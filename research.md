@@ -15,7 +15,7 @@ rows[].height: number[0, 40]
 rows[].top + rows[].height <= parent.bottom
 nondecreasing(rows.top)
 spaced(rows, gap)
-extentEnd(rows, empty: top) == bottom
+extentEnd(rows, top) == bottom
 ```
 
 Avoid public syntax like:
@@ -44,7 +44,7 @@ Once views exist, current facts can become less ad hoc:
 ```ts
 nondecreasing(rows.start)
 spaced(rows, gap)
-extentEnd(rows, empty: top) == bottom
+extentEnd(rows, top) == bottom
 inside(child, parent)
 partitions(fragments, textRange)
 ```
@@ -56,7 +56,7 @@ partitions(fragments, textRange)
 The total shape should be:
 
 ```ts
-extentEnd(rows, empty: top) == bottom
+extentEnd(rows, top) == bottom
 ```
 
 This matters because the ordinary stack loop:
@@ -84,10 +84,10 @@ Keep app code natural. A checker that understands locals, loops, arrays, object 
 
 High-value inference:
 
-- `items.map(...)` preserves length, source order, and simple field domains.
-- append-only `for...of` can infer length, source order, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
-- conditional push should infer `rows.length <= items.length` and subsequence/source order, not equal length.
-- indexed loops should infer index ranges and one-to-one source order.
+- `items.map(...)` preserves length and simple field domains; source order can come later when there is a public fact that needs it.
+- append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
+- conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
+- indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
 - boring reducers like `total += row.height` can become internal measures.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized.
 

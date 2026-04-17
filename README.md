@@ -98,7 +98,7 @@ spaced(result.rows, gap)
 lastEnd(result.rows) == result.bottom
 ```
 
-Only `nondecreasing` and `spaced` are atoms today. `lastEnd(rows)` is an expression helper, so use it inside a comparison.
+Only `nondecreasing` and `spaced` are atoms today. `lastEnd(rows)` and `extentEnd(rows, emptyValue)` are expression helpers, so use them inside comparisons.
 
 Future names should be explicit, not cute. E.g. prefer `nondecreasing` over `monotone`, and do not accept aliases unless the second word means a different fact.
 
@@ -113,7 +113,7 @@ rows[].height: number[0, 40]
 rows[].top + rows[].height <= parent.bottom
 nondecreasing(rows.top)
 spaced(rows, gap)
-extentEnd(rows, empty: top) == bottom
+extentEnd(rows, top) == bottom
 ```
 
 Bad public facts:
@@ -198,7 +198,9 @@ The checker understands a small pure subset:
 - direct same-file function calls
 - object literals with normal or shorthand properties
 - array literals, array spread, `.length`, and bounded literal indexing
-- one append-only running-sum `for...of` loop shape, with optional loop-level `@fit` facts
+- expression-bodied `items.map(...)` for length and field domains
+- append-only `for...of` loops, including running-sum rows and conditional push
+- simple indexed `for` loops over `items.length`
 - conservative array mutation handling for `reverse`, `sort`, `splice`, and indexed assignment
 
 Unsupported source becomes `unknown`; unsupported annotation syntax is an error.
@@ -286,6 +288,8 @@ Supported today:
 - array literal length
 - array literal element values
 - `[...items, value]` length
+- `items.map(item => ...)` length and item fields
+- conditional push length, e.g. `rows.length <= items.length`
 - index checks when the index is proven integer and `0 <= index < array.length`
 
 Example:
@@ -324,7 +328,7 @@ The first loop primitive is this shape:
  * result.rows[].height: number[0, 40]
  * nondecreasing(result.rows.top)
  * spaced(result.rows, gap)
- * lastEnd(result.rows) == result.bottom
+ * extentEnd(result.rows, top) == result.bottom
  */
 function stackRows(items: Item[], top: number, gap: number) {
   const rows = []
@@ -333,7 +337,8 @@ function stackRows(items: Item[], top: number, gap: number) {
     rows.push({top: y, height: item.height, source: item})
     y += item.height + gap
   }
-  return {rows, bottom: y - gap}
+  const bottom = rows.length === 0 ? top : y - gap
+  return {rows, bottom}
 }
 ```
 
@@ -343,10 +348,11 @@ It proves:
 - `nondecreasing(rows.top)`, when the increment is non-negative
 - `spaced(rows, gap)`, when the increment is `height + gap`
 - `lastEnd(rows)`, when the input length is known non-empty and each pushed row has `top` and `height`
+- `extentEnd(rows, top)`, when the code uses the same empty fallback
 
 It also accepts a scalar row height and `y += rowHeight`, which means `spaced(rows, 0)`.
 
-It does not yet prove facts about conditional rows.
+Conditional push proves `rows.length <= items.length` and row field domains. It does not claim equal length.
 
 ## Results
 

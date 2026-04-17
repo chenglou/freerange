@@ -311,6 +311,59 @@ export function negativeLinearReductionNeedsNonNegativePadding(containee: number
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * given top: number[0, 1000]
+ * given gap: number[0, 10]
+ * extentEnd(result.rows, top) == result.bottom
+ */
+export function negativeExtentEndCatchesEmptyRows(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height + gap
+  }
+  return {rows, bottom: y - gap}
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[-40, 40]
+ * result.rows[].height: number[0, 40]
+ */
+export function negativeMapRowsNeedFieldDomain(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * given items[].height: number[0, 40]
+ * result.rows[].index: int[1, 49]
+ */
+export function negativeIndexedLoopIndexCanBeZero(items: {height: number}[]) {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    rows.push({index: i, height: items[i]!.height})
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result.rows.length == items.length
+ */
+export function negativeConditionalPushIsNotSameLength(items: {height: number; visible: boolean}[]) {
+  const rows = []
+  for (const item of items) {
+    if (item.visible) rows.push({height: item.height})
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given items[].height: number[0, 40]
  * nondecreasing(result.rows.top)

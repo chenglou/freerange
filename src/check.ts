@@ -80,6 +80,7 @@ type ArraySummary = {
   advances: {prop: string; value: NumberValue}[]
   spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
   lastEnd: NumberValue | null
+  extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: NumberValue}[]
 }
 
 type WildcardUse =
@@ -734,6 +735,11 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
       if (result != null) return result
       continue
     }
+    if (ts.isForStatement(statement)) {
+      const result = evaluateForStatement(statement, context)
+      if (result != null) return result
+      continue
+    }
     if (ts.isExpressionStatement(statement)) {
       const result = applyExpressionStatement(statement.expression, context)
       if (result != null) return result
@@ -896,6 +902,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   const loopItemName = declaration.name.text
   const loopItem = source.element ?? unknownObject(`${source.expr ?? statement.expression.getText(context.program.sourceFile)}[]`)
   const pushedArrays: LoopPush[] = []
+  const conditionalPushedArrays: LoopPush[] = []
   const pendingAdds = new Map<string, NumberValue>()
 
   for (const child of statement.statement.statements) {
@@ -905,6 +912,12 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
       const target = context.env.get(targetName)
       if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
       pushedArrays.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+      continue
+    }
+
+    const conditionalPush = readConditionalLoopPush(child, loopContext, source.length)
+    if (conditionalPush != null) {
+      conditionalPushedArrays.push(conditionalPush)
       continue
     }
 
@@ -918,6 +931,10 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
     }
 
     return unknown(`Unsupported for-of body statement: ${child.getText(context.program.sourceFile)}`)
+  }
+
+  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0)) {
+    return unknown('Conditional push loops support one guarded push and no cursor update')
   }
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
@@ -941,6 +958,72 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
       element: loopElementFromPush(push, update),
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
     })
+  }
+
+  for (const push of conditionalPushedArrays) {
+    const target = context.env.get(push.arrayName)
+    if (target?.kind !== 'array') continue
+    const length = conditionalPushLength(push.arrayName, source.length)
+    context.env.set(push.arrayName, {
+      ...target,
+      length,
+      elements: null,
+      element: mergeElementValue(target.element, push.element),
+      summary: null,
+    })
+    const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
+    if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
+  }
+
+  verifyLocalLoopSpecs(localSpecs, context)
+
+  return null
+}
+
+function evaluateForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
+  const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
+  const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
+  reportLoopResultSpecs(resultSpecs, context)
+  applyLocalGivenSpecs(localSpecs, context)
+
+  const shape = indexedLoopShape(statement)
+  if (shape == null) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
+  if (!ts.isBlock(statement.statement)) return unknown('Only block indexed loops are supported')
+
+  const source = evaluateExpression(shape.sourceExpression, context)
+  if (source.kind !== 'array') return unknown('Indexed loop source expected an array')
+  if (source.length.max < 1) return unknown('Indexed loop expected a possibly non-empty source')
+
+  const indexValue = numberValue(0, source.length.max - 1, true, shape.indexName, linearVariable(shape.indexName))
+  const indexFacts = indexedLoopAssumptions(indexValue, source.length)
+  const loopContext = contextWithAssumptions(
+    {...context, env: new Map(context.env).set(shape.indexName, indexValue)},
+    indexFacts,
+  )
+
+  const pushes: LoopPush[] = []
+  for (const child of statement.statement.statements) {
+    if (!ts.isExpressionStatement(child) || !isPushCall(child.expression)) {
+      return unknown(`Unsupported indexed loop body statement: ${child.getText(context.program.sourceFile)}`)
+    }
+    const targetName = child.expression.expression.expression.text
+    const target = context.env.get(targetName)
+    if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
+    pushes.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+  }
+
+  for (const push of pushes) {
+    const target = context.env.get(push.arrayName)
+    if (target?.kind !== 'array') continue
+    const element = indexedLoopElementFromPush(push, shape.indexName, source.length)
+    context.env.set(push.arrayName, {
+      ...target,
+      length: source.length,
+      elements: null,
+      element,
+      summary: null,
+    })
+    context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
   }
 
   verifyLocalLoopSpecs(localSpecs, context)
@@ -1054,6 +1137,83 @@ function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit
   return {element: evaluateExpression(row, context), topName, height: height?.kind === 'number' ? height : null}
 }
 
+function readConditionalLoopPush(statement: ts.Statement, context: EvalContext, length: NumberValue): LoopPush | null {
+  if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
+  const push = pushCallFromStatement(statement.thenStatement)
+  if (push == null) return null
+  const targetName = push.expression.expression.text
+  const target = context.env.get(targetName)
+  if (target == null || target.kind !== 'array') return null
+  return {...readLoopPush(push, context), arrayName: targetName, length}
+}
+
+function pushCallFromStatement(statement: ts.Statement): (ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}}) | null {
+  if (ts.isExpressionStatement(statement) && isPushCall(statement.expression)) return statement.expression
+  if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
+  const child = statement.statements[0]
+  return child != null && ts.isExpressionStatement(child) && isPushCall(child.expression) ? child.expression : null
+}
+
+function conditionalPushLength(arrayName: string, sourceLength: NumberValue): NumberValue {
+  return numberValue(0, sourceLength.max, true, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
+}
+
+type IndexedLoopShape = {
+  indexName: string
+  sourceExpression: ts.Expression
+}
+
+function indexedLoopShape(statement: ts.ForStatement): IndexedLoopShape | null {
+  if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
+  if (statement.initializer.declarations.length !== 1) return null
+  const declaration = statement.initializer.declarations[0]
+  if (declaration == null || !ts.isIdentifier(declaration.name)) return null
+  if (declaration.initializer == null || numericLiteralValue(declaration.initializer) !== 0) return null
+
+  const indexName = declaration.name.text
+  if (statement.condition == null || statement.incrementor == null) return null
+  const sourceExpression = indexedLoopSourceExpression(statement.condition, indexName)
+  if (sourceExpression == null) return null
+  if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
+  return {indexName, sourceExpression}
+}
+
+function indexedLoopSourceExpression(expression: ts.Expression, indexName: string): ts.Expression | null {
+  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
+  if (!ts.isIdentifier(expression.left) || expression.left.text !== indexName) return null
+  if (!ts.isPropertyAccessExpression(expression.right) || expression.right.name.text !== 'length') return null
+  return expression.right.expression
+}
+
+function indexedLoopIncrements(expression: ts.Expression, indexName: string) {
+  if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
+    && expression.operator === ts.SyntaxKind.PlusPlusToken
+    && ts.isIdentifier(expression.operand)
+    && expression.operand.text === indexName) return true
+
+  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
+  return ts.isIdentifier(expression.left)
+    && expression.left.text === indexName
+    && numericLiteralValue(expression.right) === 1
+}
+
+function indexedLoopAssumptions(index: NumberValue, sourceLength: NumberValue): LinearConstraint[] {
+  const lower = comparisonConstraint(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
+  const upper = comparisonConstraint(index, '<', sourceLength)
+  return nonNullFacts(lower, upper)
+}
+
+function indexedElementAssumptions(arrayName: string, sourceLength: NumberValue): LinearConstraint[] {
+  const index = indexedElementValue(arrayName, 'index', sourceLength)
+  const lower = comparisonConstraint(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), `${index.expr ?? `${arrayName}[].index`} >= 0`)
+  const upper = comparisonConstraint(index, '<', sourceLength, `${index.expr ?? `${arrayName}[].index`} < ${sourceLength.expr ?? formatRange(sourceLength)}`)
+  return nonNullFacts(lower, upper)
+}
+
+function nonNullFacts(...facts: (LinearConstraint | null)[]): LinearConstraint[] {
+  return facts.filter(fact => fact != null)
+}
+
 function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: string): ts.Expression | null {
   for (const property of expression.properties) {
     if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
@@ -1070,6 +1230,27 @@ function loopElementFromPush(
   const props = new Map(push.element.props)
   props.set('top', loopCursorElementValue(update, `${push.arrayName}[].top`))
   return {...push.element, props}
+}
+
+function indexedLoopElementFromPush(push: LoopPush, indexName: string, sourceLength: NumberValue): Value | null {
+  if (push.element?.kind !== 'object') return push.element
+  const props = new Map(push.element.props)
+  for (const [name, value] of push.element.props) {
+    if (value.kind === 'number' && value.expr === indexName) {
+      props.set(name, indexedElementValue(push.arrayName, name, sourceLength))
+    }
+  }
+  return {...push.element, props}
+}
+
+function indexedElementValue(arrayName: string, prop: string, sourceLength: NumberValue): NumberValue {
+  return numberValue(
+    0,
+    Math.max(0, sourceLength.max - 1),
+    true,
+    `${arrayName}[].${prop}`,
+    linearVariable(linearNameForExpression(`${arrayName}[].${prop}`)),
+  )
 }
 
 function loopCursorElementValue(
@@ -1092,7 +1273,7 @@ function sequenceSummaryFromLoopPush(
   context: EvalContext,
 ): ArraySummary | null {
   if (push.topName == null || push.height == null || update == null) return null
-  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: update.increment}], spaced: [], lastEnd: null}
+  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: update.increment}], spaced: [], lastEnd: null, extentEnds: []}
   if (update.increment.min >= 0) summary.nondecreasingProps.push('top')
 
   const advanceExpr = update.increment.expr
@@ -1102,8 +1283,37 @@ function sequenceSummaryFromLoopPush(
   if (gapExpr == null) return summary
 
   summary.spaced.push({gapExpr, heightExpr, advanceExpr})
-  if (push.length.min >= 1) summary.lastEnd = lastEndFromLoopEnd(update.end, gapExpr, context)
+  const nonEmptyEnd = lastEndFromLoopEnd(nonEmptyLoopEnd(update, push.length), gapExpr, context)
+  if (push.length.min >= 1) summary.lastEnd = nonEmptyEnd
+  const extentEnd = extentEndFromLoopPush(push.arrayName, update.start, nonEmptyEnd)
+  if (extentEnd != null) summary.extentEnds.push(extentEnd)
   return summary
+}
+
+function nonEmptyLoopEnd(
+  update: {start: NumberValue; increment: NumberValue; end: NumberValue},
+  length: NumberValue,
+): NumberValue {
+  const nonEmptyLength = {...length, min: Math.max(1, length.min)}
+  return runningSumNumber(update.start, nonEmptyLength, update.increment)
+}
+
+function extentEndFromLoopPush(
+  arrayName: string,
+  empty: NumberValue,
+  nonEmptyEnd: NumberValue | null,
+): ArraySummary['extentEnds'][number] | null {
+  if (empty.expr == null || nonEmptyEnd?.expr == null) return null
+  return {
+    emptyExpr: empty.expr,
+    nonEmptyExpr: nonEmptyEnd.expr,
+    value: numberValue(
+      Math.min(empty.min, nonEmptyEnd.min),
+      Math.max(empty.max, nonEmptyEnd.max),
+      empty.isInteger && nonEmptyEnd.isInteger,
+      `extentEnd(${arrayName}, ${empty.expr})`,
+    ),
+  }
 }
 
 function spacedGapExpr(incrementExpr: string, heightExpr: string): string | null {
@@ -1224,6 +1434,9 @@ function combineNumberCases(
 }
 
 function evaluateConditional(expression: ts.ConditionalExpression, context: EvalContext): Value {
+  const extentEnd = evaluateExtentEndConditional(expression, context)
+  if (extentEnd != null) return extentEnd
+
   const condition = evaluateConditionFacts(expression.condition, context)
   switch (condition.truth) {
     case 'true':
@@ -1246,11 +1459,14 @@ function evaluateConditional(expression: ts.ConditionalExpression, context: Eval
 
 function evaluateCall(expression: ts.CallExpression, context: EvalContext): Value {
   if (ts.isIdentifier(expression.expression) && expression.expression.text === 'lastEnd') return evaluateLastEndCall(expression, context)
+  if (ts.isIdentifier(expression.expression) && expression.expression.text === 'extentEnd') return evaluateExtentEndCall(expression, context)
   if (ts.isPropertyAccessExpression(expression.expression)) {
     const target = expression.expression
     if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
       return evaluateMathCall(target.name.text, expression.arguments, context)
     }
+    const mapResult = evaluateArrayMapCall(expression, context)
+    if (mapResult != null) return mapResult
   }
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
 
@@ -1281,12 +1497,83 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   })
 }
 
+function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
+  if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'map') return null
+  const source = evaluateExpression(expression.expression.expression, context)
+  if (source.kind !== 'array') return unknown('Array.map expected an array')
+  const callback = expression.arguments[0]
+  if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.map expects one arrow callback')
+  const param = callback.parameters[0]
+  if (param == null || callback.parameters.length !== 1 || !ts.isIdentifier(param.name)) return unknown('Array.map callback expected one simple parameter')
+  if (!ts.isExpression(callback.body)) return unknown('Array.map callback block bodies are not supported yet')
+
+  const item = source.element ?? unknownObject(`${source.expr ?? expression.expression.expression.getText(context.program.sourceFile)}[]`)
+  const element = evaluateExpression(callback.body, {...context, env: new Map(context.env).set(param.name.text, item)})
+  return {
+    kind: 'array',
+    length: source.length,
+    elements: null,
+    element,
+    expr: null,
+    summary: null,
+  }
+}
+
+function evaluateExtentEndConditional(expression: ts.ConditionalExpression, context: EvalContext): NumberValue | null {
+  const condition = arrayLengthZeroCondition(expression.condition, context)
+  if (condition == null) return null
+
+  const trueValue = evaluateExpression(expression.whenTrue, context)
+  const falseValue = evaluateExpression(expression.whenFalse, context)
+  if (trueValue.kind !== 'number' || falseValue.kind !== 'number') return null
+
+  const emptyValue = condition.emptyWhenTrue ? trueValue : falseValue
+  const nonEmptyValue = condition.emptyWhenTrue ? falseValue : trueValue
+  if (emptyValue.expr == null || nonEmptyValue.expr == null) return null
+  return extentEndSummaryValue(condition.array, emptyValue.expr, nonEmptyValue.expr)
+}
+
+function arrayLengthZeroCondition(expression: ts.Expression, context: EvalContext): {array: ArrayValue; emptyWhenTrue: boolean} | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const leftLength = arrayFromLengthExpression(expression.left, context)
+  const rightLength = arrayFromLengthExpression(expression.right, context)
+  const leftZero = numericLiteralValue(expression.left) === 0
+  const rightZero = numericLiteralValue(expression.right) === 0
+  const op = expression.operatorToken.kind
+
+  if (leftLength != null && rightZero && (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken)) return {array: leftLength, emptyWhenTrue: true}
+  if (rightLength != null && leftZero && (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken)) return {array: rightLength, emptyWhenTrue: true}
+  if (leftLength != null && rightZero && op === ts.SyntaxKind.GreaterThanToken) return {array: leftLength, emptyWhenTrue: false}
+  if (rightLength != null && leftZero && op === ts.SyntaxKind.LessThanToken) return {array: rightLength, emptyWhenTrue: false}
+  return null
+}
+
+function arrayFromLengthExpression(expression: ts.Expression, context: EvalContext): ArrayValue | null {
+  if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== 'length') return null
+  const value = evaluateExpression(expression.expression, context)
+  return value.kind === 'array' ? value : null
+}
+
 function evaluateLastEndCall(expression: ts.CallExpression, context: EvalContext): Value {
   const targetExpression = expression.arguments[0]
   if (targetExpression == null || expression.arguments.length !== 1) return unknown('lastEnd expects one array')
   const target = evaluateExpression(targetExpression, context)
   if (target.kind !== 'array') return unknown('lastEnd expected an array')
   return target.summary?.lastEnd ?? unknown(lastEndFailureReason(targetExpression.getText(), target))
+}
+
+function evaluateExtentEndCall(expression: ts.CallExpression, context: EvalContext): Value {
+  const targetExpression = expression.arguments[0]
+  const emptyExpression = expression.arguments[1]
+  if (targetExpression == null || emptyExpression == null || expression.arguments.length !== 2) return unknown('extentEnd expects extentEnd(rows, emptyValue)')
+  const target = evaluateExpression(targetExpression, context)
+  if (target.kind !== 'array') return unknown('extentEnd expected an array')
+  const empty = evaluateExpression(emptyExpression, context)
+  if (empty.kind !== 'number' || empty.expr == null) return unknown('extentEnd expected a known empty value')
+
+  if (target.length.max === 0) return empty
+  if (target.length.min >= 1 && target.summary?.lastEnd != null) return target.summary.lastEnd
+  return extentEndSummaryValue(target, empty.expr) ?? unknown(extentEndFailureReason(targetExpression.getText(), empty.expr, target))
 }
 
 function lastEndFailureReason(targetText: string, target: ArrayValue) {
@@ -1297,6 +1584,16 @@ function lastEndFailureReason(targetText: string, target: ArrayValue) {
     `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
   ]
   lines.push(`missing: ${missing}`)
+  return lines.join('\n')
+}
+
+function extentEndFailureReason(targetText: string, emptyExpr: string, target: ArrayValue) {
+  const lines = [
+    `extentEnd(${targetText}, ${emptyExpr}) was not inferred`,
+    'need: an append-only row loop plus the empty fallback used by the source',
+    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+  ]
+  lines.push('missing: empty-safe row end')
   return lines.join('\n')
 }
 
@@ -2205,6 +2502,14 @@ function sequencePropArgument(args: string[], context: EvalContext): {array: Arr
   return array.kind === 'array' ? {array, prop: expression.name.text} : null
 }
 
+function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExpr?: string): NumberValue | null {
+  const extentEnds = array.summary?.extentEnds ?? []
+  return extentEnds.find(fact =>
+    sameExpressionText(fact.emptyExpr, emptyExpr)
+    && (nonEmptyExpr == null || sameExpressionText(fact.nonEmptyExpr, nonEmptyExpr))
+  )?.value ?? null
+}
+
 function mergeArraySummary(left: ArraySummary | null, right: ArraySummary | null): ArraySummary | null {
   if (left == null) return right
   if (right == null) return left
@@ -2213,6 +2518,7 @@ function mergeArraySummary(left: ArraySummary | null, right: ArraySummary | null
     advances: [...left.advances, ...right.advances].filter((fact, index, facts) => facts.findIndex(other => sameAdvanceFact(other, fact)) === index),
     spaced: [...left.spaced, ...right.spaced].filter((fact, index, facts) => facts.findIndex(other => sameSpacedFact(other, fact)) === index),
     lastEnd: right.lastEnd ?? left.lastEnd,
+    extentEnds: [...left.extentEnds, ...right.extentEnds].filter((fact, index, facts) => facts.findIndex(other => sameExtentEndFact(other, fact)) === index),
   }
 }
 
@@ -2230,7 +2536,9 @@ function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null)
   if (left.advances.length !== right.advances.length) return false
   if (!left.advances.every((fact, index) => sameAdvanceFact(fact, right.advances[index]!))) return false
   if (left.spaced.length !== right.spaced.length) return false
-  return left.spaced.every((fact, index) => sameSpacedFact(fact, right.spaced[index]!))
+  if (!left.spaced.every((fact, index) => sameSpacedFact(fact, right.spaced[index]!))) return false
+  if (left.extentEnds.length !== right.extentEnds.length) return false
+  return left.extentEnds.every((fact, index) => sameExtentEndFact(fact, right.extentEnds[index]!))
 }
 
 function sameAdvanceFact(left: ArraySummary['advances'][number], right: ArraySummary['advances'][number]) {
@@ -2241,6 +2549,12 @@ function sameSpacedFact(left: ArraySummary['spaced'][number], right: ArraySummar
   return sameExpressionText(left.gapExpr, right.gapExpr)
     && sameExpressionText(left.heightExpr, right.heightExpr)
     && sameExpressionText(left.advanceExpr, right.advanceExpr)
+}
+
+function sameExtentEndFact(left: ArraySummary['extentEnds'][number], right: ArraySummary['extentEnds'][number]) {
+  return sameExpressionText(left.emptyExpr, right.emptyExpr)
+    && sameExpressionText(left.nonEmptyExpr, right.nonEmptyExpr)
+    && (left.value.expr ?? null) === (right.value.expr ?? null)
 }
 
 function linearNameForExpression(text: string) {
@@ -2327,6 +2641,7 @@ function valueWithAssumptions(value: Value, assumptions: LinearConstraint[]): Va
         ...value.summary,
         advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
         lastEnd: value.summary.lastEnd == null ? null : valueWithAssumptions(value.summary.lastEnd, assumptions) as NumberValue,
+        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
       },
     }
   }

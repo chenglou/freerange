@@ -11,6 +11,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 - Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
 - Loop specs also use `@fit` on the supported append-only `for...of` shape. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
+- `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
 - Wildcard comparisons support one collection side and one scalar side. The collection side may be nested:
 
 ```ts
@@ -30,23 +31,17 @@ sections[].rows[].height <= maxHeight
 2. **Make helper report lines clearer.**
    Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, or `read from code`. Helper calls still mostly appear as separate checks; make that output easier to scan without adding new public syntax.
 
-3. **Add `extentEnd(rows, empty: top)`.**
-   `lastEnd(rows)` is only valid for non-empty rows. `extentEnd` should handle empty rows and catch the realistic `bottom = y - gap` bug when `items.length` may be `0`.
-
-4. **Improve wildcard comparisons carefully.**
+3. **Improve wildcard comparisons carefully.**
    Keep the current one-wildcard-vs-scalar rule. Next useful steps:
    - same-item comparisons only if the syntax makes same-item semantics explicit
    - zip/cross comparisons only if the syntax makes zip/cross semantics explicit
    Do not silently guess what two wildcard sides mean.
 
-5. **Broaden source inference before adding atoms.**
-   Add common TS shapes:
-   - `items.map(...)` preserves length and source order
-   - conditional push gives `rows.length <= items.length` and subsequence/source order, not equal length
-   - indexed loops infer `rows[].index: int[0, items.length - 1]`
+4. **Broaden source inference before adding atoms.**
+   `items.map(...)`, indexed loops, and conditional push now have small summaries. Next useful source shape:
    - boring reducers like `total += row.height` become internal measures
 
-6. **Delay views until field-name pressure earns them.**
+5. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
 
 ```ts
@@ -57,7 +52,7 @@ view fragments as ranges(start: .textStart, end: .textEnd)
 
    A view is only a field mapping. It must not assert layout facts.
 
-7. **Prefer plain geometry first.**
+6. **Prefer plain geometry first.**
    Start with field comparisons:
 
 ```ts
@@ -67,7 +62,7 @@ child.x + child.w <= parent.x + parent.w
 
    Add `inside(child, parent)` only when repeated reports prove the name earns itself. If it lands, decide whether it includes non-negative width/height; probably yes.
 
-8. **Add Pretext facts through generic range/lineage facts first.**
+7. **Add Pretext facts through generic range/lineage facts first.**
    Try these before text-specific atoms:
    - `fragments[].width <= offeredWidth`
    - `nondecreasing(fragments.textStart)`
@@ -75,7 +70,7 @@ child.x + child.w <= parent.x + parent.w
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
 
-9. **Add module/import summaries.**
+8. **Add module/import summaries.**
     Same-file helper tracking is enough for the prototype, not for a helper library. Summaries must report when they were trusted.
 
 ## Public DSL Governance
@@ -124,12 +119,11 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 
 - No import graph or module summaries.
 - No public views yet.
-- No `extentEnd(rows, empty)` yet.
 - Impossible `given` checks are still small: empty ranges and direct contradictions against earlier ranges are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
-- Loop-level `@fit` only attaches to the supported append-only `for...of` loop.
+- Loop-level `@fit` only attaches to supported append-only loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
-- No conditional push, indexed loop, `map`, or reducer summaries yet.
+- No reducer summaries yet.
 - No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.

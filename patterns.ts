@@ -286,6 +286,67 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * given top: number[0, 1000]
+ * given gap: number[0, 10]
+ * result.rows.length == items.length
+ * result.rows[].height: number[0, 40]
+ * extentEnd(result.rows, top) == result.bottom
+ */
+export function extentEndHandlesEmptyRows(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height + gap
+  }
+  const bottom = rows.length === 0 ? top : y - gap
+  return {rows, bottom}
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result.rows.length == items.length
+ * result.rows[].height: number[0, 40]
+ */
+export function mapRowsKeepsLengthAndFields(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * given items[].height: number[0, 40]
+ * result.rows.length == items.length
+ * result.rows[].height: number[0, 40]
+ * result.rows[].index: int[0, 49]
+ * result.rows[].index < items.length
+ */
+export function indexedLoopRows(items: {height: number}[]) {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    rows.push({index: i, height: items[i]!.height})
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result.rows.length <= items.length
+ * result.rows[].height: number[0, 40]
+ */
+export function conditionalPushRows(items: {height: number; visible: boolean}[]) {
+  const rows = []
+  for (const item of items) {
+    if (item.visible) rows.push({height: item.height})
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given items[].height: number[0, 40]
  * given top: number[0, 1000]
