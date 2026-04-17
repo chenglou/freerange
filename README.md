@@ -64,7 +64,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-The same marker is used for functions and loops; placement decides the scope. Loop specs use the same language. `given` facts are trusted from that point forward. Bare lines are checked after the loop. Name local values directly; loop specs do not have `result`.
+The same marker is used for functions and loops; placement decides the scope. Loop specs use the same language. `given` facts are trusted from that point forward. Bare lines are checked after the loop. Name local values directly; loop specs do not have `result`, and loop `given` lines can only describe function inputs, not loop-built values like `rows` or mutable cursors like `y`.
 
 ## Annotation Language
 
@@ -149,7 +149,18 @@ function centeredOffset(containee: number, container: number) {
 }
 ```
 
-Top-level `given` lines are trusted assumptions.
+Top-level `given` lines are trusted input facts. They can name function parameters and top-level numeric constants. They cannot name `result` or locals created inside the function; those facts must be proved from source.
+
+The checker also rejects impossible input facts:
+
+```ts
+/** @fit
+ * given width: number[500, 400]
+ */
+function impossible(width: number) {
+  return width
+}
+```
 
 When a verified same-file helper is called, its `given` lines become things the caller must prove:
 
@@ -343,6 +354,14 @@ Each check is:
 - `unknown`: the checker could not prove it
 
 `unknown` is real. It is not a soft pass.
+
+Failure reports say whether a useful fact was trusted from `@fit` or read from code:
+
+```txt
+known:
+  trusted from function @fit: given width: number[0, 1000]
+  read from code: width - 320 <= 0
+```
 
 ## Missing On Purpose
 

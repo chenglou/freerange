@@ -19,7 +19,11 @@ export type ReportLinearConstraint = {
   text?: string
   leftExpr?: string
   rightExpr?: string
+  source: ReportFactSource
+  rangeFact?: true
 }
+
+export type ReportFactSource = 'function-given' | 'loop-given' | 'code'
 
 export type ReportArrayValue = {
   summary: {
@@ -94,7 +98,7 @@ export function formatRange(value: ReportNumberValue) {
   return `${kind}[${value.min}, ${value.max}]${expr}`
 }
 
-export function formatLinearConstraint(constraint: ReportLinearConstraint) {
+export function formatLinearConstraint(constraint: ReportLinearConstraint): string {
   if (constraint.diff == null) {
     const left = constraint.leftExpr ?? '?'
     const right = constraint.rightExpr ?? '?'
@@ -128,10 +132,22 @@ export function formatLinear(linear: ReportLinearExpr | null) {
 function knownProofContext(left: ReportNumberValue, right: ReportNumberValue, assumptions: ReportLinearConstraint[]) {
   const lines = [formatRange(left), formatRange(right)]
   for (const assumption of assumptions) {
-    lines.push(assumption.text ?? formatLinearConstraint(assumption))
+    lines.push(formatKnownFact(assumption))
     if (lines.length >= 12) break
   }
   return [...new Set(lines)]
+}
+
+function formatKnownFact(assumption: ReportLinearConstraint): string {
+  const fact = assumption.text ?? formatLinearConstraint(assumption)
+  switch (assumption.source) {
+    case 'function-given':
+      return `trusted from function @fit: ${fact}`
+    case 'loop-given':
+      return `trusted from loop @fit: ${fact}`
+    case 'code':
+      return `read from code: ${fact}`
+  }
 }
 
 function rangeValue(min: number, max: number, isInteger: boolean, expr: string): ReportNumberValue {

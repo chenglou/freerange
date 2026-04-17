@@ -300,3 +300,39 @@ export function negativeRelationalCallGiven(containee: number, container: number
 export function negativeLinearReductionNeedsNonNegativePadding(containee: number, padding: number, container: number) {
   return {offset: (container - containee) / 2, padding}
 }
+
+/** @fit
+ * given result: number[0, 10]
+ */
+export function negativeFunctionGivenCannotNameResult() {
+  return 0
+}
+
+/** @fit
+ * given width: number[500, 400]
+ */
+export function negativeGivenRangeCannotBeEmpty(width: number) {
+  return width
+}
+
+/** @fit
+ * given width: number[100, 200]
+ * given width <= 50
+ */
+export function negativeGivenComparisonCannotFit(width: number) {
+  return width
+}
+
+/** @fit
+ * given items.length: int[0, 10]
+ */
+export function negativeLoopGivenCannotNameRows(items: number[]) {
+  const rows = []
+  /** @fit
+   * given rows.length == items.length
+   */
+  for (const item of items) {
+    rows.push(item)
+  }
+  return rows
+}

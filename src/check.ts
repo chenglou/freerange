@@ -14,7 +14,6 @@ import {
   comparisonFailureReason,
   comparisonNeed,
   formatArraySummary,
-  formatLinear,
   formatRange,
   missingRangeBounds,
   rangeFailureReason,
@@ -96,6 +95,7 @@ type EvalContext = {
   program: Program
   file: string
   env: Map<string, Value>
+  inputRoots: string[]
   stack: string[]
   checks: FitCheck[]
   assumptions: LinearConstraint[]
@@ -117,8 +117,15 @@ type LinearConstraint = {
   text?: string
   leftExpr?: string
   rightExpr?: string
-  source?: 'range' | 'comparison' | 'derived'
+  source: FactSource
+  rangeFact?: true
 }
+
+type FactSource = 'function-given' | 'loop-given' | 'code'
+
+type TrustedGivenSpec =
+  | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
+  | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
 
 type NonNegativeFact = {
   diff: LinearExpr
@@ -199,21 +206,25 @@ function verifyFunctionSpecs(
   const functionName = fn.name?.text ?? '<anonymous>'
   const env = new Map<string, Value>()
   for (const [name, value] of program.globals) env.set(name, value)
+  const inputRoots = functionInputRoots(program, fn)
 
   for (const param of fn.parameters) {
     if (!ts.isIdentifier(param.name)) continue
     env.set(param.name.text, unknownParamValue(param.name.text, specs))
   }
 
-  for (const spec of specs) {
-    if (spec.kind !== 'given-range') continue
-    applyGivenRangeSpec(env, spec)
+  const {trustedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
+
+  for (const given of trustedGivens) {
+    if (given.kind !== 'range') continue
+    applyGivenRangeSpec(env, given.spec)
   }
 
-  const assumptions = collectComparisonAssumptions(file, program, functionName, env, specs)
-  const context: EvalContext = {program, file, env, stack: [functionName], checks: [], assumptions}
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens)
+  checks.push(...impossibleChecks)
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions}
   const result = evaluateFunctionBody(fn, context)
-  const checks: FitCheck[] = [...context.checks]
+  checks.push(...context.checks)
 
   for (const spec of specs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
@@ -223,27 +234,121 @@ function verifyFunctionSpecs(
   return checks
 }
 
-function collectComparisonAssumptions(
+function functionInputRoots(program: Program, fn: ts.FunctionDeclaration): string[] {
+  const roots = [...program.globals.keys()]
+  for (const param of fn.parameters) {
+    if (!ts.isIdentifier(param.name)) continue
+    roots.push(param.name.text)
+  }
+  return [...new Set(roots)]
+}
+
+function validateGivenSpecs(
+  file: string,
+  functionName: string,
+  specs: FitSpec[],
+  allowedRoots: string[],
+  source: Extract<FactSource, 'function-given' | 'loop-given'>,
+): {trustedGivens: TrustedGivenSpec[]; checks: FitCheck[]} {
+  const trustedGivens: TrustedGivenSpec[] = []
+  const checks: FitCheck[] = []
+  const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
+
+  for (const spec of specs) {
+    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
+    const badRoot = givenBadRoot(spec, allowedRoots)
+    if (badRoot != null) {
+      checks.push(invalidGivenCheck(file, functionName, spec.text, `given can only describe inputs; ${badRoot} is not an input here`))
+      continue
+    }
+
+    if (spec.kind === 'given-range') {
+      const rangeProblem = givenRangeProblem(spec, ranges)
+      if (rangeProblem != null) {
+        checks.push({file, functionName, text: spec.text, status: 'fail', reason: rangeProblem})
+        continue
+      }
+      ranges.push(spec)
+      trustedGivens.push({kind: 'range', spec, source})
+      continue
+    }
+
+    trustedGivens.push({kind: 'comparison', spec, source})
+  }
+
+  return {trustedGivens, checks}
+}
+
+function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
+  for (const root of givenRootNames(spec)) {
+    if (!allowedRoots.includes(root)) return root
+  }
+  return null
+}
+
+function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string[] {
+  switch (spec.kind) {
+    case 'given-range':
+      return expressionRootNamesFromText(spec.expression)
+    case 'given-comparison':
+      return [...new Set([...expressionRootNamesFromText(spec.left), ...expressionRootNamesFromText(spec.right)])]
+  }
+}
+
+function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
+  if (spec.min > spec.max) return `no input can satisfy this: minimum ${spec.min} is greater than maximum ${spec.max}`
+  for (const range of ranges) {
+    if (!sameExpressionText(range.expression, spec.expression)) continue
+    if (spec.max < range.min || spec.min > range.max) {
+      return `no input can satisfy both ${range.text} and ${spec.text}`
+    }
+  }
+  return null
+}
+
+function invalidGivenCheck(file: string, functionName: string, text: string, reason: string): FitCheck {
+  return {file, functionName, text, status: 'unknown', reason}
+}
+
+function collectGivenAssumptions(
   file: string,
   program: Program,
   functionName: string,
   env: Map<string, Value>,
-  specs: FitSpec[],
-): LinearConstraint[] {
+  inputRoots: string[],
+  givens: TrustedGivenSpec[],
+): {assumptions: LinearConstraint[]; checks: FitCheck[]} {
   const assumptions: LinearConstraint[] = []
-  const context: EvalContext = {program, file, env, stack: [functionName], checks: [], assumptions}
-  for (const spec of specs) {
-    if (spec.kind === 'given-range') {
+  const checks: FitCheck[] = []
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions}
+  for (const given of givens) {
+    if (given.kind === 'range') {
+      const spec = given.spec
       const value = evaluateSpecExpression(spec.expression, context)
-      assumptions.push(...rangeFactsFromValue(value, spec.min, spec.max))
+      assumptions.push(...rangeFactsFromValue(value, spec.min, spec.max, spec.text, given.source))
       continue
     }
-    if (spec.kind === 'given-comparison') {
-      const fact = comparisonFactFromSpec(spec, context)
-      if (fact != null) assumptions.push(fact)
+
+    const spec = given.spec
+    const left = evaluateSpecExpression(spec.left, context)
+    const right = evaluateSpecExpression(spec.right, context)
+    if (left.kind === 'number' && right.kind === 'number') {
+      const status = proveComparison(left, spec.op, right, assumptions)
+      if (status.status === 'fail') {
+        checks.push({
+          file,
+          functionName,
+          text: spec.text,
+          status: 'fail',
+          reason: `no input can satisfy this with the earlier given lines\n${status.reason ?? ''}`.trimEnd(),
+        })
+        continue
+      }
     }
+    const fact = comparisonFactFromSpec(spec, context, given.source)
+    if (fact != null) assumptions.push(fact)
   }
-  return assumptions
+  return {assumptions, checks}
 }
 
 function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
@@ -316,6 +421,35 @@ function specExpressionParamShape(text: string, name: string): 'array' | 'object
   if (expressionMentionsArrayParam(parsed.expression, name)) return 'array'
   if (expressionMentionsObjectParam(parsed.expression, name)) return 'object'
   return 'number'
+}
+
+function expressionRootNamesFromText(text: string): string[] {
+  const parsed = parseFitExpression(text)
+  const ignored = [...parsed.domainPaths.keys()]
+  const roots = [...parsed.domainPaths.values()].map(domainPath => domainPath.root)
+  roots.push(...expressionRootNames(parsed.expression, ignored))
+  return [...new Set(roots)]
+}
+
+function expressionRootNames(expression: ts.Expression, ignored: string[]): string[] {
+  if (ts.isIdentifier(expression)) return ignored.includes(expression.text) ? [] : [expression.text]
+  if (ts.isPropertyAccessExpression(expression)) return expressionRootNames(expression.expression, ignored)
+  if (ts.isElementAccessExpression(expression)) {
+    const roots = expressionRootNames(expression.expression, ignored)
+    if (expression.argumentExpression != null) roots.push(...expressionRootNames(expression.argumentExpression, ignored))
+    return roots
+  }
+  if (ts.isCallExpression(expression)) {
+    const roots = expressionRootNames(expression.expression, ignored)
+    for (const argument of expression.arguments) roots.push(...expressionRootNames(argument, ignored))
+    return roots
+  }
+
+  const roots: string[] = []
+  for (const child of expression.getChildren()) {
+    if (ts.isExpression(child)) roots.push(...expressionRootNames(child, ignored))
+  }
+  return roots
 }
 
 function expressionMentionsArrayParam(expression: ts.Expression, name: string): boolean {
@@ -413,7 +547,8 @@ function verifyCheckSpec(
 ): FitCheck {
   const env = new Map(baseEnv)
   env.set('result', result)
-  const context: EvalContext = {program, file, env, stack: [functionName], checks, assumptions}
+  const inputRoots = [...baseEnv.keys(), 'result']
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions}
 
   if (spec.kind === 'check-range') {
     const value = evaluateSpecExpression(spec.expression, context)
@@ -767,11 +902,16 @@ function expressionMentionsIdentifier(expression: ts.Expression, name: string): 
 }
 
 function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
-  for (const spec of specs) {
-    if (spec.kind !== 'given-range') continue
-    applyGivenRangeSpec(context.env, spec)
+  const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
+  const {trustedGivens, checks} = validateGivenSpecs(context.file, functionName, specs, context.inputRoots, 'loop-given')
+  context.checks.push(...checks)
+
+  for (const given of trustedGivens) {
+    if (given.kind !== 'range') continue
+    applyGivenRangeSpec(context.env, given.spec)
   }
-  const assumptions = collectComparisonAssumptions(context.file, context.program, context.stack.at(-1) ?? '<unknown>', context.env, specs)
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(context.file, context.program, functionName, context.env, context.inputRoots, trustedGivens)
+  context.checks.push(...impossibleChecks)
   context.assumptions = mergeAssumptions(context.assumptions, assumptions)
 }
 
@@ -1029,6 +1169,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     program: context.program,
     file: context.file,
     env,
+    inputRoots: functionInputRoots(context.program, fn),
     stack: [...context.stack, functionName],
     checks: context.checks,
     assumptions: context.assumptions,
@@ -1059,7 +1200,7 @@ function verifyCallGivenSpecs(
     if (!ts.isIdentifier(param.name)) continue
     env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for ${functionName}`))
   }
-  const calleeContext: EvalContext = {...context, env}
+  const calleeContext: EvalContext = {...context, env, inputRoots: functionInputRoots(context.program, fn)}
 
   for (const spec of specs) {
     let status: {status: FitCheckStatus; reason?: string} | null = null
@@ -1791,7 +1932,7 @@ function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: Num
   const diff = comparisonDiff(left, op, right)
   if (diff == null) return null
   const target = cleanLinear(diff)
-  for (const fact of assumptions.filter(assumption => assumption.source !== 'range').flatMap(nonNegativeFacts)) {
+  for (const fact of assumptions.filter(assumption => assumption.rangeFact !== true).flatMap(nonNegativeFacts)) {
     for (const scale of reductionScales(target, fact.diff)) {
       const scaledFact = linearScaleExact(fact.diff, scale)
       const remainder = linearSubtract(target, scaledFact)
@@ -1826,7 +1967,7 @@ function singleLinearBound(linear: LinearExpr) {
   return coefficient > 0 ? `${name} >= 0` : `${name} <= 0`
 }
 
-function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: LinearConstraint['source'] = 'derived'): LinearConstraint | null {
+function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: FactSource = 'code'): LinearConstraint | null {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
   return {
@@ -1839,20 +1980,20 @@ function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: 
   }
 }
 
-function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext): LinearConstraint | null {
+function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext, source: FactSource): LinearConstraint | null {
   const left = evaluateSpecExpression(spec.left, context)
   const right = evaluateSpecExpression(spec.right, context)
   if (left.kind !== 'number' || right.kind !== 'number') return null
-  return comparisonConstraint(left, spec.op, right, spec.text, 'comparison')
+  return comparisonConstraint(left, spec.op, right, spec.text, source)
 }
 
-function rangeFactsFromValue(value: Value, min: number, max: number): LinearConstraint[] {
+function rangeFactsFromValue(value: Value, min: number, max: number, text: string, source: FactSource): LinearConstraint[] {
   if (value.kind !== 'number') return []
   const minDiff = linearSubtract(value.linear, linearConstant(min))
   const maxDiff = linearSubtract(linearConstant(max), value.linear)
   const facts: LinearConstraint[] = []
-  if (minDiff != null) facts.push({diff: minDiff, op: '>=', text: `${value.expr ?? formatLinear(value.linear)} >= ${min}`, source: 'range'})
-  if (maxDiff != null) facts.push({diff: maxDiff, op: '>=', text: `${value.expr ?? formatLinear(value.linear)} <= ${max}`, source: 'range'})
+  if (minDiff != null) facts.push({diff: minDiff, op: '>=', text, source, rangeFact: true})
+  if (maxDiff != null) facts.push({diff: maxDiff, op: '>=', text, source, rangeFact: true})
   return facts
 }
 

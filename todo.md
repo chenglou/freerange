@@ -8,7 +8,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 
 ## Current Surface
 
-- Function specs use `@fit`. `given` lines are trusted assumptions; bare lines are facts to prove.
+- Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
 - Loop specs also use `@fit` on the supported append-only `for...of` shape. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - Wildcard comparisons support one collection side and one scalar side:
@@ -22,11 +22,11 @@ fragments[].width <= offeredWidth
 
 ## Do Next
 
-1. **Restrict trusted assumptions.**
-   Top-level `given` should only mention params, globals, and imported assumptions. It should not mention `result` or mutable locals. Loop-local `given` should be ambient input facts only, e.g. `given items[].height: number[0, 40]`, not `given rows.length == items.length`.
+1. **Tighten `given` beyond root names.**
+   Top-level `given` now only names input roots, and loop-level `given` rejects `result`, loop-built arrays, and mutable cursors. The next step is deciding how much expression shape to allow inside those roots.
 
-2. **Add an assumption ledger.**
-   Reports should separate `proved from source`, `trusted top-level given`, `trusted loop-local given`, `proved helper contract`, `trusted helper summary`, and `unsupported`. Also add a vacuity check for inconsistent assumptions, e.g. `given width: number[500, 400]`.
+2. **Make helper report lines clearer.**
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, or `read from code`. Helper calls still mostly appear as separate checks; make that output easier to scan without adding new public syntax.
 
 3. **Add `extentEnd(rows, empty: top)`.**
    `lastEnd(rows)` is only valid for non-empty rows. `extentEnd` should handle empty rows and catch the realistic `bottom = y - gap` bug when `items.length` may be `0`.
@@ -128,10 +128,10 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - No import graph or module summaries.
 - No public views yet.
 - No `extentEnd(rows, empty)` yet.
-- No assumption ledger or vacuity warnings yet.
-- `given` is still too permissive.
+- Impossible `given` checks are still small: empty ranges and direct contradictions against earlier ranges are caught, not every possible inconsistent set.
+- `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to the supported append-only `for...of` loop.
-- Loop-local `given` facts are trusted from that point forward, not proved against earlier state.
+- Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - No nested wildcard paths.
 - No conditional push, indexed loop, `map`, reducer, or mutation-kills-facts summaries yet.
