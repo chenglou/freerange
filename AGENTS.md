@@ -13,6 +13,6 @@ Do `bun install` if you're in a fresh checkout/worktree.
 
 - Docs should keep Cheng's tone: concise, concrete, slightly personal, and grounded in examples. Avoid generic theorem-prover prose. Say what the checker can actually prove today, then name the next limitation plainly.
 
-**Important:** after you're done with a feature, and have enough holistic vision, make sure you do a pass over all the files again and see if you can simplify anything. Don't change things for the sake of, but if there are simplifications, YELL **I DID A HOLISTIC PASS AND FOUND SIMPLIFICATIONS**.
+**Important:** after you're done with a feature, and have enough holistic vision, make sure you do a pass over all the files again and see if you can simplify anything. Don't change things for the sake of, but if there are simplifications, YELL **I DID A HOLISTIC PASS AND FOUND SIMPLIFICATIONS** with a brief summary.
 
-**Important:** do NOT monkey-patch. If you find yourself solving the symptom instead of the root cause, YELL **I SOLVED THE ROOT CAUSE NOT JUST THE SYMPTOM**.
+**Important:** do NOT monkey-patch. If you find yourself solving the symptom instead of the root cause, YELL **I SOLVED THE ROOT CAUSE NOT JUST THE SYMPTOM** with a brief summary.
