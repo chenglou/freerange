@@ -202,7 +202,7 @@ export function negativeRunningSumPerItemHeightNeedsNonNegative(items: {height: 
 export function negativeLocalLoopAnnotationNeedsNonNegativeItem(items: {height: number}[], top: number) {
   const rows = []
   let y = top
-  /** @fit-loop
+  /** @fit
    * given items[].height: number[-40, 40]
    * nondecreasing(rows.top)
    */
@@ -211,6 +211,21 @@ export function negativeLocalLoopAnnotationNeedsNonNegativeItem(items: {height: 
     y += item.height
   }
   return {rows, bottom: y}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * result.rows.length == items.length
+ */
+export function negativeLoopFitHasNoResult(items: {height: number}[]) {
+  const rows = []
+  /** @fit
+   * given result.rows.length == items.length
+   */
+  for (const item of items) {
+    rows.push({top: 0, height: item.height})
+  }
+  return {rows}
 }
 
 /** @fit

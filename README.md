@@ -42,13 +42,13 @@ This is not prose. Unsupported lines are parser errors.
 
 `given` lines are input assumptions. Bare lines are facts the checker must prove.
 
-Put a `@fit-loop` block immediately above a supported `for...of` when the fact belongs to that loop:
+Put a `@fit` block immediately above a supported `for...of` when the fact belongs to that loop:
 
 ```ts
 function stackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
   let y = top
-  /** @fit-loop
+  /** @fit
    * given items[].height: number[0, 40]
    * rows.length == items.length
    * rows[].height: number[0, 40]
@@ -64,7 +64,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-Loop specs use the same language. `given` facts are trusted from that point forward. Bare lines are checked after the loop. Name local values directly; loop specs do not have `result`.
+The same marker is used for functions and loops; placement decides the scope. Loop specs use the same language. `given` facts are trusted from that point forward. Bare lines are checked after the loop. Name local values directly; loop specs do not have `result`.
 
 ## Annotation Language
 
@@ -187,7 +187,7 @@ The checker understands a small pure subset:
 - direct same-file function calls
 - object literals with normal or shorthand properties
 - array literals, array spread, `.length`, and bounded literal indexing
-- one append-only running-sum `for...of` loop shape, with optional `@fit-loop` facts
+- one append-only running-sum `for...of` loop shape, with optional loop-level `@fit` facts
 
 Unsupported source becomes `unknown`; unsupported annotation syntax is an error.
 

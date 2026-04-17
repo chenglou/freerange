@@ -644,7 +644,9 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
 }
 
 function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalContext): Value | null {
-  const localSpecs = parseFitSpecs(context.program.sourceText, statement, '@fit-loop')
+  const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
+  const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
+  reportLoopResultSpecs(resultSpecs, context)
   applyLocalGivenSpecs(localSpecs, context)
 
   if (!ts.isVariableDeclarationList(statement.initializer)) return unknown('Only for-of variable declarations are supported')
@@ -707,6 +709,61 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   verifyLocalLoopSpecs(localSpecs, context)
 
   return null
+}
+
+function splitLoopSpecs(specs: FitSpec[]): {validSpecs: FitSpec[]; resultSpecs: FitSpec[]} {
+  const validSpecs: FitSpec[] = []
+  const resultSpecs: FitSpec[] = []
+  for (const spec of specs) {
+    if (specMentionsRoot(spec, 'result')) resultSpecs.push(spec)
+    else validSpecs.push(spec)
+  }
+  return {validSpecs, resultSpecs}
+}
+
+function reportLoopResultSpecs(specs: FitSpec[], context: EvalContext) {
+  if (specs.length === 0) return
+  const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
+  for (const spec of specs) {
+    context.checks.push({
+      file: context.file,
+      functionName,
+      text: spec.text,
+      status: 'unknown',
+      reason: 'loop @fit specs do not have result; name local values directly',
+    })
+  }
+}
+
+function specMentionsRoot(spec: FitSpec, root: string) {
+  return specExpressionTexts(spec).some(text => expressionTextMentionsRoot(text, root))
+}
+
+function specExpressionTexts(spec: FitSpec): string[] {
+  switch (spec.kind) {
+    case 'given-range':
+    case 'check-range':
+      return [spec.expression]
+    case 'given-comparison':
+    case 'check-comparison':
+      return [spec.left, spec.right]
+    case 'check-atom':
+      return [spec.name, ...spec.args]
+  }
+}
+
+function expressionTextMentionsRoot(text: string, root: string) {
+  const parsed = parseFitExpression(text)
+  if ([...parsed.domainPaths.values()].some(domainPath => domainPath.root === root)) return true
+  return expressionMentionsIdentifier(parsed.expression, root)
+}
+
+function expressionMentionsIdentifier(expression: ts.Expression, name: string): boolean {
+  if (ts.isIdentifier(expression) && expression.text === name) return true
+  for (const child of expression.getChildren()) {
+    if (ts.isExpression(child) && expressionMentionsIdentifier(child, name)) return true
+  }
+  return false
 }
 
 function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {

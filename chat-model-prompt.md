@@ -37,13 +37,13 @@ Rules:
 - Unsupported syntax is a parser error, not prose.
 - Top-level `given` facts are trusted.
 - Same-file helper calls prove the callee's `given` facts at the call site.
-- There is a newer `@fit-loop` form directly above supported loops:
+- A `@fit` block can sit directly above supported loops:
 
 ```ts
 function stackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
   let y = top
-  /** @fit-loop
+  /** @fit
    * given items[].height: number[0, 40]
    * rows.length == items.length
    * rows[].height: number[0, 40]

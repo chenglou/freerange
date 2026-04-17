@@ -57,17 +57,18 @@ export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
 const identifierPattern = '[A-Za-z_$][\\w$]*'
 const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[\\]))+`, 'g')
 
-export function parseFitSpecs(sourceText: string, node: ts.Node, marker = '@fit'): FitSpec[] {
+export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
   const specs: FitSpec[] = []
 
   for (const range of commentRanges) {
     const comment = sourceText.slice(range.pos, range.end)
     const lines = comment.split(/\r?\n/).map(cleanCommentLine)
-    if (!lines.some(line => line === marker)) continue
+    if (lines.some(line => line === '@fit-loop')) throw new Error('Use @fit for loop specs; @fit-loop is not supported')
+    if (!lines.some(line => line === '@fit')) continue
     for (const line of lines) {
-      if (line.length === 0 || line === marker) continue
-      if (line.startsWith('@fit')) continue
+      if (line.length === 0 || line === '@fit') continue
+      if (line.startsWith('@fit')) throw new Error(`Unsupported @fit marker: ${line}`)
       specs.push(parseFitSpecLine(line))
     }
   }

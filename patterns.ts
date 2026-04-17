@@ -270,7 +270,7 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
 export function localLoopAnnotation(items: {height: number}[], top: number, gap: number) {
   const rows = []
   let y = top
-  /** @fit-loop
+  /** @fit
    * given items[].height: number[0, 40]
    * rows.length == items.length
    * rows[].height: number[0, 40]

@@ -145,6 +145,8 @@ UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: no
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
   known: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
+UNKNOWN negative-patterns.ts:negativeLoopFitHasNoResult > loop: given result.rows.length == items.length
+  loop @fit specs do not have result; name local values directly
 UNKNOWN negative-patterns.ts:negativeWildcardRowsNeedParentBottom: result.rows[].top + result.rows[].height <= parent.bottom
   wildcard comparison means every result.rows[] item must satisfy: result.rows[].top + result.rows[].height <= parent.bottom
   number[0, 3540] as (rows[].top + items[].height) <= number[0, 2000] as parent.bottom was not proven

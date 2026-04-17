@@ -9,7 +9,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 ## Current Surface
 
 - Function specs use `@fit`. `given` lines are trusted assumptions; bare lines are facts to prove.
-- Loop specs use `@fit-loop` on the supported append-only `for...of` shape. Loop checks name locals directly; they do not have `result`.
+- Loop specs also use `@fit` on the supported append-only `for...of` shape. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - Wildcard comparisons support one collection side and one scalar side:
 
@@ -130,7 +130,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - No `extentEnd(rows, empty)` yet.
 - No assumption ledger or vacuity warnings yet.
 - `given` is still too permissive.
-- `@fit-loop` only attaches to the supported append-only `for...of` loop.
+- Loop-level `@fit` only attaches to the supported append-only `for...of` loop.
 - Loop-local `given` facts are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - No nested wildcard paths.
