@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Use [README.md](./README.md) as the user-facing source of truth. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes.
+Use [README.md](./README.md) as the user-facing source of truth. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes. **Every time before you commit, ensure you've synced the docs**.
+
 
 Do `bun install` if you're in a fresh checkout/worktree.
 
