@@ -1,0 +1,17 @@
+{
+  "name": "@chenglou/freerange",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Static @fit facts for ordinary TypeScript layout code",
+  "type": "module",
+  "scripts": {
+    "test": "bun test.ts",
+    "verify": "bun verify.ts",
+    "check": "tsc && oxlint --type-aware src patterns.ts negative-patterns.ts test.ts verify.ts research/kernels --ignore-pattern '*.js'"
+  },
+  "devDependencies": {
+    "oxlint": "latest",
+    "oxlint-tsgolint": "latest",
+    "typescript": "^6.0.2"
+  }
+}
