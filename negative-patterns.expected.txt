@@ -91,12 +91,25 @@ UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: result.bott
   missing: given runningSum(top, items.length, step) >= top
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasing(result.rows.top)
   nondecreasing(result.rows.top) was not inferred
-  known: spaced(0)
+  need: every next .top >= previous .top
+  known:
+    row advance for .top: number[-40, 40] as step
+    sequence facts: spaced(0)
+  missing: given step >= 0
 UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(result.rows, otherGap)
   spaced(result.rows, otherGap) was not inferred
-  known: nondecreasing(.top), spaced(gap), lastEnd = number[-10, 3500] as (runningSum(top, items.length, (step + gap)) - gap)
+  need: every next row top == previous top + previous height + otherGap
+  known:
+    loop proved: row advance (step + gap) = previous height step + gap
+    sequence facts: nondecreasing(.top), spaced(gap), lastEnd = number[-10, 3500] as (runningSum(top, items.length, (step + gap)) - gap)
+  missing: given gap == otherGap
 UNKNOWN negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(result.rows) == result.bottom
-  lastEnd was not inferred
+  lastEnd(result.rows) was not inferred
+  need: a non-empty append-only row loop that pushes height
+  known:
+    rows length: int[1, 50] as items.length
+    sequence facts: no sequence facts
+  missing: pushed row height for lastEnd
 UNKNOWN negative-patterns.ts:negativeObjectFieldDomainTooWide: result.height >= 0
   number[-20, 40] as item.height >= int[0, 0] as 0 was not proven
   need: item.height >= 0
@@ -119,10 +132,18 @@ UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: re
   missing: given runningSum(top, items.length, items[].height) >= top
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(result.rows.top)
   nondecreasing(result.rows.top) was not inferred
-  known: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
+  need: every next .top >= previous .top
+  known:
+    row advance for .top: number[-40, 40] as items[].height
+    sequence facts: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
+  missing: given items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
-  known: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
+  need: every next .top >= previous .top
+  known:
+    row advance for .top: number[-40, 40] as items[].height
+    sequence facts: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
+  missing: given items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeLoopFitHasNoResult > loop: given result.rows.length == items.length
   loop @fit specs do not have result; name local values directly
 UNKNOWN negative-patterns.ts:negativeWildcardRowsNeedParentBottom: result.rows[].top + result.rows[].height <= parent.bottom
@@ -178,7 +199,10 @@ UNKNOWN negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: res
   missing: padding >= 0
 UNKNOWN negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(result.rows.top)
   nondecreasing(result.rows.top) was not inferred
-  known: no sequence facts
+  need: every next .top >= previous .top
+  known:
+    sequence facts: no sequence facts
+  missing: sequence facts for .top
 FAIL negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: result.rows[].height: number[0, 40]
   range was number[-Infinity, Infinity] as result.rows[].height, expected inside number[0, 40]
   need: result.rows[].height inside number[0, 40]

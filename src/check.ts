@@ -77,7 +77,8 @@ type ArrayValue = {
 
 type ArraySummary = {
   nondecreasingProps: string[]
-  spaced: {gapExpr: string}[]
+  advances: {prop: string; value: NumberValue}[]
+  spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
   lastEnd: NumberValue | null
 }
 
@@ -657,7 +658,7 @@ function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, co
   const target = sequencePropArgument(spec.args, context)
   if (target == null) return {status: 'unknown', reason: 'nondecreasing expects result.rows.top'}
   if (target.array.summary?.nondecreasingProps.some(prop => prop === target.prop) === true) return {status: 'pass'}
-  return {status: 'unknown', reason: `${spec.text} was not inferred\nknown: ${formatArraySummary(target.array)}`}
+  return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target)}
 }
 
 function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
@@ -667,7 +668,47 @@ function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: 
   if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array'}
   if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression'}
   if (rows.summary?.spaced.some(fact => sameExpressionText(fact.gapExpr, gap.expr!)) === true) return {status: 'pass'}
-  return {status: 'unknown', reason: `${spec.text} was not inferred\nknown: ${formatArraySummary(rows)}`}
+  return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr)}
+}
+
+function nondecreasingFailureReason(text: string, target: {array: ArrayValue; prop: string}) {
+  const lines = [
+    `${text} was not inferred`,
+    `need: every next .${target.prop} >= previous .${target.prop}`,
+  ]
+  const known: string[] = []
+  const advance = target.array.summary?.advances.find(fact => fact.prop === target.prop)
+  if (advance != null) known.push(`row advance for .${target.prop}: ${formatRange(advance.value)}`)
+  known.push(`sequence facts: ${formatArraySummary(target.array)}`)
+  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
+
+  if (advance?.value.expr != null) {
+    lines.push(`missing: given ${advance.value.expr} >= 0`)
+  } else {
+    lines.push(`missing: sequence facts for .${target.prop}`)
+  }
+  return lines.join('\n')
+}
+
+function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
+  const lines = [
+    `${text} was not inferred`,
+    `need: every next row top == previous top + previous height + ${gapExpr}`,
+  ]
+  const known: string[] = []
+  const provedSpacing = rows.summary?.spaced[0]
+  if (provedSpacing != null) {
+    known.push(`loop proved: row advance ${provedSpacing.advanceExpr} = previous height ${provedSpacing.heightExpr} + ${provedSpacing.gapExpr}`)
+  }
+  known.push(`sequence facts: ${formatArraySummary(rows)}`)
+  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
+
+  if (provedSpacing != null) {
+    lines.push(`missing: given ${provedSpacing.gapExpr} == ${gapExpr}`)
+  } else {
+    lines.push('missing: recognized adjacent row spacing')
+  }
+  return lines.join('\n')
 }
 
 function evaluateFunctionBody(fn: ts.FunctionDeclaration, context: EvalContext): Value {
@@ -1051,13 +1092,16 @@ function sequenceSummaryFromLoopPush(
   context: EvalContext,
 ): ArraySummary | null {
   if (push.topName == null || push.height == null || update == null) return null
-  const summary: ArraySummary = {nondecreasingProps: [], spaced: [], lastEnd: null}
+  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: update.increment}], spaced: [], lastEnd: null}
   if (update.increment.min >= 0) summary.nondecreasingProps.push('top')
 
-  const gapExpr = update.increment.expr == null || push.height.expr == null ? null : spacedGapExpr(update.increment.expr, push.height.expr)
-  if (gapExpr == null) return summary.nondecreasingProps.length === 0 ? null : summary
+  const advanceExpr = update.increment.expr
+  const heightExpr = push.height.expr
+  if (advanceExpr == null || heightExpr == null) return summary
+  const gapExpr = spacedGapExpr(advanceExpr, heightExpr)
+  if (gapExpr == null) return summary
 
-  summary.spaced.push({gapExpr})
+  summary.spaced.push({gapExpr, heightExpr, advanceExpr})
   if (push.length.min >= 1) summary.lastEnd = lastEndFromLoopEnd(update.end, gapExpr, context)
   return summary
 }
@@ -1242,7 +1286,18 @@ function evaluateLastEndCall(expression: ts.CallExpression, context: EvalContext
   if (targetExpression == null || expression.arguments.length !== 1) return unknown('lastEnd expects one array')
   const target = evaluateExpression(targetExpression, context)
   if (target.kind !== 'array') return unknown('lastEnd expected an array')
-  return target.summary?.lastEnd ?? unknown('lastEnd was not inferred')
+  return target.summary?.lastEnd ?? unknown(lastEndFailureReason(targetExpression.getText(), target))
+}
+
+function lastEndFailureReason(targetText: string, target: ArrayValue) {
+  const missing = target.length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
+  const lines = [
+    `lastEnd(${targetText}) was not inferred`,
+    'need: a non-empty append-only row loop that pushes height',
+    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+  ]
+  lines.push(`missing: ${missing}`)
+  return lines.join('\n')
 }
 
 function verifyCallGivenSpecs(
@@ -2155,7 +2210,8 @@ function mergeArraySummary(left: ArraySummary | null, right: ArraySummary | null
   if (right == null) return left
   return {
     nondecreasingProps: [...new Set([...left.nondecreasingProps, ...right.nondecreasingProps])],
-    spaced: [...left.spaced, ...right.spaced].filter((fact, index, facts) => facts.findIndex(other => sameExpressionText(other.gapExpr, fact.gapExpr)) === index),
+    advances: [...left.advances, ...right.advances].filter((fact, index, facts) => facts.findIndex(other => sameAdvanceFact(other, fact)) === index),
+    spaced: [...left.spaced, ...right.spaced].filter((fact, index, facts) => facts.findIndex(other => sameSpacedFact(other, fact)) === index),
     lastEnd: right.lastEnd ?? left.lastEnd,
   }
 }
@@ -2171,8 +2227,20 @@ function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null)
   if (left == null || right == null) return false
   if ((left.lastEnd?.expr ?? null) !== (right.lastEnd?.expr ?? null)) return false
   if (left.nondecreasingProps.join('|') !== right.nondecreasingProps.join('|')) return false
+  if (left.advances.length !== right.advances.length) return false
+  if (!left.advances.every((fact, index) => sameAdvanceFact(fact, right.advances[index]!))) return false
   if (left.spaced.length !== right.spaced.length) return false
-  return left.spaced.every((fact, index) => sameExpressionText(fact.gapExpr, right.spaced[index]!.gapExpr))
+  return left.spaced.every((fact, index) => sameSpacedFact(fact, right.spaced[index]!))
+}
+
+function sameAdvanceFact(left: ArraySummary['advances'][number], right: ArraySummary['advances'][number]) {
+  return left.prop === right.prop && (left.value.expr ?? null) === (right.value.expr ?? null)
+}
+
+function sameSpacedFact(left: ArraySummary['spaced'][number], right: ArraySummary['spaced'][number]) {
+  return sameExpressionText(left.gapExpr, right.gapExpr)
+    && sameExpressionText(left.heightExpr, right.heightExpr)
+    && sameExpressionText(left.advanceExpr, right.advanceExpr)
 }
 
 function linearNameForExpression(text: string) {
@@ -2257,6 +2325,7 @@ function valueWithAssumptions(value: Value, assumptions: LinearConstraint[]): Va
       element: value.element == null ? null : valueWithAssumptions(value.element, assumptions),
       summary: value.summary == null ? null : {
         ...value.summary,
+        advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
         lastEnd: value.summary.lastEnd == null ? null : valueWithAssumptions(value.summary.lastEnd, assumptions) as NumberValue,
       },
     }

@@ -28,7 +28,8 @@ export type ReportFactSource = 'function-given' | 'loop-given' | 'code'
 export type ReportArrayValue = {
   summary: {
     nondecreasingProps: string[]
-    spaced: {gapExpr: string}[]
+    advances: {prop: string; value: ReportNumberValue}[]
+    spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
     lastEnd: ReportNumberValue | null
   } | null
 }

@@ -46,10 +46,7 @@ sections[].rows[].height <= maxHeight
    - indexed loops infer `rows[].index: int[0, items.length - 1]`
    - boring reducers like `total += row.height` become internal measures
 
-6. **Improve sequence reports.**
-   `spaced(rows, gap)` failures should say what adjacent rows need, what the loop proved, and what term is missing. Wildcard failures should say "every `rows[]` item" and name the smallest useful missing fact.
-
-7. **Delay views until field-name pressure earns them.**
+6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
 
 ```ts
@@ -60,7 +57,7 @@ view fragments as ranges(start: .textStart, end: .textEnd)
 
    A view is only a field mapping. It must not assert layout facts.
 
-8. **Prefer plain geometry first.**
+7. **Prefer plain geometry first.**
    Start with field comparisons:
 
 ```ts
@@ -70,7 +67,7 @@ child.x + child.w <= parent.x + parent.w
 
    Add `inside(child, parent)` only when repeated reports prove the name earns itself. If it lands, decide whether it includes non-negative width/height; probably yes.
 
-9. **Add Pretext facts through generic range/lineage facts first.**
+8. **Add Pretext facts through generic range/lineage facts first.**
    Try these before text-specific atoms:
    - `fragments[].width <= offeredWidth`
    - `nondecreasing(fragments.textStart)`
@@ -78,7 +75,7 @@ child.x + child.w <= parent.x + parent.w
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
 
-10. **Add module/import summaries.**
+9. **Add module/import summaries.**
     Same-file helper tracking is enough for the prototype, not for a helper library. Summaries must report when they were trusted.
 
 ## Public DSL Governance
