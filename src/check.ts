@@ -573,7 +573,7 @@ function verifyCheckSpec(
   const right = evaluateSpecExpression(spec.right, context)
   const status = proveComparison(left, spec.op, right, context.assumptions)
   const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
-    ? `wildcard comparison means every ${wildcardCheck.collection}[] item must satisfy: ${spec.text}\n${status.reason}`
+    ? `wildcard comparison means every ${wildcardCheck.collection} item must satisfy: ${spec.text}\n${status.reason}`
     : status.reason
   return {
     file,
@@ -601,7 +601,6 @@ function wildcardUse(text: string): WildcardUse {
   for (const domainPath of parseFitExpression(text).domainPaths.values()) {
     const itemCount = domainPath.segments.filter(segment => segment.kind === 'item').length
     if (itemCount === 0) continue
-    if (itemCount > 1) return {kind: 'unsupported', reason: `Nested wildcard paths are not supported yet: ${text}`}
     collections.add(domainPathCollectionText(domainPath))
   }
   if (collections.size === 0) return {kind: 'none'}
@@ -610,12 +609,17 @@ function wildcardUse(text: string): WildcardUse {
 }
 
 function domainPathCollectionText(domainPath: FitDomainPath) {
-  const parts = [domainPath.root]
-  for (const segment of domainPath.segments) {
-    if (segment.kind === 'item') break
-    parts.push(segment.name)
+  const lastItemIndex = domainPath.segments.findLastIndex(segment => segment.kind === 'item')
+  let collection = domainPath.root
+  for (let index = 0; index <= lastItemIndex; index++) {
+    const segment = domainPath.segments[index]!
+    if (segment.kind === 'item') {
+      collection = `${collection}[]`
+      continue
+    }
+    collection = `${collection}.${segment.name}`
   }
-  return parts.join('.')
+  return collection
 }
 
 function evaluateSpecExpression(text: string, context: EvalContext): Value {
@@ -717,16 +721,73 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
 }
 
 function applyExpressionStatement(expression: ts.Expression, context: EvalContext): Value | null {
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) {
-    return unknown(`Unsupported expression statement: ${expression.getText(context.program.sourceFile)}`)
+  if (ts.isCallExpression(expression)) return applyCallExpressionStatement(expression, context)
+  if (!ts.isBinaryExpression(expression)) return unknown(`Unsupported expression statement: ${expression.getText(context.program.sourceFile)}`)
+
+  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+    if (!ts.isIdentifier(expression.left)) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
+    const current = context.env.get(expression.left.text)
+    const increment = evaluateExpression(expression.right, context)
+    if (current == null || current.kind !== 'number' || increment.kind !== 'number') return unknown('+= expected numbers')
+    const next = evaluateNumberBinary(ts.SyntaxKind.PlusToken, current, increment)
+    context.env.set(expression.left.text, next)
+    return null
   }
-  if (!ts.isIdentifier(expression.left)) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
-  const current = context.env.get(expression.left.text)
-  const increment = evaluateExpression(expression.right, context)
-  if (current == null || current.kind !== 'number' || increment.kind !== 'number') return unknown('+= expected numbers')
-  const next = evaluateNumberBinary(ts.SyntaxKind.PlusToken, current, increment)
-  context.env.set(expression.left.text, next)
+
+  if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken) return applyAssignmentStatement(expression, context)
+  return unknown(`Unsupported expression statement: ${expression.getText(context.program.sourceFile)}`)
+}
+
+function applyCallExpressionStatement(expression: ts.CallExpression, context: EvalContext): Value | null {
+  if (!ts.isPropertyAccessExpression(expression.expression)) return unknown(`Unsupported expression statement: ${expression.getText(context.program.sourceFile)}`)
+  const targetName = expressionRootName(expression.expression.expression)
+  if (targetName == null) return unknown(`Unsupported mutation target: ${expression.expression.expression.getText(context.program.sourceFile)}`)
+  const target = context.env.get(targetName)
+  if (target?.kind !== 'array') return unknown(`${targetName}.${expression.expression.name.text} expected an array`)
+
+  switch (expression.expression.name.text) {
+    case 'reverse':
+    case 'sort':
+      context.env.set(targetName, arrayWithoutSequenceFacts(target))
+      return null
+    case 'splice':
+      context.env.set(targetName, arrayWithUnknownContents(targetName, target))
+      return null
+    default:
+      return unknown(`Unsupported array mutation: ${expression.getText(context.program.sourceFile)}`)
+  }
+}
+
+function applyAssignmentStatement(expression: ts.BinaryExpression, context: EvalContext): Value | null {
+  const targetName = mutationTargetRoot(expression.left)
+  if (targetName == null) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
+  const target = context.env.get(targetName)
+  if (target?.kind !== 'array') return unknown(`Assignment target ${targetName} expected an array`)
+  context.env.set(targetName, arrayWithUnknownContents(targetName, target))
   return null
+}
+
+function mutationTargetRoot(expression: ts.Expression): string | null {
+  if (ts.isElementAccessExpression(expression)) return expressionRootName(expression.expression) ?? mutationTargetRoot(expression.expression)
+  if (ts.isPropertyAccessExpression(expression)) return expressionRootName(expression.expression) ?? mutationTargetRoot(expression.expression)
+  if (ts.isParenthesizedExpression(expression)) return mutationTargetRoot(expression.expression)
+  if (ts.isNonNullExpression(expression)) return mutationTargetRoot(expression.expression)
+  return null
+}
+
+function arrayWithoutSequenceFacts(array: ArrayValue): ArrayValue {
+  return {...array, elements: null, summary: null}
+}
+
+function arrayWithUnknownContents(name: string, array: ArrayValue): ArrayValue {
+  const expr = array.expr ?? name
+  return {
+    ...array,
+    length: unknownNumber(`${expr}.length`),
+    elements: null,
+    element: null,
+    summary: null,
+  }
 }
 
 function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): Value {

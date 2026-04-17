@@ -199,6 +199,7 @@ The checker understands a small pure subset:
 - object literals with normal or shorthand properties
 - array literals, array spread, `.length`, and bounded literal indexing
 - one append-only running-sum `for...of` loop shape, with optional loop-level `@fit` facts
+- conservative array mutation handling for `reverse`, `sort`, `splice`, and indexed assignment
 
 Unsupported source becomes `unknown`; unsupported annotation syntax is an error.
 
@@ -278,6 +279,7 @@ Supported today:
 - `given items[]: number[0, 400]`
 - `given items[].height: number[0, 40]`
 - wildcard comparisons with one collection side and one scalar side, e.g. `rows[].top + rows[].height <= parent.bottom`
+- nested wildcard paths on that one collection side, e.g. `sections[].rows[].height <= maxHeight`
 - reading `items.length`
 - reading object fields with declared domains
 - reading `items[index].height` after `0 <= index < items.length`
@@ -300,11 +302,12 @@ function keepIndex(items: number[], index: number) {
 }
 ```
 
+Array mutation is deliberately conservative. `reverse()` and `sort()` keep length and item domains, but drop sequence facts like `nondecreasing`, `spaced`, and `lastEnd`. `splice()` and indexed assignment make length and item facts unknown.
+
 Not supported yet:
 
 - two wildcard collections in one comparison, e.g. `rows[].top <= boxes[].bottom`
-- nested wildcard paths like `sections[].rows[].height`
-- general array mutation
+- precise facts after `splice()` or indexed assignment
 - arbitrary indexed values from unknown arrays
 
 ## Running Sums

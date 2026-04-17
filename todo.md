@@ -11,14 +11,16 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 - Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
 - Loop specs also use `@fit` on the supported append-only `for...of` shape. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
-- Wildcard comparisons support one collection side and one scalar side:
+- Wildcard comparisons support one collection side and one scalar side. The collection side may be nested:
 
 ```ts
 rows[].top + rows[].height <= parent.bottom
 fragments[].width <= offeredWidth
+sections[].rows[].height <= maxHeight
 ```
 
-- Two wildcard collection sides and nested wildcards are intentionally unsupported until their semantics are explicit.
+- Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
+- Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 
 ## Do Next
 
@@ -35,7 +37,6 @@ fragments[].width <= offeredWidth
    Keep the current one-wildcard-vs-scalar rule. Next useful steps:
    - same-item comparisons only if the syntax makes same-item semantics explicit
    - zip/cross comparisons only if the syntax makes zip/cross semantics explicit
-   - nested wildcard paths like `sections[].rows[].height`
    Do not silently guess what two wildcard sides mean.
 
 5. **Broaden source inference before adding atoms.**
@@ -44,7 +45,6 @@ fragments[].width <= offeredWidth
    - conditional push gives `rows.length <= items.length` and subsequence/source order, not equal length
    - indexed loops infer `rows[].index: int[0, items.length - 1]`
    - boring reducers like `total += row.height` become internal measures
-   - mutation like `sort`, `reverse`, `splice`, or indexed assignment kills sequence facts unless summarized
 
 6. **Improve sequence reports.**
    `spaced(rows, gap)` failures should say what adjacent rows need, what the loop proved, and what term is missing. Wildcard failures should say "every `rows[]` item" and name the smallest useful missing fact.
@@ -133,6 +133,6 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Loop-level `@fit` only attaches to the supported append-only `for...of` loop.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
-- No nested wildcard paths.
-- No conditional push, indexed loop, `map`, reducer, or mutation-kills-facts summaries yet.
+- Mutation handling only forgets facts; it does not infer precise facts after mutation.
+- No conditional push, indexed loop, `map`, or reducer summaries yet.
 - No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.

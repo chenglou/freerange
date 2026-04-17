@@ -247,6 +247,15 @@ export function negativeWildcardRowsNeedParentBottom(items: {height: number}[], 
 }
 
 /** @fit
+ * given sections[].rows[].height: number[0, 40]
+ * given maxHeight: number[0, 30]
+ * result.sections[].rows[].height <= maxHeight
+ */
+export function negativeNestedWildcardRowsNeedScalarBound(sections: {rows: {height: number}[]}[], maxHeight: number) {
+  return {sections, maxHeight}
+}
+
+/** @fit
  * given rows[].top: number[0, 10]
  * given boxes[].bottom: number[0, 10]
  * result.rows[].top <= result.boxes[].bottom
@@ -299,6 +308,36 @@ export function negativeRelationalCallGiven(containee: number, container: number
  */
 export function negativeLinearReductionNeedsNonNegativePadding(containee: number, padding: number, container: number) {
   return {offset: (container - containee) / 2, padding}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * given items[].height: number[0, 40]
+ * nondecreasing(result.rows.top)
+ */
+export function negativeReverseKillsRowOrder(items: {height: number}[]) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  rows.reverse()
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * given items[].height: number[0, 40]
+ * result.rows[].height: number[0, 40]
+ */
+export function negativeIndexedAssignmentKillsRowDomain(items: {height: number}[], height: number) {
+  const rows = []
+  for (const item of items) {
+    rows.push({height: item.height})
+  }
+  rows[0]!.height = height
+  return {rows}
 }
 
 /** @fit

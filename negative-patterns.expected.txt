@@ -138,6 +138,16 @@ UNKNOWN negative-patterns.ts:negativeWildcardRowsNeedParentBottom: result.rows[]
     trusted from function @fit: given gap: number[0, 10]
     trusted from function @fit: given parent.bottom: number[0, 2000]
   missing: given (rows[].top + items[].height) <= parent.bottom
+UNKNOWN negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: result.sections[].rows[].height <= maxHeight
+  wildcard comparison means every result.sections[].rows[] item must satisfy: result.sections[].rows[].height <= maxHeight
+  number[0, 40] as sections[].rows[].height <= number[0, 30] as maxHeight was not proven
+  need: sections[].rows[].height <= maxHeight
+  known:
+    number[0, 40] as sections[].rows[].height
+    number[0, 30] as maxHeight
+    trusted from function @fit: given sections[].rows[].height: number[0, 40]
+    trusted from function @fit: given maxHeight: number[0, 30]
+  missing: given sections[].rows[].height <= maxHeight
 UNKNOWN negative-patterns.ts:negativeWildcardComparisonNeedsScalar: result.rows[].top <= result.boxes[].bottom
   Wildcard comparisons support one wildcard side and one scalar side
 FAIL negative-patterns.ts:negativeCallGiven: call negativeNeedsSmallValue(value): given value: number[0, 10]
@@ -166,6 +176,19 @@ UNKNOWN negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: res
     trusted from function @fit: given container: number[0, 1200]
     trusted from function @fit: given container >= containee + padding
   missing: padding >= 0
+UNKNOWN negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(result.rows.top)
+  nondecreasing(result.rows.top) was not inferred
+  known: no sequence facts
+FAIL negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: result.rows[].height: number[0, 40]
+  range was number[-Infinity, Infinity] as result.rows[].height, expected inside number[0, 40]
+  need: result.rows[].height inside number[0, 40]
+  known:
+    number[-Infinity, Infinity] as result.rows[].height
+    number[0, 40] as 0..40
+    trusted from function @fit: given items.length: int[1, 50]
+    trusted from function @fit: given items[].height: number[0, 40]
+  missing: result.rows[].height >= 0
+  missing: result.rows[].height <= 40
 UNKNOWN negative-patterns.ts:negativeFunctionGivenCannotNameResult: given result: number[0, 10]
   given can only describe inputs; result is not an input here
 FAIL negative-patterns.ts:negativeGivenRangeCannotBeEmpty: given width: number[500, 400]

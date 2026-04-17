@@ -305,6 +305,33 @@ export function wildcardRowsFitParent(items: {height: number}[], top: number, ga
 }
 
 /** @fit
+ * given sections[].rows[].height: number[0, 40]
+ * given maxHeight: number[40, 100]
+ * result.sections[].rows[].height: number[0, 40]
+ * result.sections[].rows[].height <= maxHeight
+ */
+export function nestedWildcardRows(sections: {rows: {height: number}[]}[], maxHeight: number) {
+  return {sections, maxHeight}
+}
+
+/** @fit
+ * given items.length: int[1, 50]
+ * given items[].height: number[0, 40]
+ * result.rows.length == items.length
+ * result.rows[].height: number[0, 40]
+ */
+export function reverseKeepsRowDomains(items: {height: number}[]) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  rows.reverse()
+  return {rows}
+}
+
+/** @fit
  * given width: number[0, 1000]
  * result.capped: number[0, 320]
  * result.overflow >= 0
