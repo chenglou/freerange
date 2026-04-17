@@ -7,7 +7,7 @@
   "scripts": {
     "test": "bun test.ts",
     "verify": "bun verify.ts",
-    "check": "tsc && oxlint --type-aware src patterns.ts negative-patterns.ts test.ts verify.ts research/kernels --ignore-pattern '*.js'"
+    "check": "tsc && oxlint --type-aware src patterns.ts import-patterns.ts import-pattern-helpers.ts negative-patterns.ts negative-import-patterns.ts negative-import-helpers.ts test.ts verify.ts research/kernels --ignore-pattern '*.js'"
   },
   "devDependencies": {
     "oxlint": "latest",

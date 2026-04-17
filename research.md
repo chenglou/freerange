@@ -105,6 +105,19 @@ A layered IR seems better than one giant SMT encoding:
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 
+## Module Boundaries
+
+Imports should find contracts, not turn Freerange into a second TypeScript compiler. The first useful rule is:
+
+- same-file helpers may still be read from source
+- cross-file calls use exported `@fit` contracts as summaries
+- imported helper contracts must be proved from source in the same run before callers can use them
+- imported bodies are not inlined at the call site
+
+The first resolver only follows named relative imports to nearby `.ts` files. That is enough to try real helper libraries without committing to tsconfig paths, package exports, re-export barrels, summary files, stale-summary trust, or workspace caches.
+
+When those land, reports need to say whether a fact came from source, a trusted `given`, a source-proved imported contract, or a trusted summary. Do not let a checked-in summary launder a failed source proof.
+
 ## Reports
 
 Reports matter as much as proof power. Each serious atom needs a report template.

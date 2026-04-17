@@ -1,7 +1,7 @@
 import {type FitCheck, verifyFitFiles} from './src/check.ts'
 
-const positiveFiles = ['patterns.ts']
-const negativeFiles = ['negative-patterns.ts']
+const positiveFiles = ['patterns.ts', 'import-patterns.ts']
+const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 
 const positiveReport = await verifyFitFiles(positiveFiles)

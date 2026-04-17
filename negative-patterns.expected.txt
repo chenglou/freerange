@@ -269,3 +269,5 @@ FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
   missing: given width <= 50
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   given can only describe inputs; rows is not an input here
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: number[0, 320]
+  Imported function unannotatedImportedClamp from ./negative-import-helpers has no @fit contract

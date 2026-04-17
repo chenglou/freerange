@@ -22,6 +22,7 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
+- Named relative imports can call exported function declarations with `@fit` contracts. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next
 
@@ -70,8 +71,8 @@ child.x + child.w <= parent.x + parent.w
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
 
-8. **Add module/import summaries.**
-    Same-file helper tracking is enough for the prototype, not for a helper library. Summaries must report when they were trusted.
+8. **Grow imports one boring step at a time.**
+   Relative named imports work for nearby `.ts` files. Next useful steps are explicit re-exports, better imported-contract report provenance, and eventually a project resolver. Do not add package, tsconfig, or summary-file trust before reports can say exactly what was source-proved.
 
 ## Public DSL Governance
 
@@ -117,7 +118,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 
 ## Current Limitations
 
-- No import graph or module summaries.
+- Import support is deliberately tiny: named relative imports only, no tsconfig paths, packages, namespace/default imports, re-export barrels, summary files, or stale-summary policy.
 - No public views yet.
 - Impossible `given` checks are still small: empty ranges and direct contradictions against earlier ranges are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.

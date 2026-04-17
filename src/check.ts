@@ -41,12 +41,34 @@ export type FitCheckReport = {
 }
 
 type Program = {
+  file: string
   sourceFile: ts.SourceFile
   sourceText: string
   globals: Map<string, NumberValue>
   functions: Map<string, ts.FunctionDeclaration>
   specsByFunction: Map<string, FitSpec[]>
+  exports: Map<string, string>
+  imports: Map<string, ImportedBinding>
+  contractCache: Map<string, FunctionContractProof>
 }
+
+type ImportedBinding =
+  | {
+      kind: 'resolved'
+      exportedName: string
+      specifier: string
+      module: Program
+    }
+  | {
+      kind: 'unresolved'
+      exportedName: string
+      specifier: string
+      reason: string
+    }
+
+type FunctionContractProof =
+  | {status: 'verifying'}
+  | {status: FitCheckStatus; checks: FitCheck[]}
 
 type Value = NumberValue | ObjectValue | ArrayValue | UnknownValue
 
@@ -142,10 +164,11 @@ type NumberCase = {
 
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   const checks: FitCheck[] = []
-  for (const path of paths) {
-    const sourceText = await Bun.file(path).text()
-    checks.push(...verifyFitSource(path, sourceText))
-  }
+  const modules = new Map<string, Program>()
+  const contractCache = new Map<string, FunctionContractProof>()
+  const entryPrograms: Program[] = []
+  for (const path of paths) entryPrograms.push(await loadProgram(normalizePath(path), modules, contractCache))
+  for (const program of entryPrograms) checks.push(...verifyProgram(program))
 
   const summary = {
     pass: checks.filter(check => check.status === 'pass').length,
@@ -162,29 +185,57 @@ export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
   const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const program = buildProgram(sourceFile, sourceText)
-  const checks: FitCheck[] = []
+  const program = buildProgram(normalizePath(file), sourceFile, sourceText, new Map())
+  return verifyProgram(program)
+}
 
-  for (const statement of sourceFile.statements) {
+function verifyProgram(program: Program): FitCheck[] {
+  const checks: FitCheck[] = []
+  for (const statement of program.sourceFile.statements) {
     if (!ts.isFunctionDeclaration(statement)) continue
     if (statement.name == null) continue
     const specs = program.specsByFunction.get(statement.name.text) ?? []
     if (specs.length === 0) continue
-    checks.push(...verifyFunctionSpecs(file, program, statement, specs))
+    checks.push(...verifyFunctionSpecs(program.file, program, statement, specs))
   }
 
   return checks
 }
 
-function buildProgram(sourceFile: ts.SourceFile, sourceText: string): Program {
+async function loadProgram(file: string, modules: Map<string, Program>, contractCache: Map<string, FunctionContractProof>): Promise<Program> {
+  const normalized = normalizePath(file)
+  const existing = modules.get(normalized)
+  if (existing != null) return existing
+
+  const sourceText = await Bun.file(normalized).text()
+  const sourceFile = ts.createSourceFile(normalized, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const program = buildProgram(normalized, sourceFile, sourceText, contractCache)
+  modules.set(normalized, program)
+  await loadRelativeImports(program, modules, contractCache)
+  return program
+}
+
+function buildProgram(
+  file: string,
+  sourceFile: ts.SourceFile,
+  sourceText: string,
+  contractCache: Map<string, FunctionContractProof>,
+): Program {
   const globals = new Map<string, NumberValue>()
   const functions = new Map<string, ts.FunctionDeclaration>()
   const specsByFunction = new Map<string, FitSpec[]>()
+  const exports = new Map<string, string>()
+  const imports = new Map<string, ImportedBinding>()
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
       functions.set(statement.name.text, statement)
       specsByFunction.set(statement.name.text, parseFitSpecs(sourceText, statement))
+      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) exports.set(statement.name.text, statement.name.text)
+      continue
+    }
+    if (ts.isExportDeclaration(statement)) {
+      collectLocalExportDeclaration(statement, exports)
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
@@ -196,7 +247,119 @@ function buildProgram(sourceFile: ts.SourceFile, sourceText: string): Program {
     }
   }
 
-  return {sourceFile, sourceText, globals, functions, specsByFunction}
+  return {file, sourceFile, sourceText, globals, functions, specsByFunction, exports, imports, contractCache}
+}
+
+async function loadRelativeImports(
+  program: Program,
+  modules: Map<string, Program>,
+  contractCache: Map<string, FunctionContractProof>,
+) {
+  for (const statement of program.sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement)) continue
+    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
+    const specifier = statement.moduleSpecifier.text
+    const namedBindings = statement.importClause?.namedBindings
+    if (namedBindings == null || !ts.isNamedImports(namedBindings)) continue
+
+    for (const element of namedBindings.elements) {
+      const localName = element.name.text
+      const exportedName = element.propertyName?.text ?? localName
+      if (!isRelativeSpecifier(specifier)) {
+        program.imports.set(localName, {
+          kind: 'unresolved',
+          exportedName,
+          specifier,
+          reason: `Only relative named imports are supported for @fit helpers: ${specifier}`,
+        })
+        continue
+      }
+
+      const resolved = await resolveRelativeModule(program.file, specifier)
+      if (resolved == null) {
+        program.imports.set(localName, {
+          kind: 'unresolved',
+          exportedName,
+          specifier,
+          reason: `Could not resolve ${specifier} from ${program.file}`,
+        })
+        continue
+      }
+
+      const importedProgram = await loadProgram(resolved, modules, contractCache)
+      program.imports.set(localName, {
+        kind: 'resolved',
+        exportedName,
+        specifier,
+        module: importedProgram,
+      })
+    }
+  }
+}
+
+function collectLocalExportDeclaration(statement: ts.ExportDeclaration, exports: Map<string, string>) {
+  if (statement.moduleSpecifier != null) return
+  if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) return
+  for (const element of statement.exportClause.elements) {
+    const localName = element.propertyName?.text ?? element.name.text
+    exports.set(element.name.text, localName)
+  }
+}
+
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
+  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
+}
+
+function isRelativeSpecifier(specifier: string) {
+  return specifier.startsWith('./') || specifier.startsWith('../')
+}
+
+async function resolveRelativeModule(fromFile: string, specifier: string): Promise<string | null> {
+  const basePath = normalizePath(joinPath(dirname(fromFile), specifier))
+  for (const candidate of relativeModuleCandidates(basePath)) {
+    if (await canReadFile(candidate)) return candidate
+  }
+  return null
+}
+
+function relativeModuleCandidates(basePath: string): string[] {
+  if (basePath.endsWith('.ts')) return [basePath]
+  return [`${basePath}.ts`, `${basePath}/index.ts`]
+}
+
+async function canReadFile(path: string): Promise<boolean> {
+  try {
+    await Bun.file(path).text()
+    return true
+  } catch {
+    return false
+  }
+}
+
+function dirname(path: string) {
+  const index = path.lastIndexOf('/')
+  return index < 0 ? '' : path.slice(0, index)
+}
+
+function joinPath(base: string, path: string) {
+  if (base.length === 0) return path
+  if (path.length === 0) return base
+  return `${base}/${path}`
+}
+
+function normalizePath(path: string): string {
+  const absolute = path.startsWith('/')
+  const parts: string[] = []
+  for (const part of path.split('/')) {
+    if (part.length === 0 || part === '.') continue
+    if (part === '..') {
+      if (parts.length > 0 && parts.at(-1) !== '..') parts.pop()
+      else if (!absolute) parts.push(part)
+      continue
+    }
+    parts.push(part)
+  }
+  return `${absolute ? '/' : ''}${parts.join('/')}`
 }
 
 function verifyFunctionSpecs(
@@ -1472,11 +1635,11 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
 
   const functionName = expression.expression.text
   const fn = context.program.functions.get(functionName)
-  if (fn == null) return unknown(`Unknown function ${functionName}`)
+  if (fn == null) return evaluateImportedCall(functionName, expression, context)
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  verifyCallGivenSpecs(functionName, fn, expression, argumentValues, context)
+  verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
 
   const env = new Map<string, Value>()
   for (const [name, value] of context.program.globals) env.set(name, value)
@@ -1495,6 +1658,32 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     checks: context.checks,
     assumptions: context.assumptions,
   })
+}
+
+function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
+  const binding = context.program.imports.get(functionName)
+  if (binding == null) return unknown(`Unknown function ${functionName}`)
+  if (binding.kind === 'unresolved') return unknown(binding.reason)
+
+  const localName = binding.module.exports.get(binding.exportedName)
+  if (localName == null) {
+    return unknown(`Imported symbol ${binding.exportedName} from ${binding.specifier} is not exported by ${binding.module.file}`)
+  }
+
+  const fn = binding.module.functions.get(localName)
+  if (fn == null) return unknown(`Imported symbol ${binding.exportedName} from ${binding.specifier} is not a function declaration`)
+  const specs = binding.module.specsByFunction.get(localName) ?? []
+  if (specs.length === 0) return unknown(`Imported function ${binding.exportedName} from ${binding.specifier} has no @fit contract`)
+  if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
+
+  const proof = verifyFunctionContract(binding.module, localName)
+  if (proof.status !== 'pass') return unknown(importedContractFailureReason(binding, proof))
+
+  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
+  const obligations = verifyCallGivenSpecs(binding.exportedName, binding.module, fn, expression, argumentValues, context)
+  if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
+
+  return valueFromFunctionContract(binding.exportedName, binding.module, fn, specs, argumentValues)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -1597,23 +1786,184 @@ function extentEndFailureReason(targetText: string, emptyExpr: string, target: A
   return lines.join('\n')
 }
 
+function verifyFunctionContract(program: Program, functionName: string): FunctionContractProof {
+  const key = `${program.file}#${functionName}`
+  const cached = program.contractCache.get(key)
+  if (cached != null) {
+    if (cached.status === 'verifying') {
+      return {
+        status: 'unknown',
+        checks: [{
+          file: program.file,
+          functionName,
+          text: '@fit contract',
+          status: 'unknown',
+          reason: `cyclic imported contract dependency at ${key}`,
+        }],
+      }
+    }
+    return cached
+  }
+
+  const fn = program.functions.get(functionName)
+  const specs = program.specsByFunction.get(functionName) ?? []
+  if (fn == null || specs.length === 0) {
+    const proof: FunctionContractProof = {
+      status: 'unknown',
+      checks: [{
+        file: program.file,
+        functionName,
+        text: '@fit contract',
+        status: 'unknown',
+        reason: `No @fit contract for ${functionName}`,
+      }],
+    }
+    program.contractCache.set(key, proof)
+    return proof
+  }
+
+  program.contractCache.set(key, {status: 'verifying'})
+  const checks = verifyFunctionSpecs(program.file, program, fn, specs)
+  const status = checks.some(check => check.status === 'fail') ? 'fail'
+    : checks.some(check => check.status === 'unknown') ? 'unknown'
+      : 'pass'
+  const proof: FunctionContractProof = {status, checks}
+  program.contractCache.set(key, proof)
+  return proof
+}
+
+function importedContractFailureReason(binding: Extract<ImportedBinding, {kind: 'resolved'}>, proof: FunctionContractProof) {
+  if (proof.status === 'verifying') return `Imported contract ${binding.exportedName} from ${binding.specifier} is already being verified`
+  const failed = proof.checks.find(check => check.status !== 'pass')
+  if (failed == null) return `Imported contract ${binding.exportedName} from ${binding.specifier} was not proven`
+  const reason = failed.reason == null ? '' : `\n${failed.reason}`
+  return `Imported contract ${binding.exportedName} from ${binding.specifier} was not proven\n${failed.file}:${failed.functionName}: ${failed.text}${reason}`
+}
+
+function valueFromFunctionContract(
+  functionName: string,
+  program: Program,
+  fn: ts.FunctionDeclaration,
+  specs: FitSpec[],
+  argumentValues: Value[],
+): Value {
+  const env = new Map<string, Value>()
+  for (const [name, value] of program.globals) env.set(name, value)
+  for (let i = 0; i < fn.parameters.length; i++) {
+    const param = fn.parameters[i]!
+    if (!ts.isIdentifier(param.name)) return unknown(`Unsupported parameter pattern in imported function ${functionName}`)
+    env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for imported function ${functionName}`))
+  }
+  env.set('result', unknownParamValue('result', specs))
+
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env,
+    inputRoots: [...functionInputRoots(program, fn), 'result'],
+    stack: [functionName],
+    checks: [],
+    assumptions: [],
+  }
+
+  for (const spec of specs) {
+    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec)
+    if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context)
+  }
+
+  return env.get('result') ?? unknown(`Imported function ${functionName} contract did not describe result`)
+}
+
+function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>) {
+  if (simpleResultPathText(spec.expression) == null) return
+  setSummaryPathValue(
+    env,
+    spec.expression,
+    numberValue(spec.min, spec.max, spec.valueKind === 'int', spec.expression, linearVariable(linearNameForExpression(spec.expression))),
+  )
+}
+
+function applySummaryComparisonSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-comparison'}>, context: EvalContext) {
+  const leftPath = simpleResultPathText(spec.left)
+  const rightPath = simpleResultPathText(spec.right)
+  if (leftPath != null && rightPath == null) {
+    const right = evaluateSpecExpression(spec.right, context)
+    if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right)
+    return
+  }
+  if (rightPath != null && leftPath == null) {
+    const left = evaluateSpecExpression(spec.left, context)
+    if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left)
+  }
+}
+
+function applySummaryComparisonToPath(
+  env: Map<string, Value>,
+  context: EvalContext,
+  path: string,
+  op: ComparisonOperator,
+  other: NumberValue,
+) {
+  const current = evaluateSpecExpression(path, context)
+  if (current.kind !== 'number') return
+
+  switch (op) {
+    case '==':
+      setSummaryPathValue(env, path, numberValue(other.min, other.max, other.isInteger, other.expr, other.linear))
+      return
+    case '>=':
+    case '>':
+      setSummaryPathValue(env, path, numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases))
+      return
+    case '<=':
+    case '<':
+      setSummaryPathValue(env, path, numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases))
+      return
+  }
+}
+
+function simpleResultPathText(text: string): string | null {
+  const parsed = parseFitExpression(text)
+  const domainPaths = [...parsed.domainPaths.values()]
+  if (domainPaths.length === 1 && domainPaths[0]!.root === 'result' && ts.isIdentifier(parsed.expression)) return text
+  if (domainPaths.length > 0) return null
+
+  const expression = unwrapExpression(parsed.expression)
+  if (ts.isIdentifier(expression) && expression.text === 'result') return text
+  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === 'result') return text
+  return null
+}
+
+function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value) {
+  const expression = parseExpression(path)
+  if (ts.isIdentifier(expression)) {
+    env.set(expression.text, value)
+    return
+  }
+  const domainPath = parseDomainPathText(path)
+  if (domainPath == null || domainPath.segments.length === 0) return
+  env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+}
+
 function verifyCallGivenSpecs(
   functionName: string,
+  calleeProgram: Program,
   fn: ts.FunctionDeclaration,
   expression: ts.CallExpression,
   argumentValues: Value[],
   context: EvalContext,
 ) {
-  const specs = context.program.specsByFunction.get(functionName) ?? []
+  const specs = calleeProgram.specsByFunction.get(fn.name?.text ?? functionName) ?? []
   const callText = `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
   const env = new Map<string, Value>()
-  for (const [name, value] of context.program.globals) env.set(name, value)
+  let statusSummary: FitCheckStatus = 'pass'
+  for (const [name, value] of calleeProgram.globals) env.set(name, value)
   for (let i = 0; i < fn.parameters.length; i++) {
     const param = fn.parameters[i]!
     if (!ts.isIdentifier(param.name)) continue
     env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for ${functionName}`))
   }
-  const calleeContext: EvalContext = {...context, env, inputRoots: functionInputRoots(context.program, fn)}
+  const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
   for (const spec of specs) {
     let status: {status: FitCheckStatus; reason?: string} | null = null
@@ -1636,7 +1986,10 @@ function verifyCallGivenSpecs(
       status: status.status,
       ...(status.reason == null ? {} : {reason: status.reason}),
     })
+    if (status.status === 'fail') statusSummary = 'fail'
+    else if (status.status === 'unknown' && statusSummary === 'pass') statusSummary = 'unknown'
   }
+  return statusSummary
 }
 
 function withCallRangeReason(

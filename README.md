@@ -29,7 +29,7 @@ bun install
 bun run test
 ```
 
-That checks the good examples in [patterns.ts](./patterns.ts) and the stable bad-example messages in [negative-patterns.ts](./negative-patterns.ts).
+That checks the good examples in [patterns.ts](./patterns.ts) / [import-patterns.ts](./import-patterns.ts), plus the stable bad-example messages in [negative-patterns.ts](./negative-patterns.ts).
 
 To inspect your own file:
 
@@ -243,7 +243,7 @@ function overflow(width: number) {
 
 That works because either `capped == width`, or `capped == 320` and `width >= 320`.
 
-## Same-File Helpers
+## Helpers
 
 When a checked helper is called, its input facts become things the caller must prove:
 
@@ -265,7 +265,35 @@ function caller(width: number) {
 }
 ```
 
-This is same-file and transitive. Imports are not followed yet.
+Same-file helpers can still be read from source.
+
+Imported helpers use their exported `@fit` contract as the module boundary:
+
+```ts
+// layout-math.ts
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+export function clampWidth(width: number) {
+  return Math.min(width, 320)
+}
+
+// card.ts
+import {clampWidth} from './layout-math'
+
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+function cardWidth(width: number) {
+  return clampWidth(width)
+}
+```
+
+Freerange follows named relative imports like `./layout-math` to nearby `.ts` files. It proves the imported function's own contract from source, then uses that contract at the call site. It does not inline imported function bodies.
+
+This is intentionally small: no packages, tsconfig paths, namespace imports, default imports, or re-export barrels yet.
 
 ## Arrays
 
@@ -435,6 +463,7 @@ The checker understands a small pure subset:
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
+- named relative imports of exported `@fit` function declarations
 - object literals with normal or shorthand properties
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
@@ -450,7 +479,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- imports or module summaries
+- package imports, tsconfig path aliases, namespace/default imports, or re-export barrels
 - classes, methods, async, generators
 - destructured params, rest params, default params
 - TS type narrowing, generics, overloads
@@ -467,9 +496,9 @@ When something on this list earns its way in, add the smallest useful pattern fi
 
 ## Add New Support
 
-[patterns.ts](./patterns.ts) is the runnable catalog of good examples.
+[patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) are the runnable catalog of good examples.
 
-[negative-patterns.ts](./negative-patterns.ts) has the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
+[negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
 
 For a new guarantee:
 
