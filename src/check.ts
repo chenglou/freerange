@@ -138,6 +138,11 @@ type TrustedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
   | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
 
+type ConditionalLoopAdd = {
+  targetName: string
+  increment: NumberValue
+}
+
 type NonNegativeFact = {
   diff: LinearExpr
   strict: boolean
@@ -266,6 +271,11 @@ function validateGivenSpecs(
       checks.push(invalidGivenCheck(file, functionName, spec.text, `given can only describe inputs; ${badRoot} is not an input here`))
       continue
     }
+    const shapeProblem = givenShapeProblem(spec)
+    if (shapeProblem != null) {
+      checks.push(invalidGivenCheck(file, functionName, spec.text, shapeProblem))
+      continue
+    }
 
     if (spec.kind === 'given-range') {
       const rangeProblem = givenRangeProblem(spec, ranges)
@@ -309,6 +319,59 @@ function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges
     }
   }
   return null
+}
+
+function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
+  const roots = givenRootNames(spec)
+  if (roots.length === 0) return 'given must mention an input'
+
+  if (spec.kind === 'given-range') {
+    if (parseDomainPathText(spec.expression) != null) return null
+    const expression = parseExpression(spec.expression)
+    return isGivenRangeExpression(expression) ? null : 'given range must name one input path, not a derived expression'
+  }
+
+  const left = givenComparisonExpressionProblem(spec.left)
+  if (left != null) return left
+  return givenComparisonExpressionProblem(spec.right)
+}
+
+function givenComparisonExpressionProblem(text: string): string | null {
+  return isGivenComparisonExpression(parseExpression(text))
+    ? null
+    : 'given comparisons only support input paths, numbers, and simple arithmetic'
+}
+
+function isGivenRangeExpression(expression: ts.Expression): boolean {
+  if (ts.isIdentifier(expression)) return true
+  if (ts.isPropertyAccessExpression(expression)) return isGivenRangeExpression(expression.expression)
+  if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
+  return false
+}
+
+function isGivenComparisonExpression(expression: ts.Expression): boolean {
+  if (ts.isIdentifier(expression)) return true
+  if (numericLiteralValue(expression) != null) return true
+  if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
+  if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
+  if (ts.isPrefixUnaryExpression(expression)) {
+    return (expression.operator === ts.SyntaxKind.PlusToken || expression.operator === ts.SyntaxKind.MinusToken)
+      && isGivenComparisonExpression(expression.operand)
+  }
+  if (ts.isBinaryExpression(expression) && isGivenArithmeticOperator(expression.operatorToken.kind)) {
+    return isGivenComparisonExpression(expression.left)
+      && isGivenComparisonExpression(expression.right)
+  }
+  return false
+}
+
+function isGivenArithmeticOperator(kind: ts.SyntaxKind) {
+  return kind === ts.SyntaxKind.PlusToken
+    || kind === ts.SyntaxKind.MinusToken
+    || kind === ts.SyntaxKind.AsteriskToken
+    || kind === ts.SyntaxKind.SlashToken
+    || kind === ts.SyntaxKind.PercentToken
+    || kind === ts.SyntaxKind.AsteriskAsteriskToken
 }
 
 function invalidGivenCheck(file: string, functionName: string, text: string, reason: string): FitCheck {
@@ -908,6 +971,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   const loopItem = source.element ?? unknownObject(`${source.expr ?? statement.expression.getText(context.program.sourceFile)}[]`)
   const pushedArrays: LoopPush[] = []
   const conditionalPushedArrays: LoopPush[] = []
+  const conditionalAdds = new Map<string, NumberValue>()
   const pendingAdds = new Map<string, NumberValue>()
 
   for (const child of statement.statement.statements) {
@@ -926,6 +990,13 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
       continue
     }
 
+    const conditionalAdd = readConditionalLoopAdd(child, loopContext)
+    if (conditionalAdd != null) {
+      if (conditionalAdds.has(conditionalAdd.targetName)) return unknown(`Conditional running-sum loop already updates ${conditionalAdd.targetName}`)
+      conditionalAdds.set(conditionalAdd.targetName, conditionalAdd.increment)
+      continue
+    }
+
     if (ts.isExpressionStatement(child) && ts.isBinaryExpression(child.expression) && child.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
       if (!ts.isIdentifier(child.expression.left)) return unknown('Running-sum loop expected a simple += target')
       const targetName = child.expression.left.text
@@ -941,6 +1012,9 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0)) {
     return unknown('Conditional push loops support one guarded push and no cursor update')
   }
+  if (conditionalAdds.size > 0 && (pushedArrays.length > 0 || conditionalPushedArrays.length > 0 || pendingAdds.size > 0)) {
+    return unknown('Conditional running-sum loops support guarded += statements only')
+  }
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
 
@@ -950,6 +1024,14 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
     const end = runningSumNumber(start, source.length, increment)
     context.env.set(targetName, end)
     updates.set(targetName, {start, increment, end})
+  }
+
+  for (const [targetName, increment] of conditionalAdds) {
+    const start = context.env.get(targetName)
+    if (start == null || start.kind !== 'number') return unknown('Conditional running-sum loop target expected a number')
+    const end = conditionalRunningSumNumber(targetName, start, source.length, increment)
+    context.env.set(targetName, end)
+    context.assumptions = mergeAssumptions(context.assumptions, conditionalRunningSumFacts(end, start, source.length, increment))
   }
 
   for (const push of pushedArrays) {
@@ -1161,11 +1243,33 @@ function readConditionalLoopPush(statement: ts.Statement, context: EvalContext, 
   return {...readLoopPush(push, context), arrayName: targetName, length}
 }
 
+function readConditionalLoopAdd(statement: ts.Statement, context: EvalContext): ConditionalLoopAdd | null {
+  if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
+  const add = plusEqualsFromStatement(statement.thenStatement)
+  if (add == null) return null
+  const increment = evaluateExpression(add.right, context)
+  if (increment.kind !== 'number') return null
+  return {targetName: add.left.text, increment}
+}
+
 function pushCallFromStatement(statement: ts.Statement): (ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}}) | null {
   if (ts.isExpressionStatement(statement) && isPushCall(statement.expression)) return statement.expression
   if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
   const child = statement.statements[0]
   return child != null && ts.isExpressionStatement(child) && isPushCall(child.expression) ? child.expression : null
+}
+
+function plusEqualsFromStatement(statement: ts.Statement): (ts.BinaryExpression & {left: ts.Identifier}) | null {
+  if (ts.isExpressionStatement(statement) && isIdentifierPlusEquals(statement.expression)) return statement.expression
+  if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
+  const child = statement.statements[0]
+  return child != null && ts.isExpressionStatement(child) && isIdentifierPlusEquals(child.expression) ? child.expression : null
+}
+
+function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.BinaryExpression & {left: ts.Identifier} {
+  return ts.isBinaryExpression(expression)
+    && expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
+    && ts.isIdentifier(expression.left)
 }
 
 function conditionalPushLength(arrayName: string, sourceLength: NumberValue): NumberValue {
@@ -3100,12 +3204,16 @@ function moduloNumbers(left: NumberValue, right: NumberValue): Value {
 }
 
 function runningSumNumber(start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
+  const exactIncrement = increment.min === increment.max ? increment.min : null
+  const linear = exactIncrement == null || start.linear == null || count.linear == null
+    ? null
+    : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
   if (count.min < 0 || increment.min < 0) return numberValue(
     Number.NEGATIVE_INFINITY,
     Number.POSITIVE_INFINITY,
     false,
     start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
-    null,
+    linear,
     null,
     mergeProvenance(start, count, increment),
   )
@@ -3120,10 +3228,44 @@ function runningSumNumber(start: NumberValue, count: NumberValue, increment: Num
     start.max + Math.max(...deltas),
     start.isInteger && count.isInteger && increment.isInteger,
     start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
-    null,
+    linear,
     null,
     mergeProvenance(start, count, increment),
   )
+}
+
+function conditionalRunningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
+  const deltas = [
+    0,
+    count.max * increment.min,
+    count.max * increment.max,
+  ]
+  return numberValue(
+    start.min + Math.min(...deltas),
+    start.max + Math.max(...deltas),
+    start.isInteger && count.isInteger && increment.isInteger,
+    targetName,
+    linearVariable(targetName),
+    null,
+    mergeProvenance(start, count, increment),
+  )
+}
+
+function conditionalRunningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
+  const facts: LinearConstraint[] = []
+  if (increment.min >= 0) {
+    const lower = comparisonConstraint(value, '>=', start, `${value.expr ?? formatRange(value)} >= ${start.expr ?? formatRange(start)}`)
+    if (lower != null) facts.push(lower)
+  }
+  if (increment.max <= 0) {
+    const upper = comparisonConstraint(value, '<=', start, `${value.expr ?? formatRange(value)} <= ${start.expr ?? formatRange(start)}`)
+    if (upper != null) facts.push(upper)
+  }
+  if (start.min === 0 && start.max === 0 && increment.min === 1 && increment.max === 1) {
+    const upper = comparisonConstraint(value, '<=', count, `${value.expr ?? formatRange(value)} <= ${count.expr ?? formatRange(count)}`)
+    if (upper != null) facts.push(upper)
+  }
+  return facts
 }
 
 function powerNumbers(left: NumberValue, right: NumberValue): Value {

@@ -146,6 +146,15 @@ UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: result >=
     trusted from function @fit: given items.length: int[0, 50]
     trusted from function @fit: given items[].height: number[-40, 40]
   missing: given runningSum(0, items.length, items[].height) >= 0
+UNKNOWN negative-patterns.ts:negativeConditionalRunningTotalNeedsNonNegativeItem: result >= 0
+  number[-2000, 2000] as total >= int[0, 0] as 0 was not proven
+  need: total >= 0
+  known:
+    number[-2000, 2000] as total
+    int[0, 0] as 0
+    trusted from function @fit: given items.length: int[0, 50]
+    trusted from function @fit: given items[].height: number[-40, 40]
+  missing: given total >= 0
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
   need: every next .top >= previous .top
@@ -276,6 +285,12 @@ FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
     int[50, 50] as 50
     trusted from function @fit: given width: number[100, 200]
   missing: given width <= 50
+UNKNOWN negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: given width + 1: number[0, 10]
+  given range must name one input path, not a derived expression
+UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
+  given comparisons only support input paths, numbers, and simple arithmetic
+UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
+  given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   given can only describe inputs; rows is not an input here
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: number[0, 320]

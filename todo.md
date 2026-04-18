@@ -22,15 +22,13 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
-- Simple `for...of` scalar running sums like `total += item.height` produce numeric ranges when the increment is known non-negative.
+- Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Named local imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next
 
-1. **Finish input honesty.**
-   Top-level `given` now only names input roots, and loop-level `given` rejects `result`, loop-built arrays, and mutable cursors. Next:
-   - decide how much expression shape to allow inside those roots
-   - catch more contradictory input promises before they make later checks look proven
+1. **Keep tightening input honesty.**
+   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Next useful step: catch more contradictory input promises before they make later checks look proven.
 
 2. **Make helper/import report lines clearer.**
    Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, or `source-proved imported contract`. Next report work is keeping helper/import failures easy to scan without adding new public syntax: unsupported imports, missing contracts, and any future trusted summaries.
@@ -41,9 +39,8 @@ sections[].rows[].height <= maxHeight
    - different labels could mean all pairs, e.g. `children[i]` with `blockers[j]`
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
 
-4. **Turn thin scalar sums into better internal measures.**
-   Simple non-negative `total += row.height` already gives ranges. Next useful shapes are still source inference, not public folds:
-   - conditional totals/counts
+4. **Turn scalar accumulators into better internal measures.**
+   Non-negative `total += row.height` and guarded `if (...) total += row.height` already give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds:
    - min/max accumulation
    - totals that feed later comparisons and reports cleanly
 
@@ -121,5 +118,5 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
-- Scalar accumulation support is thin: non-negative `+=` running sums work, but no `reduce`, conditional counts/totals, min/max accumulation, or public aggregate syntax yet.
+- Scalar accumulation support is thin: `+=` running sums and guarded `+=` work, but no `reduce`, min/max accumulation, or public aggregate syntax yet.
 - No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.

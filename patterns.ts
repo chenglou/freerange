@@ -275,6 +275,45 @@ export function runningTotalPerItemHeight(items: {height: number}[]) {
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result: number[0, 2000]
+ * result >= 0
+ */
+export function conditionalRunningTotalPerItemHeight(items: {height: number; visible: boolean}[]) {
+  let total = 0
+  for (const item of items) {
+    if (item.visible) total += item.height
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * result: int[0, 50]
+ * result <= items.length
+ */
+export function conditionalRunningCount(items: {visible: boolean}[]) {
+  let count = 0
+  for (const item of items) {
+    if (item.visible) count += 1
+  }
+  return count
+}
+
+/** @fit
+ * given items.length: int[0, 50]
+ * result <= items.length
+ */
+export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) {
+  let count = 0
+  for (const item of items) {
+    count += item.visible ? 1 : 1
+  }
+  return count
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given top: number[0, 1000]
  * given gap: number[0, 10]

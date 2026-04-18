@@ -106,6 +106,30 @@ function centeredOffset(containee: number, container: number) {
 
 Top-level `given` can name function parameters and top-level numeric constants. It cannot name `result`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
 
+Range `given` lines name one input path:
+
+```ts
+given width: number[0, 1000]
+given item.height: number[0, 40]
+given items[].height: number[0, 40]
+```
+
+Comparison `given` lines can use simple arithmetic over input paths:
+
+```ts
+given container >= containee + padding
+given index < items.length
+```
+
+They cannot call methods, index arrays by a local index, or put derived expressions on the range side:
+
+```ts
+// Not accepted as input facts.
+given width + 1: number[0, 10]
+given items[index] >= 0
+given width.toString() == 10
+```
+
 Freerange also rejects the obvious impossible inputs:
 
 ```ts
@@ -355,7 +379,7 @@ Array mutation is conservative. `reverse()` and `sort()` keep length and item do
 
 ## Scalar Loops
 
-Freerange supports one narrow accumulator shape:
+Freerange supports narrow accumulator shapes:
 
 ```ts
 /** @fit
@@ -372,12 +396,28 @@ function totalHeight(items: {height: number}[]) {
 }
 ```
 
+Guarded totals and counts work too:
+
+```ts
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result: number[0, 2000]
+ */
+function visibleHeight(items: {height: number; visible: boolean}[]) {
+  let total = 0
+  for (const item of items) {
+    if (item.visible) total += item.height
+  }
+  return total
+}
+```
+
 This is useful when the increment is known non-negative. It is not general reducer support yet:
 
 ```ts
 items.reduce(...)
 total = total + item.height
-if (item.visible) total += item.height
 maxWidth = Math.max(maxWidth, item.width)
 ```
 
@@ -508,7 +548,7 @@ The checker understands a small pure subset:
 - object literals with normal or shorthand properties
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
-- simple `for...of` scalar running sums with `+=`
+- simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`
 - one guarded conditional push inside a `for...of`

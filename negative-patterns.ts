@@ -208,6 +208,19 @@ export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[-40, 40]
+ * result >= 0
+ */
+export function negativeConditionalRunningTotalNeedsNonNegativeItem(items: {height: number; visible: boolean}[]) {
+  let total = 0
+  for (const item of items) {
+    if (item.visible) total += item.height
+  }
+  return total
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given top: number[0, 1000]
  * result.rows.length == items.length
@@ -425,6 +438,29 @@ export function negativeGivenRangeCannotBeEmpty(width: number) {
  * given width <= 50
  */
 export function negativeGivenComparisonCannotFit(width: number) {
+  return width
+}
+
+/** @fit
+ * given width + 1: number[0, 10]
+ */
+export function negativeGivenRangeCannotDescribeDerivedExpression(width: number) {
+  return width
+}
+
+/** @fit
+ * given items.length: int[0, 10]
+ * given index: int[0, 9]
+ * given items[index] >= 0
+ */
+export function negativeGivenComparisonCannotIndexArray(items: number[], index: number) {
+  return {items, index}
+}
+
+/** @fit
+ * given width.toString() == 10
+ */
+export function negativeGivenComparisonCannotCallInputMethod(width: number) {
   return width
 }
 
