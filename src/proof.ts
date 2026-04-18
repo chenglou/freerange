@@ -128,6 +128,8 @@ function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberV
 
 function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
   if (left.expr == null || right.expr == null) return 'maybe'
+  if (hasComparisonFact(left.expr, op, right.expr, assumptions)) return 'true'
+  if (provesChoiceOperandBound(left.expr, op, right.expr)) return 'true'
   if (provesRoundingFact(left.expr, op, right.expr)) return 'true'
   if ((op === '>=' || op === '>') && provesCeilDivisionCovers(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if ((op === '<' || op === '<=') && provesFloorDivisionBelowCount(left.expr, right, assumptions)) return 'true'
@@ -136,6 +138,23 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if (provesPositiveMonotone(left.expr, op, right.expr, assumptions)) return 'true'
   return 'maybe'
+}
+
+function provesChoiceOperandBound(leftExpr: string, op: ComparisonOperator, rightExpr: string) {
+  if (op === '<=') {
+    if (choiceHasOperand(leftExpr, 'min', rightExpr)) return true
+    if (choiceHasOperand(rightExpr, 'max', leftExpr)) return true
+  }
+  if (op === '>=') {
+    if (choiceHasOperand(leftExpr, 'max', rightExpr)) return true
+    if (choiceHasOperand(rightExpr, 'min', leftExpr)) return true
+  }
+  return false
+}
+
+function choiceHasOperand(choiceExpr: string, choiceName: 'min' | 'max', operandExpr: string) {
+  const args = callArgs(choiceExpr, choiceName)
+  return args != null && args.some(arg => sameExpressionText(arg, operandExpr))
 }
 
 function provesRoundingFact(leftExpr: string, op: ComparisonOperator, rightExpr: string) {

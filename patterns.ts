@@ -113,6 +113,23 @@ export function mathSubset(value: number) {
 }
 
 /** @fit
+ * given width: 0..1000
+ * given scale: 0..10
+ * given floor: 0..1000
+ * result.fitted <= width * scale
+ * result.fitted <= 400
+ * result.raised >= floor
+ * result.raised >= width * scale
+ */
+export function mathChoiceCarriesBranchFacts(width: number, scale: number, floor: number) {
+  const scaled = width * scale
+  return {
+    fitted: Math.min(scaled, 400),
+    raised: Math.max(floor, scaled),
+  }
+}
+
+/** @fit
  * given total: int 0..6000
  * given count: int 1..200
  * result >= total
@@ -519,6 +536,18 @@ function clampLayoutValue(value: number, min: number, max: number) {
  */
 export function userlandClamp(value: number) {
   return clampLayoutValue(value, 0, 320)
+}
+
+/** @fit
+ * given value: -1000..1000
+ * given min: -1000..1000
+ * given max: -1000..1000
+ * given max >= min
+ * result >= min
+ * result <= max
+ */
+export function userlandClampWithVariableBounds(value: number, min: number, max: number) {
+  return clampLayoutValue(value, min, max)
 }
 
 /** @fit

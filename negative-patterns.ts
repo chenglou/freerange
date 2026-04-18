@@ -30,6 +30,32 @@ export function negativePathSensitiveMinOverflow(width: number) {
 }
 
 /** @fit
+ * given value: 0..10
+ * result < 4
+ */
+export function negativeMathMinOperandBoundIsNotStrict(value: number) {
+  return Math.min(value, 4)
+}
+
+/** @fit
+ * given minWidth: 0..1000
+ * given width: 0..1000
+ * result >= minWidth
+ */
+function negativeAtLeastMinWidth(minWidth: number, width: number) {
+  return Math.max(minWidth, width)
+}
+
+/** @fit
+ * given minWidth: 0..1000
+ * given width: 0..1000
+ * result > minWidth
+ */
+export function negativeHelperSummaryComparisonIsNotStrict(minWidth: number, width: number) {
+  return negativeAtLeastMinWidth(minWidth, width)
+}
+
+/** @fit
  * given items.length: int 0..10
  * given index: int 0..10
  * result < items.length

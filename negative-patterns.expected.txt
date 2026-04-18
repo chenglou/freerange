@@ -23,6 +23,24 @@ FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: result.overflow < 0
     trusted from function @fit: given width: 0..1000
     read from code: width - 320 <= 0
   missing: given (width - width) < 0
+FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: result < 4
+  int 4..4 as 4 < int 4..4 as 4 is false
+  need: 4 < 4
+  known:
+    int 4..4 as 4
+    trusted from function @fit: given value: 0..10
+    read from code: -value + 4 <= 0
+  missing: given 4 < 4
+FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: result > minWidth
+  0..1000 as minWidth > 0..1000 as minWidth is false by exact linear facts
+  need: minWidth > minWidth
+  known:
+    0..1000 as minWidth
+    trusted from function @fit: given minWidth: 0..1000
+    trusted from function @fit: given width: 0..1000
+    read from code: minWidth - width >= 0
+    read from code: source-proved helper contract: negative-patterns.ts#negativeAtLeastMinWidth: result >= minWidth
+  missing: given minWidth > minWidth
 UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: result < items.length
   int 0..10 as index < int 0..10 as items.length was not proven
   need: index < items.length

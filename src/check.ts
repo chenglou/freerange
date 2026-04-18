@@ -2037,6 +2037,8 @@ function valueWithFunctionContractSummary(
 
   for (const spec of specs) {
     if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, source)
+  }
+  for (const spec of specs) {
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
   }
 
@@ -2091,18 +2093,26 @@ function applySummaryComparisonToPath(
   const current = evaluateSpecExpression(path, context)
   if (current.kind !== 'number') return
   const provenance = mergeProvenance(current, other, [fact])
+  const withSummaryFact = (value: NumberValue): NumberValue => {
+    const summaryFact = comparisonConstraint(value, op, other, fact)
+    if (summaryFact == null) return value
+    return withNumberCases(value, numberBranches(value).map(branch => ({
+      value: branch.value,
+      assumptions: mergeAssumptions(branch.assumptions, [summaryFact]),
+    })))
+  }
 
   switch (op) {
     case '==':
-      setSummaryPathValue(env, path, numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, null, provenance))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, null, provenance)))
       return
     case '>=':
     case '>':
-      setSummaryPathValue(env, path, numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, provenance))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, provenance)))
       return
     case '<=':
     case '<':
-      setSummaryPathValue(env, path, numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance)))
       return
   }
 }
