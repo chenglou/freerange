@@ -320,11 +320,32 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   given can only describe inputs; rows is not an input here
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: 0..320
-  Imported function unannotatedImportedClamp from ./negative-import-helpers has no @fit contract
+  imported helper contract was not available
+  helper: unannotatedImportedClamp from ./negative-import-helpers
+  reason: resolved to negative-import-helpers.ts#unannotatedImportedClamp, but that function has no @fit contract
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: result: 0..320
-  Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
+  imported helper contract was not available
+  helper: missingImportedClamp from @fit-fixtures/missing-import-helper
+  reason: Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: result: 0..320
-  Imported function barrelUnannotatedClamp from ./negative-import-barrel has no @fit contract
+  imported helper contract was not available
+  helper: barrelUnannotatedClamp from ./negative-import-barrel
+  reason: resolved to negative-import-helpers.ts#unannotatedImportedClamp, but that function has no @fit contract
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperDefaultImportUnsupported: result: 0..320
+  imported helper contract was not available
+  helper: defaultImportedClamp (default) from ./import-pattern-helpers
+  reason: default imports are not supported for @fit helpers
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperSourceContractFails: result: 0..100
+  imported helper contract failed in source before this call could trust it
+  helper: importedClampWithBadContract from ./negative-import-helpers
+  failed check: negative-import-helpers.ts:importedClampWithBadContract: result: 0..100
+  range was 0..320 as min(width, 320), expected inside 0..100
+  need: min(width, 320) inside 0..100
+  known:
+    0..320 as min(width, 320)
+    0..100
+    trusted from function @fit: given width: 0..1000
+  missing: min(width, 320) <= 100
 FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: result: 0..100
   range was 0..320 as result, expected inside 0..100
   need: result inside 0..100

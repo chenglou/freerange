@@ -328,6 +328,18 @@ function cardWidth(width: number) {
 
 Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
 
+When an import boundary cannot be used, the report says which bucket it fell into:
+
+```txt
+imported helper contract was not available
+helper: clampWidth from ./layout-math
+reason: resolved to layout-math.ts#clampWidth, but that function has no @fit contract
+
+imported helper contract failed in source before this call could trust it
+helper: clampWidth from ./layout-math
+failed check: layout-math.ts:clampWidth: result: 0..320
+```
+
 Explicit named re-export barrels work too:
 
 ```ts

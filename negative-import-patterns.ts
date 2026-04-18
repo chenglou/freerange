@@ -1,10 +1,12 @@
 // Imported helper negative patterns. `bun run test` compares their
 // stable messages against negative-patterns.expected.txt.
 
-import {unannotatedImportedClamp} from './negative-import-helpers'
+import {importedClampWithBadContract, unannotatedImportedClamp} from './negative-import-helpers'
 import {barrelClampWidth} from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
+// @ts-expect-error default import fixture for Freerange's unsupported import-shape report.
+import defaultImportedClamp from './import-pattern-helpers'
 // @ts-expect-error unresolved import fixture for Freerange's TypeScript resolver boundary.
 import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
 
@@ -30,6 +32,22 @@ export function negativeImportedHelperUnresolved(width: number) {
  */
 export function negativeImportedHelperReExportNeedsFit(width: number) {
   return barrelUnannotatedClamp(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * result: 0..320
+ */
+export function negativeImportedHelperDefaultImportUnsupported(width: number) {
+  return defaultImportedClamp(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * result: 0..100
+ */
+export function negativeImportedHelperSourceContractFails(width: number) {
+  return importedClampWithBadContract(width)
 }
 
 /** @fit

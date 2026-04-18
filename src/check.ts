@@ -1755,6 +1755,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     }
     const mapResult = evaluateArrayMapCall(expression, context)
     if (mapResult != null) return mapResult
+    const namespaceImportReason = namespaceImportCallReason(target, context)
+    if (namespaceImportReason != null) return unknown(namespaceImportReason)
   }
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
 
@@ -1800,15 +1802,15 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
 function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
   const binding = context.program.imports.get(functionName)
   if (binding == null) return unknown(`Unknown function ${functionName}`)
-  if (binding.kind === 'unresolved') return unknown(binding.reason)
+  if (binding.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
 
   const exported = resolveFitExport(binding.module, binding.exportedName)
-  if (exported.kind === 'unresolved') return unknown(exported.reason)
+  if (exported.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, exported.reason))
 
   const fn = exported.module.functions.get(exported.localName)
-  if (fn == null) return unknown(`Imported symbol ${binding.exportedName} from ${binding.specifier} is not a function declaration`)
+  if (fn == null) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that symbol is not a function declaration`))
   const specs = exported.module.specsByFunction.get(exported.localName) ?? []
-  if (specs.length === 0) return unknown(`Imported function ${binding.exportedName} from ${binding.specifier} has no @fit contract`)
+  if (specs.length === 0) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
   const source = {
     sourceFile: exported.module.file,
@@ -1816,13 +1818,20 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   }
 
   const proof = verifyFunctionContract(exported.module, exported.localName, context.contractCache)
-  if (proof.status !== 'pass') return unknown(importedContractFailureReason(binding, proof))
+  if (proof.status !== 'pass') return unknown(importedContractFailureReason(functionName, binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
   const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
   return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, unknownParamValue('result', specs))
+}
+
+function namespaceImportCallReason(target: ts.PropertyAccessExpression, context: EvalContext): string | null {
+  if (!ts.isIdentifier(target.expression)) return null
+  const binding = context.program.imports.get(target.expression.text)
+  if (binding?.kind !== 'unresolved' || binding.exportedName !== '*') return null
+  return importedContractUnavailableReason(`${target.expression.text}.${target.name.text}`, binding, binding.reason)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -1972,12 +1981,37 @@ function verifyFunctionContract(program: Program, functionName: string, contract
   return proof
 }
 
-function importedContractFailureReason(binding: Extract<ImportedBinding, {kind: 'resolved'}>, proof: FunctionContractProof) {
-  if (proof.status === 'verifying') return `Imported contract ${binding.exportedName} from ${binding.specifier} is already being verified`
+function importedContractUnavailableReason(localName: string, binding: ImportedBinding, detail: string) {
+  return [
+    'imported helper contract was not available',
+    `helper: ${importedHelperLabel(localName, binding)}`,
+    `reason: ${detail}`,
+  ].join('\n')
+}
+
+function importedContractFailureReason(localName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, proof: FunctionContractProof) {
+  if (proof.status === 'verifying') return importedContractUnavailableReason(localName, binding, 'contract is already being verified')
   const failed = proof.checks.find(check => check.status !== 'pass')
-  if (failed == null) return `Imported contract ${binding.exportedName} from ${binding.specifier} was not proven`
+  const head = proof.status === 'fail' ? 'imported helper contract failed in source before this call could trust it' : 'imported helper contract was not proven in source before this call could trust it'
+  if (failed == null) {
+    return [
+      head,
+      `helper: ${importedHelperLabel(localName, binding)}`,
+    ].join('\n')
+  }
   const reason = failed.reason == null ? '' : `\n${failed.reason}`
-  return `Imported contract ${binding.exportedName} from ${binding.specifier} was not proven\n${failed.file}:${failed.functionName}: ${failed.text}${reason}`
+  return [
+    head,
+    `helper: ${importedHelperLabel(localName, binding)}`,
+    `failed check: ${failed.file}:${failed.functionName}: ${failed.text}${reason}`,
+  ].join('\n')
+}
+
+function importedHelperLabel(localName: string, binding: ImportedBinding) {
+  const importedName = binding.exportedName === '*'
+    ? `${localName} (namespace)`
+    : binding.exportedName === localName ? localName : `${localName} (${binding.exportedName})`
+  return `${importedName} from ${binding.specifier}`
 }
 
 function valueWithFunctionContractSummary(

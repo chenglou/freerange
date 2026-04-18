@@ -172,8 +172,29 @@ function loadImports<TGlobal>(
     if (!ts.isImportDeclaration(statement)) continue
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
     const specifier = statement.moduleSpecifier.text
-    const namedBindings = statement.importClause?.namedBindings
-    if (namedBindings == null || !ts.isNamedImports(namedBindings)) continue
+    const importClause = statement.importClause
+    const importIsTypeOnly = importClause?.isTypeOnly === true
+    if (importClause?.name != null) {
+      module.imports.set(importClause.name.text, {
+        kind: 'unresolved',
+        exportedName: 'default',
+        specifier,
+        reason: importIsTypeOnly ? `Type-only imports cannot provide @fit helpers: ${specifier}` : 'default imports are not supported for @fit helpers',
+      })
+    }
+
+    const namedBindings = importClause?.namedBindings
+    if (namedBindings == null) continue
+    if (ts.isNamespaceImport(namedBindings)) {
+      module.imports.set(namedBindings.name.text, {
+        kind: 'unresolved',
+        exportedName: '*',
+        specifier,
+        reason: importIsTypeOnly ? `Type-only imports cannot provide @fit helpers: ${specifier}` : 'namespace imports are not supported for @fit helpers',
+      })
+      continue
+    }
+    if (!ts.isNamedImports(namedBindings)) continue
 
     for (const element of namedBindings.elements) {
       const localName = element.name.text
