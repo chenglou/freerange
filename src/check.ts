@@ -1,5 +1,11 @@
 import * as ts from 'typescript'
 import {
+  buildFitProgram,
+  loadFitPrograms,
+  type ModuleImportedBinding,
+  type ModuleProgram,
+} from './modules.ts'
+import {
   domainPathSyntheticName,
   parseDomainPathText,
   parseExpression,
@@ -40,31 +46,9 @@ export type FitCheckReport = {
   }
 }
 
-type Program = {
-  file: string
-  sourceFile: ts.SourceFile
-  sourceText: string
-  globals: Map<string, NumberValue>
-  functions: Map<string, ts.FunctionDeclaration>
-  specsByFunction: Map<string, FitSpec[]>
-  exports: Map<string, string>
-  imports: Map<string, ImportedBinding>
-  contractCache: Map<string, FunctionContractProof>
-}
+type Program = ModuleProgram<NumberValue, FunctionContractProof>
 
-type ImportedBinding =
-  | {
-      kind: 'resolved'
-      exportedName: string
-      specifier: string
-      module: Program
-    }
-  | {
-      kind: 'unresolved'
-      exportedName: string
-      specifier: string
-      reason: string
-    }
+type ImportedBinding = ModuleImportedBinding<Program>
 
 type FunctionContractProof =
   | {status: 'verifying'}
@@ -164,10 +148,8 @@ type NumberCase = {
 
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   const checks: FitCheck[] = []
-  const modules = new Map<string, Program>()
   const contractCache = new Map<string, FunctionContractProof>()
-  const entryPrograms: Program[] = []
-  for (const path of paths) entryPrograms.push(await loadProgram(normalizePath(path), modules, contractCache))
+  const entryPrograms = await loadFitPrograms(paths, contractCache, readTopLevelNumberGlobal)
   for (const program of entryPrograms) checks.push(...verifyProgram(program))
 
   const summary = {
@@ -184,9 +166,18 @@ export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
 }
 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
-  const sourceFile = ts.createSourceFile(file, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const program = buildProgram(normalizePath(file), sourceFile, sourceText, new Map())
+  const program = buildFitProgram(file, sourceText, new Map<string, FunctionContractProof>(), readTopLevelNumberGlobal)
   return verifyProgram(program)
+}
+
+function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
+  if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
+  const literal = numericLiteralValue(declaration.initializer)
+  if (literal == null) return null
+  return {
+    name: declaration.name.text,
+    value: numberValue(literal, literal, Number.isInteger(literal), declaration.name.text, linearConstant(literal)),
+  }
 }
 
 function verifyProgram(program: Program): FitCheck[] {
@@ -200,166 +191,6 @@ function verifyProgram(program: Program): FitCheck[] {
   }
 
   return checks
-}
-
-async function loadProgram(file: string, modules: Map<string, Program>, contractCache: Map<string, FunctionContractProof>): Promise<Program> {
-  const normalized = normalizePath(file)
-  const existing = modules.get(normalized)
-  if (existing != null) return existing
-
-  const sourceText = await Bun.file(normalized).text()
-  const sourceFile = ts.createSourceFile(normalized, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const program = buildProgram(normalized, sourceFile, sourceText, contractCache)
-  modules.set(normalized, program)
-  await loadRelativeImports(program, modules, contractCache)
-  return program
-}
-
-function buildProgram(
-  file: string,
-  sourceFile: ts.SourceFile,
-  sourceText: string,
-  contractCache: Map<string, FunctionContractProof>,
-): Program {
-  const globals = new Map<string, NumberValue>()
-  const functions = new Map<string, ts.FunctionDeclaration>()
-  const specsByFunction = new Map<string, FitSpec[]>()
-  const exports = new Map<string, string>()
-  const imports = new Map<string, ImportedBinding>()
-
-  for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) {
-      functions.set(statement.name.text, statement)
-      specsByFunction.set(statement.name.text, parseFitSpecs(sourceText, statement))
-      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) exports.set(statement.name.text, statement.name.text)
-      continue
-    }
-    if (ts.isExportDeclaration(statement)) {
-      collectLocalExportDeclaration(statement, exports)
-      continue
-    }
-    if (!ts.isVariableStatement(statement)) continue
-    for (const declaration of statement.declarationList.declarations) {
-      if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) continue
-      const literal = numericLiteralValue(declaration.initializer)
-      if (literal == null) continue
-      globals.set(declaration.name.text, numberValue(literal, literal, Number.isInteger(literal), declaration.name.text, linearConstant(literal)))
-    }
-  }
-
-  return {file, sourceFile, sourceText, globals, functions, specsByFunction, exports, imports, contractCache}
-}
-
-async function loadRelativeImports(
-  program: Program,
-  modules: Map<string, Program>,
-  contractCache: Map<string, FunctionContractProof>,
-) {
-  for (const statement of program.sourceFile.statements) {
-    if (!ts.isImportDeclaration(statement)) continue
-    if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
-    const specifier = statement.moduleSpecifier.text
-    const namedBindings = statement.importClause?.namedBindings
-    if (namedBindings == null || !ts.isNamedImports(namedBindings)) continue
-
-    for (const element of namedBindings.elements) {
-      const localName = element.name.text
-      const exportedName = element.propertyName?.text ?? localName
-      if (!isRelativeSpecifier(specifier)) {
-        program.imports.set(localName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: `Only relative named imports are supported for @fit helpers: ${specifier}`,
-        })
-        continue
-      }
-
-      const resolved = await resolveRelativeModule(program.file, specifier)
-      if (resolved == null) {
-        program.imports.set(localName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: `Could not resolve ${specifier} from ${program.file}`,
-        })
-        continue
-      }
-
-      const importedProgram = await loadProgram(resolved, modules, contractCache)
-      program.imports.set(localName, {
-        kind: 'resolved',
-        exportedName,
-        specifier,
-        module: importedProgram,
-      })
-    }
-  }
-}
-
-function collectLocalExportDeclaration(statement: ts.ExportDeclaration, exports: Map<string, string>) {
-  if (statement.moduleSpecifier != null) return
-  if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) return
-  for (const element of statement.exportClause.elements) {
-    const localName = element.propertyName?.text ?? element.name.text
-    exports.set(element.name.text, localName)
-  }
-}
-
-function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
-  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
-}
-
-function isRelativeSpecifier(specifier: string) {
-  return specifier.startsWith('./') || specifier.startsWith('../')
-}
-
-async function resolveRelativeModule(fromFile: string, specifier: string): Promise<string | null> {
-  const basePath = normalizePath(joinPath(dirname(fromFile), specifier))
-  for (const candidate of relativeModuleCandidates(basePath)) {
-    if (await canReadFile(candidate)) return candidate
-  }
-  return null
-}
-
-function relativeModuleCandidates(basePath: string): string[] {
-  if (basePath.endsWith('.ts')) return [basePath]
-  return [`${basePath}.ts`, `${basePath}/index.ts`]
-}
-
-async function canReadFile(path: string): Promise<boolean> {
-  try {
-    await Bun.file(path).text()
-    return true
-  } catch {
-    return false
-  }
-}
-
-function dirname(path: string) {
-  const index = path.lastIndexOf('/')
-  return index < 0 ? '' : path.slice(0, index)
-}
-
-function joinPath(base: string, path: string) {
-  if (base.length === 0) return path
-  if (path.length === 0) return base
-  return `${base}/${path}`
-}
-
-function normalizePath(path: string): string {
-  const absolute = path.startsWith('/')
-  const parts: string[] = []
-  for (const part of path.split('/')) {
-    if (part.length === 0 || part === '.') continue
-    if (part === '..') {
-      if (parts.length > 0 && parts.at(-1) !== '..') parts.pop()
-      else if (!absolute) parts.push(part)
-      continue
-    }
-    parts.push(part)
-  }
-  return `${absolute ? '/' : ''}${parts.join('/')}`
 }
 
 function verifyFunctionSpecs(
@@ -1935,14 +1766,16 @@ function simpleResultPathText(text: string): string | null {
 }
 
 function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value) {
+  const domainPath = parseDomainPathText(path)
+  if (domainPath != null && domainPath.segments.length > 0) {
+    env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+    return
+  }
+
   const expression = parseExpression(path)
   if (ts.isIdentifier(expression)) {
     env.set(expression.text, value)
-    return
   }
-  const domainPath = parseDomainPathText(path)
-  if (domainPath == null || domainPath.segments.length === 0) return
-  env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }
 
 function verifyCallGivenSpecs(

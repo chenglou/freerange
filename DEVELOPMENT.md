@@ -24,6 +24,7 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator, abstract domains, and proof rules
+- [src/modules.ts](./src/modules.ts) — source loading, relative import resolution, and export/import indexing
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [verify.ts](./verify.ts) — ad hoc JSON-report CLI

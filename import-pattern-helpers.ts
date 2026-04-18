@@ -16,3 +16,12 @@ export function importedClampWidth(width: number) {
 export function importedAddGap(value: number) {
   return value + importPatternGap
 }
+
+/** @fit
+ * given items[].height: number[0, 40]
+ * result.rows[].height: number[0, 40]
+ */
+export function importedRows(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
