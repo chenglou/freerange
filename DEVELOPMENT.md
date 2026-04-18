@@ -24,7 +24,9 @@ bun install
 
 ## Important Files
 
-- [src/check.ts](./src/check.ts) — source evaluator, abstract domains, and proof rules
+- [src/check.ts](./src/check.ts) — source evaluator, contract orchestration, and proof rules
+- [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
+- [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting

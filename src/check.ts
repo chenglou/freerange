@@ -7,7 +7,6 @@ import {
   type FitModule,
 } from './modules.ts'
 import {
-  domainPathSyntheticName,
   parseDomainPathText,
   parseExpression,
   parseFitExpression,
@@ -17,6 +16,71 @@ import {
   type FitDomainPathSegment,
   type FitSpec,
 } from './parser.ts'
+import {
+  binaryExpr,
+  callExpr,
+  conditionalRunningSumNumber,
+  divideNumbers,
+  joinValues,
+  linearNameForExpression,
+  maxNumberCases,
+  mergeArraySummary,
+  mergeAssumptions,
+  mergeElementValue,
+  mergeProvenance,
+  moduloNumbers,
+  multiplyNumbers,
+  numberBranches,
+  numberValue,
+  plainNumber,
+  powerNumbers,
+  runningSumNumber,
+  unknown,
+  unknownArray,
+  unknownNumber,
+  unknownObject,
+  valueWithAssumptions,
+  withNumberCases,
+  type ArraySummary,
+  type ArrayValue,
+  type FactSource,
+  type LinearConstraint,
+  type NumberCase,
+  type NumberValue,
+  type ObjectValue,
+  type UnknownValue,
+  type Value,
+} from './domain.ts'
+import {
+  binaryExpression,
+  callArg,
+  callArgs,
+  ceilDivisionProduct,
+  cleanLinear,
+  floorDivision,
+  isZeroLinear,
+  linearAdd,
+  linearConstant,
+  linearConstantStatus,
+  linearEpsilon,
+  linearFromExpressionText,
+  linearKey,
+  linearScaleExact,
+  linearScale,
+  linearSubtract,
+  linearVariable,
+  mergeScale,
+  moduloExpression,
+  numericLiteralValue,
+  positiveScaleMultiple,
+  productFactors,
+  productText,
+  reductionScales,
+  sameExpressionText,
+  sameLinear,
+  unwrapExpression,
+  type LinearExpr,
+} from './linear.ts'
 import {
   comparisonFailureReason,
   comparisonNeed,
@@ -56,51 +120,10 @@ type FunctionContractProof =
   | {status: 'verifying'}
   | {status: FitCheckStatus; checks: FitCheck[]}
 
-type Value = NumberValue | ObjectValue | ArrayValue | UnknownValue
-
-type NumberValue = {
-  kind: 'number'
-  min: number
-  max: number
-  isInteger: boolean
-  expr: string | null
-  linear: LinearExpr | null
-  cases: NumberCase[] | null
-  provenance: string[]
-}
-
-type ObjectValue = {
-  kind: 'object'
-  props: Map<string, Value>
-  expr: string | null
-}
-
-type ArrayValue = {
-  kind: 'array'
-  length: NumberValue
-  elements: Value[] | null
-  element: Value | null
-  expr: string | null
-  summary: ArraySummary | null
-}
-
-type ArraySummary = {
-  nondecreasingProps: string[]
-  advances: {prop: string; value: NumberValue}[]
-  spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
-  lastEnd: NumberValue | null
-  extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: NumberValue}[]
-}
-
 type WildcardUse =
   | {kind: 'none'}
   | {kind: 'one'; collection: string}
   | {kind: 'unsupported'; reason: string}
-
-type UnknownValue = {
-  kind: 'unknown'
-  reason: string
-}
 
 type EvalContext = {
   program: Program
@@ -114,26 +137,7 @@ type EvalContext = {
 }
 
 const maxInlineDepth = 12
-const maxNumberCases = 8
 const maxLinearReductionDepth = 4
-const linearEpsilon = 1e-9
-
-type LinearExpr = {
-  constant: number
-  terms: Map<string, number>
-}
-
-type LinearConstraint = {
-  diff: LinearExpr | null
-  op: ComparisonOperator
-  text?: string
-  leftExpr?: string
-  rightExpr?: string
-  source: FactSource
-  rangeFact?: true
-}
-
-type FactSource = 'function-given' | 'loop-given' | 'code'
 
 type TrustedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
@@ -148,11 +152,6 @@ type NonNegativeFact = {
   diff: LinearExpr
   strict: boolean
   text?: string
-}
-
-type NumberCase = {
-  value: NumberValue
-  assumptions: LinearConstraint[]
 }
 
 type ImportedContractSource = {
@@ -2790,113 +2789,6 @@ function flipComparison(op: ComparisonOperator): ComparisonOperator {
   }
 }
 
-function sameExpressionText(left: string, right: string) {
-  return expressionKeyFromText(left) === expressionKeyFromText(right)
-}
-
-function expressionKeyFromText(text: string): string {
-  try {
-    return expressionKey(parseExpression(text))
-  } catch {
-    return `text:${text}`
-  }
-}
-
-function expressionKey(expression: ts.Expression): string {
-  const current = unwrapExpression(expression)
-  const linear = linearFromExpression(current)
-  if (linear != null) return `linear:${linearKey(linear)}`
-  if (ts.isIdentifier(current)) return `id:${current.text}`
-  if (ts.isNumericLiteral(current)) return `number:${Number(current.text)}`
-  if (ts.isPropertyAccessExpression(current)) return `prop:${expressionKey(current.expression)}.${current.name.text}`
-  if (ts.isCallExpression(current)) return `call:${callName(current.expression)}(${current.arguments.map(argument => expressionKey(argument)).join(',')})`
-  if (ts.isPrefixUnaryExpression(current)) return `prefix:${current.operator}:${expressionKey(current.operand)}`
-  if (ts.isBinaryExpression(current)) {
-    const op = current.operatorToken.kind
-    if (op === ts.SyntaxKind.AsteriskToken) return `product:${productFactorsFromExpression(current).map(text => expressionKeyFromText(text)).sort().join('*')}`
-    return `binary:${ts.SyntaxKind[op]}:${expressionKey(current.left)}:${expressionKey(current.right)}`
-  }
-  return `text:${current.getText()}`
-}
-
-function unwrapExpression(expression: ts.Expression): ts.Expression {
-  let current = expression
-  while (ts.isParenthesizedExpression(current)) current = current.expression
-  return current
-}
-
-function callName(expression: ts.Expression): string {
-  if (ts.isIdentifier(expression)) return expression.text
-  if (ts.isPropertyAccessExpression(expression)) return `${callName(expression.expression)}.${expression.name.text}`
-  return expression.getText()
-}
-
-function callArgs(text: string, name: string): string[] | null {
-  const expression = unwrapExpression(parseExpression(text))
-  if (!ts.isCallExpression(expression) || callName(expression.expression) !== name) return null
-  return expression.arguments.map(argument => argument.getText())
-}
-
-function callArg(text: string, name: string): string | null {
-  const args = callArgs(text, name)
-  return args != null && args.length === 1 ? args[0]! : null
-}
-
-function ceilDivisionProduct(text: string): {total: string; count: string} | null {
-  const product = binaryExpression(text, '*')
-  if (product == null) return null
-  for (const [maybeCeil, maybeCount] of [[product.left, product.right], [product.right, product.left]] as const) {
-    const ceilArg = callArg(maybeCeil, 'ceil')
-    if (ceilArg == null) continue
-    const division = binaryExpression(ceilArg, '/')
-    if (division != null && sameExpressionText(division.right, maybeCount)) return {total: division.left, count: division.right}
-  }
-  return null
-}
-
-function floorDivision(text: string): {left: string; right: string} | null {
-  const floorArg = callArg(text, 'floor')
-  return floorArg == null ? null : binaryExpression(floorArg, '/')
-}
-
-function moduloExpression(text: string): {left: string; right: string} | null {
-  return binaryExpression(text, '%')
-}
-
-function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
-  const expression = unwrapExpression(parseExpression(text))
-  if (!ts.isBinaryExpression(expression)) return null
-  const expected = op === '*'
-    ? ts.SyntaxKind.AsteriskToken
-    : op === '/'
-      ? ts.SyntaxKind.SlashToken
-      : op === '%'
-        ? ts.SyntaxKind.PercentToken
-        : op === '+'
-          ? ts.SyntaxKind.PlusToken
-          : ts.SyntaxKind.MinusToken
-  if (expression.operatorToken.kind !== expected) return null
-  return {left: expression.left.getText(), right: expression.right.getText()}
-}
-
-function productFactors(text: string): string[] | null {
-  const expression = unwrapExpression(parseExpression(text))
-  const factors = productFactorsFromExpression(expression)
-  return factors.length <= 1 ? null : factors
-}
-
-function productFactorsFromExpression(expression: ts.Expression): string[] {
-  const current = unwrapExpression(expression)
-  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.AsteriskToken) return [current.getText()]
-  return [...productFactorsFromExpression(current.left), ...productFactorsFromExpression(current.right)]
-}
-
-function productText(factors: string[]) {
-  if (factors.length === 0) return '1'
-  if (factors.length === 1) return factors[0]!
-  return factors.map(factor => `(${factor})`).join(' * ')
-}
-
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
@@ -3072,408 +2964,8 @@ function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExp
   )?.value ?? null
 }
 
-function mergeArraySummary(left: ArraySummary | null, right: ArraySummary | null): ArraySummary | null {
-  if (left == null) return right
-  if (right == null) return left
-  return {
-    nondecreasingProps: [...new Set([...left.nondecreasingProps, ...right.nondecreasingProps])],
-    advances: [...left.advances, ...right.advances].filter((fact, index, facts) => facts.findIndex(other => sameAdvanceFact(other, fact)) === index),
-    spaced: [...left.spaced, ...right.spaced].filter((fact, index, facts) => facts.findIndex(other => sameSpacedFact(other, fact)) === index),
-    lastEnd: right.lastEnd ?? left.lastEnd,
-    extentEnds: [...left.extentEnds, ...right.extentEnds].filter((fact, index, facts) => facts.findIndex(other => sameExtentEndFact(other, fact)) === index),
-  }
-}
-
-function mergeElementValue(left: Value | null, right: Value | null): Value | null {
-  if (left == null) return right
-  if (right == null) return left
-  return joinValues(left, right)
-}
-
-function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null) {
-  if (left === right) return true
-  if (left == null || right == null) return false
-  if ((left.lastEnd?.expr ?? null) !== (right.lastEnd?.expr ?? null)) return false
-  if (left.nondecreasingProps.join('|') !== right.nondecreasingProps.join('|')) return false
-  if (left.advances.length !== right.advances.length) return false
-  if (!left.advances.every((fact, index) => sameAdvanceFact(fact, right.advances[index]!))) return false
-  if (left.spaced.length !== right.spaced.length) return false
-  if (!left.spaced.every((fact, index) => sameSpacedFact(fact, right.spaced[index]!))) return false
-  if (left.extentEnds.length !== right.extentEnds.length) return false
-  return left.extentEnds.every((fact, index) => sameExtentEndFact(fact, right.extentEnds[index]!))
-}
-
-function sameAdvanceFact(left: ArraySummary['advances'][number], right: ArraySummary['advances'][number]) {
-  return left.prop === right.prop && (left.value.expr ?? null) === (right.value.expr ?? null)
-}
-
-function sameSpacedFact(left: ArraySummary['spaced'][number], right: ArraySummary['spaced'][number]) {
-  return sameExpressionText(left.gapExpr, right.gapExpr)
-    && sameExpressionText(left.heightExpr, right.heightExpr)
-    && sameExpressionText(left.advanceExpr, right.advanceExpr)
-}
-
-function sameExtentEndFact(left: ArraySummary['extentEnds'][number], right: ArraySummary['extentEnds'][number]) {
-  return sameExpressionText(left.emptyExpr, right.emptyExpr)
-    && sameExpressionText(left.nonEmptyExpr, right.nonEmptyExpr)
-    && (left.value.expr ?? null) === (right.value.expr ?? null)
-}
-
-function linearNameForExpression(text: string) {
-  const domainPath = parseDomainPathText(text)
-  return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathSyntheticName(text) : text
-}
-
-function numberValue(
-  min: number,
-  max: number,
-  isInteger: boolean,
-  expr: string | null,
-  linear: LinearExpr | null = null,
-  cases: NumberCase[] | null = null,
-  provenance: string[] = [],
-): NumberValue {
-  const clean = linear == null ? null : cleanLinear(linear)
-  const cleanProvenance = [...new Set(provenance)]
-  if (clean != null && clean.terms.size === 0 && Number.isFinite(clean.constant)) {
-    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases, provenance: cleanProvenance}
-  }
-  return {kind: 'number', min, max, isInteger, expr, linear: clean, cases, provenance: cleanProvenance}
-}
-
-function unknownNumber(name: string): NumberValue {
-  return {
-    kind: 'number',
-    min: Number.NEGATIVE_INFINITY,
-    max: Number.POSITIVE_INFINITY,
-    isInteger: false,
-    expr: name,
-    linear: linearVariable(linearNameForExpression(name)),
-    cases: null,
-    provenance: [],
-  }
-}
-
-function mergeProvenance(...items: (NumberValue | string[])[]) {
-  const lines: string[] = []
-  for (const item of items) {
-    lines.push(...(Array.isArray(item) ? item : item.provenance))
-  }
-  return [...new Set(lines)]
-}
-
-function unknownObject(name: string): ObjectValue {
-  return {
-    kind: 'object',
-    props: new Map(),
-    expr: name,
-  }
-}
-
-function unknownArray(name: string, length: NumberValue = unknownNumber(`${name}.length`), element: Value | null = null): ArrayValue {
-  return {
-    kind: 'array',
-    length,
-    elements: null,
-    element,
-    expr: name,
-    summary: null,
-  }
-}
-
-function unknown(reason: string): UnknownValue {
-  return {kind: 'unknown', reason}
-}
-
-function plainNumber(value: NumberValue): NumberValue {
-  return value.cases == null ? value : {...value, cases: null}
-}
-
-function numberBranches(value: NumberValue): NumberCase[] {
-  return value.cases ?? [{value: plainNumber(value), assumptions: []}]
-}
-
-function withNumberCases(value: NumberValue, cases: NumberCase[] | null): NumberValue {
-  if (cases == null || cases.length === 0 || cases.length > maxNumberCases) return value
-  return {...value, cases: cases.map(choice => ({value: plainNumber(choice.value), assumptions: choice.assumptions}))}
-}
-
-function valueWithAssumptions(value: Value, assumptions: LinearConstraint[]): Value {
-  if (assumptions.length === 0) return value
-  if (value.kind === 'number') {
-    return withNumberCases(value, numberBranches(value).map(branch => ({
-      value: branch.value,
-      assumptions: mergeAssumptions(branch.assumptions, assumptions),
-    })))
-  }
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, valueWithAssumptions(prop, assumptions))
-    return {...value, props}
-  }
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      length: valueWithAssumptions(value.length, assumptions) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(element => valueWithAssumptions(element, assumptions)),
-      element: value.element == null ? null : valueWithAssumptions(value.element, assumptions),
-      summary: value.summary == null ? null : {
-        ...value.summary,
-        advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
-        lastEnd: value.summary.lastEnd == null ? null : valueWithAssumptions(value.summary.lastEnd, assumptions) as NumberValue,
-        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
-      },
-    }
-  }
-  return value
-}
-
 function contextWithAssumptions(context: EvalContext, assumptions: LinearConstraint[]): EvalContext {
   return assumptions.length === 0 ? context : {...context, assumptions: mergeAssumptions(context.assumptions, assumptions)}
-}
-
-function mergeAssumptions(...groups: LinearConstraint[][]): LinearConstraint[] {
-  return groups.flat()
-}
-
-function numericLiteralValue(expression: ts.Expression): number | null {
-  if (ts.isNumericLiteral(expression)) return Number(expression.text)
-  if (ts.isPrefixUnaryExpression(expression) && expression.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(expression.operand)) {
-    return -Number(expression.operand.text)
-  }
-  return null
-}
-
-function linearConstant(value: number): LinearExpr {
-  return {constant: value, terms: new Map()}
-}
-
-function linearVariable(name: string): LinearExpr {
-  return {constant: 0, terms: new Map([[name, 1]])}
-}
-
-function linearFromExpressionText(text: string): LinearExpr | null {
-  try {
-    return linearFromExpression(parseExpression(text))
-  } catch {
-    return null
-  }
-}
-
-function linearFromExpression(expression: ts.Expression): LinearExpr | null {
-  if (ts.isNumericLiteral(expression)) return linearConstant(Number(expression.text))
-  if (ts.isIdentifier(expression)) return linearVariable(expression.text)
-  if (ts.isPropertyAccessExpression(expression)) return linearVariable(expression.getText())
-  if (ts.isParenthesizedExpression(expression)) return linearFromExpression(expression.expression)
-  if (ts.isPrefixUnaryExpression(expression)) {
-    const operand = linearFromExpression(expression.operand)
-    if (operand == null) return null
-    if (expression.operator === ts.SyntaxKind.MinusToken) return linearScaleExact(operand, -1)
-    if (expression.operator === ts.SyntaxKind.PlusToken) return operand
-    return null
-  }
-  if (!ts.isBinaryExpression(expression)) return null
-  const left = linearFromExpression(expression.left)
-  const right = linearFromExpression(expression.right)
-  switch (expression.operatorToken.kind) {
-    case ts.SyntaxKind.PlusToken:
-      return linearAdd(left, right)
-    case ts.SyntaxKind.MinusToken:
-      return linearSubtract(left, right)
-    case ts.SyntaxKind.AsteriskToken: {
-      const leftValue = numericLiteralValue(expression.left)
-      const rightValue = numericLiteralValue(expression.right)
-      if (leftValue != null) return linearScale(right, leftValue)
-      if (rightValue != null) return linearScale(left, rightValue)
-      return null
-    }
-    case ts.SyntaxKind.SlashToken: {
-      const rightValue = numericLiteralValue(expression.right)
-      return rightValue == null || rightValue === 0 ? null : linearScale(left, 1 / rightValue)
-    }
-    default:
-      return null
-  }
-}
-
-function linearAdd(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
-  if (left == null || right == null) return null
-  const terms = new Map(left.terms)
-  for (const [name, coefficient] of right.terms) {
-    terms.set(name, (terms.get(name) ?? 0) + coefficient)
-  }
-  return cleanLinear({constant: left.constant + right.constant, terms})
-}
-
-function linearSubtract(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
-  if (left == null || right == null) return null
-  return linearAdd(left, linearScaleExact(right, -1))
-}
-
-function linearScale(linear: LinearExpr | null, factor: number): LinearExpr | null {
-  return linear == null ? null : linearScaleExact(linear, factor)
-}
-
-function linearScaleExact(linear: LinearExpr, factor: number): LinearExpr {
-  const terms = new Map<string, number>()
-  for (const [name, coefficient] of linear.terms) terms.set(name, coefficient * factor)
-  return cleanLinear({constant: linear.constant * factor, terms})
-}
-
-function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | null {
-  if (left.min === left.max) return linearScale(right.linear, left.min)
-  if (right.min === right.max) return linearScale(left.linear, right.min)
-  return null
-}
-
-function sameLinear(left: LinearExpr, right: LinearExpr) {
-  const diff = linearSubtract(left, right)
-  return diff != null && isZeroLinear(diff)
-}
-
-function cleanLinear(linear: LinearExpr): LinearExpr {
-  const terms = new Map<string, number>()
-  for (const [name, coefficient] of linear.terms) {
-    if (Math.abs(coefficient) > linearEpsilon) terms.set(name, coefficient)
-  }
-  return {
-    constant: Math.abs(linear.constant) > linearEpsilon ? linear.constant : 0,
-    terms,
-  }
-}
-
-function isZeroLinear(linear: LinearExpr) {
-  return linear.constant === 0 && linear.terms.size === 0
-}
-
-function linearConstantStatus(linear: LinearExpr, strict: boolean) {
-  if (linear.terms.size > 0) return false
-  return strict ? linear.constant > linearEpsilon : linear.constant >= -linearEpsilon
-}
-
-function linearKey(linear: LinearExpr) {
-  const parts = [`${linear.constant}`]
-  for (const [name, coefficient] of [...linear.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    parts.push(`${name}:${coefficient}`)
-  }
-  return parts.join('|')
-}
-
-function reductionScales(target: LinearExpr, fact: LinearExpr): number[] {
-  const scales: number[] = []
-  const names = new Set([...target.terms.keys(), ...fact.terms.keys()])
-  for (const name of names) addReductionScale(scales, target.terms.get(name) ?? 0, fact.terms.get(name) ?? 0)
-  addReductionScale(scales, target.constant, fact.constant)
-  return scales
-}
-
-function addReductionScale(scales: number[], targetCoefficient: number, factCoefficient: number) {
-  if (Math.abs(targetCoefficient) <= linearEpsilon || Math.abs(factCoefficient) <= linearEpsilon) return
-  const scale = targetCoefficient / factCoefficient
-  if (scale <= linearEpsilon) return
-  if (!scales.some(existing => Math.abs(existing - scale) <= linearEpsilon)) scales.push(scale)
-}
-
-function positiveScaleMultiple(target: LinearExpr, fact: LinearExpr): number | null {
-  let scale: number | null = null
-  const names = new Set([...target.terms.keys(), ...fact.terms.keys()])
-  for (const name of names) {
-    const nextScale = coefficientScale(target.terms.get(name) ?? 0, fact.terms.get(name) ?? 0)
-    if (nextScale === false) return null
-    if (nextScale != null) scale = mergeScale(scale, nextScale)
-    if (scale === Number.NEGATIVE_INFINITY) return null
-  }
-
-  const constantScale = coefficientScale(target.constant, fact.constant)
-  if (constantScale === false) return null
-  if (constantScale != null) scale = mergeScale(scale, constantScale)
-  if (scale == null || scale === Number.NEGATIVE_INFINITY || scale <= 0) return null
-  return scale
-}
-
-function coefficientScale(target: number, fact: number): number | null | false {
-  if (Math.abs(fact) <= linearEpsilon) return Math.abs(target) <= linearEpsilon ? null : false
-  return target / fact
-}
-
-function mergeScale(current: number | null, next: number): number {
-  if (current == null) return next
-  return Math.abs(current - next) <= linearEpsilon ? current : Number.NEGATIVE_INFINITY
-}
-
-function multiplyNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  const products = [
-    left.min * right.min,
-    left.min * right.max,
-    left.max * right.min,
-    left.max * right.max,
-  ]
-  return numberValue(Math.min(...products), Math.max(...products), left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
-}
-
-function divideNumbers(left: NumberValue, right: NumberValue): Value {
-  if (right.min <= 0 && right.max >= 0) return unknown('Division by a range containing zero is unsupported')
-  const quotients = [
-    left.min / right.min,
-    left.min / right.max,
-    left.max / right.min,
-    left.max / right.max,
-  ]
-  return numberValue(Math.min(...quotients), Math.max(...quotients), false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeProvenance(left, right))
-}
-
-function moduloNumbers(left: NumberValue, right: NumberValue): Value {
-  if (right.min <= 0 || left.min < 0) return unknown('Modulo is only supported for non-negative values and positive divisors')
-  const max = left.isInteger && right.isInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
-  return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right), null, null, mergeProvenance(left, right))
-}
-
-function runningSumNumber(start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
-  const exactIncrement = increment.min === increment.max ? increment.min : null
-  const linear = exactIncrement == null || start.linear == null || count.linear == null
-    ? null
-    : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
-  if (count.min < 0 || increment.min < 0) return numberValue(
-    Number.NEGATIVE_INFINITY,
-    Number.POSITIVE_INFINITY,
-    false,
-    start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
-    linear,
-    null,
-    mergeProvenance(start, count, increment),
-  )
-  const deltas = [
-    count.min * increment.min,
-    count.min * increment.max,
-    count.max * increment.min,
-    count.max * increment.max,
-  ]
-  return numberValue(
-    start.min + Math.min(...deltas),
-    start.max + Math.max(...deltas),
-    start.isInteger && count.isInteger && increment.isInteger,
-    start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
-    linear,
-    null,
-    mergeProvenance(start, count, increment),
-  )
-}
-
-function conditionalRunningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
-  const deltas = [
-    0,
-    count.max * increment.min,
-    count.max * increment.max,
-  ]
-  return numberValue(
-    start.min + Math.min(...deltas),
-    start.max + Math.max(...deltas),
-    start.isInteger && count.isInteger && increment.isInteger,
-    targetName,
-    linearVariable(targetName),
-    null,
-    mergeProvenance(start, count, increment),
-  )
 }
 
 function conditionalRunningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
@@ -3491,68 +2983,4 @@ function conditionalRunningSumFacts(value: NumberValue, start: NumberValue, coun
     if (upper != null) facts.push(upper)
   }
   return facts
-}
-
-function powerNumbers(left: NumberValue, right: NumberValue): Value {
-  if (right.min !== right.max) return unknown('Non-constant exponent is unsupported')
-  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
-  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
-  return unknown('Only square of non-negative ranges is supported')
-}
-
-function joinValues(left: Value, right: Value): Value {
-  if (left.kind === 'unknown') return left
-  if (right.kind === 'unknown') return right
-  if (left.kind === 'number' && right.kind === 'number') {
-    const joined = numberValue(
-      Math.min(left.min, right.min),
-      Math.max(left.max, right.max),
-      left.isInteger && right.isInteger,
-      left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
-      left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
-      null,
-      mergeProvenance(left, right),
-    )
-    if (left.cases == null && right.cases == null) return joined
-    return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
-  }
-  if (left.kind === 'object' && right.kind === 'object') {
-    const keys = new Set([...left.props.keys(), ...right.props.keys()])
-    const props = new Map<string, Value>()
-    for (const key of keys) {
-      const leftProp = left.props.get(key)
-      const rightProp = right.props.get(key)
-      props.set(key, leftProp == null || rightProp == null ? unknown(`Property ${key} only exists on one branch`) : joinValues(leftProp, rightProp))
-    }
-    return {kind: 'object', props, expr: left.expr != null && left.expr === right.expr ? left.expr : null}
-  }
-  if (left.kind === 'array' && right.kind === 'array') {
-    const length = joinValues(left.length, right.length)
-    if (length.kind !== 'number') return unknown('Array branches had incompatible lengths')
-    return {
-      kind: 'array',
-      length,
-      elements: left.elements != null && right.elements != null && left.elements.length === right.elements.length
-        ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements![index]!))
-        : null,
-      element: mergeElementValue(left.element, right.element),
-      expr: left.expr != null && left.expr === right.expr ? left.expr : null,
-      summary: sameArraySummary(left.summary, right.summary) ? left.summary : null,
-    }
-  }
-  return unknown('Branches returned incompatible value shapes')
-}
-
-function binaryExpr(left: NumberValue, op: string, right: NumberValue) {
-  if (left.expr == null || right.expr == null) return null
-  return `(${left.expr} ${op} ${right.expr})`
-}
-
-function callExpr(name: string, values: NumberValue[]) {
-  const parts: string[] = []
-  for (const value of values) {
-    if (value.expr == null) return null
-    parts.push(value.expr)
-  }
-  return `${name}(${parts.join(', ')})`
 }
