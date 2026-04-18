@@ -2,6 +2,7 @@ import {type ComparisonOperator} from './parser.ts'
 import {type NumberValue} from './domain.ts'
 import {
   binaryExpression,
+  floorDivision,
   productFactors,
   productText,
   sameExpressionText,
@@ -32,6 +33,10 @@ export const comparisonProofRules: ComparisonProofRule[] = [
     name: 'positive-scale-monotonicity',
     evaluate: evaluatePositiveScaleMonotonicity,
   },
+  {
+    name: 'floor-division-below-count',
+    evaluate: evaluateFloorDivisionBelowCount,
+  },
 ]
 
 function evaluatePositiveScaleMonotonicity(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {
@@ -49,6 +54,22 @@ function comparisonLessGoal(goal: ComparisonGoal): {leftExpr: string; op: '<=' |
   if (goal.op === '>=') return {leftExpr: goal.right.expr, op: '<=', rightExpr: goal.left.expr}
   if (goal.op === '>') return {leftExpr: goal.right.expr, op: '<', rightExpr: goal.left.expr}
   return null
+}
+
+function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {
+  if (goal.op !== '<' && goal.op !== '<=') return null
+  if (goal.left.expr == null || goal.right.expr == null || !goal.right.isInteger) return null
+  const shape = floorDivision(goal.left.expr)
+  if (shape == null) return null
+  const divisorNeed = `${shape.right} > 0`
+  const boundNeed = `${shape.left} < ${goal.right.expr} * ${shape.right}`
+  const divisorProven = context.provesExprNonNegative(shape.right, true)
+  const boundProven = context.hasComparisonFact(shape.left, '<', `(${goal.right.expr} * ${shape.right})`)
+    || context.hasComparisonFact(shape.left, '<', `(${shape.right} * ${goal.right.expr})`)
+  if (divisorProven && boundProven) return {status: 'pass'}
+  if (boundProven) return {status: 'blocked', missing: divisorNeed}
+  if (divisorProven) return {status: 'blocked', missing: boundNeed}
+  return {status: 'blocked', missing: `${divisorNeed} and ${boundNeed}`}
 }
 
 type PositiveMonotoneObligation = {

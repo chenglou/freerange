@@ -73,7 +73,7 @@ UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: result < coun
     trusted from function @fit: given cellSize: int 1..100
     trusted from function @fit: given count: int 1..10
     branch fact from code: pointer >= (count * cellSize)
-  missing: given floor((pointer / cellSize)) < count
+  missing: pointer < count * cellSize
 UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: result.scaled <= result.limit
   -2000..2000 as (content * scale) <= -2000..2000 as (available * scale) was not proven
   need: (content * scale) <= (available * scale)

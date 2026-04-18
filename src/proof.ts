@@ -28,7 +28,6 @@ import {
   callArgs,
   ceilDivisionProduct,
   cleanLinear,
-  floorDivision,
   isZeroLinear,
   linearConstant,
   linearConstantStatus,
@@ -135,7 +134,6 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   if (provesChoiceOperandBound(left.expr, op, right.expr)) return 'true'
   if (provesRoundingFact(left.expr, op, right.expr)) return 'true'
   if ((op === '>=' || op === '>') && provesCeilDivisionCovers(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if ((op === '<' || op === '<=') && provesFloorDivisionBelowCount(left.expr, right, assumptions)) return 'true'
   if ((op === '<' || op === '<=') && provesModuloBelowDivisor(left.expr, right.expr, assumptions)) return 'true'
   if ((op === '>=' || op === '>') && provesRunningSumAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
@@ -178,15 +176,6 @@ function provesCeilDivisionCovers(leftExpr: string, rightExpr: string, assumptio
   const {total, count} = shape
   if (!sameExpressionText(total, rightExpr)) return false
   return provesExprNonNegative(total, false, assumptions) && provesExprNonNegative(count, true, assumptions)
-}
-
-function provesFloorDivisionBelowCount(leftExpr: string, right: NumberValue, assumptions: LinearConstraint[]) {
-  if (right.expr == null || !right.isInteger) return false
-  const shape = floorDivision(leftExpr)
-  if (shape == null) return false
-  const {left: pointer, right: cell} = shape
-  if (!provesExprNonNegative(cell, true, assumptions)) return false
-  return hasComparisonFact(pointer, '<', `(${right.expr} * ${cell})`, assumptions) || hasComparisonFact(pointer, '<', `(${cell} * ${right.expr})`, assumptions)
 }
 
 function provesModuloBelowDivisor(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
