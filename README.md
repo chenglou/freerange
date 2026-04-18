@@ -88,11 +88,12 @@ A useful report says where facts came from:
 ```txt
 known:
   trusted from function @fit: given width: 0..1000
-  read from code: width - 320 <= 0
+  read from code: rows[].index >= 0
+  branch fact from code: width - 320 <= 0
   source-proved imported contract: layout-math.ts#clampWidth: result: 0..320
 ```
 
-That distinction matters. Facts from `given` are promises. Facts from code and imported contracts are earned from source.
+That distinction matters. Facts from `given` are promises. Facts from code, branch splits, and imported contracts are earned from source.
 
 ## Input Facts
 

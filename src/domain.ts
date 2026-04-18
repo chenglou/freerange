@@ -25,7 +25,7 @@ export type LinearConstraint = {
   rangeFact?: true
 }
 
-export type FactSource = 'function-given' | 'loop-given' | 'code'
+export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
 export type Value = NumberValue | ObjectValue | ArrayValue | UnknownValue
 

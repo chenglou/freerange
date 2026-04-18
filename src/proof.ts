@@ -297,9 +297,24 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
 }
 
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
+  const strictSelf = strictSelfComparisonMissing(left, op, right)
+  if (strictSelf != null) return strictSelf
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
   return `given ${comparisonNeed(left, op, right)}`
+}
+
+function strictSelfComparisonMissing(left: NumberValue, op: ComparisonOperator, right: NumberValue) {
+  if (op !== '>' && op !== '<') return null
+  const leftName = left.expr ?? formatRange(left)
+  const rightName = right.expr ?? formatRange(right)
+  if (left.expr != null && right.expr != null && sameExpressionText(left.expr, right.expr)) {
+    return `strict comparison cannot hold when both sides are ${leftName}`
+  }
+  if (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)) {
+    return `strict comparison cannot hold because ${leftName} and ${rightName} are equal by exact linear facts`
+  }
+  return null
 }
 
 function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {

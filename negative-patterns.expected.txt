@@ -21,16 +21,16 @@ FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: result.overflow < 0
     int 0..0 as (width - width)
     int 0..0 as 0
     trusted from function @fit: given width: 0..1000
-    read from code: width - 320 <= 0
-  missing: given (width - width) < 0
+    branch fact from code: width - 320 <= 0
+  missing: strict comparison cannot hold when both sides are (width - width)
 FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: result < 4
   int 4..4 as 4 < int 4..4 as 4 is false
   need: 4 < 4
   known:
     int 4..4 as 4
     trusted from function @fit: given value: 0..10
-    read from code: -value + 4 <= 0
-  missing: given 4 < 4
+    branch fact from code: -value + 4 <= 0
+  missing: strict comparison cannot hold when both sides are 4
 FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: result > minWidth
   0..1000 as minWidth > 0..1000 as minWidth is false by exact linear facts
   need: minWidth > minWidth
@@ -38,9 +38,9 @@ FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: result > m
     0..1000 as minWidth
     trusted from function @fit: given minWidth: 0..1000
     trusted from function @fit: given width: 0..1000
-    read from code: minWidth - width >= 0
-    read from code: source-proved helper contract: negative-patterns.ts#negativeAtLeastMinWidth: result >= minWidth
-  missing: given minWidth > minWidth
+    branch fact from code: minWidth - width >= 0
+    source-proved helper contract: negative-patterns.ts#negativeAtLeastMinWidth: result >= minWidth
+  missing: strict comparison cannot hold when both sides are minWidth
 UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: result < items.length
   int 0..10 as index < int 0..10 as items.length was not proven
   need: index < items.length
@@ -72,7 +72,7 @@ UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: result < coun
     trusted from function @fit: given pointer: 0..1000
     trusted from function @fit: given cellSize: int 1..100
     trusted from function @fit: given count: int 1..10
-    read from code: pointer >= (count * cellSize)
+    branch fact from code: pointer >= (count * cellSize)
   missing: given floor((pointer / cellSize)) < count
 UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: result.scaled <= result.limit
   -2000..2000 as (content * scale) <= -2000..2000 as (available * scale) was not proven
@@ -95,7 +95,7 @@ UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: result >= minW
     0..1000 as minWidth
     trusted from function @fit: given width: 0..1000
     trusted from function @fit: given minWidth: 0..1000
-    read from code: -minWidth + width <= 0
+    branch fact from code: -minWidth + width <= 0
   missing: given width >= minWidth
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: result.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, step) >= 0..1000 as top was not proven

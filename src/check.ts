@@ -2094,7 +2094,7 @@ function applySummaryComparisonToPath(
   if (current.kind !== 'number') return
   const provenance = mergeProvenance(current, other, [fact])
   const withSummaryFact = (value: NumberValue): NumberValue => {
-    const summaryFact = comparisonConstraint(value, op, other, fact)
+    const summaryFact = comparisonConstraint(value, op, other, fact, 'contract')
     if (summaryFact == null) return value
     return withNumberCases(value, numberBranches(value).map(branch => ({
       value: branch.value,
@@ -2341,8 +2341,8 @@ function absNumber(value: NumberValue, assumptions: LinearConstraint[]): NumberV
   const joined = numberValue(0, max, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, null, null, plain.provenance)
   const cases: NumberCase[] = []
   for (const valueCase of numberBranches(value)) {
-    const nonNegative = comparisonConstraint(valueCase.value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
-    const nonPositive = comparisonConstraint(valueCase.value, '<=', numberValue(0, 0, true, '0', linearConstant(0)))
+    const nonNegative = comparisonConstraint(valueCase.value, '>=', numberValue(0, 0, true, '0', linearConstant(0)), undefined, 'branch')
+    const nonPositive = comparisonConstraint(valueCase.value, '<=', numberValue(0, 0, true, '0', linearConstant(0)), undefined, 'branch')
     if (nonNegative == null || nonPositive == null) return joined
 
     const positiveStatus = proveComparisonPlain(valueCase.value, '>=', numberValue(0, 0, true, '0', linearConstant(0)), mergeAssumptions(assumptions, valueCase.assumptions))
@@ -2396,7 +2396,7 @@ function choiceNumberPair(
       const rightWins = proveComparisonPlain(rightCase.value, rightOp, leftCase.value, baseAssumptions)
 
       if (leftWins.status !== 'fail') {
-        const fact = comparisonConstraint(leftCase.value, leftOp, rightCase.value)
+        const fact = comparisonConstraint(leftCase.value, leftOp, rightCase.value, undefined, 'branch')
         if (leftWins.status === 'pass') {
           cases.push({
             value: leftCase.value,
@@ -2410,7 +2410,7 @@ function choiceNumberPair(
         }
       }
       if (rightWins.status !== 'fail') {
-        const fact = comparisonConstraint(rightCase.value, rightOp, leftCase.value)
+        const fact = comparisonConstraint(rightCase.value, rightOp, leftCase.value, undefined, 'branch')
         if (rightWins.status === 'pass') {
           cases.push({
             value: rightCase.value,
@@ -2507,9 +2507,9 @@ function evaluateConditionFacts(expression: ts.Expression, context: EvalContext)
   const right = evaluateExpression(expression.right, context)
   if (left.kind !== 'number' || right.kind !== 'number') return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   const comparison = syntaxToComparison(op)
-  const trueFact = comparisonConstraint(left, comparison, right)
+  const trueFact = comparisonConstraint(left, comparison, right, undefined, 'branch')
   const falseComparison = negatedComparison(comparison)
-  const falseFact = falseComparison == null ? null : comparisonConstraint(left, falseComparison, right)
+  const falseFact = falseComparison == null ? null : comparisonConstraint(left, falseComparison, right, undefined, 'branch')
   const status = proveComparison(left, comparison, right, context.assumptions)
   if (status.status === 'pass') return {truth: 'true', trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
   if (status.status === 'fail') return {truth: 'false', trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}

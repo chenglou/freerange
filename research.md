@@ -149,7 +149,7 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 
 The resolver follows named imports through TypeScript module resolution when they land on local source files, and it follows explicit named re-export barrels. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, wildcard barrels, summary files, stale-summary trust, or workspace caches.
 
-Reports now say whether a fact came from source, a trusted `given`, a source-proved same-file helper contract, or a source-proved imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source proof.
+Reports now say whether a fact came from source, a branch split, a trusted `given`, a source-proved same-file helper contract, or a source-proved imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source proof.
 
 ## Reports
 

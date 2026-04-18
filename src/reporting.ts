@@ -24,7 +24,7 @@ export type ReportLinearConstraint = {
   rangeFact?: true
 }
 
-export type ReportFactSource = 'function-given' | 'loop-given' | 'code'
+export type ReportFactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
 export type ReportArrayValue = {
   summary: {
@@ -159,6 +159,10 @@ function formatKnownFact(assumption: ReportLinearConstraint): string {
       return `trusted from loop @fit: ${fact}`
     case 'code':
       return `read from code: ${fact}`
+    case 'branch':
+      return `branch fact from code: ${fact}`
+    case 'contract':
+      return fact
   }
 }
 
