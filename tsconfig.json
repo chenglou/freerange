@@ -6,6 +6,10 @@
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": [],
+    "jsx": "preserve",
+    "paths": {
+      "@fit-fixtures/*": ["./*"]
+    },
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -21,5 +25,5 @@
     "noFallthroughCasesInSwitch": true,
     "noPropertyAccessFromIndexSignature": true
   },
-  "include": ["src/**/*.ts", "*.ts", "research/kernels/**/*.ts"]
+  "include": ["src/**/*.ts", "*.ts", "*.tsx", "research/kernels/**/*.ts"]
 }

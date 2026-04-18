@@ -114,7 +114,7 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 - imported helper contracts must be proved from source in the same run before callers can use them
 - imported bodies are not inlined at the call site
 
-The first resolver only follows named relative imports to nearby `.ts` files. That is enough to try real helper libraries without committing to tsconfig paths, package exports, re-export barrels, summary files, stale-summary trust, or workspace caches.
+The resolver follows named imports through TypeScript module resolution when they land on local source files. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, re-export barrels, summary files, stale-summary trust, or workspace caches.
 
 When those land, reports need to say whether a fact came from source, a trusted `given`, a source-proved imported contract, or a trusted summary. Do not let a checked-in summary launder a failed source proof.
 

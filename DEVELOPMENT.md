@@ -24,10 +24,10 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator, abstract domains, and proof rules
-- [src/modules.ts](./src/modules.ts) — source loading, relative import resolution, and export/import indexing
+- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [verify.ts](./verify.ts) — ad hoc JSON-report CLI
 - [test.ts](./test.ts) — pattern-suite runner
-- [import-pattern-helpers.ts](./import-pattern-helpers.ts) and [negative-import-helpers.ts](./negative-import-helpers.ts) — small imported-helper fixtures
+- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), and [negative-import-helpers.ts](./negative-import-helpers.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet

@@ -1,6 +1,8 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
 import {importedAddGap as addImportedGap, importedClampWidth, importedRows} from './import-pattern-helpers'
+import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
+import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
 
 /** @fit
  * given width: number[0, 1000]
@@ -24,4 +26,20 @@ export function importedHelperAliasContract(value: number) {
  */
 export function importedHelperWildcardContract(items: {height: number}[]) {
   return importedRows(items)
+}
+
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+export function importedHelperTsconfigAliasContract(width: number) {
+  return aliasImportedClampWidth(width)
+}
+
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+export function importedHelperTsxContract(width: number) {
+  return importedTsxClampWidth(width)
 }

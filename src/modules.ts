@@ -1,7 +1,8 @@
 import * as ts from 'typescript'
 import {parseFitSpecs, type FitSpec} from './parser.ts'
 
-export type ModuleProgram<TGlobal, TContract> = {
+export type FitModule<TGlobal> = {
+  sourceId: string
   file: string
   sourceFile: ts.SourceFile
   sourceText: string
@@ -9,11 +10,16 @@ export type ModuleProgram<TGlobal, TContract> = {
   functions: Map<string, ts.FunctionDeclaration>
   specsByFunction: Map<string, FitSpec[]>
   exports: Map<string, string>
-  imports: Map<string, ModuleImportedBinding<ModuleProgram<TGlobal, TContract>>>
-  contractCache: Map<string, TContract>
+  imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
 }
 
-export type ModuleImportedBinding<TModule> =
+export type FitProject<TGlobal> = {
+  entries: FitModule<TGlobal>[]
+  modules: Map<string, FitModule<TGlobal>>
+  configFile: string | null
+}
+
+export type FitImportBinding<TModule> =
   | {
       kind: 'resolved'
       exportedName: string
@@ -29,32 +35,67 @@ export type ModuleImportedBinding<TModule> =
 
 export type TopLevelGlobalReader<TGlobal> = (declaration: ts.VariableDeclaration) => {name: string; value: TGlobal} | null
 
-export async function loadFitPrograms<TGlobal, TContract>(
-  paths: string[],
-  contractCache: Map<string, TContract>,
-  readGlobal: TopLevelGlobalReader<TGlobal>,
-): Promise<ModuleProgram<TGlobal, TContract>[]> {
-  const modules = new Map<string, ModuleProgram<TGlobal, TContract>>()
-  const programs: ModuleProgram<TGlobal, TContract>[] = []
-  for (const path of paths) {
-    programs.push(await loadProgram(normalizePath(path), modules, contractCache, readGlobal))
-  }
-  return programs
+type ResolutionContext = {
+  compilerOptions: ts.CompilerOptions
+  configFile: string | null
+  cache: ts.ModuleResolutionCache
 }
 
-export function buildFitProgram<TGlobal, TContract>(
+type ResolvedImport =
+  | {kind: 'source'; sourceId: string}
+  | {kind: 'unresolved'; reason: string}
+
+export function loadFitProject<TGlobal>(
+  paths: string[],
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+): FitProject<TGlobal> {
+  const resolution = createResolutionContext(paths)
+  const modules = new Map<string, FitModule<TGlobal>>()
+  const entries = paths.map(path => loadModule(path, modules, resolution, readGlobal))
+  return {entries, modules, configFile: resolution.configFile}
+}
+
+export function buildFitSourceModule<TGlobal>(
   file: string,
   sourceText: string,
-  contractCache: Map<string, TContract>,
   readGlobal: TopLevelGlobalReader<TGlobal>,
-): ModuleProgram<TGlobal, TContract> {
-  const normalized = normalizePath(file)
-  const sourceFile = ts.createSourceFile(normalized, sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+): FitModule<TGlobal> {
+  const sourceId = toSourceId(file)
+  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
+}
+
+function loadModule<TGlobal>(
+  file: string,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+): FitModule<TGlobal> {
+  const sourceId = toSourceId(file)
+  const cacheKey = cacheKeyFor(sourceId)
+  const existing = modules.get(cacheKey)
+  if (existing != null) return existing
+
+  const sourceText = ts.sys.readFile(sourceId)
+  if (sourceText == null) throw new Error(`Could not read ${displayPath(sourceId)}`)
+
+  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
+  modules.set(cacheKey, module)
+  loadImports(module, modules, resolution, readGlobal)
+  return module
+}
+
+function parseFitModule<TGlobal>(
+  sourceId: string,
+  file: string,
+  sourceText: string,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+): FitModule<TGlobal> {
+  const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, ts.FunctionDeclaration>()
   const specsByFunction = new Map<string, FitSpec[]>()
   const exports = new Map<string, string>()
-  const imports = new Map<string, ModuleImportedBinding<ModuleProgram<TGlobal, TContract>>>()
+  const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
@@ -75,33 +116,16 @@ export function buildFitProgram<TGlobal, TContract>(
     }
   }
 
-  return {file: normalized, sourceFile, sourceText, globals, functions, specsByFunction, exports, imports, contractCache}
+  return {sourceId, file, sourceFile, sourceText, globals, functions, specsByFunction, exports, imports}
 }
 
-async function loadProgram<TGlobal, TContract>(
-  file: string,
-  modules: Map<string, ModuleProgram<TGlobal, TContract>>,
-  contractCache: Map<string, TContract>,
-  readGlobal: TopLevelGlobalReader<TGlobal>,
-): Promise<ModuleProgram<TGlobal, TContract>> {
-  const normalized = normalizePath(file)
-  const existing = modules.get(normalized)
-  if (existing != null) return existing
-
-  const sourceText = await Bun.file(normalized).text()
-  const program = buildFitProgram(normalized, sourceText, contractCache, readGlobal)
-  modules.set(normalized, program)
-  await loadRelativeImports(program, modules, contractCache, readGlobal)
-  return program
-}
-
-async function loadRelativeImports<TGlobal, TContract>(
-  program: ModuleProgram<TGlobal, TContract>,
-  modules: Map<string, ModuleProgram<TGlobal, TContract>>,
-  contractCache: Map<string, TContract>,
+function loadImports<TGlobal>(
+  module: FitModule<TGlobal>,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
 ) {
-  for (const statement of program.sourceFile.statements) {
+  for (const statement of module.sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
     const specifier = statement.moduleSpecifier.text
@@ -111,36 +135,66 @@ async function loadRelativeImports<TGlobal, TContract>(
     for (const element of namedBindings.elements) {
       const localName = element.name.text
       const exportedName = element.propertyName?.text ?? localName
-      if (!isRelativeSpecifier(specifier)) {
-        program.imports.set(localName, {
+      if (statement.importClause?.isTypeOnly === true || element.isTypeOnly) {
+        module.imports.set(localName, {
           kind: 'unresolved',
           exportedName,
           specifier,
-          reason: `Only relative named imports are supported for @fit helpers: ${specifier}`,
+          reason: `Type-only imports cannot provide @fit helpers: ${specifier}`,
         })
         continue
       }
 
-      const resolved = await resolveRelativeModule(program.file, specifier)
-      if (resolved == null) {
-        program.imports.set(localName, {
+      const resolved = resolveImport(module, specifier, resolution)
+      if (resolved.kind === 'unresolved') {
+        module.imports.set(localName, {
           kind: 'unresolved',
           exportedName,
           specifier,
-          reason: `Could not resolve ${specifier} from ${program.file}`,
+          reason: resolved.reason,
         })
         continue
       }
 
-      const importedProgram = await loadProgram(resolved, modules, contractCache, readGlobal)
-      program.imports.set(localName, {
+      const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal)
+      module.imports.set(localName, {
         kind: 'resolved',
         exportedName,
         specifier,
-        module: importedProgram,
+        module: importedModule,
       })
     }
   }
+}
+
+function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext): ResolvedImport {
+  const result = ts.resolveModuleName(specifier, module.sourceId, resolution.compilerOptions, ts.sys, resolution.cache)
+  const resolved = result.resolvedModule
+  if (resolved == null) {
+    return {
+      kind: 'unresolved',
+      reason: `Could not resolve ${specifier} from ${module.file} with TypeScript module resolution`,
+    }
+  }
+  if (resolved.isExternalLibraryImport) {
+    return {
+      kind: 'unresolved',
+      reason: `External package imports are not source-proved @fit helpers: ${specifier}`,
+    }
+  }
+  if (isDeclarationExtension(resolved.extension)) {
+    return {
+      kind: 'unresolved',
+      reason: `Declaration-only imports are not source-proved @fit helpers: ${specifier}`,
+    }
+  }
+  if (!isSupportedSourceExtension(resolved.extension)) {
+    return {
+      kind: 'unresolved',
+      reason: `Only TypeScript source imports are supported for @fit helpers: ${specifier}`,
+    }
+  }
+  return {kind: 'source', sourceId: normalizePath(resolved.resolvedFileName)}
 }
 
 function collectLocalExportDeclaration(statement: ts.ExportDeclaration, exports: Map<string, string>) {
@@ -156,54 +210,95 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
   return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
-function isRelativeSpecifier(specifier: string) {
-  return specifier.startsWith('./') || specifier.startsWith('../')
-}
-
-async function resolveRelativeModule(fromFile: string, specifier: string): Promise<string | null> {
-  const basePath = normalizePath(joinPath(dirname(fromFile), specifier))
-  for (const candidate of relativeModuleCandidates(basePath)) {
-    if (await canReadFile(candidate)) return candidate
+function createResolutionContext(paths: string[]): ResolutionContext {
+  const configFile = findConfigFile(paths)
+  const compilerOptions = configFile == null ? defaultCompilerOptions() : readCompilerOptions(configFile)
+  return {
+    compilerOptions,
+    configFile,
+    cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
   }
-  return null
 }
 
-function relativeModuleCandidates(basePath: string): string[] {
-  if (basePath.endsWith('.ts')) return [basePath]
-  return [`${basePath}.ts`, `${basePath}/index.ts`]
-}
-
-async function canReadFile(path: string): Promise<boolean> {
-  try {
-    await Bun.file(path).text()
-    return true
-  } catch {
-    return false
+function findConfigFile(paths: string[]): string | null {
+  for (const path of paths) {
+    const sourceId = toSourceId(path)
+    const configFile = ts.findConfigFile(dirname(sourceId), fileExists, 'tsconfig.json')
+    if (configFile != null) return normalizePath(configFile)
   }
+  const configFile = ts.findConfigFile(cwd(), fileExists, 'tsconfig.json')
+  return configFile == null ? null : normalizePath(configFile)
+}
+
+function readCompilerOptions(configFile: string): ts.CompilerOptions {
+  const read = ts.readConfigFile(configFile, readFile)
+  if (read.error != null) return defaultCompilerOptions()
+  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configFile))
+  return parsed.options
+}
+
+function defaultCompilerOptions(): ts.CompilerOptions {
+  return {
+    target: ts.ScriptTarget.ESNext,
+    module: ts.ModuleKind.ESNext,
+    moduleResolution: ts.ModuleResolutionKind.Bundler,
+    allowImportingTsExtensions: true,
+    jsx: ts.JsxEmit.Preserve,
+  }
+}
+
+function scriptKindForFile(file: string): ts.ScriptKind {
+  if (file.endsWith('.tsx')) return ts.ScriptKind.TSX
+  if (file.endsWith('.jsx')) return ts.ScriptKind.JSX
+  if (file.endsWith('.json')) return ts.ScriptKind.JSON
+  return ts.ScriptKind.TS
+}
+
+function isDeclarationExtension(extension: string) {
+  return extension === ts.Extension.Dts || extension === ts.Extension.Dmts || extension === ts.Extension.Dcts
+}
+
+function isSupportedSourceExtension(extension: string) {
+  return extension === ts.Extension.Ts
+    || extension === ts.Extension.Tsx
+    || extension === ts.Extension.Mts
+    || extension === ts.Extension.Cts
+}
+
+function toSourceId(path: string) {
+  return normalizePath(ts.sys.resolvePath(path))
+}
+
+function displayPath(sourceId: string) {
+  const root = cwd()
+  if (sourceId === root) return '.'
+  if (sourceId.startsWith(`${root}/`)) return sourceId.slice(root.length + 1)
+  return sourceId
+}
+
+function cwd() {
+  return normalizePath(ts.sys.getCurrentDirectory())
 }
 
 function dirname(path: string) {
-  const index = path.lastIndexOf('/')
-  return index < 0 ? '' : path.slice(0, index)
+  const normalized = normalizePath(path)
+  const index = normalized.lastIndexOf('/')
+  return index < 0 ? '' : normalized.slice(0, index)
 }
 
-function joinPath(base: string, path: string) {
-  if (base.length === 0) return path
-  if (path.length === 0) return base
-  return `${base}/${path}`
+function normalizePath(path: string) {
+  return path.replace(/\\/g, '/')
 }
 
-function normalizePath(path: string): string {
-  const absolute = path.startsWith('/')
-  const parts: string[] = []
-  for (const part of path.split('/')) {
-    if (part.length === 0 || part === '.') continue
-    if (part === '..') {
-      if (parts.length > 0 && parts.at(-1) !== '..') parts.pop()
-      else if (!absolute) parts.push(part)
-      continue
-    }
-    parts.push(part)
-  }
-  return `${absolute ? '/' : ''}${parts.join('/')}`
+function cacheKeyFor(path: string) {
+  const normalized = normalizePath(path)
+  return ts.sys.useCaseSensitiveFileNames ? normalized : normalized.toLowerCase()
+}
+
+function fileExists(file: string) {
+  return ts.sys.fileExists(file)
+}
+
+function readFile(file: string) {
+  return ts.sys.readFile(file)
 }

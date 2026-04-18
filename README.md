@@ -291,9 +291,9 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named relative imports like `./layout-math` to nearby `.ts` files. It proves the imported function's own contract from source, then uses that contract at the call site. It does not inline imported function bodies.
+Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It does not inline imported function bodies.
 
-This is intentionally small: no packages, tsconfig paths, namespace imports, default imports, or re-export barrels yet.
+This is intentionally small: package imports, declaration-only imports, namespace imports, default imports, and re-export barrels stay opaque for now.
 
 ## Arrays
 
@@ -463,7 +463,7 @@ The checker understands a small pure subset:
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
-- named relative imports of exported `@fit` function declarations
+- named imports of exported `@fit` function declarations when TypeScript resolves them to local source
 - object literals with normal or shorthand properties
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
@@ -479,7 +479,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, tsconfig path aliases, namespace/default imports, or re-export barrels
+- package imports, declaration-only imports, namespace/default imports, or re-export barrels
 - classes, methods, async, generators
 - destructured params, rest params, default params
 - TS type narrowing, generics, overloads

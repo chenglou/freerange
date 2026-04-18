@@ -271,3 +271,5 @@ UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.
   given can only describe inputs; rows is not an input here
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: number[0, 320]
   Imported function unannotatedImportedClamp from ./negative-import-helpers has no @fit contract
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: result: number[0, 320]
+  Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution

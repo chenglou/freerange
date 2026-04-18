@@ -1,9 +1,9 @@
 import * as ts from 'typescript'
 import {
-  buildFitProgram,
-  loadFitPrograms,
-  type ModuleImportedBinding,
-  type ModuleProgram,
+  buildFitSourceModule,
+  loadFitProject,
+  type FitImportBinding,
+  type FitModule,
 } from './modules.ts'
 import {
   domainPathSyntheticName,
@@ -46,9 +46,9 @@ export type FitCheckReport = {
   }
 }
 
-type Program = ModuleProgram<NumberValue, FunctionContractProof>
+type Program = FitModule<NumberValue>
 
-type ImportedBinding = ModuleImportedBinding<Program>
+type ImportedBinding = FitImportBinding<Program>
 
 type FunctionContractProof =
   | {status: 'verifying'}
@@ -107,6 +107,7 @@ type EvalContext = {
   stack: string[]
   checks: FitCheck[]
   assumptions: LinearConstraint[]
+  contractCache: Map<string, FunctionContractProof>
 }
 
 const maxInlineDepth = 12
@@ -149,8 +150,8 @@ type NumberCase = {
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   const checks: FitCheck[] = []
   const contractCache = new Map<string, FunctionContractProof>()
-  const entryPrograms = await loadFitPrograms(paths, contractCache, readTopLevelNumberGlobal)
-  for (const program of entryPrograms) checks.push(...verifyProgram(program))
+  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  for (const program of project.entries) checks.push(...verifyProgram(program, contractCache))
 
   const summary = {
     pass: checks.filter(check => check.status === 'pass').length,
@@ -166,8 +167,8 @@ export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
 }
 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
-  const program = buildFitProgram(file, sourceText, new Map<string, FunctionContractProof>(), readTopLevelNumberGlobal)
-  return verifyProgram(program)
+  const program = buildFitSourceModule(file, sourceText, readTopLevelNumberGlobal)
+  return verifyProgram(program, new Map<string, FunctionContractProof>())
 }
 
 function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
@@ -180,14 +181,14 @@ function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: s
   }
 }
 
-function verifyProgram(program: Program): FitCheck[] {
+function verifyProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
   for (const statement of program.sourceFile.statements) {
     if (!ts.isFunctionDeclaration(statement)) continue
     if (statement.name == null) continue
     const specs = program.specsByFunction.get(statement.name.text) ?? []
     if (specs.length === 0) continue
-    checks.push(...verifyFunctionSpecs(program.file, program, statement, specs))
+    checks.push(...verifyFunctionSpecs(program.file, program, statement, specs, contractCache))
   }
 
   return checks
@@ -198,6 +199,7 @@ function verifyFunctionSpecs(
   program: Program,
   fn: ts.FunctionDeclaration,
   specs: FitSpec[],
+  contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
   const functionName = fn.name?.text ?? '<anonymous>'
   const env = new Map<string, Value>()
@@ -216,15 +218,15 @@ function verifyFunctionSpecs(
     applyGivenRangeSpec(env, given.spec)
   }
 
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens)
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   checks.push(...impossibleChecks)
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions}
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
   const result = evaluateFunctionBody(fn, context)
   checks.push(...context.checks)
 
   for (const spec of specs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
-    checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions))
+    checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions, contractCache))
   }
 
   return checks
@@ -313,10 +315,11 @@ function collectGivenAssumptions(
   env: Map<string, Value>,
   inputRoots: string[],
   givens: TrustedGivenSpec[],
+  contractCache: Map<string, FunctionContractProof>,
 ): {assumptions: LinearConstraint[]; checks: FitCheck[]} {
   const assumptions: LinearConstraint[] = []
   const checks: FitCheck[] = []
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions}
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
   for (const given of givens) {
     if (given.kind === 'range') {
       const spec = given.spec
@@ -540,11 +543,12 @@ function verifyCheckSpec(
   spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
+  contractCache: Map<string, FunctionContractProof>,
 ): FitCheck {
   const env = new Map(baseEnv)
   env.set('result', result)
   const inputRoots = [...baseEnv.keys(), 'result']
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions}
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
 
   if (spec.kind === 'check-range') {
     const value = evaluateSpecExpression(spec.expression, context)
@@ -1089,7 +1093,15 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
     if (given.kind !== 'range') continue
     applyGivenRangeSpec(context.env, given.spec)
   }
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(context.file, context.program, functionName, context.env, context.inputRoots, trustedGivens)
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(
+    context.file,
+    context.program,
+    functionName,
+    context.env,
+    context.inputRoots,
+    trustedGivens,
+    context.contractCache,
+  )
   context.checks.push(...impossibleChecks)
   context.assumptions = mergeAssumptions(context.assumptions, assumptions)
 }
@@ -1109,6 +1121,7 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
       spec,
       context.checks,
       context.assumptions,
+      context.contractCache,
     ))
   }
 }
@@ -1488,6 +1501,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     stack: [...context.stack, functionName],
     checks: context.checks,
     assumptions: context.assumptions,
+    contractCache: context.contractCache,
   })
 }
 
@@ -1507,14 +1521,14 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   if (specs.length === 0) return unknown(`Imported function ${binding.exportedName} from ${binding.specifier} has no @fit contract`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
 
-  const proof = verifyFunctionContract(binding.module, localName)
+  const proof = verifyFunctionContract(binding.module, localName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
   const obligations = verifyCallGivenSpecs(binding.exportedName, binding.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
-  return valueFromFunctionContract(binding.exportedName, binding.module, fn, specs, argumentValues)
+  return valueFromFunctionContract(binding.exportedName, binding.module, fn, specs, argumentValues, context.contractCache)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -1617,9 +1631,10 @@ function extentEndFailureReason(targetText: string, emptyExpr: string, target: A
   return lines.join('\n')
 }
 
-function verifyFunctionContract(program: Program, functionName: string): FunctionContractProof {
-  const key = `${program.file}#${functionName}`
-  const cached = program.contractCache.get(key)
+function verifyFunctionContract(program: Program, functionName: string, contractCache: Map<string, FunctionContractProof>): FunctionContractProof {
+  const key = `${program.sourceId}#${functionName}`
+  const displayKey = `${program.file}#${functionName}`
+  const cached = contractCache.get(key)
   if (cached != null) {
     if (cached.status === 'verifying') {
       return {
@@ -1629,7 +1644,7 @@ function verifyFunctionContract(program: Program, functionName: string): Functio
           functionName,
           text: '@fit contract',
           status: 'unknown',
-          reason: `cyclic imported contract dependency at ${key}`,
+          reason: `cyclic imported contract dependency at ${displayKey}`,
         }],
       }
     }
@@ -1649,17 +1664,17 @@ function verifyFunctionContract(program: Program, functionName: string): Functio
         reason: `No @fit contract for ${functionName}`,
       }],
     }
-    program.contractCache.set(key, proof)
+    contractCache.set(key, proof)
     return proof
   }
 
-  program.contractCache.set(key, {status: 'verifying'})
-  const checks = verifyFunctionSpecs(program.file, program, fn, specs)
+  contractCache.set(key, {status: 'verifying'})
+  const checks = verifyFunctionSpecs(program.file, program, fn, specs, contractCache)
   const status = checks.some(check => check.status === 'fail') ? 'fail'
     : checks.some(check => check.status === 'unknown') ? 'unknown'
       : 'pass'
   const proof: FunctionContractProof = {status, checks}
-  program.contractCache.set(key, proof)
+  contractCache.set(key, proof)
   return proof
 }
 
@@ -1677,6 +1692,7 @@ function valueFromFunctionContract(
   fn: ts.FunctionDeclaration,
   specs: FitSpec[],
   argumentValues: Value[],
+  contractCache: Map<string, FunctionContractProof>,
 ): Value {
   const env = new Map<string, Value>()
   for (const [name, value] of program.globals) env.set(name, value)
@@ -1695,6 +1711,7 @@ function valueFromFunctionContract(
     stack: [functionName],
     checks: [],
     assumptions: [],
+    contractCache,
   }
 
   for (const spec of specs) {
