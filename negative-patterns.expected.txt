@@ -235,6 +235,16 @@ FAIL negative-patterns.ts:negativeMapRowsNeedFieldDomain: result.rows[].height: 
     trusted from function @fit: given items.length: int[0, 50]
     trusted from function @fit: given items[].height: number[-40, 40]
   missing: items[].height >= 0
+FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: result.cols: int[1, 6]
+  range was int[1, 7], expected inside int[1, 6]
+  need: int[1, 7] inside int[1, 6]
+  known:
+    int[1, 7]
+    source-proved helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: result >= min
+    source-proved helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: result <= max
+    int[1, 6] as 1..6
+    trusted from function @fit: given containerWidth: number[320, 2000]
+  missing: int[1, 7] <= 6
 FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: result.rows[].index: int[1, 49]
   range was int[0, 49] as rows[].index, expected inside int[1, 49]
   need: rows[].index inside int[1, 49]
@@ -336,3 +346,11 @@ FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: 
     number[0, 100] as 0..100
     trusted from function @fit: given width: number[0, 1000]
   missing: result <= 100
+UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: result == width + importedChromeX + 1
+  number[16, 1016] as (width + importedChromeX) == number[17, 1017] as ((width + importedChromeX) + 1) was not proven
+  need: (width + importedChromeX) == ((width + importedChromeX) + 1)
+  known:
+    number[16, 1016] as (width + importedChromeX)
+    number[17, 1017] as ((width + importedChromeX) + 1)
+    trusted from function @fit: given width: number[0, 1000]
+  missing: given (width + importedChromeX) == ((width + importedChromeX) + 1)

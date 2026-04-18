@@ -1,5 +1,6 @@
 const importPatternCap = 320
 const importPatternGap = 4
+export const importedChromeX = 16
 
 /** @fit
  * given width: number[0, 1000]

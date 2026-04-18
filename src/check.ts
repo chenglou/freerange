@@ -159,6 +159,10 @@ type ImportedContractSource = {
   sourceFunctionName: string
 }
 
+type FunctionContractSource = ImportedContractSource & {
+  kind: 'imported' | 'local'
+}
+
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   const checks: FitCheck[] = []
   const contractCache = new Map<string, FunctionContractProof>()
@@ -214,8 +218,7 @@ function verifyFunctionSpecs(
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
   const functionName = fn.name?.text ?? '<anonymous>'
-  const env = new Map<string, Value>()
-  for (const [name, value] of program.globals) env.set(name, value)
+  const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
   for (const param of fn.parameters) {
@@ -251,6 +254,25 @@ function functionInputRoots(program: Program, fn: ts.FunctionDeclaration): strin
     roots.push(param.name.text)
   }
   return [...new Set(roots)]
+}
+
+function programGlobalEnv(program: Program): Map<string, Value> {
+  const env = new Map<string, Value>()
+  for (const [name, value] of program.globals) env.set(name, value)
+  for (const [localName, binding] of program.imports) {
+    const imported = importedGlobalValue(localName, binding)
+    if (imported != null) env.set(localName, imported)
+  }
+  return env
+}
+
+function importedGlobalValue(localName: string, binding: ImportedBinding): NumberValue | null {
+  if (binding.kind === 'unresolved') return null
+  const exported = resolveFitExport(binding.module, binding.exportedName)
+  if (exported.kind === 'unresolved') return null
+  const value = exported.module.globals.get(exported.localName)
+  if (value == null) return null
+  return numberValue(value.min, value.max, value.isInteger, localName, value.linear, null, value.provenance)
 }
 
 function validateGivenSpecs(
@@ -1684,15 +1706,14 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
   verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
 
-  const env = new Map<string, Value>()
-  for (const [name, value] of context.program.globals) env.set(name, value)
+  const env = programGlobalEnv(context.program)
   for (let i = 0; i < fn.parameters.length; i++) {
     const param = fn.parameters[i]!
     if (!ts.isIdentifier(param.name)) return unknown(`Unsupported parameter pattern in ${functionName}`)
     env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for ${functionName}`))
   }
 
-  return evaluateFunctionBody(fn, {
+  const result = evaluateFunctionBody(fn, {
     program: context.program,
     file: context.file,
     env,
@@ -1702,6 +1723,17 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     assumptions: context.assumptions,
     contractCache: context.contractCache,
   })
+  const specs = context.program.specsByFunction.get(functionName) ?? []
+  if (specs.length === 0) return result
+
+  const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
+  if (proof.status !== 'pass') return result
+
+  return valueWithFunctionContractSummary(functionName, context.program, fn, specs, argumentValues, context.contractCache, {
+    kind: 'local',
+    sourceFile: context.program.file,
+    sourceFunctionName: functionName,
+  }, result)
 }
 
 function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
@@ -1729,7 +1761,7 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
-  return valueFromFunctionContract(functionName, exported.module, fn, specs, argumentValues, context.contractCache, source)
+  return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, unknownParamValue('result', specs))
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -1887,23 +1919,23 @@ function importedContractFailureReason(binding: Extract<ImportedBinding, {kind: 
   return `Imported contract ${binding.exportedName} from ${binding.specifier} was not proven\n${failed.file}:${failed.functionName}: ${failed.text}${reason}`
 }
 
-function valueFromFunctionContract(
+function valueWithFunctionContractSummary(
   functionName: string,
   program: Program,
   fn: ts.FunctionDeclaration,
   specs: FitSpec[],
   argumentValues: Value[],
   contractCache: Map<string, FunctionContractProof>,
-  source: ImportedContractSource,
+  source: FunctionContractSource,
+  result: Value,
 ): Value {
-  const env = new Map<string, Value>()
-  for (const [name, value] of program.globals) env.set(name, value)
+  const env = programGlobalEnv(program)
   for (let i = 0; i < fn.parameters.length; i++) {
     const param = fn.parameters[i]!
     if (!ts.isIdentifier(param.name)) return unknown(`Unsupported parameter pattern in imported function ${functionName}`)
     env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for imported function ${functionName}`))
   }
-  env.set('result', unknownParamValue('result', specs))
+  env.set('result', result)
 
   const context: EvalContext = {
     program,
@@ -1924,7 +1956,7 @@ function valueFromFunctionContract(
   return env.get('result') ?? unknown(`Imported function ${functionName} contract did not describe result`)
 }
 
-function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: ImportedContractSource) {
+function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: FunctionContractSource) {
   if (simpleResultPathText(spec.expression) == null) return
   setSummaryPathValue(
     env,
@@ -1936,7 +1968,7 @@ function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {
       spec.expression,
       linearVariable(linearNameForExpression(spec.expression)),
       null,
-      [importedContractFact(source, spec.text)],
+      [sourceProvedContractFact(source, spec.text)],
     ),
   )
 }
@@ -1945,11 +1977,11 @@ function applySummaryComparisonSpec(
   env: Map<string, Value>,
   spec: Extract<FitSpec, {kind: 'check-comparison'}>,
   context: EvalContext,
-  source: ImportedContractSource,
+  source: FunctionContractSource,
 ) {
   const leftPath = simpleResultPathText(spec.left)
   const rightPath = simpleResultPathText(spec.right)
-  const fact = importedContractFact(source, spec.text)
+  const fact = sourceProvedContractFact(source, spec.text)
   if (leftPath != null && rightPath == null) {
     const right = evaluateSpecExpression(spec.right, context)
     if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact)
@@ -1988,8 +2020,9 @@ function applySummaryComparisonToPath(
   }
 }
 
-function importedContractFact(source: ImportedContractSource, text: string) {
-  return `source-proved imported contract: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
+function sourceProvedContractFact(source: FunctionContractSource, text: string) {
+  const kind = source.kind === 'local' ? 'source-proved helper contract' : 'source-proved imported contract'
+  return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }
 
 function simpleResultPathText(text: string): string | null {
@@ -2027,9 +2060,8 @@ function verifyCallGivenSpecs(
 ) {
   const specs = calleeProgram.specsByFunction.get(fn.name?.text ?? functionName) ?? []
   const callText = `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
-  const env = new Map<string, Value>()
+  const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
-  for (const [name, value] of calleeProgram.globals) env.set(name, value)
   for (let i = 0; i < fn.parameters.length; i++) {
     const param = fn.parameters[i]!
     if (!ts.isIdentifier(param.name)) continue

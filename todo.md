@@ -24,7 +24,7 @@ sections[].rows[].height <= maxHeight
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
-- Named local imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
+- Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next
 
@@ -32,7 +32,7 @@ sections[].rows[].height <= maxHeight
    `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Next useful step: catch more contradictory input promises before they make later checks look proven.
 
 2. **Make helper/import report lines clearer.**
-   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, or `source-proved imported contract`. Next report work is keeping helper/import failures easy to scan without adding new public syntax: unsupported imports, missing contracts, and any future trusted summaries.
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `source-proved helper contract`, or `source-proved imported contract`. Next report work is keeping helper/import failures easy to scan without adding new public syntax: unsupported imports, missing contracts, and any future trusted summaries.
 
 3. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
@@ -111,7 +111,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 
 ## Current Limitations
 
-- Import support is deliberately tiny: named imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, and explicit named re-exports. Packages, declaration-only imports, namespace/default imports, wildcard barrels, summary files, and stale-summary policy are still out.
+- Import support is deliberately tiny: named imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, exported numeric constants, and explicit named re-exports. Packages, declaration-only imports, namespace/default imports, wildcard barrels, summary files, and stale-summary policy are still out.
 - No public views yet.
 - Impossible `given` checks are still small: empty ranges and direct contradictions against earlier ranges are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.

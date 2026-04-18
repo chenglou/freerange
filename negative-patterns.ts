@@ -364,6 +364,27 @@ export function negativeMapRowsNeedFieldDomain(items: {height: number}[]) {
 }
 
 /** @fit
+ * given min: number[-1000, 1000]
+ * given value: number[-1000, 1000]
+ * given max: number[-1000, 1000]
+ * given max >= min
+ * result >= min
+ * result <= max
+ */
+function negativeConditionalClampLayoutValue(min: number, value: number, max: number) {
+  return value > max ? max : value < min ? min : value
+}
+
+/** @fit
+ * given containerWidth: number[320, 2000]
+ * result.cols: int[1, 6]
+ */
+export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number) {
+  const cols = negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
+  return {cols}
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given items[].height: number[0, 40]
  * result.rows[].index: int[1, 49]

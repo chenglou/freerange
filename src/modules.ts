@@ -150,6 +150,9 @@ function parseFitModule<TGlobal>(
     }
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
+      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword) && ts.isIdentifier(declaration.name)) {
+        exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
+      }
       const global = readGlobal(declaration)
       if (global == null) continue
       globals.set(global.name, global.value)

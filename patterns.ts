@@ -512,6 +512,27 @@ export function userlandClamp(value: number) {
 }
 
 /** @fit
+ * given min: number[-1000, 1000]
+ * given value: number[-1000, 1000]
+ * given max: number[-1000, 1000]
+ * given max >= min
+ * result >= min
+ * result <= max
+ */
+function conditionalClampLayoutValue(min: number, value: number, max: number) {
+  return value > max ? max : value < min ? min : value
+}
+
+/** @fit
+ * given containerWidth: number[320, 2000]
+ * result.cols: int[1, 7]
+ */
+export function localHelperPostconditionRange(containerWidth: number) {
+  const cols = conditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
+  return {cols}
+}
+
+/** @fit
  * given items.length: int[0, 100]
  * result: int[0, 100]
  */

@@ -12,7 +12,7 @@ const firstWaveDemoPaths = [
   '../pretext/pages/demos/wrap-geometry.ts',
 ]
 
-const expectedPassCount = 70
+const expectedPassCount = 72
 const report = await verifyFitFiles(firstWaveDemoPaths)
 
 console.log(JSON.stringify(report, null, 2))

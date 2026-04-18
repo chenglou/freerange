@@ -104,7 +104,7 @@ function centeredOffset(containee: number, container: number) {
 }
 ```
 
-Top-level `given` can name function parameters and top-level numeric constants. It cannot name `result`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
+Top-level `given` can name function parameters and top-level numeric constants, including named imported numeric constants from local source. It cannot name `result`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
 
 Range `given` lines name one input path:
 
@@ -292,7 +292,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven, result facts like `result >= min` and `result <= max` also narrow the caller's local value.
 
 Imported helpers use their exported `@fit` contract as the module boundary:
 
@@ -318,7 +318,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It does not inline imported function bodies.
+Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
 
 Explicit named re-export barrels work too:
 
@@ -566,7 +566,7 @@ The checker understands a small pure subset:
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
-- named imports of exported `@fit` function declarations when TypeScript resolves them to local source
+- named imports of exported numeric constants and `@fit` function declarations when TypeScript resolves them to local source
 - explicit named re-exports of source-proved `@fit` function declarations
 - object literals with normal or shorthand properties
 - array literals, spread, `.length`, bounded indexing

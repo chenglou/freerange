@@ -3,7 +3,7 @@
 
 import {unannotatedImportedClamp} from './negative-import-helpers'
 import {barrelClampWidth} from './import-pattern-barrel'
-import {importedClampWidth} from './import-pattern-helpers'
+import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
 // @ts-expect-error unresolved import fixture for Freerange's TypeScript resolver boundary.
 import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
@@ -46,4 +46,12 @@ export function negativeImportedHelperContractTooWide(width: number) {
  */
 export function negativeImportedHelperReExportContractTooWide(width: number) {
   return barrelClampWidth(width)
+}
+
+/** @fit
+ * given width: number[0, 1000]
+ * result == width + importedChromeX + 1
+ */
+export function negativeImportedNumericConstantMismatch(width: number) {
+  return width + importedChromeX
 }
