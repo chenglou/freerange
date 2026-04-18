@@ -84,7 +84,7 @@ UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: result.scaled 
     trusted from function @fit: given available: 0..1000
     trusted from function @fit: given scale: -2..2
     trusted from function @fit: given content <= available
-  missing: given (content * scale) <= (available * scale)
+  missing: scale >= 0
 UNKNOWN negative-patterns.ts:negativeModuloNeedsPositiveCount: result < count
   Modulo is only supported for non-negative values and positive divisors
 UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: result >= minWidth
@@ -329,6 +329,8 @@ FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
   missing: given width <= 50
 FAIL negative-patterns.ts:negativeGivenComparisonsCannotBothHold: given width <= 50
   no input can satisfy both given width >= 100 and given width <= 50
+FAIL negative-patterns.ts:negativeGivenComparisonsCannotTransitivelyHold: given right > left
+  no input can satisfy this with the earlier given lines; they already rule out right > left
 UNKNOWN negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: given width + 1: 0..10
   given range must name one input path, not a derived expression
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0

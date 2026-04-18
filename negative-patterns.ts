@@ -522,6 +522,15 @@ export function negativeGivenComparisonsCannotBothHold(width: number) {
 }
 
 /** @fit
+ * given left >= middle
+ * given middle >= right
+ * given right > left
+ */
+export function negativeGivenComparisonsCannotTransitivelyHold(left: number, middle: number, right: number) {
+  return {left, middle, right}
+}
+
+/** @fit
  * given width + 1: 0..10
  */
 export function negativeGivenRangeCannotDescribeDerivedExpression(width: number) {

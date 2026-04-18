@@ -69,6 +69,7 @@ import {
   conditionalRunningSumFacts,
   flipComparison,
   nonNegativeFacts,
+  proveNonNegativeFromFacts,
   proveComparison,
   proveComparisonPlain,
   proveRange,
@@ -459,6 +460,9 @@ function givenComparisonContradictionReason(fact: LinearConstraint, assumptions:
       const nextText = fact.text ?? 'this given line'
       return `no input can satisfy both ${earlierText} and ${nextText}`
     }
+    if (nonNegativeFactConflictsWithEarlierFacts(next, earlierFacts)) {
+      return `no input can satisfy this with the earlier given lines; they already rule out ${givenFactLabel(fact.text)}`
+    }
   }
   return null
 }
@@ -476,6 +480,14 @@ function nonNegativeFactsConflict(left: NonNegativeFact, right: NonNegativeFact)
   if (combined == null || combined.terms.size > 0) return false
   if (combined.constant < -linearEpsilon) return true
   return (left.strict || right.strict) && combined.constant <= linearEpsilon
+}
+
+function nonNegativeFactConflictsWithEarlierFacts(fact: NonNegativeFact, earlierFacts: NonNegativeFact[]) {
+  return proveNonNegativeFromFacts(linearScaleExact(fact.diff, -1), !fact.strict, earlierFacts)
+}
+
+function givenFactLabel(text: string | undefined) {
+  return text?.startsWith('given ') === true ? text.slice('given '.length) : text ?? 'this comparison'
 }
 
 function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | null {

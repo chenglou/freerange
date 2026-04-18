@@ -154,6 +154,15 @@ function impossible(width: number) {
 function impossibleComparison(width: number) {
   return width
 }
+
+/** @fit
+ * given left >= middle
+ * given middle >= right
+ * given right > left
+ */
+function impossibleChain(left: number, middle: number, right: number) {
+  return {left, middle, right}
+}
 ```
 
 Loop-level `given` works the same way, but is trusted from that point in the function forward.
@@ -602,6 +611,7 @@ The checker understands a small pure subset:
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - one guarded conditional push inside a `for...of`
+- shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 
 Anything outside this surface should become `unknown`, not a fake proof.
@@ -622,7 +632,7 @@ Not supported yet:
 - Pretext text facts
 - table/grid/flex column negotiation
 - general loops
-- general nonlinear arithmetic
+- general nonlinear arithmetic beyond the small named shapes above
 
 When something on this list earns its way in, add the smallest useful pattern first. Prefer one positive example and one negative message.
 

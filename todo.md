@@ -29,10 +29,10 @@ sections[].rows[].height <= maxHeight
 ## Do Next
 
 1. **Keep tightening input honesty.**
-   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, and simple comparison-only contradictions like `given width >= 100` plus `given width <= 50` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
+   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, and small chained contradictions like `left >= middle`, `middle >= right`, `right > left` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
 
 2. **Keep helper/import report lines boring and precise.**
-   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `branch fact from code`, `source-proved helper contract`, or `source-proved imported contract`. Import boundary failures are bucketed as unavailable contracts, unsupported import shapes, or imported contracts that failed in source before the caller could trust them. Call precondition failures have their own `requires ...` line now; next report work is likely sharper missing-fact text for nonlinear expressions.
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `branch fact from code`, `source-proved helper contract`, or `source-proved imported contract`. Import boundary failures are bucketed as unavailable contracts, unsupported import shapes, or imported contracts that failed in source before the caller could trust them. Shared product/division reports point at the missing sign or base comparison when possible, e.g. `scale >= 0` instead of repeating `content * scale <= available * scale`. Next report work is likely sharper missing-fact text for rounding expressions.
 
 3. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
@@ -114,7 +114,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Import support is deliberately tiny: named imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, exported numeric constants, and explicit named re-exports. Packages, declaration-only imports, namespace/default imports, wildcard barrels, summary files, and stale-summary policy are still out.
 - Import failure reports distinguish unavailable contracts, unsupported import shapes, and imported contracts that failed in source.
 - No public views yet.
-- Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, and simple opposing linear comparison bounds are caught, not every possible inconsistent set.
+- Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, simple opposing linear comparison bounds, and short chained linear contradictions are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.

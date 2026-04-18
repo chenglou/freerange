@@ -180,6 +180,14 @@ Reports should separate:
 - trusted summary, if that ever exists
 - unsupported
 
+For shared-factor arithmetic, missing facts should name the small human obligation. If the code has:
+
+```ts
+content * scale <= available * scale
+```
+
+and `content <= available` is known, the missing line should be `scale >= 0`, not a restatement of the whole product comparison.
+
 Also add vacuity warnings. Inconsistent assumptions should not make everything look beautifully proved.
 
 ## Atom Admission
@@ -216,6 +224,7 @@ Before adding an atom, require:
 - Read source by default. Use summaries only for genuinely opaque helper boundaries, and make the report say which helper was trusted.
 - Use mutation/red probes as research signals. They are good for finding holes in the proof surface, but they should not become verifier guarantees.
 - `life-calendar` was a useful hard numeric example: `**`, `Math.sqrt`, `Math.ceil`, integer facts after `ceil(life / countX)`, and half-open grid hit testing.
+- Bad `given` lines are not harmless. Reject small linear contradictions before proof, including chained comparisons, so the rest of the checker never gets to prove from an empty input set.
 
 ## Did Not Earn Itself
 
