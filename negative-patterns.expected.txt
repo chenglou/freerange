@@ -246,6 +246,25 @@ FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: result.rows[].index
     read from code: rows[].index >= 0
     read from code: rows[].index < items.length
   missing: rows[].index >= 1
+UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: result.bottom >= params.top
+  number[-Infinity, Infinity] as runningSum(params.top, params.items.length, params.items[].height) >= number[0, 1000] as params.top was not proven
+  need: runningSum(params.top, params.items.length, params.items[].height) >= params.top
+  known:
+    number[-Infinity, Infinity] as runningSum(params.top, params.items.length, params.items[].height)
+    number[0, 1000] as params.top
+    trusted from function @fit: given params.items.length: int[1, 50]
+    trusted from function @fit: given params.items[].height: number[-40, 40]
+    trusted from function @fit: given params.top: number[0, 1000]
+    read from code: rows[].index >= 0
+    read from code: rows[].index < params.items.length
+  missing: given runningSum(params.top, params.items.length, params.items[].height) >= params.top
+UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: nondecreasing(result.rows.top)
+  nondecreasing(result.rows.top) was not inferred
+  need: every next .top >= previous .top
+  known:
+    row advance for .top: number[-40, 40] as params.items[].height
+    sequence facts: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(params.top, params.items.length, params.items[].height)
+  missing: given params.items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeConditionalPushIsNotSameLength: result.rows.length == items.length
   int[0, 50] as rows.length == int[0, 50] as items.length was not proven
   need: rows.length == items.length

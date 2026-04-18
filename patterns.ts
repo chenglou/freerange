@@ -386,6 +386,29 @@ export function indexedLoopRows(items: {height: number}[]) {
 }
 
 /** @fit
+ * given params.items.length: int[1, 50]
+ * given params.items[].height: number[0, 40]
+ * given params.top: number[0, 1000]
+ * result.rows.length == params.items.length
+ * result.rows[].index: int[0, 49]
+ * result.rows[].index < params.items.length
+ * result.rows[].height: number[0, 40]
+ * result.bottom >= params.top
+ * nondecreasing(result.rows.top)
+ * lastEnd(result.rows) == result.bottom
+ */
+export function indexedLoopAliasRows(params: {items: {height: number}[]; top: number}) {
+  const rows = []
+  let y = params.top
+  for (let i = 0; i < params.items.length; i++) {
+    const item = params.items[i]!
+    rows.push({index: i, top: y, height: item.height})
+    y += item.height
+  }
+  return {rows, bottom: y}
+}
+
+/** @fit
  * given items.length: int[0, 50]
  * given items[].height: number[0, 40]
  * result.rows.length <= items.length

@@ -23,6 +23,7 @@ sections[].rows[].height <= maxHeight
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
+- Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
 - Named local imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next

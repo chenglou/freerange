@@ -565,6 +565,10 @@ function setDomainPathValue(current: Value | undefined, expr: string, segments: 
   if (segment == null) return value
 
   if (segment.kind === 'prop') {
+    if (current?.kind === 'array' && segment.name === 'length') {
+      const length = setDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
+      return length.kind === 'number' ? {...current, length} : current
+    }
     const base = current?.kind === 'object' ? current : unknownObject(expr)
     const props = new Map(base.props)
     const propExpr = `${expr}.${segment.name}`
@@ -572,7 +576,10 @@ function setDomainPathValue(current: Value | undefined, expr: string, segments: 
     return {...base, props}
   }
 
-  const base = current?.kind === 'array' ? current : unknownArray(expr)
+  const objectLength = current?.kind === 'object' ? current.props.get('length') : null
+  const base = current?.kind === 'array'
+    ? current
+    : unknownArray(expr, objectLength?.kind === 'number' ? objectLength : undefined)
   return {
     ...base,
     element: setDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value),
@@ -1042,7 +1049,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
       ...target,
       length: push.length,
       elements: null,
-      element: loopElementFromPush(push, update),
+      element: loopElementFromPush(push, updates, context),
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
     })
   }
@@ -1089,26 +1096,54 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   )
 
   const pushes: LoopPush[] = []
+  const pendingAdds = new Map<string, NumberValue>()
   for (const child of statement.statement.statements) {
-    if (!ts.isExpressionStatement(child) || !isPushCall(child.expression)) {
-      return unknown(`Unsupported indexed loop body statement: ${child.getText(context.program.sourceFile)}`)
+    if (ts.isVariableStatement(child)) {
+      for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
+      continue
     }
-    const targetName = child.expression.expression.expression.text
-    const target = context.env.get(targetName)
-    if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
-    pushes.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+
+    if (ts.isExpressionStatement(child) && isPushCall(child.expression)) {
+      const targetName = child.expression.expression.expression.text
+      const target = context.env.get(targetName)
+      if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
+      pushes.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+      continue
+    }
+
+    if (ts.isExpressionStatement(child) && ts.isBinaryExpression(child.expression) && child.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+      if (!ts.isIdentifier(child.expression.left)) return unknown('Indexed running-sum loop expected a simple += target')
+      const targetName = child.expression.left.text
+      const increment = evaluateExpression(child.expression.right, loopContext)
+      if (increment.kind !== 'number') return unknown('Indexed running-sum loop increment expected a number')
+      pendingAdds.set(targetName, increment)
+      continue
+    }
+
+    return unknown(`Unsupported indexed loop body statement: ${child.getText(context.program.sourceFile)}`)
+  }
+
+  const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
+  for (const [targetName, increment] of pendingAdds) {
+    const start = context.env.get(targetName)
+    if (start == null || start.kind !== 'number') return unknown('Indexed running-sum loop target expected a number')
+    const end = runningSumNumber(start, source.length, increment)
+    context.env.set(targetName, end)
+    updates.set(targetName, {start, increment, end})
   }
 
   for (const push of pushes) {
     const target = context.env.get(push.arrayName)
     if (target?.kind !== 'array') continue
-    const element = indexedLoopElementFromPush(push, shape.indexName, source.length)
+    const update = updates.get(push.topName ?? '')
+    const cursorElement = loopElementFromPush(push, updates, context)
+    const element = indexedLoopElementFromPush({...push, element: cursorElement}, shape.indexName, source.length)
     context.env.set(push.arrayName, {
       ...target,
       length: source.length,
       elements: null,
       element,
-      summary: null,
+      summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
     })
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
   }
@@ -1221,16 +1256,17 @@ type LoopPush = {
   element: Value | null
   topName: string | null
   height: NumberValue | null
+  cursorPaths: {path: string[]; targetName: string}[]
 }
 
 function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit<LoopPush, 'arrayName' | 'length'> {
   const row = expression.arguments[0]
-  if (row == null || !ts.isObjectLiteralExpression(row)) return {element: null, topName: null, height: null}
+  if (row == null || !ts.isObjectLiteralExpression(row)) return {element: null, topName: null, height: null, cursorPaths: []}
   const topExpression = objectPropertyExpression(row, 'top')
   const heightExpression = objectPropertyExpression(row, 'height')
   const topName = topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null
   const height = heightExpression == null ? null : evaluateExpression(heightExpression, context)
-  return {element: evaluateExpression(row, context), topName, height: height?.kind === 'number' ? height : null}
+  return {element: evaluateExpression(row, context), topName, height: height?.kind === 'number' ? height : null, cursorPaths: objectIdentifierPropertyPaths(row)}
 }
 
 function readConditionalLoopPush(statement: ts.Statement, context: EvalContext, length: NumberValue): LoopPush | null {
@@ -1340,44 +1376,96 @@ function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: 
   return null
 }
 
+function objectIdentifierPropertyPaths(expression: ts.ObjectLiteralExpression, prefix: string[] = []): {path: string[]; targetName: string}[] {
+  const paths: {path: string[]; targetName: string}[] = []
+  for (const property of expression.properties) {
+    if (ts.isShorthandPropertyAssignment(property)) {
+      paths.push({path: [...prefix, property.name.text], targetName: property.name.text})
+      continue
+    }
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
+    const path = [...prefix, property.name.text]
+    if (ts.isIdentifier(property.initializer)) {
+      paths.push({path, targetName: property.initializer.text})
+      continue
+    }
+    if (ts.isObjectLiteralExpression(property.initializer)) paths.push(...objectIdentifierPropertyPaths(property.initializer, path))
+  }
+  return paths
+}
+
 function loopElementFromPush(
   push: LoopPush,
-  update: {start: NumberValue; increment: NumberValue; end: NumberValue} | undefined,
+  updates: Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>,
+  context: EvalContext,
 ): Value | null {
-  if (push.element?.kind !== 'object' || push.topName == null || update == null) return push.element
-  const props = new Map(push.element.props)
-  props.set('top', loopCursorElementValue(update, `${push.arrayName}[].top`))
-  return {...push.element, props}
+  if (push.element == null || updates.size === 0) return push.element
+  let element = push.element
+  for (const cursorPath of push.cursorPaths) {
+    const update = updates.get(cursorPath.targetName)
+    if (update == null) continue
+    element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, `${push.arrayName}[].${cursorPath.path.join('.')}`, context))
+  }
+  return element
 }
 
 function indexedLoopElementFromPush(push: LoopPush, indexName: string, sourceLength: NumberValue): Value | null {
-  if (push.element?.kind !== 'object') return push.element
-  const props = new Map(push.element.props)
-  for (const [name, value] of push.element.props) {
-    if (value.kind === 'number' && value.expr === indexName) {
-      props.set(name, indexedElementValue(push.arrayName, name, sourceLength))
+  if (push.element == null) return null
+  return indexedLoopValueFromPush(push.element, indexName, sourceLength, `${push.arrayName}[]`)
+}
+
+function setObjectPathValue(value: Value, path: string[], replacement: Value): Value {
+  const [head, ...tail] = path
+  if (head == null) return replacement
+  if (value.kind !== 'object') return value
+  const props = new Map(value.props)
+  const current = props.get(head)
+  props.set(head, setObjectPathValue(current ?? unknownObject(head), tail, replacement))
+  return {...value, props}
+}
+
+function indexedLoopValueFromPush(value: Value, indexName: string, sourceLength: NumberValue, expr: string): Value {
+  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(expr, sourceLength)
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      elements: value.elements == null ? null : value.elements.map((element, index) => indexedLoopValueFromPush(element, indexName, sourceLength, `${expr}[${index}]`)),
+      element: value.element == null ? null : indexedLoopValueFromPush(value.element, indexName, sourceLength, `${expr}[]`),
     }
   }
-  return {...push.element, props}
+  if (value.kind !== 'object') return value
+  const props = new Map<string, Value>()
+  for (const [name, prop] of value.props) {
+    props.set(name, indexedLoopValueFromPush(prop, indexName, sourceLength, `${expr}.${name}`))
+  }
+  return {...value, props}
 }
 
 function indexedElementValue(arrayName: string, prop: string, sourceLength: NumberValue): NumberValue {
+  return indexedElementPathValue(`${arrayName}[].${prop}`, sourceLength)
+}
+
+function indexedElementPathValue(expr: string, sourceLength: NumberValue): NumberValue {
   return numberValue(
     0,
     Math.max(0, sourceLength.max - 1),
     true,
-    `${arrayName}[].${prop}`,
-    linearVariable(linearNameForExpression(`${arrayName}[].${prop}`)),
+    expr,
+    linearVariable(linearNameForExpression(expr)),
   )
 }
 
 function loopCursorElementValue(
   update: {start: NumberValue; increment: NumberValue; end: NumberValue},
   expr: string,
+  context: EvalContext,
 ): NumberValue {
   if (update.increment.min < 0) return unknownNumber(expr)
+  const startMin = proveComparison(update.start, '>=', numberValue(0, 0, true, '0', linearConstant(0)), context.assumptions).status === 'pass'
+    ? Math.max(0, update.start.min)
+    : update.start.min
   return numberValue(
-    update.start.min,
+    startMin,
     update.end.max,
     update.start.isInteger && update.increment.isInteger,
     expr,

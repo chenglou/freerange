@@ -483,6 +483,29 @@ function indexedRows(items: {height: number}[]) {
 }
 ```
 
+The body may also bind the current item and advance a simple numeric cursor:
+
+```ts
+/** @fit
+ * given params.items.length: int[1, 50]
+ * given params.items[].height: number[0, 40]
+ * given params.top: number[0, 1000]
+ * result.rows.length == params.items.length
+ * nondecreasing(result.rows.top)
+ * lastEnd(result.rows) == result.bottom
+ */
+function indexedStackRows(params: {items: {height: number}[]; top: number}) {
+  const rows = []
+  let y = params.top
+  for (let i = 0; i < params.items.length; i++) {
+    const item = params.items[i]!
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows, bottom: y}
+}
+```
+
 Conditional push gets a weaker, honest fact:
 
 ```ts
@@ -550,7 +573,7 @@ The checker understands a small pure subset:
 - expression-bodied `items.map(...)`
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only `for...of` row loops
-- simple indexed `for` loops over `items.length`
+- simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - one guarded conditional push inside a `for...of`
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 
