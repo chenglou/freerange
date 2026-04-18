@@ -613,15 +613,18 @@ The checker understands a small pure subset:
 
 - function declarations
 - simple named parameters
+- obvious TypeScript parameter shapes: arrays, object type literals, local interfaces, and local type aliases
 - numeric top-level constants
 - `const` / `let` locals with initializers
 - `return expression`
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
+- same-file return type shapes when a helper body is outside the source subset
 - named imports of exported numeric constants and `@fit` function declarations when TypeScript resolves them to local source
 - explicit named re-exports of source-proved `@fit` function declarations
-- object literals with normal or shorthand properties
+- object literals with normal properties, shorthand properties, and object spread
+- `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
 - simple `for...of` scalar running sums with direct or guarded `+=`

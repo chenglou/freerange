@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {parseFitSpecs, type FitSpec} from './parser.ts'
+import {hasFitComment, parseFitSpecs, type FitSpec} from './parser.ts'
 
 export type FitModule<TGlobal> = {
   sourceId: string
@@ -8,6 +8,7 @@ export type FitModule<TGlobal> = {
   sourceText: string
   globals: Map<string, TGlobal>
   functions: Map<string, ts.FunctionDeclaration>
+  fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
   exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
   imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
@@ -131,6 +132,7 @@ function parseFitModule<TGlobal>(
   const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, ts.FunctionDeclaration>()
+  const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
   const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
@@ -138,6 +140,7 @@ function parseFitModule<TGlobal>(
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
       functions.set(statement.name.text, statement)
+      if (hasFitComment(sourceText, statement)) fitFunctions.add(statement.name.text)
       specsByFunction.set(statement.name.text, parseFitSpecs(sourceText, statement))
       if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
         exports.set(statement.name.text, {kind: 'local', localName: statement.name.text})
@@ -159,7 +162,7 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, globals, functions, specsByFunction, exports, imports}
+  return {sourceId, file, sourceFile, sourceText, globals, functions, fitFunctions, specsByFunction, exports, imports}
 }
 
 function loadImports<TGlobal>(

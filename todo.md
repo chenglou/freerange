@@ -22,11 +22,14 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
+- Array lengths default to non-negative integers, and obvious local TS array/object shapes are used even when no `given` line names the path yet.
+- Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
 - Expression-bodied `items.map(...)` preserves length, item field domains, and optional callback index facts.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
+- `bun run infer path --function name` is a dev-only x-ray of result/local facts. It is not a public annotation writer.
 
 ## Do Next
 
@@ -46,7 +49,8 @@ sections[].rows[].height <= maxHeight
    Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
 
 5. **Use real demos as pressure tests.**
-   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Do not add an atom just because a demo would look nicer with one.
+   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature. Do not add an atom just because a demo would look nicer with one.
+   Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now; Vibescript photo grid is blocked by an unannotated imported helper and a chunked row-height loop, not by a missing public atom.
 
 6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
@@ -118,6 +122,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
+- TS shape reading is syntactic and local. It handles arrays, readonly arrays, object type literals, local interfaces, local aliases, unions, and intersections; imported type declarations and optional properties are still opaque.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.

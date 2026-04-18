@@ -84,12 +84,20 @@ Keep app code natural. A checker that understands locals, loops, arrays, object 
 
 High-value inference:
 
+- local TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; local object/interface/type-alias shapes let sparse `@fit` comments still evaluate natural code. Imported type declarations can stay opaque until they block a real proof.
 - `items.map(...)` preserves length, simple field domains, and optional callback index facts. Source order can come later when there is a public fact that needs it.
 - append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized.
+- `bun run infer` is useful as a checker x-ray: it should show curated result/local facts, not every internal linear assumption. Keep it dev-only until the output is consistently useful on demos.
+
+Demo notes from the first infer pass:
+
+- Pretext `layoutTemplateFrame` now exposes the useful boring facts: block count is preserved, `bubbleHeight` and `totalHeight` share the same running measure, and the `usedContentWidth` max accumulator stays numeric. The next real blocker there is not min/max; it is whether we want better contracts around helper return measures like `layoutBlockFrameResult.height`.
+- Vibescript photo grid still stops at `rowHeight = Math.max(rowHeight, layoutHeight)` because `layoutHeight` flows through an unannotated imported helper. That is the right boundary to notice. Do not paper over it with imported-body guessing unless we decide imported return-shape summaries are allowed.
+- The broader Pretext markdown parser shows noisy but honest unsupported shapes: switches, `continue`, `null`, counted loops over scalar bounds, and text/string work. Most of that is not layout proof pressure yet.
 
 ## Wildcard Semantics
 

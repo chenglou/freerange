@@ -58,12 +58,10 @@ const identifierPattern = '[A-Za-z_$][\\w$]*'
 const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[\\]))+`, 'g')
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
-  const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
+  const comments = fitCommentLines(sourceText, node)
   const specs: FitSpec[] = []
 
-  for (const range of commentRanges) {
-    const comment = sourceText.slice(range.pos, range.end)
-    const lines = comment.split(/\r?\n/).map(cleanCommentLine)
+  for (const lines of comments) {
     if (lines.some(line => line === '@fit-loop')) throw new Error('Use @fit for loop specs; @fit-loop is not supported')
     if (!lines.some(line => line === '@fit')) continue
     for (const line of lines) {
@@ -74,6 +72,15 @@ export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   }
 
   return specs
+}
+
+export function hasFitComment(sourceText: string, node: ts.Node): boolean {
+  return fitCommentLines(sourceText, node).some(lines => lines.some(line => line === '@fit'))
+}
+
+function fitCommentLines(sourceText: string, node: ts.Node): string[][] {
+  const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
+  return commentRanges.map(range => sourceText.slice(range.pos, range.end).split(/\r?\n/).map(cleanCommentLine))
 }
 
 function cleanCommentLine(line: string) {

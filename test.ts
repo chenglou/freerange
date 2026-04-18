@@ -1,4 +1,4 @@
-import {type FitCheck, verifyFitFiles} from './src/check.ts'
+import {inferFitFiles, type FitCheck, verifyFitFiles} from './src/check.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts']
 const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts']
@@ -23,6 +23,22 @@ if (actualNegative !== expectedNegative) {
   process.exitCode = 1
 } else {
   console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
+}
+
+const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
+const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedInferFacts = [
+  'result.rows.length == params.items.length',
+  'result.rows.length: int 0..Infinity',
+  'result.rows[].height == params.items[].height',
+]
+const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
+if (missingInferFacts.length > 0) {
+  console.error('expected inferred facts changed')
+  console.error(missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer: ${expectedInferFacts.length} expected facts`)
 }
 
 function normalizeNegative(checks: FitCheck[]) {

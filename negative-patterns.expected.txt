@@ -136,8 +136,26 @@ UNKNOWN negative-patterns.ts:negativeObjectFieldDomainTooWide: result.height >= 
     int 0..0 as 0
     trusted from function @fit: given item.height: -20..40
   missing: given item.height >= 0
-UNKNOWN negative-patterns.ts:negativePerItemFieldNeedsDomain: result: 0..40
-  Property access height expected an object
+FAIL negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: result.x: 0..100
+  range was -10..100 as base.x, expected inside 0..100
+  need: base.x inside 0..100
+  known:
+    -10..100 as base.x
+    0..100
+    trusted from function @fit: given base.x: -10..100
+    trusted from function @fit: given y: 0..100
+  missing: base.x >= 0
+FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: result: 0..40
+  range was -Infinity..Infinity as items[].height, expected inside 0..40
+  need: items[].height inside 0..40
+  known:
+    -Infinity..Infinity as items[].height
+    0..40
+    trusted from function @fit: given items.length: int 1..50
+    trusted from function @fit: given index: int 0..49
+    trusted from function @fit: given index < items.length
+  missing: items[].height >= 0
+  missing: items[].height <= 40
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: result.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, items[].height) >= 0..1000 as top was not proven
   need: runningSum(top, items.length, items[].height) >= top

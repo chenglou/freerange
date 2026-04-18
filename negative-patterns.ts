@@ -194,6 +194,18 @@ export function negativeObjectFieldDomainTooWide(item: {height: number}) {
 }
 
 /** @fit
+ * given base.x: -10..100
+ * given y: 0..100
+ * result.x: 0..100
+ */
+export function negativeObjectSpreadNeedsFieldDomain(base: {x: number}, y: number) {
+  return {
+    ...base,
+    y,
+  } satisfies {x: number; y: number}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given index: int 0..49
  * given index < items.length

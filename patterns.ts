@@ -242,6 +242,19 @@ export function objectFieldDomain(item: {top: number; height: number}) {
 }
 
 /** @fit
+ * given base.x: 0..100
+ * given y: 0..100
+ * result.x: 0..100
+ * result.y: 0..100
+ */
+export function objectSpreadKeepsFields(base: {x: number}, y: number) {
+  return {
+    ...base,
+    y,
+  } satisfies {x: number; y: number}
+}
+
+/** @fit
  * given child.x: 0..1000
  * given child.w: 0..500
  * given parent.x: 0..1000
@@ -368,6 +381,26 @@ export function indexedRunningMaxPerItemWidth(items: {width: number}[]) {
     maxWidth = Math.max(maxWidth, width)
   }
   return maxWidth
+}
+
+type TypedShapeParams = {
+  items: {height: number}[]
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function typedArrayParamShape(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function typedObjectParamArrayShape(params: TypedShapeParams) {
+  const rows = params.items.map(item => ({height: item.height}))
+  return {rows}
 }
 
 /** @fit

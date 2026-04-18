@@ -124,7 +124,12 @@ export function unknownObject(name: string): ObjectValue {
   }
 }
 
-export function unknownArray(name: string, length: NumberValue = unknownNumber(`${name}.length`), element: Value | null = null): ArrayValue {
+export function unknownArrayLength(name: string): NumberValue {
+  const expr = `${name}.length`
+  return numberValue(0, Number.POSITIVE_INFINITY, true, expr, linearVariable(linearNameForExpression(expr)))
+}
+
+export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): ArrayValue {
   return {
     kind: 'array',
     length,
