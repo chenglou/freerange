@@ -47,48 +47,41 @@ import {
   type LinearConstraint,
   type NumberCase,
   type NumberValue,
-  type ObjectValue,
-  type UnknownValue,
   type Value,
 } from './domain.ts'
 import {
-  binaryExpression,
-  callArg,
-  callArgs,
-  ceilDivisionProduct,
   cleanLinear,
-  floorDivision,
-  isZeroLinear,
   linearAdd,
   linearConstant,
-  linearConstantStatus,
   linearEpsilon,
-  linearFromExpressionText,
-  linearKey,
   linearScaleExact,
   linearScale,
   linearSubtract,
   linearVariable,
   mergeScale,
-  moduloExpression,
   numericLiteralValue,
-  positiveScaleMultiple,
-  productFactors,
-  productText,
-  reductionScales,
   sameExpressionText,
-  sameLinear,
   unwrapExpression,
   type LinearExpr,
 } from './linear.ts'
 import {
-  comparisonFailureReason,
+  comparisonConstraint,
+  conditionalRunningSumFacts,
+  flipComparison,
+  nonNegativeFacts,
+  proveComparison,
+  proveComparisonPlain,
+  proveRange,
+  rangeFactsFromValue,
+  type NonNegativeFact,
+  type Truth,
+} from './proof.ts'
+import {
   comparisonNeed,
   formatArraySummary,
   formatExpectedRange,
   formatRange,
   missingRangeBounds,
-  rangeFailureReason,
 } from './reporting.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
@@ -137,7 +130,6 @@ type EvalContext = {
 }
 
 const maxInlineDepth = 12
-const maxLinearReductionDepth = 4
 
 type TrustedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
@@ -146,12 +138,6 @@ type TrustedGivenSpec =
 type ConditionalLoopAdd = {
   targetName: string
   increment: NumberValue
-}
-
-type NonNegativeFact = {
-  diff: LinearExpr
-  strict: boolean
-  text?: string
 }
 
 type ImportedContractSource = {
@@ -453,6 +439,13 @@ function collectGivenAssumptions(
     }
   }
   return {assumptions, checks}
+}
+
+function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext, source: FactSource): LinearConstraint | null {
+  const left = evaluateSpecExpression(spec.left, context)
+  const right = evaluateSpecExpression(spec.right, context)
+  if (left.kind !== 'number' || right.kind !== 'number') return null
+  return comparisonConstraint(left, spec.op, right, spec.text, source)
 }
 
 function givenComparisonContradictionReason(fact: LinearConstraint, assumptions: LinearConstraint[]): string | null {
@@ -2496,8 +2489,6 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: Ev
   return {kind: 'array', length, elements, element: elementValue, expr: null, summary: null}
 }
 
-type Truth = 'true' | 'false' | 'maybe'
-
 function evaluateConditionFacts(expression: ts.Expression, context: EvalContext): {truth: Truth; trueAssumptions: LinearConstraint[]; falseAssumptions: LinearConstraint[]} {
   if (!ts.isBinaryExpression(expression)) return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   const op = expression.operatorToken.kind
@@ -2563,391 +2554,6 @@ function syntaxToComparison(kind: ts.SyntaxKind): ComparisonOperator {
   }
 }
 
-function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue): Truth {
-  switch (op) {
-    case '==':
-      if (left.min === left.max && right.min === right.max && left.min === right.min) return 'true'
-      if (left.max < right.min || right.max < left.min) return 'false'
-      return 'maybe'
-    case '>=':
-      if (left.min >= right.max) return 'true'
-      if (left.max < right.min) return 'false'
-      return 'maybe'
-    case '<=':
-      if (left.max <= right.min) return 'true'
-      if (left.min > right.max) return 'false'
-      return 'maybe'
-    case '>':
-      if (left.min > right.max) return 'true'
-      if (left.max <= right.min) return 'false'
-      return 'maybe'
-    case '<':
-      if (left.max < right.min) return 'true'
-      if (left.min >= right.max) return 'false'
-      return 'maybe'
-  }
-}
-
-function proveRange(value: Value, min: number, max: number, requireInteger: boolean, assumptions: LinearConstraint[] = []): {status: FitCheckStatus; reason?: string} {
-  if (value.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(value)}
-  if (value.min < min || value.max > max) {
-    const lower = proveComparison(value, '>=', numberValue(min, min, Number.isInteger(min), `${min}`, linearConstant(min)), assumptions)
-    const upper = proveComparison(value, '<=', numberValue(max, max, Number.isInteger(max), `${max}`, linearConstant(max)), assumptions)
-    if (lower.status === 'pass' && upper.status === 'pass' && (!requireInteger || value.isInteger)) return {status: 'pass'}
-    return {
-      status: 'fail',
-      reason: rangeFailureReason(value, min, max, requireInteger, assumptions),
-    }
-  }
-  if (requireInteger && !value.isInteger) return {status: 'fail', reason: `range was ${formatRange(value)}, expected integer\nneed: ${value.expr ?? formatRange(value)} to be integer`}
-  return {status: 'pass'}
-}
-
-function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: FitCheckStatus; reason?: string} {
-  if (left.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(left)}
-  if (right.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(right)}
-  if (left.cases != null || right.cases != null) {
-    let unknownStatus: {status: FitCheckStatus; reason?: string} | null = null
-    for (const leftCase of numberBranches(left)) {
-      for (const rightCase of numberBranches(right)) {
-        const status = proveComparisonPlain(
-          leftCase.value,
-          op,
-          rightCase.value,
-          mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions),
-        )
-        if (status.status === 'fail') return status
-        if (status.status === 'unknown') unknownStatus = status
-      }
-    }
-    return unknownStatus ?? {status: 'pass'}
-  }
-  return proveComparisonPlain(left, op, right, assumptions)
-}
-
-function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): {status: FitCheckStatus; reason?: string} {
-  if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) return {status: 'pass'}
-  const mathTruth = proveMathLemma(left, op, right, assumptions)
-  if (mathTruth === 'true') return {status: 'pass'}
-  const truth = compareRanges(left, op, right)
-  if (truth === 'true') return {status: 'pass'}
-  if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, op, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
-  const linearTruth = compareLinear(left, op, right, assumptions)
-  if (linearTruth === 'true') return {status: 'pass'}
-  if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, op, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
-  return {status: 'unknown', reason: comparisonFailureReason(left, op, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
-}
-
-function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
-  if (left.expr == null || right.expr == null) return 'maybe'
-  if (provesRoundingFact(left.expr, op, right.expr)) return 'true'
-  if ((op === '>=' || op === '>') && provesCeilDivisionCovers(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if ((op === '<' || op === '<=') && provesFloorDivisionBelowCount(left.expr, right, assumptions)) return 'true'
-  if ((op === '<' || op === '<=') && provesModuloBelowDivisor(left.expr, right.expr, assumptions)) return 'true'
-  if ((op === '>=' || op === '>') && provesRunningSumAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if (provesPositiveMonotone(left.expr, op, right.expr, assumptions)) return 'true'
-  return 'maybe'
-}
-
-function provesRoundingFact(leftExpr: string, op: ComparisonOperator, rightExpr: string) {
-  const leftCeil = callArg(leftExpr, 'ceil')
-  if ((op === '>=' || op === '>') && leftCeil != null && sameExpressionText(leftCeil, rightExpr)) return op === '>='
-  const leftFloor = callArg(leftExpr, 'floor')
-  if ((op === '<=' || op === '<') && leftFloor != null && sameExpressionText(leftFloor, rightExpr)) return op === '<='
-  const rightCeil = callArg(rightExpr, 'ceil')
-  if ((op === '<=' || op === '<') && rightCeil != null && sameExpressionText(leftExpr, rightCeil)) return op === '<='
-  const rightFloor = callArg(rightExpr, 'floor')
-  if ((op === '>=' || op === '>') && rightFloor != null && sameExpressionText(leftExpr, rightFloor)) return op === '>='
-  return false
-}
-
-function provesCeilDivisionCovers(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const shape = ceilDivisionProduct(leftExpr)
-  if (shape == null) return false
-  const {total, count} = shape
-  if (!sameExpressionText(total, rightExpr)) return false
-  return provesExprNonNegative(total, false, assumptions) && provesExprNonNegative(count, true, assumptions)
-}
-
-function provesFloorDivisionBelowCount(leftExpr: string, right: NumberValue, assumptions: LinearConstraint[]) {
-  if (right.expr == null || !right.isInteger) return false
-  const shape = floorDivision(leftExpr)
-  if (shape == null) return false
-  const {left: pointer, right: cell} = shape
-  if (!provesExprNonNegative(cell, true, assumptions)) return false
-  return hasComparisonFact(pointer, '<', `(${right.expr} * ${cell})`, assumptions) || hasComparisonFact(pointer, '<', `(${cell} * ${right.expr})`, assumptions)
-}
-
-function provesModuloBelowDivisor(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const shape = moduloExpression(leftExpr)
-  if (shape == null || !sameExpressionText(shape.right, rightExpr)) return false
-  return provesExprNonNegative(shape.left, false, assumptions) && provesExprNonNegative(shape.right, true, assumptions)
-}
-
-function provesRunningSumAtLeastStart(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const args = callArgs(leftExpr, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, rightExpr)) return false
-  return provesExprNonNegative(args[1]!, false, assumptions) && provesExprNonNegative(args[2]!, false, assumptions)
-}
-
-function provesRunningSumMinusTrailingGapAtLeastStart(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const trailingGap = binaryExpression(leftExpr, '-')
-  if (trailingGap == null) return false
-  const args = callArgs(trailingGap.left, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, rightExpr)) return false
-  const count = args[1]!
-  const increment = args[2]!
-  const gap = trailingGap.right
-  if (!hasComparisonFact(count, '>=', '1', assumptions)) return false
-  if (!provesExprNonNegative(gap, false, assumptions)) return false
-  if (sameExpressionText(increment, gap)) return true
-  const incrementSum = binaryExpression(increment, '+')
-  if (incrementSum == null) return false
-  const base =
-    sameExpressionText(incrementSum.left, gap) ? incrementSum.right
-      : sameExpressionText(incrementSum.right, gap) ? incrementSum.left
-        : null
-  return base != null && provesExprNonNegative(base, false, assumptions)
-}
-
-function provesPositiveMonotone(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[]) {
-  if (op === '<=' || op === '<') return provesPositiveMonotoneLess(leftExpr, op, rightExpr, assumptions)
-  if (op === '>=') return provesPositiveMonotoneLess(rightExpr, '<=', leftExpr, assumptions)
-  if (op === '>') return provesPositiveMonotoneLess(rightExpr, '<', leftExpr, assumptions)
-  return false
-}
-
-function provesPositiveMonotoneLess(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]) {
-  const leftDivision = binaryExpression(leftExpr, '/')
-  const rightDivision = binaryExpression(rightExpr, '/')
-  if (leftDivision != null && rightDivision != null && sameExpressionText(leftDivision.right, rightDivision.right)) {
-    return provesExprNonNegative(leftDivision.right, true, assumptions) && hasComparisonFact(leftDivision.left, op, rightDivision.left, assumptions)
-  }
-
-  const leftProduct = productFactors(leftExpr)
-  const rightProduct = productFactors(rightExpr)
-  if (leftProduct == null || rightProduct == null) return false
-  for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
-    for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
-      const leftFactor = leftProduct[leftIndex]!
-      const rightFactor = rightProduct[rightIndex]!
-      if (!sameExpressionText(leftFactor, rightFactor)) continue
-      const factorIsPositive = provesExprNonNegative(leftFactor, op === '<', assumptions)
-      if (!factorIsPositive) continue
-      const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
-      const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
-      if (hasComparisonFact(leftBase, op, rightBase, assumptions)) return true
-    }
-  }
-  return false
-}
-
-function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
-  const linear = linearFromExpressionText(expression)
-  return linear != null && provesNonNegative(linear, strict, assumptions)
-}
-
-function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[]) {
-  for (const assumption of assumptions) {
-    if (assumption.leftExpr == null || assumption.rightExpr == null) continue
-    if (sameExpressionText(assumption.leftExpr, leftExpr) && sameExpressionText(assumption.rightExpr, rightExpr) && comparisonImplies(assumption.op, op)) return true
-    if (sameExpressionText(assumption.leftExpr, rightExpr) && sameExpressionText(assumption.rightExpr, leftExpr) && comparisonImplies(flipComparison(assumption.op), op)) return true
-  }
-
-  const leftLinear = linearFromExpressionText(leftExpr)
-  const rightLinear = linearFromExpressionText(rightExpr)
-  if (leftLinear == null || rightLinear == null) return false
-  return compareLinear(
-    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, leftExpr, leftLinear),
-    op,
-    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, rightExpr, rightLinear),
-    assumptions,
-  ) === 'true'
-}
-
-function comparisonImplies(actual: ComparisonOperator, needed: ComparisonOperator) {
-  if (actual === needed) return true
-  if (actual === '==') return needed === '>=' || needed === '<='
-  if (actual === '>') return needed === '>='
-  if (actual === '<') return needed === '<='
-  return false
-}
-
-function flipComparison(op: ComparisonOperator): ComparisonOperator {
-  switch (op) {
-    case '==':
-      return '=='
-    case '>=':
-      return '<='
-    case '<=':
-      return '>='
-    case '>':
-      return '<'
-    case '<':
-      return '>'
-  }
-}
-
-function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
-  const missingLinear = missingLinearFact(left, op, right, assumptions)
-  if (missingLinear != null) return missingLinear
-  return `given ${comparisonNeed(left, op, right)}`
-}
-
-function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
-  const diff = comparisonDiff(left, op, right)
-  if (diff == null) return null
-  const target = cleanLinear(diff)
-  for (const fact of assumptions.filter(assumption => assumption.rangeFact !== true).flatMap(nonNegativeFacts)) {
-    for (const scale of reductionScales(target, fact.diff)) {
-      const scaledFact = linearScaleExact(fact.diff, scale)
-      const remainder = linearSubtract(target, scaledFact)
-      if (remainder == null || sameLinear(remainder, target)) continue
-      const missing = singleLinearBound(remainder)
-      if (missing != null) return missing
-    }
-  }
-  return null
-}
-
-function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: NumberValue): LinearExpr | null {
-  switch (op) {
-    case '==':
-      return null
-    case '>=':
-    case '>':
-      return linearSubtract(left.linear, right.linear)
-    case '<=':
-    case '<':
-      return linearSubtract(right.linear, left.linear)
-  }
-}
-
-function singleLinearBound(linear: LinearExpr) {
-  const clean = cleanLinear(linear)
-  if (clean.constant !== 0 || clean.terms.size !== 1) return null
-  const first = [...clean.terms.entries()][0]
-  if (first == null) return null
-  const [name, coefficient] = first
-  if (coefficient === 0) return null
-  return coefficient > 0 ? `${name} >= 0` : `${name} <= 0`
-}
-
-function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: FactSource = 'code'): LinearConstraint | null {
-  const diff = linearSubtract(left.linear, right.linear)
-  if (diff == null && left.expr == null && right.expr == null && text == null) return null
-  return {
-    diff,
-    op,
-    source,
-    ...(left.expr == null ? {} : {leftExpr: left.expr}),
-    ...(right.expr == null ? {} : {rightExpr: right.expr}),
-    ...(text == null ? {} : {text}),
-  }
-}
-
-function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext, source: FactSource): LinearConstraint | null {
-  const left = evaluateSpecExpression(spec.left, context)
-  const right = evaluateSpecExpression(spec.right, context)
-  if (left.kind !== 'number' || right.kind !== 'number') return null
-  return comparisonConstraint(left, spec.op, right, spec.text, source)
-}
-
-function rangeFactsFromValue(value: Value, min: number, max: number, text: string, source: FactSource): LinearConstraint[] {
-  if (value.kind !== 'number') return []
-  const minDiff = linearSubtract(value.linear, linearConstant(min))
-  const maxDiff = linearSubtract(linearConstant(max), value.linear)
-  const facts: LinearConstraint[] = []
-  if (minDiff != null) facts.push({diff: minDiff, op: '>=', text, source, rangeFact: true})
-  if (maxDiff != null) facts.push({diff: maxDiff, op: '>=', text, source, rangeFact: true})
-  return facts
-}
-
-function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
-  const diff = linearSubtract(left.linear, right.linear)
-  if (diff == null) return 'maybe'
-
-  switch (op) {
-    case '==':
-      if (isZeroLinear(diff)) return 'true'
-      return provesNonNegative(diff, false, assumptions) && provesNonNegative(linearScaleExact(diff, -1), false, assumptions) ? 'true' : 'maybe'
-    case '>=':
-      return provesNonNegative(diff, false, assumptions) ? 'true' : 'maybe'
-    case '<=':
-      return provesNonNegative(linearScaleExact(diff, -1), false, assumptions) ? 'true' : 'maybe'
-    case '>':
-      if (isZeroLinear(diff)) return 'false'
-      return provesNonNegative(diff, true, assumptions) ? 'true' : 'maybe'
-    case '<':
-      if (isZeroLinear(diff)) return 'false'
-      return provesNonNegative(linearScaleExact(diff, -1), true, assumptions) ? 'true' : 'maybe'
-  }
-}
-
-function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: LinearConstraint[]) {
-  const facts = assumptions.flatMap(nonNegativeFacts)
-  return reduceToNonNegative(diff, strict, facts, maxLinearReductionDepth, new Set())
-}
-
-function reduceToNonNegative(
-  diff: LinearExpr,
-  strict: boolean,
-  facts: NonNegativeFact[],
-  depth: number,
-  seen: Set<string>,
-): boolean {
-  const cleanDiff = cleanLinear(diff)
-  if (linearConstantStatus(cleanDiff, strict)) return true
-  for (const fact of facts) {
-    const scale = positiveScaleMultiple(cleanDiff, fact.diff)
-    if (scale != null && (!strict || fact.strict)) return true
-  }
-  if (depth === 0) return false
-
-  const key = `${strict ? 'strict' : 'loose'}:${linearKey(cleanDiff)}`
-  if (seen.has(key)) return false
-  seen.add(key)
-
-  for (const fact of facts) {
-    for (const scale of reductionScales(cleanDiff, fact.diff)) {
-      const scaledFact = linearScaleExact(fact.diff, scale)
-      const remainder = linearSubtract(cleanDiff, scaledFact)
-      if (remainder == null || sameLinear(remainder, cleanDiff)) continue
-      if (reduceToNonNegative(remainder, strict && !fact.strict, facts, depth - 1, new Set(seen))) return true
-    }
-  }
-  return false
-}
-
-function nonNegativeFacts(assumption: LinearConstraint): NonNegativeFact[] {
-  if (assumption.diff == null) return []
-  switch (assumption.op) {
-    case '==':
-      return [
-        nonNegativeFact(assumption.diff, false, assumption.text),
-        nonNegativeFact(linearScaleExact(assumption.diff, -1), false, assumption.text == null ? undefined : `${assumption.text} reversed`),
-      ]
-    case '>=':
-      return [nonNegativeFact(assumption.diff, false, assumption.text)]
-    case '<=':
-      return [nonNegativeFact(linearScaleExact(assumption.diff, -1), false, assumption.text)]
-    case '>':
-      return [nonNegativeFact(assumption.diff, true, assumption.text)]
-    case '<':
-      return [nonNegativeFact(linearScaleExact(assumption.diff, -1), true, assumption.text)]
-  }
-}
-
-function nonNegativeFact(diff: LinearExpr, strict: boolean, text?: string): NonNegativeFact {
-  return {diff, strict, ...(text == null ? {} : {text})}
-}
-
-function nonNumberReason(value: ObjectValue | ArrayValue | UnknownValue) {
-  if (value.kind === 'unknown') return value.reason
-  return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
-}
-
 function sequencePropArgument(args: string[], context: EvalContext): {array: ArrayValue; prop: string} | null {
   if (args.length !== 1) return null
   const expression = unwrapExpression(parseExpression(args[0]!))
@@ -2966,21 +2572,4 @@ function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExp
 
 function contextWithAssumptions(context: EvalContext, assumptions: LinearConstraint[]): EvalContext {
   return assumptions.length === 0 ? context : {...context, assumptions: mergeAssumptions(context.assumptions, assumptions)}
-}
-
-function conditionalRunningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
-  const facts: LinearConstraint[] = []
-  if (increment.min >= 0) {
-    const lower = comparisonConstraint(value, '>=', start, `${value.expr ?? formatRange(value)} >= ${start.expr ?? formatRange(start)}`)
-    if (lower != null) facts.push(lower)
-  }
-  if (increment.max <= 0) {
-    const upper = comparisonConstraint(value, '<=', start, `${value.expr ?? formatRange(value)} <= ${start.expr ?? formatRange(start)}`)
-    if (upper != null) facts.push(upper)
-  }
-  if (start.min === 0 && start.max === 0 && increment.min === 1 && increment.max === 1) {
-    const upper = comparisonConstraint(value, '<=', count, `${value.expr ?? formatRange(value)} <= ${count.expr ?? formatRange(count)}`)
-    if (upper != null) facts.push(upper)
-  }
-  return facts
 }
