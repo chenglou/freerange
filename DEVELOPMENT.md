@@ -28,6 +28,7 @@ bun install
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
+- [src/proof-rules.ts](./src/proof-rules.ts) — small named comparison proof rules with shared prove/report obligations
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting

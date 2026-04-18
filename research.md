@@ -138,6 +138,16 @@ A layered IR seems better than one giant SMT encoding:
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 
+Comparison proof rules are now their own small layer. Keep it modest: a rule matches one goal, asks for ordinary obligations, and uses the same obligations for proving and report text. The first example is shared positive factors/divisors:
+
+```txt
+goal: content * scale <= available * scale
+known: content <= available
+missing: scale >= 0
+```
+
+This should grow only when a proof shape would otherwise split into separate proof and report helpers.
+
 ## Module Boundaries
 
 Imports should find contracts, not turn Freerange into a second TypeScript compiler. The first useful rule is:

@@ -6,6 +6,11 @@ import {
   rangeFailureReason,
 } from './reporting.ts'
 import {
+  comparisonProofRules,
+  type ComparisonGoal,
+  type ComparisonRuleContext,
+} from './proof-rules.ts'
+import {
   mergeAssumptions,
   numberBranches,
   numberValue,
@@ -33,8 +38,6 @@ import {
   linearSubtract,
   moduloExpression,
   positiveScaleMultiple,
-  productFactors,
-  productText,
   reductionScales,
   sameExpressionText,
   sameLinear,
@@ -136,7 +139,7 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   if ((op === '<' || op === '<=') && provesModuloBelowDivisor(left.expr, right.expr, assumptions)) return 'true'
   if ((op === '>=' || op === '>') && provesRunningSumAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if (provesPositiveMonotone(left.expr, op, right.expr, assumptions)) return 'true'
+  if (comparisonRuleProves({left, op, right}, assumptions)) return 'true'
   return 'maybe'
 }
 
@@ -218,21 +221,30 @@ function provesRunningSumMinusTrailingGapAtLeastStart(leftExpr: string, rightExp
   return base != null && provesExprNonNegative(base, false, assumptions)
 }
 
-function provesPositiveMonotone(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[]) {
-  if (op === '<=' || op === '<') return provesPositiveMonotoneLess(leftExpr, op, rightExpr, assumptions)
-  if (op === '>=') return provesPositiveMonotoneLess(rightExpr, '<=', leftExpr, assumptions)
-  if (op === '>') return provesPositiveMonotoneLess(rightExpr, '<', leftExpr, assumptions)
-  return false
-}
-
-function provesPositiveMonotoneLess(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]) {
-  return positiveMonotoneObligations(leftExpr, op, rightExpr, assumptions)
-    .some(obligation => obligation.factorProven && obligation.baseProven)
-}
-
 function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
   const linear = linearFromExpressionText(expression)
   return linear != null && provesNonNegative(linear, strict, assumptions)
+}
+
+function comparisonRuleProves(goal: ComparisonGoal, assumptions: LinearConstraint[]) {
+  const context = comparisonRuleContext(assumptions)
+  return comparisonProofRules.some(rule => rule.evaluate(goal, context)?.status === 'pass')
+}
+
+function comparisonRuleMissing(goal: ComparisonGoal, assumptions: LinearConstraint[]) {
+  const context = comparisonRuleContext(assumptions)
+  for (const rule of comparisonProofRules) {
+    const result = rule.evaluate(goal, context)
+    if (result?.status === 'blocked') return result.missing
+  }
+  return null
+}
+
+function comparisonRuleContext(assumptions: LinearConstraint[]): ComparisonRuleContext {
+  return {
+    hasComparisonFact: (leftExpr, op, rightExpr) => hasComparisonFact(leftExpr, op, rightExpr, assumptions),
+    provesExprNonNegative: (expression, strict) => provesExprNonNegative(expression, strict, assumptions),
+  }
 }
 
 function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[]) {
@@ -279,8 +291,8 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
   const strictSelf = strictSelfComparisonMissing(left, op, right)
   if (strictSelf != null) return strictSelf
-  const missingMonotone = missingPositiveMonotoneFact(left, op, right, assumptions)
-  if (missingMonotone != null) return missingMonotone
+  const missingRule = comparisonRuleMissing({left, op, right}, assumptions)
+  if (missingRule != null) return missingRule
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
   return `given ${comparisonNeed(left, op, right)}`
@@ -313,78 +325,6 @@ function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: Num
     }
   }
   return null
-}
-
-function missingPositiveMonotoneFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
-  if (left.expr == null || right.expr == null) return null
-  if (op === '<=' || op === '<') return missingPositiveMonotoneLess(left.expr, op, right.expr, assumptions)
-  if (op === '>=') return missingPositiveMonotoneLess(right.expr, '<=', left.expr, assumptions)
-  if (op === '>') return missingPositiveMonotoneLess(right.expr, '<', left.expr, assumptions)
-  return null
-}
-
-function missingPositiveMonotoneLess(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]) {
-  for (const obligation of positiveMonotoneObligations(leftExpr, op, rightExpr, assumptions)) {
-    const missing = monotoneMissing(obligation)
-    if (missing != null) return missing
-  }
-  return null
-}
-
-type PositiveMonotoneObligation = {
-  factorNeed: string
-  factorProven: boolean
-  baseNeed: string
-  baseProven: boolean
-}
-
-function positiveMonotoneObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]) {
-  return [
-    ...positiveDivisionObligations(leftExpr, op, rightExpr, assumptions),
-    ...positiveProductObligations(leftExpr, op, rightExpr, assumptions),
-  ]
-}
-
-function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]): PositiveMonotoneObligation[] {
-  const leftDivision = binaryExpression(leftExpr, '/')
-  const rightDivision = binaryExpression(rightExpr, '/')
-  if (leftDivision == null || rightDivision == null || !sameExpressionText(leftDivision.right, rightDivision.right)) return []
-  return [{
-    factorNeed: `${leftDivision.right} > 0`,
-    factorProven: provesExprNonNegative(leftDivision.right, true, assumptions),
-    baseNeed: `${leftDivision.left} ${op} ${rightDivision.left}`,
-    baseProven: hasComparisonFact(leftDivision.left, op, rightDivision.left, assumptions),
-  }]
-}
-
-function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, assumptions: LinearConstraint[]): PositiveMonotoneObligation[] {
-  const leftProduct = productFactors(leftExpr)
-  const rightProduct = productFactors(rightExpr)
-  if (leftProduct == null || rightProduct == null) return []
-  const obligations: PositiveMonotoneObligation[] = []
-  for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
-    for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
-      const leftFactor = leftProduct[leftIndex]!
-      const rightFactor = rightProduct[rightIndex]!
-      if (!sameExpressionText(leftFactor, rightFactor)) continue
-      const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
-      const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
-      obligations.push({
-        factorNeed: `${leftFactor} ${op === '<' ? '>' : '>='} 0`,
-        factorProven: provesExprNonNegative(leftFactor, op === '<', assumptions),
-        baseNeed: `${leftBase} ${op} ${rightBase}`,
-        baseProven: hasComparisonFact(leftBase, op, rightBase, assumptions),
-      })
-    }
-  }
-  return obligations
-}
-
-function monotoneMissing(obligation: PositiveMonotoneObligation) {
-  if (obligation.factorProven && obligation.baseProven) return null
-  if (obligation.baseProven) return obligation.factorNeed
-  if (obligation.factorProven) return obligation.baseNeed
-  return `${obligation.factorNeed} and ${obligation.baseNeed}`
 }
 
 function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: NumberValue): LinearExpr | null {
