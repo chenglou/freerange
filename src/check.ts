@@ -2081,13 +2081,13 @@ function verifyCallGivenSpecs(
       const left = evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluateSpecExpression(spec.right, calleeContext)
       status = proveComparison(left, spec.op, right, calleeContext.assumptions)
-      if (status.status !== 'pass') status = withCallComparisonReason(status, left, spec.op, right, spec.text)
+      if (status.status !== 'pass') status = withCallComparisonReason(status, left, right, spec)
     }
     if (status == null) continue
     context.checks.push({
       file: context.file,
       functionName: context.stack.join(' > '),
-      text: `call ${callText}: ${spec.text}`,
+      text: `call ${callText}: ${callRequirementText(spec)}`,
       status: status.status,
       ...(status.reason == null ? {} : {reason: status.reason}),
     })
@@ -2095,6 +2095,10 @@ function verifyCallGivenSpecs(
     else if (status.status === 'unknown' && statusSummary === 'pass') statusSummary = 'unknown'
   }
   return statusSummary
+}
+
+function callRequirementText(spec: FitSpec) {
+  return spec.text.startsWith('given ') ? `requires ${spec.text.slice('given '.length)}` : spec.text
 }
 
 function withCallRangeReason(
@@ -2106,8 +2110,8 @@ function withCallRangeReason(
   return {
     ...status,
     reason: [
-      `caller has ${formatRange(value)}`,
-      `callee needs ${spec.expression}: ${spec.valueKind}[${spec.min}, ${spec.max}]`,
+      `called function requires ${spec.expression}: ${spec.valueKind}[${spec.min}, ${spec.max}]`,
+      `this call passes ${formatCallBinding(spec.expression, value)}`,
       ...missingRangeBounds(value, spec.min, spec.max),
     ].join('\n'),
   }
@@ -2116,19 +2120,25 @@ function withCallRangeReason(
 function withCallComparisonReason(
   status: {status: FitCheckStatus; reason?: string},
   left: Value,
-  op: ComparisonOperator,
   right: Value,
-  text: string,
+  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
 ): {status: FitCheckStatus; reason?: string} {
   if (left.kind !== 'number' || right.kind !== 'number') return status
+  const lines = [
+    `called function requires ${spec.left} ${spec.op} ${spec.right}`,
+    `this call passes ${formatCallBinding(spec.left, left)} and ${formatCallBinding(spec.right, right)}`,
+  ]
+  if (status.status === 'unknown') lines.push(`could not prove ${comparisonNeed(left, spec.op, right)}`)
   return {
     ...status,
-    reason: [
-      `callee needs ${text}`,
-      `caller has ${formatRange(left)} ${op} ${formatRange(right)}`,
-      ...(status.reason == null ? [] : status.reason.split('\n')),
-    ].join('\n'),
+    reason: lines.join('\n'),
   }
+}
+
+function formatCallBinding(name: string, value: NumberValue) {
+  if (value.min === value.max) return `${name} = ${value.min}`
+  const range = `${value.isInteger ? 'int' : 'number'}[${value.min}, ${value.max}]`
+  return value.expr == null || value.expr === name ? `${name} is ${range}` : `${name} is ${range} from ${value.expr}`
 }
 
 function evaluateMathCall(name: string, args: ts.NodeArray<ts.Expression>, context: EvalContext): Value {
