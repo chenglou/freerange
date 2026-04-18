@@ -9,7 +9,7 @@ export type FitModule<TGlobal> = {
   globals: Map<string, TGlobal>
   functions: Map<string, ts.FunctionDeclaration>
   specsByFunction: Map<string, FitSpec[]>
-  exports: Map<string, string>
+  exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
   imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
 }
 
@@ -30,6 +30,36 @@ export type FitImportBinding<TModule> =
       kind: 'unresolved'
       exportedName: string
       specifier: string
+      reason: string
+    }
+
+export type FitExportBinding<TModule> =
+  | {
+      kind: 'local'
+      localName: string
+    }
+  | {
+      kind: 'reexport'
+      exportedName: string
+      specifier: string
+      module: TModule
+    }
+  | {
+      kind: 'unresolved'
+      exportedName: string
+      specifier: string
+      reason: string
+    }
+
+export type FitResolvedExport<TModule> =
+  | {
+      kind: 'local'
+      localName: string
+      module: TModule
+    }
+  | {
+      kind: 'unresolved'
+      exportedName: string
       reason: string
     }
 
@@ -64,6 +94,13 @@ export function buildFitSourceModule<TGlobal>(
   return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
 }
 
+export function resolveFitExport<TGlobal>(
+  module: FitModule<TGlobal>,
+  exportedName: string,
+): FitResolvedExport<FitModule<TGlobal>> {
+  return resolveFitExportInner(module, exportedName, new Set())
+}
+
 function loadModule<TGlobal>(
   file: string,
   modules: Map<string, FitModule<TGlobal>>,
@@ -81,6 +118,7 @@ function loadModule<TGlobal>(
   const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal)
+  loadReExports(module, modules, resolution, readGlobal)
   return module
 }
 
@@ -94,14 +132,16 @@ function parseFitModule<TGlobal>(
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, ts.FunctionDeclaration>()
   const specsByFunction = new Map<string, FitSpec[]>()
-  const exports = new Map<string, string>()
+  const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
       functions.set(statement.name.text, statement)
       specsByFunction.set(statement.name.text, parseFitSpecs(sourceText, statement))
-      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) exports.set(statement.name.text, statement.name.text)
+      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+        exports.set(statement.name.text, {kind: 'local', localName: statement.name.text})
+      }
       continue
     }
     if (ts.isExportDeclaration(statement)) {
@@ -167,6 +207,54 @@ function loadImports<TGlobal>(
   }
 }
 
+function loadReExports<TGlobal>(
+  module: FitModule<TGlobal>,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+) {
+  for (const statement of module.sourceFile.statements) {
+    if (!ts.isExportDeclaration(statement)) continue
+    const moduleSpecifier = statement.moduleSpecifier
+    if (moduleSpecifier == null || !ts.isStringLiteral(moduleSpecifier)) continue
+    if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) continue
+    const specifier = moduleSpecifier.text
+
+    for (const element of statement.exportClause.elements) {
+      const exportName = element.name.text
+      const exportedName = element.propertyName?.text ?? exportName
+      if (statement.isTypeOnly || element.isTypeOnly) {
+        module.exports.set(exportName, {
+          kind: 'unresolved',
+          exportedName,
+          specifier,
+          reason: `Type-only re-exports cannot provide @fit helpers: ${specifier}`,
+        })
+        continue
+      }
+
+      const resolved = resolveImport(module, specifier, resolution)
+      if (resolved.kind === 'unresolved') {
+        module.exports.set(exportName, {
+          kind: 'unresolved',
+          exportedName,
+          specifier,
+          reason: resolved.reason,
+        })
+        continue
+      }
+
+      const exportedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal)
+      module.exports.set(exportName, {
+        kind: 'reexport',
+        exportedName,
+        specifier,
+        module: exportedModule,
+      })
+    }
+  }
+}
+
 function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext): ResolvedImport {
   const result = ts.resolveModuleName(specifier, module.sourceId, resolution.compilerOptions, ts.sys, resolution.cache)
   const resolved = result.resolvedModule
@@ -197,12 +285,47 @@ function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, r
   return {kind: 'source', sourceId: normalizePath(resolved.resolvedFileName)}
 }
 
-function collectLocalExportDeclaration(statement: ts.ExportDeclaration, exports: Map<string, string>) {
+function resolveFitExportInner<TGlobal>(
+  module: FitModule<TGlobal>,
+  exportedName: string,
+  seen: Set<string>,
+): FitResolvedExport<FitModule<TGlobal>> {
+  const key = `${module.sourceId}#${exportedName}`
+  if (seen.has(key)) {
+    return {
+      kind: 'unresolved',
+      exportedName,
+      reason: `Cyclic re-export at ${module.file}#${exportedName}`,
+    }
+  }
+  seen.add(key)
+
+  const binding = module.exports.get(exportedName)
+  if (binding == null) {
+    return {
+      kind: 'unresolved',
+      exportedName,
+      reason: `Imported symbol ${exportedName} is not exported by ${module.file}`,
+    }
+  }
+  if (binding.kind === 'local') {
+    return {kind: 'local', localName: binding.localName, module}
+  }
+  if (binding.kind === 'unresolved') {
+    return {kind: 'unresolved', exportedName, reason: binding.reason}
+  }
+  return resolveFitExportInner(binding.module, binding.exportedName, seen)
+}
+
+function collectLocalExportDeclaration<TGlobal>(
+  statement: ts.ExportDeclaration,
+  exports: Map<string, FitExportBinding<FitModule<TGlobal>>>,
+) {
   if (statement.moduleSpecifier != null) return
   if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) return
   for (const element of statement.exportClause.elements) {
     const localName = element.propertyName?.text ?? element.name.text
-    exports.set(element.name.text, localName)
+    exports.set(element.name.text, {kind: 'local', localName})
   }
 }
 

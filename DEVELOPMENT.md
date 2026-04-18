@@ -29,5 +29,5 @@ bun install
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [verify.ts](./verify.ts) — ad hoc JSON-report CLI
 - [test.ts](./test.ts) — pattern-suite runner
-- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), and [negative-import-helpers.ts](./negative-import-helpers.ts) — small imported-helper fixtures
+- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet

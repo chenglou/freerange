@@ -2,6 +2,7 @@
 
 import {importedAddGap as addImportedGap, importedClampWidth, importedRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
+import {barrelClampWidth, barrelTsxClampWidth} from './import-pattern-barrel'
 import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
 
 /** @fit
@@ -42,4 +43,20 @@ export function importedHelperTsconfigAliasContract(width: number) {
  */
 export function importedHelperTsxContract(width: number) {
   return importedTsxClampWidth(width)
+}
+
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+export function importedHelperBarrelContract(width: number) {
+  return barrelClampWidth(width)
+}
+
+/** @fit
+ * given width: number[0, 1000]
+ * result: number[0, 320]
+ */
+export function importedHelperBarrelTsxContract(width: number) {
+  return barrelTsxClampWidth(width)
 }

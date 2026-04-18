@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   buildFitSourceModule,
   loadFitProject,
+  resolveFitExport,
   type FitImportBinding,
   type FitModule,
 } from './modules.ts'
@@ -1510,25 +1511,23 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   if (binding == null) return unknown(`Unknown function ${functionName}`)
   if (binding.kind === 'unresolved') return unknown(binding.reason)
 
-  const localName = binding.module.exports.get(binding.exportedName)
-  if (localName == null) {
-    return unknown(`Imported symbol ${binding.exportedName} from ${binding.specifier} is not exported by ${binding.module.file}`)
-  }
+  const exported = resolveFitExport(binding.module, binding.exportedName)
+  if (exported.kind === 'unresolved') return unknown(exported.reason)
 
-  const fn = binding.module.functions.get(localName)
+  const fn = exported.module.functions.get(exported.localName)
   if (fn == null) return unknown(`Imported symbol ${binding.exportedName} from ${binding.specifier} is not a function declaration`)
-  const specs = binding.module.specsByFunction.get(localName) ?? []
+  const specs = exported.module.specsByFunction.get(exported.localName) ?? []
   if (specs.length === 0) return unknown(`Imported function ${binding.exportedName} from ${binding.specifier} has no @fit contract`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
 
-  const proof = verifyFunctionContract(binding.module, localName, context.contractCache)
+  const proof = verifyFunctionContract(exported.module, exported.localName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(binding.exportedName, binding.module, fn, expression, argumentValues, context)
+  const obligations = verifyCallGivenSpecs(binding.exportedName, exported.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
-  return valueFromFunctionContract(binding.exportedName, binding.module, fn, specs, argumentValues, context.contractCache)
+  return valueFromFunctionContract(binding.exportedName, exported.module, fn, specs, argumentValues, context.contractCache)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {

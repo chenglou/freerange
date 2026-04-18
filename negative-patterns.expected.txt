@@ -273,3 +273,5 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: numb
   Imported function unannotatedImportedClamp from ./negative-import-helpers has no @fit contract
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: result: number[0, 320]
   Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: result: number[0, 320]
+  Imported function barrelUnannotatedClamp from ./negative-import-barrel has no @fit contract
