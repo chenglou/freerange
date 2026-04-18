@@ -15,4 +15,4 @@ Do `bun install` if you're in a fresh checkout/worktree.
 
 **Important:** after you're done with a feature, and have enough holistic vision, make sure you do a pass over all the files again and see if you can simplify anything. Don't change things for the sake of, but if there are simplifications, YELL **I DID A HOLISTIC PASS AND FOUND SIMPLIFICATIONS** with a brief summary.
 
-**Important:** do NOT monkey-patch. If you find yourself solving the symptom instead of the root cause, YELL **I SOLVED THE ROOT CAUSE NOT JUST THE SYMPTOM** with a brief summary.
+**Important:** do NOT monkey-patch. If you found yourself solving the symptom instead of the root cause, reconsider and do a proper fix, then YELL **I SOLVED THE ROOT CAUSE NOT THE SYMPTOM** with a brief summary.
