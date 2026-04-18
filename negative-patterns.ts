@@ -390,6 +390,16 @@ export function negativeMapRowsNeedFieldDomain(items: {height: number}[]) {
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[].index: int 1..49
+ */
+export function negativeMapIndexCanBeZero(items: {height: number}[]) {
+  const rows = items.map((item, index) => ({index, height: item.height}))
+  return {rows}
+}
+
+/** @fit
  * given min: -1000..1000
  * given value: -1000..1000
  * given max: -1000..1000

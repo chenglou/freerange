@@ -84,7 +84,7 @@ Keep app code natural. A checker that understands locals, loops, arrays, object 
 
 High-value inference:
 
-- `items.map(...)` preserves length and simple field domains; source order can come later when there is a public fact that needs it.
+- `items.map(...)` preserves length, simple field domains, and optional callback index facts. Source order can come later when there is a public fact that needs it.
 - append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.

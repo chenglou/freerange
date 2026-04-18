@@ -24,6 +24,7 @@ sections[].rows[].height <= maxHeight
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
+- Expression-bodied `items.map(...)` preserves length, item field domains, and optional callback index facts.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next

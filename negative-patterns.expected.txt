@@ -245,6 +245,17 @@ FAIL negative-patterns.ts:negativeMapRowsNeedFieldDomain: result.rows[].height: 
     trusted from function @fit: given items.length: int 0..50
     trusted from function @fit: given items[].height: -40..40
   missing: items[].height >= 0
+FAIL negative-patterns.ts:negativeMapIndexCanBeZero: result.rows[].index: int 1..49
+  range was int 0..49 as mapIndex(items), expected inside int 1..49
+  need: mapIndex(items) inside int 1..49
+  known:
+    int 0..49 as mapIndex(items)
+    int 1..49
+    trusted from function @fit: given items.length: int 1..50
+    trusted from function @fit: given items[].height: 0..40
+    read from code: mapIndex(items) >= 0
+    read from code: mapIndex(items) < items.length
+  missing: mapIndex(items) >= 1
 FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: result.cols: int 1..6
   range was int 1..7, expected inside int 1..6
   need: int 1..7 inside int 1..6

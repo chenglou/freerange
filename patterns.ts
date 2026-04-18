@@ -398,6 +398,22 @@ export function mapRowsKeepsLengthAndFields(items: {height: number}[]) {
 
 /** @fit
  * given items.length: int 1..50
+ * given items[].height: 0..100
+ * result.rows.length == items.length
+ * result.rows[].index: int 0..49
+ * result.rows[].index < items.length
+ * result.rows[].height: 0..40
+ */
+export function mapRowsKeepsIndexAndClampedFields(items: {height: number}[]) {
+  const rows = items.map((item, index) => ({
+    index,
+    height: clampLayoutValue(item.height, 0, 40),
+  }))
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
  * given items[].height: 0..40
  * result.rows.length == items.length
  * result.rows[].height: 0..40

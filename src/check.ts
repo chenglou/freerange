@@ -1445,8 +1445,12 @@ function indexedLoopAssumptions(index: NumberValue, sourceLength: NumberValue): 
 
 function indexedElementAssumptions(arrayName: string, sourceLength: NumberValue): LinearConstraint[] {
   const index = indexedElementValue(arrayName, 'index', sourceLength)
-  const lower = comparisonConstraint(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), `${index.expr ?? `${arrayName}[].index`} >= 0`)
-  const upper = comparisonConstraint(index, '<', sourceLength, `${index.expr ?? `${arrayName}[].index`} < ${sourceLength.expr ?? formatRange(sourceLength)}`)
+  return indexedElementPathAssumptions(index, sourceLength)
+}
+
+function indexedElementPathAssumptions(index: NumberValue, sourceLength: NumberValue): LinearConstraint[] {
+  const lower = comparisonConstraint(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), `${index.expr ?? 'index'} >= 0`)
+  const upper = comparisonConstraint(index, '<', sourceLength, `${index.expr ?? 'index'} < ${sourceLength.expr ?? formatRange(sourceLength)}`)
   return nonNullFacts(lower, upper)
 }
 
@@ -1844,12 +1848,22 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   if (source.kind !== 'array') return unknown('Array.map expected an array')
   const callback = expression.arguments[0]
   if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.map expects one arrow callback')
-  const param = callback.parameters[0]
-  if (param == null || callback.parameters.length !== 1 || !ts.isIdentifier(param.name)) return unknown('Array.map callback expected one simple parameter')
+  const itemParam = callback.parameters[0]
+  const indexParam = callback.parameters[1]
+  if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return unknown('Array.map callback expected one simple item parameter and optional index parameter')
+  const indexName = indexParam == null ? null : ts.isIdentifier(indexParam.name) ? indexParam.name.text : null
+  if (indexParam != null && indexName == null) return unknown('Array.map index parameter expected a simple identifier')
   if (!ts.isExpression(callback.body)) return unknown('Array.map callback block bodies are not supported yet')
 
-  const item = source.element ?? unknownObject(`${source.expr ?? expression.expression.expression.getText(context.program.sourceFile)}[]`)
-  const element = evaluateExpression(callback.body, {...context, env: new Map(context.env).set(param.name.text, item)})
+  const sourceName = source.expr ?? expression.expression.expression.getText(context.program.sourceFile)
+  const item = source.element ?? unknownObject(`${sourceName}[]`)
+  const env = new Map(context.env).set(itemParam.name.text, item)
+  if (indexName != null) {
+    const index = indexedElementPathValue(`mapIndex(${sourceName})`, source.length)
+    env.set(indexName, index)
+    context.assumptions = mergeAssumptions(context.assumptions, indexedElementPathAssumptions(index, source.length))
+  }
+  const element = evaluateExpression(callback.body, {...context, env})
   return {
     kind: 'array',
     length: source.length,

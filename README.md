@@ -391,7 +391,7 @@ Supported today:
 - `[...items, value]` length
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
-- `items.map(item => expression)` for length and item fields
+- `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - conditional push length, e.g. `rows.length <= items.length`
 
 `map` support is deliberately tiny:
@@ -409,7 +409,7 @@ function mapRows(items: {height: number}[]) {
 }
 ```
 
-The callback must be a one-parameter expression body. This is source inference, not a public callback language.
+The callback must be an expression body with an item parameter and optional index parameter. This is source inference, not a public callback language.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
