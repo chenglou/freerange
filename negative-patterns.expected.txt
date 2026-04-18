@@ -137,6 +137,15 @@ UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: no
     row advance for .top: number[-40, 40] as items[].height
     sequence facts: spaced(0), lastEnd = number[-Infinity, Infinity] as runningSum(top, items.length, items[].height)
   missing: given items[].height >= 0
+UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: result >= 0
+  number[-Infinity, Infinity] as runningSum(0, items.length, items[].height) >= int[0, 0] as 0 was not proven
+  need: runningSum(0, items.length, items[].height) >= 0
+  known:
+    number[-Infinity, Infinity] as runningSum(0, items.length, items[].height)
+    int[0, 0] as 0
+    trusted from function @fit: given items.length: int[0, 50]
+    trusted from function @fit: given items[].height: number[-40, 40]
+  missing: given runningSum(0, items.length, items[].height) >= 0
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
   need: every next .top >= previous .top

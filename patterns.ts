@@ -261,6 +261,20 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result: number[0, 2000]
+ * result >= 0
+ */
+export function runningTotalPerItemHeight(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total += item.height
+  }
+  return total
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given top: number[0, 1000]
  * given gap: number[0, 10]

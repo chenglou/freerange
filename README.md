@@ -163,6 +163,8 @@ rows[].top <= boxes[].bottom
 
 That could mean same index, all pairs, visible pairs, or something else. The syntax should say that before the checker accepts it.
 
+So `[]` stays the anonymous one-collection shorthand. If a future fact needs two collections, it should name the relationship instead of asking `[]` to guess.
+
 ## Comparisons
 
 ```ts
@@ -351,6 +353,36 @@ The callback must be a one-parameter expression body. This is source inference, 
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
+## Scalar Loops
+
+Freerange supports one narrow accumulator shape:
+
+```ts
+/** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[0, 40]
+ * result: number[0, 2000]
+ */
+function totalHeight(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total += item.height
+  }
+  return total
+}
+```
+
+This is useful when the increment is known non-negative. It is not general reducer support yet:
+
+```ts
+items.reduce(...)
+total = total + item.height
+if (item.visible) total += item.height
+maxWidth = Math.max(maxWidth, item.width)
+```
+
+Those should land as source inference when real demos need them, not as public `sum(map(...))` syntax.
+
 ## Row Loops
 
 This is the main layout shape today:
@@ -476,6 +508,7 @@ The checker understands a small pure subset:
 - object literals with normal or shorthand properties
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
+- simple `for...of` scalar running sums with `+=`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`
 - one guarded conditional push inside a `for...of`

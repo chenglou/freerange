@@ -195,6 +195,19 @@ export function negativeRunningSumPerItemHeightNeedsNonNegative(items: {height: 
 }
 
 /** @fit
+ * given items.length: int[0, 50]
+ * given items[].height: number[-40, 40]
+ * result >= 0
+ */
+export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total += item.height
+  }
+  return total
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given top: number[0, 1000]
  * result.rows.length == items.length

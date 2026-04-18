@@ -88,8 +88,41 @@ High-value inference:
 - append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
-- boring reducers like `total += row.height` can become internal measures.
+- thin non-negative running sums like `total += row.height` already give numeric ranges. Next reducer-like work should be conditional totals/counts, min/max accumulation, and cleaner reports when totals feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized.
+
+## Wildcard Semantics
+
+One-sided `[]` is anonymous `for every item here`:
+
+```ts
+rows[].height <= maxHeight
+sections[].rows[].height <= maxHeight
+```
+
+Do not give two-sided `[]` a hidden meaning:
+
+```ts
+rows[].top <= boxes[].bottom
+```
+
+That could mean same index, all pairs, matched by source item, matched by id, or adjacent rows. The syntax should carry the relationship.
+
+Einops is a useful taste reference: named axes make repetition meaningful. A future syntax could use repeated labels for same-index comparison:
+
+```ts
+rows[i].top <= boxes[i].bottom
+```
+
+and different labels for all-pairs comparison:
+
+```ts
+children[i].right <= blockers[j].left
+```
+
+SQL is the taste reference for source/id matching: name the relation. If two collections match by source item, fragment id, line id, or range ownership, bracket labels alone are probably not enough.
+
+Keep this as design pressure, not implemented syntax, until a real demo needs it.
 
 ## Internal IR
 
@@ -116,7 +149,7 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 
 The resolver follows named imports through TypeScript module resolution when they land on local source files, and it follows explicit named re-export barrels. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, wildcard barrels, summary files, stale-summary trust, or workspace caches.
 
-When those land, reports need to say whether a fact came from source, a trusted `given`, a source-proved imported contract, or a trusted summary. Do not let a checked-in summary launder a failed source proof.
+Next, reports need to say whether a fact came from source, a trusted `given`, a source-proved imported contract, or a trusted summary. Do not let a checked-in summary launder a failed source proof.
 
 ## Reports
 

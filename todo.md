@@ -22,27 +22,35 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
-- Named imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
+- Simple `for...of` scalar running sums like `total += item.height` produce numeric ranges when the increment is known non-negative.
+- Named local imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next
 
-1. **Tighten `given` beyond root names.**
-   Top-level `given` now only names input roots, and loop-level `given` rejects `result`, loop-built arrays, and mutable cursors. The next step is deciding how much expression shape to allow inside those roots.
+1. **Finish input honesty.**
+   Top-level `given` now only names input roots, and loop-level `given` rejects `result`, loop-built arrays, and mutable cursors. Next:
+   - decide how much expression shape to allow inside those roots
+   - catch more contradictory input promises before they make later checks look proven
 
-2. **Make helper report lines clearer.**
-   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, or `source-proved imported contract`. Helper calls still mostly appear as separate checks; make that output easier to scan without adding new public syntax.
+2. **Make helper/import report lines clearer.**
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, or `source-proved imported contract`. Next report work is keeping helper/import failures easy to scan without adding new public syntax: unsupported imports, missing contracts, and any future trusted summaries.
 
-3. **Improve wildcard comparisons carefully.**
-   Keep the current one-wildcard-vs-scalar rule. Next useful steps:
-   - same-item comparisons only if the syntax makes same-item semantics explicit
-   - zip/cross comparisons only if the syntax makes zip/cross semantics explicit
-   Do not silently guess what two wildcard sides mean.
+3. **Design two-collection wildcard semantics before implementing them.**
+   Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
+   - repeated labels could mean same index, e.g. `rows[i]` with `boxes[i]`
+   - different labels could mean all pairs, e.g. `children[i]` with `blockers[j]`
+   - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
 
-4. **Broaden source inference before adding atoms.**
-   `items.map(...)`, indexed loops, and conditional push now have small summaries. Next useful source shape:
-   - boring reducers like `total += row.height` become internal measures
+4. **Turn thin scalar sums into better internal measures.**
+   Simple non-negative `total += row.height` already gives ranges. Next useful shapes are still source inference, not public folds:
+   - conditional totals/counts
+   - min/max accumulation
+   - totals that feed later comparisons and reports cleanly
 
-5. **Delay views until field-name pressure earns them.**
+5. **Use real demos as pressure tests.**
+   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Do not add an atom just because a demo would look nicer with one.
+
+6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
 
 ```ts
@@ -53,16 +61,6 @@ view fragments as ranges(start: .textStart, end: .textEnd)
 
    A view is only a field mapping. It must not assert layout facts.
 
-6. **Prefer plain geometry first.**
-   Start with field comparisons:
-
-```ts
-child.x >= parent.x
-child.x + child.w <= parent.x + parent.w
-```
-
-   Add `inside(child, parent)` only when repeated reports prove the name earns itself. If it lands, decide whether it includes non-negative width/height; probably yes.
-
 7. **Add Pretext facts through generic range/lineage facts first.**
    Try these before text-specific atoms:
    - `fragments[].width <= offeredWidth`
@@ -70,9 +68,6 @@ child.x + child.w <= parent.x + parent.w
    - `partitions(fragments, textRange)`
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
-
-8. **Grow imports one boring step at a time.**
-   Named imports now go through TypeScript resolution when they point at local source, and explicit named re-export barrels are followed. Next useful steps are better imported-contract report provenance and a sharper project/workspace story. Do not add package imports, declaration-only imports, wildcard barrels, or summary-file trust before reports can say exactly what was source-proved.
 
 ## Public DSL Governance
 
@@ -113,7 +108,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Numeric atoms. Existing interval math, small linear reduction, ceil/floor/modulo facts, positive scale/divide facts, and `Math.min` / `Math.max` branch facts cover a lot.
 - Clamp atoms. Userland clamp works through helper contracts plus `Math.min` / `Math.max`.
 - `sameLength` as a primitive. Append/running-sum inference often proves length directly.
-- Early geometry atoms. Many first cases are ordinary comparisons plus wildcard facts.
+- Early geometry atoms. Field math already works; keep writing `child.x + child.w <= parent.x + parent.w` until repeated demos earn a name like `inside`.
 - Exhaustive integer sweeps. Keep them out unless a finite-domain static proof explicitly earns its complexity.
 
 ## Current Limitations
@@ -126,5 +121,5 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
-- No reducer summaries yet.
+- Scalar accumulation support is thin: non-negative `+=` running sums work, but no `reduce`, conditional counts/totals, min/max accumulation, or public aggregate syntax yet.
 - No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.
