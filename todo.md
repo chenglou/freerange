@@ -9,7 +9,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 ## Current Surface
 
 - Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
-- Loop specs also use `@fit` on the supported append-only `for...of` shape. Placement decides scope. Loop checks name locals directly; they do not have `result`.
+- Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
 - Wildcard comparisons support one collection side and one scalar side. The collection side may be nested:
@@ -31,8 +31,8 @@ sections[].rows[].height <= maxHeight
 1. **Keep tightening input honesty.**
    `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, and simple comparison-only contradictions like `given width >= 100` plus `given width <= 50` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
 
-2. **Make helper/import report lines clearer.**
-   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `source-proved helper contract`, or `source-proved imported contract`. Import boundary failures are bucketed as unavailable contracts, unsupported import shapes, or imported contracts that failed in source before the caller could trust them. Next report work is likely call precondition failures and any future trusted-summary wording.
+2. **Keep helper/import report lines boring and precise.**
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `source-proved helper contract`, or `source-proved imported contract`. Import boundary failures are bucketed as unavailable contracts, unsupported import shapes, or imported contracts that failed in source before the caller could trust them. Call precondition failures have their own `requires ...` line now; next report work is likely sharper missing-fact text and any future trusted-summary wording.
 
 3. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
@@ -116,7 +116,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - No public views yet.
 - Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, and simple opposing linear comparison bounds are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
-- Loop-level `@fit` only attaches to supported append-only loops.
+- Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.

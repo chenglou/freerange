@@ -29,7 +29,7 @@ bun install
 bun run test
 ```
 
-That checks the good examples in [patterns.ts](./patterns.ts) / [import-patterns.ts](./import-patterns.ts), plus the stable bad-example messages in [negative-patterns.ts](./negative-patterns.ts).
+That checks the good examples in [patterns.ts](./patterns.ts) / [import-patterns.ts](./import-patterns.ts), plus the stable bad-example messages in [negative-patterns.ts](./negative-patterns.ts) / [negative-import-patterns.ts](./negative-import-patterns.ts).
 
 To inspect your own file:
 
