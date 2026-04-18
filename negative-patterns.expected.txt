@@ -275,3 +275,21 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: result: nu
   Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: result: number[0, 320]
   Imported function barrelUnannotatedClamp from ./negative-import-barrel has no @fit contract
+FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: result: number[0, 100]
+  range was number[0, 320] as result, expected inside number[0, 100]
+  need: result inside number[0, 100]
+  known:
+    number[0, 320] as result
+    source-proved imported contract: import-pattern-helpers.ts#importedClampWidth: result: number[0, 320]
+    number[0, 100] as 0..100
+    trusted from function @fit: given width: number[0, 1000]
+  missing: result <= 100
+FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: result: number[0, 100]
+  range was number[0, 320] as result, expected inside number[0, 100]
+  need: result inside number[0, 100]
+  known:
+    number[0, 320] as result
+    source-proved imported contract: import-pattern-helpers.ts#importedClampWidth: result: number[0, 320]
+    number[0, 100] as 0..100
+    trusted from function @fit: given width: number[0, 1000]
+  missing: result <= 100

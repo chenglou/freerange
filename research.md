@@ -142,8 +142,8 @@ Reports should separate:
 - proved from source
 - trusted top-level `given`
 - trusted loop-local `given`
-- proved helper contract
-- trusted imported/helper summary
+- source-proved imported contract
+- trusted summary, if that ever exists
 - unsupported
 
 Also add vacuity warnings. Inconsistent assumptions should not make everything look beautifully proved.

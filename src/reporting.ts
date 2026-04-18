@@ -6,6 +6,7 @@ export type ReportNumberValue = {
   isInteger: boolean
   expr: string | null
   linear: ReportLinearExpr | null
+  provenance?: string[]
 }
 
 export type ReportLinearExpr = {
@@ -132,12 +133,16 @@ export function formatLinear(linear: ReportLinearExpr | null) {
 }
 
 function knownProofContext(left: ReportNumberValue, right: ReportNumberValue, assumptions: ReportLinearConstraint[]) {
-  const lines = [formatRange(left), formatRange(right)]
+  const lines = [...knownValueFacts(left), ...knownValueFacts(right)]
   for (const assumption of assumptions) {
     lines.push(formatKnownFact(assumption))
     if (lines.length >= 12) break
   }
   return [...new Set(lines)]
+}
+
+function knownValueFacts(value: ReportNumberValue) {
+  return [formatRange(value), ...(value.provenance ?? [])]
 }
 
 function formatKnownFact(assumption: ReportLinearConstraint): string {

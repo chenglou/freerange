@@ -83,9 +83,10 @@ A useful report says where facts came from:
 known:
   trusted from function @fit: given width: number[0, 1000]
   read from code: width - 320 <= 0
+  source-proved imported contract: layout-math.ts#clampWidth: result: number[0, 320]
 ```
 
-That distinction matters. Facts from `given` are promises. Facts from code are earned.
+That distinction matters. Facts from `given` are promises. Facts from code and imported contracts are earned from source.
 
 ## Input Facts
 

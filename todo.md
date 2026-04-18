@@ -22,7 +22,7 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
-- Named relative imports can call exported function declarations with `@fit` contracts. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
+- Named imports can call exported function declarations with `@fit` contracts when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 
 ## Do Next
 
@@ -30,7 +30,7 @@ sections[].rows[].height <= maxHeight
    Top-level `given` now only names input roots, and loop-level `given` rejects `result`, loop-built arrays, and mutable cursors. The next step is deciding how much expression shape to allow inside those roots.
 
 2. **Make helper report lines clearer.**
-   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, or `read from code`. Helper calls still mostly appear as separate checks; make that output easier to scan without adding new public syntax.
+   Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, or `source-proved imported contract`. Helper calls still mostly appear as separate checks; make that output easier to scan without adding new public syntax.
 
 3. **Improve wildcard comparisons carefully.**
    Keep the current one-wildcard-vs-scalar rule. Next useful steps:

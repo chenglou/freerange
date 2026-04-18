@@ -65,6 +65,7 @@ type NumberValue = {
   expr: string | null
   linear: LinearExpr | null
   cases: NumberCase[] | null
+  provenance: string[]
 }
 
 type ObjectValue = {
@@ -146,6 +147,11 @@ type NonNegativeFact = {
 type NumberCase = {
   value: NumberValue
   assumptions: LinearConstraint[]
+}
+
+type ImportedContractSource = {
+  sourceFile: string
+  sourceFunctionName: string
 }
 
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
@@ -1372,7 +1378,7 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, context: Eval
   if (value.kind !== 'number') return unknown('Unary operator expected a number')
   switch (expression.operator) {
     case ts.SyntaxKind.MinusToken:
-      return numberValue(-value.max, -value.min, value.isInteger, value.expr == null ? null : `-${value.expr}`, linearScale(value.linear, -1))
+      return numberValue(-value.max, -value.min, value.isInteger, value.expr == null ? null : `-${value.expr}`, linearScale(value.linear, -1), null, value.provenance)
     case ts.SyntaxKind.PlusToken:
       return value
     default:
@@ -1404,9 +1410,9 @@ function evaluateNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: Numbe
 function evaluatePlainNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: NumberValue): Value {
   switch (op) {
     case ts.SyntaxKind.PlusToken:
-      return numberValue(left.min + right.min, left.max + right.max, left.isInteger && right.isInteger, binaryExpr(left, '+', right), linearAdd(left.linear, right.linear))
+      return numberValue(left.min + right.min, left.max + right.max, left.isInteger && right.isInteger, binaryExpr(left, '+', right), linearAdd(left.linear, right.linear), null, mergeProvenance(left, right))
     case ts.SyntaxKind.MinusToken:
-      return numberValue(left.min - right.max, left.max - right.min, left.isInteger && right.isInteger, binaryExpr(left, '-', right), linearSubtract(left.linear, right.linear))
+      return numberValue(left.min - right.max, left.max - right.min, left.isInteger && right.isInteger, binaryExpr(left, '-', right), linearSubtract(left.linear, right.linear), null, mergeProvenance(left, right))
     case ts.SyntaxKind.AsteriskToken:
       return multiplyNumbers(left, right)
     case ts.SyntaxKind.SlashToken:
@@ -1519,15 +1525,19 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const specs = exported.module.specsByFunction.get(exported.localName) ?? []
   if (specs.length === 0) return unknown(`Imported function ${binding.exportedName} from ${binding.specifier} has no @fit contract`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
+  const source = {
+    sourceFile: exported.module.file,
+    sourceFunctionName: fn.name?.text ?? exported.localName,
+  }
 
   const proof = verifyFunctionContract(exported.module, exported.localName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(binding.exportedName, exported.module, fn, expression, argumentValues, context)
+  const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
-  return valueFromFunctionContract(binding.exportedName, exported.module, fn, specs, argumentValues, context.contractCache)
+  return valueFromFunctionContract(functionName, exported.module, fn, specs, argumentValues, context.contractCache, source)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -1692,6 +1702,7 @@ function valueFromFunctionContract(
   specs: FitSpec[],
   argumentValues: Value[],
   contractCache: Map<string, FunctionContractProof>,
+  source: ImportedContractSource,
 ): Value {
   const env = new Map<string, Value>()
   for (const [name, value] of program.globals) env.set(name, value)
@@ -1714,33 +1725,47 @@ function valueFromFunctionContract(
   }
 
   for (const spec of specs) {
-    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec)
-    if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context)
+    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, source)
+    if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
   }
 
   return env.get('result') ?? unknown(`Imported function ${functionName} contract did not describe result`)
 }
 
-function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>) {
+function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: ImportedContractSource) {
   if (simpleResultPathText(spec.expression) == null) return
   setSummaryPathValue(
     env,
     spec.expression,
-    numberValue(spec.min, spec.max, spec.valueKind === 'int', spec.expression, linearVariable(linearNameForExpression(spec.expression))),
+    numberValue(
+      spec.min,
+      spec.max,
+      spec.valueKind === 'int',
+      spec.expression,
+      linearVariable(linearNameForExpression(spec.expression)),
+      null,
+      [importedContractFact(source, spec.text)],
+    ),
   )
 }
 
-function applySummaryComparisonSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-comparison'}>, context: EvalContext) {
+function applySummaryComparisonSpec(
+  env: Map<string, Value>,
+  spec: Extract<FitSpec, {kind: 'check-comparison'}>,
+  context: EvalContext,
+  source: ImportedContractSource,
+) {
   const leftPath = simpleResultPathText(spec.left)
   const rightPath = simpleResultPathText(spec.right)
+  const fact = importedContractFact(source, spec.text)
   if (leftPath != null && rightPath == null) {
     const right = evaluateSpecExpression(spec.right, context)
-    if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right)
+    if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact)
     return
   }
   if (rightPath != null && leftPath == null) {
     const left = evaluateSpecExpression(spec.left, context)
-    if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left)
+    if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left, fact)
   }
 }
 
@@ -1750,23 +1775,29 @@ function applySummaryComparisonToPath(
   path: string,
   op: ComparisonOperator,
   other: NumberValue,
+  fact: string,
 ) {
   const current = evaluateSpecExpression(path, context)
   if (current.kind !== 'number') return
+  const provenance = mergeProvenance(current, other, [fact])
 
   switch (op) {
     case '==':
-      setSummaryPathValue(env, path, numberValue(other.min, other.max, other.isInteger, other.expr, other.linear))
+      setSummaryPathValue(env, path, numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, null, provenance))
       return
     case '>=':
     case '>':
-      setSummaryPathValue(env, path, numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases))
+      setSummaryPathValue(env, path, numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, provenance))
       return
     case '<=':
     case '<':
-      setSummaryPathValue(env, path, numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases))
+      setSummaryPathValue(env, path, numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance))
       return
   }
+}
+
+function importedContractFact(source: ImportedContractSource, text: string) {
+  return `source-proved imported contract: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }
 
 function simpleResultPathText(text: string): string | null {
@@ -1943,40 +1974,40 @@ function evaluateNumberUnary(value: NumberValue, evaluate: (value: NumberValue) 
 }
 
 function floorNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear)
-  return numberValue(Math.floor(value.min), Math.floor(value.max), true, value.expr == null ? null : `floor(${value.expr})`)
+  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
+  return numberValue(Math.floor(value.min), Math.floor(value.max), true, value.expr == null ? null : `floor(${value.expr})`, null, null, value.provenance)
 }
 
 function ceilNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear)
-  return numberValue(Math.ceil(value.min), Math.ceil(value.max), true, value.expr == null ? null : `ceil(${value.expr})`)
+  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
+  return numberValue(Math.ceil(value.min), Math.ceil(value.max), true, value.expr == null ? null : `ceil(${value.expr})`, null, null, value.provenance)
 }
 
 function roundNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear)
-  return numberValue(Math.round(value.min), Math.round(value.max), true, value.expr == null ? null : `round(${value.expr})`)
+  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
+  return numberValue(Math.round(value.min), Math.round(value.max), true, value.expr == null ? null : `round(${value.expr})`, null, null, value.provenance)
 }
 
 function truncNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear)
-  return numberValue(Math.trunc(value.min), Math.trunc(value.max), true, value.expr == null ? null : `trunc(${value.expr})`)
+  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
+  return numberValue(Math.trunc(value.min), Math.trunc(value.max), true, value.expr == null ? null : `trunc(${value.expr})`, null, null, value.provenance)
 }
 
 function sqrtNumber(value: NumberValue): Value {
   if (value.min < 0) return unknown('Math.sqrt over a negative range is unsupported')
-  return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`)
+  return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`, null, null, value.provenance)
 }
 
 function absNumber(value: NumberValue, assumptions: LinearConstraint[]): NumberValue {
   const plain = plainNumber(value)
   if (plain.min >= 0) return withNumberCases(plain, value.cases)
   if (plain.max <= 0) {
-    const result = evaluateNumberUnary(value, current => numberValue(-current.max, -current.min, current.isInteger, current.expr == null ? null : `abs(${current.expr})`, linearScale(current.linear, -1)))
-    return result.kind === 'number' ? result : numberValue(-plain.max, -plain.min, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, linearScale(plain.linear, -1))
+    const result = evaluateNumberUnary(value, current => numberValue(-current.max, -current.min, current.isInteger, current.expr == null ? null : `abs(${current.expr})`, linearScale(current.linear, -1), null, current.provenance))
+    return result.kind === 'number' ? result : numberValue(-plain.max, -plain.min, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, linearScale(plain.linear, -1), null, plain.provenance)
   }
 
   const max = Math.max(Math.abs(plain.min), Math.abs(plain.max))
-  const joined = numberValue(0, max, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`)
+  const joined = numberValue(0, max, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, null, null, plain.provenance)
   const cases: NumberCase[] = []
   for (const valueCase of numberBranches(value)) {
     const nonNegative = comparisonConstraint(valueCase.value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
@@ -1994,7 +2025,7 @@ function absNumber(value: NumberValue, assumptions: LinearConstraint[]): NumberV
     }
     if (negativeStatus.status !== 'fail') {
       cases.push({
-        value: numberValue(-valueCase.value.max, -valueCase.value.min, valueCase.value.isInteger, valueCase.value.expr == null ? null : `abs(${valueCase.value.expr})`, linearScale(valueCase.value.linear, -1)),
+        value: numberValue(-valueCase.value.max, -valueCase.value.min, valueCase.value.isInteger, valueCase.value.expr == null ? null : `abs(${valueCase.value.expr})`, linearScale(valueCase.value.linear, -1), null, valueCase.value.provenance),
         assumptions: negativeStatus.status === 'pass' ? valueCase.assumptions : mergeAssumptions(valueCase.assumptions, [nonPositive]),
       })
     }
@@ -2023,8 +2054,8 @@ function choiceNumberPair(
   const plainRight = plainNumber(right)
   const joined =
     name === 'min'
-      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]))
-      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]))
+      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]), null, null, mergeProvenance(plainLeft, plainRight))
+      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]), null, null, mergeProvenance(plainLeft, plainRight))
 
   const cases: NumberCase[] = []
   for (const leftCase of numberBranches(left)) {
@@ -2764,12 +2795,21 @@ function linearNameForExpression(text: string) {
   return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathSyntheticName(text) : text
 }
 
-function numberValue(min: number, max: number, isInteger: boolean, expr: string | null, linear: LinearExpr | null = null, cases: NumberCase[] | null = null): NumberValue {
+function numberValue(
+  min: number,
+  max: number,
+  isInteger: boolean,
+  expr: string | null,
+  linear: LinearExpr | null = null,
+  cases: NumberCase[] | null = null,
+  provenance: string[] = [],
+): NumberValue {
   const clean = linear == null ? null : cleanLinear(linear)
+  const cleanProvenance = [...new Set(provenance)]
   if (clean != null && clean.terms.size === 0 && Number.isFinite(clean.constant)) {
-    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases}
+    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases, provenance: cleanProvenance}
   }
-  return {kind: 'number', min, max, isInteger, expr, linear: clean, cases}
+  return {kind: 'number', min, max, isInteger, expr, linear: clean, cases, provenance: cleanProvenance}
 }
 
 function unknownNumber(name: string): NumberValue {
@@ -2781,7 +2821,16 @@ function unknownNumber(name: string): NumberValue {
     expr: name,
     linear: linearVariable(linearNameForExpression(name)),
     cases: null,
+    provenance: [],
   }
+}
+
+function mergeProvenance(...items: (NumberValue | string[])[]) {
+  const lines: string[] = []
+  for (const item of items) {
+    lines.push(...(Array.isArray(item) ? item : item.provenance))
+  }
+  return [...new Set(lines)]
 }
 
 function unknownObject(name: string): ObjectValue {
@@ -3030,7 +3079,7 @@ function multiplyNumbers(left: NumberValue, right: NumberValue): NumberValue {
     left.max * right.min,
     left.max * right.max,
   ]
-  return numberValue(Math.min(...products), Math.max(...products), left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right))
+  return numberValue(Math.min(...products), Math.max(...products), left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
 }
 
 function divideNumbers(left: NumberValue, right: NumberValue): Value {
@@ -3041,13 +3090,13 @@ function divideNumbers(left: NumberValue, right: NumberValue): Value {
     left.max / right.min,
     left.max / right.max,
   ]
-  return numberValue(Math.min(...quotients), Math.max(...quotients), false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null)
+  return numberValue(Math.min(...quotients), Math.max(...quotients), false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeProvenance(left, right))
 }
 
 function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 || left.min < 0) return unknown('Modulo is only supported for non-negative values and positive divisors')
   const max = left.isInteger && right.isInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
-  return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right))
+  return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right), null, null, mergeProvenance(left, right))
 }
 
 function runningSumNumber(start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
@@ -3056,6 +3105,9 @@ function runningSumNumber(start: NumberValue, count: NumberValue, increment: Num
     Number.POSITIVE_INFINITY,
     false,
     start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
+    null,
+    null,
+    mergeProvenance(start, count, increment),
   )
   const deltas = [
     count.min * increment.min,
@@ -3068,13 +3120,16 @@ function runningSumNumber(start: NumberValue, count: NumberValue, increment: Num
     start.max + Math.max(...deltas),
     start.isInteger && count.isInteger && increment.isInteger,
     start.expr != null && count.expr != null && increment.expr != null ? `runningSum(${start.expr}, ${count.expr}, ${increment.expr})` : null,
+    null,
+    null,
+    mergeProvenance(start, count, increment),
   )
 }
 
 function powerNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min !== right.max) return unknown('Non-constant exponent is unsupported')
-  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right))
-  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right))
+  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
+  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
   return unknown('Only square of non-negative ranges is supported')
 }
 
@@ -3088,6 +3143,8 @@ function joinValues(left: Value, right: Value): Value {
       left.isInteger && right.isInteger,
       left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
       left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
+      null,
+      mergeProvenance(left, right),
     )
     if (left.cases == null && right.cases == null) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
