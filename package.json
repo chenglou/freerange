@@ -7,8 +7,8 @@
   "scripts": {
     "test": "bun test.ts",
     "verify": "bun verify.ts",
-    "verify:first-wave": "bun verify-first-wave-demos.ts",
-    "check": "tsc && oxlint --type-aware src patterns.ts import-patterns.ts import-pattern-helpers.ts import-pattern-barrel.ts import-pattern-tsx-helpers.tsx negative-patterns.ts negative-import-patterns.ts negative-import-helpers.ts negative-import-barrel.ts test.ts verify.ts verify-first-wave-demos.ts research/kernels --ignore-pattern '*.js'"
+    "verify:demos": "bun verify-demo-contracts.ts",
+    "check": "bun run verify:demos && tsc && oxlint --type-aware src patterns.ts import-patterns.ts import-pattern-helpers.ts import-pattern-barrel.ts import-pattern-tsx-helpers.tsx negative-patterns.ts negative-import-patterns.ts negative-import-helpers.ts negative-import-barrel.ts test.ts verify.ts verify-demo-contracts.ts research/kernels --ignore-pattern '*.js'"
   },
   "devDependencies": {
     "oxlint": "latest",

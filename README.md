@@ -37,6 +37,12 @@ To inspect your own file:
 bun run verify path/to/file.ts
 ```
 
+To verify the checked demo contracts in sibling Vibescript/Pretext checkouts:
+
+```sh
+bun run verify:demos
+```
+
 For development:
 
 ```sh
