@@ -245,6 +245,16 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: result.cols
     int[1, 6] as 1..6
     trusted from function @fit: given containerWidth: number[320, 2000]
   missing: int[1, 7] <= 6
+FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): given max >= min
+  callee needs given max >= min
+  caller has int[5, 5] as 5 >= int[10, 10] as 10
+  int[5, 5] as 5 >= int[10, 10] as 10 is false
+  need: 5 >= 10
+  known:
+    int[5, 5] as 5
+    int[10, 10] as 10
+    trusted from function @fit: given width: number[0, 100]
+  missing: given 5 >= 10
 FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: result.rows[].index: int[1, 49]
   range was int[0, 49] as rows[].index, expected inside int[1, 49]
   need: rows[].index inside int[1, 49]

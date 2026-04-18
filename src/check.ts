@@ -1704,7 +1704,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
+  const obligations = verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
 
   const env = programGlobalEnv(context.program)
   for (let i = 0; i < fn.parameters.length; i++) {
@@ -1725,6 +1725,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   })
   const specs = context.program.specsByFunction.get(functionName) ?? []
   if (specs.length === 0) return result
+  if (obligations !== 'pass') return result
 
   const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
   if (proof.status !== 'pass') return result

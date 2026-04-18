@@ -385,6 +385,13 @@ export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number
 }
 
 /** @fit
+ * given width: number[0, 100]
+ */
+export function negativeLocalHelperPreconditionViolation(width: number) {
+  return negativeConditionalClampLayoutValue(10, width, 5)
+}
+
+/** @fit
  * given items.length: int[1, 50]
  * given items[].height: number[0, 40]
  * result.rows[].index: int[1, 49]
