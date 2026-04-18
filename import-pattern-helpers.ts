@@ -3,24 +3,24 @@ const importPatternGap = 4
 export const importedChromeX = 16
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 export function importedClampWidth(width: number) {
   return Math.min(width, importPatternCap)
 }
 
 /** @fit
- * given value: number[0, 10]
- * result: number[4, 14]
+ * given value: 0..10
+ * result: 4..14
  */
 export function importedAddGap(value: number) {
   return value + importPatternGap
 }
 
 /** @fit
- * given items[].height: number[0, 40]
- * result.rows[].height: number[0, 40]
+ * given items[].height: 0..40
+ * result.rows[].height: 0..40
  */
 export function importedRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))

@@ -21,6 +21,7 @@ import {
   comparisonFailureReason,
   comparisonNeed,
   formatArraySummary,
+  formatExpectedRange,
   formatRange,
   missingRangeBounds,
   rangeFailureReason,
@@ -2110,7 +2111,7 @@ function withCallRangeReason(
   return {
     ...status,
     reason: [
-      `called function requires ${spec.expression}: ${spec.valueKind}[${spec.min}, ${spec.max}]`,
+      `called function requires ${spec.expression}: ${formatExpectedRange(spec.min, spec.max, spec.valueKind === 'int')}`,
       `this call passes ${formatCallBinding(spec.expression, value)}`,
       ...missingRangeBounds(value, spec.min, spec.max),
     ].join('\n'),
@@ -2137,7 +2138,7 @@ function withCallComparisonReason(
 
 function formatCallBinding(name: string, value: NumberValue) {
   if (value.min === value.max) return `${name} = ${value.min}`
-  const range = `${value.isInteger ? 'int' : 'number'}[${value.min}, ${value.max}]`
+  const range = formatExpectedRange(value.min, value.max, value.isInteger)
   return value.expr == null || value.expr === name ? `${name} is ${range}` : `${name} is ${range} from ${value.expr}`
 }
 

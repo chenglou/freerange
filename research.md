@@ -9,9 +9,9 @@ The public DSL should be a small layout constraint catalog over ordinary TS valu
 Good public surface:
 
 ```ts
-given width: number[0, 1000]
+given width: 0..1000
 rows.length == items.length
-rows[].height: number[0, 40]
+rows[].height: 0..40
 rows[].top + rows[].height <= parent.bottom
 nondecreasing(rows.top)
 spaced(rows, gap)

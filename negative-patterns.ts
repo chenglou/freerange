@@ -2,15 +2,15 @@
 // stable messages against negative-patterns.expected.txt.
 
 /** @fit
- * given value: int[0, 10]
- * result: int[0, 4]
+ * given value: int 0..10
+ * result: int 0..4
  */
 export function negativeOutputRange(value: number) {
   return value + 5
 }
 
 /** @fit
- * given value: number[0, 5]
+ * given value: 0..5
  * result.high < result.low
  */
 export function negativeComparison(value: number) {
@@ -20,7 +20,7 @@ export function negativeComparison(value: number) {
 }
 
 /** @fit
- * given width: number[0, 1000]
+ * given width: 0..1000
  * result.overflow < 0
  */
 export function negativePathSensitiveMinOverflow(width: number) {
@@ -30,8 +30,8 @@ export function negativePathSensitiveMinOverflow(width: number) {
 }
 
 /** @fit
- * given items.length: int[0, 10]
- * given index: int[0, 10]
+ * given items.length: int 0..10
+ * given index: int 0..10
  * result < items.length
  */
 export function negativeArrayIndexNeedsUpperBound(items: number[], index: number) {
@@ -40,24 +40,24 @@ export function negativeArrayIndexNeedsUpperBound(items: number[], index: number
 }
 
 /** @fit
- * given items.length: int[0, 10]
- * result: int[0, 10]
+ * given items.length: int 0..10
+ * result: int 0..10
  */
 function negativeNeedsShortArray(items: number[]) {
   return items.length
 }
 
 /** @fit
- * given items.length: int[0, 20]
- * result: int[0, 20]
+ * given items.length: int 0..20
+ * result: int 0..20
  */
 export function negativeArrayLengthCallGiven(items: number[]) {
   return negativeNeedsShortArray(items)
 }
 
 /** @fit
- * given total: int[0, 6000]
- * given count: int[1, 200]
+ * given total: int 0..6000
+ * given count: int 1..200
  * result >= total
  */
 export function negativeFloorDivisionDoesNotCoverTotal(total: number, count: number) {
@@ -65,9 +65,9 @@ export function negativeFloorDivisionDoesNotCoverTotal(total: number, count: num
 }
 
 /** @fit
- * given pointer: number[0, 1000]
- * given cellSize: int[1, 100]
- * given count: int[1, 10]
+ * given pointer: 0..1000
+ * given cellSize: int 1..100
+ * given count: int 1..10
  * result < count
  */
 export function negativeFloorHitIndexNeedsUpperBound(pointer: number, cellSize: number, count: number) {
@@ -76,9 +76,9 @@ export function negativeFloorHitIndexNeedsUpperBound(pointer: number, cellSize: 
 }
 
 /** @fit
- * given content: number[0, 1000]
- * given available: number[0, 1000]
- * given scale: number[-2, 2]
+ * given content: 0..1000
+ * given available: 0..1000
+ * given scale: -2..2
  * given content <= available
  * result.scaled <= result.limit
  */
@@ -90,8 +90,8 @@ export function negativeScaleNeedsNonNegativeFactor(content: number, available: 
 }
 
 /** @fit
- * given index: int[0, 10000]
- * given count: int[0, 1000]
+ * given index: int 0..10000
+ * given count: int 0..1000
  * result < count
  */
 export function negativeModuloNeedsPositiveCount(index: number, count: number) {
@@ -99,8 +99,8 @@ export function negativeModuloNeedsPositiveCount(index: number, count: number) {
 }
 
 /** @fit
- * given width: number[0, 1000]
- * given minWidth: number[0, 1000]
+ * given width: 0..1000
+ * given minWidth: 0..1000
  * result >= minWidth
  */
 export function negativeGuardNeedsReturnOnSmallSide(width: number, minWidth: number) {
@@ -109,9 +109,9 @@ export function negativeGuardNeedsReturnOnSmallSide(width: number, minWidth: num
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given top: number[0, 1000]
- * given step: number[-40, 40]
+ * given items.length: int 0..50
+ * given top: 0..1000
+ * given step: -40..40
  * result.bottom >= top
  * nondecreasing(result.rows.top)
  */
@@ -126,11 +126,11 @@ export function negativeRunningSumNeedsNonNegativeStep(items: number[], top: num
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given top: number[0, 1000]
- * given step: number[0, 40]
- * given gap: number[0, 10]
- * given otherGap: number[20, 30]
+ * given items.length: int 1..50
+ * given top: 0..1000
+ * given step: 0..40
+ * given gap: 0..10
+ * given otherGap: 20..30
  * spaced(result.rows, otherGap)
  */
 export function negativeSpacedNeedsMatchingGap(items: number[], top: number, step: number, gap: number, otherGap: number) {
@@ -144,9 +144,9 @@ export function negativeSpacedNeedsMatchingGap(items: number[], top: number, ste
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given top: number[0, 1000]
- * given step: number[0, 40]
+ * given items.length: int 1..50
+ * given top: 0..1000
+ * given step: 0..40
  * lastEnd(result.rows) == result.bottom
  */
 export function negativeLastEndNeedsHeightInRows(items: number[], top: number, step: number) {
@@ -160,7 +160,7 @@ export function negativeLastEndNeedsHeightInRows(items: number[], top: number, s
 }
 
 /** @fit
- * given item.height: number[-20, 40]
+ * given item.height: -20..40
  * result.height >= 0
  */
 export function negativeObjectFieldDomainTooWide(item: {height: number}) {
@@ -168,19 +168,19 @@ export function negativeObjectFieldDomainTooWide(item: {height: number}) {
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given index: int[0, 49]
+ * given items.length: int 1..50
+ * given index: int 0..49
  * given index < items.length
- * result: number[0, 40]
+ * result: 0..40
  */
 export function negativePerItemFieldNeedsDomain(items: {height: number}[], index: number) {
   return items[index]!.height
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[-40, 40]
- * given top: number[0, 1000]
+ * given items.length: int 1..50
+ * given items[].height: -40..40
+ * given top: 0..1000
  * result.bottom >= top
  * nondecreasing(result.rows.top)
  */
@@ -195,8 +195,8 @@ export function negativeRunningSumPerItemHeightNeedsNonNegative(items: {height: 
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[-40, 40]
+ * given items.length: int 0..50
+ * given items[].height: -40..40
  * result >= 0
  */
 export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}[]) {
@@ -208,8 +208,8 @@ export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[-40, 40]
+ * given items.length: int 0..50
+ * given items[].height: -40..40
  * result >= 0
  */
 export function negativeConditionalRunningTotalNeedsNonNegativeItem(items: {height: number; visible: boolean}[]) {
@@ -221,15 +221,15 @@ export function negativeConditionalRunningTotalNeedsNonNegativeItem(items: {heig
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given top: number[0, 1000]
+ * given items.length: int 1..50
+ * given top: 0..1000
  * result.rows.length == items.length
  */
 export function negativeLocalLoopAnnotationNeedsNonNegativeItem(items: {height: number}[], top: number) {
   const rows = []
   let y = top
   /** @fit
-   * given items[].height: number[-40, 40]
+   * given items[].height: -40..40
    * nondecreasing(rows.top)
    */
   for (const item of items) {
@@ -240,7 +240,7 @@ export function negativeLocalLoopAnnotationNeedsNonNegativeItem(items: {height: 
 }
 
 /** @fit
- * given items.length: int[1, 50]
+ * given items.length: int 1..50
  * result.rows.length == items.length
  */
 export function negativeLoopFitHasNoResult(items: {height: number}[]) {
@@ -255,11 +255,11 @@ export function negativeLoopFitHasNoResult(items: {height: number}[]) {
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
- * given top: number[0, 1000]
- * given gap: number[0, 10]
- * given parent.bottom: number[0, 2000]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * given parent.bottom: 0..2000
  * result.rows[].top + result.rows[].height <= parent.bottom
  */
 export function negativeWildcardRowsNeedParentBottom(items: {height: number}[], top: number, gap: number, parent: {bottom: number}) {
@@ -273,8 +273,8 @@ export function negativeWildcardRowsNeedParentBottom(items: {height: number}[], 
 }
 
 /** @fit
- * given sections[].rows[].height: number[0, 40]
- * given maxHeight: number[0, 30]
+ * given sections[].rows[].height: 0..40
+ * given maxHeight: 0..30
  * result.sections[].rows[].height <= maxHeight
  */
 export function negativeNestedWildcardRowsNeedScalarBound(sections: {rows: {height: number}[]}[], maxHeight: number) {
@@ -282,8 +282,8 @@ export function negativeNestedWildcardRowsNeedScalarBound(sections: {rows: {heig
 }
 
 /** @fit
- * given rows[].top: number[0, 10]
- * given boxes[].bottom: number[0, 10]
+ * given rows[].top: 0..10
+ * given boxes[].bottom: 0..10
  * result.rows[].top <= result.boxes[].bottom
  */
 export function negativeWildcardComparisonNeedsScalar(rows: {top: number}[], boxes: {bottom: number}[]) {
@@ -291,24 +291,24 @@ export function negativeWildcardComparisonNeedsScalar(rows: {top: number}[], box
 }
 
 /** @fit
- * given value: number[0, 10]
- * result: number[0, 10]
+ * given value: 0..10
+ * result: 0..10
  */
 function negativeNeedsSmallValue(value: number) {
   return value
 }
 
 /** @fit
- * given value: number[0, 20]
- * result: number[0, 20]
+ * given value: 0..20
+ * result: 0..20
  */
 export function negativeCallGiven(value: number) {
   return negativeNeedsSmallValue(value)
 }
 
 /** @fit
- * given containee: number[0, 1000]
- * given container: number[0, 1000]
+ * given containee: 0..1000
+ * given container: 0..1000
  * given container >= containee
  * result >= 0
  */
@@ -317,18 +317,18 @@ function negativeNeedsContainerFit(containee: number, container: number) {
 }
 
 /** @fit
- * given containee: number[100, 200]
- * given container: number[0, 50]
- * result: number[-100, 0]
+ * given containee: 100..200
+ * given container: 0..50
+ * result: -100..0
  */
 export function negativeRelationalCallGiven(containee: number, container: number) {
   return negativeNeedsContainerFit(containee, container)
 }
 
 /** @fit
- * given containee: number[0, 1000]
- * given padding: number[-100, 100]
- * given container: number[0, 1200]
+ * given containee: 0..1000
+ * given padding: -100..100
+ * given container: 0..1200
  * given container >= containee + padding
  * result.offset >= 0
  */
@@ -337,10 +337,10 @@ export function negativeLinearReductionNeedsNonNegativePadding(containee: number
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
- * given top: number[0, 1000]
- * given gap: number[0, 10]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
  * extentEnd(result.rows, top) == result.bottom
  */
 export function negativeExtentEndCatchesEmptyRows(items: {height: number}[], top: number, gap: number) {
@@ -354,9 +354,9 @@ export function negativeExtentEndCatchesEmptyRows(items: {height: number}[], top
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[-40, 40]
- * result.rows[].height: number[0, 40]
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * result.rows[].height: 0..40
  */
 export function negativeMapRowsNeedFieldDomain(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -364,9 +364,9 @@ export function negativeMapRowsNeedFieldDomain(items: {height: number}[]) {
 }
 
 /** @fit
- * given min: number[-1000, 1000]
- * given value: number[-1000, 1000]
- * given max: number[-1000, 1000]
+ * given min: -1000..1000
+ * given value: -1000..1000
+ * given max: -1000..1000
  * given max >= min
  * result >= min
  * result <= max
@@ -376,8 +376,8 @@ function negativeConditionalClampLayoutValue(min: number, value: number, max: nu
 }
 
 /** @fit
- * given containerWidth: number[320, 2000]
- * result.cols: int[1, 6]
+ * given containerWidth: 320..2000
+ * result.cols: int 1..6
  */
 export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number) {
   const cols = negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
@@ -385,16 +385,16 @@ export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number
 }
 
 /** @fit
- * given width: number[0, 100]
+ * given width: 0..100
  */
 export function negativeLocalHelperPreconditionViolation(width: number) {
   return negativeConditionalClampLayoutValue(10, width, 5)
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
- * result.rows[].index: int[1, 49]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[].index: int 1..49
  */
 export function negativeIndexedLoopIndexCanBeZero(items: {height: number}[]) {
   const rows = []
@@ -405,9 +405,9 @@ export function negativeIndexedLoopIndexCanBeZero(items: {height: number}[]) {
 }
 
 /** @fit
- * given params.items.length: int[1, 50]
- * given params.items[].height: number[-40, 40]
- * given params.top: number[0, 1000]
+ * given params.items.length: int 1..50
+ * given params.items[].height: -40..40
+ * given params.top: 0..1000
  * result.bottom >= params.top
  * nondecreasing(result.rows.top)
  */
@@ -423,8 +423,8 @@ export function negativeIndexedLoopAliasNeedsNonNegativeItem(params: {items: {he
 }
 
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * result.rows.length == items.length
  */
 export function negativeConditionalPushIsNotSameLength(items: {height: number; visible: boolean}[]) {
@@ -436,8 +436,8 @@ export function negativeConditionalPushIsNotSameLength(items: {height: number; v
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
  * nondecreasing(result.rows.top)
  */
 export function negativeReverseKillsRowOrder(items: {height: number}[]) {
@@ -452,9 +452,9 @@ export function negativeReverseKillsRowOrder(items: {height: number}[]) {
 }
 
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
- * result.rows[].height: number[0, 40]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[].height: 0..40
  */
 export function negativeIndexedAssignmentKillsRowDomain(items: {height: number}[], height: number) {
   const rows = []
@@ -466,21 +466,21 @@ export function negativeIndexedAssignmentKillsRowDomain(items: {height: number}[
 }
 
 /** @fit
- * given result: number[0, 10]
+ * given result: 0..10
  */
 export function negativeFunctionGivenCannotNameResult() {
   return 0
 }
 
 /** @fit
- * given width: number[500, 400]
+ * given width: 500..400
  */
 export function negativeGivenRangeCannotBeEmpty(width: number) {
   return width
 }
 
 /** @fit
- * given width: number[100, 200]
+ * given width: 100..200
  * given width <= 50
  */
 export function negativeGivenComparisonCannotFit(width: number) {
@@ -488,15 +488,15 @@ export function negativeGivenComparisonCannotFit(width: number) {
 }
 
 /** @fit
- * given width + 1: number[0, 10]
+ * given width + 1: 0..10
  */
 export function negativeGivenRangeCannotDescribeDerivedExpression(width: number) {
   return width
 }
 
 /** @fit
- * given items.length: int[0, 10]
- * given index: int[0, 9]
+ * given items.length: int 0..10
+ * given index: int 0..9
  * given items[index] >= 0
  */
 export function negativeGivenComparisonCannotIndexArray(items: number[], index: number) {
@@ -511,7 +511,7 @@ export function negativeGivenComparisonCannotCallInputMethod(width: number) {
 }
 
 /** @fit
- * given items.length: int[0, 10]
+ * given items.length: int 0..10
  */
 export function negativeLoopGivenCannotNameRows(items: number[]) {
   const rows = []

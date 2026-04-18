@@ -84,17 +84,22 @@ function cleanCommentLine(line: string) {
     .trim()
 }
 
+const numberPattern = '-?\\d+(?:\\.\\d+)?'
+const rangePattern = new RegExp(`^(?:(int)\\s+)?(${numberPattern})\\s*\\.\\.\\s*(${numberPattern})$`)
+
 function parseFitSpecLine(line: string): FitSpec {
-  const givenRange = /^given\s+(.+)\s*:\s*(int|number)\[(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\]$/.exec(line)
+  const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
   if (givenRange != null) {
     const expression = givenRange[1]!.trim()
+    const range = parseRangeText(givenRange[2]!.trim())
+    if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     parseExpression(expression)
     return {
       kind: 'given-range',
       expression,
-      valueKind: givenRange[2]! as 'int' | 'number',
-      min: Number(givenRange[3]!),
-      max: Number(givenRange[4]!),
+      valueKind: range.valueKind,
+      min: range.min,
+      max: range.max,
       text: line,
     }
   }
@@ -114,16 +119,18 @@ function parseFitSpecLine(line: string): FitSpec {
     }
   }
 
-  const checkRange = /^(.+)\s*:\s*(int|number)\[(-?\d+(?:\.\d+)?),\s*(-?\d+(?:\.\d+)?)\]$/.exec(line)
+  const checkRange = /^(.+)\s*:\s*(.+)$/.exec(line)
   if (checkRange != null) {
     const expression = checkRange[1]!.trim()
+    const range = parseRangeText(checkRange[2]!.trim())
+    if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     parseExpression(expression)
     return {
       kind: 'check-range',
       expression,
-      valueKind: checkRange[2]! as 'int' | 'number',
-      min: Number(checkRange[3]!),
-      max: Number(checkRange[4]!),
+      valueKind: range.valueKind,
+      min: range.min,
+      max: range.max,
       text: line,
     }
   }
@@ -147,6 +154,16 @@ function parseFitSpecLine(line: string): FitSpec {
   if (checkAtom != null) return checkAtom
 
   throw new Error(`Unsupported @fit line: ${line}`)
+}
+
+function parseRangeText(text: string): {valueKind: 'int' | 'number'; min: number; max: number} | null {
+  const range = rangePattern.exec(text)
+  if (range == null) return null
+  return {
+    valueKind: range[1] == null ? 'number' : 'int',
+    min: Number(range[2]!),
+    max: Number(range[3]!),
+  }
 }
 
 function parseCheckAtom(line: string): Extract<FitSpec, {kind: 'check-atom'}> | null {

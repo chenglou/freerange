@@ -9,13 +9,13 @@ This is for the boring UI math that keeps coming back:
 ```ts
 row.top + row.height <= parent.bottom
 rows.length == items.length
-rows[].height: number[0, 40]
+rows[].height: 0..40
 nondecreasing(rows.top)
 spaced(rows, gap)
 extentEnd(rows, top) == bottom
 ```
 
-The comments are meant to feel like TypeScript types for layout values: small, strict, erased, and close to the code.
+The comments are meant to feel like small erased facts for layout values: strict, local, and close to the code.
 
 ## Install
 
@@ -51,8 +51,8 @@ Put `@fit` immediately above a function declaration:
 
 ```ts
 /** @fit
- * given width: number[0, 1000]
- * result.capped: number[0, 320]
+ * given width: 0..1000
+ * result.capped: 0..320
  * result.overflow >= 0
  */
 function cappedOverflow(width: number) {
@@ -81,9 +81,9 @@ A useful report says where facts came from:
 
 ```txt
 known:
-  trusted from function @fit: given width: number[0, 1000]
+  trusted from function @fit: given width: 0..1000
   read from code: width - 320 <= 0
-  source-proved imported contract: layout-math.ts#clampWidth: result: number[0, 320]
+  source-proved imported contract: layout-math.ts#clampWidth: result: 0..320
 ```
 
 That distinction matters. Facts from `given` are promises. Facts from code and imported contracts are earned from source.
@@ -94,8 +94,8 @@ Use `given` for the input domain:
 
 ```ts
 /** @fit
- * given containee: number[0, 1000]
- * given container: number[0, 1000]
+ * given containee: 0..1000
+ * given container: 0..1000
  * given container >= containee
  * result >= 0
  */
@@ -109,9 +109,9 @@ Top-level `given` can name function parameters and top-level numeric constants, 
 Range `given` lines name one input path:
 
 ```ts
-given width: number[0, 1000]
-given item.height: number[0, 40]
-given items[].height: number[0, 40]
+given width: 0..1000
+given item.height: 0..40
+given items[].height: 0..40
 ```
 
 Comparison `given` lines can use simple arithmetic over input paths:
@@ -125,7 +125,7 @@ They cannot call methods, index arrays by a local index, or put derived expressi
 
 ```ts
 // Not accepted as input facts.
-given width + 1: number[0, 10]
+given width + 1: 0..10
 given items[index] >= 0
 given width.toString() == 10
 ```
@@ -134,7 +134,7 @@ Freerange also rejects the obvious impossible inputs:
 
 ```ts
 /** @fit
- * given width: number[500, 400]
+ * given width: 500..400
  */
 function impossible(width: number) {
   return width
@@ -147,22 +147,22 @@ Loop-level `given` works the same way, but is trusted from that point in the fun
 
 ```ts
 /** @fit
- * given width: number[0, 1000]
- * given items.length: int[0, 100]
- * result.x: number[10, 20]
- * result.index: int[0, 9]
+ * given width: 0..1000
+ * given items.length: int 0..100
+ * result.x: 10..20
+ * result.index: int 0..9
  */
 ```
 
-`number[...]` means a JavaScript number in that interval. `int[...]` also says the value is an integer.
+`a..b` means a JavaScript number in that interval. `int a..b` also says the value is an integer.
 
 Ranges can describe object fields and array items:
 
 ```ts
 /** @fit
- * given item.height: number[0, 40]
- * given items[].height: number[0, 40]
- * result.rows[].height: number[0, 40]
+ * given item.height: 0..40
+ * given items[].height: 0..40
+ * result.rows[].height: 0..40
  */
 ```
 
@@ -172,8 +172,8 @@ Nested array paths are fine when there is only one collection side:
 
 ```ts
 /** @fit
- * given sections[].rows[].height: number[0, 40]
- * given maxHeight: number[40, 100]
+ * given sections[].rows[].height: 0..40
+ * given maxHeight: 40..100
  * result.sections[].rows[].height <= maxHeight
  */
 ```
@@ -210,9 +210,9 @@ The checker carries small linear facts from ranges and comparisons:
 
 ```ts
 /** @fit
- * given content: number[0, 1000]
- * given padding: number[0, 100]
- * given width: number[0, 1200]
+ * given content: 0..1000
+ * given padding: 0..100
+ * given width: 0..1200
  * given width >= content + padding
  * result >= 0
  */
@@ -259,7 +259,7 @@ index % count < count
 
 ```ts
 /** @fit
- * given width: number[0, 1000]
+ * given width: 0..1000
  * result.overflow >= 0
  */
 function overflow(width: number) {
@@ -276,16 +276,16 @@ When a checked helper is called, its input facts become things the caller must p
 
 ```ts
 /** @fit
- * given value: number[4, 14]
- * result: number[5, 15]
+ * given value: 4..14
+ * result: 5..15
  */
 function addOne(value: number) {
   return value + 1
 }
 
 /** @fit
- * given width: number[0, 10]
- * result: number[5, 15]
+ * given width: 0..10
+ * result: 5..15
  */
 function caller(width: number) {
   return addOne(width + 4)
@@ -299,8 +299,8 @@ Imported helpers use their exported `@fit` contract as the module boundary:
 ```ts
 // layout-math.ts
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 export function clampWidth(width: number) {
   return Math.min(width, 320)
@@ -310,8 +310,8 @@ export function clampWidth(width: number) {
 import {clampWidth} from './layout-math'
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 function cardWidth(width: number) {
   return clampWidth(width)
@@ -335,11 +335,11 @@ Freerange understands the common array facts that layout code tends to need:
 
 ```ts
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
- * given index: int[0, 49]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given index: int 0..49
  * given index < items.length
- * result: number[0, 40]
+ * result: 0..40
  */
 function indexedPerItemField(items: {height: number}[], index: number) {
   return items[index]!.height
@@ -349,8 +349,8 @@ function indexedPerItemField(items: {height: number}[], index: number) {
 Supported today:
 
 - `items.length`
-- `items[]: number[0, 400]`
-- `items[].height: number[0, 40]`
+- `items[]: 0..400`
+- `items[].height: 0..40`
 - array literal length and item values
 - `[...items, value]` length
 - bounded literal indexing
@@ -362,10 +362,10 @@ Supported today:
 
 ```ts
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * result.rows.length == items.length
- * result.rows[].height: number[0, 40]
+ * result.rows[].height: 0..40
  */
 function mapRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -383,9 +383,9 @@ Freerange supports narrow accumulator shapes:
 
 ```ts
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
- * result: number[0, 2000]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result: 0..2000
  */
 function totalHeight(items: {height: number}[]) {
   let total = 0
@@ -400,9 +400,9 @@ Guarded totals and counts work too:
 
 ```ts
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
- * result: number[0, 2000]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result: 0..2000
  */
 function visibleHeight(items: {height: number; visible: boolean}[]) {
   let total = 0
@@ -429,12 +429,12 @@ This is the main layout shape today:
 
 ```ts
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
- * given top: number[0, 1000]
- * given gap: number[0, 10]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
  * result.rows.length == items.length
- * result.rows[].height: number[0, 40]
+ * result.rows[].height: 0..40
  * nondecreasing(result.rows.top)
  * spaced(result.rows, gap)
  * extentEnd(result.rows, top) == result.bottom
@@ -454,7 +454,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 Freerange proves:
 
 - `rows.length == items.length`
-- `rows[].height: number[0, 40]`
+- `rows[].height: 0..40`
 - `nondecreasing(rows.top)` when the cursor increment is non-negative
 - `spaced(rows, gap)` when the cursor advances by `height + gap`
 - `lastEnd(rows) == bottom` when rows are known non-empty
@@ -468,10 +468,10 @@ The indexed loop shape is also supported:
 
 ```ts
 /** @fit
- * given items.length: int[1, 50]
- * given items[].height: number[0, 40]
+ * given items.length: int 1..50
+ * given items[].height: 0..40
  * result.rows.length == items.length
- * result.rows[].index: int[0, 49]
+ * result.rows[].index: int 0..49
  * result.rows[].index < items.length
  */
 function indexedRows(items: {height: number}[]) {
@@ -487,9 +487,9 @@ The body may also bind the current item and advance a simple numeric cursor:
 
 ```ts
 /** @fit
- * given params.items.length: int[1, 50]
- * given params.items[].height: number[0, 40]
- * given params.top: number[0, 1000]
+ * given params.items.length: int 1..50
+ * given params.items[].height: 0..40
+ * given params.top: 0..1000
  * result.rows.length == params.items.length
  * nondecreasing(result.rows.top)
  * lastEnd(result.rows) == result.bottom
@@ -510,10 +510,10 @@ Conditional push gets a weaker, honest fact:
 
 ```ts
 /** @fit
- * given items.length: int[0, 50]
- * given items[].height: number[0, 40]
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * result.rows.length <= items.length
- * result.rows[].height: number[0, 40]
+ * result.rows[].height: 0..40
  */
 function visibleRows(items: {height: number; visible: boolean}[]) {
   const rows = []
@@ -535,9 +535,9 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
   let y = top
   /** @fit
-   * given items[].height: number[0, 40]
+   * given items[].height: 0..40
    * rows.length == items.length
-   * rows[].height: number[0, 40]
+   * rows[].height: 0..40
    * nondecreasing(rows.top)
    * spaced(rows, gap)
    * lastEnd(rows) == y - gap

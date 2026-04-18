@@ -45,12 +45,12 @@ export function rangeFailureReason(
   requireInteger: boolean,
   assumptions: ReportLinearConstraint[],
 ) {
-  const expectedKind = requireInteger ? 'int' : 'number'
+  const expectedRange = formatExpectedRange(min, max, requireInteger)
   const lines = [
-    `range was ${formatRange(value)}, expected inside ${expectedKind}[${min}, ${max}]`,
-    `need: ${value.expr ?? formatRange(value)} inside ${expectedKind}[${min}, ${max}]`,
+    `range was ${formatRange(value)}, expected inside ${expectedRange}`,
+    `need: ${value.expr ?? formatRange(value)} inside ${expectedRange}`,
   ]
-  const known = knownProofContext(value, rangeValue(min, max, requireInteger, `${min}..${max}`), assumptions)
+  const known = knownProofContext(value, rangeValue(min, max, requireInteger), assumptions)
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
   lines.push(...missingRangeBounds(value, min, max))
   return lines.join('\n')
@@ -96,9 +96,14 @@ export function formatArraySummary(value: ReportArrayValue) {
 }
 
 export function formatRange(value: ReportNumberValue) {
-  const kind = value.isInteger ? 'int' : 'number'
+  const range = formatExpectedRange(value.min, value.max, value.isInteger)
   const expr = value.expr == null ? '' : ` as ${value.expr}`
-  return `${kind}[${value.min}, ${value.max}]${expr}`
+  return `${range}${expr}`
+}
+
+export function formatExpectedRange(min: number, max: number, isInteger: boolean) {
+  const prefix = isInteger ? 'int ' : ''
+  return `${prefix}${formatNumber(min)}..${formatNumber(max)}`
 }
 
 export function formatLinearConstraint(constraint: ReportLinearConstraint): string {
@@ -157,8 +162,8 @@ function formatKnownFact(assumption: ReportLinearConstraint): string {
   }
 }
 
-function rangeValue(min: number, max: number, isInteger: boolean, expr: string): ReportNumberValue {
-  return {min, max, isInteger, expr, linear: null}
+function rangeValue(min: number, max: number, isInteger: boolean): ReportNumberValue {
+  return {min, max, isInteger, expr: null, linear: null}
 }
 
 function cleanReportLinear(linear: ReportLinearExpr): ReportLinearExpr {

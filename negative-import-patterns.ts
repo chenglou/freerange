@@ -9,47 +9,47 @@ import {barrelUnannotatedClamp} from './negative-import-barrel'
 import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 export function negativeImportedHelperNeedsFit(width: number) {
   return unannotatedImportedClamp(width)
 }
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 export function negativeImportedHelperUnresolved(width: number) {
   return missingImportedClamp(width)
 }
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 320]
+ * given width: 0..1000
+ * result: 0..320
  */
 export function negativeImportedHelperReExportNeedsFit(width: number) {
   return barrelUnannotatedClamp(width)
 }
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 100]
+ * given width: 0..1000
+ * result: 0..100
  */
 export function negativeImportedHelperContractTooWide(width: number) {
   return importedClampWidth(width)
 }
 
 /** @fit
- * given width: number[0, 1000]
- * result: number[0, 100]
+ * given width: 0..1000
+ * result: 0..100
  */
 export function negativeImportedHelperReExportContractTooWide(width: number) {
   return barrelClampWidth(width)
 }
 
 /** @fit
- * given width: number[0, 1000]
+ * given width: 0..1000
  * result == width + importedChromeX + 1
  */
 export function negativeImportedNumericConstantMismatch(width: number) {

@@ -20,8 +20,8 @@ Function contracts look like this:
 
 ```ts
 /** @fit
- * given width: number[0, 1000]
- * result.capped: number[0, 320]
+ * given width: 0..1000
+ * result.capped: 0..320
  * result.overflow >= 0
  */
 function cappedOverflow(width: number) {
@@ -44,9 +44,9 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
   let y = top
   /** @fit
-   * given items[].height: number[0, 40]
+   * given items[].height: 0..40
    * rows.length == items.length
-   * rows[].height: number[0, 40]
+   * rows[].height: 0..40
    * nondecreasing(rows.top)
    * spaced(rows, gap)
    * lastEnd(rows) == y - gap
@@ -63,14 +63,14 @@ Loop specs use the same language. Loop-local `given` facts are trusted from that
 
 Current supported facts include:
 
-- intervals: `number[0, 1000]`, `int[0, 10]`
+- intervals: `0..1000`, `int 0..10`
 - comparisons: `==`, `>=`, `<=`, `>`, `<`
 - basic arithmetic, bounded division, modulo for non-negative values / positive divisors
 - `Math.floor`, `ceil`, `round`, `trunc`, `abs`, `sqrt`, `min`, `max`
 - small known math facts such as `ceil(total / count) * count >= total`, floor hit testing, modulo bounds, order preservation through known-positive scale/divide
 - tiny linear reduction from ranges and comparisons
 - `.length`, array literals, spread append length, literal indexing, proven half-open array indexes
-- per-object and per-item domains like `row.height: number[0, 40]` and `items[].height: number[0, 40]`
+- per-object and per-item domains like `row.height: 0..40` and `items[].height: 0..40`
 - one append-only running-sum `for...of` loop shape
 
 Current sequence-ish vocabulary:
