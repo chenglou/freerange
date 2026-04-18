@@ -23,6 +23,7 @@ sections[].rows[].height <= maxHeight
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
+- Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
 - Expression-bodied `items.map(...)` preserves length, item field domains, and optional callback index facts.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
@@ -42,9 +43,7 @@ sections[].rows[].height <= maxHeight
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
 
 4. **Turn scalar accumulators into better internal measures.**
-   Non-negative `total += row.height` and guarded `if (...) total += row.height` already give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds:
-   - min/max accumulation
-   - totals that feed later comparisons and reports cleanly
+   Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
 
 5. **Use real demos as pressure tests.**
    The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Do not add an atom just because a demo would look nicer with one.
@@ -121,5 +120,5 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
-- Scalar accumulation support is thin: `+=` running sums and guarded `+=` work, but no `reduce`, min/max accumulation, or public aggregate syntax yet.
+- Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
 - No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.

@@ -314,6 +314,30 @@ export function conditionalRunningSumNumber(targetName: string, start: NumberVal
   )
 }
 
+export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, start: NumberValue, count: NumberValue, candidate: NumberValue): NumberValue {
+  if (count.max <= 0) {
+    return numberValue(start.min, start.max, start.isInteger, targetName, linearVariable(linearNameForExpression(targetName)), null, start.provenance)
+  }
+
+  const hasItem = count.min >= 1
+  const min = kind === 'max'
+    ? hasItem ? Math.max(start.min, candidate.min) : start.min
+    : Math.min(start.min, candidate.min)
+  const max = kind === 'max'
+    ? Math.max(start.max, candidate.max)
+    : hasItem ? Math.min(start.max, candidate.max) : start.max
+
+  return numberValue(
+    min,
+    max,
+    start.isInteger && candidate.isInteger,
+    targetName,
+    linearVariable(linearNameForExpression(targetName)),
+    null,
+    mergeProvenance(start, count, candidate),
+  )
+}
+
 export function powerNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min !== right.max) return unknown('Non-constant exponent is unsupported')
   if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))

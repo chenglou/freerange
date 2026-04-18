@@ -449,15 +449,32 @@ function visibleHeight(items: {height: number; visible: boolean}[]) {
 }
 ```
 
-This is useful when the increment is known non-negative. It is not general reducer support yet:
+Simple min/max accumulators work when the assignment keeps the same target on one side:
+
+```ts
+/** @fit
+ * given items.length: int 0..50
+ * given items[].width: 0..80
+ * result: 0..80
+ */
+function widest(items: {width: number}[]) {
+  let maxWidth = 0
+  for (const item of items) {
+    maxWidth = Math.max(maxWidth, item.width)
+  }
+  return maxWidth
+}
+```
+
+This is useful when the increment or candidate range is known. It is not general reducer support:
 
 ```ts
 items.reduce(...)
 total = total + item.height
-maxWidth = Math.max(maxWidth, item.width)
+Math.max(...items.map(item => item.width))
 ```
 
-Those should land as source inference when real demos need them, not as public `sum(map(...))` syntax.
+Those should land only when real demos need them, not as public `sum(map(...))` syntax.
 
 ## Row Loops
 
@@ -608,6 +625,7 @@ The checker understands a small pure subset:
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`
 - simple `for...of` scalar running sums with direct or guarded `+=`
+- simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - one guarded conditional push inside a `for...of`

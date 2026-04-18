@@ -247,6 +247,32 @@ export function negativeConditionalRunningTotalNeedsNonNegativeItem(items: {heig
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].width: 0..120
+ * result: 0..80
+ */
+export function negativeRunningMaxNeedsItemBound(items: {width: number}[]) {
+  let maxWidth = 0
+  for (const item of items) {
+    maxWidth = Math.max(maxWidth, item.width)
+  }
+  return maxWidth
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].width: -20..80
+ * result >= 0
+ */
+export function negativeRunningMinNeedsItemBound(items: {width: number}[]) {
+  let minWidth = 100
+  for (const item of items) {
+    minWidth = Math.min(minWidth, item.width)
+  }
+  return minWidth
+}
+
+/** @fit
  * given items.length: int 1..50
  * given top: 0..1000
  * result.rows.length == items.length

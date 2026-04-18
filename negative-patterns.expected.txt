@@ -173,6 +173,24 @@ UNKNOWN negative-patterns.ts:negativeConditionalRunningTotalNeedsNonNegativeItem
     trusted from function @fit: given items.length: int 0..50
     trusted from function @fit: given items[].height: -40..40
   missing: given total >= 0
+FAIL negative-patterns.ts:negativeRunningMaxNeedsItemBound: result: 0..80
+  range was 0..120 as maxWidth, expected inside 0..80
+  need: maxWidth inside 0..80
+  known:
+    0..120 as maxWidth
+    0..80
+    trusted from function @fit: given items.length: int 0..50
+    trusted from function @fit: given items[].width: 0..120
+  missing: maxWidth <= 80
+UNKNOWN negative-patterns.ts:negativeRunningMinNeedsItemBound: result >= 0
+  -20..80 as minWidth >= int 0..0 as 0 was not proven
+  need: minWidth >= 0
+  known:
+    -20..80 as minWidth
+    int 0..0 as 0
+    trusted from function @fit: given items.length: int 1..50
+    trusted from function @fit: given items[].width: -20..80
+  missing: given minWidth >= 0
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
   need: every next .top >= previous .top

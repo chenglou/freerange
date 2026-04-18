@@ -34,6 +34,7 @@ import {
   numberValue,
   plainNumber,
   powerNumbers,
+  runningExtremumNumber,
   runningSumNumber,
   unknown,
   unknownArray,
@@ -139,6 +140,12 @@ type TrustedGivenSpec =
 type ConditionalLoopAdd = {
   targetName: string
   increment: NumberValue
+}
+
+type LoopExtremum = {
+  targetName: string
+  kind: 'min' | 'max'
+  candidate: NumberValue
 }
 
 type ImportedContractSource = {
@@ -1066,9 +1073,15 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   const conditionalPushedArrays: LoopPush[] = []
   const conditionalAdds = new Map<string, NumberValue>()
   const pendingAdds = new Map<string, NumberValue>()
+  const pendingExtrema = new Map<string, LoopExtremum>()
+  const loopContext = {...context, env: new Map(context.env).set(loopItemName, loopItem)}
 
   for (const child of statement.statement.statements) {
-    const loopContext = {...context, env: new Map(context.env).set(loopItemName, loopItem)}
+    if (ts.isVariableStatement(child)) {
+      for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
+      continue
+    }
+
     if (ts.isExpressionStatement(child) && isPushCall(child.expression)) {
       const targetName = child.expression.expression.expression.text
       const target = context.env.get(targetName)
@@ -1099,15 +1112,23 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
       continue
     }
 
+    const extremum = readLoopExtremumAssignment(child, loopContext)
+    if (extremum != null) {
+      if (pendingExtrema.has(extremum.targetName)) return unknown(`Scalar min/max loop already updates ${extremum.targetName}`)
+      pendingExtrema.set(extremum.targetName, extremum)
+      continue
+    }
+
     return unknown(`Unsupported for-of body statement: ${child.getText(context.program.sourceFile)}`)
   }
 
-  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0)) {
+  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0 || pendingExtrema.size > 0)) {
     return unknown('Conditional push loops support one guarded push and no cursor update')
   }
-  if (conditionalAdds.size > 0 && (pushedArrays.length > 0 || conditionalPushedArrays.length > 0 || pendingAdds.size > 0)) {
+  if (conditionalAdds.size > 0 && (pushedArrays.length > 0 || conditionalPushedArrays.length > 0 || pendingAdds.size > 0 || pendingExtrema.size > 0)) {
     return unknown('Conditional running-sum loops support guarded += statements only')
   }
+  if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Scalar min/max loops cannot also use += on the same target')
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
 
@@ -1126,6 +1147,9 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
     context.env.set(targetName, end)
     context.assumptions = mergeAssumptions(context.assumptions, conditionalRunningSumFacts(end, start, source.length, increment))
   }
+
+  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Scalar min/max loop target expected a number')
+  if (extremumResult != null) return extremumResult
 
   for (const push of pushedArrays) {
     const target = context.env.get(push.arrayName)
@@ -1183,6 +1207,7 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
 
   const pushes: LoopPush[] = []
   const pendingAdds = new Map<string, NumberValue>()
+  const pendingExtrema = new Map<string, LoopExtremum>()
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
       for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
@@ -1206,8 +1231,17 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
       continue
     }
 
+    const extremum = readLoopExtremumAssignment(child, loopContext)
+    if (extremum != null) {
+      if (pendingExtrema.has(extremum.targetName)) return unknown(`Indexed scalar min/max loop already updates ${extremum.targetName}`)
+      pendingExtrema.set(extremum.targetName, extremum)
+      continue
+    }
+
     return unknown(`Unsupported indexed loop body statement: ${child.getText(context.program.sourceFile)}`)
   }
+
+  if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Indexed scalar min/max loops cannot also use += on the same target')
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
   for (const [targetName, increment] of pendingAdds) {
@@ -1217,6 +1251,9 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
     context.env.set(targetName, end)
     updates.set(targetName, {start, increment, end})
   }
+
+  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Indexed scalar min/max loop target expected a number')
+  if (extremumResult != null) return extremumResult
 
   for (const push of pushes) {
     const target = context.env.get(push.arrayName)
@@ -1372,6 +1409,47 @@ function readConditionalLoopAdd(statement: ts.Statement, context: EvalContext): 
   const increment = evaluateExpression(add.right, context)
   if (increment.kind !== 'number') return null
   return {targetName: add.left.text, increment}
+}
+
+function readLoopExtremumAssignment(statement: ts.Statement, context: EvalContext): LoopExtremum | null {
+  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return null
+  const assignment = statement.expression
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left)) return null
+  if (!ts.isCallExpression(assignment.right) || !ts.isPropertyAccessExpression(assignment.right.expression)) return null
+
+  const callTarget = assignment.right.expression
+  if (!ts.isIdentifier(callTarget.expression) || callTarget.expression.text !== 'Math') return null
+  if (callTarget.name.text !== 'min' && callTarget.name.text !== 'max') return null
+  if (assignment.right.arguments.length !== 2) return null
+
+  const targetName = assignment.left.text
+  const left = assignment.right.arguments[0]!
+  const right = assignment.right.arguments[1]!
+  const candidateExpression =
+    ts.isIdentifier(left) && left.text === targetName ? right
+      : ts.isIdentifier(right) && right.text === targetName ? left
+        : null
+  if (candidateExpression == null) return null
+
+  const candidate = evaluateExpression(candidateExpression, context)
+  if (candidate.kind !== 'number') return null
+  return {targetName, kind: callTarget.name.text, candidate}
+}
+
+function loopExtremaConflictWithAdds(extrema: Map<string, LoopExtremum>, adds: Map<string, NumberValue>) {
+  for (const targetName of extrema.keys()) {
+    if (adds.has(targetName)) return true
+  }
+  return false
+}
+
+function applyLoopExtrema(extrema: Map<string, LoopExtremum>, length: NumberValue, context: EvalContext, targetError: string): Value | null {
+  for (const extremum of extrema.values()) {
+    const start = context.env.get(extremum.targetName)
+    if (start == null || start.kind !== 'number') return unknown(targetError)
+    context.env.set(extremum.targetName, runningExtremumNumber(extremum.kind, extremum.targetName, start, length, extremum.candidate))
+  }
+  return null
 }
 
 function pushCallFromStatement(statement: ts.Statement): (ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}}) | null {

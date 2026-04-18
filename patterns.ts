@@ -330,6 +330,48 @@ export function conditionalRunningCount(items: {visible: boolean}[]) {
 
 /** @fit
  * given items.length: int 0..50
+ * given items[].width: 0..80
+ * result: 0..80
+ */
+export function runningMaxPerItemWidth(items: {width: number}[]) {
+  let maxWidth = 0
+  for (const item of items) {
+    const width = item.width
+    maxWidth = Math.max(maxWidth, width)
+  }
+  return maxWidth
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].width: 20..80
+ * result: 20..80
+ */
+export function runningMinPerItemWidth(items: {width: number}[]) {
+  let minWidth = 100
+  for (const item of items) {
+    minWidth = Math.min(minWidth, item.width)
+  }
+  return minWidth
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].width: 0..80
+ * result: 0..80
+ */
+export function indexedRunningMaxPerItemWidth(items: {width: number}[]) {
+  let maxWidth = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    const width = item.width
+    maxWidth = Math.max(maxWidth, width)
+  }
+  return maxWidth
+}
+
+/** @fit
+ * given items.length: int 0..50
  * result <= items.length
  */
 export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) {
