@@ -438,9 +438,68 @@ function collectGivenAssumptions(
       }
     }
     const fact = comparisonFactFromSpec(spec, context, given.source)
-    if (fact != null) assumptions.push(fact)
+    if (fact != null) {
+      const contradiction = givenComparisonContradictionReason(fact, assumptions)
+      if (contradiction != null) {
+        checks.push({
+          file,
+          functionName,
+          text: spec.text,
+          status: 'fail',
+          reason: contradiction,
+        })
+        continue
+      }
+      assumptions.push(fact)
+    }
   }
   return {assumptions, checks}
+}
+
+function givenComparisonContradictionReason(fact: LinearConstraint, assumptions: LinearConstraint[]): string | null {
+  const facts = nonNegativeFacts(fact)
+  const earlierFacts = assumptions.flatMap(nonNegativeFacts)
+  for (const next of facts) {
+    if (nonNegativeFactIsImpossible(next)) return `no input can satisfy this: ${fact.text ?? 'given comparison'} is impossible`
+    for (const earlier of earlierFacts) {
+      if (!nonNegativeFactsConflict(next, earlier)) continue
+      const earlierText = earlier.text ?? 'an earlier given line'
+      const nextText = fact.text ?? 'this given line'
+      return `no input can satisfy both ${earlierText} and ${nextText}`
+    }
+  }
+  return null
+}
+
+function nonNegativeFactIsImpossible(fact: NonNegativeFact) {
+  const clean = cleanLinear(fact.diff)
+  if (clean.terms.size > 0) return false
+  return fact.strict ? clean.constant <= linearEpsilon : clean.constant < -linearEpsilon
+}
+
+function nonNegativeFactsConflict(left: NonNegativeFact, right: NonNegativeFact) {
+  const scale = positiveTermCancelScale(left.diff, right.diff)
+  if (scale == null) return false
+  const combined = linearAdd(left.diff, linearScaleExact(right.diff, scale))
+  if (combined == null || combined.terms.size > 0) return false
+  if (combined.constant < -linearEpsilon) return true
+  return (left.strict || right.strict) && combined.constant <= linearEpsilon
+}
+
+function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | null {
+  let scale: number | null = null
+  const names = new Set([...left.terms.keys(), ...right.terms.keys()])
+  for (const name of names) {
+    const leftCoefficient = left.terms.get(name) ?? 0
+    const rightCoefficient = right.terms.get(name) ?? 0
+    if (Math.abs(leftCoefficient) <= linearEpsilon && Math.abs(rightCoefficient) <= linearEpsilon) continue
+    if (Math.abs(rightCoefficient) <= linearEpsilon) return null
+    const nextScale = -leftCoefficient / rightCoefficient
+    if (nextScale <= linearEpsilon) return null
+    scale = scale == null ? nextScale : mergeScale(scale, nextScale)
+    if (scale === Number.NEGATIVE_INFINITY) return null
+  }
+  return scale
 }
 
 function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {

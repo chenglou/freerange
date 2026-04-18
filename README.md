@@ -139,6 +139,14 @@ Freerange also rejects the obvious impossible inputs:
 function impossible(width: number) {
   return width
 }
+
+/** @fit
+ * given width >= 100
+ * given width <= 50
+ */
+function impossibleComparison(width: number) {
+  return width
+}
 ```
 
 Loop-level `given` works the same way, but is trusted from that point in the function forward.

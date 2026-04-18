@@ -488,6 +488,14 @@ export function negativeGivenComparisonCannotFit(width: number) {
 }
 
 /** @fit
+ * given width >= 100
+ * given width <= 50
+ */
+export function negativeGivenComparisonsCannotBothHold(width: number) {
+  return width
+}
+
+/** @fit
  * given width + 1: 0..10
  */
 export function negativeGivenRangeCannotDescribeDerivedExpression(width: number) {

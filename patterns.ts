@@ -151,6 +151,16 @@ export function positiveScaleKeepsOrder(content: number, available: number, scal
 }
 
 /** @fit
+ * given width >= 100
+ * given width <= 200
+ * result >= 100
+ * result <= 200
+ */
+export function comparisonOnlyGivenBounds(width: number) {
+  return width
+}
+
+/** @fit
  * given content: 0..1000
  * given available: 0..1000
  * given columns: int 1..12

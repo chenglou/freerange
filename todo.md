@@ -29,7 +29,7 @@ sections[].rows[].height <= maxHeight
 ## Do Next
 
 1. **Keep tightening input honesty.**
-   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Next useful step: catch more contradictory input promises before they make later checks look proven.
+   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, and simple comparison-only contradictions like `given width >= 100` plus `given width <= 50` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
 
 2. **Make helper/import report lines clearer.**
    Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `source-proved helper contract`, or `source-proved imported contract`. Next report work is keeping helper/import failures easy to scan without adding new public syntax: unsupported imports, missing contracts, and any future trusted summaries.
@@ -113,7 +113,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 
 - Import support is deliberately tiny: named imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, exported numeric constants, and explicit named re-exports. Packages, declaration-only imports, namespace/default imports, wildcard barrels, summary files, and stale-summary policy are still out.
 - No public views yet.
-- Impossible `given` checks are still small: empty ranges and direct contradictions against earlier ranges are caught, not every possible inconsistent set.
+- Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, and simple opposing linear comparison bounds are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported append-only loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
