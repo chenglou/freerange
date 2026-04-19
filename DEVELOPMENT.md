@@ -16,7 +16,8 @@ bun install
 
 ## Current Sources Of Truth
 
-- [README.md](./README.md) — user-facing syntax and supported checker surface
+- [README.md](./README.md) — short project front door
+- [DOCUMENTATION.md](./DOCUMENTATION.md) — user-facing syntax, glossary, adoption guide, and supported checker surface
 - [patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) — positive pattern specimens
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
