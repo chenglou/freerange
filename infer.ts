@@ -34,13 +34,22 @@ if (paths.length === 0) {
     console.log(`${fn.file}:${fn.functionName}`)
     printSection('result', fn.facts.map(fact => fact.text))
     printSection('locals', fn.locals.map(fact => fact.text))
+    for (const loop of fn.loops) {
+      console.log(`loop ${loop.line}: ${loop.header}`)
+      printSection('inferred', loop.facts.map(fact => fact.text), '  ')
+      printSection('source-proved', loop.specs.filter(spec => spec.status === 'source-proved').map(spec => spec.text), '  ')
+      printSection('trusted', loop.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text), '  ')
+      printSection('not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => `${spec.text}${spec.reason == null ? '' : `: ${spec.reason}`}`), '  ')
+      printSection('redundant', loop.redundant, '  ')
+      printSection('unsupported', loop.unsupported, '  ')
+    }
     printSection('unsupported', fn.unsupported)
     console.log()
   }
 }
 
-function printSection(name: string, lines: string[]) {
+function printSection(name: string, lines: string[], indent = '') {
   if (lines.length === 0) return
-  console.log(`${name}:`)
-  for (const line of lines) console.log(`  ${line}`)
+  console.log(`${indent}${name}:`)
+  for (const line of lines) console.log(`${indent}  ${line}`)
 }

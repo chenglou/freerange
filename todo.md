@@ -29,7 +29,7 @@ sections[].rows[].height <= maxHeight
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
 - Expression-bodied `items.map(...)` preserves length, item field domains, and optional callback index facts.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
-- `bun run infer path --function name` is a dev-only x-ray of result/local facts. It is not a public annotation writer.
+- `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates loop specs into trusted, source-proved, and not-inferred lines. It is not a public annotation writer.
 
 ## Do Next
 
@@ -49,7 +49,7 @@ sections[].rows[].height <= maxHeight
    Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
 
 5. **Use real demos as pressure tests.**
-   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature. Do not add an atom just because a demo would look nicer with one.
+   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; loop output is especially useful for deciding which local `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
    Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now; Vibescript photo grid is blocked by an unannotated imported helper and a chunked row-height loop, not by a missing public atom.
 
 6. **Delay views until field-name pressure earns them.**

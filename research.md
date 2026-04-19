@@ -91,7 +91,7 @@ High-value inference:
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized.
-- `bun run infer` is useful as a checker x-ray: it should show curated result/local facts, not every internal linear assumption. Keep it dev-only until the output is consistently useful on demos.
+- `bun run infer` is useful as a checker x-ray: it should show curated result/local facts and loop-local facts, not every internal linear assumption. Loop output should keep separating trusted givens, source-proved checks, and not-inferred checks so authors can shorten local `@fit` comments without losing the important guarantees. Keep it dev-only until the output is consistently useful on demos.
 
 Demo notes from the first infer pass:
 

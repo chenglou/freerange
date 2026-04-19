@@ -10,7 +10,7 @@ bun install
 
 - `bun run test` — positive patterns plus stable negative messages
 - `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
-- `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts
+- `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts and loop-local facts
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run check` — demo contracts plus typecheck and lint
 
@@ -39,3 +39,47 @@ bun install
 - [test.ts](./test.ts) — pattern-suite runner
 - [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet
+
+## Infer Tool
+
+`bun run infer path/to/file.ts --function name` is for us, not public annotation generation. It prints curated facts the checker already knows:
+
+- `result` facts from the returned value
+- `locals` from locals that survive to the return
+- loop-local facts for supported loops marked with `@fit`
+
+Loop output separates explicit loop comment lines into:
+
+- `trusted` — valid loop `given` lines
+- `source-proved` — local loop checks proven from source
+- `not-inferred` — checks Freerange could not prove
+- `redundant` — source-proved loop checks that can be omitted if the author only wanted a local checkpoint
+
+Do not grow TypeScript type logic just to make `infer` prettier. Keep TS-shape reading small and syntactic unless a real proof needs more; if imported/generic/utility type shape support becomes important, use the TypeScript checker instead of recreating it.
+
+## Adding Support
+
+[patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) are the runnable catalog of good examples.
+
+[negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
+
+For a new guarantee:
+
+1. Add the smallest good pattern.
+2. Add a bad pattern with a useful expected message.
+3. Run:
+
+```sh
+bun run test
+bun run check
+```
+
+Before adding a public name, write down:
+
+- what it means
+- what it does not imply
+- what source shape proves it
+- what the report should say when it fails
+- why the name is not demo-specific
+
+Prefer better source inference before more public syntax. If ordinary TypeScript already says the thing clearly, make Freerange understand that code instead of asking the user to write a cleverer comment.

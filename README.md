@@ -17,39 +17,15 @@ extentEnd(rows, top) == bottom
 
 The comments are meant to feel like small erased facts for layout values: strict, local, and close to the code.
 
-## Install
+## Run A File
 
-```sh
-bun install
-```
-
-## Run
-
-```sh
-bun run test
-```
-
-That checks the good examples in [patterns.ts](./patterns.ts) / [import-patterns.ts](./import-patterns.ts), plus the stable bad-example messages in [negative-patterns.ts](./negative-patterns.ts) / [negative-import-patterns.ts](./negative-import-patterns.ts).
-
-To inspect your own file:
+In this repo today:
 
 ```sh
 bun run verify path/to/file.ts
 ```
 
-To verify the checked demo contracts in sibling Vibescript/Pretext checkouts:
-
-```sh
-bun run verify:demos
-```
-
-For development:
-
-```sh
-bun run check
-```
-
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for the repo map.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for setup, tests, demo checks, and repo notes.
 
 ## A First Check
 
@@ -474,7 +450,7 @@ total = total + item.height
 Math.max(...items.map(item => item.width))
 ```
 
-Those should land only when real demos need them, not as public `sum(map(...))` syntax.
+Those should land only when real code needs them, not as public `sum(map(...))` syntax.
 
 ## Row Loops
 
@@ -655,31 +631,4 @@ Not supported yet:
 - general loops
 - general nonlinear arithmetic beyond the small named shapes above
 
-When something on this list earns its way in, add the smallest useful pattern first. Prefer one positive example and one negative message.
-
-## Add New Support
-
-[patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) are the runnable catalog of good examples.
-
-[negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
-
-For a new guarantee:
-
-1. Add the smallest good pattern.
-2. Add a bad pattern with a useful expected message.
-3. Run:
-
-```sh
-bun run test
-bun run check
-```
-
-Before adding a public name, write down:
-
-- what it means
-- what it does not imply
-- what source shape proves it
-- what the report should say when it fails
-- why the name is not demo-specific
-
-Prefer better source inference before more public syntax. If ordinary TypeScript already says the thing clearly, make Freerange understand that code instead of asking the user to write a cleverer comment.
+This list should shrink through source inference first and public syntax second. If ordinary TypeScript already says the thing clearly, Freerange should understand the code instead of asking the user to write a cleverer comment.

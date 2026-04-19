@@ -41,6 +41,32 @@ if (missingInferFacts.length > 0) {
   console.log(`infer: ${expectedInferFacts.length} expected facts`)
 }
 
+const loopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'localLoopAnnotation'})
+const loopReport = loopInferReport.functions[0]?.loops[0]
+const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
+const loopSpecStatuses = new Map(loopReport?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const expectedLoopFacts = [
+  'rows.length == items.length',
+  'rows[].height: 0..40',
+  'nondecreasing(rows.top)',
+  'spaced(rows, gap)',
+]
+const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
+const expectedLoopSpecStatuses = [
+  ['given items[].height: 0..40', 'trusted'],
+  ['rows.length == items.length', 'source-proved'],
+  ['spaced(rows, gap)', 'source-proved'],
+] as const
+const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
+if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0) {
+  console.error('expected loop inferred facts changed')
+  console.error(missingLoopFacts.map(fact => `missing: ${fact}`).join('\n'))
+  console.error(badLoopSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
+}
+
 function normalizeNegative(checks: FitCheck[]) {
   const lines = checks
     .filter(check => check.status !== 'pass')

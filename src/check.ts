@@ -11,6 +11,7 @@ import {
   parseExpression,
   parseFitExpression,
   parseFitSpecs,
+  hasFitComment,
   type ComparisonOperator,
   type FitDomainPath,
   type FitDomainPathSegment,
@@ -113,11 +114,30 @@ export type FitInferFact = {
   source: 'range' | 'equality' | 'sequence'
 }
 
+export type FitInferLoopSpecStatus = 'source-proved' | 'trusted' | 'not-inferred'
+
+export type FitInferLoopSpec = {
+  text: string
+  status: FitInferLoopSpecStatus
+  reason?: string
+}
+
+export type FitInferLoopReport = {
+  line: number
+  kind: 'for-of' | 'for'
+  header: string
+  facts: FitInferFact[]
+  specs: FitInferLoopSpec[]
+  redundant: string[]
+  unsupported: string[]
+}
+
 export type FitInferFunctionReport = {
   file: string
   functionName: string
   facts: FitInferFact[]
   locals: FitInferFact[]
+  loops: FitInferLoopReport[]
   unsupported: string[]
 }
 
@@ -148,6 +168,7 @@ type EvalContext = {
   checks: FitCheck[]
   assumptions: LinearConstraint[]
   contractCache: Map<string, FunctionContractProof>
+  inferLoops?: FitInferLoopReport[]
 }
 
 const maxInlineDepth = 12
@@ -279,6 +300,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
   const specs = program.specsByFunction.get(functionName) ?? []
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
+  const loops: FitInferLoopReport[] = []
 
   for (const param of fn.parameters) {
     if (!ts.isIdentifier(param.name)) continue
@@ -290,7 +312,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
   const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
-  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
+  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops}
   const state = evaluateFunctionBodyState(fn, context)
   const resultFacts = factsFromValue('result', state.result)
   const localFacts = localFactsFromEnv(env, state.env)
@@ -305,6 +327,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     functionName,
     facts: uniqueFacts(resultFacts),
     locals: uniqueFacts(localFacts),
+    loops,
     unsupported: [...new Set(unsupported)],
   }
 }
@@ -342,6 +365,16 @@ function factsFromValue(path: string, value: Value): FitInferFact[] {
     }
   }
   return facts
+}
+
+function factsFromEnvRoots(env: Map<string, Value>, roots: Set<string>): FitInferFact[] {
+  const facts: FitInferFact[] = []
+  for (const name of [...roots].sort()) {
+    const value = env.get(name)
+    if (value == null) continue
+    facts.push(...factsFromValue(name, value))
+  }
+  return uniqueFacts(facts)
 }
 
 function numberFacts(path: string, value: NumberValue): FitInferFact[] {
@@ -1309,6 +1342,7 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
 }
 
 function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalContext): Value | null {
+  const checksStart = context.checks.length
   const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
   const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
   reportLoopResultSpecs(resultSpecs, context)
@@ -1385,6 +1419,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Scalar min/max loops cannot also use += on the same target')
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
+  const factRoots = new Set<string>()
 
   for (const [targetName, increment] of pendingAdds) {
     const start = context.env.get(targetName)
@@ -1392,6 +1427,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
     const end = runningSumNumber(start, source.length, increment)
     context.env.set(targetName, end)
     updates.set(targetName, {start, increment, end})
+    factRoots.add(targetName)
   }
 
   for (const [targetName, increment] of conditionalAdds) {
@@ -1400,14 +1436,17 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
     const end = conditionalRunningSumNumber(targetName, start, source.length, increment)
     context.env.set(targetName, end)
     context.assumptions = mergeAssumptions(context.assumptions, conditionalRunningSumFacts(end, start, source.length, increment))
+    factRoots.add(targetName)
   }
 
   const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Scalar min/max loop target expected a number')
   if (extremumResult != null) return extremumResult
+  for (const targetName of pendingExtrema.keys()) factRoots.add(targetName)
 
   for (const push of pushedArrays) {
     const target = context.env.get(push.arrayName)
     if (target?.kind !== 'array') continue
+    factRoots.add(push.arrayName)
     const update = updates.get(push.topName ?? '')
     context.env.set(push.arrayName, {
       ...target,
@@ -1421,6 +1460,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   for (const push of conditionalPushedArrays) {
     const target = context.env.get(push.arrayName)
     if (target?.kind !== 'array') continue
+    factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length)
     context.env.set(push.arrayName, {
       ...target,
@@ -1434,11 +1474,13 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   }
 
   verifyLocalLoopSpecs(localSpecs, context)
+  recordInferLoop(statement, 'for-of', rawLocalSpecs, context, checksStart, factRoots)
 
   return null
 }
 
 function evaluateForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
+  const checksStart = context.checks.length
   const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
   const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
   reportLoopResultSpecs(resultSpecs, context)
@@ -1498,20 +1540,24 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Indexed scalar min/max loops cannot also use += on the same target')
 
   const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
+  const factRoots = new Set<string>()
   for (const [targetName, increment] of pendingAdds) {
     const start = context.env.get(targetName)
     if (start == null || start.kind !== 'number') return unknown('Indexed running-sum loop target expected a number')
     const end = runningSumNumber(start, source.length, increment)
     context.env.set(targetName, end)
     updates.set(targetName, {start, increment, end})
+    factRoots.add(targetName)
   }
 
   const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Indexed scalar min/max loop target expected a number')
   if (extremumResult != null) return extremumResult
+  for (const targetName of pendingExtrema.keys()) factRoots.add(targetName)
 
   for (const push of pushes) {
     const target = context.env.get(push.arrayName)
     if (target?.kind !== 'array') continue
+    factRoots.add(push.arrayName)
     const update = updates.get(push.topName ?? '')
     const cursorElement = loopElementFromPush(push, updates, context)
     const element = indexedLoopElementFromPush({...push, element: cursorElement}, shape.indexName, source.length)
@@ -1526,8 +1572,59 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   }
 
   verifyLocalLoopSpecs(localSpecs, context)
+  recordInferLoop(statement, 'for', rawLocalSpecs, context, checksStart, factRoots)
 
   return null
+}
+
+function recordInferLoop(
+  statement: ts.ForOfStatement | ts.ForStatement,
+  kind: FitInferLoopReport['kind'],
+  specs: FitSpec[],
+  context: EvalContext,
+  checksStart: number,
+  factRoots: Set<string>,
+) {
+  if (context.inferLoops == null) return
+  if (!hasFitComment(context.program.sourceText, statement)) return
+
+  const checks = context.checks.slice(checksStart)
+  const specReports = inferLoopSpecReports(specs, checks)
+  context.inferLoops.push({
+    line: context.program.sourceFile.getLineAndCharacterOfPosition(statement.getStart(context.program.sourceFile)).line + 1,
+    kind,
+    header: loopHeaderText(statement, context.program.sourceFile),
+    facts: factsFromEnvRoots(context.env, factRoots),
+    specs: specReports,
+    redundant: specReports.filter(spec => spec.status === 'source-proved').map(spec => spec.text),
+    unsupported: checks
+      .filter(check => check.status !== 'pass' && !specs.some(spec => spec.text === check.text))
+      .map(check => `${check.text}: ${check.reason ?? check.status}`),
+  })
+}
+
+function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoopSpec[] {
+  const checkByText = new Map<string, FitCheck>()
+  for (const check of checks) {
+    if (!checkByText.has(check.text)) checkByText.set(check.text, check)
+  }
+
+  return specs.map(spec => {
+    const check = checkByText.get(spec.text)
+    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+      if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
+      return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
+    }
+    if (check?.status === 'pass') return {text: spec.text, status: 'source-proved'}
+    return {text: spec.text, status: 'not-inferred', reason: check?.reason ?? check?.status ?? 'not checked'}
+  })
+}
+
+function loopHeaderText(statement: ts.ForOfStatement | ts.ForStatement, sourceFile: ts.SourceFile) {
+  const text = statement.getText(sourceFile)
+  const bodyStart = text.indexOf('{')
+  const header = bodyStart === -1 ? text : text.slice(0, bodyStart)
+  return header.replace(/\s+/g, ' ').trim()
 }
 
 function splitLoopSpecs(specs: FitSpec[]): {validSpecs: FitSpec[]; resultSpecs: FitSpec[]} {
