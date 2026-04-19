@@ -34,25 +34,31 @@ sections[].rows[].height <= maxHeight
 
 ## Do Next
 
+There are two tracks now: the normal proof/report/demo work we were about to do anyway, and the TypeScript shape piggyback experiment. The experiment should help us classify blockers. It should not quietly replace the rest of the roadmap.
+
+## If We Do Not Do The TS Shape Experiment
+
+This was the next path before the TypeScript piggyback idea came up. Keep it here so the experiment does not erase the boring work that was already worth doing.
+
 1. **Keep tightening input honesty.**
    `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, and small chained contradictions like `left >= middle`, `middle >= right`, `right > left` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
 
 2. **Keep helper/import report lines boring and precise.**
    Comparison reports now say `trusted from function @fit`, `trusted from loop @fit`, `read from code`, `branch fact from code`, `source-proved helper contract`, or `source-proved imported contract`. Small comparison proof rules point at their missing obligation when possible: `scale >= 0` instead of repeating `content * scale <= available * scale`, and `pointer < count * cellSize` instead of repeating `floor(pointer / cellSize) < count`. Next report work is likely sharper missing-fact text for rounding expressions that are not covered by a rule yet.
 
-3. **Design two-collection wildcard semantics before implementing them.**
+3. **Turn scalar accumulators into better internal measures.**
+   Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
+
+4. **Use real demos as pressure tests.**
+   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; loop output is especially useful for deciding which local `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
+   Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now. Vibescript photo-gallery now has source-owned contracts on the real grid sizing, prompt visible sizing, line max sizes, line target math, stable edge hit areas, and item geometry. The remaining photo-gallery gaps are larger loop/product facts, not a request for a new public atom.
+   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 61 helper checks after trimming checker-shaped helper bloat, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
+
+5. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
    - repeated labels could mean same index, e.g. `rows[i]` with `boxes[i]`
    - different labels could mean all pairs, e.g. `children[i]` with `blockers[j]`
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
-
-4. **Turn scalar accumulators into better internal measures.**
-   Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
-
-5. **Use real demos as pressure tests.**
-   The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; loop output is especially useful for deciding which local `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
-   Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now. Vibescript photo-gallery now has source-owned contracts on the real grid sizing, prompt visible sizing, line max sizes, line target math, stable edge hit areas, and item geometry. The remaining photo-gallery gaps are larger loop/product facts, not a request for a new public atom.
-   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 61 helper checks after trimming checker-shaped helper bloat, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
 
 6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
@@ -72,6 +78,41 @@ view fragments as ranges(start: .textStart, end: .textEnd)
    - `partitions(fragments, textRange)`
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
+
+## TS Shape Piggyback Experiment
+
+Treat this as a bounded diagnostic spike, not a rewrite and not a fork.
+
+1. **Add a shape-provider boundary.**
+   The evaluator should ask one small interface for structural shape. The current syntactic reader is one backend. A TypeScript `Program` / `TypeChecker` backend is the experiment. Do not scatter `checker.getTypeAtLocation(...)` through `src/check.ts`.
+
+2. **Use TypeScript only as a shape and symbol oracle.**
+   TS may tell us that something is a number, array, object, property, imported alias, instantiated generic, or return shape. TS must not produce Freerange numeric ranges, linear facts, sequence facts, or proof obligations.
+
+3. **Build a small fixture packet before touching demos.**
+   The packet should include imported interfaces/type aliases, generic instantiation, a utility type like `Pick` or `Readonly`, an unannotated helper return object, local inferred object/array shapes, and a nullable or optional-property case that stays conservative.
+
+4. **Add a dev-only shape diff.**
+   The tool should answer: "is Freerange blind because proof logic is weak, or because shape reading lost the object?" Useful output compares Freerange shape and TS shape at function parameters, locals, indexed elements, helper returns, and imported symbols.
+
+5. **Measure on real pressure.**
+   Run the shape diff and infer snapshots on photo-gallery `getGridLayout` / `getLineLayout`, then Pretext `layoutTemplateFrame`. A good result turns "property expected an object" into structural knowledge without inventing bounds.
+
+6. **Keep performance boring.**
+   Compare `bun run check` before and after. TS program creation can cost something, but repeated per-node type queries should be cached by node/type/symbol. Around 1.5x is tolerable during the spike if coverage improves; 3x for small gains is not.
+
+7. **Call failure clearly.**
+   The experiment fails if it becomes a second TypeScript type walker, makes reports noisier, spreads TS checker calls everywhere, slows normal checks too much, or makes structural facts look like numeric proof facts.
+
+## After The TS Shape Experiment
+
+Do this reconciliation before adding the next proof feature:
+
+1. Compare `infer-snapshots.expected.txt` before and after. Keep new facts only if they are stable, structural, and useful on demos.
+2. Decide whether to keep, freeze, or delete parts of the local syntactic type reader.
+3. Update `DOCUMENTATION.md`, `DEVELOPMENT.md`, `research.md`, and this file so they describe the actual source of shape knowledge.
+4. Re-run the "If We Do Not Do The TS Shape Experiment" list above and mark which items are still real.
+5. Re-check whether photo-gallery and Pretext blockers are proof gaps, shape gaps, report gaps, or public-language gaps.
 
 ## Public DSL Governance
 
