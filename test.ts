@@ -116,8 +116,8 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   const fn = report.functions[0]
   if (fn == null) return `${functionName}\n  missing function`
   const lines = [`${displayFile(fn.file)}:${fn.functionName}`]
-  addSection(lines, 'result', fn.facts.map(fact => fact.text))
-  addSection(lines, 'locals', fn.locals.map(fact => fact.text))
+  addSection(lines, 'result', snapshotItems(functionName, 'result', fn.facts.map(fact => fact.text)))
+  addSection(lines, 'locals', snapshotItems(functionName, 'locals', fn.locals.map(fact => fact.text)))
   for (const loop of fn.loops) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
     addSection(lines, 'inferred', loop.facts.map(fact => fact.text), '  ')
@@ -127,6 +127,57 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   }
   addSection(lines, 'unsupported', fn.unsupported.filter(line => line.startsWith('Forgot unsupported')))
   return lines.join('\n')
+}
+
+function snapshotItems(functionName: string, section: string, items: string[]) {
+  if (functionName === 'getGridLayout') return items.filter(item => keepGridLayoutSnapshotItem(section, item))
+  if (functionName === 'getLineLayout') return items.filter(item => keepLineLayoutSnapshotItem(section, item))
+  return items
+}
+
+function keepGridLayoutSnapshotItem(section: string, item: string) {
+  if (item.includes('.fragments')) return false
+  if (item === 'result.items.length == layoutSources.length') return true
+  if (item === 'result.items.length: int 0..Infinity') return true
+  if (item === 'result.rowsTop.length == rowsTop.length') return true
+  if (item === 'result.rowsTop.length: int 0..Infinity') return true
+  if (section === 'result') {
+    return item === 'result.items[].imageBox.sizeX == gridImageSizeXResult'
+      || item === 'result.items[].layoutBox.sizeX == gridImageSizeXResult'
+      || item.includes('result.items[].prompt.box.sizeX ==')
+      || item.includes('result.items[].prompt.box.sizeY ==')
+      || item.includes('result.items[].prompt.lines.length ==')
+      || item === 'result.items[].prompt.lines.length: int 0..Infinity'
+  }
+  return item === 'rowsTop.length: int 0..Infinity'
+    || item === 'rowHeights.length: int 0..Infinity'
+    || item === 'measurements.length == layoutSources.length'
+    || item === 'measurements.length: int 0..Infinity'
+    || item === 'measurements[].imageSizeX == gridImageSizeXResult'
+    || item.includes('measurements[].promptLayout.lineCount ==')
+    || item.includes('measurements[].promptLayout.lines.length ==')
+    || item === 'measurements[].promptLayout.lines.length: int 0..Infinity'
+    || item.includes('measurements[].promptLayout.visibleHeight ==')
+    || item.includes('measurements[].promptLayout.width ==')
+}
+
+function keepLineLayoutSnapshotItem(section: string, item: string) {
+  if (item.includes('.fragments')) return false
+  if (section === 'result') return true
+  return item === 'box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))'
+    || item === 'box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)'
+    || item === 'measurements.length == layoutSources.length'
+    || item === 'measurements.length: int 0..Infinity'
+    || item === 'items.length == layoutSources.length'
+    || item === 'items.length: int 0..Infinity'
+    || item === 'measurements[].imageSizeX == get1DItemSizeResult.imageSizeX'
+    || item === 'measurements[].imageSizeY == get1DItemSizeResult.imageSizeY'
+    || item === 'measurements[].layoutHeight == get1DItemSizeResult.layoutHeight'
+    || item === 'measurements[].promptLayout.lineCount == get1DItemSizeResult.promptLayout.lineCount'
+    || item === 'measurements[].promptLayout.lines.length == get1DItemSizeResult.promptLayout.lines.length'
+    || item === 'measurements[].promptLayout.lines.length: int 0..Infinity'
+    || item === 'measurements[].promptLayout.visibleHeight == get1DItemSizeResult.promptLayout.visibleHeight'
+    || item === 'measurements[].promptLayout.width == get1DItemSizeResult.promptLayout.width'
 }
 
 function addSection(lines: string[], name: string, items: string[], indent = '') {

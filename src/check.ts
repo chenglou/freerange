@@ -87,6 +87,13 @@ import {
   formatRange,
   missingRangeBounds,
 } from './reporting.ts'
+import {
+  structuralShape,
+  valueFromCallReturnShape,
+  valueFromFunctionReturnShape,
+  valueFromNodeShape,
+  valueFromSyntaxTypeShape,
+} from './shapes.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
 
@@ -144,6 +151,19 @@ export type FitInferFunctionReport = {
 export type FitInferReport = {
   files: string[]
   functions: FitInferFunctionReport[]
+}
+
+export type FitShapeInsight = {
+  file: string
+  functionName: string
+  subject: string
+  freerange: string[]
+  typescript: string[]
+}
+
+export type FitShapeReport = {
+  files: string[]
+  insights: FitShapeInsight[]
 }
 
 type Program = FitModule<NumberValue>
@@ -236,6 +256,19 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   return {files: paths, functions}
 }
 
+export function inspectFitShapes(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitShapeReport {
+  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const insights: FitShapeInsight[] = []
+  for (const program of project.entries) {
+    for (const [functionName, fn] of program.functions) {
+      if (options.functionName != null && functionName !== options.functionName) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName)) continue
+      insights.push(...inspectFunctionShapes(program, fn))
+    }
+  }
+  return {files: paths, insights}
+}
+
 function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
   const literal = numericLiteralValue(declaration.initializer)
@@ -272,7 +305,7 @@ function verifyFunctionSpecs(
 
   for (const param of fn.parameters) {
     if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program))
+    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
   }
 
   const {trustedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
@@ -305,7 +338,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
 
   for (const param of fn.parameters) {
     if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program))
+    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
   }
 
   const {trustedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
@@ -333,6 +366,111 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     loops,
     unsupported: [...new Set(unsupported)],
   }
+}
+
+function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration): FitShapeInsight[] {
+  const functionName = fn.name?.text ?? '<anonymous>'
+  const insights: FitShapeInsight[] = []
+
+  for (const param of fn.parameters) {
+    if (!ts.isIdentifier(param.name)) continue
+    const subject = `param ${param.name.text}`
+    const freerange = valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
+    const typescript = valueFromNodeShape(param.name.text, param.name, program)
+    addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
+  }
+
+  const syntaxReturn = valueFromSyntaxTypeShape('result', fn.type, program, new Set())
+  const tsReturn = valueFromFunctionReturnShape('result', fn, program)
+  addShapeInsight(insights, program, functionName, 'return type', 'result', syntaxReturn, tsReturn)
+
+  if (fn.body != null) {
+    collectShapeInsightsFromNode(fn.body, program, functionName, insights)
+  }
+
+  return insights
+}
+
+function collectShapeInsightsFromNode(node: ts.Node, program: Program, functionName: string, insights: FitShapeInsight[]) {
+  if (node !== program.sourceFile && isNestedFunctionLike(node)) return
+
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+    const freerange = valueFromSyntaxTypeShape(node.name.text, node.type, program, new Set())
+    const typescript = valueFromNodeShape(node.name.text, node.name, program)
+    addShapeInsight(insights, program, functionName, `local ${node.name.text}`, node.name.text, freerange, typescript)
+  }
+
+  if (ts.isCallExpression(node)) {
+    const typescript = structuralShape(valueFromCallReturnShape('shape', node, program))
+    addShapeInsight(insights, program, functionName, `call ${compactNodeText(node, program.sourceFile)}`, 'shape', null, typescript)
+  }
+
+  ts.forEachChild(node, child => collectShapeInsightsFromNode(child, program, functionName, insights))
+}
+
+function isNestedFunctionLike(node: ts.Node) {
+  return ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isConstructorDeclaration(node)
+}
+
+function addShapeInsight(
+  insights: FitShapeInsight[],
+  program: Program,
+  functionName: string,
+  subject: string,
+  root: string,
+  freerangeValue: Value | null,
+  typescriptValue: Value | null,
+) {
+  const typescript = shapeFactTexts(root, typescriptValue)
+  if (typescript.length === 0) return
+  const freerange = shapeFactTexts(root, freerangeValue)
+  const freerangeSet = new Set(freerange)
+  const extra = typescript.filter(fact => !freerangeSet.has(fact))
+  if (extra.length === 0) return
+  insights.push({file: program.file, functionName, subject, freerange, typescript: extra})
+}
+
+function shapeFactTexts(root: string, value: Value | null): string[] {
+  if (value == null) return []
+  return [...new Set(shapeFactsFromValue(root, value))]
+}
+
+function shapeFactsFromValue(path: string, value: Value): string[] {
+  if (value.kind === 'unknown') return []
+  if (value.kind === 'number') {
+    if (!isStructuralShapePath(path)) return []
+    const facts = numberFacts(path, value).map(fact => fact.text)
+    return facts.length === 0 ? [`${path}: number`] : facts
+  }
+  if (value.kind === 'object') {
+    const facts: string[] = []
+    for (const [name, prop] of [...value.props.entries()].sort(([left], [right]) => left.localeCompare(right))) {
+      facts.push(...shapeFactsFromValue(`${path}.${name}`, prop))
+    }
+    return facts
+  }
+
+  const facts = numberFacts(`${path}.length`, value.length).map(fact => fact.text)
+  if (value.element != null) facts.push(...shapeFactsFromValue(`${path}[]`, value.element))
+  return facts
+}
+
+function compactNodeText(node: ts.Node, sourceFile: ts.SourceFile) {
+  return node.getText(sourceFile)
+    .replace(/\s+/g, ' ')
+    .replace(/\( /g, '(')
+    .replace(/ ,/g, ',')
+    .replace(/, \)/g, ')')
+    .replace(/ \)/g, ')')
+    .trim()
+}
+
+function isStructuralShapePath(path: string) {
+  return path.includes('.') || path.includes('[]')
 }
 
 function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
@@ -713,8 +851,8 @@ function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {ki
   env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }
 
-function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | undefined, program: Program): Value {
-  const typed = valueFromTypeNode(name, type, program, new Set())
+function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | undefined, program: Program, node?: ts.Node): Value {
+  const typed = (node == null ? null : valueFromNodeShape(name, node, program)) ?? valueFromSyntaxTypeShape(name, type, program, new Set())
   if (typed != null) return typed
 
   const shape = specParamShape(name, specs)
@@ -725,107 +863,6 @@ function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | u
 
 function unknownResultValue(specs: FitSpec[], program: Program): Value {
   return unknownParamValue('result', specs, undefined, program)
-}
-
-function valueFromTypeNode(expr: string, type: ts.TypeNode | undefined, program: Program, seen: Set<string>): Value | null {
-  if (type == null) return null
-
-  if (ts.isParenthesizedTypeNode(type)) return valueFromTypeNode(expr, type.type, program, seen)
-  if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return valueFromTypeNode(expr, type.type, program, seen)
-  if (type.kind === ts.SyntaxKind.NumberKeyword) return unknownNumber(expr)
-  if (type.kind === ts.SyntaxKind.BooleanKeyword) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
-  if (type.kind === ts.SyntaxKind.StringKeyword) return unknown(`String values are not in the static layout subset: ${expr}`)
-  if (type.kind === ts.SyntaxKind.ObjectKeyword) return unknownObject(expr)
-  if (ts.isArrayTypeNode(type)) {
-    return unknownArray(expr, unknownArrayLength(expr), valueFromTypeNode(`${expr}[]`, type.elementType, program, seen))
-  }
-  if (ts.isUnionTypeNode(type)) return valueFromUnionType(expr, type, program, seen)
-  if (ts.isIntersectionTypeNode(type)) return valueFromIntersectionType(expr, type, program, seen)
-  if (ts.isLiteralTypeNode(type)) return unknown(`Literal values are not in the static layout subset: ${expr}`)
-  if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
-  if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
-  return null
-}
-
-function valueFromTypeReference(expr: string, type: ts.TypeReferenceNode, program: Program, seen: Set<string>): Value | null {
-  if (!ts.isIdentifier(type.typeName)) return null
-  const name = type.typeName.text
-  const typeArgument = type.typeArguments?.[0]
-  if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
-    return unknownArray(expr, unknownArrayLength(expr), valueFromTypeNode(`${expr}[]`, typeArgument, program, seen))
-  }
-
-  const key = `${program.sourceId}#${name}`
-  if (seen.has(key)) return unknownObject(expr)
-  const declaration = localTypeDeclaration(program, name)
-  if (declaration == null) return null
-  seen.add(key)
-  const value = ts.isInterfaceDeclaration(declaration)
-    ? objectValueFromTypeMembers(expr, declaration.members, program, seen)
-    : valueFromTypeNode(expr, declaration.type, program, seen)
-  seen.delete(key)
-  return value
-}
-
-function valueFromUnionType(expr: string, type: ts.UnionTypeNode, program: Program, seen: Set<string>): Value | null {
-  let value: Value | null = null
-  for (const member of type.types) {
-    const next = valueFromTypeNode(expr, member, program, seen)
-    if (next == null) return null
-    value = value == null ? next : joinValues(value, next)
-  }
-  return value
-}
-
-function valueFromIntersectionType(expr: string, type: ts.IntersectionTypeNode, program: Program, seen: Set<string>): Value | null {
-  let value: Value | null = null
-  for (const member of type.types) {
-    const next = valueFromTypeNode(expr, member, program, seen)
-    if (next == null) return null
-    value = value == null ? next : intersectTypeValues(value, next)
-  }
-  return value
-}
-
-function intersectTypeValues(left: Value, right: Value): Value {
-  if (left.kind === 'object' && right.kind === 'object') {
-    const props = new Map(left.props)
-    for (const [name, prop] of right.props) {
-      const current = props.get(name)
-      props.set(name, current == null ? prop : joinValues(current, prop))
-    }
-    return {kind: 'object', props, expr: left.expr ?? right.expr}
-  }
-  if (left.kind === 'array' && right.kind === 'array') return joinValues(left, right)
-  return right.kind === 'unknown' ? left : right
-}
-
-function objectValueFromTypeMembers(expr: string, members: ts.NodeArray<ts.TypeElement>, program: Program, seen: Set<string>): Value {
-  const props = new Map<string, Value>()
-  for (const member of members) {
-    if (!ts.isPropertySignature(member)) continue
-    const name = propertyNameText(member.name)
-    if (name == null) continue
-    const propExpr = `${expr}.${name}`
-    const value = member.questionToken == null
-      ? valueFromTypeNode(propExpr, member.type, program, seen) ?? unknownNumber(propExpr)
-      : unknown(`Optional property ${propExpr} is not in the static layout subset`)
-    props.set(name, value)
-  }
-  return {kind: 'object', props, expr}
-}
-
-function propertyNameText(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
-  return null
-}
-
-function localTypeDeclaration(program: Program, name: string): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
-  for (const statement of program.sourceFile.statements) {
-    if (ts.isInterfaceDeclaration(statement) && statement.name.text === name) return statement
-    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) return statement
-  }
-  return null
 }
 
 function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'number' {
@@ -2396,7 +2433,10 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     contractCache: context.contractCache,
   })
   const fallbackResult = result.kind === 'unknown'
-    ? valueFromTypeNode(`${functionName}Result`, fn.type, context.program, new Set()) ?? result
+    ? valueFromFunctionReturnShape(`${functionName}Result`, fn, context.program)
+      ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.type, context.program, new Set())
+      ?? valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program)
+      ?? result
     : result
   const specs = context.program.specsByFunction.get(functionName) ?? []
   if (specs.length === 0) return fallbackResult
@@ -2414,8 +2454,9 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
 
 function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
   const binding = context.program.imports.get(functionName)
-  if (binding == null) return unknown(`Unknown function ${functionName}`)
-  if (binding.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
+  const structuralFallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
+  if (binding == null) return structuralFallback ?? unknown(`Unknown function ${functionName}`)
+  if (binding.kind === 'unresolved') return structuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
 
   const exported = resolveFitExport(binding.module, binding.exportedName)
   if (exported.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, exported.reason))
@@ -2423,7 +2464,8 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const fn = exported.module.functions.get(exported.localName)
   if (fn == null) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that symbol is not a function declaration`))
   const specs = exported.module.specsByFunction.get(exported.localName) ?? []
-  if (specs.length === 0) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
+  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${binding.exportedName}Result`, fn, exported.module))
+  if (specs.length === 0) return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
   const source = {
     sourceFile: exported.module.file,
@@ -2437,7 +2479,7 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context)
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, unknownResultValue(specs, exported.module))
+  return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, resolvedStructuralFallback ?? unknownResultValue(specs, exported.module))
 }
 
 function namespaceImportCallReason(target: ts.PropertyAccessExpression, context: EvalContext): string | null {
@@ -3085,6 +3127,7 @@ function choiceNumberPair(
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
   if (target.kind === 'array' && expression.name.text === 'length') return target.length
+  if (target.kind === 'unknown') return target
   if (target.kind !== 'object') return unknown(`Property access ${expression.name.text} expected an object`)
   return target.props.get(expression.name.text) ?? (target.expr == null ? unknown(`Unknown property ${expression.name.text}`) : unknownNumber(`${target.expr}.${expression.name.text}`))
 }

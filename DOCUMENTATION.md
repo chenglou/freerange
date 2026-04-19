@@ -23,6 +23,7 @@ helper contract // a helper function's own `@fit` block, proven once and used as
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
 infer // the dev x-ray: `bun run infer path --function name`. It prints curated facts the checker already knows.
+shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that Freerange did not get from its own source reader.
 ```
 
 ## Adoption
@@ -47,7 +48,7 @@ Bad first targets:
 
 Adoption pass:
 
-1. Run `bun run infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows.
+1. Run `bun run infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
 2. Add `given` lines only for input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
@@ -235,6 +236,19 @@ Supported operators:
 == >= <= > <
 ```
 
+Most comparisons are numeric. One non-numeric equality is supported because it falls out of normal source shape: the exact same object or array expression can equal itself through the returned structure.
+
+```ts
+/** @fit
+ * result.rows == input.rows
+ */
+function carryRows(input: {rows: {height: number}[]}) {
+  return {rows: input.rows}
+}
+```
+
+Freerange does not compare array contents or object fields recursively for equality. It only proves the same source expression.
+
 The checker carries small linear facts from ranges and comparisons:
 
 ```ts
@@ -348,6 +362,25 @@ function cardWidth(width: number) {
 ```
 
 Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
+
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, or helper return is an object or array, Freerange can use that structure so paths like `result.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its result can satisfy `result.width: 0..320` or `result.height >= 0`.
+
+Optional and nullable properties stay conservative:
+
+```ts
+type MaybeRows = {
+  rows?: {height: number}[]
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+function maybeRows(input: MaybeRows) {
+  return {rows: input.rows}
+}
+```
+
+Freerange reports this as unknown because `rows` may be absent.
 
 When an import boundary cannot be used, the report says which bucket it fell into:
 
@@ -619,7 +652,7 @@ The checker understands a small pure subset:
 
 - function declarations
 - simple named parameters
-- obvious TypeScript parameter shapes: arrays, readonly arrays, object type literals, local interfaces, local type aliases, unions, and intersections
+- obvious TypeScript shapes through a small provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, and helper return shapes
 - numeric top-level constants
 - `const` / `let` locals with initializers
 - `return expression`
@@ -628,6 +661,7 @@ The checker understands a small pure subset:
 - direct same-file function calls
 - same-file return type shapes when a helper body is outside the source subset
 - named imports of exported numeric constants and `@fit` function declarations when TypeScript resolves them to local source
+- TypeScript-known imported object/array shape, without treating it as a source-proved helper contract
 - explicit named re-exports of source-proved `@fit` function declarations
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
@@ -649,12 +683,12 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels
+- package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts
 - classes, methods, async, generators
 - destructured params, rest params, default params
-- TS type narrowing, generics, overloads
+- general TS control-flow narrowing, overload semantics, and generic value reasoning
 - general closures or callback reasoning
-- strings, booleans, branded types, and general TS type narrowing
+- strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
 - public lambdas, `forall`, filters, arbitrary folds, prose-as-truth
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
 - Pretext text facts

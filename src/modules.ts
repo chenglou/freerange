@@ -6,6 +6,7 @@ export type FitModule<TGlobal> = {
   file: string
   sourceFile: ts.SourceFile
   sourceText: string
+  typeChecker: ts.TypeChecker | null
   globals: Map<string, TGlobal>
   functions: Map<string, ts.FunctionDeclaration>
   fitFunctions: Set<string>
@@ -70,6 +71,8 @@ type ResolutionContext = {
   compilerOptions: ts.CompilerOptions
   configFile: string | null
   cache: ts.ModuleResolutionCache
+  typeProgram: ts.Program
+  typeChecker: ts.TypeChecker
 }
 
 type ResolvedImport =
@@ -116,7 +119,8 @@ function loadModule<TGlobal>(
   const sourceText = ts.sys.readFile(sourceId)
   if (sourceText == null) throw new Error(`Could not read ${displayPath(sourceId)}`)
 
-  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
+  const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
+  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, resolution.typeChecker, sourceFile)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal)
   loadReExports(module, modules, resolution, readGlobal)
@@ -128,8 +132,9 @@ function parseFitModule<TGlobal>(
   file: string,
   sourceText: string,
   readGlobal: TopLevelGlobalReader<TGlobal>,
+  typeChecker: ts.TypeChecker | null = null,
+  sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
 ): FitModule<TGlobal> {
-  const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, ts.FunctionDeclaration>()
   const fitFunctions = new Set<string>()
@@ -162,7 +167,7 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, globals, functions, fitFunctions, specsByFunction, exports, imports}
+  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, fitFunctions, specsByFunction, exports, imports}
 }
 
 function loadImports<TGlobal>(
@@ -363,10 +368,13 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
 function createResolutionContext(paths: string[]): ResolutionContext {
   const configFile = findConfigFile(paths)
   const compilerOptions = configFile == null ? defaultCompilerOptions() : readCompilerOptions(configFile)
+  const typeProgram = ts.createProgram(paths.map(toSourceId), {...compilerOptions, noEmit: true})
   return {
     compilerOptions,
     configFile,
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
+    typeProgram,
+    typeChecker: typeProgram.getTypeChecker(),
   }
 }
 

@@ -22,7 +22,8 @@ sections[].rows[].height <= maxHeight
 
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
-- Array lengths default to non-negative integers, and obvious local TS array/object shapes are used even when no `given` line names the path yet.
+- Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
+- Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `result.rows == input.rows`.
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
@@ -31,14 +32,15 @@ sections[].rows[].height <= maxHeight
 - Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 - `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates loop specs into trusted, source-proved, and not-inferred lines. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not a public annotation writer.
+- `bun run shape-diff path --function name` is the dev-only TS piggyback x-ray. It compares Freerange-owned structural facts with TypeScript-only object/array shape for params, locals, return shapes, and call returns.
 
 ## Do Next
 
-There are two tracks now: the normal proof/report/demo work we were about to do anyway, and the TypeScript shape piggyback experiment. The experiment should help us classify blockers. It should not quietly replace the rest of the roadmap.
+There are two tracks now: normal proof/report/demo work, and the TypeScript shape piggyback result. The experiment is useful enough to keep, but it should stay a shape oracle. It must not quietly replace the rest of the roadmap.
 
-## If We Do Not Do The TS Shape Experiment
+## Normal Proof Track
 
-This was the next path before the TypeScript piggyback idea came up. Keep it here so the experiment does not erase the boring work that was already worth doing.
+This was the next path before the TypeScript piggyback idea came up. Keep it visible so the shape work does not erase the boring proof/report/demo work that was already worth doing.
 
 1. **Keep tightening input honesty.**
    `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, and small chained contradictions like `left >= middle`, `middle >= right`, `right > left` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
@@ -79,40 +81,40 @@ view fragments as ranges(start: .textStart, end: .textEnd)
    - `sourceOrder(lines, fragments)`
    - `sameSource(selectionRects, paintFragments)`
 
-## TS Shape Piggyback Experiment
+## TS Shape Piggyback Result
 
-Treat this as a bounded diagnostic spike, not a rewrite and not a fork.
+The spike paid for itself. We now have a small shape-provider boundary in `src/shapes.ts`, plus `bun run shape-diff` to inspect where TypeScript knows structure Freerange did not know.
 
-1. **Add a shape-provider boundary.**
-   The evaluator should ask one small interface for structural shape. The current syntactic reader is one backend. A TypeScript `Program` / `TypeChecker` backend is the experiment. Do not scatter `checker.getTypeAtLocation(...)` through `src/check.ts`.
+What it improved:
 
-2. **Use TypeScript only as a shape and symbol oracle.**
-   TS may tell us that something is a number, array, object, property, imported alias, instantiated generic, or return shape. TS must not produce Freerange numeric ranges, linear facts, sequence facts, or proof obligations.
+- imported interfaces and type aliases now give structure
+- `Pick`-style utility types give structure
+- generic helper returns like `Box<T>` give structure at the call site
+- unannotated helper return shapes can make object paths meaningful without pretending to prove ranges
+- photo-gallery snapshots now keep a curated slice of prompt-layout and item-measurement structure
 
-3. **Build a small fixture packet before touching demos.**
-   The packet should include imported interfaces/type aliases, generic instantiation, a utility type like `Pick` or `Readonly`, an unannotated helper return object, local inferred object/array shapes, and a nullable or optional-property case that stays conservative.
+What it deliberately does not do:
 
-4. **Add a dev-only shape diff.**
-   The tool should answer: "is Freerange blind because proof logic is weak, or because shape reading lost the object?" Useful output compares Freerange shape and TS shape at function parameters, locals, indexed elements, helper returns, and imported symbols.
+- no numeric ranges from TypeScript types
+- no linear facts, sequence facts, or proof obligations from TypeScript
+- no imported function body inlining
+- no trusting declaration files as source-proved helper contracts
+- no optional/nullable property optimism
 
-5. **Measure on real pressure.**
-   Run the shape diff and infer snapshots on photo-gallery `getGridLayout` / `getLineLayout`, then Pretext `layoutTemplateFrame`. A good result turns "property expected an object" into structural knowledge without inventing bounds.
+`shape-diff` was useful on the real pressure points:
 
-6. **Keep performance boring.**
-   Compare `bun run check` before and after. TS program creation can cost something, but repeated per-node type queries should be cached by node/type/symbol. Around 1.5x is tolerable during the spike if coverage improves; 3x for small gains is not.
+- photo-gallery `getGridLayout` / `getLineLayout`: TypeScript exposes prompt-layout, measurement, item geometry, and hit-area structure even when Freerange has not proven numeric bounds.
+- Pretext `layoutTemplateFrame`: TypeScript exposes `layoutBlockFrame` return structure, including `height`, `top`, `contentLeft`, and `quoteRailLefts`.
 
-7. **Call failure clearly.**
-   The experiment fails if it becomes a second TypeScript type walker, makes reports noisier, spreads TS checker calls everywhere, slows normal checks too much, or makes structural facts look like numeric proof facts.
+Keep watching the failure line. This turns bad if `src/shapes.ts` becomes a second TypeScript checker, if reports start treating shape as proof, or if normal checks get slow enough that the small shape win is not worth it.
 
-## After The TS Shape Experiment
+## After The Shape Work
 
-Do this reconciliation before adding the next proof feature:
+Before adding the next proof feature:
 
-1. Compare `infer-snapshots.expected.txt` before and after. Keep new facts only if they are stable, structural, and useful on demos.
-2. Decide whether to keep, freeze, or delete parts of the local syntactic type reader.
-3. Update `DOCUMENTATION.md`, `DEVELOPMENT.md`, `research.md`, and this file so they describe the actual source of shape knowledge.
-4. Re-run the "If We Do Not Do The TS Shape Experiment" list above and mark which items are still real.
-5. Re-check whether photo-gallery and Pretext blockers are proof gaps, shape gaps, report gaps, or public-language gaps.
+1. Keep the TS shape provider frozen around structural facts unless a real demo blocks on shape.
+2. Re-run the normal proof track above and mark which items are still real.
+3. Re-check whether photo-gallery and Pretext blockers are proof gaps, shape gaps, report gaps, or public-language gaps.
 
 ## Public DSL Governance
 
@@ -165,8 +167,8 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
-- TS shape reading is syntactic and local. It handles arrays, readonly arrays, object type literals, local interfaces, local aliases, unions, and intersections; imported type declarations and optional properties are still opaque.
+- TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, unions, and intersections. Optional and nullable properties are still conservative unknowns.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
-- No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or branded-value reasoning.
+- No general loops, nonlinear solver, TS type narrowing, overload semantics, general generic value reasoning, classes, async, closures, strings, booleans, or branded-value reasoning.

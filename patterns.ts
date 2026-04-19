@@ -255,6 +255,13 @@ export function objectSpreadKeepsFields(base: {x: number}, y: number) {
 }
 
 /** @fit
+ * result.rows == input.rows
+ */
+export function arrayIdentityEquality(input: {rows: {height: number}[]}) {
+  return {rows: input.rows}
+}
+
+/** @fit
  * given child.x: 0..1000
  * given child.w: 0..500
  * given parent.x: 0..1000

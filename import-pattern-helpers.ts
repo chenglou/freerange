@@ -26,3 +26,17 @@ export function importedRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
   return {rows}
 }
+
+export type ImportedShapeRows = {
+  rows: {height: number}[]
+}
+
+export type ImportedPickedRows = Pick<ImportedShapeRows, 'rows'>
+
+export type ImportedBox<T> = {
+  value: T
+}
+
+export function importedBox<T>(value: T): ImportedBox<T> {
+  return {value}
+}

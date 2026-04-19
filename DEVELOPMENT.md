@@ -11,6 +11,7 @@ bun install
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
 - `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts and loop-local facts
+- `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of Freerange's structural shape and TypeScript-only shape
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
@@ -33,10 +34,12 @@ bun install
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
 - [src/proof-rules.ts](./src/proof-rules.ts) — small named comparison proof rules with shared prove/report obligations
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
+- [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [verify.ts](./verify.ts) — ad hoc JSON-report CLI
 - [infer.ts](./infer.ts) — dev-only inferred-facts CLI
+- [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape piggyback diagnostic
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
 - [test.ts](./test.ts) — pattern-suite runner
 - [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
@@ -59,7 +62,15 @@ Loop output separates explicit loop comment lines into:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
-Do not grow TypeScript type logic just to make `infer` prettier. Keep TS-shape reading small and syntactic unless a real proof needs more; if imported/generic/utility type shape support becomes important, use the TypeScript checker instead of recreating it.
+Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
+
+## Shape Diff Tool
+
+`bun run shape-diff path/to/file.ts --function name` is the TS piggyback x-ray. It answers a narrower question than `infer`: did Freerange lose because it did not know an object/array shape that TypeScript already knew?
+
+It prints TypeScript-only structural facts for params, locals, return shapes, and call returns. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
+
+Use this when a report says a property or array path is unknown. If `shape-diff` sees the structure, the blocker is likely proof logic or missing input facts. If `shape-diff` does not see it, the blocker is still shape reading.
 
 ## Adding Support
 

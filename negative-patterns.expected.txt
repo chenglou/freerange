@@ -145,6 +145,8 @@ FAIL negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: result.x: 0..100
     trusted from function @fit: given base.x: -10..100
     trusted from function @fit: given y: 0..100
   missing: base.x >= 0
+UNKNOWN negative-patterns.ts:negativeArrayIdentityNeedsSameSource: result.rows == other.rows
+  Non-number equality is only proven for the same source expression
 FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: result: 0..40
   range was -Infinity..Infinity as items[].height, expected inside 0..40
   need: items[].height inside 0..40
@@ -458,3 +460,5 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: res
     17..1017 as ((width + importedChromeX) + 1)
     trusted from function @fit: given width: 0..1000
   missing: given (width + importedChromeX) == ((width + importedChromeX) + 1)
+UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: result.rows.length >= 0
+  Optional property input.rows is not in the static layout subset

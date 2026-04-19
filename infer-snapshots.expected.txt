@@ -51,7 +51,7 @@ locals:
   extentEnd(rows, top): -10..3500
   y == runningSum(top, items.length, (items[].height + gap))
   y: 0..3500
-loop 436: for (const item of items)
+loop 443: for (const item of items)
   inferred:
     rows.length == items.length
     rows.length: int 1..50
@@ -77,6 +77,12 @@ loop 436: for (const item of items)
 result:
   result.items.length == layoutSources.length
   result.items.length: int 0..Infinity
+  result.items[].imageBox.sizeX == gridImageSizeXResult
+  result.items[].layoutBox.sizeX == gridImageSizeXResult
+  result.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).width
+  result.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).visibleHeight
+  result.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lines.length
+  result.items[].prompt.lines.length: int 0..Infinity
   result.rowsTop.length == rowsTop.length
   result.rowsTop.length: int 0..Infinity
 locals:
@@ -84,6 +90,12 @@ locals:
   rowHeights.length: int 0..Infinity
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
+  measurements[].imageSizeX == gridImageSizeXResult
+  measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lineCount
+  measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lines.length
+  measurements[].promptLayout.lines.length: int 0..Infinity
+  measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).visibleHeight
+  measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).width
 unsupported:
   Forgot unsupported indexed loop side effect: rowHeight = Math.max(rowHeight, layoutHeight)
   Forgot unsupported indexed loop side effect: if (i % cols === cols - 1 || i === layoutSources.length - 1) {
@@ -100,6 +112,14 @@ locals:
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
+  measurements[].imageSizeX == get1DItemSizeResult.imageSizeX
+  measurements[].imageSizeY == get1DItemSizeResult.imageSizeY
+  measurements[].layoutHeight == get1DItemSizeResult.layoutHeight
+  measurements[].promptLayout.lineCount == get1DItemSizeResult.promptLayout.lineCount
+  measurements[].promptLayout.lines.length == get1DItemSizeResult.promptLayout.lines.length
+  measurements[].promptLayout.lines.length: int 0..Infinity
+  measurements[].promptLayout.visibleHeight == get1DItemSizeResult.promptLayout.visibleHeight
+  measurements[].promptLayout.width == get1DItemSizeResult.promptLayout.width
   items.length == layoutSources.length
   items.length: int 0..Infinity
 unsupported:

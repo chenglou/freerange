@@ -5,6 +5,7 @@ import {importedClampWithBadContract, unannotatedImportedClamp} from './negative
 import {barrelClampWidth} from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
+import type {ImportedOptionalRows} from './negative-import-helpers'
 // @ts-expect-error default import fixture for Freerange's unsupported import-shape report.
 import defaultImportedClamp from './import-pattern-helpers'
 // @ts-expect-error unresolved import fixture for Freerange's TypeScript resolver boundary.
@@ -72,4 +73,11 @@ export function negativeImportedHelperReExportContractTooWide(width: number) {
  */
 export function negativeImportedNumericConstantMismatch(width: number) {
   return width + importedChromeX
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function negativeOptionalImportedShape(input: ImportedOptionalRows) {
+  return {rows: input.rows}
 }

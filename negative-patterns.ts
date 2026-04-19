@@ -206,6 +206,13 @@ export function negativeObjectSpreadNeedsFieldDomain(base: {x: number}, y: numbe
 }
 
 /** @fit
+ * result.rows == other.rows
+ */
+export function negativeArrayIdentityNeedsSameSource(input: {rows: {height: number}[]}, other: {rows: {height: number}[]}) {
+  return {rows: input.rows, otherRows: other.rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given index: int 0..49
  * given index < items.length

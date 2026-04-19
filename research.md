@@ -101,7 +101,7 @@ Keep app code natural. A checker that understands locals, loops, arrays, object 
 
 High-value inference:
 
-- local TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; local object/interface/type-alias/union/intersection shapes let sparse `@fit` comments still evaluate natural code. Imported type declarations can stay opaque until they block a real proof.
+- TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; object/interface/type-alias/union/intersection shapes let sparse `@fit` comments still evaluate natural code. The useful boundary is now `src/shapes.ts`: TypeScript can tell us structural shape across imported aliases, utility types, generic instantiations, and helper returns, but it must not give Freerange numeric ranges, sequence facts, or proof obligations.
 - `items.map(...)` preserves length, simple field domains, and optional callback index facts. Expression callbacks and tiny block callbacks are enough for the code we have seen; source order can come later when there is a public fact that needs it.
 - append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
@@ -109,6 +109,7 @@ High-value inference:
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized. Unsupported loop bodies can also be useful when they are only side effects on roots we can forget; preserve unrelated facts, never stale mutated-root facts.
 - `bun run infer` is useful as a checker x-ray: it should show curated result/local facts and loop-local facts, not every internal linear assumption. Loop output should keep separating trusted givens, source-proved checks, and not-inferred checks so authors can shorten local `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it dev-only until the output is consistently useful on demos.
+- `bun run shape-diff` is a different x-ray. It compares Freerange-owned structural facts with TypeScript-only shape for params, locals, return shapes, and call returns. It helped classify photo-gallery and Pretext blockers: TypeScript could see prompt layout, measurement, item geometry, edge hit-area, and `layoutBlockFrame` structure; the remaining work is mostly proof/report/product semantics, not object-path blindness.
 
 Demo notes from the first infer pass:
 
@@ -188,6 +189,10 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 - imported bodies are not inlined at the call site
 
 The resolver follows named imports through TypeScript module resolution when they land on local source files, and it follows explicit named re-export barrels. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, wildcard barrels, summary files, stale-summary trust, or workspace caches.
+
+TypeScript shape piggybacking is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system.
+
+Structural equality should stay small too. Proving `result.rows == input.rows` because both sides are the same source expression is useful. Recursive object/array equality is a different feature and should wait for a real need.
 
 Reports now say whether a fact came from source, a branch split, a trusted `given`, a source-proved same-file helper contract, or a source-proved imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source proof.
 

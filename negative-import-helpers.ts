@@ -9,3 +9,7 @@ export function unannotatedImportedClamp(width: number) {
 export function importedClampWithBadContract(width: number) {
   return Math.min(width, 320)
 }
+
+export type ImportedOptionalRows = {
+  rows?: {height: number}[]
+}

@@ -1,6 +1,7 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import {importedAddGap as addImportedGap, importedChromeX, importedClampWidth, importedRows} from './import-pattern-helpers'
+import {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows} from './import-pattern-helpers'
+import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
 import {barrelClampWidth, barrelTsxClampWidth} from './import-pattern-barrel'
 import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
@@ -67,4 +68,26 @@ export function importedHelperBarrelContract(width: number) {
  */
 export function importedHelperBarrelTsxContract(width: number) {
   return barrelTsxClampWidth(width)
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function importedTypeShape(input: ImportedShapeRows) {
+  return {rows: input.rows}
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function importedUtilityTypeShape(input: ImportedPickedRows) {
+  return {rows: input.rows}
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function importedGenericReturnShape(items: {height: number}[]) {
+  const boxed = importedBox(items)
+  return {rows: boxed.value}
 }

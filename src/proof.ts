@@ -69,6 +69,8 @@ export function proveRange(value: Value, min: number, max: number, requireIntege
 }
 
 export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+  const structuralEquality = proveStructuralEquality(left, op, right)
+  if (structuralEquality != null) return structuralEquality
   if (left.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(left)}
   if (right.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(right)}
   if (left.cases != null || right.cases != null) {
@@ -88,6 +90,23 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
     return unknownStatus ?? {status: 'pass'}
   }
   return proveComparisonPlain(left, op, right, assumptions)
+}
+
+function proveStructuralEquality(left: Value, op: ComparisonOperator, right: Value): {status: 'pass' | 'unknown'; reason?: string} | null {
+  if (left.kind === 'number' && right.kind === 'number') return null
+  if (op !== '==') return null
+
+  const leftExpr = structuralExpr(left)
+  const rightExpr = structuralExpr(right)
+  if (leftExpr != null && rightExpr != null && sameExpressionText(leftExpr, rightExpr)) return {status: 'pass'}
+  if (left.kind === 'unknown') return {status: 'unknown', reason: left.reason}
+  if (right.kind === 'unknown') return {status: 'unknown', reason: right.reason}
+  return {status: 'unknown', reason: 'Non-number equality is only proven for the same source expression'}
+}
+
+function structuralExpr(value: Value): string | null {
+  if (value.kind === 'number' || value.kind === 'unknown') return null
+  return value.expr
 }
 
 export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {

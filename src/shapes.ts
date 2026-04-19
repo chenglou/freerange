@@ -1,0 +1,208 @@
+import * as ts from 'typescript'
+import {
+  joinValues,
+  unknown,
+  unknownArray,
+  unknownArrayLength,
+  unknownNumber,
+  unknownObject,
+  type Value,
+} from './domain.ts'
+
+export type ShapeProgram = {
+  sourceId: string
+  sourceFile: ts.SourceFile
+  typeChecker: ts.TypeChecker | null
+}
+
+export function valueFromNodeShape(expr: string, node: ts.Node, program: ShapeProgram): Value | null {
+  const checker = program.typeChecker
+  if (checker == null) return null
+  return valueFromTsType(expr, checker.getTypeAtLocation(node), checker, node, new Set())
+}
+
+export function valueFromFunctionReturnShape(expr: string, fn: ts.FunctionDeclaration, program: ShapeProgram): Value | null {
+  const checker = program.typeChecker
+  const signature = checker?.getSignatureFromDeclaration(fn)
+  if (checker == null || signature == null) return null
+  return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, fn, new Set())
+}
+
+export function valueFromCallReturnShape(expr: string, call: ts.CallExpression, program: ShapeProgram): Value | null {
+  const checker = program.typeChecker
+  const signature = checker?.getResolvedSignature(call)
+  if (checker == null || signature == null) return null
+  return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call, new Set())
+}
+
+export function structuralShape(value: Value | null): Value | null {
+  return value?.kind === 'object' || value?.kind === 'array' ? value : null
+}
+
+function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>): Value | null {
+  if (seen.has(type)) return unknownObject(expr)
+  if (isNullishTsType(type)) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
+  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
+
+  if (type.isUnion()) {
+    if (type.types.some(isNullishTsType)) return unknown(`Optional or nullable value is not in the static layout subset: ${expr}`)
+    let value: Value | null = null
+    for (const member of type.types) {
+      const next = valueFromTsType(expr, member, checker, location, seen)
+      if (next == null) return null
+      value = value == null ? next : joinValues(value, next)
+    }
+    return value
+  }
+
+  if (checker.isArrayLikeType(type)) {
+    const element = arrayElementTsValue(`${expr}[]`, type, checker, location, seen)
+    return unknownArray(expr, unknownArrayLength(expr), element)
+  }
+
+  const properties = type.getProperties()
+  if (properties.length === 0) return null
+
+  seen.add(type)
+  const props = new Map<string, Value>()
+  for (const property of properties) {
+    const name = property.getName()
+    if (name === 'prototype' || name.startsWith('__@')) continue
+    const propExpr = `${expr}.${name}`
+    if ((property.flags & ts.SymbolFlags.Optional) !== 0) {
+      props.set(name, unknown(`Optional property ${propExpr} is not in the static layout subset`))
+      continue
+    }
+    const propType = checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration ?? location)
+    const value = valueFromTsType(propExpr, propType, checker, property.valueDeclaration ?? location, seen)
+    props.set(name, value ?? unknown(`Unsupported TypeScript property shape: ${propExpr}`))
+  }
+  seen.delete(type)
+  return {kind: 'object', props, expr}
+}
+
+function isNullishTsType(type: ts.Type) {
+  return (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
+}
+
+function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>): Value | null {
+  if (checker.isArrayType(type)) {
+    const elementType = checker.getTypeArguments(type as ts.TypeReference)[0]
+    return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen)
+  }
+  if (checker.isTupleType(type)) {
+    let element: Value | null = null
+    for (const member of checker.getTypeArguments(type as ts.TypeReference)) {
+      const memberValue = valueFromTsType(expr, member, checker, location, seen)
+      if (memberValue == null) return null
+      element = element == null ? memberValue : joinValues(element, memberValue)
+    }
+    return element
+  }
+  const elementType = type.getNumberIndexType()
+  return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen)
+}
+
+export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undefined, program: ShapeProgram, seen: Set<string>): Value | null {
+  if (type == null) return null
+
+  if (ts.isParenthesizedTypeNode(type)) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
+  if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
+  if (type.kind === ts.SyntaxKind.NumberKeyword) return unknownNumber(expr)
+  if (type.kind === ts.SyntaxKind.BooleanKeyword) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
+  if (type.kind === ts.SyntaxKind.StringKeyword) return unknown(`String values are not in the static layout subset: ${expr}`)
+  if (type.kind === ts.SyntaxKind.ObjectKeyword) return unknownObject(expr)
+  if (ts.isArrayTypeNode(type)) {
+    return unknownArray(expr, unknownArrayLength(expr), valueFromSyntaxTypeShape(`${expr}[]`, type.elementType, program, seen))
+  }
+  if (ts.isUnionTypeNode(type)) return valueFromUnionSyntaxType(expr, type, program, seen)
+  if (ts.isIntersectionTypeNode(type)) return valueFromIntersectionSyntaxType(expr, type, program, seen)
+  if (ts.isLiteralTypeNode(type)) return unknown(`Literal values are not in the static layout subset: ${expr}`)
+  if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
+  if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
+  return null
+}
+
+function valueFromTypeReference(expr: string, type: ts.TypeReferenceNode, program: ShapeProgram, seen: Set<string>): Value | null {
+  if (!ts.isIdentifier(type.typeName)) return null
+  const name = type.typeName.text
+  const typeArgument = type.typeArguments?.[0]
+  if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
+    return unknownArray(expr, unknownArrayLength(expr), valueFromSyntaxTypeShape(`${expr}[]`, typeArgument, program, seen))
+  }
+
+  const key = `${program.sourceId}#${name}`
+  if (seen.has(key)) return unknownObject(expr)
+  const declaration = localTypeDeclaration(program, name)
+  if (declaration == null) return null
+  seen.add(key)
+  const value = ts.isInterfaceDeclaration(declaration)
+    ? objectValueFromTypeMembers(expr, declaration.members, program, seen)
+    : valueFromSyntaxTypeShape(expr, declaration.type, program, seen)
+  seen.delete(key)
+  return value
+}
+
+function valueFromUnionSyntaxType(expr: string, type: ts.UnionTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
+  let value: Value | null = null
+  for (const member of type.types) {
+    const next = valueFromSyntaxTypeShape(expr, member, program, seen)
+    if (next == null) return null
+    value = value == null ? next : joinValues(value, next)
+  }
+  return value
+}
+
+function valueFromIntersectionSyntaxType(expr: string, type: ts.IntersectionTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
+  let value: Value | null = null
+  for (const member of type.types) {
+    const next = valueFromSyntaxTypeShape(expr, member, program, seen)
+    if (next == null) return null
+    value = value == null ? next : intersectTypeValues(value, next)
+  }
+  return value
+}
+
+function intersectTypeValues(left: Value, right: Value): Value {
+  if (left.kind === 'object' && right.kind === 'object') {
+    const props = new Map(left.props)
+    for (const [name, prop] of right.props) {
+      const current = props.get(name)
+      props.set(name, current == null ? prop : joinValues(current, prop))
+    }
+    return {kind: 'object', props, expr: left.expr ?? right.expr}
+  }
+  if (left.kind === 'array' && right.kind === 'array') return joinValues(left, right)
+  return right.kind === 'unknown' ? left : right
+}
+
+function objectValueFromTypeMembers(expr: string, members: ts.NodeArray<ts.TypeElement>, program: ShapeProgram, seen: Set<string>): Value {
+  const props = new Map<string, Value>()
+  for (const member of members) {
+    if (!ts.isPropertySignature(member)) continue
+    const name = propertyNameText(member.name)
+    if (name == null) continue
+    const propExpr = `${expr}.${name}`
+    const value = member.questionToken == null
+      ? valueFromSyntaxTypeShape(propExpr, member.type, program, seen) ?? unknownNumber(propExpr)
+      : unknown(`Optional property ${propExpr} is not in the static layout subset`)
+    props.set(name, value)
+  }
+  return {kind: 'object', props, expr}
+}
+
+function propertyNameText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
+  return null
+}
+
+function localTypeDeclaration(program: ShapeProgram, name: string): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
+  for (const statement of program.sourceFile.statements) {
+    if (ts.isInterfaceDeclaration(statement) && statement.name.text === name) return statement
+    if (ts.isTypeAliasDeclaration(statement) && statement.name.text === name) return statement
+  }
+  return null
+}
