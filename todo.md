@@ -27,9 +27,10 @@ sections[].rows[].height <= maxHeight
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
 - Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
-- Expression-bodied `items.map(...)` preserves length, item field domains, and optional callback index facts.
+- `items.map(...)` preserves length, item field domains, and optional callback index facts for expression callbacks and tiny block callbacks with local `const` bindings plus `return`.
+- Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
-- `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates loop specs into trusted, source-proved, and not-inferred lines. It is not a public annotation writer.
+- `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates loop specs into trusted, source-proved, and not-inferred lines. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not a public annotation writer.
 
 ## Do Next
 
@@ -50,8 +51,8 @@ sections[].rows[].height <= maxHeight
 
 5. **Use real demos as pressure tests.**
    The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; loop output is especially useful for deciding which local `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
-   Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now; Vibescript photo grid is blocked by an unannotated imported helper and a chunked row-height loop, not by a missing public atom.
-   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. Next trial should tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
+   Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now. Vibescript photo-gallery now has source-owned contracts on the real grid sizing, prompt visible sizing, line max sizes, line target math, stable edge hit areas, and item geometry. The remaining photo-gallery gaps are larger loop/product facts, not a request for a new public atom.
+   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 61 helper checks after trimming checker-shaped helper bloat, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
 
 6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
@@ -127,4 +128,4 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
-- No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or unions.
+- No general loops, nonlinear solver, TS type narrowing, overloads, generics, classes, async, closures, strings, booleans, or branded-value reasoning.

@@ -169,6 +169,7 @@ type EvalContext = {
   assumptions: LinearConstraint[]
   contractCache: Map<string, FunctionContractProof>
   inferLoops?: FitInferLoopReport[]
+  inferUnsupported?: string[]
 }
 
 const maxInlineDepth = 12
@@ -312,7 +313,8 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
   const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
-  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops}
+  const inferUnsupported: string[] = []
+  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
   const state = evaluateFunctionBodyState(fn, context)
   const resultFacts = factsFromValue('result', state.result)
   const localFacts = localFactsFromEnv(env, state.env)
@@ -320,6 +322,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     ...givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...context.checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
+    ...inferUnsupported,
     ...topUnknownReason(state.result),
   ]
   return {
@@ -1214,12 +1217,48 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
 }
 
 function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext) {
-  if (!ts.isIdentifier(declaration.name)) return
   if (declaration.initializer == null) {
-    context.env.set(declaration.name.text, unknown(`Uninitialized local ${declaration.name.text}`))
+    bindUninitializedName(declaration.name, context)
     return
   }
-  context.env.set(declaration.name.text, evaluateExpression(declaration.initializer, context))
+  bindName(declaration.name, evaluateExpression(declaration.initializer, context), context)
+}
+
+function bindUninitializedName(name: ts.BindingName, context: EvalContext) {
+  if (ts.isIdentifier(name)) context.env.set(name.text, unknown(`Uninitialized local ${name.text}`))
+  if (ts.isObjectBindingPattern(name)) {
+    for (const element of name.elements) bindUninitializedName(element.name, context)
+  }
+}
+
+function bindName(name: ts.BindingName, value: Value, context: EvalContext) {
+  if (ts.isIdentifier(name)) {
+    context.env.set(name.text, value)
+    return
+  }
+  if (ts.isObjectBindingPattern(name)) bindObjectPattern(name, value, context)
+}
+
+function bindObjectPattern(pattern: ts.ObjectBindingPattern, value: Value, context: EvalContext) {
+  for (const element of pattern.elements) {
+    if (element.dotDotDotToken != null) continue
+    const propertyName = bindingElementPropertyName(element)
+    if (propertyName == null) {
+      bindUninitializedName(element.name, context)
+      continue
+    }
+    const prop = value.kind === 'object'
+      ? value.props.get(propertyName) ?? (value.expr == null ? unknown(`Unknown property ${propertyName}`) : unknownNumber(`${value.expr}.${propertyName}`))
+      : unknown(`Destructuring property ${propertyName} expected an object`)
+    bindName(element.name, prop, context)
+  }
+}
+
+function bindingElementPropertyName(element: ts.BindingElement): string | null {
+  if (element.propertyName == null) return ts.isIdentifier(element.name) ? element.name.text : null
+  if (ts.isIdentifier(element.propertyName)) return element.propertyName.text
+  if (ts.isStringLiteral(element.propertyName) || ts.isNumericLiteral(element.propertyName)) return element.propertyName.text
+  return null
 }
 
 function applyExpressionStatement(expression: ts.Expression, context: EvalContext): Value | null {
@@ -1487,7 +1526,7 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   applyLocalGivenSpecs(localSpecs, context)
 
   const shape = indexedLoopShape(statement)
-  if (shape == null) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
+  if (shape == null) return evaluateForgettableForStatement(statement, context)
   if (!ts.isBlock(statement.statement)) return unknown('Only block indexed loops are supported')
 
   const source = evaluateExpression(shape.sourceExpression, context)
@@ -1504,6 +1543,7 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   const pushes: LoopPush[] = []
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
+  const forgottenRoots = new Set<string>()
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
       for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
@@ -1531,6 +1571,13 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
     if (extremum != null) {
       if (pendingExtrema.has(extremum.targetName)) return unknown(`Indexed scalar min/max loop already updates ${extremum.targetName}`)
       pendingExtrema.set(extremum.targetName, extremum)
+      continue
+    }
+
+    const forgotten = forgettableMutationRoots(child)
+    if (forgotten != null) {
+      for (const root of forgotten) forgottenRoots.add(root)
+      addInferUnsupported(context, `Forgot unsupported indexed loop side effect: ${child.getText(context.program.sourceFile)}`)
       continue
     }
 
@@ -1571,10 +1618,134 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
   }
 
+  for (const root of forgottenRoots) {
+    if (factRoots.has(root)) factRoots.delete(root)
+    forgetRoot(context.env, root)
+  }
+
   verifyLocalLoopSpecs(localSpecs, context)
   recordInferLoop(statement, 'for', rawLocalSpecs, context, checksStart, factRoots)
 
   return null
+}
+
+function evaluateForgettableForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
+  if (!isForgettableForStatement(statement)) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
+  const forgotten = forgettableMutationRoots(statement.statement)
+  if (forgotten == null) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
+  for (const root of forgotten) forgetRoot(context.env, root)
+  addInferUnsupported(context, `Forgot unsupported for loop side effects: ${loopHeaderText(statement, context.program.sourceFile)}`)
+  return null
+}
+
+function isForgettableForStatement(statement: ts.ForStatement) {
+  const indexName = forgettableForIndexName(statement.initializer)
+  return indexName != null
+    && statement.condition != null
+    && statement.incrementor != null
+    && isSideEffectFreeExpression(statement.condition)
+    && incrementorOnlyTouchesIndex(statement.incrementor, indexName)
+}
+
+function forgettableForIndexName(initializer: ts.ForInitializer | undefined): string | null {
+  if (initializer == null || !ts.isVariableDeclarationList(initializer) || initializer.declarations.length !== 1) return null
+  const declaration = initializer.declarations[0]!
+  if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
+  return isSideEffectFreeExpression(declaration.initializer) ? declaration.name.text : null
+}
+
+function incrementorOnlyTouchesIndex(expression: ts.Expression, indexName: string): boolean {
+  if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
+    return (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken)
+      && ts.isIdentifier(expression.operand)
+      && expression.operand.text === indexName
+  }
+  if (!ts.isBinaryExpression(expression) || !ts.isIdentifier(expression.left) || expression.left.text !== indexName) return false
+  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) return isSideEffectFreeExpression(expression.right)
+  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false
+  return isSideEffectFreeExpression(expression.right)
+}
+
+function forgettableMutationRoots(statement: ts.Statement): string[] | null {
+  if (ts.isBlock(statement)) {
+    const roots: string[] = []
+    for (const child of statement.statements) {
+      const childRoots = forgettableMutationRoots(child)
+      if (childRoots == null) return null
+      roots.push(...childRoots)
+    }
+    return [...new Set(roots)]
+  }
+  if (ts.isIfStatement(statement) && statement.elseStatement == null && isSideEffectFreeExpression(statement.expression)) return forgettableMutationRoots(statement.thenStatement)
+  if (!ts.isExpressionStatement(statement)) return null
+
+  const expression = statement.expression
+  if (ts.isCallExpression(expression) && isPushCall(expression) && expression.arguments.every(isSideEffectFreeExpression)) return [expression.expression.expression.text]
+  if (ts.isBinaryExpression(expression)) {
+    const root = assignmentRootName(expression.left)
+    if (root == null) return null
+    if (!isSideEffectFreeExpression(expression.right)) return null
+    if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken || expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) return [root]
+  }
+  return null
+}
+
+function isSideEffectFreeExpression(expression: ts.Expression): boolean {
+  if (
+    ts.isIdentifier(expression)
+    || ts.isNumericLiteral(expression)
+    || ts.isStringLiteral(expression)
+    || expression.kind === ts.SyntaxKind.TrueKeyword
+    || expression.kind === ts.SyntaxKind.FalseKeyword
+    || expression.kind === ts.SyntaxKind.NullKeyword
+  ) return true
+  if (ts.isParenthesizedExpression(expression) || ts.isNonNullExpression(expression)) return isSideEffectFreeExpression(expression.expression)
+  if (ts.isPropertyAccessExpression(expression)) return isSideEffectFreeExpression(expression.expression)
+  if (ts.isElementAccessExpression(expression)) return isSideEffectFreeExpression(expression.expression) && (expression.argumentExpression == null || isSideEffectFreeExpression(expression.argumentExpression))
+  if (ts.isPrefixUnaryExpression(expression)) return expression.operator !== ts.SyntaxKind.PlusPlusToken && expression.operator !== ts.SyntaxKind.MinusMinusToken && isSideEffectFreeExpression(expression.operand)
+  if (ts.isPostfixUnaryExpression(expression)) return false
+  if (ts.isBinaryExpression(expression)) return !isAssignmentOperator(expression.operatorToken.kind) && isSideEffectFreeExpression(expression.left) && isSideEffectFreeExpression(expression.right)
+  if (ts.isConditionalExpression(expression)) return isSideEffectFreeExpression(expression.condition) && isSideEffectFreeExpression(expression.whenTrue) && isSideEffectFreeExpression(expression.whenFalse)
+  if (ts.isCallExpression(expression)) return isKnownPureReadCall(expression)
+  return false
+}
+
+function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
+}
+
+function isKnownPureReadCall(expression: ts.CallExpression): boolean {
+  if (!expression.arguments.every(isSideEffectFreeExpression)) return false
+  const target = expression.expression
+  if (!ts.isPropertyAccessExpression(target)) return false
+  if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') return true
+  return target.name.text === 'at' && isSideEffectFreeExpression(target.expression)
+}
+
+function assignmentRootName(expression: ts.Expression): string | null {
+  if (ts.isIdentifier(expression)) return expression.text
+  return mutationTargetRoot(expression)
+}
+
+function forgetRoot(env: Map<string, Value>, root: string) {
+  const current = env.get(root)
+  if (current?.kind === 'array') {
+    env.set(root, arrayWithUnknownContents(root, current))
+    return
+  }
+  if (current?.kind === 'number') {
+    env.set(root, unknownNumber(root))
+    return
+  }
+  if (current?.kind === 'object') {
+    env.set(root, unknownObject(root))
+    return
+  }
+  env.set(root, unknown(`Unsupported mutation changed ${root}`))
+}
+
+function addInferUnsupported(context: EvalContext, message: string) {
+  context.inferUnsupported?.push(message)
 }
 
 function recordInferLoop(
@@ -2287,8 +2458,6 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return unknown('Array.map callback expected one simple item parameter and optional index parameter')
   const indexName = indexParam == null ? null : ts.isIdentifier(indexParam.name) ? indexParam.name.text : null
   if (indexParam != null && indexName == null) return unknown('Array.map index parameter expected a simple identifier')
-  if (!ts.isExpression(callback.body)) return unknown('Array.map callback block bodies are not supported yet')
-
   const sourceName = source.expr ?? expression.expression.expression.getText(context.program.sourceFile)
   const item = source.element ?? unknownObject(`${sourceName}[]`)
   const env = new Map(context.env).set(itemParam.name.text, item)
@@ -2297,7 +2466,10 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
     env.set(indexName, index)
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementPathAssumptions(index, source.length))
   }
-  const element = evaluateExpression(callback.body, {...context, env})
+  const callbackContext = {...context, env}
+  const element = ts.isExpression(callback.body)
+    ? evaluateExpression(callback.body, callbackContext)
+    : evaluateArrayMapCallbackBlock(callback.body, callbackContext)
   return {
     kind: 'array',
     length: source.length,
@@ -2306,6 +2478,26 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
     expr: null,
     summary: null,
   }
+}
+
+function evaluateArrayMapCallbackBlock(block: ts.Block, context: EvalContext): Value {
+  for (const statement of block.statements) {
+    if (ts.isVariableStatement(statement)) {
+      if (!isConstDeclarationList(statement.declarationList)) return unknown('Array.map callback block supports const bindings and return only')
+      for (const declaration of statement.declarationList.declarations) bindVariableDeclaration(declaration, context)
+      continue
+    }
+    if (ts.isReturnStatement(statement)) {
+      if (statement.expression == null) return unknown('Array.map callback block return expected an expression')
+      return evaluateExpression(statement.expression, context)
+    }
+    return unknown('Array.map callback block supports const bindings and return only')
+  }
+  return unknown('Array.map callback block did not return')
+}
+
+function isConstDeclarationList(list: ts.VariableDeclarationList) {
+  return (list.flags & ts.NodeFlags.Const) !== 0
 }
 
 function evaluateExtentEndConditional(expression: ts.ConditionalExpression, context: EvalContext): NumberValue | null {

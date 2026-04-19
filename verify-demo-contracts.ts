@@ -17,7 +17,7 @@ const demoContractPaths = [
   '../pretext/pages/demos/wrap-geometry.ts',
 ]
 
-const expectedPassCount = 91
+const expectedPassCount = 122
 const report = await verifyFitFiles(demoContractPaths)
 
 if (report.phase !== 'ready' || report.summary.pass !== expectedPassCount) {

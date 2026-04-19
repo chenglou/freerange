@@ -8,11 +8,11 @@ bun install
 
 ## Day-To-Day
 
-- `bun run test` — positive patterns plus stable negative messages
+- `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
 - `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts and loop-local facts
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
-- `bun run check` — demo contracts plus typecheck and lint
+- `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
 ## Current Sources Of Truth
 
@@ -21,6 +21,7 @@ bun install
 - [patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) — positive pattern specimens
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
+- [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -55,6 +56,8 @@ Loop output separates explicit loop comment lines into:
 - `source-proved` — local loop checks proven from source
 - `not-inferred` — checks Freerange could not prove
 - `redundant` — source-proved loop checks that can be omitted if the author only wanted a local checkpoint
+
+The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
 Do not grow TypeScript type logic just to make `infer` prettier. Keep TS-shape reading small and syntactic unless a real proof needs more; if imported/generic/utility type shape support becomes important, use the TypeScript checker instead of recreating it.
 

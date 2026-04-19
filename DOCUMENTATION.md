@@ -397,6 +397,7 @@ Supported today:
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
+- simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
 - conditional push length, e.g. `rows.length <= items.length`
 
 `map` support is deliberately tiny:
@@ -414,7 +415,7 @@ function mapRows(items: {height: number}[]) {
 }
 ```
 
-The callback must be an expression body with an item parameter and optional index parameter. This is source inference, not a public callback language.
+The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are just local `const` bindings plus a `return`; this keeps normal code normal without turning callbacks into a public Freerange language.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
@@ -618,7 +619,7 @@ The checker understands a small pure subset:
 
 - function declarations
 - simple named parameters
-- obvious TypeScript parameter shapes: arrays, object type literals, local interfaces, and local type aliases
+- obvious TypeScript parameter shapes: arrays, readonly arrays, object type literals, local interfaces, local type aliases, unions, and intersections
 - numeric top-level constants
 - `const` / `let` locals with initializers
 - `return expression`
@@ -631,7 +632,7 @@ The checker understands a small pure subset:
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
-- expression-bodied `items.map(...)`
+- expression-bodied `items.map(...)`, plus tiny block-bodied callbacks with local `const` bindings and `return`
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
 - append-only `for...of` row loops
@@ -639,6 +640,7 @@ The checker understands a small pure subset:
 - one guarded conditional push inside a `for...of`
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
+- conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets
 
 Anything outside this surface should become `unknown`, not a fake proof.
 
@@ -652,7 +654,7 @@ Not supported yet:
 - destructured params, rest params, default params
 - TS type narrowing, generics, overloads
 - general closures or callback reasoning
-- strings, booleans, unions, branded types
+- strings, booleans, branded types, and general TS type narrowing
 - public lambdas, `forall`, filters, arbitrary folds, prose-as-truth
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
 - Pretext text facts

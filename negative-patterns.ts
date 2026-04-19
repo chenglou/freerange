@@ -438,6 +438,19 @@ export function negativeMapIndexCanBeZero(items: {height: number}[]) {
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * result.rows[].height: 0..40
+ */
+export function negativeMapBlockRowsNeedFieldDomain(items: {height: number}[]) {
+  const rows = items.map(item => {
+    const {height} = item
+    return {height}
+  })
+  return {rows}
+}
+
+/** @fit
  * given min: -1000..1000
  * given value: -1000..1000
  * given max: -1000..1000
@@ -494,6 +507,19 @@ export function negativeIndexedLoopAliasNeedsNonNegativeItem(params: {items: {he
     y += item.height
   }
   return {rows, bottom: y}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[]: 0..10
+ * result: 0..0
+ */
+export function negativeUnsupportedForLoopForgetsScalar(items: number[]) {
+  let total = 0
+  for (let i = items.length - 1; i >= 0; i--) {
+    total += items[i]!
+  }
+  return total
 }
 
 /** @fit

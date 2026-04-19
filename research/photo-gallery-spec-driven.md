@@ -232,14 +232,21 @@ At the end, report:
 
 ## Main-Thread Baseline
 
-Current `demos/photo-gallery` contracts prove the small helper seams cleanly:
+Current `demos/photo-gallery` contracts prove the important source-owned helper seams cleanly:
 
-- `layout-model.ts` and `prompt-layout.ts`: 30 pass, 0 fail, 0 unknown
-- all checked sibling demo contracts: 91 pass, 0 fail, 0 unknown
+- `layout-model.ts` and `prompt-layout.ts`: 61 pass, 0 fail, 0 unknown
+- all checked sibling demo contracts: 122 pass, 0 fail, 0 unknown
 
-The wider helpers are still beyond the current checker surface:
+The useful ground-truth facts now include:
 
-- `getGridLayout` inference stops at `rowHeight = Math.max(rowHeight, layoutHeight)`. The row height itself depends on an imported prompt-measurement helper, so this is a real boundary, not just missing syntax sugar.
+- grid image caps and width capping against natural width and box width
+- prompt visible line count, visible height, inner max width, and single-line shrink width
+- line max sizes, previous/next target math, and stable edge hit boxes
+- image/layout/occlusion/prompt geometry copied from the pure item helper
+
+The wider product helpers are still beyond the current checker surface:
+
+- `getGridLayout` inference still does not prove the whole row-height packing loop. That is okay; the direct helper contracts already cover the source-owned sizing and geometry that matter for this trial.
 - `getLineLayout` inference stops at the reverse indexed loop that walks left from the focused item. Supporting that loop shape could help, but it is not required for the first useful helper contracts.
 - `measurePromptLayout` inference stops at the `while (true)` rich-inline cursor loop. That is browser/text-engine-adjacent enough that the first facts should stay on the smaller visible-line-count helpers.
 

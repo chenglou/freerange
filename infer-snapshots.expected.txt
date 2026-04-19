@@ -1,0 +1,131 @@
+patterns.ts:typedObjectParamArrayShape
+result:
+  result.rows.length == params.items.length
+  result.rows.length: int 0..Infinity
+  result.rows[].height == params.items[].height
+locals:
+  rows.length == params.items.length
+  rows.length: int 0..Infinity
+  rows[].height == params.items[].height
+patterns.ts:mapBlockRowsWithDestructure
+result:
+  result.rows.length == items.length
+  result.rows.length: int 1..50
+  result.rows[].height == items[].height
+  result.rows[].height: 0..40
+  result.rows[].index == mapIndex(items)
+  result.rows[].index: int 0..49
+locals:
+  rows.length == items.length
+  rows.length: int 1..50
+  rows[].height == items[].height
+  rows[].height: 0..40
+  rows[].index == mapIndex(items)
+  rows[].index: int 0..49
+patterns.ts:localLoopAnnotation
+result:
+  result.bottom == (runningSum(top, items.length, (items[].height + gap)) - gap)
+  result.bottom: -10..3500
+  result.rows.length == items.length
+  result.rows.length: int 1..50
+  result.rows[].height == items[].height
+  result.rows[].height: 0..40
+  result.rows[].top == rows[].top
+  result.rows[].top: 0..3500
+  nondecreasing(result.rows.top)
+  spaced(result.rows, gap)
+  lastEnd(result.rows) == (runningSum(top, items.length, (items[].height + gap)) - gap)
+  lastEnd(result.rows): -10..3500
+  extentEnd(result.rows, top) == extentEnd(rows, top)
+  extentEnd(result.rows, top): -10..3500
+locals:
+  rows.length == items.length
+  rows.length: int 1..50
+  rows[].height == items[].height
+  rows[].height: 0..40
+  rows[].top: 0..3500
+  nondecreasing(rows.top)
+  spaced(rows, gap)
+  lastEnd(rows) == (runningSum(top, items.length, (items[].height + gap)) - gap)
+  lastEnd(rows): -10..3500
+  extentEnd(rows, top): -10..3500
+  y == runningSum(top, items.length, (items[].height + gap))
+  y: 0..3500
+loop 436: for (const item of items)
+  inferred:
+    rows.length == items.length
+    rows.length: int 1..50
+    rows[].height == items[].height
+    rows[].height: 0..40
+    rows[].top: 0..3500
+    nondecreasing(rows.top)
+    spaced(rows, gap)
+    lastEnd(rows) == (runningSum(top, items.length, (items[].height + gap)) - gap)
+    lastEnd(rows): -10..3500
+    extentEnd(rows, top): -10..3500
+    y == runningSum(top, items.length, (items[].height + gap))
+    y: 0..3500
+  source-proved:
+    rows.length == items.length
+    rows[].height: 0..40
+    nondecreasing(rows.top)
+    spaced(rows, gap)
+    lastEnd(rows) == y - gap
+  trusted:
+    given items[].height: 0..40
+../vibescript/demos/photo-gallery/layout-model.ts:getGridLayout
+result:
+  result.items.length == layoutSources.length
+  result.items.length: int 0..Infinity
+  result.rowsTop.length == rowsTop.length
+  result.rowsTop.length: int 0..Infinity
+locals:
+  rowsTop.length: int 0..Infinity
+  rowHeights.length: int 0..Infinity
+  measurements.length == layoutSources.length
+  measurements.length: int 0..Infinity
+unsupported:
+  Forgot unsupported indexed loop side effect: rowHeight = Math.max(rowHeight, layoutHeight)
+  Forgot unsupported indexed loop side effect: if (i % cols === cols - 1 || i === layoutSources.length - 1) {
+      rowHeights.push(rowHeight)
+      rowsTop.push(rowsTop.at(-1)! + rowHeight + boxesGapY)
+      rowHeight = 0
+    }
+../vibescript/demos/photo-gallery/layout-model.ts:getLineLayout
+result:
+  result.items.length == layoutSources.length
+  result.items.length: int 0..Infinity
+locals:
+  box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
+  box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
+  measurements.length == layoutSources.length
+  measurements.length: int 0..Infinity
+  items.length == layoutSources.length
+  items.length: int 0..Infinity
+unsupported:
+  Forgot unsupported for loop side effects: for (let i = focused - 1; i >= 0; i--) currentLeft -= measurements[i]!.imageSizeX + boxes1DGapX
+  Forgot unsupported indexed loop side effect: currentLeft = i === focused ? windowSizeX - hitArea1DSizeX : currentLeft + measurement.imageSizeX + boxes1DGapX
+../vibescript/demos/photo-gallery/layout-model.ts:leftEdgeHitArea
+result:
+  result.box.sizeX == hitArea1DSizeX
+  result.box.sizeX: int 100..100
+  result.box.sizeY == windowSizeY
+  result.box.sizeY: 320..2000
+  result.box.x == 0
+  result.box.x: int 0..0
+  result.box.y == scrollY
+  result.box.y: -100000..100000
+  result.targetIndex == (focused - 1)
+  result.targetIndex: int 0..999
+../vibescript/demos/photo-gallery/layout-model.ts:rightEdgeHitArea
+result:
+  result.box.sizeX == hitArea1DSizeX
+  result.box.sizeX: int 100..100
+  result.box.sizeY == windowSizeY
+  result.box.sizeY: 320..2000
+  result.box.x == (windowSizeX - hitArea1DSizeX)
+  result.box.x: 220..1900
+  result.box.y == scrollY
+  result.box.y: -100000..100000
+  result.targetIndex == (focused + 1)
+  result.targetIndex: int 1..1000

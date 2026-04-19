@@ -495,6 +495,22 @@ export function mapRowsKeepsIndexAndClampedFields(items: {height: number}[]) {
  * result.rows[].index: int 0..49
  * result.rows[].index < items.length
  */
+export function mapBlockRowsWithDestructure(items: {height: number}[]) {
+  const rows = items.map((item, index) => {
+    const {height} = item
+    return {index, height}
+  })
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ * result.rows[].height: 0..40
+ * result.rows[].index: int 0..49
+ * result.rows[].index < items.length
+ */
 export function indexedLoopRows(items: {height: number}[]) {
   const rows = []
   for (let i = 0; i < items.length; i++) {

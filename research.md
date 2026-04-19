@@ -101,19 +101,20 @@ Keep app code natural. A checker that understands locals, loops, arrays, object 
 
 High-value inference:
 
-- local TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; local object/interface/type-alias shapes let sparse `@fit` comments still evaluate natural code. Imported type declarations can stay opaque until they block a real proof.
-- `items.map(...)` preserves length, simple field domains, and optional callback index facts. Source order can come later when there is a public fact that needs it.
+- local TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; local object/interface/type-alias/union/intersection shapes let sparse `@fit` comments still evaluate natural code. Imported type declarations can stay opaque until they block a real proof.
+- `items.map(...)` preserves length, simple field domains, and optional callback index facts. Expression callbacks and tiny block callbacks are enough for the code we have seen; source order can come later when there is a public fact that needs it.
 - append-only `for...of` can infer length, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
-- mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized.
-- `bun run infer` is useful as a checker x-ray: it should show curated result/local facts and loop-local facts, not every internal linear assumption. Loop output should keep separating trusted givens, source-proved checks, and not-inferred checks so authors can shorten local `@fit` comments without losing the important guarantees. Keep it dev-only until the output is consistently useful on demos.
+- mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized. Unsupported loop bodies can also be useful when they are only side effects on roots we can forget; preserve unrelated facts, never stale mutated-root facts.
+- `bun run infer` is useful as a checker x-ray: it should show curated result/local facts and loop-local facts, not every internal linear assumption. Loop output should keep separating trusted givens, source-proved checks, and not-inferred checks so authors can shorten local `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it dev-only until the output is consistently useful on demos.
 
 Demo notes from the first infer pass:
 
 - Pretext `layoutTemplateFrame` now exposes the useful boring facts: block count is preserved, `bubbleHeight` and `totalHeight` share the same running measure, and the `usedContentWidth` max accumulator stays numeric. The next real blocker there is not min/max; it is whether we want better contracts around helper return measures like `layoutBlockFrameResult.height`.
-- Vibescript photo grid still stops at `rowHeight = Math.max(rowHeight, layoutHeight)` because `layoutHeight` flows through an unannotated imported helper. That is the right boundary to notice. Do not paper over it with imported-body guessing unless we decide imported return-shape summaries are allowed.
+- Vibescript photo-gallery became much more useful once the real demo owned the small facts directly: grid image caps, width capping, line max sizes, edge targets, stable hit boxes, prompt visible sizing, and item geometry. The useful version is the trimmed one; one-off row/column/index helpers inflated the pass count without making the app code clearer.
+- Vibescript photo grid still does not prove the whole row-height packing loop. That is fine for now: the useful facts are on the source-owned seams, and the remaining row packing/product fidelity questions should keep coming from real demos before we add more language.
 - The broader Pretext markdown parser shows noisy but honest unsupported shapes: switches, `continue`, `null`, counted loops over scalar bounds, and text/string work. Most of that is not layout proof pressure yet.
 
 ## Wildcard Semantics
