@@ -27,6 +27,23 @@ sum(rows.map(row => row.height + gap))
 
 Users may name layout shapes. They should not write traversals.
 
+## Spec-Driven Demos
+
+The photo-gallery scratch trial is the best signal so far for agent-driven, spec-driven UI work. Two fresh agents got only Vibescript docs plus a private packet with Freerange-style source facts. Both produced runnable grid/line galleries, pure helper tests, browser-owned semantic reports, and the same 18 passing `@fit` checks on the same five seams.
+
+The useful part was not "the whole app is formally verified." The useful part was that the spec made the source-owned geometry boring:
+
+- grid columns and max box width
+- rect construction
+- previous/next index math
+- stable line hit boxes
+
+That was enough to keep both agents away from screenshot or runner-side layout guesses. Browser reports stayed on browser-owned outcomes: hash sync, native selection, scroll restore, and occlusion.
+
+It also found a spec bug before implementation: a nullable left hit area cannot honestly promise `result.left.targetIndex` for every focused index. Splitting previous/next target helpers from nullable edge control flow made the contract true.
+
+No new primitive was needed. The current surface of ranges, comparisons, constants, helper contracts, and source inference was enough for the useful static part. The remaining misses were product-spec misses: exact line sizing, neighbor visibility, edge no-ops, overscan, bottom scroll runway, link target, and optional animation handoff samples.
+
 ## Views
 
 Views are probably the right way to keep future atoms generic without forcing app field names:

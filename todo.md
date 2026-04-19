@@ -51,6 +51,7 @@ sections[].rows[].height <= maxHeight
 5. **Use real demos as pressure tests.**
    The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; loop output is especially useful for deciding which local `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
    Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now; Vibescript photo grid is blocked by an unannotated imported helper and a chunked row-height loop, not by a missing public atom.
+   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. Next trial should tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
 
 6. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
