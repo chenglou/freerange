@@ -7,6 +7,47 @@ locals:
   rows.length == params.items.length
   rows.length: int 0..Infinity
   rows[].height == params.items[].height
+patterns.ts:propertyAccessCallShape
+result:
+  result.rows.length == structuralShapeApi.wrapRows(items).rows.length
+  result.rows.length: int 0..Infinity
+  result.rows[].height == structuralShapeApi.wrapRows(items).rows[].height
+patterns.ts:mapCallbackReturnShape
+result:
+  result.rows.length == items.length
+  result.rows.length: int 0..Infinity
+  result.rows[].cells.length == structuralShapeApi.row(item).cells.length
+  result.rows[].cells.length: int 0..Infinity
+  result.rows[].cells[].width == structuralShapeApi.row(item).cells[].width
+  result.rows[].height == structuralShapeApi.row(item).height
+locals:
+  rows.length == items.length
+  rows.length: int 0..Infinity
+  rows[].cells.length == structuralShapeApi.row(item).cells.length
+  rows[].cells.length: int 0..Infinity
+  rows[].cells[].width == structuralShapeApi.row(item).cells[].width
+  rows[].height == structuralShapeApi.row(item).height
+patterns.ts:scalarPushLoop
+result:
+  result.length == items.length
+  result.length: int 0..50
+  result[] == rows[]
+  result[]: 0..3000
+locals:
+  rows.length == items.length
+  rows.length: int 0..50
+  rows[]: 0..3000
+  y == runningSum(top, items.length, step)
+  y: 0..3000
+import-patterns.ts:namespaceImportedStructuralShape
+result:
+  result.rows.length == importedShapes.importedBox(items).value.length
+  result.rows.length: int 0..Infinity
+  result.rows[].height == importedShapes.importedBox(items).value[].height
+locals:
+  boxed.value.length == importedShapes.importedBox(items).value.length
+  boxed.value.length: int 0..Infinity
+  boxed.value[].height == importedShapes.importedBox(items).value[].height
 patterns.ts:mapBlockRowsWithDestructure
 result:
   result.rows.length == items.length
@@ -51,7 +92,7 @@ locals:
   extentEnd(rows, top): -10..3500
   y == runningSum(top, items.length, (items[].height + gap))
   y: 0..3500
-loop 443: for (const item of items)
+loop 481: for (const item of items)
   inferred:
     rows.length == items.length
     rows.length: int 1..50
@@ -107,6 +148,13 @@ unsupported:
 result:
   result.items.length == layoutSources.length
   result.items.length: int 0..Infinity
+  result.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX
+  result.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY
+  result.items[].prompt.box.sizeX == get1DItemSizeResult.promptLayout.width
+  result.items[].prompt.box.sizeY == get1DItemSizeResult.promptLayout.visibleHeight
+  result.items[].prompt.lines.length == get1DItemSizeResult.promptLayout.lines.length
+  result.items[].prompt.lines.length: int 0..Infinity
+  result.items[].prompt.lines[].width == get1DItemSizeResult.promptLayout.lines[].width
 locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)

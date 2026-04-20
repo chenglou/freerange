@@ -11,7 +11,7 @@ bun install
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
 - `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts and loop-local facts
-- `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of Freerange's structural shape and TypeScript-only shape
+- `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
@@ -62,15 +62,15 @@ Loop output separates explicit loop comment lines into:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
-Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
+Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
 
 ## Shape Diff Tool
 
 `bun run shape-diff path/to/file.ts --function name` is the TS piggyback x-ray. It answers a narrower question than `infer`: did Freerange lose because it did not know an object/array shape that TypeScript already knew?
 
-It prints TypeScript-only structural facts for params, locals, return shapes, and call returns. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
+It compares TypeScript shape against evaluated Freerange shape for params, locals, and returns. Raw call-return probing is opt-in with `--calls`, because calls are often consumed by a later local or return value. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
 
-Use this when a report says a property or array path is unknown. If `shape-diff` sees the structure, the blocker is likely proof logic or missing input facts. If `shape-diff` does not see it, the blocker is still shape reading.
+Use this when a report says a property or array path is unknown. If `shape-diff` sees the structure, the blocker is likely proof logic or missing input facts. If `shape-diff` does not see it, the blocker is still shape reading. The TypeScript walk has depth/width limits on purpose, so huge parser/library types are declined instead of turning the tool into a second checker.
 
 ## Adding Support
 

@@ -3,6 +3,7 @@ import {inspectFitShapes} from './src/check.ts'
 const args = Bun.argv.slice(2)
 let functionName: string | undefined
 let all = false
+let calls = false
 const paths: string[] = []
 
 for (let index = 0; index < args.length; index++) {
@@ -19,16 +20,21 @@ for (let index = 0; index < args.length; index++) {
     all = true
     continue
   }
+  if (arg === '--calls') {
+    calls = true
+    continue
+  }
   paths.push(arg)
 }
 
 if (paths.length === 0) {
-  console.error('Usage: bun shape-diff.ts [--function name] [--all] <file.ts> ...')
+  console.error('Usage: bun shape-diff.ts [--function name] [--all] [--calls] <file.ts> ...')
   process.exitCode = 1
 } else {
   const report = inspectFitShapes(paths, {
     ...(functionName == null ? {} : {functionName}),
     all,
+    calls,
   })
   if (report.insights.length === 0) {
     console.log('shape-diff: no TypeScript-only structural facts')

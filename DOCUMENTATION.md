@@ -23,7 +23,7 @@ helper contract // a helper function's own `@fit` block, proven once and used as
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
 infer // the dev x-ray: `bun run infer path --function name`. It prints curated facts the checker already knows.
-shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that Freerange did not get from its own source reader.
+shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that evaluated Freerange shape did not keep.
 ```
 
 ## Adoption
@@ -363,7 +363,7 @@ function cardWidth(width: number) {
 
 Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
 
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, or helper return is an object or array, Freerange can use that structure so paths like `result.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its result can satisfy `result.width: 0..320` or `result.height >= 0`.
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `result.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its result can satisfy `result.width: 0..320` or `result.height >= 0`.
 
 Optional and nullable properties stay conservative:
 
@@ -652,7 +652,7 @@ The checker understands a small pure subset:
 
 - function declarations
 - simple named parameters
-- obvious TypeScript shapes through a small provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, and helper return shapes
+- obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - numeric top-level constants
 - `const` / `let` locals with initializers
 - `return expression`
@@ -666,8 +666,9 @@ The checker understands a small pure subset:
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
-- expression-bodied `items.map(...)`, plus tiny block-bodied callbacks with local `const` bindings and `return`
+- expression-bodied `items.map(...)`, plus tiny block-bodied callbacks with local `const` bindings and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - simple `for...of` scalar running sums with direct or guarded `+=`
+- append-only scalar-array pushes like `rows.push(y)` in a supported loop
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
@@ -683,7 +684,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts
+- package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
 - classes, methods, async, generators
 - destructured params, rest params, default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning

@@ -91,6 +91,8 @@ What it improved:
 - `Pick`-style utility types give structure
 - generic helper returns like `Box<T>` give structure at the call site
 - unannotated helper return shapes can make object paths meaningful without pretending to prove ranges
+- property-access calls, namespace-imported structural calls, and local bindings can use TypeScript object/array shape without becoming helper contracts
+- scalar array pushes in supported loops now keep element shape/range, which closes the `stackLayout`-style `number[]` gap
 - photo-gallery snapshots now keep a curated slice of prompt-layout and item-measurement structure
 
 What it deliberately does not do:
@@ -100,11 +102,13 @@ What it deliberately does not do:
 - no imported function body inlining
 - no trusting declaration files as source-proved helper contracts
 - no optional/nullable property optimism
+- no unbounded TypeScript walk through giant parser/library types
 
 `shape-diff` was useful on the real pressure points:
 
 - photo-gallery `getGridLayout` / `getLineLayout`: TypeScript exposes prompt-layout, measurement, item geometry, and hit-area structure even when Freerange has not proven numeric bounds.
 - Pretext `layoutTemplateFrame`: TypeScript exposes `layoutBlockFrame` return structure, including `height`, `top`, `contentLeft`, and `quoteRailLefts`.
+- broad `--all` sweeps stay fast because `src/shapes.ts` has depth/width limits and the tool compares against evaluated Freerange shape only where that is meaningful.
 
 Keep watching the failure line. This turns bad if `src/shapes.ts` becomes a second TypeScript checker, if reports start treating shape as proof, or if normal checks get slow enough that the small shape win is not worth it.
 
@@ -167,7 +171,7 @@ No aggregate callbacks, filters, inline arithmetic, or folds.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
-- TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, unions, and intersections. Optional and nullable properties are still conservative unknowns.
+- TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, property-access call shape, namespace-imported structural call shape, unions, and intersections. Optional and nullable properties are still conservative unknowns, and huge types are bounded out.
 - Wildcard comparisons support one collection side and one scalar side only.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.

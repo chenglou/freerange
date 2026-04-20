@@ -323,6 +323,23 @@ export function runningTotalPerItemHeight(items: {height: number}[]) {
 
 /** @fit
  * given items.length: int 0..50
+ * given top: 0..1000
+ * given step: 0..40
+ * result.length == items.length
+ * result[]: 0..3000
+ */
+export function scalarPushLoop(items: number[], top: number, step: number) {
+  const rows = []
+  let y = top
+  for (const _item of items) {
+    rows.push(y)
+    y += step
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 0..50
  * given items[].height: 0..40
  * result: 0..2000
  * result >= 0
@@ -394,6 +411,11 @@ type TypedShapeParams = {
   items: {height: number}[]
 }
 
+declare const structuralShapeApi: {
+  wrapRows(items: {height: number}[]): {rows: {height: number}[]}
+  row(item: {height: number}): {height: number; cells: {width: number}[]}
+}
+
 /** @fit
  * result.rows.length >= 0
  */
@@ -407,6 +429,22 @@ export function typedArrayParamShape(items: {height: number}[]) {
  */
 export function typedObjectParamArrayShape(params: TypedShapeParams) {
   const rows = params.items.map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function propertyAccessCallShape(items: {height: number}[]) {
+  return structuralShapeApi.wrapRows(items)
+}
+
+/** @fit
+ * result.rows.length == items.length
+ * result.rows[].cells.length >= 0
+ */
+export function mapCallbackReturnShape(items: {height: number}[]) {
+  const rows = items.map(item => structuralShapeApi.row(item))
   return {rows}
 }
 

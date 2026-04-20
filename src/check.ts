@@ -93,6 +93,7 @@ import {
   valueFromFunctionReturnShape,
   valueFromNodeShape,
   valueFromSyntaxTypeShape,
+  valueWithStructuralFallback,
 } from './shapes.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
@@ -164,6 +165,12 @@ export type FitShapeInsight = {
 export type FitShapeReport = {
   files: string[]
   insights: FitShapeInsight[]
+}
+
+export type FitShapeOptions = {
+  functionName?: string
+  all?: boolean
+  calls?: boolean
 }
 
 type Program = FitModule<NumberValue>
@@ -256,14 +263,15 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   return {files: paths, functions}
 }
 
-export function inspectFitShapes(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitShapeReport {
+export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {
   const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const contractCache = new Map<string, FunctionContractProof>()
   const insights: FitShapeInsight[] = []
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
       if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName)) continue
-      insights.push(...inspectFunctionShapes(program, fn))
+      insights.push(...inspectFunctionShapes(program, fn, contractCache, options))
     }
   }
   return {files: paths, insights}
@@ -368,44 +376,75 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
   }
 }
 
-function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration): FitShapeInsight[] {
+type FunctionShapeState = {
+  baseEnv: Map<string, Value>
+  env: Map<string, Value>
+  result: Value
+}
+
+function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
   const functionName = fn.name?.text ?? '<anonymous>'
   const insights: FitShapeInsight[] = []
+  const state = options.functionName != null || program.fitFunctions.has(functionName)
+    ? evaluateFunctionShapeState(program, fn, contractCache)
+    : null
 
   for (const param of fn.parameters) {
     if (!ts.isIdentifier(param.name)) continue
     const subject = `param ${param.name.text}`
-    const freerange = valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
+    const freerange = state?.baseEnv.get(param.name.text) ?? valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
     const typescript = valueFromNodeShape(param.name.text, param.name, program)
     addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
   }
 
   const syntaxReturn = valueFromSyntaxTypeShape('result', fn.type, program, new Set())
   const tsReturn = valueFromFunctionReturnShape('result', fn, program)
-  addShapeInsight(insights, program, functionName, 'return type', 'result', syntaxReturn, tsReturn)
+  addShapeInsight(insights, program, functionName, 'return type', 'result', state?.result ?? syntaxReturn, tsReturn)
 
-  if (fn.body != null) {
-    collectShapeInsightsFromNode(fn.body, program, functionName, insights)
+  if (fn.body != null && (state != null || options.calls === true)) {
+    collectShapeInsightsFromNode(fn.body, program, functionName, state, options, insights)
   }
 
   return insights
 }
 
-function collectShapeInsightsFromNode(node: ts.Node, program: Program, functionName: string, insights: FitShapeInsight[]) {
+function evaluateFunctionShapeState(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FunctionShapeState {
+  const functionName = fn.name?.text ?? '<anonymous>'
+  const specs = program.specsByFunction.get(functionName) ?? []
+  const env = programGlobalEnv(program)
+  const inputRoots = functionInputRoots(program, fn)
+
+  for (const param of fn.parameters) {
+    if (!ts.isIdentifier(param.name)) continue
+    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
+  }
+
+  const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  for (const given of trustedGivens) {
+    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+  }
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
+  const baseEnv = new Map(env)
+  const state = evaluateFunctionBodyState(fn, context)
+  return {baseEnv, env: state.env, result: state.result}
+}
+
+function collectShapeInsightsFromNode(node: ts.Node, program: Program, functionName: string, state: FunctionShapeState | null, options: FitShapeOptions, insights: FitShapeInsight[]) {
   if (node !== program.sourceFile && isNestedFunctionLike(node)) return
 
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-    const freerange = valueFromSyntaxTypeShape(node.name.text, node.type, program, new Set())
+    const freerange = state?.env.get(node.name.text) ?? valueFromSyntaxTypeShape(node.name.text, node.type, program, new Set())
     const typescript = valueFromNodeShape(node.name.text, node.name, program)
     addShapeInsight(insights, program, functionName, `local ${node.name.text}`, node.name.text, freerange, typescript)
   }
 
-  if (ts.isCallExpression(node)) {
+  if (options.calls === true && ts.isCallExpression(node)) {
     const typescript = structuralShape(valueFromCallReturnShape('shape', node, program))
     addShapeInsight(insights, program, functionName, `call ${compactNodeText(node, program.sourceFile)}`, 'shape', null, typescript)
   }
 
-  ts.forEachChild(node, child => collectShapeInsightsFromNode(child, program, functionName, insights))
+  ts.forEachChild(node, child => collectShapeInsightsFromNode(child, program, functionName, state, options, insights))
 }
 
 function isNestedFunctionLike(node: ts.Node) {
@@ -428,10 +467,65 @@ function addShapeInsight(
   const typescript = shapeFactTexts(root, typescriptValue)
   if (typescript.length === 0) return
   const freerange = shapeFactTexts(root, freerangeValue)
-  const freerangeSet = new Set(freerange)
-  const extra = typescript.filter(fact => !freerangeSet.has(fact))
+  const extra = typescript.filter(fact => !freerangeFactsImply(freerange, fact))
   if (extra.length === 0) return
   insights.push({file: program.file, functionName, subject, freerange, typescript: extra})
+}
+
+function freerangeFactsImply(facts: string[], fact: string) {
+  if (facts.includes(fact)) return true
+  const shape = shapeFactParts(fact)
+  if (shape == null) return false
+  return facts.some(candidate => factAtPathImpliesShapeFact(candidate, shape.path, shape.description))
+}
+
+function factAtPathImpliesShapeFact(fact: string, path: string, description: string) {
+  if (description === 'number') {
+    return fact.startsWith(`${path}: `) || fact.startsWith(`${path} == `)
+  }
+  if (description === 'int 0..Infinity') {
+    const range = rangeFactAtPath(fact, path)
+    if (range != null) return range.isInteger && range.min >= 0
+    const equal = equalityFactRightAtPath(fact, path)
+    return equal != null && expressionIsClearlyNonnegativeInteger(equal)
+  }
+  return false
+}
+
+function rangeFactAtPath(fact: string, path: string): {isInteger: boolean; min: number; max: number} | null {
+  if (!fact.startsWith(`${path}: `)) return null
+  const text = fact.slice(path.length + 2)
+  const match = /^(int )?(-?(?:\d+(?:\.\d+)?|Infinity))\.\.(-?(?:\d+(?:\.\d+)?|Infinity))$/.exec(text)
+  if (match == null) return null
+  const min = parsePrintedNumber(match[2]!)
+  const max = parsePrintedNumber(match[3]!)
+  return min == null || max == null ? null : {isInteger: match[1] != null, min, max}
+}
+
+function parsePrintedNumber(text: string): number | null {
+  if (text === 'Infinity') return Number.POSITIVE_INFINITY
+  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
+}
+
+function equalityFactRightAtPath(fact: string, path: string): string | null {
+  const prefix = `${path} == `
+  return fact.startsWith(prefix) ? fact.slice(prefix.length).trim() : null
+}
+
+function expressionIsClearlyNonnegativeInteger(expression: string) {
+  if (/^\d+$/.test(expression)) return true
+  return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\])*\.(?:length)$/.test(expression)
+}
+
+function shapeFactParts(fact: string): {path: string; description: string} | null {
+  const index = fact.indexOf(': ')
+  if (index < 0) return null
+  return {
+    path: fact.slice(0, index),
+    description: fact.slice(index + 2),
+  }
 }
 
 function shapeFactTexts(root: string, value: Value | null): string[] {
@@ -1258,7 +1352,13 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     bindUninitializedName(declaration.name, context)
     return
   }
-  bindName(declaration.name, evaluateExpression(declaration.initializer, context), context)
+  const value = evaluateExpression(declaration.initializer, context)
+  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
+}
+
+function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, context: EvalContext): Value {
+  if (!ts.isIdentifier(name)) return value
+  return valueWithStructuralFallback(value, valueFromNodeShape(name.text, name, context.program))
 }
 
 function bindUninitializedName(name: ts.BindingName, context: EvalContext) {
@@ -1943,7 +2043,15 @@ type LoopPush = {
 
 function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit<LoopPush, 'arrayName' | 'length'> {
   const row = expression.arguments[0]
-  if (row == null || !ts.isObjectLiteralExpression(row)) return {element: null, topName: null, height: null, cursorPaths: []}
+  if (row == null) return {element: null, topName: null, height: null, cursorPaths: []}
+  if (!ts.isObjectLiteralExpression(row)) {
+    return {
+      element: evaluateExpression(row, context),
+      topName: null,
+      height: null,
+      cursorPaths: ts.isIdentifier(row) ? [{path: [], targetName: row.text}] : [],
+    }
+  }
   const topExpression = objectPropertyExpression(row, 'top')
   const heightExpression = objectPropertyExpression(row, 'height')
   const topName = topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null
@@ -2131,7 +2239,8 @@ function loopElementFromPush(
   for (const cursorPath of push.cursorPaths) {
     const update = updates.get(cursorPath.targetName)
     if (update == null) continue
-    element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, `${push.arrayName}[].${cursorPath.path.join('.')}`, context))
+    const expr = cursorPath.path.length === 0 ? `${push.arrayName}[]` : `${push.arrayName}[].${cursorPath.path.join('.')}`
+    element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, expr, context))
   }
   return element
 }
@@ -2287,11 +2396,19 @@ function evaluateExpression(expression: ts.Expression, context: EvalContext): Va
   if (ts.isPropertyAccessExpression(expression)) return evaluatePropertyAccess(expression, context)
   if (ts.isElementAccessExpression(expression)) return evaluateElementAccess(expression, context)
   if (ts.isNonNullExpression(expression)) return evaluateExpression(expression.expression, context)
-  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression)) return evaluateExpression(expression.expression, context)
-  if (ts.isTypeAssertionExpression(expression)) return evaluateExpression(expression.expression, context)
+  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression)) {
+    return valueWithStructuralFallback(evaluateExpression(expression.expression, context), expressionStructuralFallback(expression, context))
+  }
+  if (ts.isTypeAssertionExpression(expression)) {
+    return valueWithStructuralFallback(evaluateExpression(expression.expression, context), expressionStructuralFallback(expression, context))
+  }
   if (ts.isObjectLiteralExpression(expression)) return evaluateObjectLiteral(expression, context)
   if (ts.isArrayLiteralExpression(expression)) return evaluateArrayLiteral(expression, context)
-  return unknown(`Unsupported expression: ${expression.getText(context.program.sourceFile)}`)
+  return expressionStructuralFallback(expression, context) ?? unknown(`Unsupported expression: ${expression.getText(context.program.sourceFile)}`)
+}
+
+function expressionStructuralFallback(expression: ts.Expression, context: EvalContext): Value | null {
+  return structuralShape(valueFromNodeShape(expression.getText(context.program.sourceFile), expression, context.program))
 }
 
 function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, context: EvalContext): Value {
@@ -2314,9 +2431,10 @@ function evaluateBinary(expression: ts.BinaryExpression, context: EvalContext): 
   }
   const left = evaluateExpression(expression.left, context)
   const right = evaluateExpression(expression.right, context)
-  if (left.kind !== 'number' || right.kind !== 'number') return unknown('Binary arithmetic expected numbers')
+  if (left.kind !== 'number' || right.kind !== 'number') return expressionStructuralFallback(expression, context) ?? unknown('Binary arithmetic expected numbers')
 
-  return evaluateNumberBinary(op, left, right)
+  const result = evaluateNumberBinary(op, left, right)
+  return result.kind === 'unknown' ? expressionStructuralFallback(expression, context) ?? result : result
 }
 
 function evaluateNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: NumberValue): Value {
@@ -2379,7 +2497,7 @@ function evaluateConditional(expression: ts.ConditionalExpression, context: Eval
     case 'false':
       return evaluateExpression(expression.whenFalse, context)
     case 'maybe':
-      return joinValues(
+      return valueWithStructuralFallback(joinValues(
         valueWithAssumptions(
           evaluateExpression(expression.whenTrue, contextWithAssumptions(context, condition.trueAssumptions)),
           condition.trueAssumptions,
@@ -2388,7 +2506,7 @@ function evaluateConditional(expression: ts.ConditionalExpression, context: Eval
           evaluateExpression(expression.whenFalse, contextWithAssumptions(context, condition.falseAssumptions)),
           condition.falseAssumptions,
         ),
-      )
+      ), expressionStructuralFallback(expression, context))
   }
 }
 
@@ -2403,6 +2521,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     const mapResult = evaluateArrayMapCall(expression, context)
     if (mapResult != null) return mapResult
     const namespaceImportReason = namespaceImportCallReason(target, context)
+    const fallback = expressionStructuralFallback(expression, context)
+    if (fallback != null) return fallback
     if (namespaceImportReason != null) return unknown(namespaceImportReason)
   }
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
@@ -2432,12 +2552,12 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     assumptions: context.assumptions,
     contractCache: context.contractCache,
   })
+  const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn, context.program)
+    ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.type, context.program, new Set())
+    ?? valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program)
   const fallbackResult = result.kind === 'unknown'
-    ? valueFromFunctionReturnShape(`${functionName}Result`, fn, context.program)
-      ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.type, context.program, new Set())
-      ?? valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program)
-      ?? result
-    : result
+    ? fallbackShape ?? result
+    : valueWithStructuralFallback(result, fallbackShape)
   const specs = context.program.specsByFunction.get(functionName) ?? []
   if (specs.length === 0) return fallbackResult
   if (obligations !== 'pass') return fallbackResult
@@ -2512,14 +2632,15 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   const element = ts.isExpression(callback.body)
     ? evaluateExpression(callback.body, callbackContext)
     : evaluateArrayMapCallbackBlock(callback.body, callbackContext)
-  return {
+  const mapped = {
     kind: 'array',
     length: source.length,
     elements: null,
     element,
     expr: null,
     summary: null,
-  }
+  } satisfies ArrayValue
+  return valueWithStructuralFallback(mapped, expressionStructuralFallback(expression, context))
 }
 
 function evaluateArrayMapCallbackBlock(block: ts.Block, context: EvalContext): Value {
@@ -3126,28 +3247,31 @@ function choiceNumberPair(
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
+  const fallback = expressionStructuralFallback(expression, context)
   if (target.kind === 'array' && expression.name.text === 'length') return target.length
-  if (target.kind === 'unknown') return target
-  if (target.kind !== 'object') return unknown(`Property access ${expression.name.text} expected an object`)
-  return target.props.get(expression.name.text) ?? (target.expr == null ? unknown(`Unknown property ${expression.name.text}`) : unknownNumber(`${target.expr}.${expression.name.text}`))
+  if (target.kind === 'unknown') return fallback ?? target
+  if (target.kind !== 'object') return fallback ?? unknown(`Property access ${expression.name.text} expected an object`)
+  const value = target.props.get(expression.name.text) ?? (target.expr == null ? unknown(`Unknown property ${expression.name.text}`) : unknownNumber(`${target.expr}.${expression.name.text}`))
+  return valueWithStructuralFallback(value, fallback)
 }
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
-  if (target.kind !== 'array') return unknown(`Element access expected an array`)
+  if (target.kind !== 'array') return expressionStructuralFallback(expression, context) ?? unknown(`Element access expected an array`)
   const index = evaluateExpression(expression.argumentExpression, context)
   if (index.kind !== 'number') return unknown('Array index expected a number')
   if (!index.isInteger) return unknown(`Array index ${formatRange(index)} was not proven integer`)
   const lower = proveComparison(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), context.assumptions)
   const upper = proveComparison(index, '<', target.length, context.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') return unknown(`Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}`)
-  if (target.elements == null) return target.element ?? unknown('Array element values are not tracked')
+  const fallback = expressionStructuralFallback(expression, context)
+  if (target.elements == null) return valueWithStructuralFallback(target.element ?? unknown('Array element values are not tracked'), fallback)
   const start = Math.max(0, Math.ceil(index.min))
   const end = Math.min(target.elements.length - 1, Math.floor(index.max))
   if (start > end) return unknown(`Array index ${formatRange(index)} has no possible element`)
   let value = target.elements[start]!
   for (let i = start + 1; i <= end; i++) value = joinValues(value, target.elements[i]!)
-  return value
+  return valueWithStructuralFallback(value, fallback)
 }
 
 function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, context: EvalContext): Value {

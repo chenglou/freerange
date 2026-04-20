@@ -72,6 +72,10 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0) {
 
 const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['patterns.ts'], 'typedObjectParamArrayShape'),
+  formatInferSnapshot(['patterns.ts'], 'propertyAccessCallShape'),
+  formatInferSnapshot(['patterns.ts'], 'mapCallbackReturnShape'),
+  formatInferSnapshot(['patterns.ts'], 'scalarPushLoop'),
+  formatInferSnapshot(['import-patterns.ts'], 'namespaceImportedStructuralShape'),
   formatInferSnapshot(['patterns.ts'], 'mapBlockRowsWithDestructure'),
   formatInferSnapshot(['patterns.ts'], 'localLoopAnnotation'),
   formatInferSnapshot([
@@ -163,7 +167,17 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
 
 function keepLineLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
-  if (section === 'result') return true
+  if (section === 'result') {
+    return item === 'result.items.length == layoutSources.length'
+      || item === 'result.items.length: int 0..Infinity'
+      || item === 'result.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX'
+      || item === 'result.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY'
+      || item.includes('result.items[].prompt.box.sizeX ==')
+      || item.includes('result.items[].prompt.box.sizeY ==')
+      || item.includes('result.items[].prompt.lines.length ==')
+      || item === 'result.items[].prompt.lines.length: int 0..Infinity'
+      || item.includes('result.items[].prompt.lines[].width ==')
+  }
   return item === 'box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))'
     || item === 'box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)'
     || item === 'measurements.length == layoutSources.length'

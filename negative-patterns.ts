@@ -212,6 +212,17 @@ export function negativeArrayIdentityNeedsSameSource(input: {rows: {height: numb
   return {rows: input.rows, otherRows: other.rows}
 }
 
+declare const optionalStructuralShapeApi: {
+  wrapRows(items: {height: number}[]): {rows?: {height: number}[]}
+}
+
+/** @fit
+ * result.rows.length >= 0
+ */
+export function negativeOptionalStructuralCallShape(items: {height: number}[]) {
+  return optionalStructuralShapeApi.wrapRows(items)
+}
+
 /** @fit
  * given items.length: int 1..50
  * given index: int 0..49
@@ -250,6 +261,22 @@ export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}
     total += item.height
   }
   return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given top: 0..1000
+ * given step: -40..40
+ * result[] >= 0
+ */
+export function negativeScalarPushLoopNeedsNonNegativeStep(items: number[], top: number, step: number) {
+  const rows = []
+  let y = top
+  for (const _item of items) {
+    rows.push(y)
+    y += step
+  }
+  return rows
 }
 
 /** @fit
