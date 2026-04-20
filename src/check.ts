@@ -131,6 +131,11 @@ export type FitInferSpec = {
   reason?: string
 }
 
+export type FitInferRedundantSpec = {
+  text: string
+  reason: string
+}
+
 export type FitInferLoopSpecStatus = FitInferSpecStatus
 export type FitInferLoopSpec = FitInferSpec
 
@@ -140,7 +145,7 @@ export type FitInferLoopReport = {
   header: string
   facts: FitInferFact[]
   specs: FitInferLoopSpec[]
-  redundant: string[]
+  redundant: FitInferRedundantSpec[]
   unsupported: string[]
 }
 
@@ -150,7 +155,7 @@ export type FitInferFunctionReport = {
   facts: FitInferFact[]
   locals: FitInferFact[]
   specs: FitInferSpec[]
-  redundant: string[]
+  redundant: FitInferRedundantSpec[]
   loops: FitInferLoopReport[]
   unsupported: string[]
 }
@@ -383,7 +388,7 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     facts: uniqueFacts(resultFacts),
     locals: uniqueFacts(localFacts),
     specs: specReports,
-    redundant: redundantFunctionSpecs(specReports, resultFacts),
+    redundant: redundantSpecs(specReports, resultFacts),
     loops,
     unsupported: [...new Set(unsupported)],
   }
@@ -657,21 +662,26 @@ function inferFunctionSpecReports(
   })
 }
 
-function redundantFunctionSpecs(specs: FitInferSpec[], facts: FitInferFact[]) {
-  return specs
-    .filter(spec => spec.status === 'source-proved' && inferredFactsProveSpecText(spec.text, facts))
-    .map(spec => spec.text)
+function redundantSpecs(specs: FitInferSpec[], facts: FitInferFact[]) {
+  const redundant: FitInferRedundantSpec[] = []
+  for (const spec of specs) {
+    if (spec.status !== 'source-proved') continue
+    const reason = inferredFactReasonForSpecText(spec.text, facts)
+    if (reason == null) continue
+    redundant.push({text: spec.text, reason})
+  }
+  return redundant
 }
 
-function inferredFactsProveSpecText(specText: string, facts: FitInferFact[]) {
-  const factTexts = new Set(facts.map(fact => fact.text))
-  if (factTexts.has(specText)) return true
+function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) {
+  const exactFact = facts.find(fact => fact.text === specText)
+  if (exactFact != null) return exactFact.text
 
   const spec = parseFitSpecLineForInference(specText)
-  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return false
-  if (spec.kind === 'check-atom') return false
-  if (spec.kind === 'check-range') return rangeFactsProveSpec(spec, facts)
-  return comparisonFactsProveSpec(spec, facts)
+  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
+  if (spec.kind === 'check-atom') return null
+  if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
+  return comparisonFactReasonForSpec(spec, facts)
 }
 
 function parseFitSpecLineForInference(text: string): FitSpec | null {
@@ -682,15 +692,17 @@ function parseFitSpecLineForInference(text: string): FitSpec | null {
   }
 }
 
-function rangeFactsProveSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
+function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
-  if (range == null) return false
+  if (range == null) return null
   return range.min >= spec.min
     && range.max <= spec.max
     && (spec.valueKind !== 'int' || range.isInteger)
+    ? range.text
+    : null
 }
 
-function comparisonFactsProveSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
+function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
   const leftRange = inferredRangeFactForExpression(facts, spec.left)
   const rightRange = inferredRangeFactForExpression(facts, spec.right)
   const leftNumber = numberText(spec.left)
@@ -698,30 +710,30 @@ function comparisonFactsProveSpec(spec: Extract<FitSpec, {kind: 'check-compariso
 
   switch (spec.op) {
     case '>=':
-      if (leftRange != null && rightNumber != null) return leftRange.min >= rightNumber
-      if (leftNumber != null && rightRange != null) return leftNumber >= rightRange.max
-      return false
+      if (leftRange != null && rightNumber != null && leftRange.min >= rightNumber) return leftRange.text
+      if (leftNumber != null && rightRange != null && leftNumber >= rightRange.max) return rightRange.text
+      return null
     case '>':
-      if (leftRange != null && rightNumber != null) return leftRange.min > rightNumber
-      if (leftNumber != null && rightRange != null) return leftNumber > rightRange.max
-      return false
+      if (leftRange != null && rightNumber != null && leftRange.min > rightNumber) return leftRange.text
+      if (leftNumber != null && rightRange != null && leftNumber > rightRange.max) return rightRange.text
+      return null
     case '<=':
-      if (leftRange != null && rightNumber != null) return leftRange.max <= rightNumber
-      if (leftNumber != null && rightRange != null) return leftNumber <= rightRange.min
-      return false
+      if (leftRange != null && rightNumber != null && leftRange.max <= rightNumber) return leftRange.text
+      if (leftNumber != null && rightRange != null && leftNumber <= rightRange.min) return rightRange.text
+      return null
     case '<':
-      if (leftRange != null && rightNumber != null) return leftRange.max < rightNumber
-      if (leftNumber != null && rightRange != null) return leftNumber < rightRange.min
-      return false
+      if (leftRange != null && rightNumber != null && leftRange.max < rightNumber) return leftRange.text
+      if (leftNumber != null && rightRange != null && leftNumber < rightRange.min) return rightRange.text
+      return null
     case '==':
-      return false
+      return null
   }
 }
 
 function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
   for (const fact of facts) {
     const range = rangeFactForExpression(fact.text, expression)
-    if (range != null) return range
+    if (range != null) return {text: fact.text, ...range}
   }
   return null
 }
@@ -2017,13 +2029,14 @@ function recordInferLoop(
 
   const checks = context.checks.slice(checksStart)
   const specReports = inferLoopSpecReports(specs, checks)
+  const facts = factsFromEnvRoots(context.env, factRoots)
   context.inferLoops.push({
     line: context.program.sourceFile.getLineAndCharacterOfPosition(statement.getStart(context.program.sourceFile)).line + 1,
     kind,
     header: loopHeaderText(statement, context.program.sourceFile),
-    facts: factsFromEnvRoots(context.env, factRoots),
+    facts,
     specs: specReports,
-    redundant: specReports.filter(spec => spec.status === 'source-proved').map(spec => spec.text),
+    redundant: redundantSpecs(specReports, facts),
     unsupported: checks
       .filter(check => check.status !== 'pass' && !specs.some(spec => spec.text === check.text))
       .map(check => `${check.text}: ${check.reason ?? check.status}`),

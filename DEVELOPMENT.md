@@ -13,6 +13,7 @@ bun install
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
+- `bun run audit:demos` — summarize which demo `@fit` checks are redundant versus worth keeping as explicit contracts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
 ## Current Sources Of Truth
@@ -41,6 +42,8 @@ bun install
 - [infer.ts](./infer.ts) — dev-only inferred-facts CLI
 - [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape piggyback diagnostic
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
+- [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
+- [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list
 - [test.ts](./test.ts) — pattern-suite runner
 - [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet
@@ -58,9 +61,9 @@ It also separates explicit function and loop comment lines into:
 - `trusted` — valid `given` lines
 - `source-proved` — explicit checks proven from source
 - `not-inferred` — checks Freerange could not prove
-- `redundant` — source-proved checks already covered by emitted inferred facts
+- `redundant` — source-proved checks already covered by emitted inferred facts, with the covering fact printed
 
-For function specs, `redundant` is intentionally narrow: it means the emitted inferred result facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
+`redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 

@@ -49,6 +49,7 @@ const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map
 const loopReport = loopInferReport.functions[0]?.loops[0]
 const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
 const loopSpecStatuses = new Map(loopReport?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const loopRedundantSpecs = new Map(loopReport?.redundant.map(spec => [spec.text, spec.reason]) ?? [])
 const expectedLoopFacts = [
   'rows.length == items.length',
   'rows[].height: 0..40',
@@ -60,6 +61,7 @@ const expectedLoopSpecStatuses = [
   ['given items[].height: 0..40', 'trusted'],
   ['rows.length == items.length', 'source-proved'],
   ['spaced(rows, gap)', 'source-proved'],
+  ['lastEnd(rows) == y - gap', 'source-proved'],
 ] as const
 const expectedLoopFunctionSpecStatuses = [
   ['given items.length: int 1..50', 'trusted'],
@@ -67,11 +69,19 @@ const expectedLoopFunctionSpecStatuses = [
   ['result.rows.length == items.length', 'source-proved'],
 ] as const
 const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
+const expectedLoopRedundantSpecs = [
+  ['rows.length == items.length', 'rows.length == items.length'],
+  ['rows[].height: 0..40', 'rows[].height: 0..40'],
+] as const
+const missingLoopRedundantSpecs = expectedLoopRedundantSpecs.filter(([text, reason]) => loopRedundantSpecs.get(text) !== reason)
+const unexpectedlyRedundantLoopSpecs = ['lastEnd(rows) == y - gap'].filter(text => loopRedundantSpecs.has(text))
 const badLoopFunctionSpecStatuses = expectedLoopFunctionSpecStatuses.filter(([text, status]) => loopFunctionSpecStatuses.get(text) !== status)
-if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
+if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoopRedundantSpecs.length > 0 || unexpectedlyRedundantLoopSpecs.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
   console.error('expected loop inferred facts changed')
   console.error(missingLoopFacts.map(fact => `missing: ${fact}`).join('\n'))
   console.error(badLoopSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  console.error(missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`).join('\n'))
+  console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
   console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
   process.exitCode = 1
 } else {
@@ -80,12 +90,12 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || badLoopFunc
 
 const redundantInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarPushLoop'})
 const redundantFunction = redundantInferReport.functions[0]
-const redundantFacts = new Set(redundantFunction?.redundant ?? [])
+const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedRedundantFacts = [
-  'result.length == items.length',
-  'result[]: 0..3000',
-]
-const missingRedundantFacts = expectedRedundantFacts.filter(fact => !redundantFacts.has(fact))
+  ['result.length == items.length', 'result.length == items.length'],
+  ['result[]: 0..3000', 'result[]: 0..3000'],
+] as const
+const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => redundantFacts.get(fact) !== reason)
 const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedRedundantSpecStatuses = [
   ['given items.length: int 0..50', 'trusted'],
@@ -95,7 +105,7 @@ const expectedRedundantSpecStatuses = [
 const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
 if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.error('expected function-level redundant facts changed')
-  console.error(missingRedundantFacts.map(fact => `missing redundant: ${fact}`).join('\n'))
+  console.error(missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
   console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
   process.exitCode = 1
 } else {
