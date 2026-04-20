@@ -234,7 +234,7 @@ At the end, report:
 
 Current `demos/photo-gallery` contracts prove the important source-owned helper seams cleanly:
 
-- `layout-model.ts` and `prompt-layout.ts`: 61 pass, 0 fail, 0 unknown
+- `layout.ts` and `prompt-layout.ts`: 61 pass, 0 fail, 0 unknown
 - all checked sibling demo contracts: 122 pass, 0 fail, 0 unknown
 
 The useful ground-truth facts now include:

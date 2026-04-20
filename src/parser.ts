@@ -94,7 +94,7 @@ function cleanCommentLine(line: string) {
 const numberPattern = '-?\\d+(?:\\.\\d+)?'
 const rangePattern = new RegExp(`^(?:(int)\\s+)?(${numberPattern})\\s*\\.\\.\\s*(${numberPattern})$`)
 
-function parseFitSpecLine(line: string): FitSpec {
+export function parseFitSpecLine(line: string): FitSpec {
   const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
   if (givenRange != null) {
     const expression = givenRange[1]!.trim()

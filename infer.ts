@@ -34,6 +34,10 @@ if (paths.length === 0) {
     console.log(`${fn.file}:${fn.functionName}`)
     printSection('result', fn.facts.map(fact => fact.text))
     printSection('locals', fn.locals.map(fact => fact.text))
+    printSection('source-proved', fn.specs.filter(spec => spec.status === 'source-proved').map(spec => spec.text))
+    printSection('trusted', fn.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text))
+    printSection('not-inferred', fn.specs.filter(spec => spec.status === 'not-inferred').map(spec => `${spec.text}${spec.reason == null ? '' : `: ${spec.reason}`}`))
+    printSection('redundant', fn.redundant)
     for (const loop of fn.loops) {
       console.log(`loop ${loop.line}: ${loop.header}`)
       printSection('inferred', loop.facts.map(fact => fact.text), '  ')

@@ -114,7 +114,7 @@ loop 481: for (const item of items)
     lastEnd(rows) == y - gap
   trusted:
     given items[].height: 0..40
-../vibescript/demos/photo-gallery/layout-model.ts:getGridLayout
+../vibescript/demos/photo-gallery/layout.ts:getGridLayout
 result:
   result.items.length == layoutSources.length
   result.items.length: int 0..Infinity
@@ -144,7 +144,7 @@ unsupported:
       rowsTop.push(rowsTop.at(-1)! + rowHeight + boxesGapY)
       rowHeight = 0
     }
-../vibescript/demos/photo-gallery/layout-model.ts:getLineLayout
+../vibescript/demos/photo-gallery/layout.ts:getLineLayout
 result:
   result.items.length == layoutSources.length
   result.items.length: int 0..Infinity
@@ -173,7 +173,7 @@ locals:
 unsupported:
   Forgot unsupported for loop side effects: for (let i = focused - 1; i >= 0; i--) currentLeft -= measurements[i]!.imageSizeX + boxes1DGapX
   Forgot unsupported indexed loop side effect: currentLeft = i === focused ? windowSizeX - hitArea1DSizeX : currentLeft + measurement.imageSizeX + boxes1DGapX
-../vibescript/demos/photo-gallery/layout-model.ts:leftEdgeHitArea
+../vibescript/demos/photo-gallery/layout.ts:leftEdgeHitArea
 result:
   result.box.sizeX == hitArea1DSizeX
   result.box.sizeX: int 100..100
@@ -185,7 +185,7 @@ result:
   result.box.y: -100000..100000
   result.targetIndex == (focused - 1)
   result.targetIndex: int 0..999
-../vibescript/demos/photo-gallery/layout-model.ts:rightEdgeHitArea
+../vibescript/demos/photo-gallery/layout.ts:rightEdgeHitArea
 result:
   result.box.sizeX == hitArea1DSizeX
   result.box.sizeX: int 100..100

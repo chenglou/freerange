@@ -10,7 +10,7 @@ bun install
 
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
 - `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
-- `bun run infer path/to/file.ts --function name` — dev-only x-ray of source-proved result/local facts and loop-local facts
+- `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
@@ -53,12 +53,14 @@ bun install
 - `locals` from locals that survive to the return
 - loop-local facts for supported loops marked with `@fit`
 
-Loop output separates explicit loop comment lines into:
+It also separates explicit function and loop comment lines into:
 
-- `trusted` — valid loop `given` lines
-- `source-proved` — local loop checks proven from source
+- `trusted` — valid `given` lines
+- `source-proved` — explicit checks proven from source
 - `not-inferred` — checks Freerange could not prove
-- `redundant` — source-proved loop checks that can be omitted if the author only wanted a local checkpoint
+- `redundant` — source-proved checks already covered by emitted inferred facts
+
+For function specs, `redundant` is intentionally narrow: it means the emitted inferred result facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 

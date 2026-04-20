@@ -10,6 +10,7 @@ import {
   parseDomainPathText,
   parseExpression,
   parseFitExpression,
+  parseFitSpecLine,
   parseFitSpecs,
   hasFitComment,
   type ComparisonOperator,
@@ -122,13 +123,16 @@ export type FitInferFact = {
   source: 'range' | 'equality' | 'sequence'
 }
 
-export type FitInferLoopSpecStatus = 'source-proved' | 'trusted' | 'not-inferred'
+export type FitInferSpecStatus = 'source-proved' | 'trusted' | 'not-inferred'
 
-export type FitInferLoopSpec = {
+export type FitInferSpec = {
   text: string
-  status: FitInferLoopSpecStatus
+  status: FitInferSpecStatus
   reason?: string
 }
+
+export type FitInferLoopSpecStatus = FitInferSpecStatus
+export type FitInferLoopSpec = FitInferSpec
 
 export type FitInferLoopReport = {
   line: number
@@ -145,6 +149,8 @@ export type FitInferFunctionReport = {
   functionName: string
   facts: FitInferFact[]
   locals: FitInferFact[]
+  specs: FitInferSpec[]
+  redundant: string[]
   loops: FitInferLoopReport[]
   unsupported: string[]
 }
@@ -359,6 +365,11 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
   const state = evaluateFunctionBodyState(fn, context)
   const resultFacts = factsFromValue('result', state.result)
   const localFacts = localFactsFromEnv(env, state.env)
+  const specReports = inferFunctionSpecReports(program, functionName, specs, env, state.result, [
+    ...givenChecks,
+    ...checks,
+    ...context.checks,
+  ], state.assumptions, contractCache)
   const unsupported = [
     ...givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
@@ -371,6 +382,8 @@ function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contra
     functionName,
     facts: uniqueFacts(resultFacts),
     locals: uniqueFacts(localFacts),
+    specs: specReports,
+    redundant: redundantFunctionSpecs(specReports, resultFacts),
     loops,
     unsupported: [...new Set(unsupported)],
   }
@@ -493,8 +506,12 @@ function factAtPathImpliesShapeFact(fact: string, path: string, description: str
 }
 
 function rangeFactAtPath(fact: string, path: string): {isInteger: boolean; min: number; max: number} | null {
-  if (!fact.startsWith(`${path}: `)) return null
-  const text = fact.slice(path.length + 2)
+  return rangeFactForExpression(fact, path)
+}
+
+function rangeFactForExpression(fact: string, expression: string): {isInteger: boolean; min: number; max: number} | null {
+  if (!fact.startsWith(`${expression}: `)) return null
+  const text = fact.slice(expression.length + 2)
   const match = /^(int )?(-?(?:\d+(?:\.\d+)?|Infinity))\.\.(-?(?:\d+(?:\.\d+)?|Infinity))$/.exec(text)
   if (match == null) return null
   const min = parsePrintedNumber(match[2]!)
@@ -610,6 +627,108 @@ function factsFromEnvRoots(env: Map<string, Value>, roots: Set<string>): FitInfe
     facts.push(...factsFromValue(name, value))
   }
   return uniqueFacts(facts)
+}
+
+function inferFunctionSpecReports(
+  program: Program,
+  functionName: string,
+  specs: FitSpec[],
+  env: Map<string, Value>,
+  result: Value,
+  backgroundChecks: FitCheck[],
+  assumptions: LinearConstraint[],
+  contractCache: Map<string, FunctionContractProof>,
+): FitInferSpec[] {
+  const checkByText = new Map<string, FitCheck>()
+  for (const check of backgroundChecks) {
+    if (!checkByText.has(check.text)) checkByText.set(check.text, check)
+  }
+
+  return specs.map(spec => {
+    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+      const check = checkByText.get(spec.text)
+      if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
+      return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
+    }
+
+    const check = verifyCheckSpec(program.file, program, functionName, env, result, spec, [...backgroundChecks], assumptions, contractCache)
+    if (check.status === 'pass') return {text: spec.text, status: 'source-proved'}
+    return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
+  })
+}
+
+function redundantFunctionSpecs(specs: FitInferSpec[], facts: FitInferFact[]) {
+  return specs
+    .filter(spec => spec.status === 'source-proved' && inferredFactsProveSpecText(spec.text, facts))
+    .map(spec => spec.text)
+}
+
+function inferredFactsProveSpecText(specText: string, facts: FitInferFact[]) {
+  const factTexts = new Set(facts.map(fact => fact.text))
+  if (factTexts.has(specText)) return true
+
+  const spec = parseFitSpecLineForInference(specText)
+  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return false
+  if (spec.kind === 'check-atom') return false
+  if (spec.kind === 'check-range') return rangeFactsProveSpec(spec, facts)
+  return comparisonFactsProveSpec(spec, facts)
+}
+
+function parseFitSpecLineForInference(text: string): FitSpec | null {
+  try {
+    return parseFitSpecLine(text)
+  } catch {
+    return null
+  }
+}
+
+function rangeFactsProveSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
+  const range = inferredRangeFactForExpression(facts, spec.expression)
+  if (range == null) return false
+  return range.min >= spec.min
+    && range.max <= spec.max
+    && (spec.valueKind !== 'int' || range.isInteger)
+}
+
+function comparisonFactsProveSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
+  const leftRange = inferredRangeFactForExpression(facts, spec.left)
+  const rightRange = inferredRangeFactForExpression(facts, spec.right)
+  const leftNumber = numberText(spec.left)
+  const rightNumber = numberText(spec.right)
+
+  switch (spec.op) {
+    case '>=':
+      if (leftRange != null && rightNumber != null) return leftRange.min >= rightNumber
+      if (leftNumber != null && rightRange != null) return leftNumber >= rightRange.max
+      return false
+    case '>':
+      if (leftRange != null && rightNumber != null) return leftRange.min > rightNumber
+      if (leftNumber != null && rightRange != null) return leftNumber > rightRange.max
+      return false
+    case '<=':
+      if (leftRange != null && rightNumber != null) return leftRange.max <= rightNumber
+      if (leftNumber != null && rightRange != null) return leftNumber <= rightRange.min
+      return false
+    case '<':
+      if (leftRange != null && rightNumber != null) return leftRange.max < rightNumber
+      if (leftNumber != null && rightRange != null) return leftNumber < rightRange.min
+      return false
+    case '==':
+      return false
+  }
+}
+
+function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
+  for (const fact of facts) {
+    const range = rangeFactForExpression(fact.text, expression)
+    if (range != null) return range
+  }
+  return null
+}
+
+function numberText(text: string): number | null {
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
 }
 
 function numberFacts(path: string, value: NumberValue): FitInferFact[] {

@@ -22,7 +22,7 @@ fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // the dev x-ray: `bun run infer path --function name`. It prints curated facts the checker already knows.
+infer // the dev x-ray: `bun run infer path --function name`. It prints curated facts and shows which explicit checks are trusted, source-proved, not-inferred, or redundant.
 shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that evaluated Freerange shape did not keep.
 ```
 
@@ -52,7 +52,7 @@ Adoption pass:
 2. Add `given` lines only for input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
-5. If a loop has a local `@fit`, use `infer` to see which loop checks are already source-proved. Keep explicit checks when they are useful documentation; remove them when they are only noise.
+5. Use `infer` to see which function and loop checks are already source-proved. `redundant` means emitted inferred facts already cover the check; keep explicit checks when they are useful documentation and remove them when they are only noise.
 6. When a report is `unknown`, decide which bucket it belongs to: missing input fact, unsupported source shape, helper boundary needing a contract, or a real missing proof feature.
 
 The goal is not to annotate everything. The goal is to make important UI code harder for an agent to silently break.

@@ -45,6 +45,7 @@ if (missingInferFacts.length > 0) {
 }
 
 const loopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'localLoopAnnotation'})
+const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]
 const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
 const loopSpecStatuses = new Map(loopReport?.specs.map(spec => [spec.text, spec.status]) ?? [])
@@ -60,14 +61,45 @@ const expectedLoopSpecStatuses = [
   ['rows.length == items.length', 'source-proved'],
   ['spaced(rows, gap)', 'source-proved'],
 ] as const
+const expectedLoopFunctionSpecStatuses = [
+  ['given items.length: int 1..50', 'trusted'],
+  ['result.bottom >= top', 'source-proved'],
+  ['result.rows.length == items.length', 'source-proved'],
+] as const
 const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
-if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0) {
+const badLoopFunctionSpecStatuses = expectedLoopFunctionSpecStatuses.filter(([text, status]) => loopFunctionSpecStatuses.get(text) !== status)
+if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
   console.error('expected loop inferred facts changed')
   console.error(missingLoopFacts.map(fact => `missing: ${fact}`).join('\n'))
   console.error(badLoopSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
   process.exitCode = 1
 } else {
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
+}
+
+const redundantInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarPushLoop'})
+const redundantFunction = redundantInferReport.functions[0]
+const redundantFacts = new Set(redundantFunction?.redundant ?? [])
+const expectedRedundantFacts = [
+  'result.length == items.length',
+  'result[]: 0..3000',
+]
+const missingRedundantFacts = expectedRedundantFacts.filter(fact => !redundantFacts.has(fact))
+const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const expectedRedundantSpecStatuses = [
+  ['given items.length: int 0..50', 'trusted'],
+  ['result.length == items.length', 'source-proved'],
+  ['result[]: 0..3000', 'source-proved'],
+] as const
+const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
+if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
+  console.error('expected function-level redundant facts changed')
+  console.error(missingRedundantFacts.map(fact => `missing redundant: ${fact}`).join('\n'))
+  console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
 const actualInferSnapshot = normalizeText([
@@ -79,15 +111,15 @@ const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['patterns.ts'], 'mapBlockRowsWithDestructure'),
   formatInferSnapshot(['patterns.ts'], 'localLoopAnnotation'),
   formatInferSnapshot([
-    '../vibescript/demos/photo-gallery/layout-model.ts',
+    '../vibescript/demos/photo-gallery/layout.ts',
     '../vibescript/demos/photo-gallery/prompt-layout.ts',
   ], 'getGridLayout'),
   formatInferSnapshot([
-    '../vibescript/demos/photo-gallery/layout-model.ts',
+    '../vibescript/demos/photo-gallery/layout.ts',
     '../vibescript/demos/photo-gallery/prompt-layout.ts',
   ], 'getLineLayout'),
-  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout-model.ts'], 'leftEdgeHitArea'),
-  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout-model.ts'], 'rightEdgeHitArea'),
+  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout.ts'], 'leftEdgeHitArea'),
+  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout.ts'], 'rightEdgeHitArea'),
 ].join('\n'))
 const expectedInferSnapshot = normalizeText(await Bun.file(inferSnapshotExpectedPath).text())
 if (actualInferSnapshot !== expectedInferSnapshot) {
