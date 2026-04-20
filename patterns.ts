@@ -1009,6 +1009,18 @@ export function pathSensitiveMinOverflow(width: number) {
   return {capped, overflow}
 }
 
+// Regression: a ternary over two literal numbers must keep per-branch identity
+// as cases so downstream Math.min can still prove `capped <= width`.
+/** @fit
+ * given width: 0..1000
+ * result.overflow >= 0
+ */
+export function pathSensitiveMinOverflowTernaryInset(width: number, folder: boolean) {
+  const inset = folder ? 108 : 68
+  const capped = Math.min(width, inset)
+  return {overflow: width - capped}
+}
+
 /** @fit
  * given width: 0..1000
  * given padding: 0..120

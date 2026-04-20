@@ -408,16 +408,22 @@ export function joinValues(left: Value, right: Value): Value {
   if (left.kind === 'unknown') return left
   if (right.kind === 'unknown') return right
   if (left.kind === 'number' && right.kind === 'number') {
+    const sameExpr = left.expr != null && right.expr != null && left.expr === right.expr
+    const sameLin = left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)
     const joined = numberValue(
       Math.min(left.min, right.min),
       Math.max(left.max, right.max),
       left.isInteger && right.isInteger,
-      left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
-      left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
+      sameExpr ? left.expr : null,
+      sameLin ? left.linear : null,
       null,
       mergeProvenance(left, right),
     )
-    if (left.cases == null && right.cases == null) return joined
+    // If the two branches carry the exact same value (same linear/expr), a plain
+    // range join is enough. When they disagree — e.g. `flag ? 108 : 68` — we
+    // preserve per-branch identity as cases so downstream Math.min / subtraction
+    // can still see which literal the value collapses to on each branch.
+    if (left.cases == null && right.cases == null && sameLin) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
   }
   if (left.kind === 'object' && right.kind === 'object') {
