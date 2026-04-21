@@ -120,9 +120,9 @@ result:
   result.items.length: int 0..Infinity
   result.items[].imageBox.sizeX == gridImageSizeXResult
   result.items[].layoutBox.sizeX == gridImageSizeXResult
-  result.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).width
-  result.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).visibleHeight
-  result.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lines.length
+  result.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
+  result.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
+  result.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   result.items[].prompt.lines.length: int 0..Infinity
   result.rowsTop.length == rowsTop.length
   result.rowsTop.length: int 0..Infinity
@@ -132,11 +132,11 @@ locals:
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
   measurements[].imageSizeX == gridImageSizeXResult
-  measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lineCount
-  measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).lines.length
+  measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
+  measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   measurements[].promptLayout.lines.length: int 0..Infinity
-  measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).visibleHeight
-  measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight, true).width
+  measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
+  measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
 unsupported:
   Forgot unsupported indexed loop side effect: rowHeight = Math.max(rowHeight, layoutHeight)
   Forgot unsupported indexed loop side effect: if (i % cols === cols - 1 || i === layoutSources.length - 1) {

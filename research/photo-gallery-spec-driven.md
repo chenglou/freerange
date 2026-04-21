@@ -234,13 +234,13 @@ At the end, report:
 
 Current `demos/photo-gallery` contracts prove the important source-owned helper seams cleanly:
 
-- `layout.ts` and `prompt-layout.ts`: 61 pass, 0 fail, 0 unknown
-- all checked sibling demo contracts: 122 pass, 0 fail, 0 unknown
+- `layout.ts` and `prompt-layout.ts`: 65 pass, 0 fail, 0 unknown
+- all checked sibling demo contracts: 126 pass, 0 fail, 0 unknown
 
 The useful ground-truth facts now include:
 
 - grid image caps and width capping against natural width and box width
-- prompt visible line count, visible height, inner max width, and single-line shrink width
+- prompt visible line count, visible height, inner max width, and prompt layout width
 - line max sizes, previous/next target math, and stable edge hit boxes
 - image/layout/occlusion/prompt geometry copied from the pure item helper
 
