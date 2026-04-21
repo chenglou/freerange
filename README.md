@@ -35,6 +35,14 @@ function cappedOverflow(width: number) {
 
 `given` lines describe inputs your function expects. Bare lines are facts Freerange must prove from source.
 
+For one local value, use the small inline form:
+
+```ts
+// @fit int 0..count
+const index = Math.floor(pointer / cellSize)
+const next = index + 1 // @fit int 1..count
+```
+
 ## Run A File
 
 In this repo today:

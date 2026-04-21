@@ -3,7 +3,6 @@ import {
   comparisonFailureReason,
   comparisonNeed,
   formatRange,
-  rangeFailureReason,
 } from './reporting.ts'
 import {
   comparisonProofRules,
@@ -29,7 +28,6 @@ import {
   ceilDivisionProduct,
   cleanLinear,
   isZeroLinear,
-  linearConstant,
   linearConstantStatus,
   linearFromExpressionText,
   linearKey,
@@ -52,21 +50,6 @@ export type NonNegativeFact = {
 }
 
 const maxLinearReductionDepth = 4
-
-export function proveRange(value: Value, min: number, max: number, requireInteger: boolean, assumptions: LinearConstraint[] = []): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
-  if (value.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(value)}
-  if (value.min < min || value.max > max) {
-    const lower = proveComparison(value, '>=', numberValue(min, min, Number.isInteger(min), `${min}`, linearConstant(min)), assumptions)
-    const upper = proveComparison(value, '<=', numberValue(max, max, Number.isInteger(max), `${max}`, linearConstant(max)), assumptions)
-    if (lower.status === 'pass' && upper.status === 'pass' && (!requireInteger || value.isInteger)) return {status: 'pass'}
-    return {
-      status: 'fail',
-      reason: rangeFailureReason(value, min, max, requireInteger, assumptions),
-    }
-  }
-  if (requireInteger && !value.isInteger) return {status: 'fail', reason: `range was ${formatRange(value)}, expected integer\nneed: ${value.expr ?? formatRange(value)} to be integer`}
-  return {status: 'pass'}
-}
 
 export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
   const structuralEquality = proveStructuralEquality(left, op, right)
@@ -371,14 +354,19 @@ export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, 
   }
 }
 
-export function rangeFactsFromValue(value: Value, min: number, max: number, text: string, source: FactSource): LinearConstraint[] {
-  if (value.kind !== 'number') return []
-  const minDiff = linearSubtract(value.linear, linearConstant(min))
-  const maxDiff = linearSubtract(linearConstant(max), value.linear)
-  const facts: LinearConstraint[] = []
-  if (minDiff != null) facts.push({diff: minDiff, op: '>=', text, source, rangeFact: true})
-  if (maxDiff != null) facts.push({diff: maxDiff, op: '>=', text, source, rangeFact: true})
-  return facts
+export function rangeFactsFromBounds(
+  value: NumberValue,
+  lower: NumberValue,
+  lowerInclusive: boolean,
+  upper: NumberValue,
+  upperInclusive: boolean,
+  text: string,
+  source: FactSource,
+): LinearConstraint[] {
+  return [
+    comparisonConstraint(value, lowerInclusive ? '>=' : '>', lower, text, source),
+    comparisonConstraint(value, upperInclusive ? '<=' : '<', upper, text, source),
+  ].filter(fact => fact != null).map(fact => ({...fact, rangeFact: true}))
 }
 
 function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {

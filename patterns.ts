@@ -28,6 +28,13 @@ export function outputRangeFact(value: number) {
   return shifted
 }
 
+export function localInlineRangeFacts() {
+  // @fit int 0..10
+  const index = Math.floor(4.2)
+  const index2 = index + 1 // @fit int 0..10
+  return index2
+}
+
 /** @fit
  * given value: 0..5
  * result.high > result.low
@@ -149,6 +156,25 @@ export function ceilDivisionCoversTotal(total: number, count: number) {
 export function floorHitIndexInsideCount(pointer: number, cellSize: number, count: number) {
   const maxPointer = count * cellSize
   return pointer < maxPointer ? Math.floor(pointer / cellSize) : Math.floor(pointer / cellSize)
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given index: int 0..<items.length
+ * result >= 0
+ * result < items.length
+ */
+export function halfOpenIndexGiven(items: number[], index: number) {
+  const length = items.length
+  return index < length ? index : index
+}
+
+/** @fit
+ * given scale > 0
+ * result > 0
+ */
+export function positiveComparisonGiven(scale: number) {
+  return scale
 }
 
 /** @fit

@@ -11,7 +11,9 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
 result.width: 0..320 // check fact. Freerange must prove this from source.
 a..b // JavaScript number in the inclusive interval from a to b.
+a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
+// @fit 0..100 // local shorthand for proving the next or current variable is in a range.
 items[] // every item in one collection. Freerange supports one wildcard collection side per comparison today.
 result // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
@@ -78,6 +80,21 @@ function cappedOverflow(width: number) {
 Bare lines are things Freerange must prove from the source.
 
 Unsupported annotation lines are errors. Unsupported source code becomes `unknown`.
+
+## Local Checks
+
+When a fact belongs to one local value, keep it near that value:
+
+```ts
+function hitIndex(pointer: number, cellSize: number) {
+  // @fit int 0..100
+  const index = Math.floor(pointer / cellSize)
+  const clamped = Math.min(index, 100) // @fit int 0..100
+  return clamped
+}
+```
+
+Inline `// @fit` is range shorthand for the variable it is attached to. It works as a leading comment on the next single variable declaration, or as a trailing side comment on that declaration. It is a check, not a trusted `given`.
 
 ## Reading Results
 
@@ -184,7 +201,21 @@ Loop-level `given` works the same way, but is trusted from that point in the fun
  */
 ```
 
-`a..b` means a JavaScript number in that interval. `int a..b` also says the value is an integer.
+`a..b` means a JavaScript number in that inclusive interval. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive:
+
+```ts
+index: int 0..<items.length
+scale: 0..Infinity
+```
+
+Lower-exclusive and open-ended range spellings are not part of the language right now. Use a comparison when that is the clearer fact:
+
+```ts
+given scale > 0
+result > 0
+```
+
+Bounds can be numeric literals, `Infinity`, or the same simple input arithmetic accepted by `given` comparisons.
 
 Ranges can describe object fields and array items:
 

@@ -14,13 +14,22 @@ export type ParsedFitExpression = {
   domainPaths: Map<string, FitDomainPath>
 }
 
+export type FitRange = {
+  valueKind: 'int' | 'number'
+  lower: string
+  upper: string
+  lowerValue: number | null
+  upperValue: number | null
+  lowerInclusive: boolean
+  upperInclusive: boolean
+  text: string
+}
+
 export type FitSpec =
   | {
       kind: 'given-range'
       expression: string
-      valueKind: 'int' | 'number'
-      min: number
-      max: number
+      range: FitRange
       text: string
     }
   | {
@@ -33,9 +42,7 @@ export type FitSpec =
   | {
       kind: 'check-range'
       expression: string
-      valueKind: 'int' | 'number'
-      min: number
-      max: number
+      range: FitRange
       text: string
     }
   | {
@@ -78,21 +85,51 @@ export function hasFitComment(sourceText: string, node: ts.Node): boolean {
   return fitCommentLines(sourceText, node).some(lines => lines.some(line => line === '@fit'))
 }
 
+export function hasLocalFitComment(sourceText: string, node: ts.Node): boolean {
+  return localFitCommentLines(sourceText, node).length > 0
+}
+
+export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'}>[] {
+  const lines = localFitCommentLines(sourceText, statement)
+  if (lines.length === 0) return []
+  const declarations = statement.declarationList.declarations
+  if (declarations.length !== 1 || !ts.isIdentifier(declarations[0]!.name)) {
+    throw new Error('Inline @fit comments support one simple variable declaration')
+  }
+  const expression = declarations[0]!.name.text
+  return lines.map(line => parseLocalFitSpecLine(line, expression))
+}
+
 function fitCommentLines(sourceText: string, node: ts.Node): string[][] {
   const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
-  return commentRanges.map(range => sourceText.slice(range.pos, range.end).split(/\r?\n/).map(cleanCommentLine))
+  return commentRanges.map(range => commentRangeLines(sourceText, range))
+}
+
+function localFitCommentLines(sourceText: string, node: ts.Node): string[] {
+  const commentRanges = [
+    ...(ts.getLeadingCommentRanges(sourceText, node.pos) ?? []),
+    ...(ts.getTrailingCommentRanges(sourceText, node.end) ?? []),
+  ]
+  return commentRanges
+    .flatMap(range => commentRangeLines(sourceText, range))
+    .filter(line => line.startsWith('@fit '))
+}
+
+function commentRangeLines(sourceText: string, range: ts.CommentRange): string[] {
+  return sourceText.slice(range.pos, range.end).split(/\r?\n/).map(cleanCommentLine)
 }
 
 function cleanCommentLine(line: string) {
   return line
     .replace(/^\s*\/\*\*?/, '')
+    .replace(/^\s*\/\//, '')
     .replace(/\*\/\s*$/, '')
     .replace(/^\s*\*\s?/, '')
     .trim()
 }
 
 const numberPattern = '-?\\d+(?:\\.\\d+)?'
-const rangePattern = new RegExp(`^(?:(int)\\s+)?(${numberPattern})\\s*\\.\\.\\s*(${numberPattern})$`)
+const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 
 export function parseFitSpecLine(line: string): FitSpec {
   const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
@@ -104,9 +141,7 @@ export function parseFitSpecLine(line: string): FitSpec {
     return {
       kind: 'given-range',
       expression,
-      valueKind: range.valueKind,
-      min: range.min,
-      max: range.max,
+      range,
       text: line,
     }
   }
@@ -135,9 +170,7 @@ export function parseFitSpecLine(line: string): FitSpec {
     return {
       kind: 'check-range',
       expression,
-      valueKind: range.valueKind,
-      min: range.min,
-      max: range.max,
+      range,
       text: line,
     }
   }
@@ -163,14 +196,91 @@ export function parseFitSpecLine(line: string): FitSpec {
   throw new Error(`Unsupported @fit line: ${line}`)
 }
 
-function parseRangeText(text: string): {valueKind: 'int' | 'number'; min: number; max: number} | null {
-  const range = rangePattern.exec(text)
-  if (range == null) return null
+function parseRangeText(text: string): FitRange | null {
+  const valueKindMatch = /^(?:(int)\s+)?([\s\S]+)$/.exec(text)
+  if (valueKindMatch == null) return null
+  const bounds = splitRangeBounds(valueKindMatch[2]!.trim())
+  if (bounds == null) return null
+  const {lower, upper, upperInclusive} = bounds
+  if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
   return {
-    valueKind: range[1] == null ? 'number' : 'int',
-    min: Number(range[2]!),
-    max: Number(range[3]!),
+    valueKind: valueKindMatch[1] == null ? 'number' : 'int',
+    lower,
+    upper,
+    lowerValue: parseRangeBoundNumber(lower),
+    upperValue: parseRangeBoundNumber(upper),
+    lowerInclusive: true,
+    upperInclusive,
+    text,
   }
+}
+
+function splitRangeBounds(text: string): {lower: string; upper: string; upperInclusive: boolean} | null {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (quote != null) {
+      if (char === '\\') i++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      if (text.startsWith('..<', i)) {
+        const lower = text.slice(0, i).trim()
+        const upper = text.slice(i + 3).trim()
+        return lower.length === 0 || upper.length === 0 ? null : {lower, upper, upperInclusive: false}
+      }
+      if (text.startsWith('..', i) && !text.startsWith('...', i)) {
+        const lower = text.slice(0, i).trim()
+        const upper = text.slice(i + 2).trim()
+        return lower.length === 0 || upper.length === 0 ? null : {lower, upper, upperInclusive: true}
+      }
+    }
+  }
+  return null
+}
+
+function parseLocalFitSpecLine(line: string, expression: string): Extract<FitSpec, {kind: 'check-range'}> {
+  const body = line.slice('@fit'.length).trim()
+  const range = parseRangeText(body)
+  if (range == null) throw new Error(`Unsupported inline @fit range: ${line}`)
+  parseExpression(expression)
+  return {
+    kind: 'check-range',
+    expression,
+    range,
+    text: `${expression}: ${body}`,
+  }
+}
+
+function isRangeBoundText(text: string) {
+  if (rangeNumberPattern.test(text)) return true
+  try {
+    parseExpression(text)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function parseRangeBoundNumber(text: string): number | null {
+  if (text === 'Infinity') return Number.POSITIVE_INFINITY
+  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
 }
 
 function parseCheckAtom(line: string): Extract<FitSpec, {kind: 'check-atom'}> | null {

@@ -10,6 +10,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 
 - Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
 - Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `result`.
+- Local inline checks use `// @fit 0..foo` immediately before a single variable declaration, or as a trailing side comment. They are checks on that local, not trusted givens.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
 - Wildcard comparisons support one collection side and one scalar side. The collection side may be nested:

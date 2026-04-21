@@ -1,4 +1,4 @@
-import {type ComparisonOperator} from './parser.ts'
+import {type ComparisonOperator, type FitRange} from './parser.ts'
 
 export type ReportNumberValue = {
   min: number
@@ -38,32 +38,6 @@ export type ReportArrayValue = {
 
 const linearEpsilon = 1e-9
 
-export function rangeFailureReason(
-  value: ReportNumberValue,
-  min: number,
-  max: number,
-  requireInteger: boolean,
-  assumptions: ReportLinearConstraint[],
-) {
-  const expectedRange = formatExpectedRange(min, max, requireInteger)
-  const lines = [
-    `range was ${formatRange(value)}, expected inside ${expectedRange}`,
-    `need: ${value.expr ?? formatRange(value)} inside ${expectedRange}`,
-  ]
-  const known = knownProofContext(value, rangeValue(min, max, requireInteger), assumptions)
-  if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-  lines.push(...missingRangeBounds(value, min, max))
-  return lines.join('\n')
-}
-
-export function missingRangeBounds(value: ReportNumberValue, min: number, max: number) {
-  const name = value.expr ?? formatRange(value)
-  const missing: string[] = []
-  if (value.min < min) missing.push(`missing: ${name} >= ${min}`)
-  if (value.max > max) missing.push(`missing: ${name} <= ${max}`)
-  return missing
-}
-
 export function comparisonFailureReason(
   left: ReportNumberValue,
   op: ComparisonOperator,
@@ -80,6 +54,40 @@ export function comparisonFailureReason(
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
   lines.push(`missing: ${missing}`)
   return lines.join('\n')
+}
+
+export function rangeSpecFailureReason(
+  value: ReportNumberValue,
+  range: FitRange,
+  lower: ReportNumberValue,
+  upper: ReportNumberValue,
+  assumptions: ReportLinearConstraint[],
+  missing: {lower: boolean; upper: boolean; integer: boolean},
+) {
+  const expectedRange = formatRangeSpec(range)
+  const lines = [
+    `range was ${formatRange(value)}, expected inside ${expectedRange}`,
+    `need: ${value.expr ?? formatRange(value)} inside ${expectedRange}`,
+  ]
+  const known = knownProofContextMany([value, lower, upper], assumptions)
+  if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
+  lines.push(...rangeSpecMissingBounds(value, range, lower, upper, missing))
+  return lines.join('\n')
+}
+
+export function rangeSpecMissingBounds(
+  value: ReportNumberValue,
+  range: FitRange,
+  lower: ReportNumberValue,
+  upper: ReportNumberValue,
+  missing: {lower: boolean; upper: boolean; integer: boolean},
+) {
+  const name = value.expr ?? formatRange(value)
+  const lines: string[] = []
+  if (missing.lower) lines.push(`missing: ${name} ${range.lowerInclusive ? '>=' : '>'} ${lower.expr ?? formatRange(lower)}`)
+  if (missing.upper) lines.push(`missing: ${name} ${range.upperInclusive ? '<=' : '<'} ${upper.expr ?? formatRange(upper)}`)
+  if (missing.integer) lines.push(`missing: ${name} is an integer`)
+  return lines
 }
 
 export function comparisonNeed(left: ReportNumberValue, op: ComparisonOperator, right: ReportNumberValue) {
@@ -104,6 +112,11 @@ export function formatRange(value: ReportNumberValue) {
 export function formatExpectedRange(min: number, max: number, isInteger: boolean) {
   const prefix = isInteger ? 'int ' : ''
   return `${prefix}${formatNumber(min)}..${formatNumber(max)}`
+}
+
+export function formatRangeSpec(range: FitRange) {
+  const prefix = range.valueKind === 'int' ? 'int ' : ''
+  return `${prefix}${range.lower}${range.upperInclusive ? '..' : '..<'}${range.upper}`
 }
 
 export function formatLinearConstraint(constraint: ReportLinearConstraint): string {
@@ -138,7 +151,11 @@ export function formatLinear(linear: ReportLinearExpr | null) {
 }
 
 function knownProofContext(left: ReportNumberValue, right: ReportNumberValue, assumptions: ReportLinearConstraint[]) {
-  const lines = [...knownValueFacts(left), ...knownValueFacts(right)]
+  return knownProofContextMany([left, right], assumptions)
+}
+
+function knownProofContextMany(values: ReportNumberValue[], assumptions: ReportLinearConstraint[]) {
+  const lines = values.flatMap(knownValueFacts)
   for (const assumption of assumptions) {
     lines.push(formatKnownFact(assumption))
     if (lines.length >= 12) break
@@ -164,10 +181,6 @@ function formatKnownFact(assumption: ReportLinearConstraint): string {
     case 'contract':
       return fact
   }
-}
-
-function rangeValue(min: number, max: number, isInteger: boolean): ReportNumberValue {
-  return {min, max, isInteger, expr: null, linear: null}
 }
 
 function cleanReportLinear(linear: ReportLinearExpr): ReportLinearExpr {

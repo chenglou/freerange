@@ -82,6 +82,14 @@ export function negativeArrayLengthCallGiven(items: number[]) {
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * result: int 0..<items.length
+ */
+export function negativeHalfOpenUpperExcludesLength(items: number[]) {
+  return items.length
+}
+
+/** @fit
  * given total: int 0..6000
  * given count: int 1..200
  * result >= total
@@ -643,6 +651,18 @@ export function negativeGivenComparisonsCannotTransitivelyHold(left: number, mid
  */
 export function negativeGivenRangeCannotDescribeDerivedExpression(width: number) {
   return width
+}
+
+export function negativeInlineSideRange() {
+  const index = 4 // @fit int 0..3
+  return index
+}
+
+/** @fit
+ * given items[].height: 0..max.toString()
+ */
+export function negativeGivenRangeBoundCannotCallInputMethod(items: {height: number}[], max: number) {
+  return items.length + max
 }
 
 /** @fit

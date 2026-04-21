@@ -133,9 +133,9 @@ index. Current Freerange can check arithmetic inside an extracted function, but
 it cannot express the product-level relation cleanly yet.
 
 ```ts
-oldAnchor: int 0..oldLayout.items.length - 1
+oldAnchor: int 0..<oldLayout.items.length
 newLayout.items.length == oldLayout.items.length
-newAnchor: int 0..newLayout.items.length - 1
+newAnchor: int 0..<newLayout.items.length
 
 // target:
 // keep the anchor item visible after resize
@@ -163,8 +163,9 @@ newAnchor: int 0..newLayout.items.length - 1
 
 ## Possible Checker Work
 
-- Statement-level/local `@fit` would help annotate red-line variables close to
-  their computation.
+- Local `// @fit 0..foo` checks now cover simple one-value red-line variables.
+  The larger rewrite question is whether richer statement annotations should
+  become first-class later.
 - Same-index labels look useful enough to keep thinking about.
 - Nullable refinement and conditional postconditions matter for edge hit areas.
 - Exact render-set checking matters for virtualization, but should probably

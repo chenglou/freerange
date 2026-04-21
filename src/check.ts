@@ -12,10 +12,13 @@ import {
   parseFitExpression,
   parseFitSpecLine,
   parseFitSpecs,
+  parseLocalFitSpecs,
   hasFitComment,
+  hasLocalFitComment,
   type ComparisonOperator,
   type FitDomainPath,
   type FitDomainPathSegment,
+  type FitRange,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -76,8 +79,7 @@ import {
   proveNonNegativeFromFacts,
   proveComparison,
   proveComparisonPlain,
-  proveRange,
-  rangeFactsFromValue,
+  rangeFactsFromBounds,
   type NonNegativeFact,
   type Truth,
 } from './proof.ts'
@@ -85,8 +87,10 @@ import {
   comparisonNeed,
   formatArraySummary,
   formatExpectedRange,
+  formatRangeSpec,
   formatRange,
-  missingRangeBounds,
+  rangeSpecFailureReason,
+  rangeSpecMissingBounds,
 } from './reporting.ts'
 import {
   structuralShape,
@@ -267,7 +271,7 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasLocalFitComment(program, fn)) continue
       functions.push(inferFunctionFacts(program, fn, contractCache))
     }
   }
@@ -281,7 +285,7 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasLocalFitComment(program, fn)) continue
       insights.push(...inspectFunctionShapes(program, fn, contractCache, options))
     }
   }
@@ -304,11 +308,34 @@ function verifyProgram(program: Program, contractCache: Map<string, FunctionCont
     if (!ts.isFunctionDeclaration(statement)) continue
     if (statement.name == null) continue
     const specs = program.specsByFunction.get(statement.name.text) ?? []
-    if (specs.length === 0) continue
+    if (specs.length === 0 && !functionHasLocalFitComment(program, statement)) continue
     checks.push(...verifyFunctionSpecs(program.file, program, statement, specs, contractCache))
   }
 
   return checks
+}
+
+function functionHasLocalFitComment(program: Program, fn: ts.FunctionDeclaration) {
+  if (fn.body == null) return false
+  let found = false
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (node !== fn.body && isFunctionLikeWithBody(node)) return
+    if (ts.isVariableStatement(node) && hasLocalFitComment(program.sourceText, node)) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(fn.body)
+  return found
+}
+
+function isFunctionLikeWithBody(node: ts.Node) {
+  return ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
 }
 
 function verifyFunctionSpecs(
@@ -403,7 +430,7 @@ type FunctionShapeState = {
 function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
   const functionName = fn.name?.text ?? '<anonymous>'
   const insights: FitShapeInsight[] = []
-  const state = options.functionName != null || program.fitFunctions.has(functionName)
+  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasLocalFitComment(program, fn)
     ? evaluateFunctionShapeState(program, fn, contractCache)
     : null
 
@@ -695,9 +722,13 @@ function parseFitSpecLineForInference(text: string): FitSpec | null {
 function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
   if (range == null) return null
-  return range.min >= spec.min
-    && range.max <= spec.max
-    && (spec.valueKind !== 'int' || range.isInteger)
+  const lowerOk = spec.range.lowerValue != null
+    && (spec.range.lowerInclusive ? range.min >= spec.range.lowerValue : range.min > spec.range.lowerValue)
+  const upperOk = spec.range.upperValue != null
+    && (spec.range.upperInclusive ? range.max <= spec.range.upperValue : range.max < spec.range.upperValue)
+  return lowerOk
+    && upperOk
+    && (spec.range.valueKind !== 'int' || range.isInteger)
     ? range.text
     : null
 }
@@ -855,21 +886,45 @@ function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'giv
 function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string[] {
   switch (spec.kind) {
     case 'given-range':
-      return expressionRootNamesFromText(spec.expression)
+      return [...new Set([
+        ...expressionRootNamesFromText(spec.expression),
+        ...rangeBoundRootNames(spec.range.lower),
+        ...rangeBoundRootNames(spec.range.upper),
+      ])]
     case 'given-comparison':
       return [...new Set([...expressionRootNamesFromText(spec.left), ...expressionRootNamesFromText(spec.right)])]
   }
 }
 
+function rangeBoundRootNames(text: string) {
+  return parsePrintedNumber(text) == null ? expressionRootNamesFromText(text) : []
+}
+
 function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
-  if (spec.min > spec.max) return `no input can satisfy this: minimum ${spec.min} is greater than maximum ${spec.max}`
+  const closed = closedRangeApprox(spec.range)
+  if (closed != null && closed.min > closed.max) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
   for (const range of ranges) {
     if (!sameExpressionText(range.expression, spec.expression)) continue
-    if (spec.max < range.min || spec.min > range.max) {
+    const earlier = closedRangeApprox(range.range)
+    if (closed == null || earlier == null) continue
+    if (closed.max < earlier.min || closed.min > earlier.max) {
       return `no input can satisfy both ${range.text} and ${spec.text}`
     }
   }
   return null
+}
+
+function closedRangeApprox(range: FitRange): {min: number; max: number} | null {
+  const lower = range.lowerValue ?? Number.NEGATIVE_INFINITY
+  const upper = range.upperValue ?? Number.POSITIVE_INFINITY
+  const min = range.valueKind === 'int' && range.lowerValue != null && !range.lowerInclusive
+    ? Math.floor(lower) + 1
+    : lower
+  const max = range.valueKind === 'int' && range.upperValue != null && !range.upperInclusive
+    ? Math.ceil(upper) - 1
+    : upper
+  if (!Number.isFinite(min) && !Number.isFinite(max) && min === Number.NEGATIVE_INFINITY && max === Number.POSITIVE_INFINITY) return null
+  return {min, max}
 }
 
 function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
@@ -877,9 +932,13 @@ function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind:
   if (roots.length === 0) return 'given must mention an input'
 
   if (spec.kind === 'given-range') {
-    if (parseDomainPathText(spec.expression) != null) return null
-    const expression = parseExpression(spec.expression)
-    return isGivenRangeExpression(expression) ? null : 'given range must name one input path, not a derived expression'
+    if (parseDomainPathText(spec.expression) == null) {
+      const expression = parseExpression(spec.expression)
+      if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
+    }
+    const lower = givenComparisonExpressionProblem(spec.range.lower)
+    if (lower != null) return lower
+    return givenComparisonExpressionProblem(spec.range.upper)
   }
 
   const left = givenComparisonExpressionProblem(spec.left)
@@ -888,6 +947,7 @@ function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind:
 }
 
 function givenComparisonExpressionProblem(text: string): string | null {
+  if (parsePrintedNumber(text) != null) return null
   return isGivenComparisonExpression(parseExpression(text))
     ? null
     : 'given comparisons only support input paths, numbers, and simple arithmetic'
@@ -945,7 +1005,11 @@ function collectGivenAssumptions(
     if (given.kind === 'range') {
       const spec = given.spec
       const value = evaluateSpecExpression(spec.expression, context)
-      assumptions.push(...rangeFactsFromValue(value, spec.min, spec.max, spec.text, given.source))
+      if (value.kind !== 'number') continue
+      const lower = evaluateRangeBound(spec.range.lower, context)
+      const upper = evaluateRangeBound(spec.range.upper, context)
+      if (lower.kind !== 'number' || upper.kind !== 'number') continue
+      assumptions.push(...rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source))
       continue
     }
 
@@ -1049,7 +1113,14 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
 }
 
 function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
-  const value = numberValue(spec.min, spec.max, spec.valueKind === 'int', spec.expression, linearVariable(linearNameForExpression(spec.expression)))
+  const closed = closedRangeApprox(spec.range)
+  const value = numberValue(
+    closed?.min ?? Number.NEGATIVE_INFINITY,
+    closed?.max ?? Number.POSITIVE_INFINITY,
+    spec.range.valueKind === 'int',
+    spec.expression,
+    linearVariable(linearNameForExpression(spec.expression)),
+  )
   if (spec.expression.includes('[]')) {
     const domainPath = parseDomainPathText(spec.expression)
     if (domainPath != null && domainPath.segments.length > 0) {
@@ -1264,7 +1335,7 @@ function verifyCheckSpec(
 
   if (spec.kind === 'check-range') {
     const value = evaluateSpecExpression(spec.expression, context)
-    const status = proveRange(value, spec.min, spec.max, spec.valueKind === 'int', context.assumptions)
+    const status = proveRangeSpec(value, spec.range, context)
     return {
       file,
       functionName,
@@ -1294,6 +1365,64 @@ function verifyCheckSpec(
     status: status.status,
     ...(reason == null ? {} : {reason}),
   }
+}
+
+function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
+  if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
+  if (staticRangeInside(value, range)) return {status: 'pass'}
+  const lower = evaluateRangeBound(range.lower, context)
+  if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower}`}
+  const upper = evaluateRangeBound(range.upper, context)
+  if (upper.kind !== 'number') return {status: 'unknown', reason: `Range upper bound is not a number: ${range.upper}`}
+
+  const lowerStatus = proveComparison(value, range.lowerInclusive ? '>=' : '>', lower, context.assumptions)
+  const upperStatus = proveComparison(value, range.upperInclusive ? '<=' : '<', upper, context.assumptions)
+  const integerStatus: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
+    ? {status: 'fail', reason: `need: ${value.expr ?? formatRange(value)} to be integer`}
+    : {status: 'pass'}
+
+  if (lowerStatus.status === 'pass' && upperStatus.status === 'pass' && integerStatus.status === 'pass') return {status: 'pass'}
+  const missing = {
+    lower: lowerStatus.status !== 'pass',
+    upper: upperStatus.status !== 'pass',
+    integer: integerStatus.status !== 'pass',
+  }
+  const definitelyOutsideLower = range.lowerValue != null
+    && lowerStatus.status !== 'pass'
+    && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue)
+  const definitelyOutsideUpper = range.upperValue != null
+    && upperStatus.status !== 'pass'
+    && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue)
+  const status: FitCheckStatus = lowerStatus.status === 'fail'
+    || upperStatus.status === 'fail'
+    || integerStatus.status === 'fail'
+    || definitelyOutsideLower
+    || definitelyOutsideUpper
+    ? 'fail'
+    : 'unknown'
+  return {
+    status,
+    reason: rangeSpecFailureReason(value, range, lower, upper, context.assumptions, missing),
+  }
+}
+
+function expectedNumberReason(value: Exclude<Value, NumberValue>) {
+  if (value.kind === 'unknown') return value.reason
+  return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
+}
+
+function staticRangeInside(value: NumberValue, range: FitRange) {
+  if (range.valueKind === 'int' && !value.isInteger) return false
+  if (range.lowerValue == null || range.upperValue == null) return false
+  const lowerOk = range.lowerInclusive ? value.min >= range.lowerValue : value.min > range.lowerValue
+  const upperOk = range.upperInclusive ? value.max <= range.upperValue : value.max < range.upperValue
+  return lowerOk && upperOk
+}
+
+function evaluateRangeBound(text: string, context: EvalContext): Value {
+  const printed = parsePrintedNumber(text)
+  if (printed != null) return numberValue(printed, printed, Number.isInteger(printed), text, Number.isFinite(printed) ? linearConstant(printed) : null)
+  return evaluateSpecExpression(text, context)
 }
 
 function checkWildcardComparisonShape(left: string, right: string): WildcardUse {
@@ -1445,9 +1574,7 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
   for (let index = startIndex; index < statements.length; index++) {
     const statement = statements[index]!
     if (ts.isVariableStatement(statement)) {
-      for (const declaration of statement.declarationList.declarations) {
-        bindVariableDeclaration(declaration, context)
-      }
+      bindVariableStatement(statement, context)
       continue
     }
     if (ts.isForOfStatement(statement)) {
@@ -1485,6 +1612,31 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
   }
   const value = evaluateExpression(declaration.initializer, context)
   bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
+}
+
+function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
+  for (const declaration of statement.declarationList.declarations) {
+    bindVariableDeclaration(declaration, context)
+  }
+  verifyLocalFitSpecs(statement, context)
+}
+
+function verifyLocalFitSpecs(statement: ts.VariableStatement, context: EvalContext) {
+  const specs = parseLocalFitSpecs(context.program.sourceText, statement)
+  if (specs.length === 0) return
+  for (const spec of specs) {
+    context.checks.push(verifyCheckSpec(
+      context.file,
+      context.program,
+      context.stack.join(' > '),
+      context.env,
+      unknown('Inline @fit checks do not use result'),
+      spec,
+      [...context.checks],
+      context.assumptions,
+      context.contractCache,
+    ))
+  }
 }
 
 function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, context: EvalContext): Value {
@@ -1631,7 +1783,7 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
   const localContext: EvalContext = {...context, env: new Map(context.env)}
   for (const child of statement.statements) {
     if (ts.isVariableStatement(child)) {
-      for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, localContext)
+      bindVariableStatement(child, localContext)
       continue
     }
     if (ts.isExpressionStatement(child)) {
@@ -1673,7 +1825,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
 
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
-      for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
+      bindVariableStatement(child, loopContext)
       continue
     }
 
@@ -1814,7 +1966,7 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   const forgottenRoots = new Set<string>()
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
-      for (const declaration of child.declarationList.declarations) bindVariableDeclaration(declaration, loopContext)
+      bindVariableStatement(child, loopContext)
       continue
     }
 
@@ -2779,7 +2931,7 @@ function evaluateArrayMapCallbackBlock(block: ts.Block, context: EvalContext): V
   for (const statement of block.statements) {
     if (ts.isVariableStatement(statement)) {
       if (!isConstDeclarationList(statement.declarationList)) return unknown('Array.map callback block supports const bindings and return only')
-      for (const declaration of statement.declarationList.declarations) bindVariableDeclaration(declaration, context)
+      bindVariableStatement(statement, context)
       continue
     }
     if (ts.isReturnStatement(statement)) {
@@ -2994,13 +3146,15 @@ function valueWithFunctionContractSummary(
 
 function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: FunctionContractSource) {
   if (simpleResultPathText(spec.expression) == null) return
+  const closed = closedRangeApprox(spec.range)
+  if (closed == null) return
   setSummaryPathValue(
     env,
     spec.expression,
     numberValue(
-      spec.min,
-      spec.max,
-      spec.valueKind === 'int',
+      closed.min,
+      closed.max,
+      spec.range.valueKind === 'int',
       spec.expression,
       linearVariable(linearNameForExpression(spec.expression)),
       null,
@@ -3117,7 +3271,7 @@ function verifyCallGivenSpecs(
     let status: {status: FitCheckStatus; reason?: string} | null = null
     if (spec.kind === 'given-range') {
       const value = evaluateSpecExpression(spec.expression, calleeContext)
-      status = proveRange(value, spec.min, spec.max, spec.valueKind === 'int', calleeContext.assumptions)
+      status = proveRangeSpec(value, spec.range, calleeContext)
       if (status.status !== 'pass') status = withCallRangeReason(status, value, spec)
     }
     if (spec.kind === 'given-comparison') {
@@ -3153,11 +3307,27 @@ function withCallRangeReason(
   return {
     ...status,
     reason: [
-      `called function requires ${spec.expression}: ${formatExpectedRange(spec.min, spec.max, spec.valueKind === 'int')}`,
+      `called function requires ${spec.expression}: ${formatRangeSpec(spec.range)}`,
       `this call passes ${formatCallBinding(spec.expression, value)}`,
-      ...missingRangeBounds(value, spec.min, spec.max),
+      ...missingBoundsForRange(value, spec.range),
     ].join('\n'),
   }
+}
+
+function missingBoundsForRange(value: NumberValue, range: FitRange) {
+  const lower = range.lowerValue == null ? null : numberValue(range.lowerValue, range.lowerValue, Number.isInteger(range.lowerValue), range.lower, Number.isFinite(range.lowerValue) ? linearConstant(range.lowerValue) : null)
+  const upper = range.upperValue == null ? null : numberValue(range.upperValue, range.upperValue, Number.isInteger(range.upperValue), range.upper, Number.isFinite(range.upperValue) ? linearConstant(range.upperValue) : null)
+  return rangeSpecMissingBounds(
+    value,
+    range,
+    lower ?? numberValue(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, false, range.lower, null),
+    upper ?? numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, range.upper, null),
+    {
+      lower: range.lowerValue != null && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue),
+      upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
+      integer: false,
+    },
+  )
 }
 
 function withCallComparisonReason(
