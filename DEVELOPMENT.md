@@ -15,6 +15,7 @@ bun install
 - `bun run verify path/to/file.ts` — old JSON-report inspection helper
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
+- `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run audit:demos` — summarize which demo `@fit` checks are redundant versus worth keeping as explicit contracts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
@@ -46,6 +47,7 @@ bun install
 - [verify.ts](./verify.ts) — old ad hoc JSON-report CLI
 - [infer.ts](./infer.ts) — dev-only inferred-facts CLI
 - [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape piggyback diagnostic
+- [bench.ts](./bench.ts) — dev-only coarse timing helper
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
 - [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
 - [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list

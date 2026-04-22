@@ -3132,17 +3132,14 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   if (source.kind !== 'array') return unknown('Array.map expected an array')
   const callback = expression.arguments[0]
   if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.map expects one arrow callback')
-  const itemParam = callback.parameters[0]
-  const indexParam = callback.parameters[1]
-  if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return unknown('Array.map callback expected one simple item parameter and optional index parameter')
-  const indexName = indexParam == null ? null : ts.isIdentifier(indexParam.name) ? indexParam.name.text : null
-  if (indexParam != null && indexName == null) return unknown('Array.map index parameter expected a simple identifier')
+  const params = simpleArrayCallbackParams(callback)
+  if (params == null) return unknown('Array.map callback expected one simple item parameter and optional index parameter')
   const sourceName = source.expr ?? expression.expression.expression.getText(context.program.sourceFile)
   const item = source.element ?? unknownObject(`${sourceName}[]`)
-  const env = new Map(context.env).set(itemParam.name.text, item)
-  if (indexName != null) {
+  const env = new Map(context.env).set(params.itemName, item)
+  if (params.indexName != null) {
     const index = indexedElementPathValue(`mapIndex(${sourceName})`, source.length)
-    env.set(indexName, index)
+    env.set(params.indexName, index)
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementPathAssumptions(index, source.length))
   }
   const callbackContext = {...context, env}
@@ -3182,7 +3179,9 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
   if (source.kind !== 'array') return unknown('Array.filter expected an array')
   const callback = expression.arguments[0]
   if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.filter expects one arrow callback')
-  if (!arrayReadCallbackIsSupported(callback)) return unknown('Array.filter callback expected a simple side-effect-free predicate')
+  if (simpleArrayCallbackParams(callback) == null || !ts.isExpression(callback.body) || !isSideEffectFreeExpression(callback.body)) {
+    return unknown('Array.filter callback expected a simple side-effect-free predicate')
+  }
 
   const length = filteredArrayLength(expression, source, context)
   const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? 'filtered.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
@@ -3199,12 +3198,13 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
   return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
 }
 
-function arrayReadCallbackIsSupported(callback: ts.ArrowFunction) {
+function simpleArrayCallbackParams(callback: ts.ArrowFunction): {itemName: string; indexName: string | null} | null {
   const itemParam = callback.parameters[0]
   const indexParam = callback.parameters[1]
-  if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return false
-  if (indexParam != null && !ts.isIdentifier(indexParam.name)) return false
-  return ts.isExpression(callback.body) && isSideEffectFreeExpression(callback.body)
+  if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return null
+  if (indexParam == null) return {itemName: itemParam.name.text, indexName: null}
+  if (!ts.isIdentifier(indexParam.name)) return null
+  return {itemName: itemParam.name.text, indexName: indexParam.name.text}
 }
 
 function filteredArrayLength(expression: ts.CallExpression, source: ArrayValue, context: EvalContext): NumberValue {
