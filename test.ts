@@ -142,6 +142,8 @@ if (actualInferSnapshot !== expectedInferSnapshot) {
   console.log('infer snapshot: matched')
 }
 
+await runCliRegressionTests()
+
 function normalizeNegative(checks: FitCheck[]) {
   const lines = checks
     .filter(check => check.status !== 'pass')
@@ -247,4 +249,112 @@ function displayFile(file: string) {
   if (file.startsWith(repoDir)) return file.slice(repoDir.length)
   if (file.startsWith(workspaceDir)) return `../${file.slice(workspaceDir.length)}`
   return file
+}
+
+async function runCliRegressionTests() {
+  const explicitCheck = runFr(['check', 'patterns.ts', 'import-patterns.ts'])
+  expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
+  expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
+  expectCli(explicitCheck.output.includes('0 fail, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
+
+  await withCliFixture({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: {
+        target: 'ESNext',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['*.ts'],
+    }, null, 2),
+    'layout.ts': `/** @fit
+ * result: 2
+ */
+function ok() {
+  return 2
+}
+`,
+  }, dir => {
+    const check = runFr(['check'], dir)
+    expectCli(check.exitCode === 0, 'expected no-arg fr check to pass from tsconfig project', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 unknown'), 'expected no-arg fr check summary from tsconfig project', check.output)
+  })
+
+  await withCliFixture({
+    'bad.ts': `/** @fit
+ * result: 0..1
+ */
+function bad() {
+  return 2
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'bad.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
+    expectCli(check.output.includes('FAIL result: 0..1'), 'expected fr check failure output', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)
+  })
+
+  await withCliFixture({
+    'doctor.ts': `function h(
+  value: number, // @fit 0..10
+) {
+  return value
+}
+
+function f() {
+  return h(20)
+}
+`,
+  }, dir => {
+    const check = runFr(['doctor', 'doctor.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected fr doctor to exit 1 on a definite bad literal call', check.output)
+    expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr doctor literal-call failure output', check.output)
+    expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor summary', check.output)
+    expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
+  })
+
+  console.log('cli: 4 expected behaviors')
+}
+
+function runFr(args: string[], cwd = repoDir) {
+  return runProcess([process.execPath, pathJoin(repoDir, 'fr.ts'), ...args], cwd)
+}
+
+function runProcess(cmd: string[], cwd = repoDir) {
+  const decoder = new TextDecoder()
+  const result = Bun.spawnSync({
+    cmd,
+    cwd,
+    stdout: 'pipe',
+    stderr: 'pipe',
+  })
+  return {
+    exitCode: result.exitCode,
+    output: decoder.decode(result.stdout) + decoder.decode(result.stderr),
+  }
+}
+
+async function withCliFixture(files: Record<string, string>, run: (dir: string) => void | Promise<void>) {
+  const dir = pathJoin('/tmp', `freerange-cli-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
+  const mkdir = runProcess(['mkdir', '-p', dir])
+  expectCli(mkdir.exitCode === 0, `expected to create ${dir}`, mkdir.output)
+  for (const [file, text] of Object.entries(files)) {
+    await Bun.write(pathJoin(dir, file), text)
+  }
+  await run(dir)
+}
+
+function expectCli(condition: boolean, message: string, output: string) {
+  if (condition) return
+  console.error(message)
+  console.error(output.trimEnd())
+  process.exitCode = 1
+}
+
+function pathJoin(first: string, ...rest: string[]) {
+  let path = first.endsWith('/') ? first.slice(0, -1) : first
+  for (const part of rest) path += '/' + part.replace(/^\/+/, '')
+  return path
 }

@@ -50,6 +50,8 @@ return {
 
 ## Run A File
 
+The command-line binary is `fr`:
+
 ```sh
 fr check path/to/file.ts
 ```
