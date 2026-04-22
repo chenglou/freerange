@@ -187,22 +187,24 @@ function snapshotItems(functionName: string, section: string, items: string[]) {
 function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
   if (item === 'result.items.length == layoutSources.length') return true
-  if (item === 'result.items.length: int 0..Infinity') return true
+  if (item === 'result.items.length: int 0..1000') return true
   if (item === 'result.rowsTop.length == rowsTop.length') return true
-  if (item === 'result.rowsTop.length: int 1..Infinity') return true
+  if (item === 'result.rowsTop.length: int 1..1001') return true
   if (section === 'result') {
-    return item === 'result.items[].imageBox.sizeX == gridImageSizeXResult'
-      || item === 'result.items[].layoutBox.sizeX == gridImageSizeXResult'
+    return item === 'result.items[].imageBox.sizeX: 0..1952'
+      || item === 'result.items[].layoutBox.sizeX: 0..1952'
       || item.includes('result.items[].prompt.box.sizeX ==')
       || item.includes('result.items[].prompt.box.sizeY ==')
       || item.includes('result.items[].prompt.lines.length ==')
       || item === 'result.items[].prompt.lines.length: int 0..Infinity'
   }
-  return item === 'rowsTop.length: int 1..Infinity'
-    || item === 'rowHeights.length: int 0..Infinity'
+  return item === 'cols: int 1..7'
+    || item === 'boxMaxSizeX: 18.285714285714285..1952'
+    || item === 'rowsTop.length: int 1..1001'
+    || item === 'rowHeights.length: int 0..1000'
     || item === 'measurements.length == layoutSources.length'
-    || item === 'measurements.length: int 0..Infinity'
-    || item === 'measurements[].imageSizeX == gridImageSizeXResult'
+    || item === 'measurements.length: int 0..1000'
+    || item === 'measurements[].imageSizeX: 0..1952'
     || item.includes('measurements[].promptLayout.lineCount ==')
     || item.includes('measurements[].promptLayout.lines.length ==')
     || item === 'measurements[].promptLayout.lines.length: int 0..Infinity'

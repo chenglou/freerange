@@ -117,21 +117,23 @@ loop 550: for (const item of items)
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout
 result:
   result.items.length == layoutSources.length
-  result.items.length: int 0..Infinity
-  result.items[].imageBox.sizeX == gridImageSizeXResult
-  result.items[].layoutBox.sizeX == gridImageSizeXResult
+  result.items.length: int 0..1000
+  result.items[].imageBox.sizeX: 0..1952
+  result.items[].layoutBox.sizeX: 0..1952
   result.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
   result.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
   result.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   result.items[].prompt.lines.length: int 0..Infinity
   result.rowsTop.length == rowsTop.length
-  result.rowsTop.length: int 1..Infinity
+  result.rowsTop.length: int 1..1001
 locals:
-  rowsTop.length: int 1..Infinity
-  rowHeights.length: int 0..Infinity
+  cols: int 1..7
+  boxMaxSizeX: 18.285714285714285..1952
+  rowsTop.length: int 1..1001
+  rowHeights.length: int 0..1000
   measurements.length == layoutSources.length
-  measurements.length: int 0..Infinity
-  measurements[].imageSizeX == gridImageSizeXResult
+  measurements.length: int 0..1000
+  measurements[].imageSizeX: 0..1952
   measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
   measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   measurements[].promptLayout.lines.length: int 0..Infinity
