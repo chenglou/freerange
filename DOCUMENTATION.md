@@ -770,6 +770,7 @@ The checker understands a small pure subset:
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
+- named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
 - named imports of exported numeric constants and `@fit` function declarations when TypeScript resolves them to local source
 - TypeScript-known imported object/array shape, without treating it as a source-proved helper contract
@@ -799,7 +800,7 @@ Not supported yet:
 - classes, methods, async, generators
 - destructured params, rest params, default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
-- general closures or callback reasoning
+- higher-order call contracts, general closures, or callback reasoning
 - strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
 - public lambdas, `forall`, filters, arbitrary folds, prose-as-truth
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`

@@ -148,6 +148,11 @@ count(visibleRows)
 
 No aggregate callbacks, filters, inline arithmetic, or folds.
 
+Callback contracts stay out until real demo pressure says otherwise. Users can
+annotate concrete wrapper functions or claimed callback results; Freerange should
+not grow a public function-type spec language just because higher-order calls
+exist in TypeScript.
+
 ## Useful Weird Prototypes
 
 - `freerange infer stackRows`: generate candidate annotations; user chooses what to commit.
