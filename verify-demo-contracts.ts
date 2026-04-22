@@ -1,4 +1,4 @@
-import {verifyFitFiles} from './src/check.ts'
+import {verifyFitFiles} from './src/reports.ts'
 import {demoContractPaths} from './demo-contract-paths.ts'
 
 const expectedPassCount = 115

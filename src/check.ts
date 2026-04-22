@@ -1,6 +1,5 @@
 import * as ts from 'typescript'
 import {
-  buildFitSourceModule,
   loadFitProject,
   resolveFitExport,
   type FitImportBinding,
@@ -112,17 +111,6 @@ export type FitCheck = {
   reason?: string
 }
 
-export type FitCheckReport = {
-  phase: 'ready' | 'error'
-  files: string[]
-  checks: FitCheck[]
-  summary: {
-    pass: number
-    fail: number
-    unknown: number
-  }
-}
-
 export type FitDoctorStatus = 'pass' | 'fail' | 'requires' | 'unknown'
 
 export type FitDoctorCheck = {
@@ -131,18 +119,6 @@ export type FitDoctorCheck = {
   text: string
   status: FitDoctorStatus
   reason?: string
-}
-
-export type FitDoctorReport = {
-  phase: 'ready' | 'error'
-  files: string[]
-  checks: FitDoctorCheck[]
-  summary: {
-    pass: number
-    fail: number
-    requires: number
-    unknown: number
-  }
 }
 
 export type FitInferFact = {
@@ -215,7 +191,7 @@ type Program = FitModule<NumberValue>
 
 type ImportedBinding = FitImportBinding<Program>
 
-type FunctionContractProof =
+export type FunctionContractProof =
   | {status: 'verifying'}
   | {status: FitCheckStatus; checks: FitCheck[]}
 
@@ -265,50 +241,6 @@ type FunctionContractSource = ImportedContractSource & {
   kind: 'imported' | 'local'
 }
 
-export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
-  const checks: FitCheck[] = []
-  const contractCache = new Map<string, FunctionContractProof>()
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
-  for (const program of project.entries) checks.push(...verifyProgram(program, contractCache))
-
-  const summary = {
-    pass: checks.filter(check => check.status === 'pass').length,
-    fail: checks.filter(check => check.status === 'fail').length,
-    unknown: checks.filter(check => check.status === 'unknown').length,
-  }
-  return {
-    phase: summary.fail === 0 && summary.unknown === 0 ? 'ready' : 'error',
-    files: paths,
-    checks,
-    summary,
-  }
-}
-
-export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> {
-  const checks: FitDoctorCheck[] = []
-  const contractCache = new Map<string, FunctionContractProof>()
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
-  for (const program of project.entries) checks.push(...doctorProgram(program, contractCache))
-
-  const summary = {
-    pass: checks.filter(check => check.status === 'pass').length,
-    fail: checks.filter(check => check.status === 'fail').length,
-    requires: checks.filter(check => check.status === 'requires').length,
-    unknown: checks.filter(check => check.status === 'unknown').length,
-  }
-  return {
-    phase: summary.fail === 0 ? 'ready' : 'error',
-    files: paths,
-    checks,
-    summary,
-  }
-}
-
-export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
-  const program = buildFitSourceModule(file, sourceText, readTopLevelNumberGlobal)
-  return verifyProgram(program, new Map<string, FunctionContractProof>())
-}
-
 export function inferFitFiles(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInferReport {
   const project = loadFitProject(paths, readTopLevelNumberGlobal)
   const contractCache = new Map<string, FunctionContractProof>()
@@ -337,7 +269,11 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
   return {files: paths, insights}
 }
 
-function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
+export function createFunctionContractCache(): Map<string, FunctionContractProof> {
+  return new Map<string, FunctionContractProof>()
+}
+
+export function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
   const literal = numericLiteralValue(declaration.initializer)
   if (literal == null) return null
@@ -347,7 +283,7 @@ function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: s
   }
 }
 
-function verifyProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
   for (const statement of program.sourceFile.statements) {
     if (!ts.isFunctionDeclaration(statement)) continue
@@ -361,7 +297,7 @@ function verifyProgram(program: Program, contractCache: Map<string, FunctionCont
   return checks
 }
 
-function doctorProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitDoctorCheck[] {
+export function doctorFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitDoctorCheck[] {
   const checks: FitCheck[] = []
   checks.push(...doctorTopLevelCalls(program, contractCache))
   for (const fn of program.functions.values()) checks.push(...doctorFunctionCalls(program, fn, contractCache))

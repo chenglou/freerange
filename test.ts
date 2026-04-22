@@ -1,4 +1,5 @@
-import {inferFitFiles, type FitCheck, verifyFitFiles} from './src/check.ts'
+import {inferFitFiles} from './src/check.ts'
+import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts']
 const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts']

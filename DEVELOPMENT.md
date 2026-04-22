@@ -33,6 +33,7 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction

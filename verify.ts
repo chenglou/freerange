@@ -1,4 +1,4 @@
-import {verifyFitFiles} from './src/check.ts'
+import {verifyFitFiles} from './src/reports.ts'
 
 const paths = Bun.argv.slice(2)
 
