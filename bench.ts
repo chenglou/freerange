@@ -4,7 +4,11 @@ import {
   verifyFitProgram,
   type FitCheck,
 } from './src/check.ts'
-import {loadFitProject} from './src/modules.ts'
+import {
+  createFitProjectLoadTiming,
+  loadFitProject,
+  type FitProjectLoadTiming,
+} from './src/modules.ts'
 import {demoContractPaths} from './demo-contract-paths.ts'
 
 type BenchOptions = {
@@ -16,6 +20,7 @@ type BenchRun = {
   totalMs: number
   loadMs: number
   verifyMs: number
+  loadTiming: FitProjectLoadTiming
   modules: number
   checks: FitCheck[]
 }
@@ -37,6 +42,7 @@ if (args.includes('--help') || args.includes('-h')) {
     const run = runBench(paths)
     runs.push(run)
     console.log(`run ${index + 1}: ${formatMs(run.totalMs)} total (${formatMs(run.loadMs)} load, ${formatMs(run.verifyMs)} verify) - ${formatSummary(run.checks)}, ${run.modules} modules`)
+    console.log(`  load: ${formatLoadTiming(run.loadTiming, run.loadMs)}`)
   }
 
   if (runs.length > 1) {
@@ -48,7 +54,8 @@ if (args.includes('--help') || args.includes('-h')) {
 function runBench(paths: string[]): BenchRun {
   const totalStart = performance.now()
   const loadStart = performance.now()
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const loadTiming = createFitProjectLoadTiming()
+  const project = loadFitProject(paths, readTopLevelNumberGlobal, {timing: loadTiming})
   const loadMs = performance.now() - loadStart
 
   const verifyStart = performance.now()
@@ -61,6 +68,7 @@ function runBench(paths: string[]): BenchRun {
     totalMs: performance.now() - totalStart,
     loadMs,
     verifyMs,
+    loadTiming,
     modules: project.modules.size,
     checks,
   }
@@ -120,6 +128,25 @@ function formatSummary(checks: FitCheck[]) {
 
 function formatMs(ms: number) {
   return `${ms.toFixed(1)}ms`
+}
+
+function formatLoadTiming(timing: FitProjectLoadTiming, loadMs: number) {
+  const known = timing.configMs
+    + timing.typeProgramMs
+    + timing.typeCheckerMs
+    + timing.fileReadMs
+    + timing.moduleParseMs
+    + timing.importResolveMs
+  const other = Math.max(0, loadMs - known)
+  return [
+    `config ${formatMs(timing.configMs)}`,
+    `ts ${formatMs(timing.typeProgramMs)}`,
+    `checker ${formatMs(timing.typeCheckerMs)}`,
+    `read ${formatMs(timing.fileReadMs)}`,
+    `parse/index ${formatMs(timing.moduleParseMs)}`,
+    `resolve ${formatMs(timing.importResolveMs)}`,
+    `other ${formatMs(other)}`,
+  ].join(', ')
 }
 
 function median(values: number[]) {

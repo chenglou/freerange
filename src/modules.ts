@@ -21,6 +21,15 @@ export type FitProject<TGlobal> = {
   configFile: string | null
 }
 
+export type FitProjectLoadTiming = {
+  configMs: number
+  typeProgramMs: number
+  typeCheckerMs: number
+  fileReadMs: number
+  moduleParseMs: number
+  importResolveMs: number
+}
+
 export type FitImportBinding<TModule> =
   | {
       kind: 'resolved'
@@ -67,6 +76,10 @@ export type FitResolvedExport<TModule> =
 
 export type TopLevelGlobalReader<TGlobal> = (declaration: ts.VariableDeclaration) => {name: string; value: TGlobal} | null
 
+type LoadFitProjectOptions = {
+  timing?: FitProjectLoadTiming
+}
+
 type ResolutionContext = {
   compilerOptions: ts.CompilerOptions
   configFile: string | null
@@ -82,11 +95,23 @@ type ResolvedImport =
 export function loadFitProject<TGlobal>(
   paths: string[],
   readGlobal: TopLevelGlobalReader<TGlobal>,
+  options: LoadFitProjectOptions = {},
 ): FitProject<TGlobal> {
-  const resolution = createResolutionContext(paths)
+  const resolution = createResolutionContext(paths, options.timing)
   const modules = new Map<string, FitModule<TGlobal>>()
-  const entries = paths.map(path => loadModule(path, modules, resolution, readGlobal))
+  const entries = paths.map(path => loadModule(path, modules, resolution, readGlobal, options.timing))
   return {entries, modules, configFile: resolution.configFile}
+}
+
+export function createFitProjectLoadTiming(): FitProjectLoadTiming {
+  return {
+    configMs: 0,
+    typeProgramMs: 0,
+    typeCheckerMs: 0,
+    fileReadMs: 0,
+    moduleParseMs: 0,
+    importResolveMs: 0,
+  }
 }
 
 export function resolveFitProjectPaths(paths: string[]): {paths: string[]; configFile: string | null} {
@@ -121,20 +146,25 @@ function loadModule<TGlobal>(
   modules: Map<string, FitModule<TGlobal>>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
 ): FitModule<TGlobal> {
   const sourceId = toSourceId(file)
   const cacheKey = cacheKeyFor(sourceId)
   const existing = modules.get(cacheKey)
   if (existing != null) return existing
 
+  const readStart = performance.now()
   const sourceText = ts.sys.readFile(sourceId)
+  addTiming(timing, 'fileReadMs', readStart)
   if (sourceText == null) throw new Error(`Could not read ${displayPath(sourceId)}`)
 
   const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
+  const parseStart = performance.now()
   const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, resolution.typeChecker, sourceFile)
+  addTiming(timing, 'moduleParseMs', parseStart)
   modules.set(cacheKey, module)
-  loadImports(module, modules, resolution, readGlobal)
-  loadReExports(module, modules, resolution, readGlobal)
+  loadImports(module, modules, resolution, readGlobal, timing)
+  loadReExports(module, modules, resolution, readGlobal, timing)
   return module
 }
 
@@ -187,6 +217,7 @@ function loadImports<TGlobal>(
   modules: Map<string, FitModule<TGlobal>>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
 ) {
   for (const statement of module.sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue
@@ -229,7 +260,7 @@ function loadImports<TGlobal>(
         continue
       }
 
-      const resolved = resolveImport(module, specifier, resolution)
+      const resolved = resolveImport(module, specifier, resolution, timing)
       if (resolved.kind === 'unresolved') {
         module.imports.set(localName, {
           kind: 'unresolved',
@@ -240,7 +271,7 @@ function loadImports<TGlobal>(
         continue
       }
 
-      const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal)
+      const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
       module.imports.set(localName, {
         kind: 'resolved',
         exportedName,
@@ -256,6 +287,7 @@ function loadReExports<TGlobal>(
   modules: Map<string, FitModule<TGlobal>>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
 ) {
   for (const statement of module.sourceFile.statements) {
     if (!ts.isExportDeclaration(statement)) continue
@@ -277,7 +309,7 @@ function loadReExports<TGlobal>(
         continue
       }
 
-      const resolved = resolveImport(module, specifier, resolution)
+      const resolved = resolveImport(module, specifier, resolution, timing)
       if (resolved.kind === 'unresolved') {
         module.exports.set(exportName, {
           kind: 'unresolved',
@@ -288,7 +320,7 @@ function loadReExports<TGlobal>(
         continue
       }
 
-      const exportedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal)
+      const exportedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
       module.exports.set(exportName, {
         kind: 'reexport',
         exportedName,
@@ -299,8 +331,10 @@ function loadReExports<TGlobal>(
   }
 }
 
-function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext): ResolvedImport {
+function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext, timing: FitProjectLoadTiming | undefined): ResolvedImport {
+  const start = performance.now()
   const result = ts.resolveModuleName(specifier, module.sourceId, resolution.compilerOptions, ts.sys, resolution.cache)
+  addTiming(timing, 'importResolveMs', start)
   const resolved = result.resolvedModule
   if (resolved == null) {
     return {
@@ -377,17 +411,32 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
   return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
-function createResolutionContext(paths: string[]): ResolutionContext {
+function createResolutionContext(paths: string[], timing: FitProjectLoadTiming | undefined): ResolutionContext {
+  const configStart = performance.now()
   const configFile = findConfigFile(paths)
   const compilerOptions = configFile == null ? defaultCompilerOptions() : readCompilerOptions(configFile)
+  addTiming(timing, 'configMs', configStart)
+
+  const typeProgramStart = performance.now()
   const typeProgram = ts.createProgram(paths.map(toSourceId), {...compilerOptions, noEmit: true})
+  addTiming(timing, 'typeProgramMs', typeProgramStart)
+
+  const typeCheckerStart = performance.now()
+  const typeChecker = typeProgram.getTypeChecker()
+  addTiming(timing, 'typeCheckerMs', typeCheckerStart)
+
   return {
     compilerOptions,
     configFile,
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
     typeProgram,
-    typeChecker: typeProgram.getTypeChecker(),
+    typeChecker,
   }
+}
+
+function addTiming(timing: FitProjectLoadTiming | undefined, key: keyof FitProjectLoadTiming, start: number) {
+  if (timing == null) return
+  timing[key] += performance.now() - start
 }
 
 function findConfigFile(paths: string[]): string | null {
