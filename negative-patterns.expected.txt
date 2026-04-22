@@ -274,6 +274,10 @@ FAIL negative-patterns.ts:negativeCallGiven: call negativeNeedsSmallValue(value)
   called function requires value: 0..10
   this call passes value is 0..20
   missing: value <= 10
+FAIL negative-patterns.ts:negativeInlineParamCallGiven: call negativeInlineParamNeedsSmall(value): requires value: 0..10
+  called function requires value: 0..10
+  this call passes value is 0..20
+  missing: value <= 10
 FAIL negative-patterns.ts:negativeRelationalCallGiven: call negativeNeedsContainerFit(containee, container): requires container >= containee
   called function requires container >= containee
   this call passes container is 0..50 and containee is 100..200
@@ -435,6 +439,14 @@ UNKNOWN negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: 
 FAIL negative-patterns.ts:negativeInlineSideRange: index: int 0..3
   range was int 4..4 as 4, expected inside int 0..3
   need: 4 inside int 0..3
+  known:
+    int 4..4 as 4
+    int 0..0 as 0
+    int 3..3 as 3
+  missing: 4 <= 3
+FAIL negative-patterns.ts:negativeInlineObjectFieldRange: result.width: 0..3
+  range was int 4..4 as 4, expected inside 0..3
+  need: 4 inside 0..3
   known:
     int 4..4 as 4
     int 0..0 as 0

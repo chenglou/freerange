@@ -147,20 +147,6 @@ function gridColumnsAndBox(windowSizeX: number) {
 }
 
 /** @fit
- * given x: -10000..10000
- * given y: -10000..10000
- * given sizeX: 0..10000
- * given sizeY: 0..10000
- * result.x == x
- * result.y == y
- * result.sizeX == sizeX
- * result.sizeY == sizeY
- */
-function rect(x: number, y: number, sizeX: number, sizeY: number) {
-  return {x, y, sizeX, sizeY}
-}
-
-/** @fit
  * given focused: int 1..1000
  * result: int 0..999
  * result == focused - 1
@@ -199,7 +185,7 @@ function lineHitAreaBoxes(windowSizeX: number, windowSizeY: number, scrollY: num
 The exact helper names can change. The point is the proof boundary:
 
 - column count and box width are source-owned geometry
-- rect construction copies its inputs
+- plain object geometry fields are source-owned too; no tiny `rect(...)` helper is needed just to copy inputs
 - left/right target helpers encode the index math, while the nullable edge cases stay in ordinary app control flow
 - hit-area boxes are stable layout geometry, not animation
 - helper contracts should be small enough that a bad arithmetic change makes the checker complain
@@ -234,8 +220,8 @@ At the end, report:
 
 Current `demos/photo-gallery` contracts prove the important source-owned helper seams cleanly:
 
-- `layout.ts` and `prompt-layout.ts`: 65 pass, 0 fail, 0 unknown
-- all checked sibling demo contracts: 126 pass, 0 fail, 0 unknown
+- `layout.ts` and `prompt-layout.ts`: 56 pass, 0 fail, 0 unknown
+- all checked sibling demo contracts: 115 pass, 0 fail, 0 unknown
 
 The useful ground-truth facts now include:
 
@@ -289,7 +275,7 @@ The scratch demos are still not faithful recreations of the current hand-written
 
 The formal seam did two useful things:
 
-- It made both workers converge on the same pure boundaries: grid columns, rect construction, previous/next target math, and stable line hit boxes.
+- It made both workers converge on the same pure boundaries: grid columns, object-field geometry, previous/next target math, and stable line hit boxes.
 - It caught a real spec bug early: nullable hit areas cannot honestly expose `result.left.targetIndex` for every focused index.
 
 No new primitive was needed. Plain ranges, comparisons, constants, helper contracts, and source inference were enough for the useful checks.

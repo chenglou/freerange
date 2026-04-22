@@ -8,9 +8,9 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 
 ## Current Surface
 
-- Function specs use `@fit`. `given` lines are trusted input facts; bare lines are facts to prove.
+- Function specs use `@fit`. `given` lines and param `// @fit` comments are trusted input facts; bare lines and `result` lines are facts to prove.
 - Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `result`.
-- Local inline checks use `// @fit 0..foo` immediately before a single variable declaration, or as a trailing side comment. They are checks on that local, not trusted givens.
+- Inline local and field checks use `@fit 0..foo` immediately before a single variable declaration, as a trailing `//` side comment, or on a simple object field. They are checks on that local value or field, not trusted givens. On simple identifier params, the same syntax is shorthand for a trusted `given`. Leading line/block comments and trailing `//` comments are supported; trailing block comments are intentionally not part of the current surface.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
 - Wildcard comparisons support one collection side and one scalar side. The collection side may be nested:
@@ -56,8 +56,8 @@ This was the next path before the TypeScript piggyback idea came up. Keep it vis
 4. **Use real demos as pressure tests.**
    The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-sided wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; its function and loop spec sections are useful for deciding which `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
    Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now. Vibescript photo-gallery now has source-owned contracts on the real grid sizing, prompt visible sizing, line max sizes, line target math, stable edge hit areas, and item geometry. The remaining photo-gallery gaps are larger loop/product facts, not a request for a new public atom.
-   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 61 helper checks after trimming checker-shaped helper bloat, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation frame samples before asking for more Freerange power.
-   Current infer sweep across checked demos: 111 explicit function checks were source-proved, 0 were not-inferred, 66 were redundant because emitted inferred result facts already covered them, and 45 remain source-proved keepers. That is a cue to simplify comments, not to auto-delete public contracts.
+   Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 56 checks across `layout.ts` and `prompt-layout.ts`, with scalar input domains mostly moved onto params and the line-size math back in one helper, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation handoff samples before asking for more Freerange power.
+   Current infer sweep across checked demos: 92 explicit function checks are source-proved, 98 input facts are trusted, 0 are not-inferred, 52 are redundant because emitted inferred result facts already cover them, and 40 remain source-proved keepers. That is a cue to simplify comments, not to auto-delete public contracts.
 
 5. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.

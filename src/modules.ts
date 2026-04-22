@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {hasFitComment, parseFitSpecs, type FitSpec} from './parser.ts'
+import {parseFunctionFitSpecs, type FitSpec} from './parser.ts'
 
 export type FitModule<TGlobal> = {
   sourceId: string
@@ -144,9 +144,10 @@ function parseFitModule<TGlobal>(
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
+      const specs = parseFunctionFitSpecs(sourceText, statement)
       functions.set(statement.name.text, statement)
-      if (hasFitComment(sourceText, statement)) fitFunctions.add(statement.name.text)
-      specsByFunction.set(statement.name.text, parseFitSpecs(sourceText, statement))
+      if (specs.length > 0) fitFunctions.add(statement.name.text)
+      specsByFunction.set(statement.name.text, specs)
       if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
         exports.set(statement.name.text, {kind: 'local', localName: statement.name.text})
       }

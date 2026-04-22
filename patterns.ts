@@ -35,6 +35,49 @@ export function localInlineRangeFacts() {
   return index2
 }
 
+export function inlineObjectFieldRangeFacts() {
+  return {
+    width: 12, // @fit int 0..20
+    nested: {
+      // @fit int 0..3
+      index: Math.floor(2.5),
+    },
+  }
+}
+
+/** @fit
+ * result: 5..15
+ */
+export function inlineParamRangeFact(
+  value: number, // @fit 0..10
+) {
+  return value + 5
+}
+
+/** @fit
+ * given min <= max
+ * result: 0..100
+ */
+export function inlineParamFactsMixWithFunctionFacts(
+  value: number, // @fit 0..100
+  min: number, // @fit 0..100
+  max: number, // @fit 0..100
+) {
+  return Math.max(min, Math.min(value, max))
+}
+
+export function inlineParamGivensOnlyDoNotAuditBody(
+  value: number, // @fit 0..10
+) {
+  return helperWithNarrowInput(value + 100)
+}
+
+function helperWithNarrowInput(
+  value: number, // @fit 0..10
+) {
+  return value
+}
+
 /** @fit
  * given value: 0..5
  * result.high > result.low
@@ -872,4 +915,25 @@ function trackedMiddleGiven(value: number) {
  */
 export function transitiveGivenTracking(value: number) {
   return trackedMiddleGiven(value)
+}
+
+export function inlineCommentFormatVariants(
+  /** @fit 0..10 */
+  blockParam: number,
+  // @fit 0..10
+  lineParam: number,
+  trailingParam: number, // @fit 0..10
+) {
+  /** @fit int 0..10 */
+  const blockLocal = Math.floor(blockParam)
+  // @fit int 0..10
+  const lineLocal = Math.floor(lineParam)
+  const trailingLocal = Math.floor(trailingParam) // @fit int 0..10
+  return {
+    /** @fit int 0..10 */
+    blockField: blockLocal,
+    // @fit int 0..10
+    lineField: lineLocal,
+    trailingField: trailingLocal, // @fit int 0..10
+  }
 }

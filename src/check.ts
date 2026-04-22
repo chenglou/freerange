@@ -12,9 +12,10 @@ import {
   parseFitExpression,
   parseFitSpecLine,
   parseFitSpecs,
+  parseInlineFitSpecsForExpression,
   parseLocalFitSpecs,
   hasFitComment,
-  hasLocalFitComment,
+  hasInlineFitComment,
   type ComparisonOperator,
   type FitDomainPath,
   type FitDomainPathSegment,
@@ -210,6 +211,8 @@ type EvalContext = {
   checks: FitCheck[]
   assumptions: LinearConstraint[]
   contractCache: Map<string, FunctionContractProof>
+  callObligations?: 'record' | 'silent'
+  objectPath?: string[]
   inferLoops?: FitInferLoopReport[]
   inferUnsupported?: string[]
 }
@@ -271,7 +274,7 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasLocalFitComment(program, fn)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn)) continue
       functions.push(inferFunctionFacts(program, fn, contractCache))
     }
   }
@@ -285,7 +288,7 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasLocalFitComment(program, fn)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn)) continue
       insights.push(...inspectFunctionShapes(program, fn, contractCache, options))
     }
   }
@@ -308,20 +311,20 @@ function verifyProgram(program: Program, contractCache: Map<string, FunctionCont
     if (!ts.isFunctionDeclaration(statement)) continue
     if (statement.name == null) continue
     const specs = program.specsByFunction.get(statement.name.text) ?? []
-    if (specs.length === 0 && !functionHasLocalFitComment(program, statement)) continue
+    if (specs.length === 0 && !functionHasBodyFitComment(program, statement)) continue
     checks.push(...verifyFunctionSpecs(program.file, program, statement, specs, contractCache))
   }
 
   return checks
 }
 
-function functionHasLocalFitComment(program: Program, fn: ts.FunctionDeclaration) {
+function functionHasBodyFitComment(program: Program, fn: ts.FunctionDeclaration) {
   if (fn.body == null) return false
   let found = false
   const visit = (node: ts.Node) => {
     if (found) return
     if (node !== fn.body && isFunctionLikeWithBody(node)) return
-    if (ts.isVariableStatement(node) && hasLocalFitComment(program.sourceText, node)) {
+    if (hasInlineFitComment(program.sourceText, node) || hasFitComment(program.sourceText, node)) {
       found = true
       return
     }
@@ -363,9 +366,20 @@ function verifyFunctionSpecs(
 
   const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   checks.push(...impossibleChecks)
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
-  const result = evaluateFunctionBody(fn, context)
-  checks.push(...context.checks)
+  const hasBodyClaims = functionHasBodyClaims(specs) || functionHasBodyFitComment(program, fn)
+  const context: EvalContext = {
+    program,
+    file,
+    env,
+    inputRoots,
+    stack: [functionName],
+    checks: [],
+    assumptions,
+    contractCache,
+    callObligations: functionHasBodyClaims(specs) ? 'record' : 'silent',
+  }
+  const result = hasBodyClaims ? evaluateFunctionBody(fn, context) : unknown('No body claim requested')
+  if (hasBodyClaims) checks.push(...context.checks)
 
   for (const spec of specs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
@@ -373,6 +387,10 @@ function verifyFunctionSpecs(
   }
 
   return checks
+}
+
+function functionHasBodyClaims(specs: FitSpec[]) {
+  return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison')
 }
 
 function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
@@ -430,7 +448,7 @@ type FunctionShapeState = {
 function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
   const functionName = fn.name?.text ?? '<anonymous>'
   const insights: FitShapeInsight[] = []
-  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasLocalFitComment(program, fn)
+  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn)
     ? evaluateFunctionShapeState(program, fn, contractCache)
     : null
 
@@ -1597,7 +1615,7 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
     }
     if (ts.isReturnStatement(statement)) {
       if (statement.expression == null) return unknown('Return without expression')
-      return evaluateExpression(statement.expression, context)
+      return evaluateExpressionWithObjectPath(statement.expression, context, ['result'])
     }
     return unknown(`Unsupported statement in ${context.stack.at(-1) ?? '<unknown>'}: ${statement.getText(context.program.sourceFile)}`)
   }
@@ -1605,24 +1623,27 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
   return unknown(`Function ${context.stack.at(-1) ?? '<unknown>'} did not return`)
 }
 
-function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext) {
+function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext, options: {claim?: boolean} = {}) {
   if (declaration.initializer == null) {
     bindUninitializedName(declaration.name, context)
     return
   }
-  const value = evaluateExpression(declaration.initializer, context)
+  const evaluate = () => ts.isIdentifier(declaration.name)
+    ? evaluateExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
+    : evaluateExpression(declaration.initializer!, context)
+  const value = options.claim === true ? withCallObligationRecording(context, evaluate) : evaluate()
   bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
 }
 
 function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
+  const specs = parseLocalFitSpecs(context.program.sourceText, statement)
   for (const declaration of statement.declarationList.declarations) {
-    bindVariableDeclaration(declaration, context)
+    bindVariableDeclaration(declaration, context, {claim: specs.length > 0})
   }
-  verifyLocalFitSpecs(statement, context)
+  verifyLocalFitSpecs(specs, context)
 }
 
-function verifyLocalFitSpecs(statement: ts.VariableStatement, context: EvalContext) {
-  const specs = parseLocalFitSpecs(context.program.sourceText, statement)
+function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'}>[], context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -1777,7 +1798,7 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
 function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): Value {
   if (ts.isReturnStatement(statement)) {
     if (statement.expression == null) return unknown('Return without expression')
-    return evaluateExpression(statement.expression, context)
+    return evaluateExpressionWithObjectPath(statement.expression, context, ['result'])
   }
   if (!ts.isBlock(statement)) return unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)
   const localContext: EvalContext = {...context, env: new Map(context.env)}
@@ -1793,7 +1814,7 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
     }
     if (ts.isReturnStatement(child)) {
       if (child.expression == null) return unknown('Return without expression')
-      return evaluateExpression(child.expression, localContext)
+      return evaluateExpressionWithObjectPath(child.expression, localContext, ['result'])
     }
     return unknown(`Unsupported branch statement: ${child.getText(context.program.sourceFile)}`)
   }
@@ -1804,6 +1825,18 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalConte
   const checksStart = context.checks.length
   const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
   const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
+  return withCallObligationRecordingWhen(context, functionHasBodyClaims(localSpecs), () =>
+    evaluateForOfStatementCore(statement, context, checksStart, rawLocalSpecs, localSpecs, resultSpecs))
+}
+
+function evaluateForOfStatementCore(
+  statement: ts.ForOfStatement,
+  context: EvalContext,
+  checksStart: number,
+  rawLocalSpecs: FitSpec[],
+  localSpecs: FitSpec[],
+  resultSpecs: FitSpec[],
+): Value | null {
   reportLoopResultSpecs(resultSpecs, context)
   applyLocalGivenSpecs(localSpecs, context)
 
@@ -1942,6 +1975,18 @@ function evaluateForStatement(statement: ts.ForStatement, context: EvalContext):
   const checksStart = context.checks.length
   const rawLocalSpecs = parseFitSpecs(context.program.sourceText, statement)
   const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
+  return withCallObligationRecordingWhen(context, functionHasBodyClaims(localSpecs), () =>
+    evaluateForStatementCore(statement, context, checksStart, rawLocalSpecs, localSpecs, resultSpecs))
+}
+
+function evaluateForStatementCore(
+  statement: ts.ForStatement,
+  context: EvalContext,
+  checksStart: number,
+  rawLocalSpecs: FitSpec[],
+  localSpecs: FitSpec[],
+  resultSpecs: FitSpec[],
+): Value | null {
   reportLoopResultSpecs(resultSpecs, context)
   applyLocalGivenSpecs(localSpecs, context)
 
@@ -2817,7 +2862,9 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
+  const obligations = shouldRecordCallObligations(context)
+    ? verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
+    : 'unknown'
 
   const env = programGlobalEnv(context.program)
   for (let i = 0; i < fn.parameters.length; i++) {
@@ -2832,9 +2879,10 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     env,
     inputRoots: functionInputRoots(context.program, fn),
     stack: [...context.stack, functionName],
-    checks: context.checks,
+    checks: shouldRecordCallObligations(context) ? context.checks : [],
     assumptions: context.assumptions,
     contractCache: context.contractCache,
+    ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
   })
   const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn, context.program)
     ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.type, context.program, new Set())
@@ -2871,6 +2919,7 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${binding.exportedName}Result`, fn, exported.module))
   if (specs.length === 0) return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
   if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
+  if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${binding.exportedName} contract was not used outside a @fit claim`)
   const source = {
     sourceFile: exported.module.file,
     sourceFunctionName: fn.name?.text ?? exported.localName,
@@ -2884,6 +2933,26 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
   return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, resolvedStructuralFallback ?? unknownResultValue(specs, exported.module))
+}
+
+function shouldRecordCallObligations(context: EvalContext) {
+  return context.callObligations !== 'silent'
+}
+
+function withCallObligationRecording<T>(context: EvalContext, fn: () => T): T {
+  return withCallObligationRecordingWhen(context, true, fn)
+}
+
+function withCallObligationRecordingWhen<T>(context: EvalContext, enabled: boolean, fn: () => T): T {
+  if (!enabled || shouldRecordCallObligations(context)) return fn()
+  const previous = context.callObligations
+  context.callObligations = 'record'
+  try {
+    return fn()
+  } finally {
+    if (previous == null) delete context.callObligations
+    else context.callObligations = previous
+  }
 }
 
 function namespaceImportCallReason(target: ts.PropertyAccessExpression, context: EvalContext): string | null {
@@ -3586,16 +3655,59 @@ function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, context: 
       continue
     }
     if (ts.isShorthandPropertyAssignment(property)) {
-      props.set(property.name.text, evaluateExpression(property.name, context))
+      const propertyPath = objectPropertyPath(context, property.name.text)
+      const specs = parseInlineFitSpecsForExpression(context.program.sourceText, property, objectPathText(propertyPath))
+      const evaluate = () => evaluateExpressionWithObjectPath(property.name, context, propertyPath)
+      const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
+      props.set(property.name.text, value)
+      verifyInlineRangeSpecsForValue(specs, value, context)
       continue
     }
     if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
-      props.set(property.name.text, evaluateExpression(property.initializer, context))
+      const propertyPath = objectPropertyPath(context, property.name.text)
+      const specs = parseInlineFitSpecsForExpression(context.program.sourceText, property, objectPathText(propertyPath))
+      const evaluate = () => evaluateExpressionWithObjectPath(property.initializer, context, propertyPath)
+      const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
+      props.set(property.name.text, value)
+      verifyInlineRangeSpecsForValue(specs, value, context)
       continue
     }
     return unknown(`Unsupported object literal property: ${property.getText(context.program.sourceFile)}`)
   }
   return {kind: 'object', props, expr: null}
+}
+
+function evaluateExpressionWithObjectPath(expression: ts.Expression, context: EvalContext, objectPath: string[]): Value {
+  const previous = context.objectPath
+  context.objectPath = objectPath
+  try {
+    return evaluateExpression(expression, context)
+  } finally {
+    if (previous == null) delete context.objectPath
+    else context.objectPath = previous
+  }
+}
+
+function objectPropertyPath(context: EvalContext, propertyName: string): string[] {
+  return [...(context.objectPath ?? []), propertyName]
+}
+
+function objectPathText(path: string[] | undefined) {
+  return path == null || path.length === 0 ? '<property>' : path.join('.')
+}
+
+function verifyInlineRangeSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'}>[], value: Value, context: EvalContext) {
+  if (specs.length === 0) return
+  for (const spec of specs) {
+    const status = proveRangeSpec(value, spec.range, context)
+    context.checks.push({
+      file: context.file,
+      functionName: context.stack.join(' > '),
+      text: spec.text,
+      status: status.status,
+      ...(status.reason == null ? {} : {reason: status.reason}),
+    })
+  }
 }
 
 function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: EvalContext): Value {

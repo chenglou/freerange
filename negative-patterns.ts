@@ -412,6 +412,20 @@ export function negativeCallGiven(value: number) {
   return negativeNeedsSmallValue(value)
 }
 
+function negativeInlineParamNeedsSmall(
+  value: number, // @fit 0..10
+) {
+  return value
+}
+
+/** @fit
+ * given value: 0..20
+ * result: 0..20
+ */
+export function negativeInlineParamCallGiven(value: number) {
+  return negativeInlineParamNeedsSmall(value)
+}
+
 /** @fit
  * given containee: 0..1000
  * given container: 0..1000
@@ -515,6 +529,7 @@ export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number
 
 /** @fit
  * given width: 0..100
+ * result: 0..100
  */
 export function negativeLocalHelperPreconditionViolation(width: number) {
   return negativeConditionalClampLayoutValue(10, width, 5)
@@ -656,6 +671,12 @@ export function negativeGivenRangeCannotDescribeDerivedExpression(width: number)
 export function negativeInlineSideRange() {
   const index = 4 // @fit int 0..3
   return index
+}
+
+export function negativeInlineObjectFieldRange() {
+  return {
+    width: 4, // @fit 0..3
+  }
 }
 
 /** @fit

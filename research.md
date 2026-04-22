@@ -34,7 +34,7 @@ The photo-gallery scratch trial is the best signal so far for agent-driven, spec
 The useful part was not "the whole app is formally verified." The useful part was that the spec made the source-owned geometry boring:
 
 - grid columns and max box width
-- rect construction
+- plain object geometry fields
 - previous/next index math
 - stable line hit boxes
 
@@ -103,7 +103,7 @@ High-value inference:
 
 - TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; object/interface/type-alias/union/intersection shapes let sparse `@fit` comments still evaluate natural code. The useful boundary is now `src/shapes.ts`: TypeScript can tell us structural shape across imported aliases, utility types, generic instantiations, property-access calls, namespace-imported structural calls, and helper returns, but it must not give Freerange numeric ranges, sequence facts, or proof obligations. The walk is deliberately depth/width bounded so broad parser/library types do not become our problem.
 - `items.map(...)` preserves length, simple field domains, and optional callback index facts. Expression callbacks and tiny block callbacks are enough for the code we have seen; source order can come later when there is a public fact that needs it.
-- Local inline `// @fit 0..foo` checks are now a small authoring valve for red-line variables. They keep one-value facts next to the code without turning `given` into a local escape hatch.
+- Inline `// @fit 0..foo` is now placement-sensitive in the useful way: on params it is a trusted input domain, exactly like a lifted `given`; on locals and object fields it is a targeted check. That keeps boring scalar domains and red-line variables next to the code without turning `given` into a local escape hatch.
 - append-only `for...of` can infer length, scalar-array element shape, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.

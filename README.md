@@ -2,7 +2,7 @@
 
 Static `@fit` checks for ordinary TypeScript.
 
-Freerange reads your function source and the `@fit` comment above it. It proves the comment from the code, or tells you where it cannot. No browser, screenshots, traces, sampled cases, fixtures, or app-code execution. Just source in, facts out.
+Freerange reads your function source and nearby `@fit` comments. It proves the requested facts from the code, or tells you where it cannot. No browser, screenshots, traces, sampled cases, fixtures, or app-code execution. Just source in, facts out.
 
 The first useful surface is layout math:
 
@@ -23,17 +23,18 @@ Put `@fit` immediately above a function declaration:
 
 ```ts
 /** @fit
- * given width: 0..1000
  * result.capped: 0..320
  * result.overflow >= 0
  */
-function cappedOverflow(width: number) {
+function cappedOverflow(
+  width: number, // @fit 0..1000
+) {
   const capped = Math.min(width, 320)
   return {capped, overflow: width - capped}
 }
 ```
 
-`given` lines describe inputs your function expects. Bare lines are facts Freerange must prove from source.
+Param `// @fit` comments are input facts, the same as `given width: 0..1000` in the function block. Bare lines and `result` lines are facts Freerange must prove from source.
 
 For one local value, use the small inline form:
 
@@ -41,6 +42,9 @@ For one local value, use the small inline form:
 // @fit int 0..count
 const index = Math.floor(pointer / cellSize)
 const next = index + 1 // @fit int 1..count
+return {
+  width: container - padding * 2, // @fit 0..1200
+}
 ```
 
 ## Run A File
