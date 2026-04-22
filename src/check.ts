@@ -123,6 +123,28 @@ export type FitCheckReport = {
   }
 }
 
+export type FitDoctorStatus = 'pass' | 'fail' | 'requires' | 'unknown'
+
+export type FitDoctorCheck = {
+  file: string
+  functionName: string
+  text: string
+  status: FitDoctorStatus
+  reason?: string
+}
+
+export type FitDoctorReport = {
+  phase: 'ready' | 'error'
+  files: string[]
+  checks: FitDoctorCheck[]
+  summary: {
+    pass: number
+    fail: number
+    requires: number
+    unknown: number
+  }
+}
+
 export type FitInferFact = {
   text: string
   source: 'range' | 'equality' | 'sequence'
@@ -262,6 +284,26 @@ export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   }
 }
 
+export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> {
+  const checks: FitDoctorCheck[] = []
+  const contractCache = new Map<string, FunctionContractProof>()
+  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  for (const program of project.entries) checks.push(...doctorProgram(program, contractCache))
+
+  const summary = {
+    pass: checks.filter(check => check.status === 'pass').length,
+    fail: checks.filter(check => check.status === 'fail').length,
+    requires: checks.filter(check => check.status === 'requires').length,
+    unknown: checks.filter(check => check.status === 'unknown').length,
+  }
+  return {
+    phase: summary.fail === 0 ? 'ready' : 'error',
+    files: paths,
+    checks,
+    summary,
+  }
+}
+
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
   const program = buildFitSourceModule(file, sourceText, readTopLevelNumberGlobal)
   return verifyProgram(program, new Map<string, FunctionContractProof>())
@@ -317,6 +359,98 @@ function verifyProgram(program: Program, contractCache: Map<string, FunctionCont
   checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
 
   return checks
+}
+
+function doctorProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitDoctorCheck[] {
+  const checks: FitCheck[] = []
+  checks.push(...doctorTopLevelCalls(program, contractCache))
+  for (const fn of program.functions.values()) checks.push(...doctorFunctionCalls(program, fn, contractCache))
+  return dedupeDoctorChecks(checks.map(toDoctorCheck))
+}
+
+function doctorTopLevelCalls(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env: programGlobalEnv(program),
+    inputRoots: [],
+    stack: ['<top-level>'],
+    checks: [],
+    assumptions: [],
+    contractCache,
+    callObligations: 'record',
+  }
+  for (const statement of program.sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    for (const declaration of statement.declarationList.declarations) {
+      bindVariableDeclaration(declaration, context, {claim: true})
+    }
+  }
+  return context.checks.filter(isCallCheck)
+}
+
+function doctorFunctionCalls(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+  const functionName = fn.name?.text ?? '<anonymous>'
+  const specs = program.specsByFunction.get(functionName) ?? []
+  const env = programGlobalEnv(program)
+  const inputRoots = functionInputRoots(program, fn)
+
+  for (const param of fn.parameters) {
+    if (!ts.isIdentifier(param.name)) continue
+    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
+  }
+
+  const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  for (const given of trustedGivens) {
+    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+  }
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env,
+    inputRoots,
+    stack: [functionName],
+    checks: [],
+    assumptions,
+    contractCache,
+    callObligations: 'record',
+  }
+  evaluateFunctionBody(fn, context)
+  return context.checks.filter(isCallCheck)
+}
+
+function isCallCheck(check: FitCheck) {
+  return check.text.startsWith('call ')
+}
+
+function toDoctorCheck(check: FitCheck): FitDoctorCheck {
+  const status = check.status === 'pass' ? 'pass'
+    : check.status === 'unknown' ? 'unknown'
+      : isDefiniteCallFailure(check) ? 'fail' : 'requires'
+  return {
+    file: check.file,
+    functionName: check.functionName,
+    text: check.text,
+    status,
+    ...(check.reason == null ? {} : {reason: check.reason}),
+  }
+}
+
+function isDefiniteCallFailure(check: FitCheck) {
+  return check.reason?.split('\n').some(line => line.startsWith('this call passes ') && line.includes(' = ') && !line.includes(' is ')) === true
+}
+
+function dedupeDoctorChecks(checks: FitDoctorCheck[]) {
+  const seen = new Set<string>()
+  const result: FitDoctorCheck[] = []
+  for (const check of checks) {
+    const key = `${check.file}\0${check.functionName}\0${check.text}\0${check.status}\0${check.reason ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(check)
+  }
+  return result
 }
 
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {

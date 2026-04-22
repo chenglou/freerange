@@ -50,11 +50,13 @@ return {
 
 ## Run A File
 
-In this repo today:
-
 ```sh
-bun run verify path/to/file.ts
+fr check path/to/file.ts
 ```
+
+Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
+Use `fr doctor` when adopting Freerange into existing code and you want a broad
+call-precondition scan instead of only claimed specs.
 
 Read [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 

@@ -61,6 +61,21 @@ Adoption pass:
 
 The goal is not to annotate everything. The goal is to make important UI code harder for an agent to silently break.
 
+## Commands
+
+`fr check` is the normal proof command. With file args, it checks those files.
+With no args, it reads the nearest `tsconfig.json` and checks that source set.
+On success it prints only the summary:
+
+```txt
+fr check: 42 files, 115 pass, 0 fail, 0 unknown
+```
+
+`fr doctor` is for adoption. It walks callsites more broadly and reports
+annotated helper preconditions that are definitely broken or appear to become
+caller requirements. `REQUIRES` is not a failed spec; it is a clue about where a
+caller may need a `given`, a wrapper contract, or earlier validation.
+
 ## A First Check
 
 Put `@fit` immediately above a function declaration:

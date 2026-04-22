@@ -89,6 +89,17 @@ export function loadFitProject<TGlobal>(
   return {entries, modules, configFile: resolution.configFile}
 }
 
+export function resolveFitProjectPaths(paths: string[]): {paths: string[]; configFile: string | null} {
+  if (paths.length > 0) return {paths, configFile: findConfigFile(paths)}
+  const configFile = findConfigFile([])
+  if (configFile == null) return {paths: [], configFile: null}
+  const parsed = readParsedConfig(configFile)
+  return {
+    paths: parsed.fileNames.filter(isSupportedSourcePath).map(displayPath),
+    configFile,
+  }
+}
+
 export function buildFitSourceModule<TGlobal>(
   file: string,
   sourceText: string,
@@ -390,10 +401,17 @@ function findConfigFile(paths: string[]): string | null {
 }
 
 function readCompilerOptions(configFile: string): ts.CompilerOptions {
+  return readParsedConfig(configFile).options
+}
+
+function readParsedConfig(configFile: string): ts.ParsedCommandLine {
   const read = ts.readConfigFile(configFile, readFile)
-  if (read.error != null) return defaultCompilerOptions()
-  const parsed = ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configFile))
-  return parsed.options
+  if (read.error != null) return {
+    options: defaultCompilerOptions(),
+    fileNames: [],
+    errors: [read.error],
+  }
+  return ts.parseJsonConfigFileContent(read.config, ts.sys, dirname(configFile))
 }
 
 function defaultCompilerOptions(): ts.CompilerOptions {
@@ -422,6 +440,13 @@ function isSupportedSourceExtension(extension: string) {
     || extension === ts.Extension.Tsx
     || extension === ts.Extension.Mts
     || extension === ts.Extension.Cts
+}
+
+function isSupportedSourcePath(path: string) {
+  return !path.endsWith('.d.ts')
+    && !path.endsWith('.d.mts')
+    && !path.endsWith('.d.cts')
+    && (path.endsWith('.ts') || path.endsWith('.tsx') || path.endsWith('.mts') || path.endsWith('.cts'))
 }
 
 function toSourceId(path: string) {

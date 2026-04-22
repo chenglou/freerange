@@ -9,7 +9,10 @@ bun install
 ## Day-To-Day
 
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
-- `bun run verify path/to/file.ts` — inspect one or more files and print the JSON report
+- `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/unknown summary
+- `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
+- `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
+- `bun run verify path/to/file.ts` — old JSON-report inspection helper
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
@@ -38,7 +41,8 @@ bun install
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
-- [verify.ts](./verify.ts) — ad hoc JSON-report CLI
+- [fr.ts](./fr.ts) — main CLI entrypoint
+- [verify.ts](./verify.ts) — old ad hoc JSON-report CLI
 - [infer.ts](./infer.ts) — dev-only inferred-facts CLI
 - [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape piggyback diagnostic
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
