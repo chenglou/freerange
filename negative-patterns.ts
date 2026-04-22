@@ -99,6 +99,15 @@ export function negativeFloorDivisionDoesNotCoverTotal(total: number, count: num
 }
 
 /** @fit
+ * given total: int 0..6000
+ * given count: int -200..-1
+ * result >= total
+ */
+export function negativeCeilDivisionNeedsPositiveCount(total: number, count: number) {
+  return Math.ceil(total / count) * count
+}
+
+/** @fit
  * given pointer: 0..1000
  * given cellSize: int 1..100
  * given count: int 1..10

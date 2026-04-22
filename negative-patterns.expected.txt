@@ -72,6 +72,15 @@ UNKNOWN negative-patterns.ts:negativeFloorDivisionDoesNotCoverTotal: result >= t
     trusted from function @fit: given total: int 0..6000
     trusted from function @fit: given count: int 1..200
   missing: given (floor((total / count)) * count) >= total
+UNKNOWN negative-patterns.ts:negativeCeilDivisionNeedsPositiveCount: result >= total
+  int 0..1200000 as (ceil((total / count)) * count) >= int 0..6000 as total was not proven
+  need: (ceil((total / count)) * count) >= total
+  known:
+    int 0..1200000 as (ceil((total / count)) * count)
+    int 0..6000 as total
+    trusted from function @fit: given total: int 0..6000
+    trusted from function @fit: given count: int -200..-1
+  missing: count > 0
 UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: result < count
   int 0..1000 as floor((pointer / cellSize)) < int 1..10 as count was not proven
   need: floor((pointer / cellSize)) < count

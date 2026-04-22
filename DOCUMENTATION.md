@@ -419,7 +419,7 @@ Some layout facts are built in because they show up everywhere:
 ```ts
 Math.floor(x) <= x
 Math.ceil(x) >= x
-Math.ceil(total / count) * count >= total
+Math.ceil(total / count) * count >= total // when count > 0
 index % count < count
 ```
 

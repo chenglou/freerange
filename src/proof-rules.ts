@@ -2,6 +2,7 @@ import {type ComparisonOperator} from './parser.ts'
 import {type NumberValue} from './domain.ts'
 import {
   binaryExpression,
+  ceilDivisionProduct,
   floorDivision,
   productFactors,
   productText,
@@ -37,6 +38,10 @@ export const comparisonProofRules: ComparisonProofRule[] = [
     name: 'floor-division-below-count',
     evaluate: evaluateFloorDivisionBelowCount,
   },
+  {
+    name: 'ceil-division-covers-total',
+    evaluate: evaluateCeilDivisionCoversTotal,
+  },
 ]
 
 function evaluatePositiveScaleMonotonicity(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {
@@ -70,6 +75,15 @@ function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: Comparis
   if (boundProven) return {status: 'blocked', missing: divisorNeed}
   if (divisorProven) return {status: 'blocked', missing: boundNeed}
   return {status: 'blocked', missing: `${divisorNeed} and ${boundNeed}`}
+}
+
+function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {
+  if (goal.op !== '>=') return null
+  if (goal.left.expr == null || goal.right.expr == null) return null
+  const shape = ceilDivisionProduct(goal.left.expr)
+  if (shape == null || !sameExpressionText(shape.total, goal.right.expr)) return null
+  if (context.provesExprNonNegative(shape.count, true)) return {status: 'pass'}
+  return {status: 'blocked', missing: `${shape.count} > 0`}
 }
 
 type PositiveMonotoneObligation = {

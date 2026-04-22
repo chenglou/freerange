@@ -315,7 +315,26 @@ function f() {
     expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
   })
 
-  console.log('cli: 4 expected behaviors')
+  await withCliFixture({
+    'doctor.ts': `function h(
+  value: number, // @fit 0..10
+) {
+  return value
+}
+
+function f(value: number) {
+  return h(value)
+}
+`,
+  }, dir => {
+    const check = runFr(['doctor', 'doctor.ts'], dir)
+    expectCli(check.exitCode === 0, 'expected fr doctor to exit 0 on inferred caller requirements', check.output)
+    expectCli(check.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr doctor caller-requirement output', check.output)
+    expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor requirement summary', check.output)
+    expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr doctor summary to classify requires separately from fail', check.output)
+  })
+
+  console.log('cli: 5 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {
@@ -340,10 +359,15 @@ async function withCliFixture(files: Record<string, string>, run: (dir: string) 
   const dir = pathJoin('/tmp', `freerange-cli-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
   const mkdir = runProcess(['mkdir', '-p', dir])
   expectCli(mkdir.exitCode === 0, `expected to create ${dir}`, mkdir.output)
-  for (const [file, text] of Object.entries(files)) {
-    await Bun.write(pathJoin(dir, file), text)
+  try {
+    for (const [file, text] of Object.entries(files)) {
+      await Bun.write(pathJoin(dir, file), text)
+    }
+    await run(dir)
+  } finally {
+    const cleanup = runProcess(['rm', '-rf', dir])
+    expectCli(cleanup.exitCode === 0, `expected to remove ${dir}`, cleanup.output)
   }
-  await run(dir)
 }
 
 function expectCli(condition: boolean, message: string, output: string) {

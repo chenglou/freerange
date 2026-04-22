@@ -25,7 +25,6 @@ import {
   binaryExpression,
   callArg,
   callArgs,
-  ceilDivisionProduct,
   cleanLinear,
   isZeroLinear,
   linearConstantStatus,
@@ -135,7 +134,6 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   if (hasComparisonFact(left.expr, op, right.expr, assumptions)) return 'true'
   if (provesChoiceOperandBound(left.expr, op, right.expr)) return 'true'
   if (provesRoundingFact(left.expr, op, right.expr)) return 'true'
-  if ((op === '>=' || op === '>') && provesCeilDivisionCovers(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if ((op === '<' || op === '<=') && provesModuloBelowDivisor(left.expr, right.expr, assumptions)) return 'true'
   if ((op === '>=' || op === '>') && provesRunningSumAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
   if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
@@ -170,14 +168,6 @@ function provesRoundingFact(leftExpr: string, op: ComparisonOperator, rightExpr:
   const rightFloor = callArg(rightExpr, 'floor')
   if ((op === '>=' || op === '>') && rightFloor != null && sameExpressionText(leftExpr, rightFloor)) return op === '>='
   return false
-}
-
-function provesCeilDivisionCovers(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const shape = ceilDivisionProduct(leftExpr)
-  if (shape == null) return false
-  const {total, count} = shape
-  if (!sameExpressionText(total, rightExpr)) return false
-  return provesExprNonNegative(total, false, assumptions) && provesExprNonNegative(count, true, assumptions)
 }
 
 function provesModuloBelowDivisor(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {

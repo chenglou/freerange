@@ -938,4 +938,13 @@ export function inlineCommentFormatVariants(
   }
 }
 
+/** @fit
+ * given total: int -6000..6000
+ * given count: int 1..200
+ * result >= total
+ */
+export function ceilDivisionCoversSignedTotal(total: number, count: number) {
+  return Math.ceil(total / count) * count
+}
+
 export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2
