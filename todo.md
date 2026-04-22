@@ -30,6 +30,7 @@ sections[].rows[].height <= maxHeight
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
 - Simple indexed `for` append loops can bind `const item = items[i]!`, advance numeric cursors with `+=`, and preserve guarded push length facts.
 - `items.map(...)` preserves length, item field domains, and optional callback index facts for expression callbacks and tiny block callbacks with local `const` bindings plus `return`.
+- `items.filter(...)` preserves item domains and proves only the subsequence length fact: `filtered.length <= items.length`.
 - Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 - `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates function and loop specs into trusted, source-proved, not-inferred, and redundant lines, and redundant lines name the covering inferred fact. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not a public annotation writer.
@@ -146,7 +147,8 @@ max(lines.width)
 count(visibleRows)
 ```
 
-No aggregate callbacks, filters, inline arithmetic, or folds.
+No aggregate callbacks, inline arithmetic, or folds. Source-level `.filter(...)`
+is separate: it is only a subsequence summary, not a public aggregate language.
 
 Callback contracts stay out until real demo pressure says otherwise. Users can
 annotate concrete wrapper functions or claimed callback results; Freerange should

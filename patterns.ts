@@ -686,6 +686,35 @@ export function indexedConditionalPushRows(items: {height: number; visible: bool
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ */
+export function filteredRowsKeepElementDomain(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => item.visible)
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[].height: 0..40
+ */
+export function forOfConditionalPushWithSafeReset(items: {height: number; endsRow: boolean}[]) {
+  const rows = []
+  let rowHeight = 0
+  for (const item of items) {
+    rowHeight = Math.max(rowHeight, item.height)
+    if (item.endsRow) {
+      rows.push({height: rowHeight})
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
  * given top: 0..1000

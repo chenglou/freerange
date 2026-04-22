@@ -1960,9 +1960,9 @@ function evaluateForOfStatementCore(
       continue
     }
 
-    const conditionalPush = readConditionalLoopPush(child, loopContext, source.length)
-    if (conditionalPush != null) {
-      conditionalPushedArrays.push(conditionalPush)
+    const conditionalPushes = readGuardedLoopPushes(child, loopContext, source.length, pendingExtrema)
+    if (conditionalPushes != null) {
+      conditionalPushedArrays.push(...conditionalPushes)
       continue
     }
 
@@ -1992,7 +1992,7 @@ function evaluateForOfStatementCore(
     return unknown(`Unsupported for-of body statement: ${child.getText(context.program.sourceFile)}`)
   }
 
-  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0 || pendingExtrema.size > 0)) {
+  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0)) {
     return unknown('Conditional push loops support one guarded push and no cursor update')
   }
   if (conditionalAdds.size > 0 && (pushedArrays.length > 0 || conditionalPushedArrays.length > 0 || pendingAdds.size > 0 || pendingExtrema.size > 0)) {
@@ -2044,11 +2044,12 @@ function evaluateForOfStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length)
+    const element = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
     context.env.set(push.arrayName, {
       ...target,
       length,
       elements: null,
-      element: mergeElementValue(target.element, push.element),
+      element: mergeElementValue(target.element, element),
       summary: null,
     })
     const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
@@ -2114,7 +2115,7 @@ function evaluateForStatementCore(
       continue
     }
 
-    const conditionalPushes = readIndexedConditionalLoopPushes(child, loopContext, source.length, pendingExtrema)
+    const conditionalPushes = readGuardedLoopPushes(child, loopContext, source.length, pendingExtrema)
     if (conditionalPushes != null) {
       conditionalPushedArrays.push(...conditionalPushes)
       continue
@@ -2504,17 +2505,7 @@ function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit
   return {element: evaluateExpression(row, context), topName, height: height?.kind === 'number' ? height : null, cursorPaths: objectIdentifierPropertyPaths(row)}
 }
 
-function readConditionalLoopPush(statement: ts.Statement, context: EvalContext, length: NumberValue): LoopPush | null {
-  if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
-  const push = pushCallFromStatement(statement.thenStatement)
-  if (push == null) return null
-  const targetName = push.expression.expression.text
-  const target = context.env.get(targetName)
-  if (target == null || target.kind !== 'array') return null
-  return {...readLoopPush(push, context), arrayName: targetName, length}
-}
-
-function readIndexedConditionalLoopPushes(
+function readGuardedLoopPushes(
   statement: ts.Statement,
   context: EvalContext,
   length: NumberValue,
@@ -3020,6 +3011,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     }
     const mapResult = evaluateArrayMapCall(expression, context)
     if (mapResult != null) return mapResult
+    const filterResult = evaluateArrayFilterCall(expression, context)
+    if (filterResult != null) return filterResult
     const namespaceImportReason = namespaceImportCallReason(target, context)
     const fallback = expressionStructuralFallback(expression, context)
     if (fallback != null) return fallback
@@ -3181,6 +3174,50 @@ function evaluateArrayMapCallbackBlock(block: ts.Block, context: EvalContext): V
     return unknown('Array.map callback block supports const bindings and return only')
   }
   return unknown('Array.map callback block did not return')
+}
+
+function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalContext): Value | null {
+  if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'filter') return null
+  const source = evaluateExpression(expression.expression.expression, context)
+  if (source.kind !== 'array') return unknown('Array.filter expected an array')
+  const callback = expression.arguments[0]
+  if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.filter expects one arrow callback')
+  if (!arrayReadCallbackIsSupported(callback)) return unknown('Array.filter callback expected a simple side-effect-free predicate')
+
+  const length = filteredArrayLength(expression, source, context)
+  const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? 'filtered.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
+  if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
+
+  const filtered = {
+    kind: 'array',
+    length,
+    elements: null,
+    element: source.element,
+    expr: null,
+    summary: null,
+  } satisfies ArrayValue
+  return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
+}
+
+function arrayReadCallbackIsSupported(callback: ts.ArrowFunction) {
+  const itemParam = callback.parameters[0]
+  const indexParam = callback.parameters[1]
+  if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return false
+  if (indexParam != null && !ts.isIdentifier(indexParam.name)) return false
+  return ts.isExpression(callback.body) && isSideEffectFreeExpression(callback.body)
+}
+
+function filteredArrayLength(expression: ts.CallExpression, source: ArrayValue, context: EvalContext): NumberValue {
+  const expr = context.objectPath == null
+    ? `${expression.getText(context.program.sourceFile)}.length`
+    : `${objectPathText(context.objectPath)}.length`
+  return numberValue(
+    0,
+    source.length.max,
+    true,
+    expr,
+    linearVariable(linearNameForExpression(expr)),
+  )
 }
 
 function isConstDeclarationList(list: ts.VariableDeclarationList) {

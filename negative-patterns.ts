@@ -616,6 +616,34 @@ export function negativeIndexedConditionalPushIsNotSameLength(items: {height: nu
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ */
+export function negativeFilteredRowsAreNotAlwaysSameLength(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => item.visible)
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..100
+ * result.rows[].height: 0..40
+ */
+export function negativeForOfConditionalPushNeedsItemBound(items: {height: number; endsRow: boolean}[]) {
+  const rows = []
+  let rowHeight = 0
+  for (const item of items) {
+    rowHeight = Math.max(rowHeight, item.height)
+    if (item.endsRow) {
+      rows.push({height: rowHeight})
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
  * nondecreasing(result.rows.top)

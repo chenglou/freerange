@@ -419,6 +419,27 @@ UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: resu
     trusted from function @fit: given items[].height: 0..40
     read from code: rows.length <= items.length
   missing: given rows.length == items.length
+UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: result.rows.length == items.length
+  int 0..50 as rows.length == int 0..50 as items.length was not proven
+  need: rows.length == items.length
+  known:
+    int 0..50 as rows.length
+    int 0..50 as items.length
+    trusted from function @fit: given items.length: int 0..50
+    trusted from function @fit: given items[].height: 0..40
+    read from code: rows.length <= items.length
+  missing: given rows.length == items.length
+FAIL negative-patterns.ts:negativeForOfConditionalPushNeedsItemBound: result.rows[].height: 0..40
+  range was 0..100 as rows[].height, expected inside 0..40
+  need: rows[].height inside 0..40
+  known:
+    0..100 as rows[].height
+    int 0..0 as 0
+    int 40..40 as 40
+    trusted from function @fit: given items.length: int 1..50
+    trusted from function @fit: given items[].height: 0..100
+    read from code: rows.length <= items.length
+  missing: rows[].height <= 40
 UNKNOWN negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(result.rows.top)
   nondecreasing(result.rows.top) was not inferred
   need: every next .top >= previous .top

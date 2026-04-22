@@ -556,6 +556,7 @@ Supported today:
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
+- `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 
 `map` support is deliberately tiny:
@@ -574,6 +575,23 @@ function mapRows(items: {height: number}[]) {
 ```
 
 The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are just local `const` bindings plus a `return`; this keeps normal code normal without turning callbacks into a public Freerange language.
+
+`filter` support is even smaller:
+
+```ts
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ */
+function visibleRows(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => item.visible)
+  return {rows}
+}
+```
+
+Freerange treats this as a subsequence: same item domain, length between zero and the source length. It does not prove `rows.length == items.length`, and it does not reason about the predicate beyond requiring a simple side-effect-free expression.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
@@ -796,6 +814,7 @@ The checker understands a small pure subset:
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
 - expression-bodied `items.map(...)`, plus tiny block-bodied callbacks with local `const` bindings and `return`; TypeScript can fill structural callback return shape while source still owns the array length
+- expression-bodied `items.filter(...)` as a subsequence summary: same item domain, length no larger than source length
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
@@ -819,7 +838,7 @@ Not supported yet:
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
 - strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
-- public lambdas, `forall`, filters, arbitrary folds, prose-as-truth
+- public lambdas, `forall`, arbitrary folds, prose-as-truth
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
 - Pretext text facts
 - table/grid/flex column negotiation
