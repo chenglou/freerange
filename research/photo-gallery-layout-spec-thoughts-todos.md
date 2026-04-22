@@ -17,6 +17,8 @@ possible syntax, and implementation questions that fell out of photo-gallery.
 
 - Imported constants.
 - Scalar ranges.
+- Inline param domains for boring scalar inputs.
+- Inline local and object-field checks for one-value red lines.
 - Basic prompt sizing arithmetic.
 - `layoutBox`, `imageBox`, and `prompt.box` field equalities.
 - Image sizing safety rails.
@@ -146,6 +148,10 @@ newAnchor: int 0..<newLayout.items.length
 
 ## Possible Source Changes
 
+- Rename the prompt cap constants if we want source names to match the target
+  vocabulary here. The spec thinks in `visibleLinesHeight`; current source still
+  exposes `prompt2DVisibleHeight` / `prompt1DVisibleHeight` and subtracts
+  `promptPaddingTop` to derive line height.
 - Return full row metadata instead of only `rowsTop` if row red lines keep
   mattering:
   ```ts
@@ -163,9 +169,13 @@ newAnchor: int 0..<newLayout.items.length
 
 ## Possible Checker Work
 
-- Local `// @fit 0..foo` checks now cover simple one-value red-line variables.
-  The larger rewrite question is whether richer statement annotations should
-  become first-class later.
+- Inline `// @fit 0..foo` now covers param domains, simple one-value red-line
+  locals, and simple object fields. The larger rewrite question is whether
+  richer statement annotations should become first-class later.
+- Call preconditions are reported when the call is inside a claimed proof path.
+  A top-level probe like `clamp(4, 2, 3)` is intentionally not audited by
+  `verify`; test a bad helper call through a tiny claimed function or inline
+  local claim.
 - Same-index labels look useful enough to keep thinking about.
 - Nullable refinement and conditional postconditions matter for edge hit areas.
 - Exact render-set checking matters for virtualization, but should probably

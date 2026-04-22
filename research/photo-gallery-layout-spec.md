@@ -7,6 +7,10 @@ write the Freerange-ish arithmetic that should hold.
 Scope: pure layout numbers, rectangles, measurements, arrays, z-order numbers,
 and transition destinations. No DOM facts.
 
+Some of these facts live in `layout.ts` today; others still live in the demo
+or are target source shapes we may want later. This file names the visual red
+lines first.
+
 Coordinates are document-space unless noted. `scrollY` shifts the viewport
 interval; it does not shrink viewport height.
 
