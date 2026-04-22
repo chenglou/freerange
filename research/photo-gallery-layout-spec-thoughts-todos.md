@@ -23,6 +23,7 @@ possible syntax, and implementation questions that fell out of photo-gallery.
 - `layoutBox`, `imageBox`, and `prompt.box` field equalities.
 - Image sizing safety rails.
 - Hit-area rectangles.
+- 1D vertical placement once the measured item height is known to fit.
 - Z-index branch facts, if extracted into small functions.
 - Expanded viewport construction.
 - Positive visibility predicates, if split into simple comparisons.
@@ -58,6 +59,14 @@ items[focused + 1].layoutBox.x == windowSizeX - hitArea1DSizeX
 
 This likely needs bounds-aware symbolic indexing plus conditional facts for the
 first and last item.
+
+### Measurement-To-Placement Handoff
+
+`lineLayoutY` can prove the line-view top and bottom gaps once the measured
+layout height fits inside `windowSizeY - windowPaddingTop - boxes1DGapY`.
+
+Still unproved: the iterative `get1DItemSize` prompt-measurement loop always
+returns a `layoutHeight` inside that budget.
 
 ### Conditional Specs
 
@@ -163,6 +172,9 @@ newAnchor: int 0..<newLayout.items.length
   relation to be checked directly.
 - Extract transition-preservation arithmetic if we want residual setup checked
   directly.
+- Do not keep duplicate geometry fields like `hitArea` or `occlusionBounds`
+  while they equal `layoutBox`. Add them back only when the interaction or
+  culling bounds actually diverge.
 - Keep prompt width simple now: `prompt.box.sizeX == imageBox.sizeX`.
 - `gapTopPeek` belongs with scroll anchoring / dismissal positioning. Keep it
   out of the main layout spec until we decide to spec anchoring.

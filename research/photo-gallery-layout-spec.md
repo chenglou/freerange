@@ -89,8 +89,10 @@ items[].imageBox.sizeX <= boxMaxSizeX
 items[].layoutBox.sizeX <= boxMaxSizeX
 items[].layoutBox.x >= boxesGapX
 items[].layoutBox.x + items[].layoutBox.sizeX <= windowSizeX - boxesGapX
-items[].hitArea == items[].layoutBox
 ```
+
+2D hit testing uses `layoutBox` directly. Do not add a separate hit rectangle
+unless the UX actually diverges from the card bounds.
 
 For a card in a column:
 
@@ -203,6 +205,7 @@ viewportSizeY == windowSizeY
 box1DMaxSizeY == windowSizeY - windowPaddingTop - boxes1DGapY
 box1DMaxSizeY >= 0
 
+focusedBox.sizeY <= box1DMaxSizeY
 focusedBox.y >= scrollY + windowPaddingTop
 focusedBox.y + focusedBox.sizeY <= scrollY + windowSizeY - boxes1DGapY
 ```
