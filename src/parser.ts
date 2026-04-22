@@ -88,7 +88,7 @@ export function parseFunctionFitSpecs(sourceText: string, fn: ts.FunctionDeclara
   ]
 }
 
-export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): Extract<FitSpec, {kind: 'given-range'}>[] {
+export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>[] {
   const lines = inlineFitCommentLines(sourceText, param)
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
@@ -104,7 +104,7 @@ export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean 
   return inlineFitCommentLines(sourceText, node).length > 0
 }
 
-export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'}>[] {
+export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
   const lines = inlineFitCommentLines(sourceText, statement)
   if (lines.length === 0) return []
   const declarations = statement.declarationList.declarations
@@ -115,7 +115,7 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
   return lines.map(line => parseInlineFitSpecLine(line, expression))
 }
 
-export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): Extract<FitSpec, {kind: 'check-range'}>[] {
+export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
   return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line, expression))
 }
 
@@ -299,10 +299,36 @@ function splitRangeBounds(text: string): {lower: string; upper: string; upperInc
   return null
 }
 
-function parseInlineFitSpecLine(line: string, expression: string): Extract<FitSpec, {kind: 'check-range'}>
-function parseInlineFitSpecLine(line: string, expression: string, kind: 'given-range'): Extract<FitSpec, {kind: 'given-range'}>
-function parseInlineFitSpecLine(line: string, expression: string, kind: 'check-range' | 'given-range' = 'check-range'): Extract<FitSpec, {kind: 'check-range'}> | Extract<FitSpec, {kind: 'given-range'}> {
+function parseInlineFitSpecLine(line: string, expression: string): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
+function parseInlineFitSpecLine(line: string, expression: string, kind: 'given-range'): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
+function parseInlineFitSpecLine(
+  line: string,
+  expression: string,
+  kind: 'check-range' | 'given-range' = 'check-range',
+): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}> | Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}> {
   const body = line.slice('@fit'.length).trim()
+  const comparison = /^(==|>=|<=|>|<)\s*(.+)$/.exec(body)
+  if (comparison != null) {
+    const right = comparison[2]!.trim()
+    parseExpression(expression)
+    parseExpression(right)
+    if (kind === 'given-range') {
+      return {
+        kind: 'given-comparison',
+        left: expression,
+        op: comparison[1]! as ComparisonOperator,
+        right,
+        text: `given ${expression} ${comparison[1]} ${right}`,
+      }
+    }
+    return {
+      kind: 'check-comparison',
+      left: expression,
+      op: comparison[1]! as ComparisonOperator,
+      right,
+      text: `${expression} ${comparison[1]} ${right}`,
+    }
+  }
   const range = parseRangeText(body)
   if (range == null) throw new Error(`Unsupported inline @fit range: ${line}`)
   parseExpression(expression)

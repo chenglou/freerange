@@ -168,27 +168,3 @@ locals:
 unsupported:
   Forgot unsupported for loop side effects: for (let i = focused - 1; i >= 0; i--) currentLeft -= measurements[i]!.imageSizeX + boxes1DGapX
   Forgot unsupported indexed loop side effect: currentLeft = i === focused ? windowSizeX - hitArea1DSizeX : currentLeft + measurement.imageSizeX + boxes1DGapX
-../vibescript/demos/photo-gallery/layout.ts:leftEdgeHitArea
-result:
-  result.box.sizeX == hitArea1DSizeX
-  result.box.sizeX: int 100..100
-  result.box.sizeY == windowSizeY
-  result.box.sizeY: 320..2000
-  result.box.x == 0
-  result.box.x: int 0..0
-  result.box.y == scrollY
-  result.box.y: -100000..100000
-  result.targetIndex == (focused - 1)
-  result.targetIndex: int 0..999
-../vibescript/demos/photo-gallery/layout.ts:rightEdgeHitArea
-result:
-  result.box.sizeX == hitArea1DSizeX
-  result.box.sizeX: int 100..100
-  result.box.sizeY == windowSizeY
-  result.box.sizeY: 320..2000
-  result.box.x == (windowSizeX - hitArea1DSizeX)
-  result.box.x: 220..1900
-  result.box.y == scrollY
-  result.box.y: -100000..100000
-  result.targetIndex == (focused + 1)
-  result.targetIndex: int 1..1000

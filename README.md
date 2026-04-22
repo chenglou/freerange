@@ -42,9 +42,12 @@ For one local value, use the small inline form:
 // @fit int 0..count
 const index = Math.floor(pointer / cellSize)
 const next = index + 1 // @fit int 1..count
+const previous = focused - step // @fit >= 0
+const capped = Math.min(width, maxWidth) // @fit <= maxWidth
 const exact = clamp(4, 2, 3) // @fit 2
 return {
   width: container - padding * 2, // @fit 0..1200
+  targetIndex: focused + step, // @fit < items.length
 }
 ```
 

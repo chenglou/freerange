@@ -1704,8 +1704,7 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
       return evaluateIfStatement(statement, context, statements, index + 1)
     }
     if (ts.isReturnStatement(statement)) {
-      if (statement.expression == null) return unknown('Return without expression')
-      return evaluateExpressionWithObjectPath(statement.expression, context, ['result'])
+      return evaluateReturnStatement(statement, context)
     }
     return unknown(`Unsupported statement in ${context.stack.at(-1) ?? '<unknown>'}: ${statement.getText(context.program.sourceFile)}`)
   }
@@ -1733,7 +1732,7 @@ function bindVariableStatement(statement: ts.VariableStatement, context: EvalCon
   verifyLocalFitSpecs(specs, context)
 }
 
-function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'}>[], context: EvalContext) {
+function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -1887,8 +1886,7 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
 
 function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): Value {
   if (ts.isReturnStatement(statement)) {
-    if (statement.expression == null) return unknown('Return without expression')
-    return evaluateExpressionWithObjectPath(statement.expression, context, ['result'])
+    return evaluateReturnStatement(statement, context)
   }
   if (!ts.isBlock(statement)) return unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)
   const localContext: EvalContext = {...context, env: new Map(context.env)}
@@ -1903,12 +1901,20 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
       continue
     }
     if (ts.isReturnStatement(child)) {
-      if (child.expression == null) return unknown('Return without expression')
-      return evaluateExpressionWithObjectPath(child.expression, localContext, ['result'])
+      return evaluateReturnStatement(child, localContext)
     }
     return unknown(`Unsupported branch statement: ${child.getText(context.program.sourceFile)}`)
   }
   return unknown('Branch did not return')
+}
+
+function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalContext): Value {
+  if (statement.expression == null) return unknown('Return without expression')
+  const specs = parseInlineFitSpecsForExpression(context.program.sourceText, statement, 'result')
+  const evaluate = () => evaluateExpressionWithObjectPath(statement.expression!, context, ['result'])
+  const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
+  verifyInlineSpecsForValue(specs, value, context)
+  return value
 }
 
 function evaluateForOfStatement(statement: ts.ForOfStatement, context: EvalContext): Value | null {
@@ -3868,7 +3874,7 @@ function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, context: 
       const evaluate = () => evaluateExpressionWithObjectPath(property.name, context, propertyPath)
       const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
       props.set(property.name.text, value)
-      verifyInlineRangeSpecsForValue(specs, value, context)
+      verifyInlineSpecsForValue(specs, value, context)
       continue
     }
     if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
@@ -3877,7 +3883,7 @@ function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, context: 
       const evaluate = () => evaluateExpressionWithObjectPath(property.initializer, context, propertyPath)
       const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
       props.set(property.name.text, value)
-      verifyInlineRangeSpecsForValue(specs, value, context)
+      verifyInlineSpecsForValue(specs, value, context)
       continue
     }
     return unknown(`Unsupported object literal property: ${property.getText(context.program.sourceFile)}`)
@@ -3904,10 +3910,12 @@ function objectPathText(path: string[] | undefined) {
   return path == null || path.length === 0 ? '<property>' : path.join('.')
 }
 
-function verifyInlineRangeSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'}>[], value: Value, context: EvalContext) {
+function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], value: Value, context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
-    const status = proveRangeSpec(value, spec.range, context)
+    const status = spec.kind === 'check-range'
+      ? proveRangeSpec(value, spec.range, context)
+      : proveInlineComparisonSpec(value, spec, context)
     context.checks.push({
       file: context.file,
       functionName: context.stack.join(' > '),
@@ -3916,6 +3924,11 @@ function verifyInlineRangeSpecsForValue(specs: Extract<FitSpec, {kind: 'check-ra
       ...(status.reason == null ? {} : {reason: status.reason}),
     })
   }
+}
+
+function proveInlineComparisonSpec(value: Value, spec: Extract<FitSpec, {kind: 'check-comparison'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
+  const right = evaluateSpecExpression(spec.right, context)
+  return proveComparison(value, spec.op, right, context.assumptions)
 }
 
 function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: EvalContext): Value {

@@ -730,6 +730,31 @@ export function negativeInlineObjectFieldRange() {
   }
 }
 
+export function negativeInlineLocalComparison() {
+  const value = 4 // @fit < 4
+  return value
+}
+
+export function negativeInlineObjectFieldComparison() {
+  return {
+    width: 4, // @fit > 4
+  }
+}
+
+export function negativeInlineReturnComparison() {
+  return 5 // @fit < 5
+}
+
+/** @fit
+ * given value: 0..50
+ */
+export function negativeInlineParamComparison(
+  value: number, // @fit > max
+  max: number, // @fit 100..200
+) {
+  return value + max
+}
+
 /** @fit
  * given items[].height: 0..max.toString()
  */

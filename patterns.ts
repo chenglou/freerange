@@ -554,6 +554,42 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
   return {rows, bottom: y - gap}
 }
 
+export function inlineComparisonFacts(
+  value: number, // @fit 0..100
+  max: number, // @fit >= value
+) {
+  const next = value + 1 // @fit > value
+  return {
+    width: Math.min(value, max), // @fit <= max
+    next, // @fit > value
+  }
+}
+
+export function inlineReturnComparisonFact(
+  value: number, // @fit 0..100
+  max: number, // @fit >= value
+) {
+  return Math.min(value, max) // @fit <= max
+}
+
+export function inlineComparisonPrefixVariants(
+  value: number, // @fit >= min
+  min: number, // @fit 0..100
+  max: number, // @fit >= value
+) {
+  const exact = value // @fit == value
+  const above = value + 1 // @fit > value
+  const below = value - 1 // @fit < value
+  const floored = Math.max(value, min) // @fit >= min
+  return {
+    atLeast: floored, // @fit >= min
+    atMost: Math.min(value, max), // @fit <= max
+    exact, // @fit == value
+    above, // @fit > value
+    below, // @fit < value
+  }
+}
+
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40

@@ -15,7 +15,9 @@ a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
-// @fit 0..100 // local/field shorthand for proving the next/current value is in a range.
+width: number, // @fit >= min // param shorthand for `given width >= min`.
+// @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
+// @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
 items[] // every item in one collection. Freerange supports one wildcard collection side per comparison today.
 result // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
@@ -53,7 +55,7 @@ Bad first targets:
 Adoption pass:
 
 1. Run `bun run infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
-2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains on params with `// @fit`; keep object paths, array paths, and relational facts in the function block.
+2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains and one-sided scalar relations on params with `// @fit`; keep object paths, array paths, and grouped relations in the function block.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
 5. Use `infer` to see which function and loop checks are already source-proved. `redundant` means emitted inferred facts already cover the check; the output names the covering fact. Keep explicit checks when they are useful documentation and remove them when they are only noise.
@@ -93,7 +95,7 @@ function cappedOverflow(
 }
 ```
 
-Param `// @fit` comments are trusted input facts, exactly as if they were lifted to `given` lines in the function block. Use them for the boring scalar domains:
+Param `// @fit` comments are trusted input facts, exactly as if they were lifted to `given` lines in the function block. Use them for boring scalar domains and small scalar relations:
 
 ```ts
 /** @fit
@@ -109,7 +111,18 @@ function clampToUiRange(
 }
 ```
 
-Function-level `given` lines are still the right place for object paths, array paths, and relations between params:
+Attached comparisons use the annotated value as the left side:
+
+```ts
+function bounded(
+  value: number, // @fit >= min
+  min: number, // @fit 0..100
+) {
+  return value
+}
+```
+
+Function-level `given` lines are still the right place for object paths, array paths, and relations that are clearer as a group:
 
 ```ts
 /** @fit
@@ -131,7 +144,7 @@ Freerange starts from claims, not from the whole file.
 
 - `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites and become assumptions inside the function, but they do not trigger body proof on their own.
 - `result...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
-- Local, top-level variable, and object-field `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
+- Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `result` inside a loop.
 - Helper preconditions are reported when a helper contract is used to prove a claim. An unclaimed helper call can still be inlined as a fallback for source inference, but its private checks should not leak into the caller's report.
 
@@ -177,18 +190,22 @@ function hitIndex(pointer: number, cellSize: number) {
 }
 ```
 
-On locals and object fields, inline `@fit` is range shorthand for the value it is attached to. It works as a leading line or block comment on the next single variable declaration, as a trailing `//` side comment on that declaration, or as a leading line/block or trailing `//` comment on a simple object field:
+On locals, object fields, and returns, inline `@fit` is shorthand for the value it is attached to. A range checks the attached value's range. A leading comparison operator checks the attached value against the right side:
 
 ```ts
+const index = focused - step // @fit >= 0
+const capped = Math.min(width, maxWidth) // @fit <= maxWidth
+
 return {
   width: container - padding * 2, // @fit 0..1200
+  targetIndex: focused + step, // @fit < items.length
   rows: {
     count: rows.length, // @fit int 0..100
   },
 }
 ```
 
-There it is a check, not a trusted `given`. On params, the same small syntax means an input `given`, and it can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
+There it is a check, not a trusted `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
 
 ## Reading Results
 
@@ -797,11 +814,11 @@ The checker understands a small pure subset:
 
 - function declarations
 - simple named parameters
-- param inline `// @fit` domains on simple identifier parameters
+- param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - numeric top-level constants
 - `const` / `let` locals with initializers
-- `return expression`
+- `return expression`, with optional inline range/comparison checks
 - ternaries
 - return-style `if` guards
 - direct same-file function calls

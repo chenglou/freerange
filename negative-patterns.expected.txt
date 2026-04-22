@@ -492,6 +492,33 @@ FAIL negative-patterns.ts:negativeInlineObjectFieldRange: result.width: 0..3
     int 0..0 as 0
     int 3..3 as 3
   missing: 4 <= 3
+FAIL negative-patterns.ts:negativeInlineLocalComparison: value < 4
+  int 4..4 as 4 < int 4..4 as 4 is false
+  need: 4 < 4
+  known:
+    int 4..4 as 4
+  missing: strict comparison cannot hold when both sides are 4
+FAIL negative-patterns.ts:negativeInlineObjectFieldComparison: result.width > 4
+  int 4..4 as 4 > int 4..4 as 4 is false
+  need: 4 > 4
+  known:
+    int 4..4 as 4
+  missing: strict comparison cannot hold when both sides are 4
+FAIL negative-patterns.ts:negativeInlineReturnComparison: result < 5
+  int 5..5 as 5 < int 5..5 as 5 is false
+  need: 5 < 5
+  known:
+    int 5..5 as 5
+  missing: strict comparison cannot hold when both sides are 5
+FAIL negative-patterns.ts:negativeInlineParamComparison: given value > max
+  no input can satisfy this with the earlier given lines
+  0..50 as value > 100..200 as max is false
+  need: value > max
+  known:
+    0..50 as value
+    100..200 as max
+    trusted from function @fit: given value: 0..50
+  missing: given value > max
 UNKNOWN negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0

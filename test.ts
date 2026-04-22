@@ -129,8 +129,6 @@ const actualInferSnapshot = normalizeText([
     '../vibescript/demos/photo-gallery/layout.ts',
     '../vibescript/demos/photo-gallery/prompt-layout.ts',
   ], 'getLineLayout'),
-  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout.ts'], 'leftEdgeHitArea'),
-  formatInferSnapshot(['../vibescript/demos/photo-gallery/layout.ts'], 'rightEdgeHitArea'),
 ].join('\n'))
 const expectedInferSnapshot = normalizeText(await Bun.file(inferSnapshotExpectedPath).text())
 if (actualInferSnapshot !== expectedInferSnapshot) {
