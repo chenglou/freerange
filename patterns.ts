@@ -937,3 +937,5 @@ export function inlineCommentFormatVariants(
     trailingField: trailingLocal, // @fit int 0..10
   }
 }
+
+export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2

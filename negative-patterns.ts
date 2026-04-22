@@ -715,3 +715,5 @@ export function negativeLoopGivenCannotNameRows(items: number[]) {
   }
   return rows
 }
+
+export const negativeTopLevelInlineCallGiven = negativeNeedsContainerFit(4, 3) // @fit -1..0

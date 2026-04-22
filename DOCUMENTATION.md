@@ -10,6 +10,7 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 @fit // marker for a Freerange spec block. Put it immediately above a function declaration, or above a supported loop when the fact belongs to that loop.
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
 result.width: 0..320 // check fact. Freerange must prove this from source.
+2 // exact-number shorthand for 2..2.
 a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
@@ -115,11 +116,15 @@ Freerange starts from claims, not from the whole file.
 
 - `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites and become assumptions inside the function, but they do not trigger body proof on their own.
 - `result...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
-- Local and object-field `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
+- Local, top-level variable, and object-field `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `result` inside a loop.
 - Helper preconditions are reported when a helper contract is used to prove a claim. An unclaimed helper call can still be inlined as a fallback for source inference, but its private checks should not leak into the caller's report.
 
-Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving.
+Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
+
+```ts
+const probe = clamp(4, 2, 3) // @fit 2
+```
 
 So this is only a boundary contract:
 
@@ -275,7 +280,7 @@ Loop-level `given` works the same way, but is trusted from that point in the fun
  */
 ```
 
-`a..b` means a JavaScript number in that inclusive interval. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive:
+`a..b` means a JavaScript number in that inclusive interval. A single expression like `2` is shorthand for `2..2`. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive:
 
 ```ts
 index: int 0..<items.length

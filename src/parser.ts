@@ -231,12 +231,26 @@ export function parseFitSpecLine(line: string): FitSpec {
 function parseRangeText(text: string): FitRange | null {
   const valueKindMatch = /^(?:(int)\s+)?([\s\S]+)$/.exec(text)
   if (valueKindMatch == null) return null
-  const bounds = splitRangeBounds(valueKindMatch[2]!.trim())
+  const body = valueKindMatch[2]!.trim()
+  const valueKind = valueKindMatch[1] == null ? 'number' : 'int'
+  if (isRangeBoundText(body)) {
+    return {
+      valueKind,
+      lower: body,
+      upper: body,
+      lowerValue: parseRangeBoundNumber(body),
+      upperValue: parseRangeBoundNumber(body),
+      lowerInclusive: true,
+      upperInclusive: true,
+      text,
+    }
+  }
+  const bounds = splitRangeBounds(body)
   if (bounds == null) return null
   const {lower, upper, upperInclusive} = bounds
   if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
   return {
-    valueKind: valueKindMatch[1] == null ? 'number' : 'int',
+    valueKind,
     lower,
     upper,
     lowerValue: parseRangeBoundNumber(lower),

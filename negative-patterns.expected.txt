@@ -460,6 +460,9 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   given can only describe inputs; rows is not an input here
+FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): requires container >= containee
+  called function requires container >= containee
+  this call passes container = 3 and containee = 4
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: result: 0..320
   imported helper contract was not available
   helper: unannotatedImportedClamp from ./negative-import-helpers

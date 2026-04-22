@@ -314,8 +314,28 @@ function verifyProgram(program: Program, contractCache: Map<string, FunctionCont
     if (specs.length === 0 && !functionHasBodyFitComment(program, statement)) continue
     checks.push(...verifyFunctionSpecs(program.file, program, statement, specs, contractCache))
   }
+  checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
 
   return checks
+}
+
+function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env: programGlobalEnv(program),
+    inputRoots: [],
+    stack: ['<top-level>'],
+    checks: [],
+    assumptions: [],
+    contractCache,
+    callObligations: 'silent',
+  }
+  for (const statement of program.sourceFile.statements) {
+    if (!ts.isVariableStatement(statement)) continue
+    bindVariableStatement(statement, context)
+  }
+  return context.checks
 }
 
 function functionHasBodyFitComment(program: Program, fn: ts.FunctionDeclaration) {
