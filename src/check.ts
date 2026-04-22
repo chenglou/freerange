@@ -2034,7 +2034,7 @@ function evaluateForOfStatementCore(
       ...target,
       length: push.length,
       elements: null,
-      element: loopElementFromPush(push, updates, context),
+      element: loopElementFromPush(push, updates, new Map(), source.length, context),
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
     })
   }
@@ -2096,6 +2096,7 @@ function evaluateForStatementCore(
   )
 
   const pushes: LoopPush[] = []
+  const conditionalPushedArrays: LoopPush[] = []
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
   const forgottenRoots = new Set<string>()
@@ -2110,6 +2111,12 @@ function evaluateForStatementCore(
       const target = context.env.get(targetName)
       if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
       pushes.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+      continue
+    }
+
+    const conditionalPushes = readIndexedConditionalLoopPushes(child, loopContext, source.length, pendingExtrema)
+    if (conditionalPushes != null) {
+      conditionalPushedArrays.push(...conditionalPushes)
       continue
     }
 
@@ -2161,7 +2168,7 @@ function evaluateForStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const update = updates.get(push.topName ?? '')
-    const cursorElement = loopElementFromPush(push, updates, context)
+    const cursorElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
     const element = indexedLoopElementFromPush({...push, element: cursorElement}, shape.indexName, source.length)
     context.env.set(push.arrayName, {
       ...target,
@@ -2171,6 +2178,25 @@ function evaluateForStatementCore(
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
     })
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
+  }
+
+  for (const push of conditionalPushedArrays) {
+    const target = context.env.get(push.arrayName)
+    if (target?.kind !== 'array') continue
+    factRoots.add(push.arrayName)
+    const length = conditionalPushLength(push.arrayName, source.length, target.length)
+    const element = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    context.env.set(push.arrayName, {
+      ...target,
+      length,
+      elements: null,
+      element: mergeElementValue(target.element, element),
+      summary: null,
+    })
+    if (target.length.min === 0 && target.length.max === 0) {
+      const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
+      if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
+    }
   }
 
   for (const root of forgottenRoots) {
@@ -2488,6 +2514,47 @@ function readConditionalLoopPush(statement: ts.Statement, context: EvalContext, 
   return {...readLoopPush(push, context), arrayName: targetName, length}
 }
 
+function readIndexedConditionalLoopPushes(
+  statement: ts.Statement,
+  context: EvalContext,
+  length: NumberValue,
+  resettableExtrema: Map<string, LoopExtremum>,
+): LoopPush[] | null {
+  if (!ts.isIfStatement(statement) || statement.elseStatement != null || !isSideEffectFreeExpression(statement.expression)) return null
+  const children = ts.isBlock(statement.thenStatement) ? [...statement.thenStatement.statements] : [statement.thenStatement]
+  const pushes: LoopPush[] = []
+  for (const child of children) {
+    const push = pushCallFromStatement(child)
+    if (push != null) {
+      const targetName = push.expression.expression.text
+      const target = context.env.get(targetName)
+      if (target == null || target.kind !== 'array') return null
+      pushes.push({...readLoopPush(push, context), arrayName: targetName, length})
+      continue
+    }
+    if (isResettableScalarAssignment(child, resettableExtrema, length, context)) continue
+    return null
+  }
+  return pushes.length === 0 ? null : pushes
+}
+
+function isResettableScalarAssignment(
+  statement: ts.Statement,
+  resettableExtrema: Map<string, LoopExtremum>,
+  length: NumberValue,
+  context: EvalContext,
+) {
+  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false
+  const assignment = statement.expression
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left) || !isSideEffectFreeExpression(assignment.right)) return false
+  const extremum = resettableExtrema.get(assignment.left.text)
+  const start = context.env.get(assignment.left.text)
+  const reset = evaluateExpression(assignment.right, context)
+  if (extremum == null || start?.kind !== 'number' || reset.kind !== 'number') return false
+  const tracked = runningExtremumNumber(extremum.kind, assignment.left.text, start, length, extremum.candidate)
+  return reset.min >= tracked.min && reset.max <= tracked.max
+}
+
 function readConditionalLoopAdd(statement: ts.Statement, context: EvalContext): ConditionalLoopAdd | null {
   if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
   const add = plusEqualsFromStatement(statement.thenStatement)
@@ -2517,8 +2584,13 @@ function readLoopExtremumAssignment(statement: ts.Statement, context: EvalContex
         : null
   if (candidateExpression == null) return null
 
-  const candidate = evaluateExpression(candidateExpression, context)
-  if (candidate.kind !== 'number') return null
+  const candidateValue = evaluateExpression(candidateExpression, context)
+  const candidate = candidateValue.kind === 'number'
+    ? candidateValue
+    : candidateValue.kind === 'unknown'
+      ? unknownNumber(candidateExpression.getText(context.program.sourceFile))
+      : null
+  if (candidate == null) return null
   return {targetName, kind: callTarget.name.text, candidate}
 }
 
@@ -2558,8 +2630,8 @@ function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.Bin
     && ts.isIdentifier(expression.left)
 }
 
-function conditionalPushLength(arrayName: string, sourceLength: NumberValue): NumberValue {
-  return numberValue(0, sourceLength.max, true, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
+function conditionalPushLength(arrayName: string, sourceLength: NumberValue, startLength: NumberValue = numberValue(0, 0, true, '0', linearConstant(0))): NumberValue {
+  return numberValue(startLength.min, startLength.max + sourceLength.max, true, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
 }
 
 type IndexedLoopShape = {
@@ -2651,15 +2723,24 @@ function objectIdentifierPropertyPaths(expression: ts.ObjectLiteralExpression, p
 function loopElementFromPush(
   push: LoopPush,
   updates: Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>,
+  extrema: Map<string, LoopExtremum>,
+  length: NumberValue,
   context: EvalContext,
 ): Value | null {
-  if (push.element == null || updates.size === 0) return push.element
+  if (push.element == null || (updates.size === 0 && extrema.size === 0)) return push.element
   let element = push.element
   for (const cursorPath of push.cursorPaths) {
     const update = updates.get(cursorPath.targetName)
-    if (update == null) continue
     const expr = cursorPath.path.length === 0 ? `${push.arrayName}[]` : `${push.arrayName}[].${cursorPath.path.join('.')}`
-    element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, expr, context))
+    if (update != null) {
+      element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, expr, context))
+      continue
+    }
+    const extremum = extrema.get(cursorPath.targetName)
+    const start = context.env.get(cursorPath.targetName)
+    if (extremum != null && start?.kind === 'number') {
+      element = setObjectPathValue(element, cursorPath.path, runningExtremumNumber(extremum.kind, expr, start, length, extremum.candidate))
+    }
   }
   return element
 }

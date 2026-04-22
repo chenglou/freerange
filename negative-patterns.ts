@@ -602,6 +602,20 @@ export function negativeConditionalPushIsNotSameLength(items: {height: number; v
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ */
+export function negativeIndexedConditionalPushIsNotSameLength(items: {height: number; visible: boolean}[]) {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) rows.push({height: item.height})
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
  * nondecreasing(result.rows.top)

@@ -125,9 +125,9 @@ result:
   result.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   result.items[].prompt.lines.length: int 0..Infinity
   result.rowsTop.length == rowsTop.length
-  result.rowsTop.length: int 0..Infinity
+  result.rowsTop.length: int 1..Infinity
 locals:
-  rowsTop.length: int 0..Infinity
+  rowsTop.length: int 1..Infinity
   rowHeights.length: int 0..Infinity
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
@@ -137,13 +137,6 @@ locals:
   measurements[].promptLayout.lines.length: int 0..Infinity
   measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
   measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
-unsupported:
-  Forgot unsupported indexed loop side effect: rowHeight = Math.max(rowHeight, layoutHeight)
-  Forgot unsupported indexed loop side effect: if (i % cols === cols - 1 || i === layoutSources.length - 1) {
-      rowHeights.push(rowHeight)
-      rowsTop.push(rowsTop.at(-1)! + rowHeight + boxesGapY)
-      rowHeight = 0
-    }
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout
 result:
   result.items.length == layoutSources.length

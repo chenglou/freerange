@@ -28,7 +28,7 @@ sections[].rows[].height <= maxHeight
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
-- Simple indexed `for` append loops can bind `const item = items[i]!` and advance numeric cursors with `+=`.
+- Simple indexed `for` append loops can bind `const item = items[i]!`, advance numeric cursors with `+=`, and preserve guarded push length facts.
 - `items.map(...)` preserves length, item field domains, and optional callback index facts for expression callbacks and tiny block callbacks with local `const` bindings plus `return`.
 - Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
 - Named local imports can call exported function declarations with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.

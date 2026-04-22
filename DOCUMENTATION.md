@@ -556,7 +556,7 @@ Supported today:
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
-- conditional push length, e.g. `rows.length <= items.length`
+- conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 
 `map` support is deliberately tiny:
 
@@ -741,6 +741,8 @@ function visibleRows(items: {height: number; visible: boolean}[]) {
 }
 ```
 
+The same weaker fact works in the supported indexed loop shape.
+
 It does not claim equal length.
 
 ## Loop Specs
@@ -799,7 +801,7 @@ The checker understands a small pure subset:
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
-- one guarded conditional push inside a `for...of`
+- guarded conditional pushes inside supported `for...of` and indexed loops
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 - conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets

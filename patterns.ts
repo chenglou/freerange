@@ -671,6 +671,21 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ */
+export function indexedConditionalPushRows(items: {height: number; visible: boolean}[]) {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) rows.push({height: item.height})
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
  * given top: 0..1000
@@ -945,6 +960,17 @@ export function inlineCommentFormatVariants(
  */
 export function ceilDivisionCoversSignedTotal(total: number, count: number) {
   return Math.ceil(total / count) * count
+}
+
+/** @fit
+ * given width: 0..1000
+ * given cap: 0..1000
+ * given limit: 0..1000
+ * result <= Math.min(width, cap)
+ */
+export function mathMinCanBeComparisonBound(width: number, cap: number, limit: number) {
+  const capped = Math.min(width, cap)
+  return Math.min(capped, limit)
 }
 
 export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2
