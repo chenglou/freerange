@@ -1890,22 +1890,7 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
   }
   if (!ts.isBlock(statement)) return unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)
   const localContext: EvalContext = {...context, env: new Map(context.env)}
-  for (const child of statement.statements) {
-    if (ts.isVariableStatement(child)) {
-      bindVariableStatement(child, localContext)
-      continue
-    }
-    if (ts.isExpressionStatement(child)) {
-      const result = applyExpressionStatement(child.expression, localContext)
-      if (result != null) return result
-      continue
-    }
-    if (ts.isReturnStatement(child)) {
-      return evaluateReturnStatement(child, localContext)
-    }
-    return unknown(`Unsupported branch statement: ${child.getText(context.program.sourceFile)}`)
-  }
-  return unknown('Branch did not return')
+  return evaluateStatements(statement.statements, localContext)
 }
 
 function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalContext): Value {

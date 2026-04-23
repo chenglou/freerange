@@ -525,6 +525,23 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given item
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: result: 0..40
   Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length
+UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: result >= 0
+  int -1..999 as (focused - 1) >= int 0..0 as 0 was not proven
+  need: (focused - 1) >= 0
+  known:
+    int -1..999 as (focused - 1)
+    int 0..0 as 0
+    trusted from function @fit: given focused: int 0..1000
+  missing: given (focused - 1) >= 0
+FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: result: int 0..1000
+  range was int -1..999 as (focused - 1), expected inside int 0..1000
+  need: (focused - 1) inside int 0..1000
+  known:
+    int -1..999 as (focused - 1)
+    int 0..0 as 0
+    int 1000..1000 as 1000
+    trusted from function @fit: given focused: int 0..1000
+  missing: (focused - 1) >= 0
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length

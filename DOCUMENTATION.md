@@ -207,6 +207,23 @@ return {
 
 There it is a check, not a trusted `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
 
+Branch-local facts use ordinary TypeScript branches. Put the fact on the value made inside that branch; Freerange carries the `if` or ternary condition while checking it:
+
+```ts
+if (focused > 0) return focused - 1 // @fit >= 0
+return focused // @fit == 0
+
+return focused > 0
+  ? {
+    targetIndex: focused - 1, // @fit >= 0
+  }
+  : {
+    targetIndex: focused, // @fit == 0
+  }
+```
+
+Function-level `result` facts still mean every return after the branches are joined.
+
 ## Reading Results
 
 Each requested fact ends in one of three states:

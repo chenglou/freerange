@@ -783,6 +783,15 @@ export function negativePredecessorIndexNeedsStrictPositiveBranch(items: number[
 }
 
 /** @fit
+ * given focused: int 0..1000
+ * result: int 0..1000
+ */
+export function negativeBranchLocalReturnNeedsStrictPositiveBranch(focused: number) {
+  if (focused >= 0) return focused - 1 // @fit >= 0
+  return 0
+}
+
+/** @fit
  * given width.toString() == 10
  */
 export function negativeGivenComparisonCannotCallInputMethod(width: number) {

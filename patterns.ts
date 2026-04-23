@@ -908,6 +908,36 @@ export function strictIntegerPredecessorArrayIndex(items: number[], focused: num
 }
 
 /** @fit
+ * given focused: int 0..1000
+ * result: int 0..1000
+ */
+export function nestedBranchLocalReturnChecks(focused: number) {
+  if (focused > 0) {
+    if (focused > 1) return focused - 2 // @fit >= 0
+    return 0
+  }
+  return focused // @fit == 0
+}
+
+/** @fit
+ * given count: int 1..50
+ * given focused: int 0..<count
+ * result.targetIndex: int 0..49
+ * result.targetIndex < count
+ */
+export function ternaryBranchLocalFieldChecks(count: number, focused: number) {
+  return focused > 0
+    ? {
+      count,
+      targetIndex: focused - 1, // @fit >= 0
+    }
+    : {
+      count,
+      targetIndex: focused, // @fit == 0
+    }
+}
+
+/** @fit
  * given items.length: int 0..100
  * given index: int 0..100
  * given index < items.length

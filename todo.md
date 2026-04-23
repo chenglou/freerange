@@ -25,6 +25,7 @@ sections[].rows[].height <= maxHeight
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
 - Strict integer branch facts can move by one step, so `focused > 0` proves `focused - 1 >= 0` for previous-index checks.
+- Branch-local inline checks use ordinary TypeScript control flow. `if`/`else` and ternaries carry their condition into return and object-field checks; helper contracts are still unconditional after branches join.
 - Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `result.rows == input.rows`.
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
@@ -61,13 +62,16 @@ This was the next path before the TypeScript piggyback idea came up. Keep it vis
    Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 56 checks across `layout.ts` and `prompt-layout.ts`, with scalar input domains mostly moved onto params and the line-size math back in one helper, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation handoff samples before asking for more Freerange power.
    Current infer sweep across checked demos: 92 explicit function checks are source-proved, 106 input facts are trusted, 0 are not-inferred, 51 are redundant because emitted inferred result facts already cover them, and 41 remain source-proved keepers. That is a cue to simplify comments, not to auto-delete public contracts.
 
-5. **Design two-collection wildcard semantics before implementing them.**
+5. **Postpone conditional helper contracts until callers need them.**
+   Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `result.leftHitArea` is non-null and `result.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
+
+6. **Design two-collection wildcard semantics before implementing them.**
    Keep the current one-wildcard-vs-scalar rule. `rows[].height <= maxHeight` is anonymous `for every row`. Never let `rows[].top <= boxes[].bottom` guess its meaning.
    - repeated labels could mean same index, e.g. `rows[i]` with `boxes[i]`
    - different labels could mean all pairs, e.g. `children[i]` with `blockers[j]`
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
 
-6. **Delay views until field-name pressure earns them.**
+7. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
 
 ```ts
@@ -78,7 +82,7 @@ view fragments as ranges(start: .textStart, end: .textEnd)
 
    A view is only a field mapping. It must not assert layout facts.
 
-7. **Add Pretext facts through generic range/lineage facts first.**
+8. **Add Pretext facts through generic range/lineage facts first.**
    Try these before text-specific atoms:
    - `fragments[].width <= offeredWidth`
    - `nondecreasing(fragments.textStart)`
