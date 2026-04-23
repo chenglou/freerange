@@ -130,7 +130,7 @@ rows[].height <= maxHeight
 sections[].rows[].height <= maxHeight
 ```
 
-Do not give two-sided `[]` a hidden meaning:
+Do not give two-sided anonymous `[]` a hidden meaning:
 
 ```ts
 rows[].top <= boxes[].bottom
@@ -138,21 +138,25 @@ rows[].top <= boxes[].bottom
 
 That could mean same index, all pairs, matched by source item, matched by id, or adjacent rows. The syntax should carry the relationship.
 
-Einops is a useful taste reference: named axes make repetition meaningful. A future syntax could use repeated labels for same-index comparison:
+Einops is a useful taste reference: named axes make repetition meaningful. Repeated labels now mean same-index comparison when matching lengths are proven:
 
 ```ts
-rows[i].top <= boxes[i].bottom
+rows[$i].top <= boxes[$i].bottom
 ```
 
-and different labels for all-pairs comparison:
+The first adjacent form is deliberately tiny:
 
 ```ts
-children[i].right <= blockers[j].left
+rows[$i].top <= rows[$i + 1].top
+```
+
+It lowers to the existing `nondecreasing(rows.top)` sequence fact. General adjacent formulas, all-pairs comparison, and source/id matching are still future work. Different labels might eventually mean all-pairs comparison:
+
+```ts
+children[$i].right <= blockers[$j].left
 ```
 
 SQL is the taste reference for source/id matching: name the relation. If two collections match by source item, fragment id, line id, or range ownership, bracket labels alone are probably not enough.
-
-Keep this as design pressure, not implemented syntax, until a real demo needs it.
 
 ## Internal IR
 

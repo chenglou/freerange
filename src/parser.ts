@@ -7,7 +7,7 @@ export type FitDomainPath = {
 
 export type FitDomainPathSegment =
   | {kind: 'prop'; name: string}
-  | {kind: 'item'}
+  | {kind: 'item'; label?: string; offset?: number}
 
 export type ParsedFitExpression = {
   expression: ts.Expression
@@ -62,7 +62,8 @@ export type FitSpec =
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
 
 const identifierPattern = '[A-Za-z_$][\\w$]*'
-const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[\\]))+`, 'g')
+const indexLabelPattern = '\\$[A-Za-z_][\\w$]*(?:\\s*[+-]\\s*\\d+)?'
+const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'g')
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   const comments = fitCommentLines(sourceText, node)
@@ -383,9 +384,8 @@ export function parseExpression(text: string): ts.Expression {
 export function parseFitExpression(text: string): ParsedFitExpression {
   const domainPaths = new Map<string, FitDomainPath>()
   const sourceText = text.replace(domainPathPattern, match => {
-    if (!match.includes('[]')) return match
     const domainPath = parseDomainPathText(match)
-    if (domainPath == null) return match
+    if (domainPath == null || !domainPath.segments.some(segment => segment.kind === 'item')) return match
     const synthetic = domainPathSyntheticName(match)
     domainPaths.set(synthetic, domainPath)
     return synthetic
@@ -401,7 +401,7 @@ export function parseFitExpression(text: string): ParsedFitExpression {
 }
 
 export function parseDomainPathText(text: string): FitDomainPath | null {
-  const match = new RegExp(`^(${identifierPattern})((?:\\.${identifierPattern}|\\[\\])*)$`).exec(text)
+  const match = new RegExp(`^(${identifierPattern})((?:\\.${identifierPattern}|\\[(?:\\]|${indexLabelPattern}\\]))*)$`).exec(text)
   if (match == null) return null
   const root = match[1]!
   const suffix = match[2]!
@@ -411,6 +411,14 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
     if (suffix.startsWith('[]', index)) {
       segments.push({kind: 'item'})
       index += 2
+      continue
+    }
+    const itemLabel = new RegExp(`^\\[(${indexLabelPattern})\\]`).exec(suffix.slice(index))
+    if (itemLabel != null) {
+      const parsed = parseIndexLabelText(itemLabel[1]!)
+      if (parsed == null) return null
+      segments.push({kind: 'item', label: parsed.label, offset: parsed.offset})
+      index += itemLabel[0].length
       continue
     }
     if (suffix[index] !== '.') return null
@@ -424,9 +432,24 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
 
 export function domainPathSyntheticName(text: string) {
   const parts = text
-    .replaceAll('[]', '.__item')
+    .replace(/\[\s*\]/g, '.__item')
+    .replace(/\[\s*(\$[A-Za-z_][\w$]*)(?:\s*([+-])\s*(\d+))?\s*\]/g, (_match, label: string, sign: string | undefined, offset: string | undefined) => {
+      const suffix = offset == null ? '' : sign === '-' ? `_minus_${offset}` : `_plus_${offset}`
+      return `.__item_${label}${suffix}`
+    })
     .split('.')
     .filter(part => part.length > 0)
     .map(part => part.replace(/[^\w$]/g, '_'))
   return `__fit_domain_${parts.join('_')}`
+}
+
+function parseIndexLabelText(text: string): {label: string; offset: number} | null {
+  const match = /^(\$[A-Za-z_][\w$]*)(?:\s*([+-])\s*(\d+))?$/.exec(text)
+  if (match == null) return null
+  const magnitude = match[3] == null ? 0 : Number(match[3])
+  if (!Number.isSafeInteger(magnitude)) return null
+  return {
+    label: match[1]!,
+    offset: match[2] === '-' ? -magnitude : magnitude,
+  }
 }

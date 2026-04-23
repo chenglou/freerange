@@ -89,6 +89,32 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
 
+const segmentedLoopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
+const segmentedFunction = segmentedLoopInferReport.functions[0]
+const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
+const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const expectedSegmentedFacts = [
+  'result.rows.length: int 0..50',
+  'result.rows[].bottom == (rows[].top + rows[].height)',
+  'nondecreasing(result.rows.top)',
+  'spaced(result.rows, gap)',
+]
+const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
+const expectedSegmentedSpecStatuses = [
+  ['result.rows.length <= items.length', 'source-proved'],
+  ['result.rows[].bottom == result.rows[].top + result.rows[].height', 'source-proved'],
+  ['spaced(result.rows, gap)', 'source-proved'],
+] as const
+const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
+if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
+  console.error('expected segmented loop inferred facts changed')
+  console.error(missingSegmentedFacts.map(fact => `missing: ${fact}`).join('\n'))
+  console.error(badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
+}
+
 const redundantInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarPushLoop'})
 const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])

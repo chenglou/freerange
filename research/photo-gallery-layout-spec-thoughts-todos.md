@@ -34,14 +34,21 @@ possible syntax, and implementation questions that fell out of photo-gallery.
 
 ### Same-Index Labels
 
-Current `[]` means one anonymous collection. It can now say “the same item” when
-the same collection appears on both sides, like `rows[].bottom ==
-rows[].top + rows[].height`. It still cannot relate two different arrays or name
-two nested positions.
+Current `[]` means one anonymous collection. Labeled indices can now say “same
+position” across collections when their lengths are proven equal, and can prove
+the narrow adjacent monotone shape from `nondecreasing`. This covers the simple
+version of:
 
 ```ts
 items[$i].imageBox.sizeX <= layoutSources[$i].naturalSizeX
 items[$i].prompt.box.x == items[$i].imageBox.x
+rows[$i].top <= rows[$i + 1].top
+```
+
+Still not covered: all-pairs, source/id matching, and general adjacent formulas.
+Nested labels are still design pressure, not a fully honest relation language:
+
+```ts
 items[$i].prompt.lines[$j].width <= items[$i].imageBox.sizeX - promptPaddingX * 2
 ```
 
@@ -126,9 +133,9 @@ adjacent rows:
 ```
 
 The source now returns row metadata, and the checker can prove the adjacent-row
-spacing from the guarded row-boundary push. The remaining checker question is
-how much same-index / adjacent-index syntax we want for item-to-column and
-item-to-row relations.
+spacing from the guarded row-boundary push. Same-index labels cover a small slice
+of item-to-source relations, but item-to-column and item-to-row relations still
+need symbolic indexing or source-recognized row membership.
 
 ### Exact Render Set
 

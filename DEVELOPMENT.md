@@ -44,6 +44,7 @@ bun install
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
+- [src/bound-index.ts](./src/bound-index.ts) — same-index and narrow adjacent-label spec checks
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [fr.ts](./fr.ts) — main CLI entrypoint
 - [verify.ts](./verify.ts) — old ad hoc JSON-report CLI

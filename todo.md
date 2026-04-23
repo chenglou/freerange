@@ -13,7 +13,7 @@ Prefer source inference, intervals, small reducers, array/object domains, and he
 - Inline local and field checks use `@fit 0..foo` immediately before a single variable declaration, as a trailing `//` side comment, or on a simple object field. They are checks on that local value or field, not trusted givens. On simple identifier params, the same syntax is shorthand for a trusted `given`. Leading line/block comments and trailing `//` comments are supported; trailing block comments are intentionally not part of the current surface.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
-- Wildcard comparisons support one collection at a time. The same collection may appear on both sides, and the collection side may be nested:
+- Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides, and the collection side may be nested:
 
 ```ts
 rows[].top + rows[].height <= parent.bottom
@@ -21,7 +21,8 @@ fragments[].width <= offeredWidth
 sections[].rows[].height <= maxHeight
 ```
 
-- Two different wildcard collection sides are intentionally unsupported until their semantics are explicit.
+- Same-index labels are supported in comparisons when matching collection lengths can be proven, e.g. `rows[$i].height == items[$i].height`. The narrow adjacent monotone form `rows[$i].top <= rows[$i + 1].top` is supported when `nondecreasing(rows.top)` has been inferred.
+- Anonymous two-collection wildcard sides like `rows[].top <= boxes[].bottom` are intentionally unsupported; use labels only when same index is the intended relation.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
 - `items.at(-1)` works for non-empty arrays. It intentionally does not support `.at(-2)`, dynamic `.at(index)`, or same-loop "append then read previous last" recurrences yet. The bracket spelling `items[items.length - 1]` is also kept out of that same-loop recurrence shape so we do not accidentally prove the initial array snapshot.
@@ -67,11 +68,13 @@ This was the next path before the TypeScript piggyback idea came up. Keep it vis
 5. **Postpone conditional helper contracts until callers need them.**
    Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `result.leftHitArea` is non-null and `result.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
 
-6. **Design two-different-collection wildcard semantics before implementing them.**
-   Keep the current one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning.
-   - repeated labels could mean same index, e.g. `rows[i]` with `boxes[i]`
-   - different labels could mean all pairs, e.g. `children[i]` with `blockers[j]`
+6. **Keep bound-index labels narrow.**
+   Keep the current anonymous one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning. Use labels only when the relationship is really same-index or the supported adjacent monotone shape.
+   - repeated labels mean same index, e.g. `rows[$i]` with `boxes[$i]`, and require proven matching lengths
+   - adjacent monotone labels work only for one property over one collection, e.g. `rows[$i].top <= rows[$i + 1].top`
+   - different labels could mean all pairs, e.g. `children[$i]` with `blockers[$j]`
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
+   - punt on numeric ghost symbols like `0..$n`. Index labels are bound variables (`items[$i]` means every valid item index), while numeric symbols would be existential/universal/generic parameters. Those are related ideas, but they bind differently, so do not reuse the syntax without a mini spec.
 
 7. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
@@ -189,7 +192,7 @@ exist in TypeScript.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, property-access call shape, namespace-imported structural call shape, unions, and intersections. Optional and nullable properties are still conservative unknowns, and huge types are bounded out.
-- Wildcard comparisons support one collection at a time. The same collection may appear on both sides; two different collections are still unsupported.
+- Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides. Labeled same-index comparisons can relate two collections when their lengths are proven equal; all-pairs, source/id matching, and general adjacent formulas are still unsupported.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
 - No general loops, nonlinear solver, TS type narrowing, overload semantics, general generic value reasoning, classes, async, closures, strings, booleans, or branded-value reasoning.

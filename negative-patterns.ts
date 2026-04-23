@@ -457,6 +457,32 @@ export function negativeWildcardComparisonNeedsScalar(rows: {top: number}[], box
 }
 
 /** @fit
+ * given rows.length: int 0..10
+ * given boxes.length: int 0..20
+ * given rows[].top: 0..10
+ * given boxes[].bottom: 0..10
+ * result.rows[$i].top <= result.boxes[$i].bottom
+ */
+export function negativeSameIndexNeedsMatchingLengths(rows: {top: number}[], boxes: {bottom: number}[]) {
+  return {rows, boxes}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: -40..40
+ * result.rows[$i].top <= result.rows[$i + 1].top
+ */
+export function negativeAdjacentBoundIndexNeedsNondecreasingRows(items: {height: number}[]) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows}
+}
+
+/** @fit
  * given value: 0..10
  * result: 0..10
  */

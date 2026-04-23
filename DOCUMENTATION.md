@@ -18,7 +18,9 @@ width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
 // @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
-items[] // every item in one collection. The same collection may appear on both sides of a comparison; different collections still need future syntax.
+items[] // every item in one anonymous collection.
+items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
+items[$i + 1] // adjacent label form, currently used for monotone `<=` / `>=` checks over one collection.
 result // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
 source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
@@ -367,7 +369,7 @@ Nested array paths are fine when one collection is being discussed:
  */
 ```
 
-Freerange does not guess what two collection sides mean:
+Anonymous `[]` does not guess what two collection sides mean:
 
 ```ts
 // Not supported yet.
@@ -385,9 +387,50 @@ collection must satisfy the relation:
  */
 ```
 
-So `[]` stays the anonymous one-collection shorthand. If a future fact needs two
-different collections, it should name the relationship instead of asking `[]` to
-guess.
+So `[]` stays the anonymous one-collection shorthand.
+
+When you really mean same index, use a bound index label:
+
+```ts
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ * result.rows[$i].height == items[$i].height
+ */
+function sameIndexRows(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
+```
+
+Reusing `$i` means the compared collections must have matching lengths. This is
+not a TypeScript variable and it is not a numeric ghost parameter; it only binds
+array positions inside the spec.
+
+The first adjacent form is intentionally tiny. It can prove monotone neighboring
+checks from an inferred `nondecreasing` row fact:
+
+```ts
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[$i].top <= result.rows[$i + 1].top
+ */
+function monotoneRows(items: {height: number}[]) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows}
+}
+```
+
+This does not replace the named atoms. Prefer `nondecreasing(rows.top)` and
+`spaced(rows, gap)` when those names express the intent better. Labels are the
+escape hatch for specific red lines that do not deserve a public atom.
 
 ## Comparisons
 
@@ -605,6 +648,8 @@ Supported today:
 - simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
+- same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
+- adjacent monotone labels, e.g. `rows[$i].top <= rows[$i + 1].top`, when row order is already inferred
 
 Strict branch checks know integer steps. If `focused` is proven integer, `focused > 0` is enough to prove `focused - 1 >= 0`; `focused >= 0` is not. That matters for previous/next indices:
 
@@ -913,6 +958,7 @@ The checker understands a small pure subset:
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - guarded conditional pushes inside supported `for...of` and indexed loops
 - guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, and `spaced(rows, gap)`
+- same-index labels in comparisons, plus the narrow adjacent `$i + 1` monotone comparison shape
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 - conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets
@@ -931,6 +977,7 @@ Not supported yet:
 - higher-order call contracts, general closures, or callback reasoning
 - strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
 - public lambdas, `forall`, arbitrary folds, prose-as-truth
+- numeric ghost parameters like `0..$n`, all-pairs labels, source/id matching labels, and general adjacent formulas beyond the narrow monotone `$i + 1` shape
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
 - Pretext text facts
 - table/grid/flex column negotiation

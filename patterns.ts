@@ -584,6 +584,36 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
   return {rows, bottom: y - gap}
 }
 
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ * result.rows[].bottom == result.rows[].top + result.rows[].height
+ * nondecreasing(result.rows.top)
+ * spaced(result.rows, gap)
+ */
+export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      const resetHeight = 0
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = resetHeight
+    }
+  }
+  return {rows}
+}
+
 export function inlineComparisonFacts(
   value: number, // @fit 0..100
   max: number, // @fit >= value
@@ -797,6 +827,32 @@ export function wildcardRowsFitParent(items: {height: number}[], top: number, ga
     y += item.height + gap
   }
   return {rows, bottom: y - gap, parent}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ * result.rows[$i].height == items[$i].height
+ */
+export function sameIndexRowsKeepItemHeight(items: {height: number}[]) {
+  const rows = items.map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[$i].top <= result.rows[$i + 1].top
+ */
+export function adjacentBoundIndexRowsAreNondecreasing(items: {height: number}[]) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows}
 }
 
 /** @fit

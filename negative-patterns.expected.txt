@@ -289,6 +289,25 @@ UNKNOWN negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: result.s
   missing: given sections[].rows[].height <= maxHeight
 UNKNOWN negative-patterns.ts:negativeWildcardComparisonNeedsScalar: result.rows[].top <= result.boxes[].bottom
   Wildcard comparisons support one wildcard side and one scalar side
+UNKNOWN negative-patterns.ts:negativeSameIndexNeedsMatchingLengths: result.rows[$i].top <= result.boxes[$i].bottom
+  Bound index label $i needs matching lengths for result.rows and result.boxes
+  int 0..10 as rows.length == int 0..20 as boxes.length was not proven
+  need: rows.length == boxes.length
+  known:
+    int 0..10 as rows.length
+    int 0..20 as boxes.length
+    trusted from function @fit: given rows.length: int 0..10
+    trusted from function @fit: given boxes.length: int 0..20
+    trusted from function @fit: given rows[].top: 0..10
+    trusted from function @fit: given boxes[].bottom: 0..10
+  missing: given rows.length == boxes.length
+UNKNOWN negative-patterns.ts:negativeAdjacentBoundIndexNeedsNondecreasingRows: result.rows[$i].top <= result.rows[$i + 1].top
+  result.rows[$i].top <= result.rows[$i + 1].top was not inferred
+  need: every next .top >= previous .top
+  known:
+    row advance for .top: -40..40 as items[].height
+    sequence facts: spaced(0), lastEnd = -Infinity..Infinity as runningSum(0, items.length, items[].height)
+  missing: given items[].height >= 0
 FAIL negative-patterns.ts:negativeCallGiven: call negativeNeedsSmallValue(value): requires value: 0..10
   called function requires value: 0..10
   this call passes value is 0..20

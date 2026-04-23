@@ -6,6 +6,11 @@ import {
   type FitModule,
 } from './modules.ts'
 import {
+  proveBoundIndexComparisonSpec,
+  proveBoundIndexRangeSpec,
+  type BoundIndexContext,
+} from './bound-index.ts'
+import {
   parseDomainPathText,
   parseExpression,
   parseFitExpression,
@@ -1466,8 +1471,19 @@ function verifyCheckSpec(
   env.set('result', result)
   const inputRoots = [...baseEnv.keys(), 'result']
   const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
+  const boundIndexContext = specBoundIndexContext(context)
 
   if (spec.kind === 'check-range') {
+    const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
+    if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
+      return {
+        file,
+        functionName,
+        text: spec.text,
+        status: boundIndexCheck.status,
+        ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
+      }
+    }
     const value = evaluateSpecExpression(spec.expression, context)
     const status = proveRangeSpec(value, spec.range, context)
     return {
@@ -1480,6 +1496,17 @@ function verifyCheckSpec(
   }
 
   if (spec.kind === 'check-atom') return verifyAtomSpec(file, functionName, spec, context)
+
+  const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
+  if (boundIndexCheck != null) {
+    return {
+      file,
+      functionName,
+      text: spec.text,
+      status: boundIndexCheck.status,
+      ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
+    }
+  }
 
   const wildcardCheck = checkWildcardComparisonShape(spec.left, spec.right)
   if (wildcardCheck.kind === 'unsupported') {
@@ -1543,6 +1570,15 @@ function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {s
 function expectedNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
+}
+
+function specBoundIndexContext(context: EvalContext): BoundIndexContext {
+  return {
+    assumptions: context.assumptions,
+    evaluateDomainPath: domainPath => evaluateDomainPath(domainPath, context),
+    evaluateSpecExpression: text => evaluateSpecExpression(text, context),
+    nondecreasingFailureReason,
+  }
 }
 
 function staticRangeInside(value: NumberValue, range: FitRange) {
