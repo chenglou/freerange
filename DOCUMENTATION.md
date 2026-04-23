@@ -589,6 +589,7 @@ Supported today:
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - `items.at(-1)` when `items.length >= 1`; other `.at(...)` forms are not in the static subset yet
+- Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`

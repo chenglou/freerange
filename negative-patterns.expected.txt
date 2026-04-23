@@ -525,6 +525,8 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given item
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeArrayAtOnlySupportsLast: result: 0..40
   Array.at only supports at(-1)
+UNKNOWN negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
+  Array length-derived index on finite local arrays inside loops is not supported
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: result: 0..40
   Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length
 UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: result >= 0

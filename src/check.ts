@@ -3852,6 +3852,15 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
 function evaluateElementAccess(expression: ts.ElementAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
   if (target.kind !== 'array') return expressionStructuralFallback(expression, context) ?? unknown(`Element access expected an array`)
+  const targetRoot = expressionRootName(expression.expression)
+  if (
+    context.insideLoop === true
+    && target.elements != null
+    && targetRoot != null
+    && expressionMentionsArrayLength(expression.argumentExpression, targetRoot)
+  ) {
+    return unknown('Array length-derived index on finite local arrays inside loops is not supported')
+  }
   const index = evaluateExpression(expression.argumentExpression, context)
   if (index.kind !== 'number') return unknown('Array index expected a number')
   if (!index.isInteger) return unknown(`Array index ${formatRange(index)} was not proven integer`)
@@ -3866,6 +3875,19 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   let value = target.elements[start]!
   for (let i = start + 1; i <= end; i++) value = joinValues(value, target.elements[i]!)
   return valueWithStructuralFallback(value, fallback)
+}
+
+function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {
+  if (expression == null) return false
+  if (
+    ts.isPropertyAccessExpression(expression)
+    && expression.name.text === 'length'
+    && expressionRootName(expression.expression) === root
+  ) return true
+  for (const child of expression.getChildren()) {
+    if (ts.isExpression(child) && expressionMentionsArrayLength(child, root)) return true
+  }
+  return false
 }
 
 function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, context: EvalContext): Value {

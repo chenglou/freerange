@@ -781,6 +781,18 @@ export function negativeArrayAtOnlySupportsLast(items: number[]) {
 }
 
 /** @fit
+ * given items.length: int 1..10
+ */
+export function negativeLoopLengthDerivedIndexDoesNotUseInitialArray(items: number[]) {
+  const xs = [0]
+  for (let i = 0; i < items.length; i++) {
+    const last = xs[xs.length - 1]! // @fit 0
+    xs.push(last + 1)
+  }
+  return xs.length
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
  * given focused: int 0..<items.length
