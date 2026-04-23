@@ -588,6 +588,7 @@ Supported today:
 - `[...items, value]` length
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
+- `items.at(-1)` when `items.length >= 1`; other `.at(...)` forms are not in the static subset yet
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`

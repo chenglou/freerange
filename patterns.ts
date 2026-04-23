@@ -897,6 +897,22 @@ export function arrayLiteralIndex(index: number) {
 }
 
 /** @fit
+ * result: int 30..30
+ */
+export function arrayLiteralAtLast() {
+  return [10, 20, 30].at(-1)!
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[]: 0..40
+ * result: 0..40
+ */
+export function arrayAtLastKeepsElementDomain(items: number[]) {
+  return items.at(-1)!
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
  * given focused: int 0..<items.length

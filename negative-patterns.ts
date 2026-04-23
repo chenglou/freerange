@@ -772,6 +772,15 @@ export function negativeGivenComparisonCannotIndexArray(items: number[], index: 
 }
 
 /** @fit
+ * given items.length: int 2..50
+ * given items[]: 0..40
+ * result: 0..40
+ */
+export function negativeArrayAtOnlySupportsLast(items: number[]) {
+  return items.at(-2)!
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
  * given focused: int 0..<items.length

@@ -213,6 +213,7 @@ type EvalContext = {
   objectPath?: string[]
   inferLoops?: FitInferLoopReport[]
   inferUnsupported?: string[]
+  insideLoop?: true
 }
 
 const maxInlineDepth = 12
@@ -1935,7 +1936,7 @@ function evaluateForOfStatementCore(
   const conditionalAdds = new Map<string, NumberValue>()
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
-  const loopContext = {...context, env: new Map(context.env).set(loopItemName, loopItem)}
+  const loopContext: EvalContext = {...context, env: new Map(context.env).set(loopItemName, loopItem), insideLoop: true}
 
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
@@ -2083,7 +2084,7 @@ function evaluateForStatementCore(
   const indexValue = numberValue(0, source.length.max - 1, true, shape.indexName, linearVariable(shape.indexName))
   const indexFacts = indexedLoopAssumptions(indexValue, source.length)
   const loopContext = contextWithAssumptions(
-    {...context, env: new Map(context.env).set(shape.indexName, indexValue)},
+    {...context, env: new Map(context.env).set(shape.indexName, indexValue), insideLoop: true},
     indexFacts,
   )
 
@@ -3000,6 +3001,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
       return evaluateMathCall(target.name.text, expression.arguments, context)
     }
+    const atResult = evaluateArrayAtCall(expression, context)
+    if (atResult != null) return atResult
     const mapResult = evaluateArrayMapCall(expression, context)
     if (mapResult != null) return mapResult
     const filterResult = evaluateArrayFilterCall(expression, context)
@@ -3057,6 +3060,27 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
   }, fallbackResult)
+}
+
+function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext): Value | null {
+  if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'at') return null
+  const target = evaluateExpression(expression.expression.expression, context)
+  if (target.kind !== 'array') return unknown('Array.at expected an array')
+  if (expression.arguments.length !== 1 || numericLiteralValue(expression.arguments[0]!) !== -1) {
+    return unknown('Array.at only supports at(-1)')
+  }
+
+  const nonEmpty = proveComparison(target.length, '>=', numberValue(1, 1, true, '1', linearConstant(1)), context.assumptions)
+  if (nonEmpty.status !== 'pass') return unknown(`Array.at(-1) expected a non-empty array; length was ${formatRange(target.length)}`)
+
+  const fallback = expressionStructuralFallback(expression, context)
+  if (target.elements != null) {
+    if (context.insideLoop === true) return fallback ?? unknown('Array.at(-1) on finite local arrays inside loops is not supported')
+    const value = target.elements[target.elements.length - 1]
+    return value == null ? unknown('Array.at(-1) has no last element') : valueWithStructuralFallback(value, fallback)
+  }
+  if (target.element != null) return valueWithStructuralFallback(target.element, fallback)
+  return fallback ?? unknown('Array.at(-1) element values are not tracked')
 }
 
 function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
