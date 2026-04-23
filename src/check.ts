@@ -39,7 +39,6 @@ import {
   numberValue,
   plainNumber,
   powerNumbers,
-  runningExtremumNumber,
   runningSumNumber,
   unknown,
   unknownArray,
@@ -72,8 +71,16 @@ import {
   type LoopExtremum,
   type LoopPush,
   type LoopScalarUpdate,
-  type SegmentedStackPush,
 } from './loop-summary.ts'
+import {
+  indexedLoopShape,
+  isPushCall,
+  readConditionalLoopAdd,
+  readGuardedLoopPushes,
+  readLoopExtremumAssignment,
+  readLoopPush,
+  type LoopSourceContext,
+} from './loop-source.ts'
 import {
   cleanLinear,
   linearAdd,
@@ -239,11 +246,6 @@ const maxInlineDepth = 12
 type TrustedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
   | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
-
-type ConditionalLoopAdd = {
-  targetName: string
-  increment: NumberValue
-}
 
 type ImportedContractSource = {
   sourceFile: string
@@ -1961,6 +1963,7 @@ function evaluateForOfStatementCore(
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
   const loopContext: EvalContext = {...context, env: new Map(context.env).set(loopItemName, loopItem), insideLoop: true}
+  const loopSource = loopSourceContext(loopContext)
 
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
@@ -1972,17 +1975,17 @@ function evaluateForOfStatementCore(
       const targetName = child.expression.expression.expression.text
       const target = context.env.get(targetName)
       if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
-      pushedArrays.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+      pushedArrays.push({...readLoopPush(child.expression, loopSource), arrayName: targetName, length: source.length})
       continue
     }
 
-    const conditionalPushes = readGuardedLoopPushes(child, loopContext, source.length, pendingExtrema)
+    const conditionalPushes = readGuardedLoopPushes(child, loopSource, source.length, pendingExtrema)
     if (conditionalPushes != null) {
       conditionalPushedArrays.push(...conditionalPushes)
       continue
     }
 
-    const conditionalAdd = readConditionalLoopAdd(child, loopContext)
+    const conditionalAdd = readConditionalLoopAdd(child, loopSource)
     if (conditionalAdd != null) {
       if (conditionalAdds.has(conditionalAdd.targetName)) return unknown(`Conditional running-sum loop already updates ${conditionalAdd.targetName}`)
       conditionalAdds.set(conditionalAdd.targetName, conditionalAdd.increment)
@@ -1998,7 +2001,7 @@ function evaluateForOfStatementCore(
       continue
     }
 
-    const extremum = readLoopExtremumAssignment(child, loopContext)
+    const extremum = readLoopExtremumAssignment(child, loopSource)
     if (extremum != null) {
       if (pendingExtrema.has(extremum.targetName)) return unknown(`Scalar min/max loop already updates ${extremum.targetName}`)
       pendingExtrema.set(extremum.targetName, extremum)
@@ -2119,6 +2122,7 @@ function evaluateForStatementCore(
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
   const forgottenRoots = new Set<string>()
+  const loopSource = loopSourceContext(loopContext)
   for (const child of statement.statement.statements) {
     if (ts.isVariableStatement(child)) {
       bindVariableStatement(child, loopContext)
@@ -2129,11 +2133,11 @@ function evaluateForStatementCore(
       const targetName = child.expression.expression.expression.text
       const target = context.env.get(targetName)
       if (target == null || target.kind !== 'array') return unknown(`${targetName}.push expected an array`)
-      pushes.push({...readLoopPush(child.expression, loopContext), arrayName: targetName, length: source.length})
+      pushes.push({...readLoopPush(child.expression, loopSource), arrayName: targetName, length: source.length})
       continue
     }
 
-    const conditionalPushes = readGuardedLoopPushes(child, loopContext, source.length, pendingExtrema)
+    const conditionalPushes = readGuardedLoopPushes(child, loopSource, source.length, pendingExtrema)
     if (conditionalPushes != null) {
       conditionalPushedArrays.push(...conditionalPushes)
       continue
@@ -2148,7 +2152,7 @@ function evaluateForStatementCore(
       continue
     }
 
-    const extremum = readLoopExtremumAssignment(child, loopContext)
+    const extremum = readLoopExtremumAssignment(child, loopSource)
     if (extremum != null) {
       if (pendingExtrema.has(extremum.targetName)) return unknown(`Indexed scalar min/max loop already updates ${extremum.targetName}`)
       pendingExtrema.set(extremum.targetName, extremum)
@@ -2498,6 +2502,16 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   }
 }
 
+function loopSourceContext(context: EvalContext): LoopSourceContext {
+  return {
+    env: context.env,
+    sourceFile: context.program.sourceFile,
+    evaluateExpression: (expression, env) => evaluateExpression(expression, {...context, env}),
+    bindVariableStatement: (statement, env) => bindVariableStatement(statement, {...context, env}),
+    isSideEffectFreeExpression,
+  }
+}
+
 function loopSummaryOptions(context: EvalContext) {
   return {
     assumptions: context.assumptions,
@@ -2506,228 +2520,6 @@ function loopSummaryOptions(context: EvalContext) {
       return value.kind === 'number' ? value : null
     },
   }
-}
-
-function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit<LoopPush, 'arrayName' | 'length'> {
-  const row = expression.arguments[0]
-  if (row == null) return {element: null, topName: null, height: null, cursorPaths: []}
-  if (!ts.isObjectLiteralExpression(row)) {
-    return {
-      element: evaluateExpression(row, context),
-      topName: null,
-      height: null,
-      cursorPaths: ts.isIdentifier(row) ? [{path: [], targetName: row.text}] : [],
-    }
-  }
-  const topExpression = objectPropertyExpression(row, 'top')
-  const heightExpression = objectPropertyExpression(row, 'height')
-  const topName = topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null
-  const height = heightExpression == null ? null : evaluateExpression(heightExpression, context)
-  return {element: evaluateExpression(row, context), topName, height: height?.kind === 'number' ? height : null, cursorPaths: objectIdentifierPropertyPaths(row)}
-}
-
-function readGuardedLoopPushes(
-  statement: ts.Statement,
-  context: EvalContext,
-  length: NumberValue,
-  resettableExtrema: Map<string, LoopExtremum>,
-): GuardedLoopPush[] | null {
-  if (!ts.isIfStatement(statement) || statement.elseStatement != null || !isSideEffectFreeExpression(statement.expression)) return null
-  const children = ts.isBlock(statement.thenStatement) ? [...statement.thenStatement.statements] : [statement.thenStatement]
-  const guardContext: EvalContext = {...context, env: new Map(context.env)}
-  const localInitializers = new Map<string, ts.Expression>()
-  const identifierAliases = new Map<string, string>()
-  const pushes: GuardedLoopPush[] = []
-  for (const child of children) {
-    if (ts.isVariableStatement(child)) {
-      bindVariableStatement(child, guardContext)
-      for (const declaration of child.declarationList.declarations) {
-        if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) continue
-        localInitializers.set(declaration.name.text, declaration.initializer)
-        if (ts.isIdentifier(declaration.initializer)) identifierAliases.set(declaration.name.text, declaration.initializer.text)
-      }
-      continue
-    }
-
-    const push = pushCallFromStatement(child)
-    if (push != null) {
-      const targetName = push.expression.expression.text
-      const target = context.env.get(targetName)
-      if (target == null || target.kind !== 'array') return null
-      pushes.push({...readLoopPush(push, guardContext), arrayName: targetName, length, segmentedStack: null})
-      continue
-    }
-    const stackAdvance = pushes.length === 1 ? readSegmentedStackAdvance(child, pushes[0]!, guardContext, localInitializers, identifierAliases) : null
-    if (stackAdvance != null) {
-      pushes[0] = {...pushes[0]!, segmentedStack: stackAdvance}
-      continue
-    }
-    if (isResettableScalarAssignment(child, resettableExtrema, length, guardContext)) continue
-    return null
-  }
-  return pushes.length === 0 ? null : pushes
-}
-
-function readSegmentedStackAdvance(
-  statement: ts.Statement,
-  push: LoopPush,
-  context: EvalContext,
-  localInitializers: Map<string, ts.Expression>,
-  identifierAliases: Map<string, string>,
-): SegmentedStackPush | null {
-  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return null
-  const assignment = statement.expression
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left)) return null
-
-  const cursorName = assignment.left.text
-  if (push.topName == null) return null
-  const topSourceName = identifierAliases.get(push.topName) ?? push.topName
-  if (topSourceName !== cursorName) return null
-
-  const heightName = pushPropertyIdentifier(push, 'height')
-  const bottomName = pushPropertyIdentifier(push, 'bottom')
-  if (heightName == null || bottomName == null) return null
-
-  const bottomInitializer = localInitializers.get(bottomName)
-  if (bottomInitializer == null || !expressionIsIdentifierSum(bottomInitializer, push.topName, heightName)) return null
-
-  const gapExpression = otherSideOfIdentifierSum(assignment.right, bottomName)
-  if (gapExpression == null) return null
-  const gap = evaluateExpression(gapExpression, context)
-  if (gap.kind !== 'number' || gap.expr == null) return null
-  return {cursorName, topName: push.topName, bottomName, gap}
-}
-
-function pushPropertyIdentifier(push: LoopPush, prop: string): string | null {
-  return push.cursorPaths.find(cursorPath => cursorPath.path.length === 1 && cursorPath.path[0] === prop)?.targetName ?? null
-}
-
-function expressionIsIdentifierSum(expression: ts.Expression, leftName: string, rightName: string) {
-  const left = otherSideOfIdentifierSum(expression, leftName)
-  return left != null && ts.isIdentifier(left) && left.text === rightName
-}
-
-function otherSideOfIdentifierSum(expression: ts.Expression, name: string): ts.Expression | null {
-  const unwrapped = unwrapExpression(expression)
-  if (!ts.isBinaryExpression(unwrapped) || unwrapped.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
-  if (ts.isIdentifier(unwrapped.left) && unwrapped.left.text === name) return unwrapped.right
-  if (ts.isIdentifier(unwrapped.right) && unwrapped.right.text === name) return unwrapped.left
-  return null
-}
-
-function isResettableScalarAssignment(
-  statement: ts.Statement,
-  resettableExtrema: Map<string, LoopExtremum>,
-  length: NumberValue,
-  context: EvalContext,
-) {
-  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return false
-  const assignment = statement.expression
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left) || !isSideEffectFreeExpression(assignment.right)) return false
-  const extremum = resettableExtrema.get(assignment.left.text)
-  const start = context.env.get(assignment.left.text)
-  const reset = evaluateExpression(assignment.right, context)
-  if (extremum == null || start?.kind !== 'number' || reset.kind !== 'number') return false
-  const tracked = runningExtremumNumber(extremum.kind, assignment.left.text, start, length, extremum.candidate)
-  return reset.min >= tracked.min && reset.max <= tracked.max
-}
-
-function readConditionalLoopAdd(statement: ts.Statement, context: EvalContext): ConditionalLoopAdd | null {
-  if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
-  const add = plusEqualsFromStatement(statement.thenStatement)
-  if (add == null) return null
-  const increment = evaluateExpression(add.right, context)
-  if (increment.kind !== 'number') return null
-  return {targetName: add.left.text, increment}
-}
-
-function readLoopExtremumAssignment(statement: ts.Statement, context: EvalContext): LoopExtremum | null {
-  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return null
-  const assignment = statement.expression
-  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left)) return null
-  if (!ts.isCallExpression(assignment.right) || !ts.isPropertyAccessExpression(assignment.right.expression)) return null
-
-  const callTarget = assignment.right.expression
-  if (!ts.isIdentifier(callTarget.expression) || callTarget.expression.text !== 'Math') return null
-  if (callTarget.name.text !== 'min' && callTarget.name.text !== 'max') return null
-  if (assignment.right.arguments.length !== 2) return null
-
-  const targetName = assignment.left.text
-  const left = assignment.right.arguments[0]!
-  const right = assignment.right.arguments[1]!
-  const candidateExpression =
-    ts.isIdentifier(left) && left.text === targetName ? right
-      : ts.isIdentifier(right) && right.text === targetName ? left
-        : null
-  if (candidateExpression == null) return null
-
-  const candidateValue = evaluateExpression(candidateExpression, context)
-  const candidate = candidateValue.kind === 'number'
-    ? candidateValue
-    : candidateValue.kind === 'unknown'
-      ? unknownNumber(candidateExpression.getText(context.program.sourceFile))
-      : null
-  if (candidate == null) return null
-  return {targetName, kind: callTarget.name.text, candidate}
-}
-
-function pushCallFromStatement(statement: ts.Statement): (ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}}) | null {
-  if (ts.isExpressionStatement(statement) && isPushCall(statement.expression)) return statement.expression
-  if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
-  const child = statement.statements[0]
-  return child != null && ts.isExpressionStatement(child) && isPushCall(child.expression) ? child.expression : null
-}
-
-function plusEqualsFromStatement(statement: ts.Statement): (ts.BinaryExpression & {left: ts.Identifier}) | null {
-  if (ts.isExpressionStatement(statement) && isIdentifierPlusEquals(statement.expression)) return statement.expression
-  if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
-  const child = statement.statements[0]
-  return child != null && ts.isExpressionStatement(child) && isIdentifierPlusEquals(child.expression) ? child.expression : null
-}
-
-function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.BinaryExpression & {left: ts.Identifier} {
-  return ts.isBinaryExpression(expression)
-    && expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
-    && ts.isIdentifier(expression.left)
-}
-
-type IndexedLoopShape = {
-  indexName: string
-  sourceExpression: ts.Expression
-}
-
-function indexedLoopShape(statement: ts.ForStatement): IndexedLoopShape | null {
-  if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
-  if (statement.initializer.declarations.length !== 1) return null
-  const declaration = statement.initializer.declarations[0]
-  if (declaration == null || !ts.isIdentifier(declaration.name)) return null
-  if (declaration.initializer == null || numericLiteralValue(declaration.initializer) !== 0) return null
-
-  const indexName = declaration.name.text
-  if (statement.condition == null || statement.incrementor == null) return null
-  const sourceExpression = indexedLoopSourceExpression(statement.condition, indexName)
-  if (sourceExpression == null) return null
-  if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
-  return {indexName, sourceExpression}
-}
-
-function indexedLoopSourceExpression(expression: ts.Expression, indexName: string): ts.Expression | null {
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
-  if (!ts.isIdentifier(expression.left) || expression.left.text !== indexName) return null
-  if (!ts.isPropertyAccessExpression(expression.right) || expression.right.name.text !== 'length') return null
-  return expression.right.expression
-}
-
-function indexedLoopIncrements(expression: ts.Expression, indexName: string) {
-  if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
-    && expression.operator === ts.SyntaxKind.PlusPlusToken
-    && ts.isIdentifier(expression.operand)
-    && expression.operand.text === indexName) return true
-
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
-  return ts.isIdentifier(expression.left)
-    && expression.left.text === indexName
-    && numericLiteralValue(expression.right) === 1
 }
 
 function indexedLoopAssumptions(index: NumberValue, sourceLength: NumberValue): LinearConstraint[] {
@@ -2749,40 +2541,6 @@ function indexedElementPathAssumptions(index: NumberValue, sourceLength: NumberV
 
 function nonNullFacts(...facts: (LinearConstraint | null)[]): LinearConstraint[] {
   return facts.filter(fact => fact != null)
-}
-
-function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: string): ts.Expression | null {
-  for (const property of expression.properties) {
-    if (ts.isShorthandPropertyAssignment(property) && property.name.text === name) return property.name
-    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
-    if (property.name.text === name) return property.initializer
-  }
-  return null
-}
-
-function objectIdentifierPropertyPaths(expression: ts.ObjectLiteralExpression, prefix: string[] = []): {path: string[]; targetName: string}[] {
-  const paths: {path: string[]; targetName: string}[] = []
-  for (const property of expression.properties) {
-    if (ts.isShorthandPropertyAssignment(property)) {
-      paths.push({path: [...prefix, property.name.text], targetName: property.name.text})
-      continue
-    }
-    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
-    const path = [...prefix, property.name.text]
-    if (ts.isIdentifier(property.initializer)) {
-      paths.push({path, targetName: property.initializer.text})
-      continue
-    }
-    if (ts.isObjectLiteralExpression(property.initializer)) paths.push(...objectIdentifierPropertyPaths(property.initializer, path))
-  }
-  return paths
-}
-
-function isPushCall(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}} {
-  return ts.isCallExpression(expression)
-    && ts.isPropertyAccessExpression(expression.expression)
-    && ts.isIdentifier(expression.expression.expression)
-    && expression.expression.name.text === 'push'
 }
 
 function evaluateExpression(expression: ts.Expression, context: EvalContext): Value {

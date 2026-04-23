@@ -34,6 +34,7 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
