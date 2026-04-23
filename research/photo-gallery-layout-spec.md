@@ -125,7 +125,13 @@ rows[0].top == windowPaddingTop
 rows[].height >= 0
 rows[].bottom == rows[].top + rows[].height
 rows[$r + 1].top == rows[$r].bottom + boxesGapY
-contentHeight == lastEnd(rows)
+
+if rows.length == 0:
+  contentHeight == windowPaddingTop
+
+if rows.length > 0:
+  // Keep the trailing vertical gap as scroll runway.
+  contentHeight == lastEnd(rows) + boxesGapY
 
 item.layoutBox.y >= row.top
 item.layoutBox.y + item.layoutBox.sizeY <= row.bottom

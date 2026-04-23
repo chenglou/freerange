@@ -123,8 +123,8 @@ adjacent rows:
   nextRow.top == row.bottom + boxesGapY
 ```
 
-This may be better solved by returning row metadata from source before adding
-syntax.
+The source now returns row metadata. The remaining checker question is how much
+same-index / adjacent-index syntax we want before proving these facts directly.
 
 ### Exact Render Set
 
@@ -161,13 +161,6 @@ newAnchor: int 0..<newLayout.items.length
   vocabulary here. The spec thinks in `visibleLinesHeight`; current source still
   exposes `prompt2DVisibleHeight` / `prompt1DVisibleHeight` and subtracts
   `promptPaddingTop` to derive line height.
-- Return full row metadata instead of only `rowsTop` if row red lines keep
-  mattering:
-  ```ts
-  rows[].top
-  rows[].height
-  rows[].bottom
-  ```
 - Extract z-order into a small pure function if we want the focused-above-all
   relation to be checked directly.
 - Extract transition-preservation arithmetic if we want residual setup checked
