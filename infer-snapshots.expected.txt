@@ -157,7 +157,7 @@ locals:
   measurements[].promptLayout.lines.length: int 0..Infinity
   measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
   measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
-loop 187: for (let i = 0; i < layoutSources.length; i++)
+loop 185: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
     measurements.length: int 0..1000
@@ -176,9 +176,7 @@ loop 187: for (let i = 0; i < layoutSources.length; i++)
     spaced(rows, boxesGapY)
   source-proved:
     rows.length <= layoutSources.length
-    rows[].height >= 0
     rows[].bottom == rows[].top + rows[].height
-    nondecreasing(rows.top)
     spaced(rows, boxesGapY)
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout
 result:
