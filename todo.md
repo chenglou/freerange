@@ -23,7 +23,7 @@ fragments[].width <= offeredWidth
 sections[].rows[].height <= maxHeight
 ```
 
-- Same-index labels are supported in comparisons when matching collection lengths can be proven, e.g. `rows[$i].height == items[$i].height`. The narrow adjacent monotone form `rows[$i].top <= rows[$i + 1].top` is supported when `nondecreasing(rows.top)` has been inferred.
+- Same-index labels are supported in comparisons when matching collection lengths can be proven, e.g. `rows[$i].height == items[$i].height`. Adjacent labels over one collection can consume inferred sequence relations, e.g. `rows[$i].top <= rows[$i + 1].top` from `nondecreasing(rows.top)` and `rows[$i + 1].top >= rows[$i].bottom + gap` from a row-spacing loop.
 - Anonymous two-collection wildcard sides like `rows[].top <= boxes[].bottom` are intentionally unsupported; use labels only when same index is the intended relation.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
@@ -34,7 +34,7 @@ sections[].rows[].height <= maxHeight
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
-- Simple indexed `for` append loops can bind `const item = items[i]!`, advance numeric cursors with `+=`, preserve guarded push length facts, and prove guarded segmented row-boundary facts such as `rows[].bottom == rows[].top + rows[].height`, `nondecreasing(rows.top)`, and `spaced(rows, gap)`.
+- Simple indexed `for` append loops can bind `const item = items[i]!`, advance numeric cursors with `+=`, preserve guarded push length facts, and prove guarded segmented row-boundary facts such as `rows[].bottom == rows[].top + rows[].height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations.
 - Loop proof meaning is split on purpose: `src/loop-source.ts` reads narrow TypeScript loop shapes, then `src/loop-summary.ts` turns the resulting pushes, scalar updates, guards, extrema, and cursor recurrences into reusable facts instead of stamping every sequence fact directly in `check.ts`.
 - `items.map(...)` preserves length, item field domains, and optional callback index facts for expression callbacks and tiny block callbacks with local `const` bindings plus `return`.
 - `items.filter(...)` preserves item domains and proves only the subsequence length fact: `filtered.length <= items.length`.
@@ -52,7 +52,7 @@ There are three active tracks now:
    `infer` should be the factual inventory agents use before writing comments. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
 
 2. **Move checker knowledge toward a typed fact layer.**
-   Keep public comments small. Internally, source readers should emit reusable range/equality/sequence facts, and contracts should query those facts. This is how `spaced`, same-index checks, and future view-ish concepts avoid becoming one recognizer per demo.
+   Keep public comments small. Internally, source readers now emit reusable range/equality/sequence facts, and contracts query those facts. `spaced`, same-index checks, adjacent row checks, and future view-ish concepts should avoid becoming one recognizer per demo.
 
 3. **Keep TypeScript shape piggybacking bounded.**
    The experiment paid for itself, but it is still a shape oracle. It must not quietly become numeric proof logic.
@@ -83,9 +83,9 @@ Keep this visible so shape work and IR cleanup do not erase the boring proof/rep
    Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `result.leftHitArea` is non-null and `result.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
 
 7. **Keep bound-index labels narrow.**
-   Keep the current anonymous one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning. Use labels only when the relationship is really same-index or the supported adjacent monotone shape.
+   Keep the current anonymous one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning. Use labels only when the relationship is really same-index or a supported adjacent relation.
    - repeated labels mean same index, e.g. `rows[$i]` with `boxes[$i]`, and require proven matching lengths
-   - adjacent monotone labels work only for one property over one collection, e.g. `rows[$i].top <= rows[$i + 1].top`
+   - adjacent labels work only over one collection and only when a sequence relation was inferred, e.g. `rows[$i].top <= rows[$i + 1].top` or `rows[$i + 1].top >= rows[$i].bottom + gap`
    - different labels could mean all pairs, e.g. `children[$i]` with `blockers[$j]`
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
    - punt on numeric ghost symbols like `0..$n`. Index labels are bound variables (`items[$i]` means every valid item index), while numeric symbols would be existential/universal/generic parameters. Those are related ideas, but they bind differently, so do not reuse the syntax without a mini spec.
@@ -206,7 +206,7 @@ exist in TypeScript.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are trusted from that point forward, not proved against earlier state.
 - TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, property-access call shape, namespace-imported structural call shape, unions, and intersections. Optional and nullable properties are still conservative unknowns, and huge types are bounded out.
-- Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides. Labeled same-index comparisons can relate two collections when their lengths are proven equal; all-pairs, source/id matching, and general adjacent formulas are still unsupported.
+- Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides. Labeled same-index comparisons can relate two collections when their lengths are proven equal. Adjacent formulas work only over one collection and only when a sequence relation was inferred; all-pairs and source/id matching are still unsupported.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
 - No general loops, nonlinear solver, TS type narrowing, overload semantics, general generic value reasoning, classes, async, closures, strings, booleans, or branded-value reasoning.

@@ -131,6 +131,13 @@ import {
   valueWithStructuralFallback,
 } from './shapes.ts'
 import {
+  adjacentComparisonText,
+  hasNondecreasingProp,
+  provedSpacing,
+  proveAdjacentComparison,
+  sequenceRelationText,
+} from './sequence-facts.ts'
+import {
   factsFromEnvRoots,
   factsFromValue,
   localFactsFromEnv,
@@ -1507,6 +1514,16 @@ function specBoundIndexContext(context: EvalContext): BoundIndexContext {
     evaluateDomainPath: domainPath => evaluateDomainPath(domainPath, context),
     evaluateSpecExpression: text => evaluateSpecExpression(text, context),
     nondecreasingFailureReason,
+    proveAdjacentComparison: (collectionPath, comparison) => {
+      const collection = evaluateDomainPath(collectionPath, context)
+      if (collection.kind !== 'array') return {status: 'unknown', reason: `${domainPathText(collectionPath)} expected an array`}
+      if (proveAdjacentComparison(collection, comparison)) return {status: 'pass'}
+      const collectionText = domainPathText(collectionPath)
+      return {
+        status: 'unknown',
+        reason: adjacentComparisonFailureReason(adjacentComparisonText(collectionText, comparison), collectionText, collection),
+      }
+    },
   }
 }
 
@@ -1563,6 +1580,18 @@ function domainPathCollectionText(domainPath: FitDomainPath) {
   return collection
 }
 
+function domainPathText(domainPath: FitDomainPath) {
+  let text = domainPath.root
+  for (const segment of domainPath.segments) {
+    if (segment.kind === 'prop') {
+      text += `.${segment.name}`
+      continue
+    }
+    text += '[]'
+  }
+  return text
+}
+
 function evaluateSpecExpression(text: string, context: EvalContext): Value {
   const parsed = parseFitExpression(text)
   if (parsed.domainPaths.size === 0) return evaluateExpression(parsed.expression, context)
@@ -1597,7 +1626,7 @@ function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: Ev
 function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   const target = sequencePropArgument(spec.args, context)
   if (target == null) return {status: 'unknown', reason: 'nondecreasing expects result.rows.top'}
-  if (target.array.summary?.nondecreasingProps.some(prop => prop === target.prop) === true) return {status: 'pass'}
+  if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass'}
   return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target)}
 }
 
@@ -1607,7 +1636,7 @@ function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: 
   const gap = evaluateSpecExpression(spec.args[1]!, context)
   if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array'}
   if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression'}
-  if (rows.summary?.spaced.some(fact => sameExpressionText(fact.gapExpr, gap.expr!)) === true) return {status: 'pass'}
+  if (provedSpacing(rows, gap.expr) != null) return {status: 'pass'}
   return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr)}
 }
 
@@ -1649,6 +1678,22 @@ function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
     lines.push('missing: recognized adjacent row spacing')
   }
   return lines.join('\n')
+}
+
+function adjacentComparisonFailureReason(text: string, collectionText: string, rows: ArrayValue) {
+  const knownRelations = rows.summary?.relations
+    .filter(relation => relation.op === '==')
+    .map(relation => sequenceRelationText(collectionText, relation)) ?? []
+  const known = [
+    `sequence facts: ${formatArraySummary(rows)}`,
+    ...knownRelations.map(relation => `adjacent: ${relation}`),
+  ]
+  return [
+    `${text} was not inferred`,
+    'need: a matching adjacent sequence relation',
+    `known:\n${known.map(line => `  ${line}`).join('\n')}`,
+    'missing: recognized adjacent row relation',
+  ].join('\n')
 }
 
 function evaluateFunctionBody(fn: ts.FunctionDeclaration, context: EvalContext): Value {

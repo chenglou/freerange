@@ -4,6 +4,7 @@ import {
 } from './domain.ts'
 import {sameExpressionText} from './linear.ts'
 import {formatExpectedRange} from './reporting.ts'
+import {sequenceRelationText} from './sequence-facts.ts'
 
 export type FitInferFact = FitRangeFact | FitEqualityFact | FitSequenceFact
 
@@ -32,6 +33,7 @@ export type FitSequenceFact = {
   fact:
     | {kind: 'nondecreasing'; path: string; prop: string}
     | {kind: 'spaced'; path: string; gapExpr: string; heightExpr: string; advanceExpr: string}
+    | {kind: 'adjacent-comparison'}
 }
 
 export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
@@ -71,6 +73,15 @@ export function factsFromValue(path: string, value: Value): FitInferFact[] {
         source: 'sequence',
         text: `spaced(${path}, ${fact.gapExpr})`,
         fact: {kind: 'spaced', path, gapExpr: fact.gapExpr, heightExpr: fact.heightExpr, advanceExpr: fact.advanceExpr},
+      })
+    }
+    for (const relation of value.summary.relations) {
+      if (relation.op !== '==') continue
+      facts.push({
+        kind: 'sequence',
+        source: 'sequence',
+        text: sequenceRelationText(path, relation),
+        fact: {kind: 'adjacent-comparison'},
       })
     }
     if (value.summary.lastEnd != null) {

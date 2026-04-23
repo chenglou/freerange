@@ -35,6 +35,7 @@ bun install
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
 - [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
+- [src/sequence-facts.ts](./src/sequence-facts.ts) — adjacent sequence relation queries and rendering
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
@@ -45,7 +46,7 @@ bun install
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
-- [src/bound-index.ts](./src/bound-index.ts) — same-index and narrow adjacent-label spec checks
+- [src/bound-index.ts](./src/bound-index.ts) — same-index labels and adjacent-label spec checks backed by sequence facts
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [fr.ts](./fr.ts) — main CLI entrypoint
 - [verify.ts](./verify.ts) — old ad hoc JSON-report CLI

@@ -142,6 +142,14 @@ UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(result.rows,
 UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: result.rows[].bottom == result.rows[].top + result.rows[].height
   wildcard comparison means every result.rows[] item must satisfy: result.rows[].bottom == result.rows[].top + result.rows[].height
   result.rows expected an object
+UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: result.rows[$i + 1].top == result.rows[$i].bottom + gap
+  result.rows[$i + 1].top == result.rows[$i].bottom + gap was not inferred
+  need: a matching adjacent sequence relation
+  known:
+    sequence facts: nondecreasing(.top), spaced(otherGap)
+    adjacent: result.rows[$i + 1].top == result.rows[$i].top + result.rows[$i].height + otherGap
+    adjacent: result.rows[$i + 1].top == result.rows[$i].bottom + otherGap
+  missing: recognized adjacent row relation
 UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(result.rows, gap)
   spaced(result.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap

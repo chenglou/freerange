@@ -20,7 +20,7 @@ width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
 items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
-items[$i + 1] // adjacent label form, currently used for monotone `<=` / `>=` checks over one collection.
+items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
 result // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
 source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
@@ -432,6 +432,34 @@ function monotoneRows(items: {height: number}[]) {
 }
 ```
 
+It can also consume an exact adjacent row relation when a supported loop proves
+one:
+
+```ts
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * result.rows[$i + 1].top >= result.rows[$i].bottom + gap
+ */
+function spacedRows(items: {height: number}[], gap: number) {
+  const rows = []
+  let nextRowTop = 0
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    rowHeight = Math.max(rowHeight, items[i]!.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const top = nextRowTop
+      const bottom = top + rowHeight
+      rows.push({top, height: rowHeight, bottom})
+      nextRowTop = bottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+```
+
 This does not replace the named atoms. Prefer `nondecreasing(rows.top)` and
 `spaced(rows, gap)` when those names express the intent better. Labels are the
 escape hatch for specific red lines that do not deserve a public atom.
@@ -653,7 +681,7 @@ Supported today:
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 - same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
-- adjacent monotone labels, e.g. `rows[$i].top <= rows[$i + 1].top`, when row order is already inferred
+- adjacent labels over one collection, e.g. `rows[$i].top <= rows[$i + 1].top` and inferred row-spacing relations like `rows[$i + 1].top >= rows[$i].bottom + gap`
 
 Strict branch checks know integer steps. If `focused` is proven integer, `focused > 0` is enough to prove `focused - 1 >= 0`; `focused >= 0` is not. That matters for previous/next indices:
 
@@ -961,8 +989,8 @@ The checker understands a small pure subset:
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - guarded conditional pushes inside supported `for...of` and indexed loops
-- guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, and `spaced(rows, gap)`
-- same-index labels in comparisons, plus the narrow adjacent `$i + 1` monotone comparison shape
+- guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations
+- same-index labels in comparisons, plus adjacent `$i + 1` comparisons backed by inferred sequence facts
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 - conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets
@@ -981,7 +1009,7 @@ Not supported yet:
 - higher-order call contracts, general closures, or callback reasoning
 - strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
 - public lambdas, `forall`, arbitrary folds, prose-as-truth
-- numeric ghost parameters like `0..$n`, all-pairs labels, source/id matching labels, and general adjacent formulas beyond the narrow monotone `$i + 1` shape
+- numeric ghost parameters like `0..$n`, all-pairs labels, source/id matching labels, and adjacent formulas not backed by an inferred sequence fact
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
 - Pretext text facts
 - table/grid/flex column negotiation

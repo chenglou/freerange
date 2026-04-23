@@ -384,6 +384,7 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
  * result.rows.length <= items.length
  * result.rows[].height: 0..40
  * result.rows[].bottom == result.rows[].top + result.rows[].height
+ * result.rows[$i + 1].top >= result.rows[$i].bottom + gap
  * nondecreasing(result.rows.top)
  * spaced(result.rows, gap)
  */

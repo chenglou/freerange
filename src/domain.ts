@@ -57,11 +57,29 @@ export type ArrayValue = {
 }
 
 export type ArraySummary = {
+  relations: SequenceRelation[]
   nondecreasingProps: string[]
   advances: {prop: string; value: NumberValue}[]
   spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
   lastEnd: NumberValue | null
   extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: NumberValue}[]
+}
+
+export type SequenceRelation = {
+  kind: 'adjacent-comparison'
+  left: SequenceTerm
+  op: ComparisonOperator
+  right: SequenceExpression
+}
+
+export type SequenceTerm = {
+  item: 'previous' | 'next'
+  path: string[]
+}
+
+export type SequenceExpression = {
+  terms: SequenceTerm[]
+  addends: string[]
 }
 
 export type UnknownValue = {
@@ -196,6 +214,7 @@ export function mergeArraySummary(left: ArraySummary | null, right: ArraySummary
   if (left == null) return right
   if (right == null) return left
   return {
+    relations: [...left.relations, ...right.relations].filter((fact, index, facts) => facts.findIndex(other => sameSequenceRelation(other, fact)) === index),
     nondecreasingProps: [...new Set([...left.nondecreasingProps, ...right.nondecreasingProps])],
     advances: [...left.advances, ...right.advances].filter((fact, index, facts) => facts.findIndex(other => sameAdvanceFact(other, fact)) === index),
     spaced: [...left.spaced, ...right.spaced].filter((fact, index, facts) => facts.findIndex(other => sameSpacedFact(other, fact)) === index),
@@ -214,6 +233,8 @@ function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null)
   if (left === right) return true
   if (left == null || right == null) return false
   if ((left.lastEnd?.expr ?? null) !== (right.lastEnd?.expr ?? null)) return false
+  if (left.relations.length !== right.relations.length) return false
+  if (!left.relations.every((fact, index) => sameSequenceRelation(fact, right.relations[index]!))) return false
   if (left.nondecreasingProps.join('|') !== right.nondecreasingProps.join('|')) return false
   if (left.advances.length !== right.advances.length) return false
   if (!left.advances.every((fact, index) => sameAdvanceFact(fact, right.advances[index]!))) return false
@@ -237,6 +258,26 @@ function sameExtentEndFact(left: ArraySummary['extentEnds'][number], right: Arra
   return sameExpressionText(left.emptyExpr, right.emptyExpr)
     && sameExpressionText(left.nonEmptyExpr, right.nonEmptyExpr)
     && (left.value.expr ?? null) === (right.value.expr ?? null)
+}
+
+function sameSequenceRelation(left: SequenceRelation, right: SequenceRelation) {
+  return left.kind === right.kind
+    && sameSequenceTerm(left.left, right.left)
+    && left.op === right.op
+    && sameSequenceExpression(left.right, right.right)
+}
+
+function sameSequenceExpression(left: SequenceExpression, right: SequenceExpression) {
+  return left.terms.length === right.terms.length
+    && left.terms.every((term, index) => sameSequenceTerm(term, right.terms[index]!))
+    && left.addends.length === right.addends.length
+    && left.addends.every((addend, index) => sameExpressionText(addend, right.addends[index]!))
+}
+
+function sameSequenceTerm(left: SequenceTerm, right: SequenceTerm) {
+  return left.item === right.item
+    && left.path.length === right.path.length
+    && left.path.every((part, index) => part === right.path[index])
 }
 
 function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | null {

@@ -162,7 +162,17 @@ The first adjacent form is deliberately tiny:
 rows[$i].top <= rows[$i + 1].top
 ```
 
-It lowers to the existing `nondecreasing(rows.top)` sequence fact. General adjacent formulas, all-pairs comparison, and source/id matching are still future work. Different labels might eventually mean all-pairs comparison:
+It lowers to an adjacent sequence relation. The same internal relation layer can
+also prove specific red lines when a loop emitted the exact relation:
+
+```ts
+rows[$i + 1].top >= rows[$i].bottom + gap
+```
+
+This is still not a general quantified expression language. Adjacent formulas
+only work over one collection and only when a source summary emitted the matching
+sequence fact. All-pairs comparison and source/id matching are still future work.
+Different labels might eventually mean all-pairs comparison:
 
 ```ts
 children[$i].right <= blockers[$j].left
@@ -192,7 +202,7 @@ nondecreasing(rows.top)
 spaced(rows, gap)
 ```
 
-Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. Object-array and parallel-array code should converge here when they prove the same layout relation.
+Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. `src/facts.ts` now owns the typed inferred fact output, and `src/sequence-facts.ts` owns adjacent sequence relation queries. Object-array and parallel-array code should converge here when they prove the same layout relation.
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 

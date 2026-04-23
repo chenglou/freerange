@@ -217,6 +217,7 @@ export function negativeSegmentedStackRowsNeedMatchingBottom(items: {height: num
  * given top: 0..1000
  * given gap: 0..10
  * given otherGap: 20..30
+ * result.rows[$i + 1].top == result.rows[$i].bottom + gap
  * spaced(result.rows, gap)
  */
 export function negativeSegmentedStackRowsNeedMatchingGap(items: {height: number}[], top: number, gap: number, otherGap: number) {

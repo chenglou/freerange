@@ -14,6 +14,7 @@ import {
   type ArrayValue,
   type LinearConstraint,
   type NumberValue,
+  type SequenceTerm,
   type Value,
 } from './domain.ts'
 import {
@@ -22,6 +23,7 @@ import {
   linearSubtract,
   linearVariable,
   sameExpressionText,
+  sameLinear,
   unwrapExpression,
 } from './linear.ts'
 import {parseExpression} from './parser.ts'
@@ -239,8 +241,11 @@ function sequenceSummaryFromAppendClock(
 ): ArraySummary | null {
   const recurrence = clock.recurrence
   if (recurrence == null) return null
-  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: recurrence.prop, value: recurrence.advance}], spaced: [], lastEnd: null, extentEnds: []}
-  if (recurrence.advance.min >= 0) summary.nondecreasingProps.push(recurrence.prop)
+  const summary: ArraySummary = {relations: [], nondecreasingProps: [], advances: [{prop: recurrence.prop, value: recurrence.advance}], spaced: [], lastEnd: null, extentEnds: []}
+  const advanceIsNonnegative = recurrence.advance.min >= 0
+    && (options.assumptions == null
+      || proveComparison(recurrence.advance, '>=', numberValue(0, 0, true, '0', linearConstant(0)), options.assumptions).status === 'pass')
+  if (advanceIsNonnegative) addNondecreasingRelation(summary, recurrence.prop)
 
   const advanceExpr = recurrence.advance.expr
   const sizeExpr = recurrence.size.expr
@@ -249,18 +254,84 @@ function sequenceSummaryFromAppendClock(
   if (gapExpr == null) return summary
 
   summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
+  addSpacedRelations(summary, clock, recurrence.prop, sizeExpr, gapExpr)
   if (!options.includeExtentEnd) return summary
 
   const nonEmptyEnd = lastEndFromLoopEnd(nonEmptyLoopEnd(recurrence.start, recurrence.advance, clock.length), gapExpr, options.resolveNumber)
   if (clock.length.min >= 1) summary.lastEnd = nonEmptyEnd
   const extentEnd = extentEndFromLoopPush(clock.arrayName, recurrence.start, nonEmptyEnd)
   if (extentEnd != null) summary.extentEnds.push(extentEnd)
-
-  if (options.assumptions != null && recurrence.advance.min >= 0) {
-    const nonNegative = proveComparison(recurrence.advance, '>=', numberValue(0, 0, true, '0', linearConstant(0)), options.assumptions)
-    if (nonNegative.status !== 'pass') summary.nondecreasingProps = summary.nondecreasingProps.filter(prop => prop !== recurrence.prop)
-  }
   return summary
+}
+
+function addNondecreasingRelation(summary: ArraySummary, prop: string) {
+  summary.nondecreasingProps.push(prop)
+  summary.relations.push({
+    kind: 'adjacent-comparison',
+    left: nextTerm([prop]),
+    op: '>=',
+    right: {terms: [previousTerm([prop])], addends: []},
+  })
+}
+
+function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topProp: string, sizeExpr: string, gapExpr: string) {
+  const heightPath = pathForStreamValue(clock, sizeExpr)
+  if (heightPath != null) {
+    summary.relations.push({
+      kind: 'adjacent-comparison',
+      left: nextTerm([topProp]),
+      op: '==',
+      right: {terms: [previousTerm([topProp]), previousTerm(heightPath)], addends: addendsForGap(gapExpr)},
+    })
+  }
+
+  const bottomPath = pathForStreamSum(clock, [topProp], heightPath, sizeExpr)
+  if (bottomPath != null) {
+    summary.relations.push({
+      kind: 'adjacent-comparison',
+      left: nextTerm([topProp]),
+      op: '==',
+      right: {terms: [previousTerm(bottomPath)], addends: addendsForGap(gapExpr)},
+    })
+  }
+}
+
+function pathForStreamValue(clock: AppendClock, expr: string): string[] | null {
+  const stream = clock.streams.find(item => item.value.kind === 'number' && item.value.expr != null && sameExpressionText(item.value.expr, expr))
+  return stream?.path ?? null
+}
+
+function pathForStreamSum(clock: AppendClock, leftPath: string[], rightPath: string[] | null, rightExpr: string) {
+  const left = pathValue(clock, leftPath)
+  const right = rightPath == null ? null : pathValue(clock, rightPath)
+  if (left?.kind !== 'number') return null
+  for (const stream of clock.streams) {
+    if (stream.value.kind !== 'number') continue
+    const sum = right?.kind === 'number' ? linearAdd(left.linear, right.linear) : null
+    if (stream.value.linear != null && sum != null && sameLinear(stream.value.linear, sum)) return stream.path
+    if (stream.value.expr != null && sameExpressionText(stream.value.expr, `${left.expr ?? ''} + ${rightExpr}`)) return stream.path
+  }
+  return null
+}
+
+function pathValue(clock: AppendClock, path: string[]): Value | null {
+  return clock.streams.find(stream => samePath(stream.path, path))?.value ?? null
+}
+
+function samePath(left: string[], right: string[]) {
+  return left.length === right.length && left.every((part, index) => part === right[index])
+}
+
+function addendsForGap(gapExpr: string) {
+  return sameExpressionText(gapExpr, '0') ? [] : [gapExpr]
+}
+
+function nextTerm(path: string[]): SequenceTerm {
+  return {item: 'next', path}
+}
+
+function previousTerm(path: string[]): SequenceTerm {
+  return {item: 'previous', path}
 }
 
 function setObjectPathValue(value: Value, path: string[], replacement: Value): Value {
