@@ -27,6 +27,18 @@ sum(rows.map(row => row.height + gap))
 
 Users may name layout shapes. They should not write traversals.
 
+The real product pivot is make `infer` / `audit` / reports the adoption loop. Freerange should help humans and agents find the static red lines in normal TypeScript, then keep those lines honest. A good flow is:
+
+```txt
+read code
+run infer
+write only the product-important @fit comments
+run check
+use reports to classify the gap
+```
+
+This keeps comments immediately adoptable in chunks. A separate spec compiler or agent can sit on top later, but the core checker should stay boring: comments state facts, source code earns them, and reports say where proof stopped.
+
 ## Spec-Driven Demos
 
 The photo-gallery scratch trial is the best signal so far for agent-driven, spec-driven UI work. Two fresh agents got only Vibescript docs plus a private packet with Freerange-style source facts. Both produced runnable grid/line galleries, pure helper tests, browser-owned semantic reports, and the same 18 passing `@fit` checks on the same five seams.
@@ -160,7 +172,7 @@ SQL is the taste reference for source/id matching: name the relation. If two col
 
 ## Internal IR
 
-A layered IR seems better than one giant SMT encoding:
+A layered IR seems better than one giant SMT encoding. This is mostly internal, but it should be visible through `infer`, audits, and report provenance:
 
 - scalar refinements: intervals, small linear facts, symbolic equality, modulo/congruence facts
 - object/path facts: `Field(row, "top")`, `Path(rows, i, "height")`
@@ -169,6 +181,18 @@ A layered IR seems better than one giant SMT encoding:
 - layout constraints: `Nondecreasing`, `Spaced`, `Inside`, `Partitions`, `SameSource`
 - loop summaries: cursor recurrences and append summaries
 - optional backend obligations: SMT later, only where earned
+
+The important boundary is source readers emit reusable facts, and contract checks query those facts. For example, a cursor loop should first emit facts like:
+
+```txt
+rows.length == items.length
+rows[].bottom == rows[].top + rows[].height
+rows[$i + 1].top >= rows[$i].bottom + gap
+nondecreasing(rows.top)
+spaced(rows, gap)
+```
+
+Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. Object-array and parallel-array code should converge here when they prove the same layout relation.
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 

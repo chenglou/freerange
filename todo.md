@@ -6,6 +6,8 @@ The project is a static checker for ordinary TS layout code plus strict `@fit` c
 
 Prefer source inference, intervals, small reducers, array/object domains, and helper contracts before adding atoms. Every new proof shape gets one positive pattern and at least one negative expected message.
 
+The current product pivot is adoption, not a bigger DSL: make `infer`, `audit`, and reports the normal loop. A human or agent should ask what source already proves, keep only the red-line comments worth reading, and get a clear reason when proof stops.
+
 ## Current Surface
 
 - Function specs use `@fit`. `given` lines and param `// @fit` comments are trusted input facts; bare lines and `result` lines are facts to prove.
@@ -44,11 +46,20 @@ sections[].rows[].height <= maxHeight
 
 ## Do Next
 
-There are two tracks now: normal proof/report/demo work, and the TypeScript shape piggyback result. The experiment is useful enough to keep, but it should stay a shape oracle. It must not quietly replace the rest of the roadmap.
+There are three active tracks now:
+
+1. **Make infer/audit/report the adoption loop.**
+   `infer` should be the factual inventory agents use before writing comments. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
+
+2. **Move checker knowledge toward a typed fact layer.**
+   Keep public comments small. Internally, source readers should emit reusable range/equality/sequence facts, and contracts should query those facts. This is how `spaced`, same-index checks, and future view-ish concepts avoid becoming one recognizer per demo.
+
+3. **Keep TypeScript shape piggybacking bounded.**
+   The experiment paid for itself, but it is still a shape oracle. It must not quietly become numeric proof logic.
 
 ## Normal Proof Track
 
-This was the next path before the TypeScript piggyback idea came up. Keep it visible so the shape work does not erase the boring proof/report/demo work that was already worth doing.
+Keep this visible so shape work and IR cleanup do not erase the boring proof/report/demo work that was already worth doing.
 
 1. **Keep tightening input honesty.**
    `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, and small chained contradictions like `left >= middle`, `middle >= right`, `right > left` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
@@ -59,16 +70,19 @@ This was the next path before the TypeScript piggyback idea came up. Keep it vis
 3. **Turn scalar accumulators into better internal measures.**
    Non-negative `total += row.height`, guarded `if (...) total += row.height`, and simple min/max assignment loops give ranges. Unit guarded counts also know `count <= items.length`. Next useful shapes are still source inference, not public folds: totals and extrema that feed later comparisons and reports cleanly.
 
-4. **Use real demos as pressure tests.**
+4. **Use real demos as pressure tests, then prune.**
    The checker is ready for small demos that stay inside the current surface: helper contracts across files, row stacks, maps/indexed rows/conditional rows, one-collection wildcard bounds, and scalar totals. Use `bun run infer` to see what the checker actually knows before adding a proof feature; its function and loop spec sections are useful for deciding which `@fit` lines are documentation versus real missing input facts. Do not add an atom just because a demo would look nicer with one.
    Current demo read: Pretext `layoutTemplateFrame` has good inferred length/measure facts now. Vibescript photo-gallery now has source-owned contracts on the real grid sizing, prompt visible sizing, line max sizes, line target math, stable edge hit areas, item geometry, and guarded row metadata spacing. `getGridLayout` now carries explicit input domains and returns full row metadata instead of parallel `rowsTop` / `rowHeights` arrays. The remaining photo-gallery gaps are larger loop/product facts: prompt-layout summaries across the unsupported text loop and the row-count relation behind `currentRow = Math.floor(i / cols)`.
    Photo-gallery spec-driven trial: two fresh workers rebuilt scratch galleries from docs plus a private formal packet and both landed the same 18 passing helper checks. The real demo now proves 71 checks across `layout.ts` and `prompt-layout.ts`, with scalar input domains mostly moved onto params, line-size math back in one helper, and row metadata spacing checked on the grid loop, so the next trial should feed workers more of the ground-truth source facts and tighten the prose packet around line sizing, neighbor visibility, edge-strip no-ops, overscan, bottom scroll runway, and optional animation handoff samples before asking for more Freerange power.
    Current infer sweep across checked demos: 73 explicit checks are source-proved, 98 input facts are trusted, 0 are not-inferred, 51 are redundant because emitted inferred facts already cover them, and 22 remain source-proved keepers. That is a cue to simplify comments, not to auto-delete public contracts.
 
-5. **Postpone conditional helper contracts until callers need them.**
+5. **Add more realistic red mistakes.**
+   Keep adding small negative kernels for mistakes agents actually make: wrong gap, off-by-one target index, missing row bottom, inverted clamp bounds, unbounded prompt height, stale row spacing after a loop refactor. The report wording is part of the feature.
+
+6. **Postpone conditional helper contracts until callers need them.**
    Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `result.leftHitArea` is non-null and `result.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
 
-6. **Keep bound-index labels narrow.**
+7. **Keep bound-index labels narrow.**
    Keep the current anonymous one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning. Use labels only when the relationship is really same-index or the supported adjacent monotone shape.
    - repeated labels mean same index, e.g. `rows[$i]` with `boxes[$i]`, and require proven matching lengths
    - adjacent monotone labels work only for one property over one collection, e.g. `rows[$i].top <= rows[$i + 1].top`
@@ -76,7 +90,7 @@ This was the next path before the TypeScript piggyback idea came up. Keep it vis
    - source/id matching probably wants a SQL-ish join relation, not bracket labels alone
    - punt on numeric ghost symbols like `0..$n`. Index labels are bound variables (`items[$i]` means every valid item index), while numeric symbols would be existential/universal/generic parameters. Those are related ideas, but they bind differently, so do not reuse the syntax without a mini spec.
 
-7. **Delay views until field-name pressure earns them.**
+8. **Delay views until field-name pressure earns them.**
    Views are likely the right long-term answer, but do not add them just to make the first row loop nicer. Add the first view only when field names become real pressure across rows/columns/text/rects:
 
 ```ts
@@ -87,7 +101,7 @@ view fragments as ranges(start: .textStart, end: .textEnd)
 
    A view is only a field mapping. It must not assert layout facts.
 
-8. **Add Pretext facts through generic range/lineage facts first.**
+9. **Add Pretext facts through generic range/lineage facts first.**
    Try these before text-specific atoms:
    - `fragments[].width <= offeredWidth`
    - `nondecreasing(fragments.textStart)`

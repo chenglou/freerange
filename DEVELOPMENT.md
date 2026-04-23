@@ -34,6 +34,7 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
@@ -76,6 +77,11 @@ It also separates explicit function and loop comment lines into:
 `redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
+
+Treat `infer`, `audit:demos`, and normal reports as one adoption loop: inspect
+what source proves, keep the human-important `@fit` comments, then classify any
+remaining failure as missing input fact, unsupported source shape, helper
+boundary, or real proof gap.
 
 Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
 

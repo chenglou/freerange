@@ -130,6 +130,14 @@ import {
   valueFromSyntaxTypeShape,
   valueWithStructuralFallback,
 } from './shapes.ts'
+import {
+  factsFromEnvRoots,
+  factsFromValue,
+  localFactsFromEnv,
+  numberFacts,
+  uniqueFacts,
+  type FitInferFact,
+} from './facts.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
 
@@ -149,11 +157,6 @@ export type FitDoctorCheck = {
   text: string
   status: FitDoctorStatus
   reason?: string
-}
-
-export type FitInferFact = {
-  text: string
-  source: 'range' | 'equality' | 'sequence'
 }
 
 export type FitInferSpecStatus = 'source-proved' | 'trusted' | 'not-inferred'
@@ -744,51 +747,6 @@ function isStructuralShapePath(path: string) {
   return path.includes('.') || path.includes('[]')
 }
 
-function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
-  const facts: FitInferFact[] = []
-  for (const [name, value] of finalEnv) {
-    if (baseEnv.has(name) || name === 'result') continue
-    facts.push(...factsFromValue(name, value))
-  }
-  return facts
-}
-
-function factsFromValue(path: string, value: Value): FitInferFact[] {
-  if (value.kind === 'unknown') return []
-  if (value.kind === 'number') return numberFacts(path, value)
-  if (value.kind === 'object') {
-    const facts: FitInferFact[] = []
-    for (const [name, prop] of [...value.props.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      facts.push(...factsFromValue(`${path}.${name}`, prop))
-    }
-    return facts
-  }
-
-  const facts = numberFacts(`${path}.length`, value.length)
-  if (value.element != null) facts.push(...factsFromValue(`${path}[]`, value.element))
-  if (value.summary != null) {
-    for (const prop of value.summary.nondecreasingProps) facts.push({source: 'sequence', text: `nondecreasing(${path}.${prop})`})
-    for (const fact of value.summary.spaced) facts.push({source: 'sequence', text: `spaced(${path}, ${fact.gapExpr})`})
-    if (value.summary.lastEnd != null) {
-      facts.push(...numberFacts(`lastEnd(${path})`, value.summary.lastEnd))
-    }
-    for (const fact of value.summary.extentEnds) {
-      facts.push(...numberFacts(`extentEnd(${path}, ${fact.emptyExpr})`, fact.value))
-    }
-  }
-  return facts
-}
-
-function factsFromEnvRoots(env: Map<string, Value>, roots: Set<string>): FitInferFact[] {
-  const facts: FitInferFact[] = []
-  for (const name of [...roots].sort()) {
-    const value = env.get(name)
-    if (value == null) continue
-    facts.push(...factsFromValue(name, value))
-  }
-  return uniqueFacts(facts)
-}
-
 function inferFunctionSpecReports(
   program: Program,
   functionName: string,
@@ -902,8 +860,7 @@ function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparis
 
 function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
   for (const fact of facts) {
-    const range = rangeFactForExpression(fact.text, expression)
-    if (range != null) return {text: fact.text, ...range}
+    if (fact.kind === 'range' && sameExpressionText(fact.path, expression)) return fact
   }
   return null
 }
@@ -913,37 +870,9 @@ function numberText(text: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
-function numberFacts(path: string, value: NumberValue): FitInferFact[] {
-  const facts: FitInferFact[] = []
-  if (value.expr != null && !sameExpressionText(path, value.expr)) {
-    facts.push({source: 'equality', text: `${path} == ${value.expr}`})
-  }
-  if (isInterestingNumberRange(value)) {
-    facts.push({source: 'range', text: `${path}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`})
-  }
-  return facts
-}
-
-function isInterestingNumberRange(value: NumberValue) {
-  if (value.min === Number.NEGATIVE_INFINITY && value.max === Number.POSITIVE_INFINITY) return false
-  return true
-}
-
 function topUnknownReason(value: Value): string[] {
   if (value.kind === 'unknown') return [value.reason]
   return []
-}
-
-function uniqueFacts(facts: FitInferFact[]): FitInferFact[] {
-  const seen = new Set<string>()
-  const unique: FitInferFact[] = []
-  for (const fact of facts) {
-    const key = `${fact.source}:${fact.text}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(fact)
-  }
-  return unique
 }
 
 function functionInputRoots(program: Program, fn: ts.FunctionDeclaration): string[] {
