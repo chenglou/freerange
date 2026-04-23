@@ -18,7 +18,7 @@ width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
 // @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
-items[] // every item in one collection. Freerange supports one wildcard collection side per comparison today.
+items[] // every item in one collection. The same collection may appear on both sides of a comparison; different collections still need future syntax.
 result // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
 source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
@@ -357,7 +357,7 @@ Ranges can describe object fields and array items:
 
 `items[]` means every item in `items`.
 
-Nested array paths are fine when there is only one collection side:
+Nested array paths are fine when one collection is being discussed:
 
 ```ts
 /** @fit
@@ -376,7 +376,18 @@ rows[].top <= boxes[].bottom
 
 That could mean same index, all pairs, visible pairs, or something else. The syntax should say that before the checker accepts it.
 
-So `[]` stays the anonymous one-collection shorthand. If a future fact needs two collections, it should name the relationship instead of asking `[]` to guess.
+The same collection can appear on both sides. That means every item in that
+collection must satisfy the relation:
+
+```ts
+/** @fit
+ * result.rows[].bottom == result.rows[].top + result.rows[].height
+ */
+```
+
+So `[]` stays the anonymous one-collection shorthand. If a future fact needs two
+different collections, it should name the relationship instead of asking `[]` to
+guess.
 
 ## Comparisons
 
@@ -805,6 +816,44 @@ The same weaker fact works in the supported indexed loop shape.
 
 It does not claim equal length.
 
+Segmented row loops can also prove the row-boundary shape when the guarded block
+pushes one row, advances the next row cursor by `bottom + gap`, and resets the
+per-row max:
+
+```ts
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ * result.rows[].bottom == result.rows[].top + result.rows[].height
+ * nondecreasing(result.rows.top)
+ * spaced(result.rows, gap)
+ */
+function segmentedRows(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+```
+
+That still only proves what the source earns. It proves `rows.length <=
+items.length`, not the exact row count or a `ceil(items.length / columns)` fact.
+
 ## Loop Specs
 
 Put `@fit` immediately above a supported loop when the fact belongs to that loop:
@@ -863,6 +912,7 @@ The checker understands a small pure subset:
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - guarded conditional pushes inside supported `for...of` and indexed loops
+- guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, and `spaced(rows, gap)`
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 - conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets

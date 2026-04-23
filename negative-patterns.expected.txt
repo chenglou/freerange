@@ -139,6 +139,16 @@ UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(result.rows,
     loop proved: row advance (step + gap) = previous height step + gap
     sequence facts: nondecreasing(.top), spaced(gap), lastEnd = -10..3500 as (runningSum(top, items.length, (step + gap)) - gap)
   missing: given gap == otherGap
+UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: result.rows[].bottom == result.rows[].top + result.rows[].height
+  wildcard comparison means every result.rows[] item must satisfy: result.rows[].bottom == result.rows[].top + result.rows[].height
+  result.rows expected an object
+UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(result.rows, gap)
+  spaced(result.rows, gap) was not inferred
+  need: every next row top == previous top + previous height + gap
+  known:
+    loop proved: row advance (rows[].height + otherGap) = previous height rows[].height + otherGap
+    sequence facts: nondecreasing(.top), spaced(otherGap)
+  missing: given otherGap == gap
 UNKNOWN negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(result.rows) == result.bottom
   lastEnd(result.rows) was not inferred
   need: a non-empty append-only row loop that pushes height

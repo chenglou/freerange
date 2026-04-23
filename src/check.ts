@@ -866,8 +866,19 @@ function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-compar
       if (leftNumber != null && rightRange != null && leftNumber < rightRange.min) return rightRange.text
       return null
     case '==':
-      return null
+      return equalityFactReasonForSpec(spec, facts)
   }
+}
+
+function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
+  for (const fact of facts) {
+    const inferred = parseFitSpecLineForInference(fact.text)
+    if (inferred?.kind !== 'check-comparison' || inferred.op !== '==') continue
+    const sameOrder = sameExpressionText(spec.left, inferred.left) && sameExpressionText(spec.right, inferred.right)
+    const flipped = sameExpressionText(spec.left, inferred.right) && sameExpressionText(spec.right, inferred.left)
+    if (sameOrder || flipped) return fact.text
+  }
+  return null
 }
 
 function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
@@ -1541,6 +1552,7 @@ function checkWildcardComparisonShape(left: string, right: string): WildcardUse 
   if (rightUse.kind === 'unsupported') return rightUse
 
   if (leftUse.kind === 'one' && rightUse.kind === 'one') {
+    if (leftUse.collection === rightUse.collection) return leftUse
     return {kind: 'unsupported', reason: 'Wildcard comparisons support one wildcard side and one scalar side'}
   }
   return leftUse.kind === 'one' ? leftUse : rightUse
@@ -1932,7 +1944,7 @@ function evaluateForOfStatementCore(
   const loopItemName = declaration.name.text
   const loopItem = source.element ?? unknownObject(`${source.expr ?? statement.expression.getText(context.program.sourceFile)}[]`)
   const pushedArrays: LoopPush[] = []
-  const conditionalPushedArrays: LoopPush[] = []
+  const conditionalPushedArrays: GuardedLoopPush[] = []
   const conditionalAdds = new Map<string, NumberValue>()
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
@@ -2036,14 +2048,16 @@ function evaluateForOfStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length)
-    const element = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    const element = segmentedStackElement(push, baseElement, source.length, context)
     context.env.set(push.arrayName, {
       ...target,
       length,
       elements: null,
-      element: mergeElementValue(target.element, element),
-      summary: null,
+      element: pushedElementValue(target, element),
+      summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
     })
+    applySegmentedStackCursorUpdate(push, element, source.length, context)
     const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
     if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
   }
@@ -2089,7 +2103,7 @@ function evaluateForStatementCore(
   )
 
   const pushes: LoopPush[] = []
-  const conditionalPushedArrays: LoopPush[] = []
+  const conditionalPushedArrays: GuardedLoopPush[] = []
   const pendingAdds = new Map<string, NumberValue>()
   const pendingExtrema = new Map<string, LoopExtremum>()
   const forgottenRoots = new Set<string>()
@@ -2178,14 +2192,16 @@ function evaluateForStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length, target.length)
-    const element = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    const element = segmentedStackElement(push, baseElement, source.length, context)
     context.env.set(push.arrayName, {
       ...target,
       length,
       elements: null,
-      element: mergeElementValue(target.element, element),
-      summary: null,
+      element: pushedElementValue(target, element),
+      summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
     })
+    applySegmentedStackCursorUpdate(push, element, source.length, context)
     if (target.length.min === 0 && target.length.max === 0) {
       const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
       if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
@@ -2479,6 +2495,17 @@ type LoopPush = {
   cursorPaths: {path: string[]; targetName: string}[]
 }
 
+type GuardedLoopPush = LoopPush & {
+  segmentedStack: SegmentedStackPush | null
+}
+
+type SegmentedStackPush = {
+  cursorName: string
+  topName: string
+  bottomName: string
+  gap: NumberValue
+}
+
 function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit<LoopPush, 'arrayName' | 'length'> {
   const row = expression.arguments[0]
   if (row == null) return {element: null, topName: null, height: null, cursorPaths: []}
@@ -2502,23 +2529,88 @@ function readGuardedLoopPushes(
   context: EvalContext,
   length: NumberValue,
   resettableExtrema: Map<string, LoopExtremum>,
-): LoopPush[] | null {
+): GuardedLoopPush[] | null {
   if (!ts.isIfStatement(statement) || statement.elseStatement != null || !isSideEffectFreeExpression(statement.expression)) return null
   const children = ts.isBlock(statement.thenStatement) ? [...statement.thenStatement.statements] : [statement.thenStatement]
-  const pushes: LoopPush[] = []
+  const guardContext: EvalContext = {...context, env: new Map(context.env)}
+  const localInitializers = new Map<string, ts.Expression>()
+  const identifierAliases = new Map<string, string>()
+  const pushes: GuardedLoopPush[] = []
   for (const child of children) {
+    if (ts.isVariableStatement(child)) {
+      bindVariableStatement(child, guardContext)
+      for (const declaration of child.declarationList.declarations) {
+        if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) continue
+        localInitializers.set(declaration.name.text, declaration.initializer)
+        if (ts.isIdentifier(declaration.initializer)) identifierAliases.set(declaration.name.text, declaration.initializer.text)
+      }
+      continue
+    }
+
     const push = pushCallFromStatement(child)
     if (push != null) {
       const targetName = push.expression.expression.text
       const target = context.env.get(targetName)
       if (target == null || target.kind !== 'array') return null
-      pushes.push({...readLoopPush(push, context), arrayName: targetName, length})
+      pushes.push({...readLoopPush(push, guardContext), arrayName: targetName, length, segmentedStack: null})
       continue
     }
-    if (isResettableScalarAssignment(child, resettableExtrema, length, context)) continue
+    const stackAdvance = pushes.length === 1 ? readSegmentedStackAdvance(child, pushes[0]!, guardContext, localInitializers, identifierAliases) : null
+    if (stackAdvance != null) {
+      pushes[0] = {...pushes[0]!, segmentedStack: stackAdvance}
+      continue
+    }
+    if (isResettableScalarAssignment(child, resettableExtrema, length, guardContext)) continue
     return null
   }
   return pushes.length === 0 ? null : pushes
+}
+
+function readSegmentedStackAdvance(
+  statement: ts.Statement,
+  push: LoopPush,
+  context: EvalContext,
+  localInitializers: Map<string, ts.Expression>,
+  identifierAliases: Map<string, string>,
+): SegmentedStackPush | null {
+  if (!ts.isExpressionStatement(statement) || !ts.isBinaryExpression(statement.expression)) return null
+  const assignment = statement.expression
+  if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left)) return null
+
+  const cursorName = assignment.left.text
+  if (push.topName == null) return null
+  const topSourceName = identifierAliases.get(push.topName) ?? push.topName
+  if (topSourceName !== cursorName) return null
+
+  const heightName = pushPropertyIdentifier(push, 'height')
+  const bottomName = pushPropertyIdentifier(push, 'bottom')
+  if (heightName == null || bottomName == null) return null
+
+  const bottomInitializer = localInitializers.get(bottomName)
+  if (bottomInitializer == null || !expressionIsIdentifierSum(bottomInitializer, push.topName, heightName)) return null
+
+  const gapExpression = otherSideOfIdentifierSum(assignment.right, bottomName)
+  if (gapExpression == null) return null
+  const gap = evaluateExpression(gapExpression, context)
+  if (gap.kind !== 'number' || gap.expr == null) return null
+  return {cursorName, topName: push.topName, bottomName, gap}
+}
+
+function pushPropertyIdentifier(push: LoopPush, prop: string): string | null {
+  return push.cursorPaths.find(cursorPath => cursorPath.path.length === 1 && cursorPath.path[0] === prop)?.targetName ?? null
+}
+
+function expressionIsIdentifierSum(expression: ts.Expression, leftName: string, rightName: string) {
+  const left = otherSideOfIdentifierSum(expression, leftName)
+  return left != null && ts.isIdentifier(left) && left.text === rightName
+}
+
+function otherSideOfIdentifierSum(expression: ts.Expression, name: string): ts.Expression | null {
+  const unwrapped = unwrapExpression(expression)
+  if (!ts.isBinaryExpression(unwrapped) || unwrapped.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
+  if (ts.isIdentifier(unwrapped.left) && unwrapped.left.text === name) return unwrapped.right
+  if (ts.isIdentifier(unwrapped.right) && unwrapped.right.text === name) return unwrapped.left
+  return null
 }
 
 function isResettableScalarAssignment(
@@ -2679,6 +2771,7 @@ function nonNullFacts(...facts: (LinearConstraint | null)[]): LinearConstraint[]
 
 function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: string): ts.Expression | null {
   for (const property of expression.properties) {
+    if (ts.isShorthandPropertyAssignment(property) && property.name.text === name) return property.name
     if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
     if (property.name.text === name) return property.initializer
   }
@@ -2726,6 +2819,93 @@ function loopElementFromPush(
     }
   }
   return element
+}
+
+function segmentedStackElement(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, context: EvalContext): Value | null {
+  if (push.segmentedStack == null || element?.kind !== 'object') return element
+  const props = new Map(element.props)
+  const height = props.get('height')
+  if (height?.kind !== 'number') return element
+  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  if (advance == null) return element
+
+  const top = segmentedStackTopValue(push, sourceLength, advance, context)
+  const bottom = evaluateNumberBinary(ts.SyntaxKind.PlusToken, top, height)
+  if (bottom.kind !== 'number') return element
+  props.set('top', top)
+  props.set('bottom', bottom)
+  return {...element, props}
+}
+
+function pushedElementValue(target: ArrayValue, element: Value | null): Value | null {
+  if (target.length.min === 0 && target.length.max === 0) {
+    return element == null ? target.element : valueWithStructuralFallback(element, target.element)
+  }
+  return mergeElementValue(target.element, element)
+}
+
+function segmentedStackSummary(push: GuardedLoopPush, element: Value | null): ArraySummary | null {
+  if (push.segmentedStack == null || element?.kind !== 'object') return null
+  const height = element.props.get('height')
+  if (height?.kind !== 'number') return null
+  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  if (advance == null) return null
+
+  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: advance}], spaced: [], lastEnd: null, extentEnds: []}
+  if (advance.min >= 0) summary.nondecreasingProps.push('top')
+  if (advance.expr != null && height.expr != null) {
+    const gapExpr = spacedGapExpr(advance.expr, height.expr)
+    if (gapExpr != null) summary.spaced.push({gapExpr, heightExpr: height.expr, advanceExpr: advance.expr})
+  }
+  return summary
+}
+
+function applySegmentedStackCursorUpdate(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, context: EvalContext) {
+  if (push.segmentedStack == null || element?.kind !== 'object') return
+  const height = element.props.get('height')
+  if (height?.kind !== 'number') return
+  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  if (advance == null) return
+  const start = context.env.get(push.segmentedStack.cursorName)
+  if (start?.kind !== 'number') return
+  context.env.set(push.segmentedStack.cursorName, segmentedStackCursorValue(push.segmentedStack.cursorName, start, sourceLength, advance))
+}
+
+function segmentedStackAdvance(height: NumberValue, gap: NumberValue): NumberValue | null {
+  const advance = evaluateNumberBinary(ts.SyntaxKind.PlusToken, height, gap)
+  return advance.kind === 'number' ? advance : null
+}
+
+function segmentedStackTopValue(push: GuardedLoopPush, sourceLength: NumberValue, advance: NumberValue, context: EvalContext): NumberValue {
+  const start = push.segmentedStack == null ? null : context.env.get(push.segmentedStack.cursorName)
+  if (start?.kind !== 'number') return unknownNumber(`${push.arrayName}[].top`)
+  const bounds = repeatedAdvanceBounds(sourceLength, advance)
+  return numberValue(
+    start.min + bounds.min,
+    start.max + bounds.max,
+    start.isInteger && advance.isInteger,
+    `${push.arrayName}[].top`,
+    linearVariable(linearNameForExpression(`${push.arrayName}[].top`)),
+  )
+}
+
+function segmentedStackCursorValue(name: string, start: NumberValue, sourceLength: NumberValue, advance: NumberValue): NumberValue {
+  const bounds = repeatedAdvanceBounds(sourceLength, advance)
+  return numberValue(
+    start.min + bounds.min,
+    start.max + bounds.max,
+    start.isInteger && advance.isInteger,
+    name,
+    linearVariable(linearNameForExpression(name)),
+  )
+}
+
+function repeatedAdvanceBounds(length: NumberValue, advance: NumberValue): {min: number; max: number} {
+  const maxCount = Math.max(0, length.max)
+  return {
+    min: advance.min < 0 ? advance.min * maxCount : 0,
+    max: advance.max > 0 ? advance.max * maxCount : 0,
+  }
 }
 
 function indexedLoopElementFromPush(push: LoopPush, indexName: string, sourceLength: NumberValue): Value | null {

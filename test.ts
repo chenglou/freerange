@@ -113,6 +113,24 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
+const equalityRedundantReport = inferFitFiles([
+  '../vibescript/demos/photo-gallery/layout.ts',
+  '../vibescript/demos/photo-gallery/prompt-layout.ts',
+], {functionName: 'getGridLayout'})
+const equalityRedundantLoop = equalityRedundantReport.functions[0]?.loops[0]
+const equalityRedundantFacts = new Map(equalityRedundantLoop?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
+const expectedEqualityRedundantFacts = [
+  ['rows[].bottom == rows[].top + rows[].height', 'rows[].bottom == (rows[].top + rows[].height)'],
+] as const
+const missingEqualityRedundantFacts = expectedEqualityRedundantFacts.filter(([fact, reason]) => equalityRedundantFacts.get(fact) !== reason)
+if (missingEqualityRedundantFacts.length > 0) {
+  console.error('expected equality redundant facts changed')
+  console.error(missingEqualityRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
+}
+
 const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['patterns.ts'], 'typedObjectParamArrayShape'),
   formatInferSnapshot(['patterns.ts'], 'propertyAccessCallShape'),
@@ -167,7 +185,7 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   addSection(lines, 'locals', snapshotItems(functionName, 'locals', fn.locals.map(fact => fact.text)))
   for (const loop of fn.loops) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
-    addSection(lines, 'inferred', loop.facts.map(fact => fact.text), '  ')
+    addSection(lines, 'inferred', snapshotItems(functionName, 'loop', loop.facts.map(fact => fact.text)), '  ')
     addSection(lines, 'source-proved', loop.specs.filter(spec => spec.status === 'source-proved').map(spec => spec.text), '  ')
     addSection(lines, 'trusted', loop.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text), '  ')
     addSection(lines, 'not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => spec.text), '  ')
@@ -186,8 +204,18 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
   if (item === 'result.items.length == layoutSources.length') return true
   if (item === 'result.items.length: int 0..1000') return true
-  if (item === 'result.rowsTop.length == rowsTop.length') return true
-  if (item === 'result.rowsTop.length: int 1..1001') return true
+  if (item === 'result.contentHeight == nextRowTop') return true
+  if (item === 'result.contentHeight: 40..Infinity') return true
+  if (item === 'result.rows.length == rows.length') return true
+  if (item === 'result.rows.length: int 0..1000') return true
+  if (item === 'result.rows[].bottom == (rows[].top + rows[].height)') return true
+  if (item === 'result.rows[].bottom: 40..Infinity') return true
+  if (item === 'result.rows[].height == rows[].height') return true
+  if (item === 'result.rows[].height: 0..Infinity') return true
+  if (item === 'result.rows[].top == rows[].top') return true
+  if (item === 'result.rows[].top: 40..Infinity') return true
+  if (item === 'nondecreasing(result.rows.top)') return true
+  if (item === 'spaced(result.rows, boxesGapY)') return true
   if (section === 'result') {
     return item === 'result.items[].imageBox.sizeX: 0..1952'
       || item === 'result.items[].layoutBox.sizeX: 0..1952'
@@ -198,8 +226,13 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   }
   return item === 'cols: int 1..7'
     || item === 'boxMaxSizeX: 18.285714285714285..1952'
-    || item === 'rowsTop.length: int 1..1001'
-    || item === 'rowHeights.length: int 0..1000'
+    || item === 'rows.length: int 0..1000'
+    || item === 'rows[].bottom == (rows[].top + rows[].height)'
+    || item === 'rows[].bottom: 40..Infinity'
+    || item === 'rows[].height: 0..Infinity'
+    || item === 'rows[].top: 40..Infinity'
+    || item === 'nondecreasing(rows.top)'
+    || item === 'spaced(rows, boxesGapY)'
     || item === 'measurements.length == layoutSources.length'
     || item === 'measurements.length: int 0..1000'
     || item === 'measurements[].imageSizeX: 0..1952'

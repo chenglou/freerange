@@ -34,8 +34,10 @@ possible syntax, and implementation questions that fell out of photo-gallery.
 
 ### Same-Index Labels
 
-Current `[]` means one collection side against scalars. It cannot say “the same
-item” inside a repeated path or across two arrays.
+Current `[]` means one anonymous collection. It can now say “the same item” when
+the same collection appears on both sides, like `rows[].bottom ==
+rows[].top + rows[].height`. It still cannot relate two different arrays or name
+two nested positions.
 
 ```ts
 items[$i].imageBox.sizeX <= layoutSources[$i].naturalSizeX
@@ -97,8 +99,8 @@ if leftHitArea != null:
 
 ### Pairwise Non-Overlap
 
-Final 2D grid layout should not overlap. Current one-sided wildcard comparisons
-cannot express pairwise relationships between distinct items.
+Final 2D grid layout should not overlap. Current one-collection wildcard
+comparisons cannot express pairwise relationships between distinct items.
 
 ```ts
 for distinct items $a, $b:
@@ -123,8 +125,10 @@ adjacent rows:
   nextRow.top == row.bottom + boxesGapY
 ```
 
-The source now returns row metadata. The remaining checker question is how much
-same-index / adjacent-index syntax we want before proving these facts directly.
+The source now returns row metadata, and the checker can prove the adjacent-row
+spacing from the guarded row-boundary push. The remaining checker question is
+how much same-index / adjacent-index syntax we want for item-to-column and
+item-to-row relations.
 
 ### Exact Render Set
 

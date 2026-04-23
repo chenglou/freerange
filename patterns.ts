@@ -379,6 +379,36 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * result.rows.length <= items.length
+ * result.rows[].height: 0..40
+ * result.rows[].bottom == result.rows[].top + result.rows[].height
+ * nondecreasing(result.rows.top)
+ * spaced(result.rows, gap)
+ */
+export function segmentedStackRows(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    const layoutHeight = item.height
+    rowHeight = Math.max(rowHeight, layoutHeight)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * result: 0..2000
  * result >= 0
  */

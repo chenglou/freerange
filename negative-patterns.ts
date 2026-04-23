@@ -187,6 +187,57 @@ export function negativeSpacedNeedsMatchingGap(items: number[], top: number, ste
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * result.rows[].bottom == result.rows[].top + result.rows[].height
+ */
+export function negativeSegmentedStackRowsNeedMatchingBottom(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight + 1
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows, gap}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * given otherGap: 20..30
+ * spaced(result.rows, gap)
+ */
+export function negativeSegmentedStackRowsNeedMatchingGap(items: {height: number}[], top: number, gap: number, otherGap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + otherGap
+      rowHeight = 0
+    }
+  }
+  return {rows, gap}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given top: 0..1000
  * given step: 0..40
