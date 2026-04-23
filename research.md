@@ -106,6 +106,7 @@ High-value inference:
 - `items.filter(...)` is worth supporting as a boring subsequence summary: output items keep the source item domain and output length is at most source length. Do not let that grow into predicate logic yet.
 - Inline `// @fit 0..foo` is now placement-sensitive in the useful way: on params it is a trusted input domain, exactly like a lifted `given`; on locals and object fields it is a targeted check. That keeps boring scalar domains and red-line variables next to the code without turning `given` into a local escape hatch.
 - append-only `for...of` can infer length, scalar-array element shape, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
+- Loop inference should keep splitting source reading from meaning. The source reader can recognize narrow TypeScript shapes, but it should emit generic append streams, scalar updates, and cursor recurrences. `src/loop-summary.ts` is the current boundary for turning those summaries into array element facts and sequence facts.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
@@ -117,7 +118,7 @@ Demo notes from the first infer pass:
 
 - Pretext `layoutTemplateFrame` now exposes the useful boring facts: block count is preserved, `bubbleHeight` and `totalHeight` share the same running measure, and the `usedContentWidth` max accumulator stays numeric. The next real blocker there is not min/max; it is whether we want better contracts around helper return measures like `layoutBlockFrameResult.height`.
 - Vibescript photo-gallery became much more useful once the real demo owned the small facts directly: grid image caps, width capping, line max sizes, edge targets, stable hit boxes, prompt visible sizing, and item geometry. The useful version is the trimmed one; one-off row/column/index helpers inflated the pass count without making the app code clearer.
-- Vibescript photo grid still does not prove the whole row-height packing loop. That is fine for now: the useful facts are on the source-owned seams, and the remaining row packing/product fidelity questions should keep coming from real demos before we add more language.
+- Vibescript photo grid now proves the row-height packing loop's row metadata and gaps. The remaining product-shaped gaps are row count, item-to-row/column adjacency, and prompt/text loop summaries; those should keep coming from real demos before we add more language.
 - The broader Pretext markdown parser shows noisy but honest unsupported shapes: switches, `continue`, `null`, counted loops over scalar bounds, and text/string work. Most of that is not layout proof pressure yet.
 
 ## Wildcard Semantics

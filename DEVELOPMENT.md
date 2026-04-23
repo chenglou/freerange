@@ -34,6 +34,7 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers

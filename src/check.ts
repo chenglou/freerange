@@ -48,7 +48,6 @@ import {
   unknownObject,
   valueWithAssumptions,
   withNumberCases,
-  type ArraySummary,
   type ArrayValue,
   type FactSource,
   type LinearConstraint,
@@ -56,6 +55,25 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {
+  applyLoopExtrema,
+  applySegmentedStackCursorUpdate,
+  conditionalPushLength,
+  indexedElementPathValue,
+  indexedElementValue,
+  indexedLoopElementFromPush,
+  loopElementFromPush,
+  loopExtremaConflictWithAdds,
+  pushedElementValue,
+  segmentedStackElement,
+  segmentedStackSummary,
+  sequenceSummaryFromLoopPush,
+  type GuardedLoopPush,
+  type LoopExtremum,
+  type LoopPush,
+  type LoopScalarUpdate,
+  type SegmentedStackPush,
+} from './loop-summary.ts'
 import {
   cleanLinear,
   linearAdd,
@@ -225,12 +243,6 @@ type TrustedGivenSpec =
 type ConditionalLoopAdd = {
   targetName: string
   increment: NumberValue
-}
-
-type LoopExtremum = {
-  targetName: string
-  kind: 'min' | 'max'
-  candidate: NumberValue
 }
 
 type ImportedContractSource = {
@@ -2004,7 +2016,7 @@ function evaluateForOfStatementCore(
   }
   if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Scalar min/max loops cannot also use += on the same target')
 
-  const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
+  const updates = new Map<string, LoopScalarUpdate>()
   const factRoots = new Set<string>()
 
   for (const [targetName, increment] of pendingAdds) {
@@ -2025,7 +2037,7 @@ function evaluateForOfStatementCore(
     factRoots.add(targetName)
   }
 
-  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Scalar min/max loop target expected a number')
+  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context.env, 'Scalar min/max loop target expected a number')
   if (extremumResult != null) return extremumResult
   for (const targetName of pendingExtrema.keys()) factRoots.add(targetName)
 
@@ -2038,8 +2050,8 @@ function evaluateForOfStatementCore(
       ...target,
       length: push.length,
       elements: null,
-      element: loopElementFromPush(push, updates, new Map(), source.length, context),
-      summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
+      element: loopElementFromPush(push, updates, new Map(), source.length, context.env, context.assumptions),
+      summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, loopSummaryOptions(context))),
     })
   }
 
@@ -2048,8 +2060,8 @@ function evaluateForOfStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length)
-    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
-    const element = segmentedStackElement(push, baseElement, source.length, context)
+    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context.env, context.assumptions)
+    const element = segmentedStackElement(push, baseElement, source.length, context.env)
     context.env.set(push.arrayName, {
       ...target,
       length,
@@ -2057,7 +2069,7 @@ function evaluateForOfStatementCore(
       element: pushedElementValue(target, element),
       summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
     })
-    applySegmentedStackCursorUpdate(push, element, source.length, context)
+    applySegmentedStackCursorUpdate(push, element, source.length, context.env)
     const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
     if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
   }
@@ -2155,7 +2167,7 @@ function evaluateForStatementCore(
 
   if (loopExtremaConflictWithAdds(pendingExtrema, pendingAdds)) return unknown('Indexed scalar min/max loops cannot also use += on the same target')
 
-  const updates = new Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>()
+  const updates = new Map<string, LoopScalarUpdate>()
   const factRoots = new Set<string>()
   for (const [targetName, increment] of pendingAdds) {
     const start = context.env.get(targetName)
@@ -2166,7 +2178,7 @@ function evaluateForStatementCore(
     factRoots.add(targetName)
   }
 
-  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context, 'Indexed scalar min/max loop target expected a number')
+  const extremumResult = applyLoopExtrema(pendingExtrema, source.length, context.env, 'Indexed scalar min/max loop target expected a number')
   if (extremumResult != null) return extremumResult
   for (const targetName of pendingExtrema.keys()) factRoots.add(targetName)
 
@@ -2175,14 +2187,14 @@ function evaluateForStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const update = updates.get(push.topName ?? '')
-    const cursorElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
+    const cursorElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context.env, context.assumptions)
     const element = indexedLoopElementFromPush({...push, element: cursorElement}, shape.indexName, source.length)
     context.env.set(push.arrayName, {
       ...target,
       length: source.length,
       elements: null,
       element,
-      summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, context)),
+      summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, loopSummaryOptions(context))),
     })
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
   }
@@ -2192,8 +2204,8 @@ function evaluateForStatementCore(
     if (target?.kind !== 'array') continue
     factRoots.add(push.arrayName)
     const length = conditionalPushLength(push.arrayName, source.length, target.length)
-    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context)
-    const element = segmentedStackElement(push, baseElement, source.length, context)
+    const baseElement = loopElementFromPush(push, updates, pendingExtrema, source.length, context.env, context.assumptions)
+    const element = segmentedStackElement(push, baseElement, source.length, context.env)
     context.env.set(push.arrayName, {
       ...target,
       length,
@@ -2201,7 +2213,7 @@ function evaluateForStatementCore(
       element: pushedElementValue(target, element),
       summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
     })
-    applySegmentedStackCursorUpdate(push, element, source.length, context)
+    applySegmentedStackCursorUpdate(push, element, source.length, context.env)
     if (target.length.min === 0 && target.length.max === 0) {
       const fact = comparisonConstraint(length, '<=', source.length, `${length.expr ?? push.arrayName + '.length'} <= ${source.length.expr ?? formatRange(source.length)}`)
       if (fact != null) context.assumptions = mergeAssumptions(context.assumptions, [fact])
@@ -2486,24 +2498,14 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   }
 }
 
-type LoopPush = {
-  arrayName: string
-  length: NumberValue
-  element: Value | null
-  topName: string | null
-  height: NumberValue | null
-  cursorPaths: {path: string[]; targetName: string}[]
-}
-
-type GuardedLoopPush = LoopPush & {
-  segmentedStack: SegmentedStackPush | null
-}
-
-type SegmentedStackPush = {
-  cursorName: string
-  topName: string
-  bottomName: string
-  gap: NumberValue
+function loopSummaryOptions(context: EvalContext) {
+  return {
+    assumptions: context.assumptions,
+    resolveNumber: (expr: string) => {
+      const value = evaluateSpecExpression(expr, context)
+      return value.kind === 'number' ? value : null
+    },
+  }
 }
 
 function readLoopPush(expression: ts.CallExpression, context: EvalContext): Omit<LoopPush, 'arrayName' | 'length'> {
@@ -2669,22 +2671,6 @@ function readLoopExtremumAssignment(statement: ts.Statement, context: EvalContex
   return {targetName, kind: callTarget.name.text, candidate}
 }
 
-function loopExtremaConflictWithAdds(extrema: Map<string, LoopExtremum>, adds: Map<string, NumberValue>) {
-  for (const targetName of extrema.keys()) {
-    if (adds.has(targetName)) return true
-  }
-  return false
-}
-
-function applyLoopExtrema(extrema: Map<string, LoopExtremum>, length: NumberValue, context: EvalContext, targetError: string): Value | null {
-  for (const extremum of extrema.values()) {
-    const start = context.env.get(extremum.targetName)
-    if (start == null || start.kind !== 'number') return unknown(targetError)
-    context.env.set(extremum.targetName, runningExtremumNumber(extremum.kind, extremum.targetName, start, length, extremum.candidate))
-  }
-  return null
-}
-
 function pushCallFromStatement(statement: ts.Statement): (ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}}) | null {
   if (ts.isExpressionStatement(statement) && isPushCall(statement.expression)) return statement.expression
   if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
@@ -2703,10 +2689,6 @@ function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.Bin
   return ts.isBinaryExpression(expression)
     && expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
     && ts.isIdentifier(expression.left)
-}
-
-function conditionalPushLength(arrayName: string, sourceLength: NumberValue, startLength: NumberValue = numberValue(0, 0, true, '0', linearConstant(0))): NumberValue {
-  return numberValue(startLength.min, startLength.max + sourceLength.max, true, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
 }
 
 type IndexedLoopShape = {
@@ -2794,248 +2776,6 @@ function objectIdentifierPropertyPaths(expression: ts.ObjectLiteralExpression, p
     if (ts.isObjectLiteralExpression(property.initializer)) paths.push(...objectIdentifierPropertyPaths(property.initializer, path))
   }
   return paths
-}
-
-function loopElementFromPush(
-  push: LoopPush,
-  updates: Map<string, {start: NumberValue; increment: NumberValue; end: NumberValue}>,
-  extrema: Map<string, LoopExtremum>,
-  length: NumberValue,
-  context: EvalContext,
-): Value | null {
-  if (push.element == null || (updates.size === 0 && extrema.size === 0)) return push.element
-  let element = push.element
-  for (const cursorPath of push.cursorPaths) {
-    const update = updates.get(cursorPath.targetName)
-    const expr = cursorPath.path.length === 0 ? `${push.arrayName}[]` : `${push.arrayName}[].${cursorPath.path.join('.')}`
-    if (update != null) {
-      element = setObjectPathValue(element, cursorPath.path, loopCursorElementValue(update, expr, context))
-      continue
-    }
-    const extremum = extrema.get(cursorPath.targetName)
-    const start = context.env.get(cursorPath.targetName)
-    if (extremum != null && start?.kind === 'number') {
-      element = setObjectPathValue(element, cursorPath.path, runningExtremumNumber(extremum.kind, expr, start, length, extremum.candidate))
-    }
-  }
-  return element
-}
-
-function segmentedStackElement(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, context: EvalContext): Value | null {
-  if (push.segmentedStack == null || element?.kind !== 'object') return element
-  const props = new Map(element.props)
-  const height = props.get('height')
-  if (height?.kind !== 'number') return element
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
-  if (advance == null) return element
-
-  const top = segmentedStackTopValue(push, sourceLength, advance, context)
-  const bottom = evaluateNumberBinary(ts.SyntaxKind.PlusToken, top, height)
-  if (bottom.kind !== 'number') return element
-  props.set('top', top)
-  props.set('bottom', bottom)
-  return {...element, props}
-}
-
-function pushedElementValue(target: ArrayValue, element: Value | null): Value | null {
-  if (target.length.min === 0 && target.length.max === 0) {
-    return element == null ? target.element : valueWithStructuralFallback(element, target.element)
-  }
-  return mergeElementValue(target.element, element)
-}
-
-function segmentedStackSummary(push: GuardedLoopPush, element: Value | null): ArraySummary | null {
-  if (push.segmentedStack == null || element?.kind !== 'object') return null
-  const height = element.props.get('height')
-  if (height?.kind !== 'number') return null
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
-  if (advance == null) return null
-
-  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: advance}], spaced: [], lastEnd: null, extentEnds: []}
-  if (advance.min >= 0) summary.nondecreasingProps.push('top')
-  if (advance.expr != null && height.expr != null) {
-    const gapExpr = spacedGapExpr(advance.expr, height.expr)
-    if (gapExpr != null) summary.spaced.push({gapExpr, heightExpr: height.expr, advanceExpr: advance.expr})
-  }
-  return summary
-}
-
-function applySegmentedStackCursorUpdate(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, context: EvalContext) {
-  if (push.segmentedStack == null || element?.kind !== 'object') return
-  const height = element.props.get('height')
-  if (height?.kind !== 'number') return
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
-  if (advance == null) return
-  const start = context.env.get(push.segmentedStack.cursorName)
-  if (start?.kind !== 'number') return
-  context.env.set(push.segmentedStack.cursorName, segmentedStackCursorValue(push.segmentedStack.cursorName, start, sourceLength, advance))
-}
-
-function segmentedStackAdvance(height: NumberValue, gap: NumberValue): NumberValue | null {
-  const advance = evaluateNumberBinary(ts.SyntaxKind.PlusToken, height, gap)
-  return advance.kind === 'number' ? advance : null
-}
-
-function segmentedStackTopValue(push: GuardedLoopPush, sourceLength: NumberValue, advance: NumberValue, context: EvalContext): NumberValue {
-  const start = push.segmentedStack == null ? null : context.env.get(push.segmentedStack.cursorName)
-  if (start?.kind !== 'number') return unknownNumber(`${push.arrayName}[].top`)
-  const bounds = repeatedAdvanceBounds(sourceLength, advance)
-  return numberValue(
-    start.min + bounds.min,
-    start.max + bounds.max,
-    start.isInteger && advance.isInteger,
-    `${push.arrayName}[].top`,
-    linearVariable(linearNameForExpression(`${push.arrayName}[].top`)),
-  )
-}
-
-function segmentedStackCursorValue(name: string, start: NumberValue, sourceLength: NumberValue, advance: NumberValue): NumberValue {
-  const bounds = repeatedAdvanceBounds(sourceLength, advance)
-  return numberValue(
-    start.min + bounds.min,
-    start.max + bounds.max,
-    start.isInteger && advance.isInteger,
-    name,
-    linearVariable(linearNameForExpression(name)),
-  )
-}
-
-function repeatedAdvanceBounds(length: NumberValue, advance: NumberValue): {min: number; max: number} {
-  const maxCount = Math.max(0, length.max)
-  return {
-    min: advance.min < 0 ? advance.min * maxCount : 0,
-    max: advance.max > 0 ? advance.max * maxCount : 0,
-  }
-}
-
-function indexedLoopElementFromPush(push: LoopPush, indexName: string, sourceLength: NumberValue): Value | null {
-  if (push.element == null) return null
-  return indexedLoopValueFromPush(push.element, indexName, sourceLength, `${push.arrayName}[]`)
-}
-
-function setObjectPathValue(value: Value, path: string[], replacement: Value): Value {
-  const [head, ...tail] = path
-  if (head == null) return replacement
-  if (value.kind !== 'object') return value
-  const props = new Map(value.props)
-  const current = props.get(head)
-  props.set(head, setObjectPathValue(current ?? unknownObject(head), tail, replacement))
-  return {...value, props}
-}
-
-function indexedLoopValueFromPush(value: Value, indexName: string, sourceLength: NumberValue, expr: string): Value {
-  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(expr, sourceLength)
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      elements: value.elements == null ? null : value.elements.map((element, index) => indexedLoopValueFromPush(element, indexName, sourceLength, `${expr}[${index}]`)),
-      element: value.element == null ? null : indexedLoopValueFromPush(value.element, indexName, sourceLength, `${expr}[]`),
-    }
-  }
-  if (value.kind !== 'object') return value
-  const props = new Map<string, Value>()
-  for (const [name, prop] of value.props) {
-    props.set(name, indexedLoopValueFromPush(prop, indexName, sourceLength, `${expr}.${name}`))
-  }
-  return {...value, props}
-}
-
-function indexedElementValue(arrayName: string, prop: string, sourceLength: NumberValue): NumberValue {
-  return indexedElementPathValue(`${arrayName}[].${prop}`, sourceLength)
-}
-
-function indexedElementPathValue(expr: string, sourceLength: NumberValue): NumberValue {
-  return numberValue(
-    0,
-    Math.max(0, sourceLength.max - 1),
-    true,
-    expr,
-    linearVariable(linearNameForExpression(expr)),
-  )
-}
-
-function loopCursorElementValue(
-  update: {start: NumberValue; increment: NumberValue; end: NumberValue},
-  expr: string,
-  context: EvalContext,
-): NumberValue {
-  if (update.increment.min < 0) return unknownNumber(expr)
-  const startMin = proveComparison(update.start, '>=', numberValue(0, 0, true, '0', linearConstant(0)), context.assumptions).status === 'pass'
-    ? Math.max(0, update.start.min)
-    : update.start.min
-  return numberValue(
-    startMin,
-    update.end.max,
-    update.start.isInteger && update.increment.isInteger,
-    expr,
-    linearVariable(linearNameForExpression(expr)),
-  )
-}
-
-function sequenceSummaryFromLoopPush(
-  push: LoopPush,
-  update: {start: NumberValue; increment: NumberValue; end: NumberValue} | undefined,
-  context: EvalContext,
-): ArraySummary | null {
-  if (push.topName == null || push.height == null || update == null) return null
-  const summary: ArraySummary = {nondecreasingProps: [], advances: [{prop: 'top', value: update.increment}], spaced: [], lastEnd: null, extentEnds: []}
-  if (update.increment.min >= 0) summary.nondecreasingProps.push('top')
-
-  const advanceExpr = update.increment.expr
-  const heightExpr = push.height.expr
-  if (advanceExpr == null || heightExpr == null) return summary
-  const gapExpr = spacedGapExpr(advanceExpr, heightExpr)
-  if (gapExpr == null) return summary
-
-  summary.spaced.push({gapExpr, heightExpr, advanceExpr})
-  const nonEmptyEnd = lastEndFromLoopEnd(nonEmptyLoopEnd(update, push.length), gapExpr, context)
-  if (push.length.min >= 1) summary.lastEnd = nonEmptyEnd
-  const extentEnd = extentEndFromLoopPush(push.arrayName, update.start, nonEmptyEnd)
-  if (extentEnd != null) summary.extentEnds.push(extentEnd)
-  return summary
-}
-
-function nonEmptyLoopEnd(
-  update: {start: NumberValue; increment: NumberValue; end: NumberValue},
-  length: NumberValue,
-): NumberValue {
-  const nonEmptyLength = {...length, min: Math.max(1, length.min)}
-  return runningSumNumber(update.start, nonEmptyLength, update.increment)
-}
-
-function extentEndFromLoopPush(
-  arrayName: string,
-  empty: NumberValue,
-  nonEmptyEnd: NumberValue | null,
-): ArraySummary['extentEnds'][number] | null {
-  if (empty.expr == null || nonEmptyEnd?.expr == null) return null
-  return {
-    emptyExpr: empty.expr,
-    nonEmptyExpr: nonEmptyEnd.expr,
-    value: numberValue(
-      Math.min(empty.min, nonEmptyEnd.min),
-      Math.max(empty.max, nonEmptyEnd.max),
-      empty.isInteger && nonEmptyEnd.isInteger,
-      `extentEnd(${arrayName}, ${empty.expr})`,
-    ),
-  }
-}
-
-function spacedGapExpr(incrementExpr: string, heightExpr: string): string | null {
-  if (sameExpressionText(incrementExpr, heightExpr)) return '0'
-  const expression = unwrapExpression(parseExpression(incrementExpr))
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
-  if (sameExpressionText(expression.left.getText(), heightExpr)) return expression.right.getText()
-  if (sameExpressionText(expression.right.getText(), heightExpr)) return expression.left.getText()
-  return null
-}
-
-function lastEndFromLoopEnd(end: NumberValue, gapExpr: string, context: EvalContext): NumberValue | null {
-  if (sameExpressionText(gapExpr, '0')) return end
-  const gap = evaluateSpecExpression(gapExpr, context)
-  if (gap.kind !== 'number') return null
-  const value = evaluateNumberBinary(ts.SyntaxKind.MinusToken, end, gap)
-  return value.kind === 'number' ? value : null
 }
 
 function isPushCall(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}} {

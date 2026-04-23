@@ -32,6 +32,7 @@ sections[].rows[].height <= maxHeight
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
 - Simple indexed `for` append loops can bind `const item = items[i]!`, advance numeric cursors with `+=`, preserve guarded push length facts, and prove guarded segmented row-boundary facts such as `rows[].bottom == rows[].top + rows[].height`, `nondecreasing(rows.top)`, and `spaced(rows, gap)`.
+- Loop proof meaning now goes through `src/loop-summary.ts`: source readers feed append streams, scalar updates, and cursor recurrences into reusable summary derivation instead of stamping every sequence fact directly in `check.ts`.
 - `items.map(...)` preserves length, item field domains, and optional callback index facts for expression callbacks and tiny block callbacks with local `const` bindings plus `return`.
 - `items.filter(...)` preserves item domains and proves only the subsequence length fact: `filtered.length <= items.length`.
 - Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
