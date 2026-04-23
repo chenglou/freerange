@@ -576,6 +576,12 @@ Supported today:
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 
+Strict branch checks know integer steps. If `focused` is proven integer, `focused > 0` is enough to prove `focused - 1 >= 0`; `focused >= 0` is not. That matters for previous/next indices:
+
+```ts
+if (focused > 0) return items[focused - 1]!
+```
+
 `map` support is deliberately tiny:
 
 ```ts

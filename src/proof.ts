@@ -28,6 +28,8 @@ import {
   cleanLinear,
   isZeroLinear,
   linearConstantStatus,
+  linearAdd,
+  linearConstant,
   linearFromExpressionText,
   linearKey,
   linearScaleExact,
@@ -334,6 +336,7 @@ function singleLinearBound(linear: LinearExpr) {
 export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: FactSource = 'code'): LinearConstraint | null {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
+  const integerStrict = diff != null && (op === '>' || op === '<') && left.isInteger && right.isInteger
   return {
     diff,
     op,
@@ -341,6 +344,7 @@ export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, 
     ...(left.expr == null ? {} : {leftExpr: left.expr}),
     ...(right.expr == null ? {} : {rightExpr: right.expr}),
     ...(text == null ? {} : {text}),
+    ...(integerStrict ? {integerStrict: true as const} : {}),
   }
 }
 
@@ -432,10 +436,19 @@ export function nonNegativeFacts(assumption: LinearConstraint): NonNegativeFact[
     case '<=':
       return [nonNegativeFact(linearScaleExact(assumption.diff, -1), false, assumption.text)]
     case '>':
-      return [nonNegativeFact(assumption.diff, true, assumption.text)]
+      return strictNonNegativeFacts(assumption.diff, assumption)
     case '<':
-      return [nonNegativeFact(linearScaleExact(assumption.diff, -1), true, assumption.text)]
+      return strictNonNegativeFacts(linearScaleExact(assumption.diff, -1), assumption)
   }
+}
+
+function strictNonNegativeFacts(diff: LinearExpr, assumption: LinearConstraint): NonNegativeFact[] {
+  const facts = [nonNegativeFact(diff, true, assumption.text)]
+  if (assumption.integerStrict === true) {
+    const stepped = linearAdd(diff, linearConstant(-1))
+    if (stepped != null) facts.push(nonNegativeFact(stepped, false, assumption.text))
+  }
+  return facts
 }
 
 function nonNegativeFact(diff: LinearExpr, strict: boolean, text?: string): NonNegativeFact {

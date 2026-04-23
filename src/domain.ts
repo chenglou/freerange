@@ -23,6 +23,7 @@ export type LinearConstraint = {
   rightExpr?: string
   source: FactSource
   rangeFact?: true
+  integerStrict?: true
 }
 
 export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'

@@ -772,6 +772,17 @@ export function negativeGivenComparisonCannotIndexArray(items: number[], index: 
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[]: 0..40
+ * given focused: int 0..<items.length
+ * result: 0..40
+ */
+export function negativePredecessorIndexNeedsStrictPositiveBranch(items: number[], focused: number) {
+  if (focused >= 0) return items[focused - 1]!
+  return items[0]!
+}
+
+/** @fit
  * given width.toString() == 10
  */
 export function negativeGivenComparisonCannotCallInputMethod(width: number) {

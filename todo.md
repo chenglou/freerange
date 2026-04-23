@@ -24,6 +24,7 @@ sections[].rows[].height <= maxHeight
 - Two wildcard collection sides are intentionally unsupported until their semantics are explicit.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
+- Strict integer branch facts can move by one step, so `focused > 0` proves `focused - 1 >= 0` for previous-index checks.
 - Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `result.rows == input.rows`.
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.

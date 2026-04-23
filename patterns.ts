@@ -897,6 +897,17 @@ export function arrayLiteralIndex(index: number) {
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[]: 0..40
+ * given focused: int 0..<items.length
+ * result: 0..40
+ */
+export function strictIntegerPredecessorArrayIndex(items: number[], focused: number) {
+  if (focused > 0) return items[focused - 1]!
+  return items[0]!
+}
+
+/** @fit
  * given items.length: int 0..100
  * given index: int 0..100
  * given index < items.length
