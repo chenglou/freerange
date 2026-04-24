@@ -197,14 +197,12 @@ function parseFitModule<TGlobal>(
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) {
-      const fn = {name: statement.name.text, node: statement, specNode: statement}
-      const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
-      functions.set(fn.name, fn)
-      if (specs.length > 0) fitFunctions.add(fn.name)
-      specsByFunction.set(fn.name, specs)
-      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
-        exports.set(fn.name, {kind: 'local', localName: fn.name})
+    if (ts.isFunctionDeclaration(statement)) {
+      const functionName = statement.name?.text ?? (hasModifier(statement, ts.SyntaxKind.DefaultKeyword) ? 'default' : null)
+      if (functionName == null) continue
+      collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction)
+      if (statement.name != null && hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+        exports.set(functionName, {kind: 'local', localName: functionName})
       }
       continue
     }
@@ -216,16 +214,18 @@ function parseFitModule<TGlobal>(
       collectLocalExportDeclaration(statement, exports)
       continue
     }
+    if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
+      const functionInitializer = supportedFunctionInitializer(statement.expression)
+      if (functionInitializer == null) continue
+      collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction)
+      continue
+    }
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
       if (ts.isIdentifier(declaration.name)) {
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
         if (functionInitializer != null) {
-          const fn = {name: declaration.name.text, node: functionInitializer, specNode: statement}
-          const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
-          functions.set(fn.name, fn)
-          if (specs.length > 0) fitFunctions.add(fn.name)
-          specsByFunction.set(fn.name, specs)
+          collectFitFunction(sourceText, declaration.name.text, functionInitializer, statement, functions, fitFunctions, specsByFunction)
         }
         if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
           exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
@@ -252,12 +252,24 @@ function collectClassMemberFunctions(
     if (member.body == null) continue
     const memberName = classMemberFunctionName(declaration.name!.text, member)
     if (memberName == null) continue
-    const fn = {name: memberName, node: member, specNode: member}
-    const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
-    functions.set(fn.name, fn)
-    if (specs.length > 0) fitFunctions.add(fn.name)
-    specsByFunction.set(fn.name, specs)
+    collectFitFunction(sourceText, memberName, member, member, functions, fitFunctions, specsByFunction)
   }
+}
+
+function collectFitFunction(
+  sourceText: string,
+  name: string,
+  node: FitFunctionNode,
+  specNode: ts.Node,
+  functions: Map<string, FitFunction>,
+  fitFunctions: Set<string>,
+  specsByFunction: Map<string, FitSpec[]>,
+) {
+  const fn = {name, node, specNode}
+  const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
+  functions.set(fn.name, fn)
+  if (specs.length > 0) fitFunctions.add(fn.name)
+  specsByFunction.set(fn.name, specs)
 }
 
 function classMemberFunctionName(className: string, member: ts.MethodDeclaration | ts.GetAccessorDeclaration): string | null {

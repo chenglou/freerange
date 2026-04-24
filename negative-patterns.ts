@@ -1033,3 +1033,15 @@ export function negativeLoopGivenCannotNameRows(items: number[]) {
 }
 
 export const negativeTopLevelInlineCallGiven = negativeNeedsContainerFit(4, 3) // @fit -1..0
+
+/** @fit
+ * given rect.left: 0..100
+ * given rect.right: 0..100
+ * given rect.top: 0..100
+ * given rect.bottom: 0..100
+ * result.x: 50..100
+ */
+export default (rect: {left: number; right: number; top: number; bottom: number}) => ({
+  x: rect.left + (rect.right - rect.left) / 2,
+  y: rect.top + (rect.bottom - rect.top) / 2,
+})

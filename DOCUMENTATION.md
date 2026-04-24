@@ -7,7 +7,7 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 ## Glossary
 
 ```ts
-@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, class method/getter, or supported loop.
+@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
 given this.width: 0..1000 // trusted input fact for an instance method/getter.
 result.width: 0..320 // check fact. Freerange must prove this from source.
@@ -87,7 +87,7 @@ caller may need a `given`, a wrapper contract, or earlier validation.
 
 ## A First Check
 
-Put `@fit` immediately above a named function, named `const` arrow/function expression, or class method/getter:
+Put `@fit` immediately above a named function, named `const` arrow/function expression, anonymous default export, or class method/getter:
 
 ```ts
 /** @fit
@@ -1010,7 +1010,7 @@ Loop `given` lines can describe function inputs. They cannot describe loop-built
 
 The checker understands a small pure subset:
 
-- function declarations and named `const` arrow/function expressions
+- function declarations, named `const` arrow/function expressions, and anonymous default-exported function/arrow boundaries
 - class methods and getters, with `this` as an input root for instance members
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters

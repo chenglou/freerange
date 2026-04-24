@@ -1363,3 +1363,16 @@ export class ClassMethodThisClaims {
     return this.width * this.height
   }
 }
+
+/** @fit
+ * given rect.left: -1000..1000
+ * given rect.right: -1000..1000
+ * given rect.top: -1000..1000
+ * given rect.bottom: -1000..1000
+ * result.x: -1000..1000
+ * result.y: -1000..1000
+ */
+export default (rect: {left: number; right: number; top: number; bottom: number}) => ({
+  x: rect.left + (rect.right - rect.left) / 2,
+  y: rect.top + (rect.bottom - rect.top) / 2,
+})

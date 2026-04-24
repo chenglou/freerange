@@ -693,6 +693,18 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   given can only describe inputs; rows is not an input here
+FAIL negative-patterns.ts:default: result.x: 50..100
+  range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
+  need: (rect.left + ((rect.right - rect.left) / 2)) inside 50..100
+  known:
+    -50..150 as (rect.left + ((rect.right - rect.left) / 2))
+    int 50..50 as 50
+    int 100..100 as 100
+    trusted from function @fit: given rect.left: 0..100
+    trusted from function @fit: given rect.right: 0..100
+    trusted from function @fit: given rect.top: 0..100
+    trusted from function @fit: given rect.bottom: 0..100
+  missing: (rect.left + ((rect.right - rect.left) / 2)) >= 50
 FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): requires container >= containee
   called function requires container >= containee
   this call passes container = 3 and containee = 4

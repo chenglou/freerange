@@ -19,7 +19,7 @@ But the project is not only about layout. The bigger goal is checkable specs ove
 
 ## First Check
 
-Put `@fit` immediately above a named function, named `const` arrow/function expression, or class method/getter:
+Put `@fit` immediately above a named function, named `const` arrow/function expression, anonymous default export, or class method/getter:
 
 ```ts
 /** @fit
