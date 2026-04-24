@@ -184,8 +184,8 @@ function lineHitAreaBoxes(windowSizeX: number, windowSizeY: number, scrollY: num
 
 The exact helper names can change. The point is the proof boundary:
 
-- column count and box width are source-owned geometry
-- plain object geometry fields are source-owned too; no tiny `rect(...)` helper is needed just to copy inputs
+- column count and box width are statically known geometry
+- plain object geometry fields are statically known too; no tiny `rect(...)` helper is needed just to copy inputs
 - left/right target helpers encode the index math, while the nullable edge cases stay in ordinary app control flow
 - hit-area boxes are stable layout geometry, not animation
 - helper contracts should be small enough that a bad arithmetic change makes the checker complain
@@ -218,7 +218,7 @@ At the end, report:
 
 ## Main-Thread Baseline
 
-Current `demos/photo-gallery` contracts prove the important source-owned helper seams cleanly:
+Current `demos/photo-gallery` contracts prove the important statically known helper seams cleanly:
 
 - `layout.ts` and `prompt-layout.ts`: 66 pass, 0 fail, 0 unknown
 - all checked sibling demo contracts: 125 pass, 0 fail, 0 unknown
@@ -237,7 +237,7 @@ The wider product helpers are still beyond the current checker surface:
 - `getLineLayout` inference stops at the reverse indexed loop that walks left from the focused item. Supporting that loop shape could help, but it is not required for the first useful helper contracts.
 - `measurePromptLayout` inference stops at the `while (true)` rich-inline cursor loop. That is browser/text-engine-adjacent enough that the first facts should stay on the smaller visible-line-count helpers.
 
-The first version of this packet accidentally asked for `return.left.targetIndex` on a helper where the left hit area can be null at `focused = 0`. Splitting target-index math from nullable edge control flow made the source-owned contract honest. This is the kind of spec bug I want Freerange to surface early.
+The first version of this packet accidentally asked for `return.left.targetIndex` on a helper where the left hit area can be null at `focused = 0`. Splitting target-index math from nullable edge control flow made the statically known contract honest. This is the kind of spec bug I want Freerange to surface early.
 
 ## Fresh-Agent Results
 
@@ -268,7 +268,7 @@ round B:
   bun browser-check.ts                     -> 4 scenario reports ready
 ```
 
-This is better than the older photo-gallery trials. The agents did not need screenshots, did not invent Playwright config, and did not turn the runner into a second layout engine. Both kept the formal claims on boring source-owned helpers and left native selection, hash navigation, scroll restore, and occlusion to page-owned reports.
+This is better than the older photo-gallery trials. The agents did not need screenshots, did not invent Playwright config, and did not turn the runner into a second layout engine. Both kept the formal claims on boring statically known helpers and left native selection, hash navigation, scroll restore, and occlusion to page-owned reports.
 
 The scratch demos are still not faithful recreations of the current hand-written demo. They simplify or choose their own answers for line sizing, transition behavior, neighbor visibility, GitHub link target, and overscan. That is fine for this trial. It means Freerange improved the spec's executable skeleton, not the whole product taste layer.
 

@@ -43,7 +43,7 @@ This keeps comments immediately adoptable in chunks. A separate spec compiler or
 
 The photo-gallery scratch trial is the best signal so far for agent-driven, spec-driven UI work. Two fresh agents got only Vibescript docs plus a private packet with Freerange-style source facts. Both produced runnable grid/line galleries, pure helper tests, browser-owned semantic reports, and the same 18 passing `@fit` checks on the same five seams.
 
-The useful part was not "the whole app is formally verified." The useful part was that the spec made the source-owned geometry boring:
+The useful part was not "the whole app is formally verified." The useful part was that the spec made the statically known geometry boring:
 
 - grid columns and max box width
 - plain object geometry fields
