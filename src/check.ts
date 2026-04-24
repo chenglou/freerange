@@ -65,7 +65,6 @@ import {
   applySegmentedStackCursorUpdate,
   conditionalPushLength,
   indexedElementPathValue,
-  indexedElementValue,
   indexedLoopElementFromPush,
   loopElementFromPush,
   loopExtremaConflictWithAdds,
@@ -2415,7 +2414,7 @@ function evaluateForStatementCore(
       element,
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, loopSummaryOptions(context))),
     })
-    context.assumptions = mergeAssumptions(context.assumptions, indexedPushElementAssumptions(push, element, shape.indexName, source.length))
+    context.assumptions = mergeAssumptions(context.assumptions, indexedPushElementAssumptions(push, shape.indexName, source.length))
   }
 
   for (const push of conditionalPushedArrays) {
@@ -2757,17 +2756,30 @@ function indexedLoopAssumptions(index: NumberValue, sourceLength: NumberValue): 
   return nonNullFacts(lower, upper)
 }
 
-function indexedElementAssumptions(arrayName: string, sourceLength: NumberValue): LinearConstraint[] {
-  const index = indexedElementValue(arrayName, 'index', sourceLength)
-  return indexedElementPathAssumptions(index, sourceLength)
+function indexedPushElementAssumptions(push: LoopPush, indexName: string, sourceLength: NumberValue): LinearConstraint[] {
+  return indexedLoopIndexPaths(push.element, indexName, `${push.arrayName}[]`)
+    .flatMap(expr => indexedElementPathAssumptions(indexedElementPathValue(expr, sourceLength), sourceLength))
 }
 
-function indexedPushElementAssumptions(push: LoopPush, element: Value | null, indexName: string, sourceLength: NumberValue): LinearConstraint[] {
-  const facts = indexedElementAssumptions(push.arrayName, sourceLength)
-  if (push.element?.kind === 'number' && push.element.expr === indexName && element?.kind === 'number') {
-    facts.push(...indexedElementPathAssumptions(element, sourceLength))
+function indexedLoopIndexPaths(value: Value | null, indexName: string, expr: string): string[] {
+  if (value == null) return []
+  if (value.kind === 'number') return value.expr === indexName ? [expr] : []
+  if (value.kind === 'array') {
+    const paths: string[] = []
+    if (value.element != null) paths.push(...indexedLoopIndexPaths(value.element, indexName, `${expr}[]`))
+    if (value.elements != null) {
+      for (let index = 0; index < value.elements.length; index++) {
+        paths.push(...indexedLoopIndexPaths(value.elements[index]!, indexName, `${expr}[${index}]`))
+      }
+    }
+    return paths
   }
-  return facts
+  if (value.kind !== 'object') return []
+  const paths: string[] = []
+  for (const [name, prop] of value.props) {
+    paths.push(...indexedLoopIndexPaths(prop, indexName, `${expr}.${name}`))
+  }
+  return paths
 }
 
 function indexedElementPathAssumptions(index: NumberValue, sourceLength: NumberValue): LinearConstraint[] {

@@ -236,6 +236,21 @@ export function floorHitIndexInsideCount(pointer: number, cellSize: number, coun
 }
 
 /** @fit
+ * given px: 0..Infinity
+ * given py: 0..Infinity
+ * given blockSize: 1..Infinity
+ * given countX: int 1..Infinity
+ * given _countY: int 1..Infinity
+ * given px < countX * blockSize
+ * given py < _countY * blockSize
+ * result >= 0
+ * result < countX * _countY
+ */
+export function flattenedGridHitIndex(px: number, py: number, blockSize: number, countX: number, _countY: number) {
+  return Math.floor(py / blockSize) * countX + Math.floor(px / blockSize)
+}
+
+/** @fit
  * given items.length: int 1..50
  * given index: int 0..<items.length
  * result >= 0
@@ -810,6 +825,22 @@ export function indexedLoopRows(items: {height: number}[]) {
   const rows = []
   for (let i = 0; i < items.length; i++) {
     rows.push({index: i, height: items[i]!.height})
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..Infinity
+ * given items[].height: 0..40
+ * result.rows.length == items.length
+ * result.rows[].rowIndex: int 0..<items.length
+ * result.rows[].height: 0..40
+ */
+export function indexedLoopNamedIndexField(items: {height: number}[]) {
+  const rows = []
+  for (let rowIndex = 0; rowIndex < items.length; rowIndex++) {
+    const item = items[rowIndex]!
+    rows.push({rowIndex, height: item.height})
   }
   return {rows}
 }

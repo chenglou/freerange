@@ -35,6 +35,10 @@ export const comparisonProofRules: ComparisonProofRule[] = [
     evaluate: evaluatePositiveScaleMonotonicity,
   },
   {
+    name: 'flattened-grid-index-below-count',
+    evaluate: evaluateFlattenedGridIndexBelowCount,
+  },
+  {
     name: 'floor-division-below-count',
     evaluate: evaluateFloorDivisionBelowCount,
   },
@@ -75,6 +79,66 @@ function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: Comparis
   if (boundProven) return {status: 'blocked', missing: divisorNeed}
   if (divisorProven) return {status: 'blocked', missing: boundNeed}
   return {status: 'blocked', missing: `${divisorNeed} and ${boundNeed}`}
+}
+
+function evaluateFlattenedGridIndexBelowCount(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {
+  if (goal.op !== '<' && goal.op !== '<=') return null
+  if (goal.left.expr == null || goal.right.expr == null || !goal.left.isInteger || !goal.right.isInteger) return null
+  const sum = binaryExpression(goal.left.expr, '+')
+  const rightFactors = productFactors(goal.right.expr)
+  if (sum == null || rightFactors == null || rightFactors.length < 2) return null
+
+  for (const [rowTerm, columnTerm] of [[sum.left, sum.right], [sum.right, sum.left]] as const) {
+    const shape = flattenedGridIndexShape(rowTerm, columnTerm, rightFactors)
+    if (shape == null) continue
+    const obligations = [
+      {need: `${shape.x.left} < ${shape.stride} * ${shape.x.right}`, proven: hasProductComparisonFact(shape.x.left, '<', shape.stride, shape.x.right, context)},
+      {need: `${shape.y.left} < ${shape.rows} * ${shape.y.right}`, proven: hasProductComparisonFact(shape.y.left, '<', shape.rows, shape.y.right, context)},
+      {need: `${shape.x.right} > 0`, proven: context.provesExprNonNegative(shape.x.right, true)},
+      {need: `${shape.y.right} > 0`, proven: context.provesExprNonNegative(shape.y.right, true)},
+      {need: `${shape.stride} > 0`, proven: context.provesExprNonNegative(shape.stride, true)},
+    ]
+    const missing = obligations.filter(obligation => !obligation.proven).map(obligation => obligation.need)
+    return missing.length === 0 ? {status: 'pass'} : {status: 'blocked', missing: missing.join(' and ')}
+  }
+
+  return null
+}
+
+type FlattenedGridIndexShape = {
+  stride: string
+  rows: string
+  x: {left: string; right: string}
+  y: {left: string; right: string}
+}
+
+function flattenedGridIndexShape(rowTerm: string, columnTerm: string, rightFactors: string[]): FlattenedGridIndexShape | null {
+  const row = floorDivisionProduct(rowTerm)
+  const column = floorDivision(columnTerm)
+  if (row == null || column == null) return null
+  const rowCount = productWithoutFactor(rightFactors, row.factor)
+  return rowCount == null ? null : {stride: row.factor, rows: rowCount, x: column, y: row.floor}
+}
+
+function floorDivisionProduct(text: string): {floor: {left: string; right: string}; factor: string} | null {
+  const factors = productFactors(text)
+  if (factors == null) return null
+  for (let index = 0; index < factors.length; index++) {
+    const floor = floorDivision(factors[index]!)
+    if (floor == null) continue
+    return {floor, factor: productText(factors.filter((_, factorIndex) => factorIndex !== index))}
+  }
+  return null
+}
+
+function productWithoutFactor(factors: string[], factor: string) {
+  const index = factors.findIndex(item => sameExpressionText(item, factor))
+  if (index < 0) return null
+  return productText(factors.filter((_, factorIndex) => factorIndex !== index))
+}
+
+function hasProductComparisonFact(left: string, op: ComparisonOperator, factorA: string, factorB: string, context: ComparisonRuleContext) {
+  return context.hasComparisonFact(left, op, productText([factorA, factorB]))
 }
 
 function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ComparisonRuleContext): ComparisonRuleResult | null {

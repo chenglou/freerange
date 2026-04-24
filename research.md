@@ -120,7 +120,7 @@ High-value inference:
 - append-only `for...of` can infer length, scalar-array element shape, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - Loop inference should keep splitting source reading from meaning. `src/loop-source.ts` can recognize narrow TypeScript shapes, but it should emit pushes, scalar updates, guards, and extrema. `src/loop-summary.ts` is the boundary for turning those summaries into array element facts and sequence facts.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
-- indexed loops should infer index ranges. One-to-one source order can come later when a fact needs it.
+- indexed loops should infer index ranges and carry whichever pushed field actually came from the loop index, not only a field literally named `index`. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized. Unsupported loop bodies can also be useful when they are only side effects on roots we can forget; preserve unrelated facts, never stale mutated-root facts.
 - `bun run infer` is useful as a checker x-ray: it should show curated result/local facts and loop-local facts, not every internal linear assumption. Function and loop output should keep separating trusted givens, source-proved checks, not-inferred checks, and the narrower redundant checks already covered by emitted inferred facts. Redundant lines should name the covering fact, because otherwise the output is only a vibe. That lets authors shorten noisy `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it dev-only until the output is consistently useful on demos.
@@ -230,6 +230,10 @@ missing: scale >= 0
 goal: floor(pointer / cellSize) < count
 known: cellSize > 0
 missing: pointer < count * cellSize
+
+goal: floor(y / cell) * countX + floor(x / cell) < countX * countY
+known: x < countX * cell, cell > 0, countX > 0
+missing: y < countY * cell
 ```
 
 This should grow only when a proof shape would otherwise split into separate proof and report helpers.

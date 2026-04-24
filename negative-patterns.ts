@@ -119,6 +119,19 @@ export function negativeFloorHitIndexNeedsUpperBound(pointer: number, cellSize: 
 }
 
 /** @fit
+ * given px: 0..Infinity
+ * given py: 0..Infinity
+ * given blockSize: 1..Infinity
+ * given countX: int 1..Infinity
+ * given _countY: int 1..Infinity
+ * given px < countX * blockSize
+ * result < countX * _countY
+ */
+export function negativeFlattenedGridHitIndexNeedsYBound(px: number, py: number, blockSize: number, countX: number, _countY: number) {
+  return Math.floor(py / blockSize) * countX + Math.floor(px / blockSize)
+}
+
+/** @fit
  * given content: 0..1000
  * given available: 0..1000
  * given scale: -2..2
@@ -694,6 +707,19 @@ export function negativeIndexedLoopIndexCanBeZero(items: {height: number}[]) {
   const rows = []
   for (let i = 0; i < items.length; i++) {
     rows.push({index: i, height: items[i]!.height})
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * result.rows[].rowIndex: int 0..<items.length
+ */
+export function negativeIndexedLoopNamedIndexTooHigh(items: {height: number}[]) {
+  const rows = []
+  for (let rowIndex = 0; rowIndex < items.length; rowIndex++) {
+    rows.push({rowIndex: rowIndex + 1, height: items[rowIndex]!.height})
   }
   return {rows}
 }

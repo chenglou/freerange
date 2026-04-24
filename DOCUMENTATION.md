@@ -559,6 +559,8 @@ Some layout facts are built in because they show up everywhere:
 Math.floor(x) <= x
 Math.ceil(x) >= x
 Math.ceil(total / count) * count >= total // when count > 0
+Math.floor(pointer / cellSize) < count // when cellSize > 0 and pointer < count * cellSize
+Math.floor(y / cell) * countX + Math.floor(x / cell) < countX * countY // when both coordinates are inside a positive integer grid
 index % count < count
 ```
 
@@ -859,19 +861,18 @@ The indexed loop shape is also supported:
  * given items.length: int 1..50
  * given items[].height: 0..40
  * result.rows.length == items.length
- * result.rows[].index: int 0..49
- * result.rows[].index < items.length
+ * result.rows[].rowIndex: int 0..<items.length
  */
 function indexedRows(items: {height: number}[]) {
   const rows = []
-  for (let i = 0; i < items.length; i++) {
-    rows.push({index: i, height: items[i]!.height})
+  for (let rowIndex = 0; rowIndex < items.length; rowIndex++) {
+    rows.push({rowIndex, height: items[rowIndex]!.height})
   }
   return {rows}
 }
 ```
 
-The body may also bind the current item and advance a simple numeric cursor:
+The loop-index field does not have to be named `index`; Freerange follows the actual pushed field. The body may also bind the current item and advance a simple numeric cursor:
 
 ```ts
 /** @fit
