@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import {
   joinValues,
+  numberValue,
   unknown,
   unknownArray,
   unknownArrayLength,
@@ -8,6 +9,7 @@ import {
   unknownObject,
   type Value,
 } from './domain.ts'
+import {linearConstant, numericLiteralValue} from './linear.ts'
 
 export type ShapeProgram = {
   sourceId: string
@@ -90,6 +92,8 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if (depth > maxTsShapeDepth) return null
   if (seen.has(type)) return unknownObject(expr)
   if (isNullishTsType(type)) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
+  const literal = tsNumberLiteralValue(type)
+  if (literal != null) return numberLiteralValue(expr, literal)
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
@@ -134,6 +138,16 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   return {kind: 'object', props, expr}
 }
 
+function tsNumberLiteralValue(type: ts.Type): number | null {
+  if ((type.flags & ts.TypeFlags.NumberLiteral) === 0) return null
+  const value = (type as ts.LiteralType).value
+  return typeof value === 'number' ? value : null
+}
+
+function numberLiteralValue(expr: string, value: number) {
+  return numberValue(value, value, Number.isInteger(value), expr, linearConstant(value))
+}
+
 function isNullishTsType(type: ts.Type) {
   return (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
 }
@@ -170,7 +184,10 @@ export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undef
   }
   if (ts.isUnionTypeNode(type)) return valueFromUnionSyntaxType(expr, type, program, seen)
   if (ts.isIntersectionTypeNode(type)) return valueFromIntersectionSyntaxType(expr, type, program, seen)
-  if (ts.isLiteralTypeNode(type)) return unknown(`Literal values are not in the static layout subset: ${expr}`)
+  if (ts.isLiteralTypeNode(type)) {
+    const literal = numericLiteralValue(type.literal)
+    return literal == null ? unknown(`Literal values are not in the static layout subset: ${expr}`) : numberLiteralValue(expr, literal)
+  }
   if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
   if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
   return valueFromTypeNodeShape(expr, type, program)

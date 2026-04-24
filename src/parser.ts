@@ -365,6 +365,7 @@ export function parseUnionText(text: string): FitUnion | null {
     values.push(parsed)
   }
   const unique = [...new Set(values)].sort((a, b) => a - b)
+  if (unique.length < 2) return null
   return {
     valueKind: unique.every(Number.isInteger) ? 'int' : 'number',
     values: unique,

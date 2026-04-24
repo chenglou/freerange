@@ -865,13 +865,9 @@ function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-compar
 function unionFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-union'}>, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
   if (range == null) return null
-  const unionMin = Math.min(...spec.union.values)
-  const unionMax = Math.max(...spec.union.values)
-  // A redundant union fact needs an existing range fact that fits strictly
-  // inside the declared union bounds. We do not try to match cases here yet;
-  // range coverage is the safest lower-bound guess.
-  if (range.min >= unionMin && range.max <= unionMax) return range.text
-  return null
+  if (range.min !== range.max) return null
+  if (spec.union.valueKind === 'int' && !range.isInteger) return null
+  return spec.union.values.includes(range.min) ? range.text : null
 }
 
 function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
@@ -1711,7 +1707,6 @@ function proveUnionSpec(value: Value, union: FitUnion): {status: FitCheckStatus;
   const set = new Set(union.values)
   const unionMin = Math.min(...union.values)
   const unionMax = Math.max(...union.values)
-  const intCheck = union.valueKind === 'int' && !value.isInteger ? `${exprOrRange(value)} to be integer` : null
 
   if (value.cases != null) {
     const missing: number[] = []
@@ -1719,26 +1714,25 @@ function proveUnionSpec(value: Value, union: FitUnion): {status: FitCheckStatus;
       const point = branch.value.min === branch.value.max ? branch.value.min : null
       if (point == null || !set.has(point)) missing.push(point ?? Number.NaN)
     }
-    if (missing.length === 0 && intCheck == null) return {status: 'pass'}
-    if (missing.length > 0) {
-      return {
-        status: outsideFailStatus(value.min, value.max, unionMin, unionMax),
-        reason: unionFailureReason(value, union, `branches produced ${missing.filter(Number.isFinite).join(', ') || 'non-literal values'}`),
-      }
+    if (missing.length === 0) return {status: 'pass'}
+    const missingLiterals = missing.filter(Number.isFinite)
+    return {
+      status: missingLiterals.length > 0 ? 'fail' : outsideFailStatus(value.min, value.max, unionMin, unionMax),
+      reason: unionFailureReason(value, union, `branches produced ${missingLiterals.join(', ') || 'non-literal values'}`),
     }
-    return {status: 'fail', reason: unionFailureReason(value, union, intCheck ?? 'integer check failed')}
   }
 
   if (value.min === value.max && Number.isFinite(value.min)) {
-    if (set.has(value.min) && intCheck == null) return {status: 'pass'}
+    if (set.has(value.min)) return {status: 'pass'}
     // A known literal that is not in the set is an honest fail regardless of
     // whether it sits between the union's min and max.
     return {status: 'fail', reason: unionFailureReason(value, union, null)}
   }
 
+  const intCheck = union.valueKind === 'int' && !value.isInteger ? `${exprOrRange(value)} to be integer` : null
   return {
     status: outsideFailStatus(value.min, value.max, unionMin, unionMax),
-    reason: unionFailureReason(value, union, null),
+    reason: unionFailureReason(value, union, intCheck),
   }
 }
 

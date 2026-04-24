@@ -162,6 +162,19 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
+const unionRedundantReport = inferFitFiles(['patterns.ts'], {functionName: 'literalUnionBranchReturn'})
+const unionFunction = unionRedundantReport.functions[0]
+const unionSpecStatuses = new Map(unionFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const unionRedundantFacts = new Map(unionFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
+if (unionSpecStatuses.get('return: 0 | 100') !== 'source-proved' || unionRedundantFacts.has('return: 0 | 100')) {
+  console.error('expected literal-union facts to stay explicit in infer output')
+  if (unionSpecStatuses.get('return: 0 | 100') !== 'source-proved') console.error('missing source-proved union return')
+  if (unionRedundantFacts.has('return: 0 | 100')) console.error(`unexpected redundant union return: ${unionRedundantFacts.get('return: 0 | 100')}`)
+  process.exitCode = 1
+} else {
+  console.log('infer union redundancy: explicit')
+}
+
 const tupleInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
 const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 if (!tupleFacts.has('return.length == 2')) {

@@ -716,6 +716,14 @@ FAIL negative-patterns.ts:negativeUnionReturnOutsideSet: return: 40 | 120
   value was int 82..214 as navSizeX, expected one of 40 | 120
   branches produced 82, 214
   missing: navSizeX in {40, 120}
+FAIL negative-patterns.ts:negativeUnionBranchInsideBoundsOutsideSet: return: 0 | 100
+  value was int 0..50, expected one of 0 | 100
+  branches produced 50
+  missing: int 0..50 in {0, 100}
+FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: call negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
+  called function requires navSizeX: 82 | 214
+  this call passes navSizeX = 150
+  missing: navSizeX in {82, 214}
 FAIL negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
   need: (rect.left + ((rect.right - rect.left) / 2)) inside 50..100

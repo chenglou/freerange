@@ -1060,6 +1060,14 @@ export function negativeUnionReturnOutsideSet(navSizeX: number) {
   return navSizeX
 }
 
+// A branch that lands between the union's bounds is still outside the set.
+/** @fit
+ * return: 0 | 100
+ */
+export function negativeUnionBranchInsideBoundsOutsideSet(folder: boolean) {
+  return folder ? 0 : 50
+}
+
 // Hand a literal that is NOT in the union to a callee that requires
 // membership. Freerange rejects the call with the set in the missing line.
 /** @fit
@@ -1070,6 +1078,9 @@ function negativeUnionGivenCallee(navSizeX: number) {
   return navSizeX
 }
 
+/** @fit
+ * return >= 82
+ */
 export function negativeUnionGivenCallerOutsideSet() {
   return negativeUnionGivenCallee(150)
 }

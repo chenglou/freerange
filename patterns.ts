@@ -1208,6 +1208,20 @@ export function literalUnionGivenOnParam(
 }
 
 /** @fit
+ * return: 82 | 214
+ */
+export function literalUnionTypedParamPassesThrough(navSizeX: 82 | 214) {
+  return navSizeX
+}
+
+/** @fit
+ * return: 0 | 100
+ */
+export function literalUnionBranchReturn(folder: boolean) {
+  return folder ? 0 : 100
+}
+
+/** @fit
  * given count: int 1..50
  * given focused: int 0..<count
  * return.targetIndex: int 0..49
