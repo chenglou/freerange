@@ -31,7 +31,7 @@ fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // the dev x-ray: `bun run infer path --function name`. It prints curated facts and shows which explicit checks are trusted, source-proved, not-inferred, or redundant with the covering fact.
+infer // the x-ray: `fr infer path --function name`. It prints curated facts and shows which explicit checks are trusted, source-proved, not-inferred, or redundant with the covering fact.
 shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that evaluated Freerange shape did not keep.
 ```
 
@@ -61,7 +61,7 @@ The working loop is: run `infer`, write the few comments that are product red
 lines, run `check`, and use the report to see which fact the source did not
 earn yet.
 
-1. Run `bun run infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
+1. Run `fr infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
 2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains and one-sided scalar relations on params with `// @fit`; keep object paths, array paths, and grouped relations in the function block.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
@@ -84,6 +84,26 @@ fr check: 42 files, 115 pass, 0 fail, 0 unknown
 annotated helper preconditions that are definitely broken or appear to become
 caller requirements. `REQUIRES` is not a failed spec; it is a clue about where a
 caller may need a `given`, a wrapper contract, or earlier validation.
+
+`fr infer --function name path/to/file.ts` is the x-ray. It prints facts
+Freerange already knows about the return, surviving locals, supported loops,
+which explicit comments are source-proved or trusted, which comments are
+redundant with inferred facts, and which unsupported source spots blocked proof.
+
+Failure reports point at the spec line when they can:
+
+```txt
+layout.ts:17:placeRows
+  UNKNOWN return.rows[$i + 1].top >= return.rows[$i].bottom + gap
+  need: rows[$i + 1].top >= rows[$i].bottom + gap
+  known:
+    trusted from function @fit: given gap: 0..20
+  missing: a sequence relation for adjacent row positions
+```
+
+For agents, the useful loop is `fr infer`, edit the smallest source/spec seam,
+then `fr check`. Treat `missing:` as the next thing to prove or the next input
+fact to say out loud.
 
 ## A First Check
 

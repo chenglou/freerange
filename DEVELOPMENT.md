@@ -12,6 +12,7 @@ bun install
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
+- `bun run fr infer path/to/file.ts --function name` — main CLI x-ray for inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run verify path/to/file.ts` — old JSON-report inspection helper
 - `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
@@ -39,6 +40,7 @@ bun install
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
+- [src/infer-output.ts](./src/infer-output.ts) — shared pretty-printer for `fr infer` and the dev `infer.ts` helper
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
@@ -62,7 +64,7 @@ bun install
 
 ## Infer Tool
 
-`bun run infer path/to/file.ts --function name` is for us, not public annotation generation. It prints curated facts the checker already knows:
+`bun run fr infer path/to/file.ts --function name` is for us and for adoption-minded agents, not public annotation generation. The older `bun run infer ...` script prints the same shape for local debugging. It prints curated facts the checker already knows:
 
 - `return` facts from the returned value
 - `locals` from locals that survive to the return

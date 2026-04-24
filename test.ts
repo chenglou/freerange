@@ -370,6 +370,7 @@ function bad() {
   }, dir => {
     const check = runFr(['check', 'bad.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
+    expectCli(check.output.includes('bad.ts:2:bad'), 'expected fr check failure output to include the spec line', check.output)
     expectCli(check.output.includes('FAIL return: 0..1'), 'expected fr check failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)
   })
@@ -388,6 +389,7 @@ function f() {
   }, dir => {
     const check = runFr(['doctor', 'doctor.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr doctor to exit 1 on a definite bad literal call', check.output)
+    expectCli(check.output.includes('doctor.ts:8:f'), 'expected fr doctor failure output to include the call line', check.output)
     expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr doctor literal-call failure output', check.output)
     expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor summary', check.output)
     expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
@@ -412,7 +414,23 @@ function f(value: number) {
     expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr doctor summary to classify requires separately from fail', check.output)
   })
 
-  console.log('cli: 5 expected behaviors')
+  await withCliFixture({
+    'layout.ts': `/** @fit
+ * return: 2
+ */
+function ok() {
+  return 2
+}
+`,
+  }, dir => {
+    const check = runFr(['infer', 'layout.ts', '--function', 'ok'], dir)
+    expectCli(check.exitCode === 0, 'expected fr infer to run from the main CLI', check.output)
+    expectCli(check.output.includes('layout.ts:ok'), 'expected fr infer to print the function header', check.output)
+    expectCli(check.output.includes('source-proved:'), 'expected fr infer to print source-proved checks', check.output)
+    expectCli(check.output.includes('return: 2'), 'expected fr infer to print the checked return fact', check.output)
+  })
+
+  console.log('cli: 6 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

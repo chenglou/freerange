@@ -1,5 +1,7 @@
 #!/usr/bin/env bun
 
+import {inferFitFiles} from './src/check.ts'
+import {printInferReport} from './src/infer-output.ts'
 import {doctorFitFiles, type FitCheck, type FitDoctorCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
 
@@ -11,6 +13,9 @@ switch (command) {
     break
   case 'doctor':
     await runDoctor(args)
+    break
+  case 'infer':
+    await runInfer(args)
     break
   default:
     printUsage()
@@ -37,6 +42,45 @@ async function runDoctor(args: string[]) {
   if (report.phase !== 'ready') process.exitCode = 1
 }
 
+async function runInfer(args: string[]) {
+  const {paths, functionName, all} = parseInferArgs(args)
+  const input = resolveInputPaths(paths)
+  if (input == null) return
+  const report = inferFitFiles(input.paths, {
+    ...(functionName == null ? {} : {functionName}),
+    all,
+  })
+  if (functionName != null && report.functions.length === 0) {
+    console.error(`fr infer: no function named ${functionName}`)
+    process.exitCode = 1
+    return
+  }
+  printInferReport(report)
+}
+
+function parseInferArgs(args: string[]) {
+  let functionName: string | undefined
+  let all = false
+  const paths: string[] = []
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!
+    if (arg === '--function') {
+      functionName = args[++index]
+      continue
+    }
+    if (arg.startsWith('--function=')) {
+      functionName = arg.slice('--function='.length)
+      continue
+    }
+    if (arg === '--all') {
+      all = true
+      continue
+    }
+    paths.push(arg)
+  }
+  return {paths, functionName, all}
+}
+
 function resolveInputPaths(args: string[]): {paths: string[]; configFile: string | null} | null {
   const input = resolveFitProjectPaths(args)
   if (args.length === 0 && input.configFile == null) {
@@ -48,20 +92,30 @@ function resolveInputPaths(args: string[]): {paths: string[]; configFile: string
 }
 
 function printCheck(check: FitCheck) {
-  console.log(`${check.file}:${check.functionName}`)
+  console.log(formatCheckLocation(check))
   console.log(`  ${check.status.toUpperCase()} ${check.text}`)
   printReason(check.reason)
 }
 
 function printDoctorCheck(check: FitDoctorCheck) {
-  console.log(`${check.file}:${check.functionName}`)
+  console.log(formatCheckLocation(check))
   console.log(`  ${check.status.toUpperCase()} ${check.text}`)
   printReason(check.reason)
 }
 
 function printReason(reason: string | undefined) {
   if (reason == null) return
-  for (const line of reason.split('\n')) console.log(`  ${line}`)
+  printLines(reason, '  ')
+}
+
+function printLines(text: string, indent: string) {
+  for (const line of text.split('\n')) console.log(`${indent}${line}`)
+}
+
+function formatCheckLocation(check: {file: string; line?: number; functionName: string}) {
+  return check.line == null
+    ? `${check.file}:${check.functionName}`
+    : `${check.file}:${check.line}:${check.functionName}`
 }
 
 function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; unknown: number}) {
@@ -76,4 +130,5 @@ function printUsage() {
   console.error('Usage:')
   console.error('  fr check [file.ts ...]')
   console.error('  fr doctor [file.ts ...]')
+  console.error('  fr infer [--function name] [--all] [file.ts ...]')
 }

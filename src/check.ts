@@ -154,6 +154,7 @@ export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
 
 export type FitCheck = {
   file: string
+  line?: number
   functionName: string
   text: string
   status: FitCheckStatus
@@ -164,6 +165,7 @@ export type FitDoctorStatus = 'pass' | 'fail' | 'requires' | 'unknown'
 
 export type FitDoctorCheck = {
   file: string
+  line?: number
   functionName: string
   text: string
   status: FitDoctorStatus
@@ -399,6 +401,7 @@ function toDoctorCheck(check: FitCheck): FitDoctorCheck {
       : isDefiniteCallFailure(check) ? 'fail' : 'requires'
   return {
     file: check.file,
+    ...(check.line == null ? {} : {line: check.line}),
     functionName: check.functionName,
     text: check.text,
     status,
@@ -464,6 +467,10 @@ function isFunctionLikeWithBody(node: ts.Node) {
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
+}
+
+function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
 }
 
 function verifyFunctionSpecs(
@@ -1050,19 +1057,19 @@ function validateGivenSpecs(
     if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec.text, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
+      checks.push(invalidGivenCheck(file, functionName, spec, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
       continue
     }
     const shapeProblem = givenShapeProblem(spec)
     if (shapeProblem != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec.text, shapeProblem))
+      checks.push(invalidGivenCheck(file, functionName, spec, shapeProblem))
       continue
     }
 
     if (spec.kind === 'given-range') {
       const rangeProblem = givenRangeProblem(spec, ranges)
       if (rangeProblem != null) {
-        checks.push({file, functionName, text: spec.text, status: 'fail', reason: rangeProblem})
+        checks.push({file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'fail', reason: rangeProblem})
         continue
       }
       ranges.push(spec)
@@ -1187,8 +1194,8 @@ function isGivenArithmeticOperator(kind: ts.SyntaxKind) {
     || kind === ts.SyntaxKind.AsteriskAsteriskToken
 }
 
-function invalidGivenCheck(file: string, functionName: string, text: string, reason: string): FitCheck {
-  return {file, functionName, text, status: 'unknown', reason}
+function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, reason: string): FitCheck {
+  return {file, functionName, text: spec.text, status: 'unknown', reason, ...(spec.line == null ? {} : {line: spec.line})}
 }
 
 function collectGivenAssumptions(
@@ -1223,6 +1230,7 @@ function collectGivenAssumptions(
       if (status.status === 'fail') {
         checks.push({
           file,
+          ...(spec.line == null ? {} : {line: spec.line}),
           functionName,
           text: spec.text,
           status: 'fail',
@@ -1237,6 +1245,7 @@ function collectGivenAssumptions(
       if (contradiction != null) {
         checks.push({
           file,
+          ...(spec.line == null ? {} : {line: spec.line}),
           functionName,
           text: spec.text,
           status: 'fail',
@@ -1544,6 +1553,7 @@ function verifyCheckSpec(
     if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
       return {
         file,
+        ...(spec.line == null ? {} : {line: spec.line}),
         functionName,
         text: spec.text,
         status: boundIndexCheck.status,
@@ -1554,6 +1564,7 @@ function verifyCheckSpec(
     const status = proveRangeSpec(value, spec.range, context)
     return {
       file,
+      ...(spec.line == null ? {} : {line: spec.line}),
       functionName,
       text: spec.text,
       status: status.status,
@@ -1567,6 +1578,7 @@ function verifyCheckSpec(
   if (boundIndexCheck != null) {
     return {
       file,
+      ...(spec.line == null ? {} : {line: spec.line}),
       functionName,
       text: spec.text,
       status: boundIndexCheck.status,
@@ -1576,7 +1588,7 @@ function verifyCheckSpec(
 
   const wildcardCheck = checkWildcardComparisonShape(spec.left, spec.right)
   if (wildcardCheck.kind === 'unsupported') {
-    return {file, functionName, text: spec.text, status: 'unknown', reason: wildcardCheck.reason}
+    return {file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'unknown', reason: wildcardCheck.reason}
   }
 
   const left = evaluateSpecExpression(spec.left, context)
@@ -1587,6 +1599,7 @@ function verifyCheckSpec(
     : status.reason
   return {
     file,
+    ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
     status: status.status,
@@ -1735,6 +1748,7 @@ function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpe
   const status = proveAtomSpec(spec, context)
   return {
     file,
+    ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
     status: status.status,
@@ -2679,6 +2693,7 @@ function reportLoopResultSpecs(specs: FitSpec[], context: EvalContext) {
   for (const spec of specs) {
     context.checks.push({
       file: context.file,
+      ...(spec.line == null ? {} : {line: spec.line}),
       functionName,
       text: spec.text,
       status: 'unknown',
@@ -2979,6 +2994,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   if (fn == null) return evaluateImportedCall(functionName, expression, context)
   return evaluateLocalFunctionCall(functionName, fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
     callText: `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
   })
 }
@@ -2990,6 +3006,7 @@ function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.Prope
   return evaluateLocalFunctionCall(member.functionName, member.fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
     thisValue: receiver,
     callText: `${access.getText(context.program.sourceFile)}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
   })
 }
@@ -3001,6 +3018,7 @@ function evaluateClassGetterAccess(expression: ts.PropertyAccessExpression, cont
   return evaluateLocalFunctionCall(member.functionName, member.fn, [], context, {
     thisValue: receiver,
     callText: expression.getText(context.program.sourceFile),
+    callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback,
   })
 }
@@ -3042,6 +3060,7 @@ function evaluateLocalFunctionCall(
   context: EvalContext,
   options: {
     callText: string
+    callLine?: number | undefined
     fallback: Value | null
     thisValue?: Value | undefined
   },
@@ -3050,6 +3069,7 @@ function evaluateLocalFunctionCall(
   if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for ${functionName}`)
   const obligations = verifyCallGivenSpecs(context.program, fn, options.callText, argumentValues, context, {
     record: shouldRecordCallObligations(context),
+    callLine: options.callLine,
     thisValue: options.thisValue,
   })
 
@@ -3139,7 +3159,7 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
     `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
     argumentValues,
     context,
-    {record: true},
+    {record: true, callLine: lineNumberForNode(context.program.sourceFile, expression)},
   )
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
@@ -3605,7 +3625,7 @@ function verifyCallGivenSpecs(
   callText: string,
   argumentValues: Value[],
   context: EvalContext,
-  options: {record: boolean; thisValue?: Value | undefined},
+  options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined},
 ) {
   const specs = calleeProgram.specsByFunction.get(fn.name) ?? []
   const env = programGlobalEnv(calleeProgram)
@@ -3630,6 +3650,7 @@ function verifyCallGivenSpecs(
     if (options.record) {
       context.checks.push({
         file: context.file,
+        ...(options.callLine == null ? {} : {line: options.callLine}),
         functionName: context.stack.join(' > '),
         text: `call ${callText}: ${callRequirementText(spec)}`,
         status: status.status,
@@ -3690,6 +3711,7 @@ function withCallComparisonReason(
     `this call passes ${formatCallBinding(spec.left, left)} and ${formatCallBinding(spec.right, right)}`,
   ]
   if (status.status === 'unknown') lines.push(`could not prove ${comparisonNeed(left, spec.op, right)}`)
+  lines.push(`missing: ${comparisonNeed(left, spec.op, right)}`)
   return {
     ...status,
     reason: lines.join('\n'),
@@ -4022,6 +4044,7 @@ function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'}
       : proveInlineComparisonSpec(value, spec, context)
     context.checks.push({
       file: context.file,
+      ...(spec.line == null ? {} : {line: spec.line}),
       functionName: context.stack.join(' > '),
       text: spec.text,
       status: status.status,
