@@ -17,7 +17,7 @@ bun install
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
-- `bun run audit:demos` — summarize which demo `@fit` checks are redundant versus worth keeping as explicit contracts
+- `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
 ## Current Sources Of Truth
