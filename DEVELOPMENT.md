@@ -92,10 +92,16 @@ Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier.
 
 Keep external repo experiments outside this checkout. The current scratch space
 is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
-bring only general Freerange fixes back into this repo. A good corpus iteration
-is: annotate one small numeric/layout-heavy helper file, run `bun run fr check`
-against that file, classify the first blocker, then add a local pattern test
-before changing checker behavior.
+bring only general Freerange fixes back into this repo.
+
+A good corpus iteration is one of two small loops:
+
+- read-only: run `bun run fr infer file --all` or `bun run fr doctor file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
+- annotation: add one or two `@fit` comments to a small numeric/layout-heavy helper, run `bun run fr check file`, classify the first blocker, then add a local pattern test before changing checker behavior.
+
+Do not leave comments in corpus branches just to make a repo look covered. If a
+file is mostly DOM, async, dynamic graph mutation, strings, or browser-owned
+measurement, the useful result may simply be "not a Freerange seam yet."
 
 ## Shape Diff Tool
 
