@@ -1,5 +1,5 @@
 import {inferFitFiles} from './src/check.ts'
-import {divideNumbers, multiplyNumbers, numberValue} from './src/domain.ts'
+import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts']
@@ -37,6 +37,29 @@ if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotie
   process.exitCode = 1
 } else {
   console.log('domain: unbounded nonnegative quotient')
+}
+
+const unboundedNonnegativeRunningSum = runningSumNumber(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'start'),
+  numberValue(0, Number.POSITIVE_INFINITY, true, 'count'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'increment'),
+)
+if (unboundedNonnegativeRunningSum.min !== 0 || unboundedNonnegativeRunningSum.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative running sum')
+}
+
+const unboundedDifference = subtractNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded difference')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)
@@ -439,7 +462,45 @@ function ok() {
     expectCli(check.output.includes('return: 2'), 'expected fr infer to print the checked return fact', check.output)
   })
 
-  console.log('cli: 6 expected behaviors')
+  await withCliFixture({
+    'helper.ts': `export function clamp(
+  value: number,
+  min: number, // @fit <= max
+  max: number,
+): number {
+  // @fit >= min
+  return Math.min(Math.max(value, min), max) // @fit <= max
+}
+
+const opacity = clamp(1.2, 0, 1) // @fit 0..1
+`,
+  }, dir => {
+    const check = runFr(['check', 'helper.ts'], dir)
+    expectCli(check.exitCode === 0, 'expected standalone helper call check to pass', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 6 pass, 0 fail, 0 unknown'), 'expected standalone helper call check summary', check.output)
+  })
+
+  await withCliFixture({
+    'helper.ts.tmp': `/** @fit
+ * given min <= max
+ * return >= min
+ * return <= max
+ */
+export function clamp(min: number, value: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+// Freerange catches this: the result can be 2.
+const opacity = clamp(0, 10, 2) // @fit 0..1
+`,
+  }, dir => {
+    const check = runFr(['check', 'helper.ts.tmp'], dir)
+    expectCli(check.exitCode === 1, 'expected de-inlined clamp example to fail without crashing', check.output)
+    expectCli(check.output.includes('FAIL opacity: 0..1'), 'expected de-inlined clamp example failure output', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
+  })
+
+  console.log('cli: 8 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

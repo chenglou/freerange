@@ -31,7 +31,7 @@ import {
   type FitSpec,
 } from './parser.ts'
 import {
-  binaryExpr,
+  addNumbers,
   callExpr,
   conditionalRunningSumNumber,
   divideNumbers,
@@ -49,6 +49,7 @@ import {
   plainNumber,
   powerNumbers,
   runningSumNumber,
+  subtractNumbers,
   unknown,
   unknownArray,
   unknownArrayLength,
@@ -97,7 +98,6 @@ import {
   linearEpsilon,
   linearScaleExact,
   linearScale,
-  linearSubtract,
   linearVariable,
   mergeScale,
   numericLiteralValue,
@@ -2910,9 +2910,9 @@ function evaluateNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: Numbe
 function evaluatePlainNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: NumberValue): Value {
   switch (op) {
     case ts.SyntaxKind.PlusToken:
-      return numberValue(left.min + right.min, left.max + right.max, left.isInteger && right.isInteger, binaryExpr(left, '+', right), linearAdd(left.linear, right.linear), null, mergeProvenance(left, right))
+      return addNumbers(left, right)
     case ts.SyntaxKind.MinusToken:
-      return numberValue(left.min - right.max, left.max - right.min, left.isInteger && right.isInteger, binaryExpr(left, '-', right), linearSubtract(left.linear, right.linear), null, mergeProvenance(left, right))
+      return subtractNumbers(left, right)
     case ts.SyntaxKind.AsteriskToken:
       return multiplyNumbers(left, right)
     case ts.SyntaxKind.SlashToken:

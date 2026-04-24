@@ -1,57 +1,25 @@
 # Freerange
 
-Static `@fit` checks for ordinary TypeScript.
-
-Freerange reads your function source and nearby `@fit` comments. It proves the requested facts from the code, or tells you where it cannot. No browser, screenshots, traces, sampled cases, fixtures, or app-code execution. Just source in, facts out.
-
-The first useful surface is layout math:
-
-```ts
-row.top + row.height <= parent.bottom
-rows.length == items.length
-rows[].height: 0..40
-nondecreasing(rows.top)
-spaced(rows, gap)
-extentEnd(rows, top) == bottom
-```
-
-But the project is not only about layout. The bigger goal is checkable specs over ordinary UI code: enough formal shape that agents can generate and edit code against real constraints instead of guessing from screenshots.
-
-## First Check
-
-Put `@fit` immediately above a named function, named `const` arrow/function expression, anonymous default export, or class method/getter:
+Freerange lets you augment your regular TypeScript code with comments that state numerical properties:
 
 ```ts
 /** @fit
- * return.capped: 0..320
- * return.overflow >= 0
+ * given min <= max
+ * return >= min
+ * return <= max
  */
-function cappedOverflow(
-  width: number, // @fit 0..1000
-) {
-  const capped = Math.min(width, 320)
-  return {capped, overflow: width - capped}
+export function clamp(min: number, value: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
 }
+
+// Freerange catches this: the result can be 2.
+const opacity = clamp(0, 10, 2) // @fit 0..1
 ```
 
-Param `// @fit` comments are input facts, the same as `given width: 0..1000` in the function block. Bare lines and `return` lines are facts Freerange must prove from source.
-
-In an instance method or getter, `this` is an input root, so `given this.width: 0..1000` works for ordinary geometry classes. Same-file `rect.bottom` and `rect.area()` calls can use those checked contracts, with the receiver bound to `this`.
-
-For one local value, use the small inline form:
-
-```ts
-// @fit int 0..count
-const index = Math.floor(pointer / cellSize)
-const next = index + 1 // @fit int 1..count
-const previous = focused - step // @fit >= 0
-const capped = Math.min(width, maxWidth) // @fit <= maxWidth
-const exact = clamp(4, 2, 3) // @fit 2
-return {
-  width: container - padding * 2, // @fit 0..1200
-  targetIndex: focused + step, // @fit < items.length
-}
-```
+It then **statically** checks those numbers, just like TypeScript, to ensure your codebase doesn't violate those properties!
+- eliminates most of off-by-one, divide-by-zero, and runtime number checks
+- your layout code can now guarantee e.g. min/max sizes, no overlap, proper occlusion (virtualization) without visual glitches. No more weird squashed mobile layouts!
+- refactors get clear red lines: if someone changes the math, Freerange tells you which contract stopped being true
 
 ## Run A File
 
@@ -67,6 +35,6 @@ call-precondition scan instead of only claimed specs. Use `fr infer --function
 name path/to/file.ts` when you want the x-ray: the facts source already proves,
 the explicit checks it covers, and the spots where proof stopped.
 
-Read [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
+See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 
-Read [DEVELOPMENT.md](./DEVELOPMENT.md) for setup, tests, demo checks, and repo notes.
+See [DEVELOPMENT.md](./DEVELOPMENT.md) for setup, tests, demo checks, and repo notes.

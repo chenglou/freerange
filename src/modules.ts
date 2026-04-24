@@ -173,7 +173,7 @@ function loadModule<TGlobal>(
 
   const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
   const parseStart = performance.now()
-  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, resolution.typeChecker, sourceFile)
+  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile)
   addTiming(timing, 'moduleParseMs', parseStart)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal, timing)

@@ -1,11 +1,11 @@
 import * as ts from 'typescript'
 import {
-  binaryExpr,
+  addNumbers,
   mergeElementValue,
-  mergeProvenance,
   numberValue,
   runningExtremumNumber,
   runningSumNumber,
+  subtractNumbers,
   unknown,
   unknownNumber,
   unknownObject,
@@ -20,7 +20,6 @@ import {
 import {
   linearAdd,
   linearConstant,
-  linearSubtract,
   linearVariable,
   sameExpressionText,
   sameLinear,
@@ -451,12 +450,4 @@ function lastEndFromLoopEnd(end: NumberValue, gapExpr: string, resolveNumber: (e
   if (sameExpressionText(gapExpr, '0')) return end
   const gap = resolveNumber(gapExpr)
   return gap == null ? null : subtractNumbers(end, gap)
-}
-
-function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  return numberValue(left.min + right.min, left.max + right.max, left.isInteger && right.isInteger, binaryExpr(left, '+', right), linearAdd(left.linear, right.linear), null, mergeProvenance(left, right))
-}
-
-function subtractNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  return numberValue(left.min - right.max, left.max - right.min, left.isInteger && right.isInteger, binaryExpr(left, '-', right), linearSubtract(left.linear, right.linear), null, mergeProvenance(left, right))
 }
