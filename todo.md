@@ -49,6 +49,7 @@ sections[].rows[].height <= maxHeight
 - Named local imports can call exported functions with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 - Proven helper summaries can narrow stored locals silently when the call preconditions prove. The checker emits call-precondition report lines only when a surrounding claim or `doctor` asked for them; otherwise missing preconditions simply prevent the summary from being trusted.
 - `fr infer path --function name` is the x-ray of return/local facts and supported loop-local facts. It separates function and loop specs into trusted, source-proved, not-inferred, and redundant lines, and redundant lines name the covering inferred fact. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not an annotation writer.
+- Reports keep stale `result` comments honest by saying to use `return`, propagate unknown identifiers through element/binary expressions, and render fixed tuple lengths as `return.length == 5` instead of internal length-building noise.
 - `bun run audit:demos` summarizes which checked demo annotations are likely-removable redundant noise, public-looking redundant contracts, and source-proved keepers.
 - `bun run shape-diff path --function name` is the dev-only TS piggyback x-ray. It compares Freerange-owned structural facts with TypeScript-only object/array shape for params, locals, return shapes, and call returns.
 

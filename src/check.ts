@@ -1507,7 +1507,7 @@ function setDomainPathValue(current: Value | undefined, expr: string, segments: 
 }
 
 function evaluateDomainPath(domainPath: FitDomainPath, context: EvalContext): Value {
-  const root = context.env.get(domainPath.root) ?? unknown(`Unknown identifier ${domainPath.root}`)
+  const root = context.env.get(domainPath.root) ?? unknown(unknownIdentifierReason(domainPath.root))
   return evaluateDomainPathSegments(root, domainPath.root, domainPath.segments)
 }
 
@@ -2842,7 +2842,7 @@ function evaluateExpression(expression: ts.Expression, context: EvalContext): Va
     const value = Number(expression.text)
     return numberValue(value, value, Number.isInteger(value), expression.text, linearConstant(value))
   }
-  if (ts.isIdentifier(expression)) return context.env.get(expression.text) ?? unknown(`Unknown identifier ${expression.text}`)
+  if (ts.isIdentifier(expression)) return context.env.get(expression.text) ?? unknown(unknownIdentifierReason(expression.text))
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return context.env.get('this') ?? unknown('Unknown identifier this')
   if (ts.isParenthesizedExpression(expression)) return evaluateExpression(expression.expression, context)
   if (ts.isPrefixUnaryExpression(expression)) return evaluatePrefixUnary(expression, context)
@@ -2887,7 +2887,12 @@ function evaluateBinary(expression: ts.BinaryExpression, context: EvalContext): 
   }
   const left = evaluateExpression(expression.left, context)
   const right = evaluateExpression(expression.right, context)
-  if (left.kind !== 'number' || right.kind !== 'number') return expressionStructuralFallback(expression, context) ?? unknown('Binary arithmetic expected numbers')
+  if (left.kind !== 'number' || right.kind !== 'number') {
+    const fallback = expressionStructuralFallback(expression, context)
+    if (left.kind === 'unknown') return fallback ?? left
+    if (right.kind === 'unknown') return fallback ?? right
+    return fallback ?? unknown(`Binary arithmetic expected numbers in ${expression.getText()}`)
+  }
 
   const result = evaluateNumberBinary(op, left, right)
   return result.kind === 'unknown' ? expressionStructuralFallback(expression, context) ?? result : result
@@ -3946,6 +3951,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
+  if (target.kind === 'unknown') return expressionStructuralFallback(expression, context) ?? target
   if (target.kind !== 'array') return expressionStructuralFallback(expression, context) ?? unknown(`Element access expected an array`)
   const targetRoot = expressionRootName(expression.expression)
   if (
@@ -4062,9 +4068,11 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: Ev
   let length = numberValue(0, 0, true, '0', linearConstant(0))
   let elements: Value[] | null = []
   let elementValue: Value | null = null
+  let hasSpread = false
 
   for (const element of expression.elements) {
     if (ts.isSpreadElement(element)) {
+      hasSpread = true
       const spreadValue = evaluateExpression(element.expression, context)
       if (spreadValue.kind !== 'array') return unknown('Array spread expected an array')
       const nextLength = evaluateNumberBinary(ts.SyntaxKind.PlusToken, length, spreadValue.length)
@@ -4083,7 +4091,17 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: Ev
     elementValue = mergeElementValue(elementValue, value)
   }
 
+  if (!hasSpread) {
+    const fixedLength = expression.elements.length
+    length = numberValue(fixedLength, fixedLength, true, `${fixedLength}`, linearConstant(fixedLength))
+  }
+
   return {kind: 'array', length, elements, element: elementValue, expr: null, summary: null}
+}
+
+function unknownIdentifierReason(name: string) {
+  if (name === 'result') return 'Unknown identifier result; use return for the function result'
+  return `Unknown identifier ${name}`
 }
 
 function evaluateConditionFacts(expression: ts.Expression, context: EvalContext): {truth: Truth; trueAssumptions: LinearConstraint[]; falseAssumptions: LinearConstraint[]} {

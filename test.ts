@@ -162,6 +162,15 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
+const tupleInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
+const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+if (!tupleFacts.has('return.length == 2')) {
+  console.error('expected fixed tuple length inference to stay readable')
+  process.exitCode = 1
+} else {
+  console.log('infer tuple length: readable')
+}
+
 const equalityRedundantReport = inferFitFiles([
   '../vibescript/demos/photo-gallery/layout.ts',
   '../vibescript/demos/photo-gallery/prompt-layout.ts',

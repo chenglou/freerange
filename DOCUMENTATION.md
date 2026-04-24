@@ -22,7 +22,7 @@ width: number, // @fit >= min // param shorthand for `given width >= min`.
 items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
-return // the returned value of a function-level spec.
+return // the returned value of a function-level spec. `result` is not an alias.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `return`.
 source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
 trusted // accepted from a `given` line.
@@ -164,6 +164,8 @@ Function-level `given` lines are still the right place for object paths, array p
 Bare lines and `return` lines are claims Freerange must prove from the source.
 
 Unsupported annotation lines are errors. Unsupported source code becomes `unknown`.
+If you accidentally write old `result`-style comments, Freerange does not treat
+them as aliases. The report points you back to `return`.
 
 For instance methods and getters, `this` is an input root:
 

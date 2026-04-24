@@ -596,6 +596,8 @@ FAIL negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[]
   missing: return.rows[].height <= 40
 UNKNOWN negative-patterns.ts:negativeFunctionGivenCannotNameReturn: given return: 0..10
   given can only describe inputs; return is not an input here
+UNKNOWN negative-patterns.ts:negativeLegacyResultIsNotReturn: result.width: 0..10
+  Unknown identifier result; use return for the function result
 FAIL negative-patterns.ts:negativeGivenRangeCannotBeEmpty: given width: 500..400
   no input can satisfy this: empty range 500..400
 FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
