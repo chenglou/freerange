@@ -353,8 +353,11 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
 // the integer-ness comes from the literals themselves.
 export function parseUnionText(text: string): FitUnion | null {
   if (!text.includes('|')) return null
-  const parts = splitUnionParts(text)
-  if (parts == null || parts.length < 2) return null
+  const parts = text.split('|').map(part => part.trim())
+  // An empty part means `||`, a leading `|`, or a trailing `|` — none of those
+  // are unions. Junk like `a | b` also fails below when parseRangeBoundNumber
+  // rejects the part.
+  if (parts.length < 2 || parts.some(part => part.length === 0)) return null
   const values: number[] = []
   for (const part of parts) {
     const parsed = parseRangeBoundNumber(part)
@@ -367,40 +370,6 @@ export function parseUnionText(text: string): FitUnion | null {
     values: unique,
     text,
   }
-}
-
-function splitUnionParts(text: string): string[] | null {
-  let parenDepth = 0
-  let bracketDepth = 0
-  let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  const parts: string[] = []
-  let start = 0
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i]
-    if (quote != null) {
-      if (char === '\\') i++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    else if (char === '|' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && text[i + 1] !== '|' && text[i - 1] !== '|') {
-      parts.push(text.slice(start, i).trim())
-      start = i + 1
-    }
-  }
-  parts.push(text.slice(start).trim())
-  if (parts.some(part => part.length === 0)) return null
-  return parts
 }
 
 function parseRangeText(text: string): FitRange | null {
