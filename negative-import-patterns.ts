@@ -1,7 +1,7 @@
 // Imported helper negative patterns. `bun run test` compares their
 // stable messages against negative-patterns.expected.txt.
 
-import {importedClampWithBadContract, unannotatedImportedClamp} from './negative-import-helpers'
+import {importedClampWithBadContract, importedTupleWithOneOffset, unannotatedImportedClamp} from './negative-import-helpers'
 import {barrelClampWidth} from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
@@ -80,4 +80,12 @@ export function negativeImportedNumericConstantMismatch(width: number) {
  */
 export function negativeOptionalImportedShape(input: ImportedOptionalRows) {
   return {rows: input.rows}
+}
+
+/** @fit
+ * result[4] >= 0
+ */
+export function negativeImportedTupleSummaryDoesNotApplyToEverySlot(value: number) {
+  const [, , offsetX, offsetY] = importedTupleWithOneOffset(value)
+  return ['path', 0, 0, offsetX, offsetY]
 }

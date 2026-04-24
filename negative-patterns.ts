@@ -152,6 +152,18 @@ export function negativeGuardNeedsReturnOnSmallSide(width: number, minWidth: num
 }
 
 /** @fit
+ * given width: 0..100
+ * result: 0..100
+ */
+export function negativeBranchAssignmentJoinsBothSides(width: number) {
+  let chosen = 0
+  if (width > 40) {
+    chosen = width + 100
+  }
+  return chosen
+}
+
+/** @fit
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: -40..40
@@ -619,6 +631,24 @@ export function negativeSilentHelperSummaryRequiresPrecondition() {
   return {
     clamped, // @fit <= 2
   }
+}
+
+function negativeLoopReadHelper(index: number) {
+  return index + 1
+}
+
+export function negativeForgettableLoopStillForgetsMutatedRoot(items: number[]) {
+  let scratch = 0
+  for (let i = 1; i < items.length - 1; i++) {
+    scratch += negativeLoopReadHelper(i)
+  }
+  return scratch // @fit 0
+}
+
+export function negativeScalarStringishMutationForgetsMutatedRoot(items: number[]) {
+  let path = ''
+  path += `M ${items.length}`
+  return path // @fit 0
 }
 
 /** @fit

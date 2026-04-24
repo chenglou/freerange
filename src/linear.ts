@@ -209,7 +209,9 @@ export function callName(expression: ts.Expression): string {
 }
 
 export function callArgs(text: string, name: string): string[] | null {
-  const expression = unwrapExpression(parseExpression(text))
+  const parsed = parseExpressionOrNull(text)
+  if (parsed == null) return null
+  const expression = unwrapExpression(parsed)
   if (!ts.isCallExpression(expression) || callName(expression.expression) !== name) return null
   return expression.arguments.map(argument => argument.getText())
 }
@@ -241,7 +243,9 @@ export function moduloExpression(text: string): {left: string; right: string} | 
 }
 
 export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
-  const expression = unwrapExpression(parseExpression(text))
+  const parsed = parseExpressionOrNull(text)
+  if (parsed == null) return null
+  const expression = unwrapExpression(parsed)
   if (!ts.isBinaryExpression(expression)) return null
   const expected = op === '*'
     ? ts.SyntaxKind.AsteriskToken
@@ -257,9 +261,19 @@ export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'):
 }
 
 export function productFactors(text: string): string[] | null {
-  const expression = unwrapExpression(parseExpression(text))
+  const parsed = parseExpressionOrNull(text)
+  if (parsed == null) return null
+  const expression = unwrapExpression(parsed)
   const factors = productFactorsFromExpression(expression)
   return factors.length <= 1 ? null : factors
+}
+
+function parseExpressionOrNull(text: string): ts.Expression | null {
+  try {
+    return parseExpression(text)
+  } catch {
+    return null
+  }
 }
 
 function productFactorsFromExpression(expression: ts.Expression): string[] {

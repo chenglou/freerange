@@ -257,6 +257,10 @@ type EvalContext = {
   insideLoop?: true
 }
 
+type EvalFlow =
+  | {kind: 'return'; value: Value}
+  | {kind: 'fallthrough'}
+
 const maxInlineDepth = 12
 
 type TrustedGivenSpec =
@@ -1814,6 +1818,11 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 }
 
 function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: EvalContext, startIndex = 0): Value {
+  const flow = evaluateStatementsFlow(statements, context, startIndex)
+  return flow.kind === 'return' ? flow.value : unknown(`Function ${context.stack.at(-1) ?? '<unknown>'} did not return`)
+}
+
+function evaluateStatementsFlow(statements: ts.NodeArray<ts.Statement>, context: EvalContext, startIndex = 0): EvalFlow {
   for (let index = startIndex; index < statements.length; index++) {
     const statement = statements[index]!
     if (ts.isVariableStatement(statement)) {
@@ -1822,29 +1831,31 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: Eva
     }
     if (ts.isForOfStatement(statement)) {
       const result = evaluateForOfStatement(statement, context)
-      if (result != null) return result
+      if (result != null) return {kind: 'return', value: result}
       continue
     }
     if (ts.isForStatement(statement)) {
       const result = evaluateForStatement(statement, context)
-      if (result != null) return result
+      if (result != null) return {kind: 'return', value: result}
       continue
     }
     if (ts.isExpressionStatement(statement)) {
       const result = applyExpressionStatement(statement.expression, context)
-      if (result != null) return result
+      if (result != null) return {kind: 'return', value: result}
       continue
     }
     if (ts.isIfStatement(statement)) {
-      return evaluateIfStatement(statement, context, statements, index + 1)
+      const flow = evaluateIfStatement(statement, context, statements, index + 1)
+      if (flow.kind === 'return') return flow
+      continue
     }
     if (ts.isReturnStatement(statement)) {
-      return evaluateReturnStatement(statement, context)
+      return {kind: 'return', value: evaluateReturnStatement(statement, context)}
     }
-    return unknown(`Unsupported statement in ${context.stack.at(-1) ?? '<unknown>'}: ${statement.getText(context.program.sourceFile)}`)
+    return {kind: 'return', value: unknown(`Unsupported statement in ${context.stack.at(-1) ?? '<unknown>'}: ${statement.getText(context.program.sourceFile)}`)}
   }
 
-  return unknown(`Function ${context.stack.at(-1) ?? '<unknown>'} did not return`)
+  return {kind: 'fallthrough'}
 }
 
 function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext, options: {claim?: boolean} = {}) {
@@ -1965,7 +1976,13 @@ function applyExpressionStatement(expression: ts.Expression, context: EvalContex
     if (!ts.isIdentifier(expression.left)) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
     const current = context.env.get(expression.left.text)
     const increment = evaluateExpression(expression.right, context)
-    if (current == null || current.kind !== 'number' || increment.kind !== 'number') return unknown('+= expected numbers')
+    if (current == null || current.kind !== 'number' || increment.kind !== 'number') {
+      if (isSideEffectFreeExpression(expression.right)) {
+        context.env.set(expression.left.text, unknown(`Unsupported += changed ${expression.left.text}`))
+        return null
+      }
+      return unknown('+= expected numbers')
+    }
     const next = evaluateNumberBinary(ts.SyntaxKind.PlusToken, current, increment)
     context.env.set(expression.left.text, next)
     return null
@@ -1996,11 +2013,26 @@ function applyCallExpressionStatement(expression: ts.CallExpression, context: Ev
 }
 
 function applyAssignmentStatement(expression: ts.BinaryExpression, context: EvalContext): Value | null {
+  if (ts.isIdentifier(expression.left)) {
+    context.env.set(expression.left.text, evaluateExpression(expression.right, context))
+    return null
+  }
   const targetName = mutationTargetRoot(expression.left)
   if (targetName == null) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
   const target = context.env.get(targetName)
-  if (target?.kind !== 'array') return unknown(`Assignment target ${targetName} expected an array`)
-  context.env.set(targetName, arrayWithUnknownContents(targetName, target))
+  if (target?.kind === 'array') {
+    context.env.set(targetName, arrayWithUnknownContents(targetName, target))
+    return null
+  }
+  if (target?.kind === 'object') {
+    context.env.set(targetName, unknownObject(targetName))
+    return null
+  }
+  if (target?.kind === 'number') {
+    context.env.set(targetName, unknownNumber(targetName))
+    return null
+  }
+  context.env.set(targetName, unknown(`Unsupported assignment changed ${targetName}`))
   return null
 }
 
@@ -2027,36 +2059,75 @@ function arrayWithUnknownContents(name: string, array: ArrayValue): ArrayValue {
   }
 }
 
-function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): Value {
+function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
   const condition = evaluateConditionFacts(statement.expression, context)
   if (condition.truth === 'true') return evaluateBranchStatement(statement.thenStatement, context)
   if (condition.truth === 'false') {
-    return statement.elseStatement == null ? evaluateStatements(statements, context, nextIndex) : evaluateBranchStatement(statement.elseStatement, context)
+    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateBranchStatement(statement.elseStatement, context)
   }
 
-  const trueValue = valueWithAssumptions(
-    evaluateBranchStatement(statement.thenStatement, contextWithAssumptions(context, condition.trueAssumptions)),
-    condition.trueAssumptions,
+  const trueContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.trueAssumptions)
+  const falseContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.falseAssumptions)
+  const trueFlow = evaluateBranchStatement(statement.thenStatement, trueContext)
+  const falseFlow = statement.elseStatement == null
+    ? {kind: 'fallthrough'} satisfies EvalFlow
+    : evaluateBranchStatement(statement.elseStatement, falseContext)
+  if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
+    return {
+      kind: 'return',
+      value: joinValues(
+        valueWithAssumptions(trueFlow.value, condition.trueAssumptions),
+        valueWithAssumptions(falseFlow.value, condition.falseAssumptions),
+      ),
+    }
+  }
+  if (trueFlow.kind === 'return') {
+    const falseContinuation = valueWithAssumptions(evaluateStatements(statements, falseContext, nextIndex), condition.falseAssumptions)
+    return {kind: 'return', value: joinValues(valueWithAssumptions(trueFlow.value, condition.trueAssumptions), falseContinuation)}
+  }
+  if (falseFlow.kind === 'return') {
+    const trueContinuation = valueWithAssumptions(evaluateStatements(statements, trueContext, nextIndex), condition.trueAssumptions)
+    return {kind: 'return', value: joinValues(trueContinuation, valueWithAssumptions(falseFlow.value, condition.falseAssumptions))}
+  }
+  context.env = joinEnvironments(
+    envWithAssumptions(trueContext.env, condition.trueAssumptions),
+    envWithAssumptions(falseContext.env, condition.falseAssumptions),
   )
-  const falseValue = statement.elseStatement == null
-    ? valueWithAssumptions(
-      evaluateStatements(statements, contextWithAssumptions(context, condition.falseAssumptions), nextIndex),
-      condition.falseAssumptions,
-    )
-    : valueWithAssumptions(
-      evaluateBranchStatement(statement.elseStatement, contextWithAssumptions(context, condition.falseAssumptions)),
-      condition.falseAssumptions,
-    )
-  return joinValues(trueValue, falseValue)
+  return {kind: 'fallthrough'}
 }
 
-function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): Value {
+function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): EvalFlow {
   if (ts.isReturnStatement(statement)) {
-    return evaluateReturnStatement(statement, context)
+    return {kind: 'return', value: evaluateReturnStatement(statement, context)}
   }
-  if (!ts.isBlock(statement)) return unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)
-  const localContext: EvalContext = {...context, env: new Map(context.env)}
-  return evaluateStatements(statement.statements, localContext)
+  if (!ts.isBlock(statement)) return {kind: 'return', value: unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)}
+  return evaluateStatementsFlow(statement.statements, context)
+}
+
+function contextWithEnvAndAssumptions(context: EvalContext, env: Map<string, Value>, assumptions: LinearConstraint[]): EvalContext {
+  return {
+    ...context,
+    env,
+    assumptions: assumptions.length === 0 ? context.assumptions : mergeAssumptions(context.assumptions, assumptions),
+  }
+}
+
+function envWithAssumptions(env: Map<string, Value>, assumptions: LinearConstraint[]): Map<string, Value> {
+  if (assumptions.length === 0) return env
+  const next = new Map<string, Value>()
+  for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions))
+  return next
+}
+
+function joinEnvironments(left: Map<string, Value>, right: Map<string, Value>): Map<string, Value> {
+  const next = new Map<string, Value>()
+  const keys = new Set([...left.keys(), ...right.keys()])
+  for (const key of keys) {
+    const leftValue = left.get(key)
+    const rightValue = right.get(key)
+    next.set(key, leftValue == null || rightValue == null ? unknown(`Local ${key} only exists on one branch`) : joinValues(leftValue, rightValue))
+  }
+  return next
 }
 
 function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalContext): Value {
@@ -2444,10 +2515,14 @@ function isSideEffectFreeExpression(expression: ts.Expression): boolean {
     ts.isIdentifier(expression)
     || ts.isNumericLiteral(expression)
     || ts.isStringLiteral(expression)
+    || ts.isNoSubstitutionTemplateLiteral(expression)
     || expression.kind === ts.SyntaxKind.TrueKeyword
     || expression.kind === ts.SyntaxKind.FalseKeyword
     || expression.kind === ts.SyntaxKind.NullKeyword
   ) return true
+  if (ts.isTemplateExpression(expression)) {
+    return expression.templateSpans.every(span => isSideEffectFreeExpression(span.expression))
+  }
   if (ts.isParenthesizedExpression(expression) || ts.isNonNullExpression(expression)) return isSideEffectFreeExpression(expression.expression)
   if (ts.isPropertyAccessExpression(expression)) return isSideEffectFreeExpression(expression.expression)
   if (ts.isElementAccessExpression(expression)) return isSideEffectFreeExpression(expression.expression) && (expression.argumentExpression == null || isSideEffectFreeExpression(expression.argumentExpression))
@@ -2466,6 +2541,7 @@ function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
 function isKnownPureReadCall(expression: ts.CallExpression): boolean {
   if (!expression.arguments.every(isSideEffectFreeExpression)) return false
   const target = expression.expression
+  if (ts.isIdentifier(target)) return true
   if (!ts.isPropertyAccessExpression(target)) return false
   if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') return true
   return target.name.text === 'at' && isSideEffectFreeExpression(target.expression)
@@ -3337,6 +3413,8 @@ function simpleResultPathText(text: string): string | null {
   const expression = unwrapExpression(parsed.expression)
   if (ts.isIdentifier(expression) && expression.text === 'result') return text
   if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === 'result') return text
+  const finiteElement = finiteElementAccessRoot(expression)
+  if (finiteElement?.root === 'result') return text
   return null
 }
 
@@ -3350,7 +3428,32 @@ function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value
   const expression = parseExpression(path)
   if (ts.isIdentifier(expression)) {
     env.set(expression.text, value)
+    return
   }
+
+  const finiteElement = finiteElementAccessRoot(expression)
+  if (finiteElement != null) {
+    env.set(finiteElement.root, setFiniteArrayElementValue(env.get(finiteElement.root), finiteElement.root, finiteElement.index, value))
+  }
+}
+
+function finiteElementAccessRoot(expression: ts.Expression): {root: string; index: number} | null {
+  const current = unwrapExpression(expression)
+  if (!ts.isElementAccessExpression(current)) return null
+  const index = numericLiteralValue(current.argumentExpression)
+  if (index == null || !Number.isInteger(index) || index < 0) return null
+  const root = expressionRootName(current.expression)
+  return root == null ? null : {root, index}
+}
+
+function setFiniteArrayElementValue(current: Value | undefined, expr: string, index: number, value: Value): Value {
+  const base = current?.kind === 'array' ? current : unknownArray(expr)
+  const elements = base.elements == null ? [] : [...base.elements]
+  while (elements.length <= index) {
+    elements.push(base.element ?? unknownNumber(`${expr}[${elements.length}]`))
+  }
+  elements[index] = value
+  return {...base, elements}
 }
 
 function verifyCallGivenSpecs(
@@ -3683,9 +3786,9 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   if (target.elements == null) return valueWithStructuralFallback(target.element ?? unknown('Array element values are not tracked'), fallback)
   const start = Math.max(0, Math.ceil(index.min))
   const end = Math.min(target.elements.length - 1, Math.floor(index.max))
-  if (start > end) return unknown(`Array index ${formatRange(index)} has no possible element`)
-  let value = target.elements[start]!
-  for (let i = start + 1; i <= end; i++) value = joinValues(value, target.elements[i]!)
+  const valueAt = (i: number) => target.elements?.[i] ?? target.element ?? unknown('Array element values are not tracked')
+  let value = start > end ? valueAt(Math.max(0, Math.ceil(index.min))) : valueAt(start)
+  for (let i = start + 1; i <= end; i++) value = joinValues(value, valueAt(i))
   return valueWithStructuralFallback(value, fallback)
 }
 

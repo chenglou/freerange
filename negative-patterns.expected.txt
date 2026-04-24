@@ -115,6 +115,15 @@ UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: result >= minW
     trusted from function @fit: given minWidth: 0..1000
     branch fact from code: -minWidth + width <= 0
   missing: given width >= minWidth
+FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: result: 0..100
+  range was 0..200, expected inside 0..100
+  need: 0..200 inside 0..100
+  known:
+    0..200
+    int 0..0 as 0
+    int 100..100 as 100
+    trusted from function @fit: given width: 0..100
+  missing: 0..200 <= 100
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: result.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, step) >= 0..1000 as top was not proven
   need: runningSum(top, items.length, step) >= top
@@ -399,6 +408,16 @@ FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: resul
     int 10..10 as min
     int 2..2 as 2
   missing: given min <= 2
+FAIL negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: result: 0
+  range was -Infinity..Infinity as scratch, expected inside 0..0
+  need: scratch inside 0..0
+  known:
+    -Infinity..Infinity as scratch
+    int 0..0 as 0
+  missing: scratch >= 0
+  missing: scratch <= 0
+UNKNOWN negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: result: 0
+  Unsupported += changed path
 FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
   called function requires max >= min
   this call passes max = 5 and min = 10
@@ -678,3 +697,10 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: res
   missing: given (width + importedChromeX) == ((width + importedChromeX) + 1)
 UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: result.rows.length >= 0
   Optional property input.rows is not in the static layout subset
+UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: result[4] >= 0
+  -Infinity..Infinity as importedTupleWithOneOffset(value)[] >= int 0..0 as 0 was not proven
+  need: importedTupleWithOneOffset(value)[] >= 0
+  known:
+    -Infinity..Infinity as importedTupleWithOneOffset(value)[]
+    int 0..0 as 0
+  missing: given importedTupleWithOneOffset(value)[] >= 0

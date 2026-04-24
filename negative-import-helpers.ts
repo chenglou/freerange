@@ -13,3 +13,11 @@ export function importedClampWithBadContract(width: number) {
 export type ImportedOptionalRows = {
   rows?: {height: number}[]
 }
+
+/** @fit
+ * result.length == 4
+ * result[2] >= 0
+ */
+export function importedTupleWithOneOffset(value: number) {
+  return [0, 0, Math.abs(value), value]
+}

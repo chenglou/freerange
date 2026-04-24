@@ -315,6 +315,18 @@ export function guardReturnKeepsMinimum(width: number, minWidth: number) {
 }
 
 /** @fit
+ * given width: 0..100
+ * result: 0..100
+ */
+export function branchAssignmentFallsThrough(width: number) {
+  let chosen = 0
+  if (width > 40) {
+    chosen = width
+  }
+  return chosen
+}
+
+/** @fit
  * given items.length: int 1..50
  * given top: 0..1000
  * given step: 0..40
@@ -967,6 +979,35 @@ export function silentHelperSummaryFeedsReturnField(
   return {
     cols, // @fit int 1..7
   }
+}
+
+function loopReadHelper(index: number) {
+  return index + 1
+}
+
+export function forgettableLoopNamedCallPreservesUnrelated(
+  items: number[],
+  value: number, // @fit 0..10
+) {
+  let scratch = 0
+  const kept = value
+  for (let i = 1; i < items.length - 1; i++) {
+    scratch += loopReadHelper(i)
+  }
+  return kept // @fit 0..10
+}
+
+/** @fit
+ * result.length == 2
+ * result[1]: 0..10
+ */
+export function scalarStringishMutationPreservesTupleFacts(
+  items: number[],
+  value: number, // @fit 0..10
+) {
+  let path = ''
+  path += `M ${items.length}`
+  return [path, value]
 }
 
 /** @fit

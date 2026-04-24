@@ -1,6 +1,6 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows} from './import-pattern-helpers'
+import {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows, importedTupleCenter} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
@@ -99,4 +99,14 @@ export function importedGenericReturnShape(items: {height: number}[]) {
 export function namespaceImportedStructuralShape(items: {height: number}[]) {
   const boxed = importedShapes.importedBox(items)
   return {rows: boxed.value}
+}
+
+/** @fit
+ * result.length == 5
+ * result[3] >= 0
+ * result[4] >= 0
+ */
+export function importedTupleSummaryFeedsDestructure(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+  const [, , offsetX, offsetY] = importedTupleCenter(sourceX, sourceY, targetX, targetY)
+  return ['path', 0, 0, offsetX, offsetY]
 }

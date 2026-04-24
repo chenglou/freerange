@@ -40,3 +40,14 @@ export type ImportedBox<T> = {
 export function importedBox<T>(value: T): ImportedBox<T> {
   return {value}
 }
+
+/** @fit
+ * result.length == 4
+ * result[2] >= 0
+ * result[3] >= 0
+ */
+export function importedTupleCenter(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+  const xOffset = Math.abs(targetX - sourceX)
+  const yOffset = Math.abs(targetY - sourceY)
+  return [sourceX + xOffset, sourceY + yOffset, xOffset, yOffset]
+}

@@ -230,6 +230,24 @@ return focused > 0
 
 Function-level `result` facts still mean every return after the branches are joined.
 
+Simple side-effecting branches can fall through too. Freerange joins the two local environments after the `if`:
+
+```ts
+/** @fit
+ * given width: 0..100
+ * result: 0..100
+ */
+function pickWidth(width: number) {
+  let chosen = 0
+  if (width > 40) {
+    chosen = width
+  }
+  return chosen
+}
+```
+
+Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot.
+
 ## Reading Results
 
 Each requested fact ends in one of three states:
@@ -581,6 +599,8 @@ function caller(width: number) {
 ```
 
 Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, result facts like `result >= min` and `result <= max` also narrow the caller's local value. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
+
+Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `result.length == 4`, `result[2] >= 0`, and `result[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
 Imported helpers use their exported `@fit` contract as the module boundary:
 
@@ -973,7 +993,8 @@ The checker understands a small pure subset:
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries
-- return-style `if` guards
+- return-style `if` guards and simple fall-through `if` / `else` branches
+- plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
