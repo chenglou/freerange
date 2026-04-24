@@ -1336,3 +1336,30 @@ export function mathMinCanBeComparisonBound(width: number, cap: number, limit: n
 }
 
 export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2
+
+export class ClassMethodThisClaims {
+  constructor(
+    public top: number,
+    public height: number,
+    public width: number,
+  ) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: 0..1000
+   * result == this.top + this.height
+   * result: 0..2000
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+
+  /** @fit
+   * given this.width: 0..1000
+   * given this.height: 0..1000
+   * result: 0..1000000
+   */
+  area() {
+    return this.width * this.height
+  }
+}

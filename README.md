@@ -19,7 +19,7 @@ But the project is not only about layout. The bigger goal is checkable specs ove
 
 ## First Check
 
-Put `@fit` immediately above a named function or named `const` arrow/function expression:
+Put `@fit` immediately above a named function, named `const` arrow/function expression, or class method/getter:
 
 ```ts
 /** @fit
@@ -35,6 +35,8 @@ function cappedOverflow(
 ```
 
 Param `// @fit` comments are input facts, the same as `given width: 0..1000` in the function block. Bare lines and `result` lines are facts Freerange must prove from source.
+
+In an instance method or getter, `this` is an input root, so `given this.width: 0..1000` works for ordinary geometry classes. Class-member contracts are checked in their own source file today; plain helper functions are still the call-summary path across files.
 
 For one local value, use the small inline form:
 

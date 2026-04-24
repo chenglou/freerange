@@ -7,8 +7,9 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 ## Glossary
 
 ```ts
-@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, or supported loop.
+@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, class method/getter, or supported loop.
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
+given this.width: 0..1000 // trusted input fact for an instance method/getter.
 result.width: 0..320 // check fact. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.
 a..b // JavaScript number in the inclusive interval from a to b.
@@ -86,7 +87,7 @@ caller may need a `given`, a wrapper contract, or earlier validation.
 
 ## A First Check
 
-Put `@fit` immediately above a named function or named `const` arrow/function expression:
+Put `@fit` immediately above a named function, named `const` arrow/function expression, or class method/getter:
 
 ```ts
 /** @fit
@@ -143,6 +144,28 @@ Function-level `given` lines are still the right place for object paths, array p
 Bare lines and `result` lines are claims Freerange must prove from the source.
 
 Unsupported annotation lines are errors. Unsupported source code becomes `unknown`.
+
+For instance methods and getters, `this` is an input root:
+
+```ts
+class Rect {
+  constructor(
+    public top: number,
+    public height: number,
+  ) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: 0..1000
+   * result == this.top + this.height
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+}
+```
+
+Today this checks the method/getter body in its own file. It does not yet make `rect.bottom` or `rect.area()` calls use a class-member summary the way plain helper calls do.
 
 ## What Gets Checked
 
@@ -988,6 +1011,7 @@ Loop `given` lines can describe function inputs. They cannot describe loop-built
 The checker understands a small pure subset:
 
 - function declarations and named `const` arrow/function expressions
+- class methods and getters, with `this` as an input root for instance members
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
@@ -1029,8 +1053,7 @@ Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
 - package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
-- classes, methods, async, generators
-- prototype-assigned JavaScript methods and `this`-driven layout objects
+- class-member summaries at method/property call sites, prototype-assigned JavaScript methods, async, generators
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning

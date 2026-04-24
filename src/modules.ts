@@ -1,9 +1,16 @@
 import * as ts from 'typescript'
 import {parseFunctionFitSpecs, type FitSpec} from './parser.ts'
 
+export type FitFunctionNode =
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | ts.MethodDeclaration
+  | ts.GetAccessorDeclaration
+
 export type FitFunction = {
   name: string
-  node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction
+  node: FitFunctionNode
   specNode: ts.Node
 }
 
@@ -201,6 +208,10 @@ function parseFitModule<TGlobal>(
       }
       continue
     }
+    if (ts.isClassDeclaration(statement) && statement.name != null) {
+      collectClassMemberFunctions(sourceText, statement, functions, fitFunctions, specsByFunction)
+      continue
+    }
     if (ts.isExportDeclaration(statement)) {
       collectLocalExportDeclaration(statement, exports)
       continue
@@ -227,6 +238,31 @@ function parseFitModule<TGlobal>(
   }
 
   return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, fitFunctions, specsByFunction, exports, imports}
+}
+
+function collectClassMemberFunctions(
+  sourceText: string,
+  declaration: ts.ClassDeclaration,
+  functions: Map<string, FitFunction>,
+  fitFunctions: Set<string>,
+  specsByFunction: Map<string, FitSpec[]>,
+) {
+  for (const member of declaration.members) {
+    if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member)) continue
+    if (member.body == null) continue
+    const memberName = classMemberFunctionName(declaration.name!.text, member)
+    if (memberName == null) continue
+    const fn = {name: memberName, node: member, specNode: member}
+    const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
+    functions.set(fn.name, fn)
+    if (specs.length > 0) fitFunctions.add(fn.name)
+    specsByFunction.set(fn.name, specs)
+  }
+}
+
+function classMemberFunctionName(className: string, member: ts.MethodDeclaration | ts.GetAccessorDeclaration): string | null {
+  if (!ts.isIdentifier(member.name)) return null
+  return `${className}.${member.name.text}`
 }
 
 function supportedFunctionInitializer(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {

@@ -181,6 +181,15 @@ UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasi
     row advance for .top: -40..40 as step
     sequence facts: spaced(0)
   missing: given step >= 0
+UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: result >= this.top
+  -100..2000 as (this.top + this.height) >= 0..1000 as this.top was not proven
+  need: (this.top + this.height) >= this.top
+  known:
+    -100..2000 as (this.top + this.height)
+    0..1000 as this.top
+    trusted from function @fit: given this.top: 0..1000
+    trusted from function @fit: given this.height: -100..1000
+  missing: given (this.top + this.height) >= this.top
 UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(result.rows, otherGap)
   spaced(result.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap

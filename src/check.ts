@@ -460,6 +460,7 @@ function isFunctionLikeWithBody(node: ts.Node) {
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
 }
 
 function verifyFunctionSpecs(
@@ -627,6 +628,7 @@ function isNestedFunctionLike(node: ts.Node) {
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
     || ts.isConstructorDeclaration(node)
 }
 
@@ -875,6 +877,9 @@ function topUnknownReason(value: Value): string[] {
 }
 
 function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program: Program, env: Map<string, Value>) {
+  if (functionHasInstanceThisInput(fn)) {
+    env.set('this', unknownParamValue('this', specs, undefined, program))
+  }
   for (const param of fn.node.parameters) {
     if (ts.isIdentifier(param.name)) {
       env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
@@ -985,10 +990,20 @@ function bindingNames(name: ts.BindingName): string[] {
 
 function functionInputRoots(program: Program, fn: FitFunction): string[] {
   const roots = [...program.globals.keys()]
+  if (functionHasInstanceThisInput(fn)) roots.push('this')
   for (const param of fn.node.parameters) {
     roots.push(...bindingNames(param.name))
   }
   return [...new Set(roots)]
+}
+
+function functionHasInstanceThisInput(fn: FitFunction) {
+  return (ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node))
+    && !hasModifier(fn.node, ts.SyntaxKind.StaticKeyword)
+}
+
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
+  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
 function programGlobalEnv(program: Program): Map<string, Value> {
@@ -1130,6 +1145,7 @@ function givenComparisonExpressionProblem(text: string): string | null {
 
 function isGivenRangeExpression(expression: ts.Expression): boolean {
   if (ts.isIdentifier(expression)) return true
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
   if (ts.isPropertyAccessExpression(expression)) return isGivenRangeExpression(expression.expression)
   if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
   return false
@@ -1137,6 +1153,7 @@ function isGivenRangeExpression(expression: ts.Expression): boolean {
 
 function isGivenComparisonExpression(expression: ts.Expression): boolean {
   if (ts.isIdentifier(expression)) return true
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
   if (numericLiteralValue(expression) != null) return true
   if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
   if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
@@ -1383,6 +1400,7 @@ function expressionRootNamesFromText(text: string): string[] {
 
 function expressionRootNames(expression: ts.Expression, ignored: string[]): string[] {
   if (ts.isIdentifier(expression)) return ignored.includes(expression.text) ? [] : [expression.text]
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return ignored.includes('this') ? [] : ['this']
   if (ts.isPropertyAccessExpression(expression)) return expressionRootNames(expression.expression, ignored)
   if (ts.isElementAccessExpression(expression)) {
     const roots = expressionRootNames(expression.expression, ignored)
@@ -1430,12 +1448,14 @@ function arrayLengthRoot(expression: ts.Expression): string | null {
 
 function expressionRootName(expression: ts.Expression): string | null {
   if (ts.isIdentifier(expression)) return expression.text
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return 'this'
   if (ts.isParenthesizedExpression(expression)) return expressionRootName(expression.expression)
   return null
 }
 
 function expressionRootNameDeep(expression: ts.Expression): string | null {
   if (ts.isIdentifier(expression)) return expression.text
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return 'this'
   if (ts.isParenthesizedExpression(expression)) return expressionRootNameDeep(expression.expression)
   if (ts.isPropertyAccessExpression(expression)) return expressionRootNameDeep(expression.expression)
   return null
@@ -2798,6 +2818,7 @@ function evaluateExpression(expression: ts.Expression, context: EvalContext): Va
     return numberValue(value, value, Number.isInteger(value), expression.text, linearConstant(value))
   }
   if (ts.isIdentifier(expression)) return context.env.get(expression.text) ?? unknown(`Unknown identifier ${expression.text}`)
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return context.env.get('this') ?? unknown('Unknown identifier this')
   if (ts.isParenthesizedExpression(expression)) return evaluateExpression(expression.expression, context)
   if (ts.isPrefixUnaryExpression(expression)) return evaluatePrefixUnary(expression, context)
   if (ts.isBinaryExpression(expression)) return evaluateBinary(expression, context)

@@ -219,6 +219,22 @@ export function negativeRunningSumNeedsNonNegativeStep(items: number[], top: num
   return {rows, bottom: y}
 }
 
+export class NegativeClassMethodNeedsThisGiven {
+  constructor(
+    public top: number,
+    public height: number,
+  ) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: -100..1000
+   * result >= this.top
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+}
+
 /** @fit
  * given items.length: int 1..50
  * given top: 0..1000
