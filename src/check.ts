@@ -897,6 +897,13 @@ function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[]
   }
 }
 
+function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, thisValue?: Value) {
+  if (functionHasInstanceThisInput(fn)) {
+    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this'))
+  }
+  bindFunctionArgumentParameters(fn, argumentValues, env)
+}
+
 function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
   return valueFromNodeShape('param', param.name, program)
     ?? valueFromSyntaxTypeShape('param', param.type, program, new Set())
@@ -2949,6 +2956,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
       return evaluateMathCall(target.name.text, expression.arguments, context)
     }
+    const classMethodResult = evaluateClassMethodCall(expression, target, context)
+    if (classMethodResult != null) return classMethodResult
     const atResult = evaluateArrayAtCall(expression, context)
     if (atResult != null) return atResult
     const mapResult = evaluateArrayMapCall(expression, context)
@@ -2965,15 +2974,84 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   const functionName = expression.expression.text
   const fn = context.program.functions.get(functionName)
   if (fn == null) return evaluateImportedCall(functionName, expression, context)
+  return evaluateLocalFunctionCall(functionName, fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
+    callText: `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
+  })
+}
+
+function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.PropertyAccessExpression, context: EvalContext): Value | null {
+  const member = classMemberFunctionForPropertyAccess(access, context)
+  if (member == null || !ts.isMethodDeclaration(member.fn.node)) return null
+  const receiver = evaluateExpression(access.expression, context)
+  return evaluateLocalFunctionCall(member.functionName, member.fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
+    thisValue: receiver,
+    callText: `${access.getText(context.program.sourceFile)}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
+  })
+}
+
+function evaluateClassGetterAccess(expression: ts.PropertyAccessExpression, context: EvalContext, fallback: Value | null): Value | null {
+  const member = classMemberFunctionForPropertyAccess(expression, context)
+  if (member == null || !ts.isGetAccessorDeclaration(member.fn.node)) return null
+  const receiver = evaluateExpression(expression.expression, context)
+  return evaluateLocalFunctionCall(member.functionName, member.fn, [], context, {
+    thisValue: receiver,
+    callText: expression.getText(context.program.sourceFile),
+    fallback,
+  })
+}
+
+function classMemberFunctionForPropertyAccess(access: ts.PropertyAccessExpression, context: EvalContext): {functionName: string; fn: FitFunction} | null {
+  const className = classNameForPropertyAccess(access, context)
+  if (className == null) return null
+  const functionName = `${className}.${access.name.text}`
+  const fn = context.program.functions.get(functionName)
+  return fn == null ? null : {functionName, fn}
+}
+
+function classNameForPropertyAccess(access: ts.PropertyAccessExpression, context: EvalContext): string | null {
+  const checker = context.program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(access.name)
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
+  if (
+    declaration != null
+    && (ts.isMethodDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration))
+    && ts.isClassDeclaration(declaration.parent)
+    && declaration.parent.name != null
+  ) {
+    return declaration.parent.name.text
+  }
+
+  if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const current = context.stack.at(-1)
+    const dot = current?.indexOf('.') ?? -1
+    if (current != null && dot > 0) return current.slice(0, dot)
+  }
+
+  return null
+}
+
+function evaluateLocalFunctionCall(
+  functionName: string,
+  fn: FitFunction,
+  argumentValues: Value[],
+  context: EvalContext,
+  options: {
+    callText: string
+    fallback: Value | null
+    thisValue?: Value | undefined
+  },
+): Value {
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
-  if (fn.node.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
-  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context, {
+  if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for ${functionName}`)
+  const obligations = verifyCallGivenSpecs(context.program, fn, options.callText, argumentValues, context, {
     record: shouldRecordCallObligations(context),
+    thisValue: options.thisValue,
   })
 
   const env = programGlobalEnv(context.program)
-  bindFunctionArgumentParameters(fn, argumentValues, env)
+  bindFunctionCallInputs(fn, argumentValues, env, options.thisValue)
 
   const result = evaluateFunctionBody(fn, {
     program: context.program,
@@ -2988,7 +3066,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   })
   const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn.node, context.program)
     ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.node.type, context.program, new Set())
-    ?? valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program)
+    ?? options.fallback
   const fallbackResult = result.kind === 'unknown'
     ? fallbackShape ?? result
     : valueWithStructuralFallback(result, fallbackShape)
@@ -3003,7 +3081,7 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
-  }, fallbackResult)
+  }, fallbackResult, options.thisValue)
 }
 
 function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -3052,7 +3130,14 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(functionName, binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context, {record: true})
+  const obligations = verifyCallGivenSpecs(
+    exported.module,
+    fn,
+    `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    argumentValues,
+    context,
+    {record: true},
+  )
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
   return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, resolvedStructuralFallback ?? unknownResultValue(specs, exported.module))
@@ -3350,9 +3435,10 @@ function valueWithFunctionContractSummary(
   contractCache: Map<string, FunctionContractProof>,
   source: FunctionContractSource,
   result: Value,
+  thisValue?: Value,
 ): Value {
   const env = programGlobalEnv(program)
-  bindFunctionArgumentParameters(fn, argumentValues, env)
+  bindFunctionCallInputs(fn, argumentValues, env, thisValue)
   env.set('result', result)
 
   const context: EvalContext = {
@@ -3508,19 +3594,17 @@ function setFiniteArrayElementValue(current: Value | undefined, expr: string, in
 }
 
 function verifyCallGivenSpecs(
-  functionName: string,
   calleeProgram: Program,
   fn: FitFunction,
-  expression: ts.CallExpression,
+  callText: string,
   argumentValues: Value[],
   context: EvalContext,
-  options: {record: boolean},
+  options: {record: boolean; thisValue?: Value | undefined},
 ) {
   const specs = calleeProgram.specsByFunction.get(fn.name) ?? []
-  const callText = `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
-  bindFunctionArgumentParameters(fn, argumentValues, env)
+  bindFunctionCallInputs(fn, argumentValues, env, options.thisValue)
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
   for (const spec of specs) {
@@ -3823,6 +3907,8 @@ function choiceNumberPair(
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
   const fallback = expressionStructuralFallback(expression, context)
+  const getterResult = evaluateClassGetterAccess(expression, context, fallback)
+  if (getterResult != null) return getterResult
   if (target.kind === 'array' && expression.name.text === 'length') return target.length
   if (target.kind === 'unknown') return fallback ?? target
   if (target.kind !== 'object') return fallback ?? unknown(`Property access ${expression.name.text} expected an object`)

@@ -236,6 +236,14 @@ export class NegativeClassMethodNeedsThisGiven {
 }
 
 /** @fit
+ * given box.top: 0..1000
+ * result: 0..2000
+ */
+export function negativeClassGetterSummaryNeedsThisGiven(box: NegativeClassMethodNeedsThisGiven) {
+  return box.bottom
+}
+
+/** @fit
  * given items.length: int 1..50
  * given top: 0..1000
  * given step: 0..40

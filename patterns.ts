@@ -1365,6 +1365,24 @@ export class ClassMethodThisClaims {
 }
 
 /** @fit
+ * given box.top: 0..1000
+ * given box.height: 0..1000
+ * result: 0..2000
+ */
+export function classGetterSummary(box: ClassMethodThisClaims) {
+  return box.bottom
+}
+
+/** @fit
+ * given box.width: 0..1000
+ * given box.height: 0..1000
+ * result: 0..1000000
+ */
+export function classMethodSummary(box: ClassMethodThisClaims) {
+  return box.area()
+}
+
+/** @fit
  * given rect.left: -1000..1000
  * given rect.right: -1000..1000
  * given rect.top: -1000..1000

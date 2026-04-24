@@ -165,7 +165,7 @@ class Rect {
 }
 ```
 
-Today this checks the method/getter body in its own file. It does not yet make `rect.bottom` or `rect.area()` calls use a class-member summary the way plain helper calls do.
+Same-file calls like `rect.bottom` and `rect.area()` use the checked class-member contract too. The receiver becomes `this`, so a getter that says `given this.height: 0..1000` makes the caller prove `rect.height: 0..1000`.
 
 ## What Gets Checked
 
@@ -624,7 +624,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, result facts like `result >= min` and `result <= max` also narrow the caller's local value. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, result facts like `result >= min` and `result <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
 
 Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `result.length == 4`, `result[2] >= 0`, and `result[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
@@ -1021,7 +1021,7 @@ The checker understands a small pure subset:
 - ternaries
 - return-style `if` guards and simple fall-through `if` / `else` branches
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
-- direct same-file function calls
+- direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
 - named imports of exported numeric constants and exported `@fit` functions when TypeScript resolves them to local source
@@ -1053,7 +1053,7 @@ Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
 - package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
-- class-member summaries at method/property call sites, prototype-assigned JavaScript methods, async, generators
+- prototype-assigned JavaScript methods, async, generators
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning

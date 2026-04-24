@@ -190,6 +190,21 @@ UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: result >=
     trusted from function @fit: given this.top: 0..1000
     trusted from function @fit: given this.height: -100..1000
   missing: given (this.top + this.height) >= this.top
+FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: call box.bottom: requires this.height: -100..1000
+  called function requires this.height: -100..1000
+  this call passes this.height is -Infinity..Infinity
+  missing: this.height >= -100
+  missing: this.height <= 1000
+FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: result: 0..2000
+  range was -Infinity..Infinity as (this.top + this.height), expected inside 0..2000
+  need: (this.top + this.height) inside 0..2000
+  known:
+    -Infinity..Infinity as (this.top + this.height)
+    int 0..0 as 0
+    int 2000..2000 as 2000
+    trusted from function @fit: given box.top: 0..1000
+  missing: (this.top + this.height) >= 0
+  missing: (this.top + this.height) <= 2000
 UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(result.rows, otherGap)
   spaced(result.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap

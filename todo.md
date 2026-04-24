@@ -11,7 +11,7 @@ The current product pivot is adoption, not a bigger DSL: make `infer`, `audit`, 
 ## Current Surface
 
 - Function specs use `@fit`. `given` lines and param `// @fit` comments are trusted input facts; bare lines and `result` lines are facts to prove.
-- Function boundaries include named `function` declarations, named `const` arrow/function expressions, anonymous default-exported function/arrow boundaries, and class methods/getters. Instance class members can use `this` as an input root.
+- Function boundaries include named `function` declarations, named `const` arrow/function expressions, anonymous default-exported function/arrow boundaries, and class methods/getters. Instance class members can use `this` as an input root, and same-file property/method calls can use the checked class-member summary.
 - Typed object and array destructuring params are supported as input bindings. Param inline `@fit` shorthand still only attaches to simple identifier params.
 - Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `result`.
 - Inline local and field checks use `@fit 0..foo` immediately before a single variable declaration, as a trailing `//` side comment, or on a simple object field. They are checks on that local value or field, not trusted givens. On simple identifier params, the same syntax is shorthand for a trusted `given`. Leading line/block comments and trailing `//` comments are supported; trailing block comments are intentionally not part of the current surface.
@@ -222,4 +222,4 @@ exist in TypeScript.
 - Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides. Labeled same-index comparisons can relate two collections when their lengths are proven equal. Adjacent formulas work only over one collection and only when a sequence relation was inferred; all-pairs and source/id matching are still unsupported.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: `+=` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.
-- No general loops, nonlinear solver, TS type narrowing, overload semantics, general generic value reasoning, class-member call summaries, async, closures, strings, booleans, or branded-value reasoning.
+- No general loops, nonlinear solver, TS type narrowing, overload semantics, general generic value reasoning, imported class-member summaries, async, closures, strings, booleans, or branded-value reasoning.

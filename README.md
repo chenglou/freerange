@@ -36,7 +36,7 @@ function cappedOverflow(
 
 Param `// @fit` comments are input facts, the same as `given width: 0..1000` in the function block. Bare lines and `result` lines are facts Freerange must prove from source.
 
-In an instance method or getter, `this` is an input root, so `given this.width: 0..1000` works for ordinary geometry classes. Class-member contracts are checked in their own source file today; plain helper functions are still the call-summary path across files.
+In an instance method or getter, `this` is an input root, so `given this.width: 0..1000` works for ordinary geometry classes. Same-file `rect.bottom` and `rect.area()` calls can use those checked contracts, with the receiver bound to `this`.
 
 For one local value, use the small inline form:
 
