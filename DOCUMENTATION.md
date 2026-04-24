@@ -15,8 +15,10 @@ return.width: 0..320 // check fact. Freerange must prove this from source.
 a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
+a | b | c // literal-union domain. The value is exactly one of the listed numbers. Two or more literals required; a single number is still `2..2`.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
+searchSlot: number, // @fit 0 | 40 | 200 | 213 // param shorthand for a literal-union `given`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
 // @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
 items[] // every item in one anonymous collection.
@@ -158,6 +160,26 @@ Function-level `given` lines are still the right place for object paths, array p
  * given min <= max
  */
 ```
+
+When a parameter only takes a small known set of values, use a literal-union `given` instead of a range. The checker narrows the input to exactly those numbers, so downstream arithmetic keeps per-value identity:
+
+```ts
+/** @fit
+ * given navSizeX: 82 | 214
+ * return: 82 | 214
+ */
+function navColumn(navSizeX: number) {
+  return navSizeX
+}
+
+function widenSearchSlot(
+  searchSlot: number, // @fit 0 | 40 | 200 | 213
+) {
+  return searchSlot + 14 // @fit 14 | 54 | 214 | 227
+}
+```
+
+A range like `82..214` would also accept `150`; the literal union rejects it, and a call site passing a literal outside the set fails with `missing: x in {82, 214}`. If the param's TypeScript type is already a literal union (`navSizeX: 82 | 214`), the shape oracle picks it up automatically; the `given` is confirmation or documentation.
 
 `given` lines and param inline facts describe inputs your function expects. They do not ask Freerange to audit the function body by themselves.
 

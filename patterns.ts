@@ -1013,7 +1013,7 @@ export function pathSensitiveMinOverflow(width: number) {
 // as cases so downstream Math.min can still prove `capped <= width`.
 /** @fit
  * given width: 0..1000
- * result.overflow >= 0
+ * return.overflow >= 0
  */
 export function pathSensitiveMinOverflowTernaryInset(width: number, folder: boolean) {
   const inset = folder ? 108 : 68
@@ -1185,6 +1185,26 @@ export function nestedBranchLocalReturnChecks(focused: number) {
     return 0
   }
   return focused // @fit == 0
+}
+
+// Literal-union `given` narrows the input domain to exactly those values. Each
+// union member flows through as its own case so a downstream fact like
+// `return: 82 | 214` stays provable. The param form (`// @fit 0 | 40 | ...`)
+// and the block form (`given searchSlot: 0 | 40 | ...`) are both accepted.
+/** @fit
+ * given navSizeX: 82 | 214
+ * return: 82 | 214
+ * return >= 82
+ * return <= 214
+ */
+export function literalUnionGivenPassesThrough(navSizeX: number) {
+  return navSizeX
+}
+
+export function literalUnionGivenOnParam(
+  searchSlot: number, // @fit 0 | 40 | 200 | 213
+) {
+  return searchSlot + 14 // @fit 14 | 54 | 214 | 227
 }
 
 /** @fit

@@ -29,6 +29,7 @@ import {
   type FitDomainPathSegment,
   type FitRange,
   type FitSpec,
+  type FitUnion,
 } from './parser.ts'
 import {
   binaryExpr,
@@ -270,6 +271,7 @@ const maxInlineDepth = 12
 
 type TrustedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
+  | {kind: 'union'; spec: Extract<FitSpec, {kind: 'given-union'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
   | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
 
 type ImportedContractSource = {
@@ -373,7 +375,7 @@ function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: M
 
   const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+    applyTrustedGiven(env, given)
   }
   const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   const context: EvalContext = {
@@ -488,10 +490,7 @@ function verifyFunctionSpecs(
 
   const {trustedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
 
-  for (const given of trustedGivens) {
-    if (given.kind !== 'range') continue
-    applyGivenRangeSpec(env, given.spec)
-  }
+  for (const given of trustedGivens) applyTrustedGiven(env, given)
 
   const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   checks.push(...impossibleChecks)
@@ -511,15 +510,19 @@ function verifyFunctionSpecs(
   if (hasBodyClaims) checks.push(...context.checks)
 
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
+    if (isGivenSpec(spec)) continue
     checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions, contractCache))
   }
 
   return checks
 }
 
+function isGivenSpec(spec: FitSpec): spec is Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}> {
+  return spec.kind === 'given-range' || spec.kind === 'given-union' || spec.kind === 'given-comparison'
+}
+
 function functionHasBodyClaims(specs: FitSpec[]) {
-  return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison')
+  return specs.some(spec => !isGivenSpec(spec))
 }
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
@@ -533,7 +536,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
 
   const {trustedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+    applyTrustedGiven(env, given)
   }
   const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   const inferUnsupported: string[] = []
@@ -607,7 +610,7 @@ function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractC
 
   const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+    applyTrustedGiven(env, given)
   }
   const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
@@ -774,7 +777,7 @@ function inferFunctionSpecReports(
   }
 
   return specs.map(spec => {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+    if (isGivenSpec(spec)) {
       const check = checkByText.get(spec.text)
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
@@ -802,9 +805,10 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
   if (exactFact != null) return exactFact.text
 
   const spec = parseFitSpecLineForInference(specText)
-  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
+  if (spec == null || isGivenSpec(spec)) return null
   if (spec.kind === 'check-atom') return null
   if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
+  if (spec.kind === 'check-union') return unionFactReasonForSpec(spec, facts)
   return comparisonFactReasonForSpec(spec, facts)
 }
 
@@ -856,6 +860,18 @@ function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-compar
     case '==':
       return equalityFactReasonForSpec(spec, facts)
   }
+}
+
+function unionFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-union'}>, facts: FitInferFact[]) {
+  const range = inferredRangeFactForExpression(facts, spec.expression)
+  if (range == null) return null
+  const unionMin = Math.min(...spec.union.values)
+  const unionMax = Math.max(...spec.union.values)
+  // A redundant union fact needs an existing range fact that fits strictly
+  // inside the declared union bounds. We do not try to match cases here yet;
+  // range coverage is the safest lower-bound guess.
+  if (range.min >= unionMin && range.max <= unionMax) return range.text
+  return null
 }
 
 function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
@@ -1054,7 +1070,7 @@ function validateGivenSpecs(
   const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
 
   for (const spec of specs) {
-    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
+    if (!isGivenSpec(spec)) continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
       checks.push(invalidGivenCheck(file, functionName, spec, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
@@ -1077,20 +1093,25 @@ function validateGivenSpecs(
       continue
     }
 
+    if (spec.kind === 'given-union') {
+      trustedGivens.push({kind: 'union', spec, source})
+      continue
+    }
+
     trustedGivens.push({kind: 'comparison', spec, source})
   }
 
   return {trustedGivens, checks}
 }
 
-function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
+function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
   for (const root of givenRootNames(spec)) {
     if (!allowedRoots.includes(root)) return root
   }
   return null
 }
 
-function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string[] {
+function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}>): string[] {
   switch (spec.kind) {
     case 'given-range':
       return [...new Set([
@@ -1098,6 +1119,8 @@ function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'g
         ...rangeBoundRootNames(spec.range.lower),
         ...rangeBoundRootNames(spec.range.upper),
       ])]
+    case 'given-union':
+      return expressionRootNamesFromText(spec.expression)
     case 'given-comparison':
       return [...new Set([...expressionRootNamesFromText(spec.left), ...expressionRootNamesFromText(spec.right)])]
   }
@@ -1134,7 +1157,7 @@ function closedRangeApprox(range: FitRange): {min: number; max: number} | null {
   return {min, max}
 }
 
-function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
+function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}>): string | null {
   const roots = givenRootNames(spec)
   if (roots.length === 0) return 'given must mention an input'
 
@@ -1146,6 +1169,14 @@ function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind:
     const lower = givenComparisonExpressionProblem(spec.range.lower)
     if (lower != null) return lower
     return givenComparisonExpressionProblem(spec.range.upper)
+  }
+
+  if (spec.kind === 'given-union') {
+    if (parseDomainPathText(spec.expression) == null) {
+      const expression = parseExpression(spec.expression)
+      if (!isGivenRangeExpression(expression)) return 'given union must name one input path, not a derived expression'
+    }
+    return null
   }
 
   const left = givenComparisonExpressionProblem(spec.left)
@@ -1219,6 +1250,20 @@ function collectGivenAssumptions(
       const upper = evaluateRangeBound(spec.range.upper, context)
       if (lower.kind !== 'number' || upper.kind !== 'number') continue
       assumptions.push(...rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source))
+      continue
+    }
+
+    if (given.kind === 'union') {
+      // A union `x: 0 | 40 | 200` also gives the linear solver the
+      // [min..max] closure — downstream `x >= 0` style checks still work.
+      const spec = given.spec
+      const value = evaluateSpecExpression(spec.expression, context)
+      if (value.kind !== 'number') continue
+      const min = Math.min(...spec.union.values)
+      const max = Math.max(...spec.union.values)
+      const lower = numberValue(min, min, Number.isInteger(min), `${min}`, linearConstant(min))
+      const upper = numberValue(max, max, Number.isInteger(max), `${max}`, linearConstant(max))
+      assumptions.push(...rangeFactsFromBounds(value, lower, true, upper, true, spec.text, given.source))
       continue
     }
 
@@ -1323,6 +1368,11 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
   return scale
 }
 
+function applyTrustedGiven(env: Map<string, Value>, given: TrustedGivenSpec) {
+  if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+  else if (given.kind === 'union') applyGivenUnionSpec(env, given.spec)
+}
+
 function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
   const closed = closedRangeApprox(spec.range)
   const value = numberValue(
@@ -1332,15 +1382,43 @@ function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {ki
     spec.expression,
     linearVariable(linearNameForExpression(spec.expression)),
   )
-  if (spec.expression.includes('[]')) {
-    const domainPath = parseDomainPathText(spec.expression)
+  writeGivenValueToEnv(env, spec.expression, value)
+}
+
+// A literal-union `given x: 0 | 40 | 200` binds the input value to a NumberValue
+// whose min/max cover the union AND whose `cases` enumerate each literal. This
+// lets Math.min / subtraction see each concrete branch (see `joinValues`) while
+// keeping downstream range math honest.
+function applyGivenUnionSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-union'}>) {
+  const value = numberValueFromUnion(spec.union, spec.expression)
+  writeGivenValueToEnv(env, spec.expression, value)
+}
+
+function numberValueFromUnion(union: FitUnion, expression: string): NumberValue {
+  const min = Math.min(...union.values)
+  const max = Math.max(...union.values)
+  const isInteger = union.valueKind === 'int' || union.values.every(Number.isInteger)
+  const linear = linearVariable(linearNameForExpression(expression))
+  const cases: NumberCase[] = union.values.map(literal => ({
+    value: numberValue(literal, literal, Number.isInteger(literal), `${literal}`, linearConstant(literal)),
+    assumptions: [],
+  }))
+  return withNumberCases(
+    numberValue(min, max, isInteger, expression, linear),
+    cases,
+  )
+}
+
+function writeGivenValueToEnv(env: Map<string, Value>, expressionText: string, value: NumberValue) {
+  if (expressionText.includes('[]')) {
+    const domainPath = parseDomainPathText(expressionText)
     if (domainPath != null && domainPath.segments.length > 0) {
       env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
     }
     return
   }
 
-  const expression = parseExpression(spec.expression)
+  const expression = parseExpression(expressionText)
   if (ts.isIdentifier(expression)) {
     env.set(expression.text, value)
     return
@@ -1353,7 +1431,7 @@ function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {ki
     return
   }
 
-  const domainPath = parseDomainPathText(spec.expression)
+  const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
   env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }
@@ -1375,7 +1453,7 @@ function unknownResultValue(specs: FitSpec[], program: Program): Value {
 function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'number' {
   let shape: 'object' | 'number' = 'number'
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'check-range') {
+    if (spec.kind === 'given-range' || spec.kind === 'check-range' || spec.kind === 'given-union' || spec.kind === 'check-union') {
       const next = specExpressionParamShape(spec.expression, name)
       if (next === 'array') return 'array'
       if (next === 'object') shape = 'object'
@@ -1537,7 +1615,7 @@ function verifyCheckSpec(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
@@ -1562,6 +1640,19 @@ function verifyCheckSpec(
     }
     const value = evaluateSpecExpression(spec.expression, context)
     const status = proveRangeSpec(value, spec.range, context)
+    return {
+      file,
+      ...(spec.line == null ? {} : {line: spec.line}),
+      functionName,
+      text: spec.text,
+      status: status.status,
+      ...(status.reason == null ? {} : {reason: status.reason}),
+    }
+  }
+
+  if (spec.kind === 'check-union') {
+    const value = evaluateSpecExpression(spec.expression, context)
+    const status = proveUnionSpec(value, spec.union)
     return {
       file,
       ...(spec.line == null ? {} : {line: spec.line}),
@@ -1605,6 +1696,71 @@ function verifyCheckSpec(
     status: status.status,
     ...(reason == null ? {} : {reason}),
   }
+}
+
+// Prove that a value is a member of a literal-union `{v1, v2, ...}`. Two
+// good-enough signals:
+// 1. The value has `cases`, and every case collapses to a union member. This
+//    is the common path when the callee's `given` bound the parameter, or when
+//    a branchy local (e.g. `flag ? 82 : 214`) produced discrete cases.
+// 2. The value is a literal constant (min == max == literal) that lives in the
+//    set.
+// Anything wider than the union is an honest `unknown`/`fail`, not a pass.
+function proveUnionSpec(value: Value, union: FitUnion): {status: FitCheckStatus; reason?: string} {
+  if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
+  const set = new Set(union.values)
+  const unionMin = Math.min(...union.values)
+  const unionMax = Math.max(...union.values)
+  const intCheck = union.valueKind === 'int' && !value.isInteger ? `${exprOrRange(value)} to be integer` : null
+
+  if (value.cases != null) {
+    const missing: number[] = []
+    for (const branch of value.cases) {
+      const point = branch.value.min === branch.value.max ? branch.value.min : null
+      if (point == null || !set.has(point)) missing.push(point ?? Number.NaN)
+    }
+    if (missing.length === 0 && intCheck == null) return {status: 'pass'}
+    if (missing.length > 0) {
+      return {
+        status: outsideFailStatus(value.min, value.max, unionMin, unionMax),
+        reason: unionFailureReason(value, union, `branches produced ${missing.filter(Number.isFinite).join(', ') || 'non-literal values'}`),
+      }
+    }
+    return {status: 'fail', reason: unionFailureReason(value, union, intCheck ?? 'integer check failed')}
+  }
+
+  if (value.min === value.max && Number.isFinite(value.min)) {
+    if (set.has(value.min) && intCheck == null) return {status: 'pass'}
+    // A known literal that is not in the set is an honest fail regardless of
+    // whether it sits between the union's min and max.
+    return {status: 'fail', reason: unionFailureReason(value, union, null)}
+  }
+
+  return {
+    status: outsideFailStatus(value.min, value.max, unionMin, unionMax),
+    reason: unionFailureReason(value, union, null),
+  }
+}
+
+function outsideFailStatus(min: number, max: number, unionMin: number, unionMax: number): FitCheckStatus {
+  return min < unionMin || max > unionMax ? 'fail' : 'unknown'
+}
+
+function unionFailureReason(value: NumberValue, union: FitUnion, detail: string | null): string {
+  const lines = [
+    `value was ${formatRange(value)}, expected one of ${formatUnionSpec(union)}`,
+  ]
+  if (detail != null) lines.push(detail)
+  lines.push(`missing: ${exprOrRange(value)} in {${union.values.join(', ')}}`)
+  return lines.join('\n')
+}
+
+function exprOrRange(value: NumberValue): string {
+  return value.expr == null ? formatRange(value) : publicFitText(value.expr)
+}
+
+export function formatUnionSpec(union: FitUnion): string {
+  return union.values.join(' | ')
 }
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
@@ -1922,7 +2078,7 @@ function bindVariableStatement(statement: ts.VariableStatement, context: EvalCon
   verifyLocalFitSpecs(specs, context)
 }
 
-function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], context: EvalContext) {
+function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}>[], context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -2661,7 +2817,7 @@ function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoo
 
   return specs.map(spec => {
     const check = checkByText.get(spec.text)
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+    if (isGivenSpec(spec)) {
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
@@ -2710,6 +2866,8 @@ function specExpressionTexts(spec: FitSpec): string[] {
   switch (spec.kind) {
     case 'given-range':
     case 'check-range':
+    case 'given-union':
+    case 'check-union':
       return [spec.expression]
     case 'given-comparison':
     case 'check-comparison':
@@ -2738,10 +2896,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
   const {trustedGivens, checks} = validateGivenSpecs(context.file, functionName, specs, context.inputRoots, 'loop-given')
   context.checks.push(...checks)
 
-  for (const given of trustedGivens) {
-    if (given.kind !== 'range') continue
-    applyGivenRangeSpec(context.env, given.spec)
-  }
+  for (const given of trustedGivens) applyTrustedGiven(context.env, given)
   const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(
     context.file,
     context.program,
@@ -2760,7 +2915,7 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
   const loopResult = unknown('Loop annotations do not have return; name local values directly')
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
+    if (isGivenSpec(spec)) continue
     context.checks.push(verifyCheckSpec(
       context.file,
       context.program,
@@ -3485,6 +3640,7 @@ function valueWithFunctionContractSummary(
 
   for (const spec of specs) {
     if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, source)
+    if (spec.kind === 'check-union') applySummaryUnionSpec(env, spec, source)
   }
   for (const spec of specs) {
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
@@ -3509,6 +3665,20 @@ function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {
       null,
       [sourceProvedContractFact(source, spec.text)],
     ),
+  )
+}
+
+// A caller consuming a `return: 82 | 214` contract should see the returned
+// value as a narrowed NumberValue with per-literal cases. That keeps the
+// discrete identity around for downstream Math.min / subtraction the same way
+// source-proved `joinValues` preserves cases.
+function applySummaryUnionSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-union'}>, source: FunctionContractSource) {
+  if (simpleResultPathText(spec.expression) == null) return
+  const base = numberValueFromUnion(spec.union, spec.expression)
+  setSummaryPathValue(
+    env,
+    spec.expression,
+    {...base, provenance: [sourceProvedContractFact(source, spec.text)]},
   )
 }
 
@@ -3645,6 +3815,11 @@ function verifyCallGivenSpecs(
       status = proveRangeSpec(value, spec.range, calleeContext)
       if (status.status !== 'pass') status = withCallRangeReason(status, value, spec)
     }
+    if (spec.kind === 'given-union') {
+      const value = evaluateSpecExpression(spec.expression, calleeContext)
+      status = proveUnionSpec(value, spec.union)
+      if (status.status !== 'pass') status = withCallUnionReason(status, value, spec)
+    }
     if (spec.kind === 'given-comparison') {
       const left = evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluateSpecExpression(spec.right, calleeContext)
@@ -3684,6 +3859,22 @@ function withCallRangeReason(
       `called function requires ${spec.expression}: ${formatRangeSpec(spec.range)}`,
       `this call passes ${formatCallBinding(spec.expression, value)}`,
       ...missingBoundsForRange(value, spec.range),
+    ].join('\n'),
+  }
+}
+
+function withCallUnionReason(
+  status: {status: FitCheckStatus; reason?: string},
+  value: Value,
+  spec: Extract<FitSpec, {kind: 'given-union'}>,
+): {status: FitCheckStatus; reason?: string} {
+  if (value.kind !== 'number') return status
+  return {
+    ...status,
+    reason: [
+      `called function requires ${spec.expression}: ${formatUnionSpec(spec.union)}`,
+      `this call passes ${formatCallBinding(spec.expression, value)}`,
+      `missing: ${spec.expression} in {${spec.union.values.join(', ')}}`,
     ].join('\n'),
   }
 }
@@ -4042,12 +4233,14 @@ function objectPathText(path: string[] | undefined) {
   return path == null || path.length === 0 ? '<property>' : path.join('.')
 }
 
-function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], value: Value, context: EvalContext) {
+function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}>[], value: Value, context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
     const status = spec.kind === 'check-range'
       ? proveRangeSpec(value, spec.range, context)
-      : proveInlineComparisonSpec(value, spec, context)
+      : spec.kind === 'check-union'
+        ? proveUnionSpec(value, spec.union)
+        : proveInlineComparisonSpec(value, spec, context)
     context.checks.push({
       file: context.file,
       ...(spec.line == null ? {} : {line: spec.line}),

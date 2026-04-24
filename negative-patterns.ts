@@ -1049,6 +1049,31 @@ export function negativeLoopGivenCannotNameRows(items: number[]) {
 
 export const negativeTopLevelInlineCallGiven = negativeNeedsContainerFit(4, 3) // @fit -1..0
 
+// The return value is known to be one of `{82, 214}`, so `return: 40 | 120`
+// cannot hold. A range-based check would be pessimistic too, but the union
+// check reports the set directly so authors see which values are rejected.
+/** @fit
+ * given navSizeX: 82 | 214
+ * return: 40 | 120
+ */
+export function negativeUnionReturnOutsideSet(navSizeX: number) {
+  return navSizeX
+}
+
+// Hand a literal that is NOT in the union to a callee that requires
+// membership. Freerange rejects the call with the set in the missing line.
+/** @fit
+ * given navSizeX: 82 | 214
+ * return >= 82
+ */
+function negativeUnionGivenCallee(navSizeX: number) {
+  return navSizeX
+}
+
+export function negativeUnionGivenCallerOutsideSet() {
+  return negativeUnionGivenCallee(150)
+}
+
 /** @fit
  * given rect.left: 0..100
  * given rect.right: 0..100

@@ -237,15 +237,17 @@ Keeping this entry because a future regression would re-surface as "`given` rang
 
 ---
 
-## 20. Range `given` on a parameter is a trust barrier, not a type check
+## 20. Literal-union types as `given` domains — fixed 2026-04-24
 
-Writing `given navSizeX: 82..214` buys no call-site enforcement — freerange assumes it holds. A refactor that introduces a third nav variant (`navSizeX: 96`) passes the contract but silently places rects 14px off.
+**Was a limitation; now fixed.** Documenting here so the workaround pattern doesn't re-emerge.
 
-**mj-gallery example:** The prod `imagineFrame` takes `navSizeX: 82..214` (collapsed = 82, expanded = 214). The dispatcher in React picks from `layout.navSizeX`. If a future tablet nav returns 96, every contract still "passes" because the number is in range, but the layout mis-positions.
+Before the fix, writing `given navSizeX: 82..214` bought no call-site enforcement — freerange assumed it held. A refactor introducing a third nav variant (`navSizeX: 96`) passed the contract but silently placed rects 14px off. There was no way to narrow the given to a discrete set.
 
-TypeScript can express this exactly (`navSizeX: 82 | 214`). Freerange currently can't use literal-union types as givens.
+**Fix:** `given` (in `@fit` blocks and inline `// @fit` param comments) now accepts literal-union numeric types such as `0 | 40 | 200 | 213`. The domain is the exact set of values; downstream per-branch cases flow through Math.min / subtraction exactly like the source-proved ternary cases in #19. Call sites that pass a literal not in the set now fail with `missing: x in {0, 40, 200, 213}` instead of range-widening.
 
-**What we want:** Accept TypeScript literal-union types as `given` domains. `given navSizeX: 82 | 214` should both narrow the domain to those two values AND get checked at every call site by the TS compiler. The frame proofs become sharper (no fake 96-valued case) and the contract becomes enforceable without trusting callers.
+Parser: `src/parser.ts::parseUnionText`. Checker: `src/check.ts::proveUnionSpec`. `patterns.ts::literalUnionGivenPassesThrough` and `patterns.ts::literalUnionGivenOnParam` are the positive regression tests. `negative-patterns.ts::negativeUnionReturnOutsideSet` is the negative regression test.
+
+If the parameter's TypeScript type is already a literal union like `searchSlot: 0 | 40 | 200 | 213`, the checker picks it up via its shape oracle the same way it reads structural shape today; the explicit `given` is confirmation or documentation for the spec block.
 
 ---
 

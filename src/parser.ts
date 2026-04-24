@@ -25,11 +25,29 @@ export type FitRange = {
   text: string
 }
 
+// A literal-union domain like `0 | 40 | 200 | 213`. Values are the discrete
+// numeric literals parsed out of the `|` list. Used by `given` to describe
+// inputs and by inline/return `@fit` to claim membership in the same small
+// set. This is the `cases` view of a domain — we do not widen it to a range
+// except as a secondary approximation for downstream linear math.
+export type FitUnion = {
+  valueKind: 'int' | 'number'
+  values: number[]
+  text: string
+}
+
 export type FitSpec =
   | {
       kind: 'given-range'
       expression: string
       range: FitRange
+      text: string
+      line?: number
+    }
+  | {
+      kind: 'given-union'
+      expression: string
+      union: FitUnion
       text: string
       line?: number
     }
@@ -45,6 +63,13 @@ export type FitSpec =
       kind: 'check-range'
       expression: string
       range: FitRange
+      text: string
+      line?: number
+    }
+  | {
+      kind: 'check-union'
+      expression: string
+      union: FitUnion
       text: string
       line?: number
     }
@@ -115,7 +140,7 @@ export function parseFunctionFitSpecs(
   ]
 }
 
-export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>[] {
+export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}>[] {
   const lines = inlineFitCommentLines(sourceText, param)
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
@@ -131,7 +156,7 @@ export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean 
   return inlineFitCommentLines(sourceText, node).length > 0
 }
 
-export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
+export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}>[] {
   const lines = inlineFitCommentLines(sourceText, statement)
   if (lines.length === 0) return []
   const declarations = statement.declarationList.declarations
@@ -142,7 +167,7 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
   return lines.map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
 }
 
-export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
+export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}>[] {
   return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
 }
 
@@ -221,11 +246,30 @@ function lineNumberAtPosition(sourceText: string, position: number) {
 const numberPattern = '-?\\d+(?:\\.\\d+)?'
 const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 
+function parseRangeBoundNumber(text: string): number | null {
+  if (text === 'Infinity') return Number.POSITIVE_INFINITY
+  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
+}
+
 export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
   if (givenRange != null) {
     const expression = normalizeFitText(givenRange[1]!.trim())
-    const range = parseRangeText(givenRange[2]!.trim())
+    const body = givenRange[2]!.trim()
+    const union = parseUnionText(body)
+    if (union != null) {
+      parseExpression(expression)
+      return {
+        kind: 'given-union',
+        expression,
+        union,
+        text: line,
+        ...(lineNumber == null ? {} : {line: lineNumber}),
+      }
+    }
+    const range = parseRangeText(body)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     parseExpression(expression)
     return {
@@ -256,7 +300,19 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const checkRange = /^(.+)\s*:\s*(.+)$/.exec(line)
   if (checkRange != null) {
     const expression = normalizeFitText(checkRange[1]!.trim())
-    const range = parseRangeText(checkRange[2]!.trim())
+    const body = checkRange[2]!.trim()
+    const union = parseUnionText(body)
+    if (union != null) {
+      parseExpression(expression)
+      return {
+        kind: 'check-union',
+        expression,
+        union,
+        text: line,
+        ...(lineNumber == null ? {} : {line: lineNumber}),
+      }
+    }
+    const range = parseRangeText(body)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     parseExpression(expression)
     return {
@@ -288,6 +344,63 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   if (checkAtom != null) return checkAtom
 
   throw new Error(`Unsupported @fit line: ${line}`)
+}
+
+// A union literal like `0 | 40 | 200 | 213` — a `|`-separated list of at least
+// two numeric literals. A single number is not a union; it's the range-shorthand
+// `2` meaning `2..2`. Returning null here falls through to `parseRangeText`.
+// The `int` prefix is not accepted because literal unions are already discrete;
+// the integer-ness comes from the literals themselves.
+export function parseUnionText(text: string): FitUnion | null {
+  if (!text.includes('|')) return null
+  const parts = splitUnionParts(text)
+  if (parts == null || parts.length < 2) return null
+  const values: number[] = []
+  for (const part of parts) {
+    const parsed = parseRangeBoundNumber(part)
+    if (parsed == null || !Number.isFinite(parsed)) return null
+    values.push(parsed)
+  }
+  const unique = [...new Set(values)].sort((a, b) => a - b)
+  return {
+    valueKind: unique.every(Number.isInteger) ? 'int' : 'number',
+    values: unique,
+    text,
+  }
+}
+
+function splitUnionParts(text: string): string[] | null {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  const parts: string[] = []
+  let start = 0
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (quote != null) {
+      if (char === '\\') i++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (char === '|' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && text[i + 1] !== '|' && text[i - 1] !== '|') {
+      parts.push(text.slice(start, i).trim())
+      start = i + 1
+    }
+  }
+  parts.push(text.slice(start).trim())
+  if (parts.some(part => part.length === 0)) return null
+  return parts
 }
 
 function parseRangeText(text: string): FitRange | null {
@@ -366,14 +479,14 @@ function splitRangeBounds(text: string): {lower: string; upper: string; upperInc
   return null
 }
 
-function parseInlineFitSpecLine(line: string, expression: string, kind?: 'check-range', lineNumber?: number): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
-function parseInlineFitSpecLine(line: string, expression: string, kind: 'given-range', lineNumber?: number): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
+function parseInlineFitSpecLine(line: string, expression: string, kind?: 'check-range', lineNumber?: number): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}>
+function parseInlineFitSpecLine(line: string, expression: string, kind: 'given-range', lineNumber?: number): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}>
 function parseInlineFitSpecLine(
   line: string,
   expression: string,
   kind: 'check-range' | 'given-range' = 'check-range',
   lineNumber?: number,
-): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}> | Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}> {
+): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-union'} | {kind: 'check-comparison'}> | Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-union'} | {kind: 'given-comparison'}> {
   const body = line.slice('@fit'.length).trim()
   const normalizedExpression = normalizeFitText(expression)
   const publicExpression = publicFitText(expression)
@@ -401,12 +514,32 @@ function parseInlineFitSpecLine(
       ...(lineNumber == null ? {} : {line: lineNumber}),
     }
   }
+  const union = parseUnionText(body)
+  if (union != null) {
+    parseExpression(normalizedExpression)
+    if (kind === 'given-range') {
+      return {
+        kind: 'given-union',
+        expression: normalizedExpression,
+        union,
+        text: `given ${publicExpression}: ${publicFitText(body)}`,
+        ...(lineNumber == null ? {} : {line: lineNumber}),
+      }
+    }
+    return {
+      kind: 'check-union',
+      expression: normalizedExpression,
+      union,
+      text: `${publicExpression}: ${publicFitText(body)}`,
+      ...(lineNumber == null ? {} : {line: lineNumber}),
+    }
+  }
   const range = parseRangeText(body)
   if (range == null) throw new Error(`Unsupported inline @fit range: ${line}`)
   parseExpression(normalizedExpression)
   if (kind === 'given-range') {
     return {
-      kind,
+      kind: 'given-range',
       expression: normalizedExpression,
       range,
       text: `given ${publicExpression}: ${publicFitText(body)}`,
@@ -414,7 +547,7 @@ function parseInlineFitSpecLine(
     }
   }
   return {
-    kind,
+    kind: 'check-range',
     expression: normalizedExpression,
     range,
     text: `${publicExpression}: ${publicFitText(body)}`,
@@ -430,13 +563,6 @@ function isRangeBoundText(text: string) {
   } catch {
     return false
   }
-}
-
-function parseRangeBoundNumber(text: string): number | null {
-  if (text === 'Infinity') return Number.POSITIVE_INFINITY
-  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
-  const value = Number(text)
-  return Number.isFinite(value) ? value : null
 }
 
 function parseCheckAtom(line: string, lineNumber?: number): Extract<FitSpec, {kind: 'check-atom'}> | null {
