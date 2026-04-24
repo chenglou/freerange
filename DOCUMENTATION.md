@@ -10,7 +10,7 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 @fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
 given this.width: 0..1000 // trusted input fact for an instance method/getter.
-result.width: 0..320 // check fact. Freerange must prove this from source.
+return.width: 0..320 // check fact. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.
 a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
@@ -22,8 +22,8 @@ width: number, // @fit >= min // param shorthand for `given width >= min`.
 items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
-result // the returned value of a function-level spec.
-loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `result`.
+return // the returned value of a function-level spec.
+loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `return`.
 source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
 trusted // accepted from a `given` line.
 unknown // not proven. This is not a soft pass.
@@ -91,8 +91,8 @@ Put `@fit` immediately above a named function, named `const` arrow/function expr
 
 ```ts
 /** @fit
- * result.capped: 0..320
- * result.overflow >= 0
+ * return.capped: 0..320
+ * return.overflow >= 0
  */
 function cappedOverflow(
   width: number, // @fit 0..1000
@@ -107,7 +107,7 @@ Param `// @fit` comments are trusted input facts, exactly as if they were lifted
 ```ts
 /** @fit
  * given min <= max
- * result: 0..100
+ * return: 0..100
  */
 function clampToUiRange(
   value: number, // @fit 0..100
@@ -141,7 +141,7 @@ Function-level `given` lines are still the right place for object paths, array p
 
 `given` lines and param inline facts describe inputs your function expects. They do not ask Freerange to audit the function body by themselves.
 
-Bare lines and `result` lines are claims Freerange must prove from the source.
+Bare lines and `return` lines are claims Freerange must prove from the source.
 
 Unsupported annotation lines are errors. Unsupported source code becomes `unknown`.
 
@@ -157,7 +157,7 @@ class Rect {
   /** @fit
    * given this.top: 0..1000
    * given this.height: 0..1000
-   * result == this.top + this.height
+   * return == this.top + this.height
    */
   get bottom() {
     return this.top + this.height
@@ -172,10 +172,10 @@ Same-file calls like `rect.bottom` and `rect.area()` use the checked class-membe
 Freerange starts from claims, not from the whole file.
 
 - `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites and become assumptions inside the function, but they do not trigger body proof on their own.
-- `result...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
+- `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
-- Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `result` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved. If an earlier unclaimed local stores a helper result, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
+- Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
+- Helper preconditions are reported when the helper call is inside the value being proved. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
 
 Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
 
@@ -197,7 +197,7 @@ And this asks for proof:
 
 ```ts
 /** @fit
- * result: 0..100
+ * return: 0..100
  */
 function helper(
   width: number, // @fit 320..2000
@@ -251,14 +251,14 @@ return focused > 0
   }
 ```
 
-Function-level `result` facts still mean every return after the branches are joined.
+Function-level `return` facts still mean every return after the branches are joined.
 
 Simple side-effecting branches can fall through too. Freerange joins the two local environments after the `if`:
 
 ```ts
 /** @fit
  * given width: 0..100
- * result: 0..100
+ * return: 0..100
  */
 function pickWidth(width: number) {
   let chosen = 0
@@ -288,7 +288,7 @@ known:
   trusted from function @fit: given width: 0..1000
   read from code: rows[].index >= 0
   branch fact from code: width - 320 <= 0
-  source-proved imported contract: layout-math.ts#clampWidth: result: 0..320
+  source-proved imported contract: layout-math.ts#clampWidth: return: 0..320
 ```
 
 That distinction matters. Facts from `given` are promises. Facts from code, branch splits, and imported contracts are earned from source.
@@ -302,14 +302,14 @@ Use `given` for the input domain:
  * given containee: 0..1000
  * given container: 0..1000
  * given container >= containee
- * result >= 0
+ * return >= 0
  */
 function centeredOffset(containee: number, container: number) {
   return (container - containee) / 2
 }
 ```
 
-Top-level `given` can name function parameters and top-level numeric constants, including named imported numeric constants from local source. It cannot name `result`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
+Top-level `given` can name function parameters and top-level numeric constants, including named imported numeric constants from local source. It cannot name `return`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
 
 Range `given` lines name one input path:
 
@@ -371,8 +371,8 @@ Loop-level `given` works the same way, but is trusted from that point in the fun
 /** @fit
  * given width: 0..1000
  * given items.length: int 0..100
- * result.x: 10..20
- * result.index: int 0..9
+ * return.x: 10..20
+ * return.index: int 0..9
  */
 ```
 
@@ -387,7 +387,7 @@ Lower-exclusive and open-ended range spellings are not part of the language righ
 
 ```ts
 given scale > 0
-result > 0
+return > 0
 ```
 
 Bounds can be numeric literals, `Infinity`, or the same simple input arithmetic accepted by `given` comparisons.
@@ -398,7 +398,7 @@ Ranges can describe object fields and array items:
 /** @fit
  * given item.height: 0..40
  * given items[].height: 0..40
- * result.rows[].height: 0..40
+ * return.rows[].height: 0..40
  */
 ```
 
@@ -410,7 +410,7 @@ Nested array paths are fine when one collection is being discussed:
 /** @fit
  * given sections[].rows[].height: 0..40
  * given maxHeight: 40..100
- * result.sections[].rows[].height <= maxHeight
+ * return.sections[].rows[].height <= maxHeight
  */
 ```
 
@@ -428,7 +428,7 @@ collection must satisfy the relation:
 
 ```ts
 /** @fit
- * result.rows[].bottom == result.rows[].top + result.rows[].height
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
  */
 ```
 
@@ -440,8 +440,8 @@ When you really mean same index, use a bound index label:
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[$i].height == items[$i].height
+ * return.rows.length == items.length
+ * return.rows[$i].height == items[$i].height
  */
 function sameIndexRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -460,7 +460,7 @@ checks from an inferred `nondecreasing` row fact:
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows[$i].top <= result.rows[$i + 1].top
+ * return.rows[$i].top <= return.rows[$i + 1].top
  */
 function monotoneRows(items: {height: number}[]) {
   const rows = []
@@ -481,7 +481,7 @@ one:
  * given items.length: int 0..50
  * given items[].height: 0..40
  * given gap: 0..10
- * result.rows[$i + 1].top >= result.rows[$i].bottom + gap
+ * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
  */
 function spacedRows(items: {height: number}[], gap: number) {
   const rows = []
@@ -511,8 +511,8 @@ escape hatch for specific red lines that do not deserve a public atom.
 /** @fit
  * given container >= content
  * given index < items.length
- * result.left == (container - content) / 2
- * result.right > result.left
+ * return.left == (container - content) / 2
+ * return.right > return.left
  */
 ```
 
@@ -526,7 +526,7 @@ Most comparisons are numeric. One non-numeric equality is supported because it f
 
 ```ts
 /** @fit
- * result.rows == input.rows
+ * return.rows == input.rows
  */
 function carryRows(input: {rows: {height: number}[]}) {
   return {rows: input.rows}
@@ -543,7 +543,7 @@ The checker carries small linear facts from ranges and comparisons:
  * given padding: 0..100
  * given width: 0..1200
  * given width >= content + padding
- * result >= 0
+ * return >= 0
  */
 function remaining(width: number, content: number) {
   return width - content
@@ -592,7 +592,7 @@ index % count < count
 ```ts
 /** @fit
  * given width: 0..1000
- * result.overflow >= 0
+ * return.overflow >= 0
  */
 function overflow(width: number) {
   const capped = Math.min(width, 320)
@@ -609,7 +609,7 @@ When a checked helper is called, its input facts become things the caller must p
 ```ts
 /** @fit
  * given value: 4..14
- * result: 5..15
+ * return: 5..15
  */
 function addOne(value: number) {
   return value + 1
@@ -617,16 +617,16 @@ function addOne(value: number) {
 
 /** @fit
  * given width: 0..10
- * result: 5..15
+ * return: 5..15
  */
 function caller(width: number) {
   return addOne(width + 4)
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, result facts like `result >= min` and `result <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
 
-Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `result.length == 4`, `result[2] >= 0`, and `result[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
+Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `return.length == 4`, `return[2] >= 0`, and `return[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
 Imported helpers use their exported `@fit` contract as the module boundary:
 
@@ -634,7 +634,7 @@ Imported helpers use their exported `@fit` contract as the module boundary:
 // layout-math.ts
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function clampWidth(width: number) {
   return Math.min(width, 320)
@@ -645,7 +645,7 @@ import {clampWidth} from './layout-math'
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 function cardWidth(width: number) {
   return clampWidth(width)
@@ -654,7 +654,7 @@ function cardWidth(width: number) {
 
 Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
 
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `result.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its result can satisfy `result.width: 0..320` or `result.height >= 0`.
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
 Optional and nullable properties stay conservative:
 
@@ -664,7 +664,7 @@ type MaybeRows = {
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 function maybeRows(input: MaybeRows) {
   return {rows: input.rows}
@@ -682,7 +682,7 @@ reason: resolved to layout-math.ts#clampWidth, but that function has no @fit con
 
 imported helper contract failed in source before this call could trust it
 helper: clampWidth from ./layout-math
-failed check: layout-math.ts:clampWidth: result: 0..320
+failed check: layout-math.ts:clampWidth: return: 0..320
 ```
 
 Explicit named re-export barrels work too:
@@ -704,7 +704,7 @@ Freerange understands the common array facts that layout code tends to need:
  * given items[].height: 0..40
  * given index: int 0..49
  * given index < items.length
- * result: 0..40
+ * return: 0..40
  */
 function indexedPerItemField(items: {height: number}[], index: number) {
   return items[index]!.height
@@ -717,7 +717,7 @@ Supported today:
 - `items[]: 0..400`
 - `items[].height: 0..40`
 - array literal length and item values
-- finite array/tuple element access like `result[2] >= 0`
+- finite array/tuple element access like `return[2] >= 0`
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
 - bounded literal indexing
@@ -743,8 +743,8 @@ if (focused > 0) return items[focused - 1]!
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
  */
 function mapRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -760,8 +760,8 @@ The callback must have an item parameter and optional index parameter. Expressio
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
  */
 function visibleRows(items: {height: number; visible: boolean}[]) {
   const rows = items.filter(item => item.visible)
@@ -781,7 +781,7 @@ Freerange supports narrow accumulator shapes:
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result: 0..2000
+ * return: 0..2000
  */
 function totalHeight(items: {height: number}[]) {
   let total = 0
@@ -798,7 +798,7 @@ Guarded totals and counts work too:
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result: 0..2000
+ * return: 0..2000
  */
 function visibleHeight(items: {height: number; visible: boolean}[]) {
   let total = 0
@@ -815,7 +815,7 @@ Simple min/max accumulators work when the assignment keeps the same target on on
 /** @fit
  * given items.length: int 0..50
  * given items[].width: 0..80
- * result: 0..80
+ * return: 0..80
  */
 function widest(items: {width: number}[]) {
   let maxWidth = 0
@@ -846,11 +846,11 @@ This is the main layout shape today:
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length == items.length
- * result.rows[].height: 0..40
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
- * extentEnd(result.rows, top) == result.bottom
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
+ * extentEnd(return.rows, top) == return.bottom
  */
 function stackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -883,8 +883,8 @@ The indexed loop shape is also supported:
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].rowIndex: int 0..<items.length
+ * return.rows.length == items.length
+ * return.rows[].rowIndex: int 0..<items.length
  */
 function indexedRows(items: {height: number}[]) {
   const rows = []
@@ -902,9 +902,9 @@ The loop-index field does not have to be named `index`; Freerange follows the ac
  * given params.items.length: int 1..50
  * given params.items[].height: 0..40
  * given params.top: 0..1000
- * result.rows.length == params.items.length
- * nondecreasing(result.rows.top)
- * lastEnd(result.rows) == result.bottom
+ * return.rows.length == params.items.length
+ * nondecreasing(return.rows.top)
+ * lastEnd(return.rows) == return.bottom
  */
 function indexedStackRows(params: {items: {height: number}[]; top: number}) {
   const rows = []
@@ -924,8 +924,8 @@ Conditional push gets a weaker, honest fact:
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
  */
 function visibleRows(items: {height: number; visible: boolean}[]) {
   const rows = []
@@ -950,11 +950,11 @@ per-row max:
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
- * result.rows[].bottom == result.rows[].top + result.rows[].height
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
  */
 function segmentedRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -1002,7 +1002,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-The marker is still `@fit`. Placement decides the scope. Loop specs name locals directly; there is no `result` inside a loop spec.
+The marker is still `@fit`. Placement decides the scope. Loop specs name locals directly; there is no `return` inside a loop spec.
 
 Loop `given` lines can describe function inputs. They cannot describe loop-built values like `rows` or mutable cursors like `y`.
 

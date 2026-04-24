@@ -13,7 +13,7 @@ import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function negativeImportedHelperNeedsFit(width: number) {
   return unannotatedImportedClamp(width)
@@ -21,7 +21,7 @@ export function negativeImportedHelperNeedsFit(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function negativeImportedHelperUnresolved(width: number) {
   return missingImportedClamp(width)
@@ -29,7 +29,7 @@ export function negativeImportedHelperUnresolved(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function negativeImportedHelperReExportNeedsFit(width: number) {
   return barrelUnannotatedClamp(width)
@@ -37,7 +37,7 @@ export function negativeImportedHelperReExportNeedsFit(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function negativeImportedHelperDefaultImportUnsupported(width: number) {
   return defaultImportedClamp(width)
@@ -45,7 +45,7 @@ export function negativeImportedHelperDefaultImportUnsupported(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..100
+ * return: 0..100
  */
 export function negativeImportedHelperSourceContractFails(width: number) {
   return importedClampWithBadContract(width)
@@ -53,7 +53,7 @@ export function negativeImportedHelperSourceContractFails(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..100
+ * return: 0..100
  */
 export function negativeImportedHelperContractTooWide(width: number) {
   return importedClampWidth(width)
@@ -61,7 +61,7 @@ export function negativeImportedHelperContractTooWide(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..100
+ * return: 0..100
  */
 export function negativeImportedHelperReExportContractTooWide(width: number) {
   return barrelClampWidth(width)
@@ -69,21 +69,21 @@ export function negativeImportedHelperReExportContractTooWide(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result == width + importedChromeX + 1
+ * return == width + importedChromeX + 1
  */
 export function negativeImportedNumericConstantMismatch(width: number) {
   return width + importedChromeX
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function negativeOptionalImportedShape(input: ImportedOptionalRows) {
   return {rows: input.rows}
 }
 
 /** @fit
- * result[4] >= 0
+ * return[4] >= 0
  */
 export function negativeImportedTupleSummaryDoesNotApplyToEverySlot(value: number) {
   const [, , offsetX, offsetY] = importedTupleWithOneOffset(value)

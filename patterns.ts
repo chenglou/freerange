@@ -13,7 +13,7 @@ const patternGap = 4
 
 /** @fit
  * given width: int 320..1600
- * result: int 320..1600
+ * return: int 320..1600
  */
 export function constantBoundedInput(width: number) {
   return width
@@ -21,7 +21,7 @@ export function constantBoundedInput(width: number) {
 
 /** @fit
  * given value: int 0..10
- * result: int 5..15
+ * return: int 5..15
  */
 export function outputRangeFact(value: number) {
   const shifted = value + 5
@@ -30,8 +30,8 @@ export function outputRangeFact(value: number) {
 
 /** @fit
  * given min <= max
- * result >= min
- * result <= max
+ * return >= min
+ * return <= max
  */
 export const arrowFunctionContract = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
 
@@ -80,7 +80,7 @@ export function inlineObjectFieldRangeFacts() {
 }
 
 /** @fit
- * result: 5..15
+ * return: 5..15
  */
 export function inlineParamRangeFact(
   value: number, // @fit 0..10
@@ -90,7 +90,7 @@ export function inlineParamRangeFact(
 
 /** @fit
  * given min <= max
- * result: 0..100
+ * return: 0..100
  */
 export function inlineParamFactsMixWithFunctionFacts(
   value: number, // @fit 0..100
@@ -114,8 +114,8 @@ function helperWithNarrowInput(
 
 /** @fit
  * given value: 0..5
- * result.high > result.low
- * result.low < result.high
+ * return.high > return.low
+ * return.low < return.high
  */
 export function scalarComparisons(value: number) {
   const low = value
@@ -125,8 +125,8 @@ export function scalarComparisons(value: number) {
 
 /** @fit
  * given value: int 0..5
- * result.square: int 0..25
- * result.half: 0..2.5
+ * return.square: int 0..25
+ * return.half: 0..2.5
  */
 export function straightLineArithmetic(value: number) {
   const square = value ** 2
@@ -136,7 +136,7 @@ export function straightLineArithmetic(value: number) {
 
 /** @fit
  * given value: 10..20
- * result.width: 14..24
+ * return.width: 14..24
  */
 export function objectReturnPropertyAccess(value: number) {
   const width = value + patternGap
@@ -150,7 +150,7 @@ function addPatternGap(value: number) {
 
 /** @fit
  * given value: 0..10
- * result: 4..14
+ * return: 4..14
  */
 export function sameFilePureHelperCall(value: number) {
   return addPatternGap(value)
@@ -158,7 +158,7 @@ export function sameFilePureHelperCall(value: number) {
 
 /** @fit
  * given value: int 0..10
- * result: int 3..7
+ * return: int 3..7
  */
 export function ternaryBranchJoin(value: number) {
   return value > 5 ? 7 : 3
@@ -166,20 +166,20 @@ export function ternaryBranchJoin(value: number) {
 
 /** @fit
  * given value: 2..8
- * result.floorValue: int 1..4
- * result.ceilValue: int 1..4
- * result.floorValue <= value / 2
- * value / 2 >= result.floorValue
- * result.ceilValue >= value / 2
- * value / 2 <= result.ceilValue
- * result.roundValue: int 1..4
- * result.truncValue: int 1..4
- * result.sqrtValue: 1..3
- * result.absValue: 0..3
- * result.minValue: 2..4
- * result.minValue <= 4
- * result.maxValue: 4..8
- * result.maxValue >= 4
+ * return.floorValue: int 1..4
+ * return.ceilValue: int 1..4
+ * return.floorValue <= value / 2
+ * value / 2 >= return.floorValue
+ * return.ceilValue >= value / 2
+ * value / 2 <= return.ceilValue
+ * return.roundValue: int 1..4
+ * return.truncValue: int 1..4
+ * return.sqrtValue: 1..3
+ * return.absValue: 0..3
+ * return.minValue: 2..4
+ * return.minValue <= 4
+ * return.maxValue: 4..8
+ * return.maxValue >= 4
  */
 export function mathSubset(value: number) {
   const half = value / 2
@@ -200,10 +200,10 @@ export function mathSubset(value: number) {
  * given width: 0..1000
  * given scale: 0..10
  * given floor: 0..1000
- * result.fitted <= width * scale
- * result.fitted <= 400
- * result.raised >= floor
- * result.raised >= width * scale
+ * return.fitted <= width * scale
+ * return.fitted <= 400
+ * return.raised >= floor
+ * return.raised >= width * scale
  */
 export function mathChoiceCarriesBranchFacts(width: number, scale: number, floor: number) {
   const scaled = width * scale
@@ -216,7 +216,7 @@ export function mathChoiceCarriesBranchFacts(width: number, scale: number, floor
 /** @fit
  * given total: int 0..6000
  * given count: int 1..200
- * result >= total
+ * return >= total
  */
 export function ceilDivisionCoversTotal(total: number, count: number) {
   return Math.ceil(total / count) * count
@@ -227,8 +227,8 @@ export function ceilDivisionCoversTotal(total: number, count: number) {
  * given cellSize: int 1..1000
  * given count: int 1..1000
  * given pointer < count * cellSize
- * result >= 0
- * result < count
+ * return >= 0
+ * return < count
  */
 export function floorHitIndexInsideCount(pointer: number, cellSize: number, count: number) {
   const maxPointer = count * cellSize
@@ -243,8 +243,8 @@ export function floorHitIndexInsideCount(pointer: number, cellSize: number, coun
  * given _countY: int 1..Infinity
  * given px < countX * blockSize
  * given py < _countY * blockSize
- * result >= 0
- * result < countX * _countY
+ * return >= 0
+ * return < countX * _countY
  */
 export function flattenedGridHitIndex(px: number, py: number, blockSize: number, countX: number, _countY: number) {
   return Math.floor(py / blockSize) * countX + Math.floor(px / blockSize)
@@ -253,8 +253,8 @@ export function flattenedGridHitIndex(px: number, py: number, blockSize: number,
 /** @fit
  * given items.length: int 1..50
  * given index: int 0..<items.length
- * result >= 0
- * result < items.length
+ * return >= 0
+ * return < items.length
  */
 export function halfOpenIndexGiven(items: number[], index: number) {
   const length = items.length
@@ -263,7 +263,7 @@ export function halfOpenIndexGiven(items: number[], index: number) {
 
 /** @fit
  * given scale > 0
- * result > 0
+ * return > 0
  */
 export function positiveComparisonGiven(scale: number) {
   return scale
@@ -274,8 +274,8 @@ export function positiveComparisonGiven(scale: number) {
  * given available: 0..1000
  * given scale: 0..8
  * given content <= available
- * result.scaled <= result.limit
- * result.swapped <= result.limit
+ * return.scaled <= return.limit
+ * return.swapped <= return.limit
  */
 export function positiveScaleKeepsOrder(content: number, available: number, scale: number) {
   return {
@@ -288,8 +288,8 @@ export function positiveScaleKeepsOrder(content: number, available: number, scal
 /** @fit
  * given width >= 100
  * given width <= 200
- * result >= 100
- * result <= 200
+ * return >= 100
+ * return <= 200
  */
 export function comparisonOnlyGivenBounds(width: number) {
   return width
@@ -300,7 +300,7 @@ export function comparisonOnlyGivenBounds(width: number) {
  * given available: 0..1000
  * given columns: int 1..12
  * given content <= available
- * result.cell <= result.maxCell
+ * return.cell <= return.maxCell
  */
 export function positiveDivisionKeepsOrder(content: number, available: number, columns: number) {
   return {
@@ -312,8 +312,8 @@ export function positiveDivisionKeepsOrder(content: number, available: number, c
 /** @fit
  * given index: int 0..10000
  * given count: int 1..1000
- * result: int 0..999
- * result < count
+ * return: int 0..999
+ * return < count
  */
 export function moduloWrapsInsideCount(index: number, count: number) {
   return index % count
@@ -322,7 +322,7 @@ export function moduloWrapsInsideCount(index: number, count: number) {
 /** @fit
  * given width: 0..1000
  * given minWidth: 0..1000
- * result >= minWidth
+ * return >= minWidth
  */
 export function guardReturnKeepsMinimum(width: number, minWidth: number) {
   if (width < minWidth) return minWidth
@@ -331,7 +331,7 @@ export function guardReturnKeepsMinimum(width: number, minWidth: number) {
 
 /** @fit
  * given width: 0..100
- * result: 0..100
+ * return: 0..100
  */
 export function branchAssignmentFallsThrough(width: number) {
   let chosen = 0
@@ -349,7 +349,7 @@ export function mathSignRange(
 
 /** @fit
  * given value: 0..10000
- * result: 0..100
+ * return: 0..100
  */
 export function signedSqrtNonnegative(value: number) {
   return Math.sign(value) * Math.sqrt(Math.abs(value))
@@ -357,8 +357,8 @@ export function signedSqrtNonnegative(value: number) {
 
 /** @fit
  * given limit: int 0..1000
- * result.length == limit
- * result[]: int 0..<limit
+ * return.length == limit
+ * return[]: int 0..<limit
  */
 export function numericLimitRangeLoop(limit: number) {
   const values = []
@@ -373,10 +373,10 @@ export function numericLimitRangeLoop(limit: number) {
  * given top: 0..1000
  * given step: 0..40
  * given gap: 0..10
- * result.rows.length == items.length
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
- * lastEnd(result.rows) == result.bottom
+ * return.rows.length == items.length
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
+ * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoop(items: number[], top: number, step: number, gap: number) {
   const rows = []
@@ -391,8 +391,8 @@ export function runningSumLoop(items: number[], top: number, step: number, gap: 
 /** @fit
  * given item.height: 0..40
  * given item.top: 0..1000
- * result.bottom >= item.top
- * result.height: 0..40
+ * return.bottom >= item.top
+ * return.height: 0..40
  */
 export function objectFieldDomain(item: {top: number; height: number}) {
   return {height: item.height, bottom: item.top + item.height}
@@ -401,8 +401,8 @@ export function objectFieldDomain(item: {top: number; height: number}) {
 /** @fit
  * given base.x: 0..100
  * given y: 0..100
- * result.x: 0..100
- * result.y: 0..100
+ * return.x: 0..100
+ * return.y: 0..100
  */
 export function objectSpreadKeepsFields(base: {x: number}, y: number) {
   return {
@@ -412,7 +412,7 @@ export function objectSpreadKeepsFields(base: {x: number}, y: number) {
 }
 
 /** @fit
- * result.rows == input.rows
+ * return.rows == input.rows
  */
 export function arrayIdentityEquality(input: {rows: {height: number}[]}) {
   return {rows: input.rows}
@@ -425,7 +425,7 @@ export function arrayIdentityEquality(input: {rows: {height: number}[]}) {
  * given parent.w: 0..2000
  * given child.x >= parent.x
  * given child.x + child.w <= parent.x + parent.w
- * result.right <= parent.x + parent.w
+ * return.right <= parent.x + parent.w
  */
 export function rectInsideAsFieldMath(child: {x: number; w: number}, parent: {x: number; w: number}) {
   return {right: child.x + child.w, parentRight: parent.x + parent.w}
@@ -436,7 +436,7 @@ export function rectInsideAsFieldMath(child: {x: number; w: number}, parent: {x:
  * given items[].height: 0..40
  * given index: int 0..49
  * given index < items.length
- * result: 0..40
+ * return: 0..40
  */
 export function indexedPerItemField(items: {height: number}[], index: number) {
   return items[index]!.height
@@ -447,12 +447,12 @@ export function indexedPerItemField(items: {height: number}[], index: number) {
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length == items.length
- * result.rows[].height: 0..40
- * result.bottom >= top
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
- * lastEnd(result.rows) == result.bottom
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * return.bottom >= top
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
+ * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoopPerItemHeight(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -469,12 +469,12 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
- * result.rows[].bottom == result.rows[].top + result.rows[].height
- * result.rows[$i + 1].top >= result.rows[$i].bottom + gap
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
  */
 export function segmentedStackRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -498,8 +498,8 @@ export function segmentedStackRows(items: {height: number}[], top: number, gap: 
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result: 0..2000
- * result >= 0
+ * return: 0..2000
+ * return >= 0
  */
 export function runningTotalPerItemHeight(items: {height: number}[]) {
   let total = 0
@@ -513,8 +513,8 @@ export function runningTotalPerItemHeight(items: {height: number}[]) {
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: 0..40
- * result.length == items.length
- * result[]: 0..3000
+ * return.length == items.length
+ * return[]: 0..3000
  */
 export function scalarPushLoop(items: number[], top: number, step: number) {
   const rows = []
@@ -529,8 +529,8 @@ export function scalarPushLoop(items: number[], top: number, step: number) {
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result: 0..2000
- * result >= 0
+ * return: 0..2000
+ * return >= 0
  */
 export function conditionalRunningTotalPerItemHeight(items: {height: number; visible: boolean}[]) {
   let total = 0
@@ -542,8 +542,8 @@ export function conditionalRunningTotalPerItemHeight(items: {height: number; vis
 
 /** @fit
  * given items.length: int 0..50
- * result: int 0..50
- * result <= items.length
+ * return: int 0..50
+ * return <= items.length
  */
 export function conditionalRunningCount(items: {visible: boolean}[]) {
   let count = 0
@@ -556,7 +556,7 @@ export function conditionalRunningCount(items: {visible: boolean}[]) {
 /** @fit
  * given items.length: int 0..50
  * given items[].width: 0..80
- * result: 0..80
+ * return: 0..80
  */
 export function runningMaxPerItemWidth(items: {width: number}[]) {
   let maxWidth = 0
@@ -570,7 +570,7 @@ export function runningMaxPerItemWidth(items: {width: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].width: 20..80
- * result: 20..80
+ * return: 20..80
  */
 export function runningMinPerItemWidth(items: {width: number}[]) {
   let minWidth = 100
@@ -583,7 +583,7 @@ export function runningMinPerItemWidth(items: {width: number}[]) {
 /** @fit
  * given items.length: int 0..50
  * given items[].width: 0..80
- * result: 0..80
+ * return: 0..80
  */
 export function indexedRunningMaxPerItemWidth(items: {width: number}[]) {
   let maxWidth = 0
@@ -605,7 +605,7 @@ declare const structuralShapeApi: {
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function typedArrayParamShape(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -613,7 +613,7 @@ export function typedArrayParamShape(items: {height: number}[]) {
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function typedObjectParamArrayShape(params: TypedShapeParams) {
   const rows = params.items.map(item => ({height: item.height}))
@@ -621,15 +621,15 @@ export function typedObjectParamArrayShape(params: TypedShapeParams) {
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function propertyAccessCallShape(items: {height: number}[]) {
   return structuralShapeApi.wrapRows(items)
 }
 
 /** @fit
- * result.rows.length == items.length
- * result.rows[].cells.length >= 0
+ * return.rows.length == items.length
+ * return.rows[].cells.length >= 0
  */
 export function mapCallbackReturnShape(items: {height: number}[]) {
   const rows = items.map(item => structuralShapeApi.row(item))
@@ -638,7 +638,7 @@ export function mapCallbackReturnShape(items: {height: number}[]) {
 
 /** @fit
  * given items.length: int 0..50
- * result <= items.length
+ * return <= items.length
  */
 export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) {
   let count = 0
@@ -652,8 +652,8 @@ export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) 
  * given items.length: int 1..50
  * given top: 0..1000
  * given gap: 0..10
- * result.bottom >= top
- * result.rows.length == items.length
+ * return.bottom >= top
+ * return.rows.length == items.length
  */
 export function localLoopAnnotation(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -674,8 +674,8 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
 }
 
 /** @fit
- * result >= y
- * result: 0..Infinity
+ * return >= y
+ * return: 0..Infinity
  */
 export function oneSidedInfinityAdd(
   y: number, // @fit 0..Infinity
@@ -689,11 +689,11 @@ export function oneSidedInfinityAdd(
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
- * result.rows[].bottom == result.rows[].top + result.rows[].height
- * nondecreasing(result.rows.top)
- * spaced(result.rows, gap)
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
  */
 export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -755,9 +755,9 @@ export function inlineComparisonPrefixVariants(
  * given items[].height: 0..40
  * given top: 0..1000
  * given gap: 0..10
- * result.rows.length == items.length
- * result.rows[].height: 0..40
- * extentEnd(result.rows, top) == result.bottom
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * extentEnd(return.rows, top) == return.bottom
  */
 export function extentEndHandlesEmptyRows(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -773,8 +773,8 @@ export function extentEndHandlesEmptyRows(items: {height: number}[], top: number
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
  */
 export function mapRowsKeepsLengthAndFields(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -784,10 +784,10 @@ export function mapRowsKeepsLengthAndFields(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..100
- * result.rows.length == items.length
- * result.rows[].index: int 0..49
- * result.rows[].index < items.length
- * result.rows[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[].index: int 0..49
+ * return.rows[].index < items.length
+ * return.rows[].height: 0..40
  */
 export function mapRowsKeepsIndexAndClampedFields(items: {height: number}[]) {
   const rows = items.map((item, index) => ({
@@ -800,10 +800,10 @@ export function mapRowsKeepsIndexAndClampedFields(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].height: 0..40
- * result.rows[].index: int 0..49
- * result.rows[].index < items.length
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * return.rows[].index: int 0..49
+ * return.rows[].index < items.length
  */
 export function mapBlockRowsWithDestructure(items: {height: number}[]) {
   const rows = items.map((item, index) => {
@@ -816,10 +816,10 @@ export function mapBlockRowsWithDestructure(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].height: 0..40
- * result.rows[].index: int 0..49
- * result.rows[].index < items.length
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * return.rows[].index: int 0..49
+ * return.rows[].index < items.length
  */
 export function indexedLoopRows(items: {height: number}[]) {
   const rows = []
@@ -832,9 +832,9 @@ export function indexedLoopRows(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..Infinity
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].rowIndex: int 0..<items.length
- * result.rows[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[].rowIndex: int 0..<items.length
+ * return.rows[].height: 0..40
  */
 export function indexedLoopNamedIndexField(items: {height: number}[]) {
   const rows = []
@@ -849,13 +849,13 @@ export function indexedLoopNamedIndexField(items: {height: number}[]) {
  * given params.items.length: int 1..50
  * given params.items[].height: 0..40
  * given params.top: 0..1000
- * result.rows.length == params.items.length
- * result.rows[].index: int 0..49
- * result.rows[].index < params.items.length
- * result.rows[].height: 0..40
- * result.bottom >= params.top
- * nondecreasing(result.rows.top)
- * lastEnd(result.rows) == result.bottom
+ * return.rows.length == params.items.length
+ * return.rows[].index: int 0..49
+ * return.rows[].index < params.items.length
+ * return.rows[].height: 0..40
+ * return.bottom >= params.top
+ * nondecreasing(return.rows.top)
+ * lastEnd(return.rows) == return.bottom
  */
 export function indexedLoopAliasRows(params: {items: {height: number}[]; top: number}) {
   const rows = []
@@ -871,8 +871,8 @@ export function indexedLoopAliasRows(params: {items: {height: number}[]; top: nu
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
  */
 export function conditionalPushRows(items: {height: number; visible: boolean}[]) {
   const rows = []
@@ -885,8 +885,8 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
  */
 export function indexedConditionalPushRows(items: {height: number; visible: boolean}[]) {
   const rows = []
@@ -900,8 +900,8 @@ export function indexedConditionalPushRows(items: {height: number; visible: bool
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * result.rows.length <= items.length
- * result.rows[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
  */
 export function filteredRowsKeepElementDomain(items: {height: number; visible: boolean}[]) {
   const rows = items.filter(item => item.visible)
@@ -911,7 +911,7 @@ export function filteredRowsKeepElementDomain(items: {height: number; visible: b
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows[].height: 0..40
+ * return.rows[].height: 0..40
  */
 export function forOfConditionalPushWithSafeReset(items: {height: number; endsRow: boolean}[]) {
   const rows = []
@@ -932,8 +932,8 @@ export function forOfConditionalPushWithSafeReset(items: {height: number; endsRo
  * given top: 0..1000
  * given gap: 0..10
  * given parent.bottom: 4000..5000
- * result.rows[].top <= parent.bottom
- * result.rows[].top + result.rows[].height <= parent.bottom
+ * return.rows[].top <= parent.bottom
+ * return.rows[].top + return.rows[].height <= parent.bottom
  */
 export function wildcardRowsFitParent(items: {height: number}[], top: number, gap: number, parent: {bottom: number}) {
   const rows = []
@@ -948,8 +948,8 @@ export function wildcardRowsFitParent(items: {height: number}[], top: number, ga
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[$i].height == items[$i].height
+ * return.rows.length == items.length
+ * return.rows[$i].height == items[$i].height
  */
 export function sameIndexRowsKeepItemHeight(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -959,7 +959,7 @@ export function sameIndexRowsKeepItemHeight(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows[$i].top <= result.rows[$i + 1].top
+ * return.rows[$i].top <= return.rows[$i + 1].top
  */
 export function adjacentBoundIndexRowsAreNondecreasing(items: {height: number}[]) {
   const rows = []
@@ -974,8 +974,8 @@ export function adjacentBoundIndexRowsAreNondecreasing(items: {height: number}[]
 /** @fit
  * given sections[].rows[].height: 0..40
  * given maxHeight: 40..100
- * result.sections[].rows[].height: 0..40
- * result.sections[].rows[].height <= maxHeight
+ * return.sections[].rows[].height: 0..40
+ * return.sections[].rows[].height <= maxHeight
  */
 export function nestedWildcardRows(sections: {rows: {height: number}[]}[], maxHeight: number) {
   return {sections, maxHeight}
@@ -984,8 +984,8 @@ export function nestedWildcardRows(sections: {rows: {height: number}[]}[], maxHe
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * result.rows.length == items.length
- * result.rows[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
  */
 export function reverseKeepsRowDomains(items: {height: number}[]) {
   const rows = []
@@ -1000,8 +1000,8 @@ export function reverseKeepsRowDomains(items: {height: number}[]) {
 
 /** @fit
  * given width: 0..1000
- * result.capped: 0..320
- * result.overflow >= 0
+ * return.capped: 0..320
+ * return.overflow >= 0
  */
 export function pathSensitiveMinOverflow(width: number) {
   const capped = Math.min(width, 320)
@@ -1012,8 +1012,8 @@ export function pathSensitiveMinOverflow(width: number) {
 /** @fit
  * given width: 0..1000
  * given padding: 0..120
- * result.content: 0..1000
- * result.leftover >= 0
+ * return.content: 0..1000
+ * return.leftover >= 0
  */
 export function pathSensitiveMaxLeftover(width: number, padding: number) {
   const content = Math.max(width - padding, 0)
@@ -1026,8 +1026,8 @@ export function pathSensitiveMaxLeftover(width: number, padding: number) {
  * given min: -1000..1000
  * given max: -1000..1000
  * given max >= min
- * result >= min
- * result <= max
+ * return >= min
+ * return <= max
  */
 function clampLayoutValue(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max))
@@ -1035,7 +1035,7 @@ function clampLayoutValue(value: number, min: number, max: number) {
 
 /** @fit
  * given value: -1000..1000
- * result: 0..320
+ * return: 0..320
  */
 export function userlandClamp(value: number) {
   return clampLayoutValue(value, 0, 320)
@@ -1067,8 +1067,8 @@ export function forgettableLoopNamedCallPreservesUnrelated(
 }
 
 /** @fit
- * result.length == 2
- * result[1]: 0..10
+ * return.length == 2
+ * return[1]: 0..10
  */
 export function scalarStringishMutationPreservesTupleFacts(
   items: number[],
@@ -1084,8 +1084,8 @@ export function scalarStringishMutationPreservesTupleFacts(
  * given min: -1000..1000
  * given max: -1000..1000
  * given max >= min
- * result >= min
- * result <= max
+ * return >= min
+ * return <= max
  */
 export function userlandClampWithVariableBounds(value: number, min: number, max: number) {
   return clampLayoutValue(value, min, max)
@@ -1096,8 +1096,8 @@ export function userlandClampWithVariableBounds(value: number, min: number, max:
  * given value: -1000..1000
  * given max: -1000..1000
  * given max >= min
- * result >= min
- * result <= max
+ * return >= min
+ * return <= max
  */
 function conditionalClampLayoutValue(min: number, value: number, max: number) {
   return value > max ? max : value < min ? min : value
@@ -1105,7 +1105,7 @@ function conditionalClampLayoutValue(min: number, value: number, max: number) {
 
 /** @fit
  * given containerWidth: 320..2000
- * result.cols: int 1..7
+ * return.cols: int 1..7
  */
 export function localHelperPostconditionRange(containerWidth: number) {
   const cols = conditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
@@ -1114,14 +1114,14 @@ export function localHelperPostconditionRange(containerWidth: number) {
 
 /** @fit
  * given items.length: int 0..100
- * result: int 0..100
+ * return: int 0..100
  */
 export function arrayLengthRange(items: number[]) {
   return items.length
 }
 
 /** @fit
- * result: int 3..3
+ * return: int 3..3
  */
 export function arrayLiteralLength() {
   const values = [10, 20, 30]
@@ -1130,14 +1130,14 @@ export function arrayLiteralLength() {
 
 /** @fit
  * given index: int 0..2
- * result: int 10..30
+ * return: int 10..30
  */
 export function arrayLiteralIndex(index: number) {
   return [10, 20, 30][index]
 }
 
 /** @fit
- * result: int 30..30
+ * return: int 30..30
  */
 export function arrayLiteralAtLast() {
   return [10, 20, 30].at(-1)!
@@ -1146,7 +1146,7 @@ export function arrayLiteralAtLast() {
 /** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
- * result: 0..40
+ * return: 0..40
  */
 export function arrayAtLastKeepsElementDomain(items: number[]) {
   return items.at(-1)!
@@ -1156,7 +1156,7 @@ export function arrayAtLastKeepsElementDomain(items: number[]) {
  * given items.length: int 1..50
  * given items[]: 0..40
  * given focused: int 0..<items.length
- * result: 0..40
+ * return: 0..40
  */
 export function strictIntegerPredecessorArrayIndex(items: number[], focused: number) {
   if (focused > 0) return items[focused - 1]!
@@ -1165,7 +1165,7 @@ export function strictIntegerPredecessorArrayIndex(items: number[], focused: num
 
 /** @fit
  * given focused: int 0..1000
- * result: int 0..1000
+ * return: int 0..1000
  */
 export function nestedBranchLocalReturnChecks(focused: number) {
   if (focused > 0) {
@@ -1178,8 +1178,8 @@ export function nestedBranchLocalReturnChecks(focused: number) {
 /** @fit
  * given count: int 1..50
  * given focused: int 0..<count
- * result.targetIndex: int 0..49
- * result.targetIndex < count
+ * return.targetIndex: int 0..49
+ * return.targetIndex < count
  */
 export function ternaryBranchLocalFieldChecks(count: number, focused: number) {
   return focused > 0
@@ -1197,9 +1197,9 @@ export function ternaryBranchLocalFieldChecks(count: number, focused: number) {
  * given items.length: int 0..100
  * given index: int 0..100
  * given index < items.length
- * result.index >= 0
- * result.index < items.length
- * result.length == items.length
+ * return.index >= 0
+ * return.index < items.length
+ * return.length == items.length
  */
 export function halfOpenArrayIndex(items: number[], index: number) {
   return {index, length: items.length}
@@ -1207,8 +1207,8 @@ export function halfOpenArrayIndex(items: number[], index: number) {
 
 /** @fit
  * given items.length: int 0..20
- * result.length: int 1..21
- * result.length == items.length + 1
+ * return.length: int 1..21
+ * return.length == items.length + 1
  */
 export function spreadAppendLength(items: number[], value: number) {
   return [...items, value]
@@ -1216,7 +1216,7 @@ export function spreadAppendLength(items: number[], value: number) {
 
 /** @fit
  * given items.length: int 0..10
- * result: int 0..10
+ * return: int 0..10
  */
 function shortArrayLength(items: number[]) {
   return items.length
@@ -1224,7 +1224,7 @@ function shortArrayLength(items: number[]) {
 
 /** @fit
  * given items.length: int 0..10
- * result: int 0..10
+ * return: int 0..10
  */
 export function arrayLengthGivenThroughHelper(items: number[]) {
   return shortArrayLength(items)
@@ -1233,7 +1233,7 @@ export function arrayLengthGivenThroughHelper(items: number[]) {
 /** @fit
  * given containee: 0..10000
  * given container: 0..10000
- * result == (container - containee) / 2
+ * return == (container - containee) / 2
  */
 export function exactExpressionIdentity(containee: number, container: number) {
   return (container - containee) / 2
@@ -1243,7 +1243,7 @@ export function exactExpressionIdentity(containee: number, container: number) {
  * given containee: 0..1000
  * given container: 0..1000
  * given container >= containee
- * result >= 0
+ * return >= 0
  */
 export function centeredOffset(containee: number, container: number) {
   return (container - containee) / 2
@@ -1253,7 +1253,7 @@ export function centeredOffset(containee: number, container: number) {
  * given containee: 0..1000
  * given container: 0..1000
  * given container >= containee
- * result >= 0
+ * return >= 0
  */
 export function centeredOffsetThroughHelper(containee: number, container: number) {
   return centeredOffset(containee, container)
@@ -1264,7 +1264,7 @@ export function centeredOffsetThroughHelper(containee: number, container: number
  * given padding: 0..100
  * given container: 0..1200
  * given container >= containee + padding
- * result.offset >= 0
+ * return.offset >= 0
  */
 export function centeredOffsetWithPaddingSlack(containee: number, padding: number, container: number) {
   return {offset: (container - containee) / 2, padding}
@@ -1272,7 +1272,7 @@ export function centeredOffsetWithPaddingSlack(containee: number, padding: numbe
 
 /** @fit
  * given value: 4..14
- * result: 5..15
+ * return: 5..15
  */
 function trackedInnerGiven(value: number) {
   return value + 1
@@ -1280,7 +1280,7 @@ function trackedInnerGiven(value: number) {
 
 /** @fit
  * given value: 0..10
- * result: 5..15
+ * return: 5..15
  */
 function trackedMiddleGiven(value: number) {
   return trackedInnerGiven(value + patternGap)
@@ -1288,7 +1288,7 @@ function trackedMiddleGiven(value: number) {
 
 /** @fit
  * given value: 0..10
- * result: 5..15
+ * return: 5..15
  */
 export function transitiveGivenTracking(value: number) {
   return trackedMiddleGiven(value)
@@ -1318,7 +1318,7 @@ export function inlineCommentFormatVariants(
 /** @fit
  * given total: int -6000..6000
  * given count: int 1..200
- * result >= total
+ * return >= total
  */
 export function ceilDivisionCoversSignedTotal(total: number, count: number) {
   return Math.ceil(total / count) * count
@@ -1328,7 +1328,7 @@ export function ceilDivisionCoversSignedTotal(total: number, count: number) {
  * given width: 0..1000
  * given cap: 0..1000
  * given limit: 0..1000
- * result <= Math.min(width, cap)
+ * return <= Math.min(width, cap)
  */
 export function mathMinCanBeComparisonBound(width: number, cap: number, limit: number) {
   const capped = Math.min(width, cap)
@@ -1347,8 +1347,8 @@ export class ClassMethodThisClaims {
   /** @fit
    * given this.top: 0..1000
    * given this.height: 0..1000
-   * result == this.top + this.height
-   * result: 0..2000
+   * return == this.top + this.height
+   * return: 0..2000
    */
   get bottom() {
     return this.top + this.height
@@ -1357,7 +1357,7 @@ export class ClassMethodThisClaims {
   /** @fit
    * given this.width: 0..1000
    * given this.height: 0..1000
-   * result: 0..1000000
+   * return: 0..1000000
    */
   area() {
     return this.width * this.height
@@ -1367,7 +1367,7 @@ export class ClassMethodThisClaims {
 /** @fit
  * given box.top: 0..1000
  * given box.height: 0..1000
- * result: 0..2000
+ * return: 0..2000
  */
 export function classGetterSummary(box: ClassMethodThisClaims) {
   return box.bottom
@@ -1376,7 +1376,7 @@ export function classGetterSummary(box: ClassMethodThisClaims) {
 /** @fit
  * given box.width: 0..1000
  * given box.height: 0..1000
- * result: 0..1000000
+ * return: 0..1000000
  */
 export function classMethodSummary(box: ClassMethodThisClaims) {
   return box.area()
@@ -1387,8 +1387,8 @@ export function classMethodSummary(box: ClassMethodThisClaims) {
  * given rect.right: -1000..1000
  * given rect.top: -1000..1000
  * given rect.bottom: -1000..1000
- * result.x: -1000..1000
- * result.y: -1000..1000
+ * return.x: -1000..1000
+ * return.y: -1000..1000
  */
 export default (rect: {left: number; right: number; top: number; bottom: number}) => ({
   x: rect.left + (rect.right - rect.left) / 2,

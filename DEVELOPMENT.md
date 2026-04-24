@@ -64,7 +64,7 @@ bun install
 
 `bun run infer path/to/file.ts --function name` is for us, not public annotation generation. It prints curated facts the checker already knows:
 
-- `result` facts from the returned value
+- `return` facts from the returned value
 - `locals` from locals that survive to the return
 - loop-local facts for supported loops marked with `@fit`
 

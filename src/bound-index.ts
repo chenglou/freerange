@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import {
   parseFitExpression,
+  publicFitText,
   type FitDomainPath,
   type FitSpec,
 } from './parser.ts'
@@ -354,5 +355,5 @@ function domainPathText(domainPath: FitDomainPath, includeLabels = true) {
     const offset = segment.offset ?? 0
     text += `[${segment.label}${offset === 0 ? '' : offset > 0 ? ` + ${offset}` : ` - ${Math.abs(offset)}`}]`
   }
-  return text
+  return publicFitText(text)
 }

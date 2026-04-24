@@ -21,6 +21,9 @@ import {
   parseLocalFitSpecs,
   hasFitComment,
   hasInlineFitComment,
+  fitReturnInternalRoot,
+  fitReturnPublicRoot,
+  publicFitText,
   type ComparisonOperator,
   type FitDomainPath,
   type FitDomainPathSegment,
@@ -529,7 +532,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const inferUnsupported: string[] = []
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
   const state = evaluateFunctionBodyState(fn, context)
-  const resultFacts = factsFromValue('result', state.result)
+  const resultFacts = factsFromValue(fitReturnInternalRoot, state.result)
   const localFacts = localFactsFromEnv(env, state.env)
   const specReports = inferFunctionSpecReports(program, functionName, specs, env, state.result, [
     ...givenChecks,
@@ -576,9 +579,9 @@ function inspectFunctionShapes(program: Program, fn: FitFunction, contractCache:
     addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
   }
 
-  const syntaxReturn = valueFromSyntaxTypeShape('result', fn.node.type, program, new Set())
-  const tsReturn = valueFromFunctionReturnShape('result', fn.node, program)
-  addShapeInsight(insights, program, functionName, 'return type', 'result', state?.result ?? syntaxReturn, tsReturn)
+  const syntaxReturn = valueFromSyntaxTypeShape(fitReturnPublicRoot, fn.node.type, program, new Set())
+  const tsReturn = valueFromFunctionReturnShape(fitReturnPublicRoot, fn.node, program)
+  addShapeInsight(insights, program, functionName, 'return type', fitReturnPublicRoot, state?.result ?? syntaxReturn, tsReturn)
 
   if (fn.node.body != null && (state != null || options.calls === true)) {
     collectShapeInsightsFromNode(fn.node.body, program, functionName, state, options, insights)
@@ -1047,7 +1050,7 @@ function validateGivenSpecs(
     if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec.text, `given can only describe inputs; ${badRoot} is not an input here`))
+      checks.push(invalidGivenCheck(file, functionName, spec.text, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
       continue
     }
     const shapeProblem = givenShapeProblem(spec)
@@ -1357,7 +1360,7 @@ function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | u
 }
 
 function unknownResultValue(specs: FitSpec[], program: Program): Value {
-  return unknownParamValue('result', specs, undefined, program)
+  return unknownParamValue(fitReturnInternalRoot, specs, undefined, program)
 }
 
 function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'number' {
@@ -1516,7 +1519,7 @@ function evaluateDomainPathSegments(current: Value, expr: string, segments: FitD
     const prop = current.props.get(segment.name) ?? (current.expr == null ? unknown(`Unknown property ${segment.name}`) : unknownNumber(`${current.expr}.${segment.name}`))
     return evaluateDomainPathSegments(prop, `${expr}.${segment.name}`, segments.slice(1))
   }
-  return unknown(`${expr}.${segment.name} expected an object`)
+  return unknown(`${publicFitText(`${expr}.${segment.name}`)} expected an object`)
 }
 
 function verifyCheckSpec(
@@ -1531,8 +1534,8 @@ function verifyCheckSpec(
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck {
   const env = new Map(baseEnv)
-  env.set('result', result)
-  const inputRoots = [...baseEnv.keys(), 'result']
+  env.set(fitReturnInternalRoot, result)
+  const inputRoots = [...baseEnv.keys(), fitReturnInternalRoot]
   const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
   const boundIndexContext = specBoundIndexContext(context)
 
@@ -1580,7 +1583,7 @@ function verifyCheckSpec(
   const right = evaluateSpecExpression(spec.right, context)
   const status = proveComparison(left, spec.op, right, context.assumptions)
   const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
-    ? `wildcard comparison means every ${wildcardCheck.collection} item must satisfy: ${spec.text}\n${status.reason}`
+    ? `wildcard comparison means every ${publicFitText(wildcardCheck.collection)} item must satisfy: ${spec.text}\n${status.reason}`
     : status.reason
   return {
     file,
@@ -1704,7 +1707,7 @@ function domainPathCollectionText(domainPath: FitDomainPath) {
     }
     collection = `${collection}.${segment.name}`
   }
-  return collection
+  return publicFitText(collection)
 }
 
 function domainPathText(domainPath: FitDomainPath) {
@@ -1716,7 +1719,7 @@ function domainPathText(domainPath: FitDomainPath) {
     }
     text += '[]'
   }
-  return text
+  return publicFitText(text)
 }
 
 function evaluateSpecExpression(text: string, context: EvalContext): Value {
@@ -1752,7 +1755,7 @@ function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: Ev
 
 function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   const target = sequencePropArgument(spec.args, context)
-  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects result.rows.top'}
+  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects return.rows.top'}
   if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass'}
   return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target)}
 }
@@ -1913,7 +1916,7 @@ function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {ki
       context.program,
       context.stack.join(' > '),
       context.env,
-      unknown('Inline @fit checks do not use result'),
+      unknown('Inline @fit checks do not use return'),
       spec,
       [...context.checks],
       context.assumptions,
@@ -2163,8 +2166,8 @@ function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalCon
 }
 
 function evaluateReturnExpression(expression: ts.Expression, inlineNode: ts.Node, context: EvalContext): Value {
-  const specs = parseInlineFitSpecsForExpression(context.program.sourceText, inlineNode, 'result')
-  const evaluate = () => evaluateExpressionWithObjectPath(expression, context, ['result'])
+  const specs = parseInlineFitSpecsForExpression(context.program.sourceText, inlineNode, fitReturnPublicRoot)
+  const evaluate = () => evaluateExpressionWithObjectPath(expression, context, [fitReturnPublicRoot])
   const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
   verifyInlineSpecsForValue(specs, value, context)
   return value
@@ -2664,7 +2667,7 @@ function splitLoopSpecs(specs: FitSpec[]): {validSpecs: FitSpec[]; resultSpecs: 
   const validSpecs: FitSpec[] = []
   const resultSpecs: FitSpec[] = []
   for (const spec of specs) {
-    if (specMentionsRoot(spec, 'result')) resultSpecs.push(spec)
+    if (specMentionsRoot(spec, fitReturnInternalRoot)) resultSpecs.push(spec)
     else validSpecs.push(spec)
   }
   return {validSpecs, resultSpecs}
@@ -2679,7 +2682,7 @@ function reportLoopResultSpecs(specs: FitSpec[], context: EvalContext) {
       functionName,
       text: spec.text,
       status: 'unknown',
-      reason: 'loop @fit specs do not have result; name local values directly',
+      reason: 'loop @fit specs do not have return; name local values directly',
     })
   }
 }
@@ -2740,7 +2743,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
 function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   if (specs.length === 0) return
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
-  const loopResult = unknown('Loop annotations do not have result; name local values directly')
+  const loopResult = unknown('Loop annotations do not have return; name local values directly')
   for (const spec of specs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
     context.checks.push(verifyCheckSpec(
@@ -3327,8 +3330,9 @@ function evaluateExtentEndCall(expression: ts.CallExpression, context: EvalConte
 
 function lastEndFailureReason(targetText: string, target: ArrayValue) {
   const missing = target.length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
+  const publicTargetText = publicFitText(targetText)
   const lines = [
-    `lastEnd(${targetText}) was not inferred`,
+    `lastEnd(${publicTargetText}) was not inferred`,
     'need: a non-empty append-only row loop that pushes height',
     `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
   ]
@@ -3337,8 +3341,10 @@ function lastEndFailureReason(targetText: string, target: ArrayValue) {
 }
 
 function extentEndFailureReason(targetText: string, emptyExpr: string, target: ArrayValue) {
+  const publicTargetText = publicFitText(targetText)
+  const publicEmptyExpr = publicFitText(emptyExpr)
   const lines = [
-    `extentEnd(${targetText}, ${emptyExpr}) was not inferred`,
+    `extentEnd(${publicTargetText}, ${publicEmptyExpr}) was not inferred`,
     'need: an append-only row loop plus the empty fallback used by the source',
     `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
   ]
@@ -3439,13 +3445,13 @@ function valueWithFunctionContractSummary(
 ): Value {
   const env = programGlobalEnv(program)
   bindFunctionCallInputs(fn, argumentValues, env, thisValue)
-  env.set('result', result)
+  env.set(fitReturnInternalRoot, result)
 
   const context: EvalContext = {
     program,
     file: program.file,
     env,
-    inputRoots: [...functionInputRoots(program, fn), 'result'],
+    inputRoots: [...functionInputRoots(program, fn), fitReturnInternalRoot],
     stack: [functionName],
     checks: [],
     assumptions: [],
@@ -3459,7 +3465,7 @@ function valueWithFunctionContractSummary(
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
   }
 
-  return env.get('result') ?? unknown(`Imported function ${functionName} contract did not describe result`)
+  return env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
 }
 
 function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: FunctionContractSource) {
@@ -3544,14 +3550,14 @@ function sourceProvedContractFact(source: FunctionContractSource, text: string) 
 function simpleResultPathText(text: string): string | null {
   const parsed = parseFitExpression(text)
   const domainPaths = [...parsed.domainPaths.values()]
-  if (domainPaths.length === 1 && domainPaths[0]!.root === 'result' && ts.isIdentifier(parsed.expression)) return text
+  if (domainPaths.length === 1 && domainPaths[0]!.root === fitReturnInternalRoot && ts.isIdentifier(parsed.expression)) return text
   if (domainPaths.length > 0) return null
 
   const expression = unwrapExpression(parsed.expression)
-  if (ts.isIdentifier(expression) && expression.text === 'result') return text
-  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === 'result') return text
+  if (ts.isIdentifier(expression) && expression.text === fitReturnInternalRoot) return text
+  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === fitReturnInternalRoot) return text
   const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement?.root === 'result') return text
+  if (finiteElement?.root === fitReturnInternalRoot) return text
   return null
 }
 

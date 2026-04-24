@@ -21,8 +21,8 @@ Function contracts look like this:
 ```ts
 /** @fit
  * given width: 0..1000
- * result.capped: 0..320
- * result.overflow >= 0
+ * return.capped: 0..320
+ * return.overflow >= 0
  */
 function cappedOverflow(width: number) {
   const capped = Math.min(width, 320)
@@ -59,7 +59,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-Loop specs use the same language. Loop-local `given` facts are trusted from that point forward. Bare loop checks are checked after the loop. Loop specs name locals directly; they do not have `result`.
+Loop specs use the same language. Loop-local `given` facts are trusted from that point forward. Bare loop checks are checked after the loop. Loop specs name locals directly; they do not have `return`.
 
 Current supported facts include:
 

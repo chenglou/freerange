@@ -4,7 +4,7 @@ export const importedChromeX = 16
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedClampWidth(width: number) {
   return Math.min(width, importPatternCap)
@@ -12,7 +12,7 @@ export function importedClampWidth(width: number) {
 
 /** @fit
  * given value: 0..10
- * result: 4..14
+ * return: 4..14
  */
 export function importedAddGap(value: number) {
   return value + importPatternGap
@@ -20,7 +20,7 @@ export function importedAddGap(value: number) {
 
 /** @fit
  * given items[].height: 0..40
- * result.rows[].height: 0..40
+ * return.rows[].height: 0..40
  */
 export function importedRows(items: {height: number}[]) {
   const rows = items.map(item => ({height: item.height}))
@@ -42,9 +42,9 @@ export function importedBox<T>(value: T): ImportedBox<T> {
 }
 
 /** @fit
- * result.length == 4
- * result[2] >= 0
- * result[3] >= 0
+ * return.length == 4
+ * return[2] >= 0
+ * return[3] >= 0
  */
 export function importedTupleCenter(sourceX: number, sourceY: number, targetX: number, targetY: number) {
   const xOffset = Math.abs(targetX - sourceX)

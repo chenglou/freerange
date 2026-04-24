@@ -10,10 +10,10 @@ The current product pivot is adoption, not a bigger DSL: make `infer`, `audit`, 
 
 ## Current Surface
 
-- Function specs use `@fit`. `given` lines and param `// @fit` comments are trusted input facts; bare lines and `result` lines are facts to prove.
+- Function specs use `@fit`. `given` lines and param `// @fit` comments are trusted input facts; bare lines and `return` lines are facts to prove.
 - Function boundaries include named `function` declarations, named `const` arrow/function expressions, anonymous default-exported function/arrow boundaries, and class methods/getters. Instance class members can use `this` as an input root, and same-file property/method calls can use the checked class-member summary.
 - Typed object and array destructuring params are supported as input bindings. Param inline `@fit` shorthand still only attaches to simple identifier params.
-- Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `result`.
+- Loop specs also use `@fit` on supported `for...of` and indexed `for` loops. Placement decides scope. Loop checks name locals directly; they do not have `return`.
 - Inline local and field checks use `@fit 0..foo` immediately before a single variable declaration, as a trailing `//` side comment, or on a simple object field. They are checks on that local value or field, not trusted givens. On simple identifier params, the same syntax is shorthand for a trusted `given`. Leading line/block comments and trailing `//` comments are supported; trailing block comments are intentionally not part of the current surface.
 - Supported sequence names are `nondecreasing(rows.top)`, `spaced(rows, gap)`, and `lastEnd(rows)`.
 - `extentEnd(rows, top)` handles the empty-row case for append-only row loops.
@@ -30,12 +30,12 @@ sections[].rows[].height <= maxHeight
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, and generic call returns when TypeScript can see them.
 - Local array binding patterns are supported for finite arrays/tuples, including skipped slots. This lets tuple-returning geometry helpers keep ordinary destructuring like `const [, , offsetX] = getEdgeCenter(...)`.
-- Tuple element facts also survive helper/import summaries: a source-proved `result[2] >= 0` can feed a caller's destructured `offsetX`.
+- Tuple element facts also survive helper/import summaries: a source-proved `return[2] >= 0` can feed a caller's destructured `offsetX`.
 - `items.at(-1)` works for non-empty arrays. It intentionally does not support `.at(-2)`, dynamic `.at(index)`, or same-loop "append then read previous last" recurrences yet. The bracket spelling `items[items.length - 1]` is also kept out of that same-loop recurrence shape so we do not accidentally prove the initial array snapshot.
 - Strict integer branch facts can move by one step, so `focused > 0` proves `focused - 1 >= 0` for previous-index checks.
 - Branch-local inline checks use ordinary TypeScript control flow. `if`/`else` and ternaries carry their condition into return and object-field checks; simple fall-through branches join local assignments afterward. Helper contracts are still unconditional after branches join.
 - Assignment handling is conservative but no longer aborts unrelated proofs: local `x = expr` keeps `expr`, while property/index assignment and unsupported scalar `+=` forget the changed root.
-- Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `result.rows == input.rows`.
+- Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `return.rows == input.rows`.
 - Object spread and `as` / `satisfies` wrappers preserve the underlying object facts.
 - Simple `for...of` scalar running sums like `total += item.height` and `if (...) total += item.height` produce numeric ranges when the increment is known.
 - Simple `for...of` and indexed-loop scalar extrema like `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` produce numeric ranges.
@@ -48,7 +48,7 @@ sections[].rows[].height <= maxHeight
 - Unsupported indexed-style `for` loops can preserve unrelated facts only when their headers and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
 - Named local imports can call exported functions with `@fit` contracts and can read exported numeric constants when TypeScript resolves them to local source. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 - Proven helper summaries can narrow stored locals silently when the call preconditions prove. The checker emits call-precondition report lines only when a surrounding claim or `doctor` asked for them; otherwise missing preconditions simply prevent the summary from being trusted.
-- `bun run infer path --function name` is a dev-only x-ray of result/local facts and supported loop-local facts. It separates function and loop specs into trusted, source-proved, not-inferred, and redundant lines, and redundant lines name the covering inferred fact. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not a public annotation writer.
+- `bun run infer path --function name` is a dev-only x-ray of return/local facts and supported loop-local facts. It separates function and loop specs into trusted, source-proved, not-inferred, and redundant lines, and redundant lines name the covering inferred fact. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not a public annotation writer.
 - `bun run audit:demos` summarizes which checked demo annotations are likely-removable redundant noise, public-looking redundant contracts, and source-proved keepers.
 - `bun run shape-diff path --function name` is the dev-only TS piggyback x-ray. It compares Freerange-owned structural facts with TypeScript-only object/array shape for params, locals, return shapes, and call returns.
 
@@ -93,7 +93,7 @@ Keep this visible so shape work and IR cleanup do not erase the boring proof/rep
    Keep adding small negative kernels for mistakes agents actually make: wrong gap, off-by-one target index, missing row bottom, inverted clamp bounds, unbounded prompt height, stale row spacing after a loop refactor. The report wording is part of the feature.
 
 6. **Postpone conditional helper contracts until callers need them.**
-   Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `result.leftHitArea` is non-null and `result.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
+   Branch-local inline facts cover local proof. Do not add `when` or another public syntax yet. The future version would be an exported summary like: if the caller knows `focused > 0`, then `return.leftHitArea` is non-null and `return.leftHitArea.targetIndex == focused - 1`. That is conditional postcondition territory, not just nicer comment placement.
 
 7. **Keep bound-index labels narrow.**
    Keep the current anonymous one-collection rule. `rows[].height <= maxHeight` is anonymous `for every row`, and `rows[].bottom == rows[].top + rows[].height` means every row satisfies that same-item relation. Never let `rows[].top <= boxes[].bottom` guess its meaning. Use labels only when the relationship is really same-index or a supported adjacent relation.

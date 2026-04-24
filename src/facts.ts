@@ -1,4 +1,8 @@
 import {
+  fitReturnInternalRoot,
+  publicFitText,
+} from './parser.ts'
+import {
   type NumberValue,
   type Value,
 } from './domain.ts'
@@ -39,7 +43,7 @@ export type FitSequenceFact = {
 export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
   const facts: FitInferFact[] = []
   for (const [name, value] of finalEnv) {
-    if (baseEnv.has(name) || name === 'result') continue
+    if (baseEnv.has(name) || name === fitReturnInternalRoot) continue
     facts.push(...factsFromValue(name, value))
   }
   return facts
@@ -63,7 +67,7 @@ export function factsFromValue(path: string, value: Value): FitInferFact[] {
       facts.push({
         kind: 'sequence',
         source: 'sequence',
-        text: `nondecreasing(${path}.${prop})`,
+        text: publicFitText(`nondecreasing(${path}.${prop})`),
         fact: {kind: 'nondecreasing', path, prop},
       })
     }
@@ -71,7 +75,7 @@ export function factsFromValue(path: string, value: Value): FitInferFact[] {
       facts.push({
         kind: 'sequence',
         source: 'sequence',
-        text: `spaced(${path}, ${fact.gapExpr})`,
+        text: publicFitText(`spaced(${path}, ${fact.gapExpr})`),
         fact: {kind: 'spaced', path, gapExpr: fact.gapExpr, heightExpr: fact.heightExpr, advanceExpr: fact.advanceExpr},
       })
     }
@@ -80,7 +84,7 @@ export function factsFromValue(path: string, value: Value): FitInferFact[] {
       facts.push({
         kind: 'sequence',
         source: 'sequence',
-        text: sequenceRelationText(path, relation),
+        text: publicFitText(sequenceRelationText(path, relation)),
         fact: {kind: 'adjacent-comparison'},
       })
     }
@@ -107,14 +111,14 @@ export function factsFromEnvRoots(env: Map<string, Value>, roots: Set<string>): 
 export function numberFacts(path: string, value: NumberValue): FitInferFact[] {
   const facts: FitInferFact[] = []
   if (value.expr != null && !sameExpressionText(path, value.expr)) {
-    facts.push({kind: 'equality', source: 'equality', text: `${path} == ${value.expr}`, path, expression: value.expr})
+    facts.push({kind: 'equality', source: 'equality', text: publicFitText(`${path} == ${value.expr}`), path: publicFitText(path), expression: publicFitText(value.expr)})
   }
   if (isInterestingNumberRange(value)) {
     facts.push({
       kind: 'range',
       source: 'range',
-      text: `${path}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`,
-      path,
+      text: publicFitText(`${path}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`),
+      path: publicFitText(path),
       min: value.min,
       max: value.max,
       isInteger: value.isInteger,

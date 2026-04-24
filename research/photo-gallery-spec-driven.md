@@ -139,8 +139,8 @@ These facts should be checkable from source:
 ```ts
 /** @fit
  * given windowSizeX: 320..2000
- * result.cols: int 1..7
- * result.boxMaxSizeX: 0..2000
+ * return.cols: int 1..7
+ * return.boxMaxSizeX: 0..2000
  */
 function gridColumnsAndBox(windowSizeX: number) {
   // your code
@@ -148,8 +148,8 @@ function gridColumnsAndBox(windowSizeX: number) {
 
 /** @fit
  * given focused: int 1..1000
- * result: int 0..999
- * result == focused - 1
+ * return: int 0..999
+ * return == focused - 1
  */
 function previousLineTarget(focused: number) {
   return focused - 1
@@ -157,8 +157,8 @@ function previousLineTarget(focused: number) {
 
 /** @fit
  * given focused: int 0..999
- * result: int 1..1000
- * result == focused + 1
+ * return: int 1..1000
+ * return == focused + 1
  */
 function nextLineTarget(focused: number) {
   return focused + 1
@@ -168,14 +168,14 @@ function nextLineTarget(focused: number) {
  * given windowSizeX: 320..2000
  * given windowSizeY: 320..2000
  * given scrollY: -100000..100000
- * result.left.box.x == 0
- * result.left.box.y == scrollY
- * result.left.box.sizeX == 100
- * result.left.box.sizeY == windowSizeY
- * result.right.box.x == windowSizeX - 100
- * result.right.box.y == scrollY
- * result.right.box.sizeX == 100
- * result.right.box.sizeY == windowSizeY
+ * return.left.box.x == 0
+ * return.left.box.y == scrollY
+ * return.left.box.sizeX == 100
+ * return.left.box.sizeY == windowSizeY
+ * return.right.box.x == windowSizeX - 100
+ * return.right.box.y == scrollY
+ * return.right.box.sizeX == 100
+ * return.right.box.sizeY == windowSizeY
  */
 function lineHitAreaBoxes(windowSizeX: number, windowSizeY: number, scrollY: number) {
   // your code
@@ -237,7 +237,7 @@ The wider product helpers are still beyond the current checker surface:
 - `getLineLayout` inference stops at the reverse indexed loop that walks left from the focused item. Supporting that loop shape could help, but it is not required for the first useful helper contracts.
 - `measurePromptLayout` inference stops at the `while (true)` rich-inline cursor loop. That is browser/text-engine-adjacent enough that the first facts should stay on the smaller visible-line-count helpers.
 
-The first version of this packet accidentally asked for `result.left.targetIndex` on a helper where the left hit area can be null at `focused = 0`. Splitting target-index math from nullable edge control flow made the source-owned contract honest. This is the kind of spec bug I want Freerange to surface early.
+The first version of this packet accidentally asked for `return.left.targetIndex` on a helper where the left hit area can be null at `focused = 0`. Splitting target-index math from nullable edge control flow made the source-owned contract honest. This is the kind of spec bug I want Freerange to surface early.
 
 ## Fresh-Agent Results
 
@@ -277,7 +277,7 @@ The scratch demos are still not faithful recreations of the current hand-written
 The formal seam did two useful things:
 
 - It made both workers converge on the same pure boundaries: grid columns, object-field geometry, previous/next target math, and stable line hit boxes.
-- It caught a real spec bug early: nullable hit areas cannot honestly expose `result.left.targetIndex` for every focused index.
+- It caught a real spec bug early: nullable hit areas cannot honestly expose `return.left.targetIndex` for every focused index.
 
 No new primitive was needed. Plain ranges, comparisons, constants, helper contracts, and source inference were enough for the useful checks.
 

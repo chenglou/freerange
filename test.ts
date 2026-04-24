@@ -55,9 +55,9 @@ if (actualNegative !== expectedNegative) {
 const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
 const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedInferFacts = [
-  'result.rows.length == params.items.length',
-  'result.rows.length: int 0..Infinity',
-  'result.rows[].height == params.items[].height',
+  'return.rows.length == params.items.length',
+  'return.rows.length: int 0..Infinity',
+  'return.rows[].height == params.items[].height',
 ]
 const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
 if (missingInferFacts.length > 0) {
@@ -89,8 +89,8 @@ const expectedLoopSpecStatuses = [
 ] as const
 const expectedLoopFunctionSpecStatuses = [
   ['given items.length: int 1..50', 'trusted'],
-  ['result.bottom >= top', 'source-proved'],
-  ['result.rows.length == items.length', 'source-proved'],
+  ['return.bottom >= top', 'source-proved'],
+  ['return.rows.length == items.length', 'source-proved'],
 ] as const
 const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
 const expectedLoopRedundantSpecs = [
@@ -117,16 +117,16 @@ const segmentedFunction = segmentedLoopInferReport.functions[0]
 const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
 const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedSegmentedFacts = [
-  'result.rows.length: int 0..50',
-  'result.rows[].bottom == (rows[].top + rows[].height)',
-  'nondecreasing(result.rows.top)',
-  'spaced(result.rows, gap)',
+  'return.rows.length: int 0..50',
+  'return.rows[].bottom == (rows[].top + rows[].height)',
+  'nondecreasing(return.rows.top)',
+  'spaced(return.rows, gap)',
 ]
 const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
 const expectedSegmentedSpecStatuses = [
-  ['result.rows.length <= items.length', 'source-proved'],
-  ['result.rows[].bottom == result.rows[].top + result.rows[].height', 'source-proved'],
-  ['spaced(result.rows, gap)', 'source-proved'],
+  ['return.rows.length <= items.length', 'source-proved'],
+  ['return.rows[].bottom == return.rows[].top + return.rows[].height', 'source-proved'],
+  ['spaced(return.rows, gap)', 'source-proved'],
 ] as const
 const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
 if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
@@ -142,15 +142,15 @@ const redundantInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scal
 const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedRedundantFacts = [
-  ['result.length == items.length', 'result.length == items.length'],
-  ['result[]: 0..3000', 'result[]: 0..3000'],
+  ['return.length == items.length', 'return.length == items.length'],
+  ['return[]: 0..3000', 'return[]: 0..3000'],
 ] as const
 const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => redundantFacts.get(fact) !== reason)
 const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedRedundantSpecStatuses = [
   ['given items.length: int 0..50', 'trusted'],
-  ['result.length == items.length', 'source-proved'],
-  ['result[]: 0..3000', 'source-proved'],
+  ['return.length == items.length', 'source-proved'],
+  ['return[]: 0..3000', 'source-proved'],
 ] as const
 const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
 if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
@@ -230,7 +230,7 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   const fn = report.functions[0]
   if (fn == null) return `${functionName}\n  missing function`
   const lines = [`${displayFile(fn.file)}:${fn.functionName}`]
-  addSection(lines, 'result', snapshotItems(functionName, 'result', fn.facts.map(fact => fact.text)))
+  addSection(lines, 'return', snapshotItems(functionName, 'return', fn.facts.map(fact => fact.text)))
   addSection(lines, 'locals', snapshotItems(functionName, 'locals', fn.locals.map(fact => fact.text)))
   for (const loop of fn.loops) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
@@ -251,25 +251,25 @@ function snapshotItems(functionName: string, section: string, items: string[]) {
 
 function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
-  if (item === 'result.items.length == layoutSources.length') return true
-  if (item === 'result.contentHeight == nextRowTop') return true
-  if (item === 'result.contentHeight: 40..Infinity') return true
-  if (item === 'result.rows.length == rows.length') return true
-  if (item === 'result.rows[].bottom == (rows[].top + rows[].height)') return true
-  if (item === 'result.rows[].bottom: 40..Infinity') return true
-  if (item === 'result.rows[].height == rows[].height') return true
-  if (item === 'result.rows[].height: 0..Infinity') return true
-  if (item === 'result.rows[].top == rows[].top') return true
-  if (item === 'result.rows[].top: 40..Infinity') return true
-  if (item === 'nondecreasing(result.rows.top)') return true
-  if (item === 'spaced(result.rows, boxesGapY)') return true
-  if (section === 'result') {
-    return item === 'result.items[].imageBox.sizeX: 0..1952'
-      || item === 'result.items[].layoutBox.sizeX: 0..1952'
-      || item.includes('result.items[].prompt.box.sizeX ==')
-      || item.includes('result.items[].prompt.box.sizeY ==')
-      || item.includes('result.items[].prompt.lines.length ==')
-      || item === 'result.items[].prompt.lines.length: int 0..Infinity'
+  if (item === 'return.items.length == layoutSources.length') return true
+  if (item === 'return.contentHeight == nextRowTop') return true
+  if (item === 'return.contentHeight: 40..Infinity') return true
+  if (item === 'return.rows.length == rows.length') return true
+  if (item === 'return.rows[].bottom == (rows[].top + rows[].height)') return true
+  if (item === 'return.rows[].bottom: 40..Infinity') return true
+  if (item === 'return.rows[].height == rows[].height') return true
+  if (item === 'return.rows[].height: 0..Infinity') return true
+  if (item === 'return.rows[].top == rows[].top') return true
+  if (item === 'return.rows[].top: 40..Infinity') return true
+  if (item === 'nondecreasing(return.rows.top)') return true
+  if (item === 'spaced(return.rows, boxesGapY)') return true
+  if (section === 'return') {
+    return item === 'return.items[].imageBox.sizeX: 0..1952'
+      || item === 'return.items[].layoutBox.sizeX: 0..1952'
+      || item.includes('return.items[].prompt.box.sizeX ==')
+      || item.includes('return.items[].prompt.box.sizeY ==')
+      || item.includes('return.items[].prompt.lines.length ==')
+      || item === 'return.items[].prompt.lines.length: int 0..Infinity'
   }
   return item === 'cols: int 1..7'
     || item === 'boxMaxSizeX: 18.285714285714285..1952'
@@ -290,16 +290,16 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
 
 function keepLineLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
-  if (section === 'result') {
-    return item === 'result.items.length == layoutSources.length'
-      || item === 'result.items.length: int 0..Infinity'
-      || item === 'result.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX'
-      || item === 'result.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY'
-      || item.includes('result.items[].prompt.box.sizeX ==')
-      || item.includes('result.items[].prompt.box.sizeY ==')
-      || item.includes('result.items[].prompt.lines.length ==')
-      || item === 'result.items[].prompt.lines.length: int 0..Infinity'
-      || item.includes('result.items[].prompt.lines[].width ==')
+  if (section === 'return') {
+    return item === 'return.items.length == layoutSources.length'
+      || item === 'return.items.length: int 0..Infinity'
+      || item === 'return.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX'
+      || item === 'return.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY'
+      || item.includes('return.items[].prompt.box.sizeX ==')
+      || item.includes('return.items[].prompt.box.sizeY ==')
+      || item.includes('return.items[].prompt.lines.length ==')
+      || item === 'return.items[].prompt.lines.length: int 0..Infinity'
+      || item.includes('return.items[].prompt.lines[].width ==')
   }
   return item === 'box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))'
     || item === 'box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)'
@@ -347,7 +347,7 @@ async function runCliRegressionTests() {
       include: ['*.ts'],
     }, null, 2),
     'layout.ts': `/** @fit
- * result: 2
+ * return: 2
  */
 function ok() {
   return 2
@@ -361,7 +361,7 @@ function ok() {
 
   await withCliFixture({
     'bad.ts': `/** @fit
- * result: 0..1
+ * return: 0..1
  */
 function bad() {
   return 2
@@ -370,7 +370,7 @@ function bad() {
   }, dir => {
     const check = runFr(['check', 'bad.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
-    expectCli(check.output.includes('FAIL result: 0..1'), 'expected fr check failure output', check.output)
+    expectCli(check.output.includes('FAIL return: 0..1'), 'expected fr check failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)
   })
 

@@ -9,7 +9,7 @@ import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedHelperContract(width: number) {
   return importedClampWidth(width)
@@ -17,7 +17,7 @@ export function importedHelperContract(width: number) {
 
 /** @fit
  * given value: 0..10
- * result: 4..14
+ * return: 4..14
  */
 export function importedHelperAliasContract(value: number) {
   return addImportedGap(value)
@@ -25,7 +25,7 @@ export function importedHelperAliasContract(value: number) {
 
 /** @fit
  * given width: 0..1000
- * result == width + importedChromeX
+ * return == width + importedChromeX
  */
 export function importedNumericConstantContract(width: number) {
   return width + importedChromeX
@@ -33,7 +33,7 @@ export function importedNumericConstantContract(width: number) {
 
 /** @fit
  * given items[].height: 0..40
- * result.rows[].height: 0..40
+ * return.rows[].height: 0..40
  */
 export function importedHelperWildcardContract(items: {height: number}[]) {
   return importedRows(items)
@@ -41,7 +41,7 @@ export function importedHelperWildcardContract(items: {height: number}[]) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedHelperTsconfigAliasContract(width: number) {
   return aliasImportedClampWidth(width)
@@ -49,7 +49,7 @@ export function importedHelperTsconfigAliasContract(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedHelperTsxContract(width: number) {
   return importedTsxClampWidth(width)
@@ -57,7 +57,7 @@ export function importedHelperTsxContract(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedHelperBarrelContract(width: number) {
   return barrelClampWidth(width)
@@ -65,28 +65,28 @@ export function importedHelperBarrelContract(width: number) {
 
 /** @fit
  * given width: 0..1000
- * result: 0..320
+ * return: 0..320
  */
 export function importedHelperBarrelTsxContract(width: number) {
   return barrelTsxClampWidth(width)
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function importedTypeShape(input: ImportedShapeRows) {
   return {rows: input.rows}
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function importedUtilityTypeShape(input: ImportedPickedRows) {
   return {rows: input.rows}
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function importedGenericReturnShape(items: {height: number}[]) {
   const boxed = importedBox(items)
@@ -94,7 +94,7 @@ export function importedGenericReturnShape(items: {height: number}[]) {
 }
 
 /** @fit
- * result.rows.length >= 0
+ * return.rows.length >= 0
  */
 export function namespaceImportedStructuralShape(items: {height: number}[]) {
   const boxed = importedShapes.importedBox(items)
@@ -102,9 +102,9 @@ export function namespaceImportedStructuralShape(items: {height: number}[]) {
 }
 
 /** @fit
- * result.length == 5
- * result[3] >= 0
- * result[4] >= 0
+ * return.length == 5
+ * return[3] >= 0
+ * return[4] >= 0
  */
 export function importedTupleSummaryFeedsDestructure(sourceX: number, sourceY: number, targetX: number, targetY: number) {
   const [, , offsetX, offsetY] = importedTupleCenter(sourceX, sourceY, targetX, targetY)

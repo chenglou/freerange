@@ -1,4 +1,4 @@
-import {type ComparisonOperator, type FitRange} from './parser.ts'
+import {publicFitText, type ComparisonOperator, type FitRange} from './parser.ts'
 
 export type ReportNumberValue = {
   min: number
@@ -67,7 +67,7 @@ export function rangeSpecFailureReason(
   const expectedRange = formatRangeSpec(range)
   const lines = [
     `range was ${formatRange(value)}, expected inside ${expectedRange}`,
-    `need: ${value.expr ?? formatRange(value)} inside ${expectedRange}`,
+    `need: ${exprText(value)} inside ${expectedRange}`,
   ]
   const known = knownProofContextMany([value, lower, upper], assumptions)
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
@@ -82,31 +82,35 @@ export function rangeSpecMissingBounds(
   upper: ReportNumberValue,
   missing: {lower: boolean; upper: boolean; integer: boolean},
 ) {
-  const name = value.expr ?? formatRange(value)
+  const name = exprText(value)
   const lines: string[] = []
-  if (missing.lower) lines.push(`missing: ${name} ${range.lowerInclusive ? '>=' : '>'} ${lower.expr ?? formatRange(lower)}`)
-  if (missing.upper) lines.push(`missing: ${name} ${range.upperInclusive ? '<=' : '<'} ${upper.expr ?? formatRange(upper)}`)
+  if (missing.lower) lines.push(`missing: ${name} ${range.lowerInclusive ? '>=' : '>'} ${exprText(lower)}`)
+  if (missing.upper) lines.push(`missing: ${name} ${range.upperInclusive ? '<=' : '<'} ${exprText(upper)}`)
   if (missing.integer) lines.push(`missing: ${name} is an integer`)
   return lines
 }
 
 export function comparisonNeed(left: ReportNumberValue, op: ComparisonOperator, right: ReportNumberValue) {
-  return `${left.expr ?? formatRange(left)} ${op} ${right.expr ?? formatRange(right)}`
+  return `${exprText(left)} ${op} ${exprText(right)}`
 }
 
 export function formatArraySummary(value: ReportArrayValue) {
   if (value.summary == null) return 'no sequence facts'
   const lines: string[] = []
   for (const prop of value.summary.nondecreasingProps) lines.push(`nondecreasing(.${prop})`)
-  for (const fact of value.summary.spaced) lines.push(`spaced(${fact.gapExpr})`)
+  for (const fact of value.summary.spaced) lines.push(`spaced(${publicFitText(fact.gapExpr)})`)
   if (value.summary.lastEnd != null) lines.push(`lastEnd = ${formatRange(value.summary.lastEnd)}`)
   return lines.length === 0 ? 'no sequence facts' : lines.join(', ')
 }
 
 export function formatRange(value: ReportNumberValue) {
   const range = formatExpectedRange(value.min, value.max, value.isInteger)
-  const expr = value.expr == null ? '' : ` as ${value.expr}`
+  const expr = value.expr == null ? '' : ` as ${publicFitText(value.expr)}`
   return `${range}${expr}`
+}
+
+function exprText(value: ReportNumberValue) {
+  return value.expr == null ? formatRange(value) : publicFitText(value.expr)
 }
 
 export function formatExpectedRange(min: number, max: number, isInteger: boolean) {
@@ -116,13 +120,13 @@ export function formatExpectedRange(min: number, max: number, isInteger: boolean
 
 export function formatRangeSpec(range: FitRange) {
   const prefix = range.valueKind === 'int' ? 'int ' : ''
-  return `${prefix}${range.lower}${range.upperInclusive ? '..' : '..<'}${range.upper}`
+  return publicFitText(`${prefix}${range.lower}${range.upperInclusive ? '..' : '..<'}${range.upper}`)
 }
 
 export function formatLinearConstraint(constraint: ReportLinearConstraint): string {
   if (constraint.diff == null) {
-    const left = constraint.leftExpr ?? '?'
-    const right = constraint.rightExpr ?? '?'
+    const left = constraint.leftExpr == null ? '?' : publicFitText(constraint.leftExpr)
+    const right = constraint.rightExpr == null ? '?' : publicFitText(constraint.rightExpr)
     return `${left} ${constraint.op} ${right}`
   }
   switch (constraint.op) {
@@ -144,7 +148,7 @@ export function formatLinear(linear: ReportLinearExpr | null) {
   const clean = cleanReportLinear(linear)
   const parts: string[] = []
   for (const [name, coefficient] of [...clean.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    parts.push(formatLinearTerm(coefficient, name, parts.length === 0))
+    parts.push(formatLinearTerm(coefficient, publicFitText(name), parts.length === 0))
   }
   if (clean.constant !== 0 || parts.length === 0) parts.push(formatLinearTerm(clean.constant, '', parts.length === 0))
   return parts.join(' ')
@@ -168,7 +172,7 @@ function knownValueFacts(value: ReportNumberValue) {
 }
 
 function formatKnownFact(assumption: ReportLinearConstraint): string {
-  const fact = assumption.text ?? formatLinearConstraint(assumption)
+  const fact = publicFitText(assumption.text ?? formatLinearConstraint(assumption))
   switch (assumption.source) {
     case 'function-given':
       return `trusted from function @fit: ${fact}`

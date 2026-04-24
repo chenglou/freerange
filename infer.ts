@@ -32,7 +32,7 @@ if (paths.length === 0) {
   })
   for (const fn of report.functions) {
     console.log(`${fn.file}:${fn.functionName}`)
-    printSection('result', fn.facts.map(fact => fact.text))
+    printSection('return', fn.facts.map(fact => fact.text))
     printSection('locals', fn.locals.map(fact => fact.text))
     printSection('source-proved', fn.specs.filter(spec => spec.status === 'source-proved').map(spec => spec.text))
     printSection('trusted', fn.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text))
