@@ -614,6 +614,13 @@ export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number
   return {cols}
 }
 
+export function negativeSilentHelperSummaryRequiresPrecondition() {
+  const clamped = negativeConditionalClampLayoutValue(10, 0, 2)
+  return {
+    clamped, // @fit <= 2
+  }
+}
+
 /** @fit
  * given width: 0..100
  * result: 0..100
@@ -821,6 +828,22 @@ export function negativeInlineObjectFieldComparison() {
 
 export function negativeInlineReturnComparison() {
   return 5 // @fit < 5
+}
+
+/** @fit
+ * result >= min
+ */
+export const negativeArrowFunctionContract = (value: number, min: number) => Math.min(value, min - 1)
+
+export const negativeDestructuredArrowParamClaim = ({width}: {width: number}) => {
+  return width - 1 // @fit >= width
+}
+
+export function negativeArrayDestructuredLocalClaim(
+  value: number, // @fit 0..10
+) {
+  const [offset] = [value - 1]
+  return offset // @fit >= value
 }
 
 /** @fit

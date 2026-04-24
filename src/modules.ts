@@ -1,6 +1,12 @@
 import * as ts from 'typescript'
 import {parseFunctionFitSpecs, type FitSpec} from './parser.ts'
 
+export type FitFunction = {
+  name: string
+  node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction
+  specNode: ts.Node
+}
+
 export type FitModule<TGlobal> = {
   sourceId: string
   file: string
@@ -8,7 +14,7 @@ export type FitModule<TGlobal> = {
   sourceText: string
   typeChecker: ts.TypeChecker | null
   globals: Map<string, TGlobal>
-  functions: Map<string, ts.FunctionDeclaration>
+  functions: Map<string, FitFunction>
   fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
   exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
@@ -177,7 +183,7 @@ function parseFitModule<TGlobal>(
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
 ): FitModule<TGlobal> {
   const globals = new Map<string, TGlobal>()
-  const functions = new Map<string, ts.FunctionDeclaration>()
+  const functions = new Map<string, FitFunction>()
   const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
   const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
@@ -185,12 +191,13 @@ function parseFitModule<TGlobal>(
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) {
-      const specs = parseFunctionFitSpecs(sourceText, statement)
-      functions.set(statement.name.text, statement)
-      if (specs.length > 0) fitFunctions.add(statement.name.text)
-      specsByFunction.set(statement.name.text, specs)
+      const fn = {name: statement.name.text, node: statement, specNode: statement}
+      const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
+      functions.set(fn.name, fn)
+      if (specs.length > 0) fitFunctions.add(fn.name)
+      specsByFunction.set(fn.name, specs)
       if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
-        exports.set(statement.name.text, {kind: 'local', localName: statement.name.text})
+        exports.set(fn.name, {kind: 'local', localName: fn.name})
       }
       continue
     }
@@ -200,8 +207,18 @@ function parseFitModule<TGlobal>(
     }
     if (!ts.isVariableStatement(statement)) continue
     for (const declaration of statement.declarationList.declarations) {
-      if (hasModifier(statement, ts.SyntaxKind.ExportKeyword) && ts.isIdentifier(declaration.name)) {
-        exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
+      if (ts.isIdentifier(declaration.name)) {
+        const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
+        if (functionInitializer != null) {
+          const fn = {name: declaration.name.text, node: functionInitializer, specNode: statement}
+          const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
+          functions.set(fn.name, fn)
+          if (specs.length > 0) fitFunctions.add(fn.name)
+          specsByFunction.set(fn.name, specs)
+        }
+        if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+          exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
+        }
       }
       const global = readGlobal(declaration)
       if (global == null) continue
@@ -210,6 +227,10 @@ function parseFitModule<TGlobal>(
   }
 
   return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, fitFunctions, specsByFunction, exports, imports}
+}
+
+function supportedFunctionInitializer(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {
+  return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression) ? expression : null
 }
 
 function loadImports<TGlobal>(

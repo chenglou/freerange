@@ -31,7 +31,7 @@ export function valueFromTypeNodeShape(expr: string, node: ts.TypeNode | undefin
   return valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node, new Set(), 0)
 }
 
-export function valueFromFunctionReturnShape(expr: string, fn: ts.FunctionDeclaration, program: ShapeProgram): Value | null {
+export function valueFromFunctionReturnShape(expr: string, fn: ts.SignatureDeclaration, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
   const signature = checker?.getSignatureFromDeclaration(fn)
   if (checker == null || signature == null) return null

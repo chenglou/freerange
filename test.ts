@@ -1,4 +1,5 @@
 import {inferFitFiles} from './src/check.ts'
+import {multiplyNumbers, numberValue} from './src/domain.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts']
@@ -14,6 +15,17 @@ if (positiveReport.phase !== 'ready') {
   process.exitCode = 1
 } else {
   console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 unknown`)
+}
+
+const unboundedNonnegativeProduct = multiplyNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedNonnegativeProduct.min !== 0 || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity product, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative product')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)

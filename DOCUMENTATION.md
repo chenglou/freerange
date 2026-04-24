@@ -7,7 +7,7 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 ## Glossary
 
 ```ts
-@fit // marker for a Freerange spec block. Put it immediately above a function declaration, or above a supported loop when the fact belongs to that loop.
+@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, or supported loop.
 given width: 0..1000 // trusted input fact. Think precondition, not proof.
 result.width: 0..320 // check fact. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.
@@ -86,7 +86,7 @@ caller may need a `given`, a wrapper contract, or earlier validation.
 
 ## A First Check
 
-Put `@fit` immediately above a function declaration:
+Put `@fit` immediately above a named function or named `const` arrow/function expression:
 
 ```ts
 /** @fit
@@ -152,7 +152,7 @@ Freerange starts from claims, not from the whole file.
 - `result...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `result` inside a loop.
-- Helper preconditions are reported when a helper contract is used to prove a claim. An unclaimed helper call can still be inlined as a fallback for source inference, but its private checks should not leak into the caller's report.
+- Helper preconditions are reported when the helper call is inside the value being proved. If an earlier unclaimed local stores a helper result, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
 
 Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
 
@@ -580,7 +580,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven, result facts like `result >= min` and `result <= max` also narrow the caller's local value.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, result facts like `result >= min` and `result <= max` also narrow the caller's local value. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
 
 Imported helpers use their exported `@fit` contract as the module boundary:
 
@@ -671,6 +671,8 @@ Supported today:
 - `items[]: 0..400`
 - `items[].height: 0..40`
 - array literal length and item values
+- finite array/tuple element access like `result[2] >= 0`
+- local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
@@ -963,21 +965,21 @@ Loop `given` lines can describe function inputs. They cannot describe loop-built
 
 The checker understands a small pure subset:
 
-- function declarations
-- simple named parameters
+- function declarations and named `const` arrow/function expressions
+- simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - numeric top-level constants
-- `const` / `let` locals with initializers
+- `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries
 - return-style `if` guards
 - direct same-file function calls
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported numeric constants and `@fit` function declarations when TypeScript resolves them to local source
+- named imports of exported numeric constants and exported `@fit` functions when TypeScript resolves them to local source
 - TypeScript-known imported object/array shape, without treating it as a source-proved helper contract
-- explicit named re-exports of source-proved `@fit` function declarations
+- explicit named re-exports of source-proved `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
@@ -1004,7 +1006,7 @@ Not supported yet:
 - browser runs, screenshots, runtime traces, sampled sweeps
 - package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
 - classes, methods, async, generators
-- destructured params, rest params, default params
+- rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
 - strings, booleans, branded types, and semantic narrowing beyond structural object/array shape

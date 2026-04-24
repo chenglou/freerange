@@ -392,6 +392,13 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: result.cols
     int 6..6 as 6
     trusted from function @fit: given containerWidth: 320..2000
   missing: int 1..7 <= 6
+FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: result.clamped <= 2
+  int 10..10 as min <= int 2..2 as 2 is false
+  need: min <= 2
+  known:
+    int 10..10 as min
+    int 2..2 as 2
+  missing: given min <= 2
 FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
   called function requires max >= min
   this call passes max = 5 and min = 10
@@ -547,6 +554,29 @@ FAIL negative-patterns.ts:negativeInlineReturnComparison: result < 5
   known:
     int 5..5 as 5
   missing: strict comparison cannot hold when both sides are 5
+UNKNOWN negative-patterns.ts:negativeArrowFunctionContract: result >= min
+  -Infinity..Infinity as (min - 1) >= -Infinity..Infinity as min was not proven
+  need: (min - 1) >= min
+  known:
+    -Infinity..Infinity as (min - 1)
+    -Infinity..Infinity as min
+    branch fact from code: min - value - 1 <= 0
+  missing: given (min - 1) >= min
+UNKNOWN negative-patterns.ts:negativeDestructuredArrowParamClaim: result >= width
+  -Infinity..Infinity as (width - 1) >= -Infinity..Infinity as width was not proven
+  need: (width - 1) >= width
+  known:
+    -Infinity..Infinity as (width - 1)
+    -Infinity..Infinity as width
+  missing: given (width - 1) >= width
+UNKNOWN negative-patterns.ts:negativeArrayDestructuredLocalClaim: result >= value
+  -1..9 as (value - 1) >= 0..10 as value was not proven
+  need: (value - 1) >= value
+  known:
+    -1..9 as (value - 1)
+    0..10 as value
+    trusted from function @fit: given value: 0..10
+  missing: given (value - 1) >= value
 FAIL negative-patterns.ts:negativeInlineParamComparison: given value > max
   no input can satisfy this with the earlier given lines
   0..50 as value > 100..200 as max is false

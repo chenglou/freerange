@@ -82,10 +82,14 @@ export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   return specs
 }
 
-export function parseFunctionFitSpecs(sourceText: string, fn: ts.FunctionDeclaration): FitSpec[] {
+export function parseFunctionFitSpecs(
+  sourceText: string,
+  specNode: ts.Node,
+  parameters: ts.NodeArray<ts.ParameterDeclaration>,
+): FitSpec[] {
   return [
-    ...parseFitSpecs(sourceText, fn),
-    ...fn.parameters.flatMap(param => parseParamFitSpecs(sourceText, param)),
+    ...parseFitSpecs(sourceText, specNode),
+    ...parameters.flatMap(param => parseParamFitSpecs(sourceText, param)),
   ]
 }
 

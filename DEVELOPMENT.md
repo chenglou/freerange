@@ -86,6 +86,15 @@ boundary, or real proof gap.
 
 Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
 
+## External Corpus Probes
+
+Keep external repo experiments outside this checkout. The current scratch space
+is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
+bring only general Freerange fixes back into this repo. A good corpus iteration
+is: annotate one small numeric/layout-heavy helper file, run `bun run fr check`
+against that file, classify the first blocker, then add a local pattern test
+before changing checker behavior.
+
 ## Shape Diff Tool
 
 `bun run shape-diff path/to/file.ts --function name` is the TS piggyback x-ray. It answers a narrower question than `infer`: did Freerange lose because it did not know an object/array shape that TypeScript already knew?

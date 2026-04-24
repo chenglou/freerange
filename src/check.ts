@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   loadFitProject,
   resolveFitExport,
+  type FitFunction,
   type FitImportBinding,
   type FitModule,
 } from './modules.ts'
@@ -315,12 +316,10 @@ export function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {
 
 export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
-  for (const statement of program.sourceFile.statements) {
-    if (!ts.isFunctionDeclaration(statement)) continue
-    if (statement.name == null) continue
-    const specs = program.specsByFunction.get(statement.name.text) ?? []
-    if (specs.length === 0 && !functionHasBodyFitComment(program, statement)) continue
-    checks.push(...verifyFunctionSpecs(program.file, program, statement, specs, contractCache))
+  for (const fn of program.functions.values()) {
+    const specs = program.specsByFunction.get(fn.name) ?? []
+    if (specs.length === 0 && !functionHasBodyFitComment(program, fn)) continue
+    checks.push(...verifyFunctionSpecs(program.file, program, fn, specs, contractCache))
   }
   checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
 
@@ -355,16 +354,13 @@ function doctorTopLevelCalls(program: Program, contractCache: Map<string, Functi
   return context.checks.filter(isCallCheck)
 }
 
-function doctorFunctionCalls(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
-  const functionName = fn.name?.text ?? '<anonymous>'
+function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+  const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
-  }
+  bindFunctionInputParameters(fn, specs, program, env)
 
   const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
@@ -438,19 +434,20 @@ function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, 
   return context.checks
 }
 
-function functionHasBodyFitComment(program: Program, fn: ts.FunctionDeclaration) {
-  if (fn.body == null) return false
+function functionHasBodyFitComment(program: Program, fn: FitFunction) {
+  if (fn.node.body == null) return false
   let found = false
   const visit = (node: ts.Node) => {
     if (found) return
-    if (node !== fn.body && isFunctionLikeWithBody(node)) return
+    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
     if (hasInlineFitComment(program.sourceText, node) || hasFitComment(program.sourceText, node)) {
       found = true
       return
     }
     ts.forEachChild(node, visit)
   }
-  visit(fn.body)
+  if (hasInlineFitComment(program.sourceText, fn.node)) return true
+  visit(fn.node.body)
   return found
 }
 
@@ -464,18 +461,15 @@ function isFunctionLikeWithBody(node: ts.Node) {
 function verifyFunctionSpecs(
   file: string,
   program: Program,
-  fn: ts.FunctionDeclaration,
+  fn: FitFunction,
   specs: FitSpec[],
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
-  const functionName = fn.name?.text ?? '<anonymous>'
+  const functionName = fn.name
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
-  }
+  bindFunctionInputParameters(fn, specs, program, env)
 
   const {trustedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
 
@@ -513,17 +507,14 @@ function functionHasBodyClaims(specs: FitSpec[]) {
   return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison')
 }
 
-function inferFunctionFacts(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
-  const functionName = fn.name?.text ?? '<anonymous>'
+function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
+  const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
   const loops: FitInferLoopReport[] = []
 
-  for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
-  }
+  bindFunctionInputParameters(fn, specs, program, env)
 
   const {trustedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
@@ -565,14 +556,14 @@ type FunctionShapeState = {
   result: Value
 }
 
-function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
-  const functionName = fn.name?.text ?? '<anonymous>'
+function inspectFunctionShapes(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
+  const functionName = fn.name
   const insights: FitShapeInsight[] = []
   const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn)
     ? evaluateFunctionShapeState(program, fn, contractCache)
     : null
 
-  for (const param of fn.parameters) {
+  for (const param of fn.node.parameters) {
     if (!ts.isIdentifier(param.name)) continue
     const subject = `param ${param.name.text}`
     const freerange = state?.baseEnv.get(param.name.text) ?? valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
@@ -580,27 +571,24 @@ function inspectFunctionShapes(program: Program, fn: ts.FunctionDeclaration, con
     addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
   }
 
-  const syntaxReturn = valueFromSyntaxTypeShape('result', fn.type, program, new Set())
-  const tsReturn = valueFromFunctionReturnShape('result', fn, program)
+  const syntaxReturn = valueFromSyntaxTypeShape('result', fn.node.type, program, new Set())
+  const tsReturn = valueFromFunctionReturnShape('result', fn.node, program)
   addShapeInsight(insights, program, functionName, 'return type', 'result', state?.result ?? syntaxReturn, tsReturn)
 
-  if (fn.body != null && (state != null || options.calls === true)) {
-    collectShapeInsightsFromNode(fn.body, program, functionName, state, options, insights)
+  if (fn.node.body != null && (state != null || options.calls === true)) {
+    collectShapeInsightsFromNode(fn.node.body, program, functionName, state, options, insights)
   }
 
   return insights
 }
 
-function evaluateFunctionShapeState(program: Program, fn: ts.FunctionDeclaration, contractCache: Map<string, FunctionContractProof>): FunctionShapeState {
-  const functionName = fn.name?.text ?? '<anonymous>'
+function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FunctionShapeState {
+  const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
-  }
+  bindFunctionInputParameters(fn, specs, program, env)
 
   const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
   for (const given of trustedGivens) {
@@ -882,11 +870,119 @@ function topUnknownReason(value: Value): string[] {
   return []
 }
 
-function functionInputRoots(program: Program, fn: ts.FunctionDeclaration): string[] {
+function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program: Program, env: Map<string, Value>) {
+  for (const param of fn.node.parameters) {
+    if (ts.isIdentifier(param.name)) {
+      env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
+      continue
+    }
+    bindPatternFromValue(param.name, unknownParamPatternValue(param, program), env)
+  }
+}
+
+function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>) {
+  for (let i = 0; i < fn.node.parameters.length; i++) {
+    const param = fn.node.parameters[i]!
+    const value = argumentValues[i] ?? unknown(`Missing argument ${i} for ${fn.name}`)
+    bindPatternFromValue(param.name, value, env)
+  }
+}
+
+function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
+  return valueFromNodeShape('param', param.name, program)
+    ?? valueFromSyntaxTypeShape('param', param.type, program, new Set())
+    ?? unknownObject('param')
+}
+
+function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<string, Value>) {
+  if (ts.isIdentifier(name)) {
+    env.set(name.text, localizeValue(value, name.text))
+    return
+  }
+  if (ts.isObjectBindingPattern(name)) {
+    for (const element of name.elements) {
+      if (element.dotDotDotToken != null) continue
+      const propertyName = bindingElementPropertyName(element)
+      if (propertyName == null) {
+        bindUnknownPattern(element.name, env)
+        continue
+      }
+      const prop = value.kind === 'object'
+        ? value.props.get(propertyName) ?? unknownNumber(`${value.expr ?? 'param'}.${propertyName}`)
+        : unknown(`Destructuring property ${propertyName} expected an object`)
+      bindPatternFromValue(element.name, prop, env)
+    }
+    return
+  }
+  if (ts.isArrayBindingPattern(name)) {
+    bindArrayPatternFromValue(name, value, env)
+    return
+  }
+  bindUnknownPattern(name, env)
+}
+
+function bindArrayPatternFromValue(name: ts.ArrayBindingPattern, value: Value, env: Map<string, Value>) {
+  forEachArrayBindingElement(name, (elementName, index, isRest) => {
+    if (isRest) {
+      bindUnknownPattern(elementName, env)
+      return
+    }
+    const item = arrayPatternElementValue(value, index)
+    bindPatternFromValue(elementName, item, env)
+  })
+}
+
+function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
+  if (ts.isIdentifier(name)) {
+    env.set(name.text, unknownNumber(name.text))
+    return
+  }
+  if (ts.isObjectBindingPattern(name)) {
+    for (const element of name.elements) bindUnknownPattern(element.name, env)
+    return
+  }
+  if (ts.isArrayBindingPattern(name)) {
+    forEachArrayBindingElement(name, elementName => bindUnknownPattern(elementName, env))
+  }
+}
+
+function localizeValue(value: Value, expr: string): Value {
+  if (value.kind === 'number') {
+    return numberValue(value.min, value.max, value.isInteger, expr, linearVariable(linearNameForExpression(expr)), null, value.provenance)
+  }
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) props.set(name, localizeValue(prop, `${expr}.${name}`))
+    return {...value, props, expr}
+  }
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      length: localizeValue(value.length, `${expr}.length`) as NumberValue,
+      elements: value.elements == null ? null : value.elements.map((element, index) => localizeValue(element, `${expr}[${index}]`)),
+      element: value.element == null ? null : localizeValue(value.element, `${expr}[]`),
+      expr,
+    }
+  }
+  return value
+}
+
+function bindingNames(name: ts.BindingName): string[] {
+  if (ts.isIdentifier(name)) return [name.text]
+  const names: string[] = []
+  if (ts.isObjectBindingPattern(name)) {
+    for (const element of name.elements) names.push(...bindingNames(element.name))
+  }
+  if (ts.isArrayBindingPattern(name)) {
+    forEachArrayBindingElement(name, elementName => names.push(...bindingNames(elementName)))
+  }
+  return names
+}
+
+function functionInputRoots(program: Program, fn: FitFunction): string[] {
   const roots = [...program.globals.keys()]
-  for (const param of fn.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    roots.push(param.name.text)
+  for (const param of fn.node.parameters) {
+    roots.push(...bindingNames(param.name))
   }
   return [...new Set(roots)]
 }
@@ -1696,21 +1792,23 @@ function adjacentComparisonFailureReason(text: string, collectionText: string, r
   ].join('\n')
 }
 
-function evaluateFunctionBody(fn: ts.FunctionDeclaration, context: EvalContext): Value {
+function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
   return evaluateFunctionBodyState(fn, context).result
 }
 
-function evaluateFunctionBodyState(fn: ts.FunctionDeclaration, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} {
-  if (fn.body == null) {
+function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} {
+  if (fn.node.body == null) {
     return {
-      result: unknown(`Function ${fn.name?.text ?? '<anonymous>'} has no body`),
+      result: unknown(`Function ${fn.name} has no body`),
       env: context.env,
       assumptions: context.assumptions,
     }
   }
   const localEnv = new Map(context.env)
   const localContext: EvalContext = {...context, env: localEnv}
-  const result = evaluateStatements(fn.body.statements, localContext)
+  const result = ts.isBlock(fn.node.body)
+    ? evaluateStatements(fn.node.body.statements, localContext)
+    : evaluateReturnExpression(fn.node.body, fn.node, localContext)
   context.assumptions = localContext.assumptions
   return {result, env: localEnv, assumptions: localContext.assumptions}
 }
@@ -1796,6 +1894,9 @@ function bindUninitializedName(name: ts.BindingName, context: EvalContext) {
   if (ts.isObjectBindingPattern(name)) {
     for (const element of name.elements) bindUninitializedName(element.name, context)
   }
+  if (ts.isArrayBindingPattern(name)) {
+    forEachArrayBindingElement(name, elementName => bindUninitializedName(elementName, context))
+  }
 }
 
 function bindName(name: ts.BindingName, value: Value, context: EvalContext) {
@@ -1804,6 +1905,7 @@ function bindName(name: ts.BindingName, value: Value, context: EvalContext) {
     return
   }
   if (ts.isObjectBindingPattern(name)) bindObjectPattern(name, value, context)
+  if (ts.isArrayBindingPattern(name)) bindArrayPattern(name, value, context)
 }
 
 function bindObjectPattern(pattern: ts.ObjectBindingPattern, value: Value, context: EvalContext) {
@@ -1819,6 +1921,33 @@ function bindObjectPattern(pattern: ts.ObjectBindingPattern, value: Value, conte
       : unknown(`Destructuring property ${propertyName} expected an object`)
     bindName(element.name, prop, context)
   }
+}
+
+function bindArrayPattern(pattern: ts.ArrayBindingPattern, value: Value, context: EvalContext) {
+  forEachArrayBindingElement(pattern, (elementName, index, isRest) => {
+    if (isRest) {
+      bindUninitializedName(elementName, context)
+      return
+    }
+    bindName(elementName, arrayPatternElementValue(value, index), context)
+  })
+}
+
+function forEachArrayBindingElement(
+  pattern: ts.ArrayBindingPattern,
+  visit: (name: ts.BindingName, index: number, isRest: boolean) => void,
+) {
+  pattern.elements.forEach((element, index) => {
+    if (ts.isOmittedExpression(element)) return
+    visit(element.name, index, element.dotDotDotToken != null)
+  })
+}
+
+function arrayPatternElementValue(value: Value, index: number): Value {
+  if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
+  return value.elements?.[index]
+    ?? value.element
+    ?? unknownNumber(`${value.expr ?? 'array'}[${index}]`)
 }
 
 function bindingElementPropertyName(element: ts.BindingElement): string | null {
@@ -1932,8 +2061,12 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
 
 function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalContext): Value {
   if (statement.expression == null) return unknown('Return without expression')
-  const specs = parseInlineFitSpecsForExpression(context.program.sourceText, statement, 'result')
-  const evaluate = () => evaluateExpressionWithObjectPath(statement.expression!, context, ['result'])
+  return evaluateReturnExpression(statement.expression, statement, context)
+}
+
+function evaluateReturnExpression(expression: ts.Expression, inlineNode: ts.Node, context: EvalContext): Value {
+  const specs = parseInlineFitSpecsForExpression(context.program.sourceText, inlineNode, 'result')
+  const evaluate = () => evaluateExpressionWithObjectPath(expression, context, ['result'])
   const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
   verifyInlineSpecsForValue(specs, value, context)
   return value
@@ -2706,18 +2839,14 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   const fn = context.program.functions.get(functionName)
   if (fn == null) return evaluateImportedCall(functionName, expression, context)
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
-  if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
+  if (fn.node.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for ${functionName}`)
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = shouldRecordCallObligations(context)
-    ? verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context)
-    : 'unknown'
+  const obligations = verifyCallGivenSpecs(functionName, context.program, fn, expression, argumentValues, context, {
+    record: shouldRecordCallObligations(context),
+  })
 
   const env = programGlobalEnv(context.program)
-  for (let i = 0; i < fn.parameters.length; i++) {
-    const param = fn.parameters[i]!
-    if (!ts.isIdentifier(param.name)) return unknown(`Unsupported parameter pattern in ${functionName}`)
-    env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for ${functionName}`))
-  }
+  bindFunctionArgumentParameters(fn, argumentValues, env)
 
   const result = evaluateFunctionBody(fn, {
     program: context.program,
@@ -2730,8 +2859,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     contractCache: context.contractCache,
     ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
   })
-  const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn, context.program)
-    ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.type, context.program, new Set())
+  const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn.node, context.program)
+    ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.node.type, context.program, new Set())
     ?? valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program)
   const fallbackResult = result.kind === 'unknown'
     ? fallbackShape ?? result
@@ -2781,22 +2910,22 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   if (exported.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, exported.reason))
 
   const fn = exported.module.functions.get(exported.localName)
-  if (fn == null) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that symbol is not a function declaration`))
+  if (fn == null) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that symbol is not a supported function`))
   const specs = exported.module.specsByFunction.get(exported.localName) ?? []
-  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${binding.exportedName}Result`, fn, exported.module))
+  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${binding.exportedName}Result`, fn.node, exported.module))
   if (specs.length === 0) return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
-  if (fn.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
+  if (fn.node.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
   if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${binding.exportedName} contract was not used outside a @fit claim`)
   const source = {
     sourceFile: exported.module.file,
-    sourceFunctionName: fn.name?.text ?? exported.localName,
+    sourceFunctionName: fn.name,
   }
 
   const proof = verifyFunctionContract(exported.module, exported.localName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(functionName, binding, proof))
 
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context)
+  const obligations = verifyCallGivenSpecs(functionName, exported.module, fn, expression, argumentValues, context, {record: true})
   if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
 
   return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, resolvedStructuralFallback ?? unknownResultValue(specs, exported.module))
@@ -3088,7 +3217,7 @@ function importedHelperLabel(localName: string, binding: ImportedBinding) {
 function valueWithFunctionContractSummary(
   functionName: string,
   program: Program,
-  fn: ts.FunctionDeclaration,
+  fn: FitFunction,
   specs: FitSpec[],
   argumentValues: Value[],
   contractCache: Map<string, FunctionContractProof>,
@@ -3096,11 +3225,7 @@ function valueWithFunctionContractSummary(
   result: Value,
 ): Value {
   const env = programGlobalEnv(program)
-  for (let i = 0; i < fn.parameters.length; i++) {
-    const param = fn.parameters[i]!
-    if (!ts.isIdentifier(param.name)) return unknown(`Unsupported parameter pattern in imported function ${functionName}`)
-    env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for imported function ${functionName}`))
-  }
+  bindFunctionArgumentParameters(fn, argumentValues, env)
   env.set('result', result)
 
   const context: EvalContext = {
@@ -3231,20 +3356,17 @@ function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value
 function verifyCallGivenSpecs(
   functionName: string,
   calleeProgram: Program,
-  fn: ts.FunctionDeclaration,
+  fn: FitFunction,
   expression: ts.CallExpression,
   argumentValues: Value[],
   context: EvalContext,
+  options: {record: boolean},
 ) {
-  const specs = calleeProgram.specsByFunction.get(fn.name?.text ?? functionName) ?? []
+  const specs = calleeProgram.specsByFunction.get(fn.name) ?? []
   const callText = `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
-  for (let i = 0; i < fn.parameters.length; i++) {
-    const param = fn.parameters[i]!
-    if (!ts.isIdentifier(param.name)) continue
-    env.set(param.name.text, argumentValues[i] ?? unknown(`Missing argument ${i} for ${functionName}`))
-  }
+  bindFunctionArgumentParameters(fn, argumentValues, env)
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
   for (const spec of specs) {
@@ -3261,13 +3383,15 @@ function verifyCallGivenSpecs(
       if (status.status !== 'pass') status = withCallComparisonReason(status, left, right, spec)
     }
     if (status == null) continue
-    context.checks.push({
-      file: context.file,
-      functionName: context.stack.join(' > '),
-      text: `call ${callText}: ${callRequirementText(spec)}`,
-      status: status.status,
-      ...(status.reason == null ? {} : {reason: status.reason}),
-    })
+    if (options.record) {
+      context.checks.push({
+        file: context.file,
+        functionName: context.stack.join(' > '),
+        text: `call ${callText}: ${callRequirementText(spec)}`,
+        status: status.status,
+        ...(status.reason == null ? {} : {reason: status.reason}),
+      })
+    }
     if (status.status === 'fail') statusSummary = 'fail'
     else if (status.status === 'unknown' && statusSummary === 'pass') statusSummary = 'unknown'
   }

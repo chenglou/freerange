@@ -19,7 +19,7 @@ But the project is not only about layout. The bigger goal is checkable specs ove
 
 ## First Check
 
-Put `@fit` immediately above a function declaration:
+Put `@fit` immediately above a named function or named `const` arrow/function expression:
 
 ```ts
 /** @fit

@@ -28,6 +28,40 @@ export function outputRangeFact(value: number) {
   return shifted
 }
 
+/** @fit
+ * given min <= max
+ * result >= min
+ * result <= max
+ */
+export const arrowFunctionContract = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max)
+
+export const arrowInlineClaims = (
+  value: number, // @fit 0..10
+) => ({
+  next: value + 1, // @fit 1..11
+})
+
+type PatternRect = {x: number; y: number; width: number; height: number}
+
+export const destructuredArrowParamClaims = ({x, y, width, height}: PatternRect) => ({
+  x2: x + width, // @fit == x + width
+  y2: y + height, // @fit == y + height
+})
+
+function tupleCenterOffsets(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+  const xOffset = Math.abs(targetX - sourceX) / 2
+  const yOffset = Math.abs(targetY - sourceY) / 2
+  return [sourceX + xOffset, sourceY + yOffset, xOffset, yOffset]
+}
+
+export function arrayDestructuredLocalClaims(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+  const [, , offsetX, offsetY] = tupleCenterOffsets(sourceX, sourceY, targetX, targetY)
+  return {
+    offsetX, // @fit >= 0
+    offsetY, // @fit >= 0
+  }
+}
+
 export function localInlineRangeFacts() {
   // @fit int 0..10
   const index = Math.floor(4.2)
@@ -924,6 +958,15 @@ function clampLayoutValue(value: number, min: number, max: number) {
  */
 export function userlandClamp(value: number) {
   return clampLayoutValue(value, 0, 320)
+}
+
+export function silentHelperSummaryFeedsReturnField(
+  containerWidth: number, // @fit 320..2000
+) {
+  const cols = conditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
+  return {
+    cols, // @fit int 1..7
+  }
 }
 
 /** @fit

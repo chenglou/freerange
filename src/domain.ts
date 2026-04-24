@@ -287,12 +287,21 @@ function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | nul
 }
 
 export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberValue {
+  if (left.min === 0 && left.max === 0) {
+    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+  }
+  if (right.min === 0 && right.max === 0) {
+    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+  }
   const products = [
     left.min * right.min,
     left.min * right.max,
     left.max * right.min,
     left.max * right.max,
-  ]
+  ].filter(product => !Number.isNaN(product))
+  if (products.length === 0) {
+    return numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+  }
   return numberValue(Math.min(...products), Math.max(...products), left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
 }
 
