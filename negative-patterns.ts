@@ -872,13 +872,6 @@ export function negativeFunctionGivenCannotNameReturn() {
 }
 
 /** @fit
- * result.width: 0..10
- */
-export function negativeLegacyResultIsNotReturn(width: number) {
-  return {width}
-}
-
-/** @fit
  * given width: 500..400
  */
 export function negativeGivenRangeCannotBeEmpty(width: number) {

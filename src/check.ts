@@ -4100,7 +4100,6 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, context: Ev
 }
 
 function unknownIdentifierReason(name: string) {
-  if (name === 'result') return 'Unknown identifier result; use return for the function result'
   return `Unknown identifier ${name}`
 }
 
