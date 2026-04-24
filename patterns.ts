@@ -326,6 +326,33 @@ export function branchAssignmentFallsThrough(width: number) {
   return chosen
 }
 
+export function mathSignRange(
+  value: number, // @fit -10..10
+) {
+  return Math.sign(value) // @fit int -1..1
+}
+
+/** @fit
+ * given value: 0..10000
+ * result: 0..100
+ */
+export function signedSqrtNonnegative(value: number) {
+  return Math.sign(value) * Math.sqrt(Math.abs(value))
+}
+
+/** @fit
+ * given limit: int 0..1000
+ * result.length == limit
+ * result[]: int 0..<limit
+ */
+export function numericLimitRangeLoop(limit: number) {
+  const values = []
+  for (let i = 0; i < limit; i++) {
+    values.push(i)
+  }
+  return values
+}
+
 /** @fit
  * given items.length: int 1..50
  * given top: 0..1000

@@ -32,6 +32,7 @@ export type ConditionalLoopAdd = {
 export type IndexedLoopShape = {
   indexName: string
   sourceExpression: ts.Expression
+  sourceKind: 'array' | 'limit'
 }
 
 export function readLoopPush(expression: ts.CallExpression, context: LoopSourceContext): Omit<LoopPush, 'arrayName' | 'length'> {
@@ -149,10 +150,10 @@ export function indexedLoopShape(statement: ts.ForStatement): IndexedLoopShape |
 
   const indexName = declaration.name.text
   if (statement.condition == null || statement.incrementor == null) return null
-  const sourceExpression = indexedLoopSourceExpression(statement.condition, indexName)
-  if (sourceExpression == null) return null
+  const source = indexedLoopSource(statement.condition, indexName)
+  if (source == null) return null
   if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
-  return {indexName, sourceExpression}
+  return {indexName, sourceExpression: source.expression, sourceKind: source.kind}
 }
 
 export function isPushCall(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}} {
@@ -239,11 +240,13 @@ function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.Bin
     && ts.isIdentifier(expression.left)
 }
 
-function indexedLoopSourceExpression(expression: ts.Expression, indexName: string): ts.Expression | null {
+function indexedLoopSource(expression: ts.Expression, indexName: string): {kind: 'array' | 'limit'; expression: ts.Expression} | null {
   if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
   if (!ts.isIdentifier(expression.left) || expression.left.text !== indexName) return null
-  if (!ts.isPropertyAccessExpression(expression.right) || expression.right.name.text !== 'length') return null
-  return expression.right.expression
+  if (ts.isPropertyAccessExpression(expression.right) && expression.right.name.text === 'length') {
+    return {kind: 'array', expression: expression.right.expression}
+  }
+  return {kind: 'limit', expression: expression.right}
 }
 
 function indexedLoopIncrements(expression: ts.Expression, indexName: string) {

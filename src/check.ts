@@ -85,6 +85,7 @@ import {
   readGuardedLoopPushes,
   readLoopExtremumAssignment,
   readLoopPush,
+  type IndexedLoopShape,
   type LoopSourceContext,
 } from './loop-source.ts'
 import {
@@ -2320,8 +2321,8 @@ function evaluateForStatementCore(
   if (shape == null) return evaluateForgettableForStatement(statement, context)
   if (!ts.isBlock(statement.statement)) return unknown('Only block indexed loops are supported')
 
-  const source = evaluateExpression(shape.sourceExpression, context)
-  if (source.kind !== 'array') return unknown('Indexed loop source expected an array')
+  const source = indexedLoopSourceValue(shape, context)
+  if (source.kind !== 'array') return source
   if (source.length.max < 1) return unknown('Indexed loop expected a possibly non-empty source')
 
   const indexValue = numberValue(0, source.length.max - 1, true, shape.indexName, linearVariable(shape.indexName))
@@ -2414,7 +2415,7 @@ function evaluateForStatementCore(
       element,
       summary: mergeArraySummary(target.summary, sequenceSummaryFromLoopPush(push, update, loopSummaryOptions(context))),
     })
-    context.assumptions = mergeAssumptions(context.assumptions, indexedElementAssumptions(push.arrayName, source.length))
+    context.assumptions = mergeAssumptions(context.assumptions, indexedPushElementAssumptions(push, element, shape.indexName, source.length))
   }
 
   for (const push of conditionalPushedArrays) {
@@ -2447,6 +2448,15 @@ function evaluateForStatementCore(
   recordInferLoop(statement, 'for', rawLocalSpecs, context, checksStart, factRoots)
 
   return null
+}
+
+function indexedLoopSourceValue(shape: IndexedLoopShape, context: EvalContext): ArrayValue | Value {
+  const source = evaluateExpression(shape.sourceExpression, context)
+  if (shape.sourceKind === 'array') {
+    return source.kind === 'array' ? source : unknown('Indexed loop source expected an array')
+  }
+  if (source.kind !== 'number') return unknown('Indexed loop limit expected a number')
+  return unknownArray(shape.sourceExpression.getText(context.program.sourceFile), source)
 }
 
 function evaluateForgettableForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
@@ -2750,6 +2760,14 @@ function indexedLoopAssumptions(index: NumberValue, sourceLength: NumberValue): 
 function indexedElementAssumptions(arrayName: string, sourceLength: NumberValue): LinearConstraint[] {
   const index = indexedElementValue(arrayName, 'index', sourceLength)
   return indexedElementPathAssumptions(index, sourceLength)
+}
+
+function indexedPushElementAssumptions(push: LoopPush, element: Value | null, indexName: string, sourceLength: NumberValue): LinearConstraint[] {
+  const facts = indexedElementAssumptions(push.arrayName, sourceLength)
+  if (push.element?.kind === 'number' && push.element.expr === indexName && element?.kind === 'number') {
+    facts.push(...indexedElementPathAssumptions(element, sourceLength))
+  }
+  return facts
 }
 
 function indexedElementPathAssumptions(index: NumberValue, sourceLength: NumberValue): LinearConstraint[] {
@@ -3600,6 +3618,11 @@ function evaluateMathCall(name: string, args: ts.NodeArray<ts.Expression>, conte
       if (value == null) return unknown('Math.sqrt expects one argument')
       return evaluateNumberUnary(value, sqrtNumber)
     }
+    case 'sign': {
+      const value = numbers[0]
+      if (value == null) return unknown('Math.sign expects one argument')
+      return evaluateNumberUnary(value, signNumber)
+    }
     case 'min': {
       if (numbers.length === 0) return unknown('Math.min expects at least one argument')
       return numbers.slice(1).reduce((current, next) => minNumberPair(current, next, context.assumptions), numbers[0]!)
@@ -3651,6 +3674,16 @@ function truncNumber(value: NumberValue): NumberValue {
 function sqrtNumber(value: NumberValue): Value {
   if (value.min < 0) return unknown('Math.sqrt over a negative range is unsupported')
   return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`, null, null, value.provenance)
+}
+
+function signNumber(value: NumberValue): NumberValue {
+  const expr = value.expr == null ? null : `sign(${value.expr})`
+  if (value.min === 0 && value.max === 0) return numberValue(0, 0, true, expr, null, null, value.provenance)
+  if (value.min > 0) return numberValue(1, 1, true, expr, null, null, value.provenance)
+  if (value.max < 0) return numberValue(-1, -1, true, expr, null, null, value.provenance)
+  if (value.min >= 0) return numberValue(0, 1, true, expr, null, null, value.provenance)
+  if (value.max <= 0) return numberValue(-1, 0, true, expr, null, null, value.provenance)
+  return numberValue(-1, 1, true, expr, null, null, value.provenance)
 }
 
 function absNumber(value: NumberValue, assumptions: LinearConstraint[]): NumberValue {

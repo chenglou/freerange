@@ -124,6 +124,28 @@ FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: result: 0..100
     int 100..100 as 100
     trusted from function @fit: given width: 0..100
   missing: 0..200 <= 100
+FAIL negative-patterns.ts:negativeMathSignCanBeNegative: result: int 0..1
+  range was int -1..1 as sign(value), expected inside int 0..1
+  need: sign(value) inside int 0..1
+  known:
+    int -1..1 as sign(value)
+    int 0..0 as 0
+    int 1..1 as 1
+    trusted from function @fit: given value: -10..10
+  missing: sign(value) >= 0
+FAIL negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: result[]: int 1..<limit
+  range was int 0..999 as values[], expected inside int 1..<limit
+  need: values[] inside int 1..<limit
+  known:
+    int 0..999 as values[]
+    int 1..1 as 1
+    int 1..1000 as limit
+    trusted from function @fit: given limit: int 1..1000
+    read from code: values[].index >= 0
+    read from code: values[].index < limit
+    read from code: values[] >= 0
+    read from code: values[] < limit
+  missing: values[] >= 1
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: result.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, step) >= 0..1000 as top was not proven
   need: runningSum(top, items.length, step) >= top

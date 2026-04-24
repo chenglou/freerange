@@ -163,6 +163,24 @@ export function negativeBranchAssignmentJoinsBothSides(width: number) {
   return chosen
 }
 
+export function negativeMathSignCanBeNegative(
+  value: number, // @fit -10..10
+) {
+  return Math.sign(value) // @fit int 0..1
+}
+
+/** @fit
+ * given limit: int 1..1000
+ * result[]: int 1..<limit
+ */
+export function negativeNumericLimitRangeLoopCanIncludeZero(limit: number) {
+  const values = []
+  for (let i = 0; i < limit; i++) {
+    values.push(i)
+  }
+  return values
+}
+
 /** @fit
  * given items.length: int 0..50
  * given top: 0..1000

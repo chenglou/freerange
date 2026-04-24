@@ -548,6 +548,7 @@ Math.round
 Math.trunc
 Math.abs
 Math.sqrt
+Math.sign
 Math.min
 Math.max
 ```
@@ -561,7 +562,7 @@ Math.ceil(total / count) * count >= total // when count > 0
 index % count < count
 ```
 
-`Math.min` and `Math.max` keep the small branch facts they introduce:
+`Math.min`, `Math.max`, and `Math.sign` keep the small branch facts they introduce:
 
 ```ts
 /** @fit
@@ -1011,6 +1012,7 @@ The checker understands a small pure subset:
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
+- simple numeric-limit indexed loops such as `for (let i = 0; i < limit; i++) values.push(i)`
 - guarded conditional pushes inside supported `for...of` and indexed loops
 - guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations
 - same-index labels in comparisons, plus adjacent `$i + 1` comparisons backed by inferred sequence facts
@@ -1027,6 +1029,7 @@ Not supported yet:
 - browser runs, screenshots, runtime traces, sampled sweeps
 - package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
 - classes, methods, async, generators
+- prototype-assigned JavaScript methods and `this`-driven layout objects
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
