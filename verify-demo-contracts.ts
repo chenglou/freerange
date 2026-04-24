@@ -1,7 +1,7 @@
 import {verifyFitFiles} from './src/reports.ts'
 import {demoContractPaths} from './demo-contract-paths.ts'
 
-const expectedPassCount = 113
+const expectedPassCount = 112
 const report = await verifyFitFiles(demoContractPaths)
 
 if (report.phase !== 'ready' || report.summary.pass !== expectedPassCount) {

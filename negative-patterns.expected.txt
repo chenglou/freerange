@@ -146,6 +146,14 @@ FAIL negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: result[]:
     read from code: values[] >= 0
     read from code: values[] < limit
   missing: values[] >= 1
+UNKNOWN negative-patterns.ts:negativeUnboundedWidthNeedsCap: result <= 500
+  0.5..Infinity as (width / 2) <= int 500..500 as 500 was not proven
+  need: (width / 2) <= 500
+  known:
+    0.5..Infinity as (width / 2)
+    int 500..500 as 500
+    trusted from function @fit: given width: 1..Infinity
+  missing: given (width / 2) <= 500
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: result.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, step) >= 0..1000 as top was not proven
   need: runningSum(top, items.length, step) >= top

@@ -659,6 +659,17 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
 }
 
 /** @fit
+ * result >= y
+ * result: 0..Infinity
+ */
+export function oneSidedInfinityAdd(
+  y: number, // @fit 0..Infinity
+  gapTop: number, // @fit 0..Infinity
+) {
+  return y + gapTop
+}
+
+/** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
  * given top: 0..1000

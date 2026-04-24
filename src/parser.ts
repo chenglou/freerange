@@ -238,6 +238,21 @@ function parseRangeText(text: string): FitRange | null {
   if (valueKindMatch == null) return null
   const body = valueKindMatch[2]!.trim()
   const valueKind = valueKindMatch[1] == null ? 'number' : 'int'
+  const bounds = splitRangeBounds(body)
+  if (bounds != null) {
+    const {lower, upper, upperInclusive} = bounds
+    if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
+    return {
+      valueKind,
+      lower,
+      upper,
+      lowerValue: parseRangeBoundNumber(lower),
+      upperValue: parseRangeBoundNumber(upper),
+      lowerInclusive: true,
+      upperInclusive,
+      text,
+    }
+  }
   if (isRangeBoundText(body)) {
     return {
       valueKind,
@@ -250,20 +265,7 @@ function parseRangeText(text: string): FitRange | null {
       text,
     }
   }
-  const bounds = splitRangeBounds(body)
-  if (bounds == null) return null
-  const {lower, upper, upperInclusive} = bounds
-  if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
-  return {
-    valueKind,
-    lower,
-    upper,
-    lowerValue: parseRangeBoundNumber(lower),
-    upperValue: parseRangeBoundNumber(upper),
-    lowerInclusive: true,
-    upperInclusive,
-    text,
-  }
+  return null
 }
 
 function splitRangeBounds(text: string): {lower: string; upper: string; upperInclusive: boolean} | null {

@@ -1,5 +1,5 @@
 import {inferFitFiles} from './src/check.ts'
-import {multiplyNumbers, numberValue} from './src/domain.ts'
+import {divideNumbers, multiplyNumbers, numberValue} from './src/domain.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts']
@@ -26,6 +26,17 @@ if (unboundedNonnegativeProduct.min !== 0 || unboundedNonnegativeProduct.max !==
   process.exitCode = 1
 } else {
   console.log('domain: unbounded nonnegative product')
+}
+
+const unboundedNonnegativeQuotient = divideNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(1, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== 0 || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity quotient, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative quotient')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)
@@ -241,11 +252,9 @@ function snapshotItems(functionName: string, section: string, items: string[]) {
 function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item.includes('.fragments')) return false
   if (item === 'result.items.length == layoutSources.length') return true
-  if (item === 'result.items.length: int 0..1000') return true
   if (item === 'result.contentHeight == nextRowTop') return true
   if (item === 'result.contentHeight: 40..Infinity') return true
   if (item === 'result.rows.length == rows.length') return true
-  if (item === 'result.rows.length: int 0..1000') return true
   if (item === 'result.rows[].bottom == (rows[].top + rows[].height)') return true
   if (item === 'result.rows[].bottom: 40..Infinity') return true
   if (item === 'result.rows[].height == rows[].height') return true
@@ -264,7 +273,6 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   }
   return item === 'cols: int 1..7'
     || item === 'boxMaxSizeX: 18.285714285714285..1952'
-    || item === 'rows.length: int 0..1000'
     || item === 'rows[].bottom == (rows[].top + rows[].height)'
     || item === 'rows[].bottom: 40..Infinity'
     || item === 'rows[].height: 0..Infinity'
@@ -272,7 +280,6 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
     || item === 'nondecreasing(rows.top)'
     || item === 'spaced(rows, boxesGapY)'
     || item === 'measurements.length == layoutSources.length'
-    || item === 'measurements.length: int 0..1000'
     || item === 'measurements[].imageSizeX: 0..1952'
     || item.includes('measurements[].promptLayout.lineCount ==')
     || item.includes('measurements[].promptLayout.lines.length ==')

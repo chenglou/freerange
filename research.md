@@ -135,6 +135,11 @@ Corpus loop notes:
 - The first non-xyflow pass stayed similarly boring. `d3-scale/src/radial.js` wanted `Math.sign` for signed square/unsquare helpers. `dagre/lib/greedy-fas.ts` wanted numeric-limit indexed loops for `range(limit)`. `tldraw/packages/editor/src/lib/primitives/utils.ts` passed small precision helpers with existing arithmetic. `masonry/masonry.js` did not get source comments because the useful layout seams are old-JS prototype assignments over `this`, plus `while` loops and dynamic calls; adding inert comments there would lie about coverage.
 - This is the right feedback loop: annotate a small real helper file, let reports show the first honest blocker, fix the root if it is general, then add a tiny positive and negative kernel before moving to the next corpus file.
 
+Infinity hygiene:
+
+- `Infinity` is a real range bound, not a fallback for "I did not think about this." Use it when a value is physically unbounded from the code's point of view, like scroll offsets, cumulative layout positions, or generic clamp inputs. Use finite upper bounds only when they are product/support facts, real caller facts, or real caps in the code.
+- Finite caps that merely make proofs pass should be treated as debt. The better end state is usually a relational fact (`index < items.length`, `width <= maxWidth`, `top == previous bottom + gap`) or a code cap. If neither exists yet, leave the finite cap visible and call it out.
+
 Demo notes from the first infer pass:
 
 - Pretext `layoutTemplateFrame` now exposes the useful boring facts: block count is preserved, `bubbleHeight` and `totalHeight` share the same running measure, and the `usedContentWidth` max accumulator stays numeric. The next real blocker there is not min/max; it is whether we want better contracts around helper return measures like `layoutBlockFrameResult.height`.

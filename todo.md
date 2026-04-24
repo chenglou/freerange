@@ -65,6 +65,9 @@ There are three active tracks now:
 3. **Keep TypeScript shape piggybacking bounded.**
    The experiment paid for itself, but it is still a shape oracle. It must not quietly become numeric proof logic.
 
+4. **Revisit open-ended range spelling later.**
+   `int > 0` reads too much like a type operator, so keep today’s explicit `int 1..Infinity` spelling. A future shorthand like `int 1..` or `0..` may be worth it once inline annotations become common enough that `Infinity` is visual noise. Do not add it until the parser story is boring.
+
 ## Normal Proof Track
 
 Keep this visible so shape work and IR cleanup do not erase the boring proof/report/demo work that was already worth doing.

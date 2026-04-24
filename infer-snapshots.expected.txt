@@ -122,7 +122,6 @@ result:
   result.contentHeight == nextRowTop
   result.contentHeight: 40..Infinity
   result.items.length == layoutSources.length
-  result.items.length: int 0..1000
   result.items[].imageBox.sizeX: 0..1952
   result.items[].layoutBox.sizeX: 0..1952
   result.items[].prompt.box.sizeX == promptLayout.width
@@ -130,7 +129,6 @@ result:
   result.items[].prompt.lines.length == promptLayout.lines.length
   result.items[].prompt.lines.length: int 0..Infinity
   result.rows.length == rows.length
-  result.rows.length: int 0..1000
   result.rows[].bottom == (rows[].top + rows[].height)
   result.rows[].bottom: 40..Infinity
   result.rows[].height == rows[].height
@@ -142,7 +140,6 @@ result:
 locals:
   cols: int 1..7
   boxMaxSizeX: 18.285714285714285..1952
-  rows.length: int 0..1000
   rows[].bottom == (rows[].top + rows[].height)
   rows[].bottom: 40..Infinity
   rows[].height: 0..Infinity
@@ -150,7 +147,6 @@ locals:
   nondecreasing(rows.top)
   spaced(rows, boxesGapY)
   measurements.length == layoutSources.length
-  measurements.length: int 0..1000
   measurements[].imageSizeX: 0..1952
   measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
   measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
@@ -160,14 +156,12 @@ locals:
 loop 185: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
-    measurements.length: int 0..1000
     measurements[].imageSizeX: 0..1952
     measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
     measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
     measurements[].promptLayout.lines.length: int 0..Infinity
     measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
     measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
-    rows.length: int 0..1000
     rows[].bottom == (rows[].top + rows[].height)
     rows[].bottom: 40..Infinity
     rows[].height: 0..Infinity

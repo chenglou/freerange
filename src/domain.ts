@@ -312,7 +312,10 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
     left.min / right.max,
     left.max / right.min,
     left.max / right.max,
-  ]
+  ].filter(quotient => !Number.isNaN(quotient))
+  if (quotients.length === 0) {
+    return numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, binaryExpr(left, '/', right), null, null, mergeProvenance(left, right))
+  }
   return numberValue(Math.min(...quotients), Math.max(...quotients), false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeProvenance(left, right))
 }
 

@@ -182,6 +182,14 @@ export function negativeNumericLimitRangeLoopCanIncludeZero(limit: number) {
 }
 
 /** @fit
+ * given width: 1..Infinity
+ * result <= 500
+ */
+export function negativeUnboundedWidthNeedsCap(width: number) {
+  return width / 2
+}
+
+/** @fit
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: -40..40
