@@ -768,6 +768,62 @@ export function negativeIndexedLoopAliasNeedsNonNegativeItem(params: {items: {he
 
 /** @fit
  * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given gap: 0..20
+ * spaced(return.rows, gap)
+ */
+export function negativeStaleGapAfterRefactor(items: {height: number}[], gap: number) {
+  const rows = []
+  let y = 0
+  const oldGap = gap + 1
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height + oldGap
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given focused: int 0..<items.length
+ * return.targetIndex: int 0..<items.length
+ */
+export function negativeOffByOneTargetIndex(items: number[], focused: number) {
+  return {targetIndex: focused + 1, itemCount: items.length}
+}
+
+/** @fit
+ * given row.top: 0..1000
+ * given row.height: 0..40
+ * return.bottom == return.top + return.height
+ */
+export function negativeMissingRowBottom(row: {top: number; height: number}) {
+  return {
+    top: row.top,
+    height: row.height,
+    bottom: row.top + row.height - 1,
+  }
+}
+
+/** @fit
+ * given prompt.height: 0..Infinity
+ * given availableHeight: 0..200
+ * return.visibleHeight <= availableHeight
+ */
+export function negativeUnboundedPromptHeight(prompt: {height: number}, availableHeight: number) {
+  return {visibleHeight: prompt.height, availableHeight}
+}
+
+/** @fit
+ * given opacity: 0..1
+ * return: 0..1
+ */
+export function negativeInvertedClampBounds(opacity: number) {
+  return negativeConditionalClampLayoutValue(1, opacity, 0)
+}
+
+/** @fit
+ * given items.length: int 1..50
  * given items[]: 0..10
  * return: 0..0
  */

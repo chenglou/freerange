@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {parseExpression} from './parser.ts'
+import {parseExpression, parseFitExpression, publicParsedExpressionText, type ParsedFitExpression} from './parser.ts'
 
 export const linearEpsilon = 1e-9
 
@@ -209,11 +209,11 @@ export function callName(expression: ts.Expression): string {
 }
 
 export function callArgs(text: string, name: string): string[] | null {
-  const parsed = parseExpressionOrNull(text)
+  const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
-  const expression = unwrapExpression(parsed)
+  const expression = unwrapExpression(parsed.expression)
   if (!ts.isCallExpression(expression) || callName(expression.expression) !== name) return null
-  return expression.arguments.map(argument => argument.getText())
+  return expression.arguments.map(argument => publicParsedExpressionText(parsed, argument))
 }
 
 export function callArg(text: string, name: string): string | null {
@@ -243,9 +243,9 @@ export function moduloExpression(text: string): {left: string; right: string} | 
 }
 
 export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
-  const parsed = parseExpressionOrNull(text)
+  const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
-  const expression = unwrapExpression(parsed)
+  const expression = unwrapExpression(parsed.expression)
   if (!ts.isBinaryExpression(expression)) return null
   const expected = op === '*'
     ? ts.SyntaxKind.AsteriskToken
@@ -257,7 +257,7 @@ export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'):
           ? ts.SyntaxKind.PlusToken
           : ts.SyntaxKind.MinusToken
   if (expression.operatorToken.kind !== expected) return null
-  return {left: expression.left.getText(), right: expression.right.getText()}
+  return {left: publicParsedExpressionText(parsed, expression.left), right: publicParsedExpressionText(parsed, expression.right)}
 }
 
 export function productFactors(text: string): string[] | null {
@@ -271,6 +271,14 @@ export function productFactors(text: string): string[] | null {
 function parseExpressionOrNull(text: string): ts.Expression | null {
   try {
     return parseExpression(text)
+  } catch {
+    return null
+  }
+}
+
+function parseFitExpressionOrNull(text: string): ParsedFitExpression | null {
+  try {
+    return parseFitExpression(text)
   } catch {
     return null
   }

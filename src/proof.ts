@@ -1,4 +1,4 @@
-import {type ComparisonOperator} from './parser.ts'
+import {publicFitText, type ComparisonOperator} from './parser.ts'
 import {
   comparisonFailureReason,
   comparisonNeed,
@@ -274,11 +274,28 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
   const strictSelf = strictSelfComparisonMissing(left, op, right)
   if (strictSelf != null) return strictSelf
+  const runningSum = runningSumAtLeastStartMissing(left, op, right, assumptions)
+  if (runningSum != null) return runningSum
   const missingRule = comparisonRuleMissing({left, op, right}, assumptions)
   if (missingRule != null) return missingRule
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
   return `given ${comparisonNeed(left, op, right)}`
+}
+
+function runningSumAtLeastStartMissing(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
+  if (op !== '>=' && op !== '>') return null
+  if (left.expr == null || right.expr == null) return null
+  const args = callArgs(left.expr, 'runningSum')
+  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, right.expr)) return null
+  const needs = []
+  if (!runningSumCountIsKnownNonNegative(args[1]!, assumptions)) needs.push(`${publicFitText(args[1]!)} >= 0`)
+  if (!provesExprNonNegative(args[2]!, false, assumptions)) needs.push(`${publicFitText(args[2]!)} >= 0`)
+  return needs.length === 0 ? null : needs.join(' and ')
+}
+
+function runningSumCountIsKnownNonNegative(expression: string, assumptions: LinearConstraint[]) {
+  return expression.endsWith('.length') || provesExprNonNegative(expression, false, assumptions)
 }
 
 function strictSelfComparisonMissing(left: NumberValue, op: ComparisonOperator, right: NumberValue) {

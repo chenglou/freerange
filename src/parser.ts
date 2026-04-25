@@ -87,6 +87,14 @@ export function publicFitText(text: string) {
   return text.replace(internalReturnRootPattern, fitReturnPublicRoot)
 }
 
+export function publicParsedExpressionText(parsed: ParsedFitExpression, expression: ts.Expression) {
+  let text = expression.getText()
+  for (const [synthetic, domainPath] of parsed.domainPaths) {
+    text = text.replace(new RegExp(`(?<![\\w$])${escapeRegExp(synthetic)}(?![\\w$])`, 'g'), domainPathText(domainPath))
+  }
+  return publicFitText(text)
+}
+
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   const comments = fitCommentLines(sourceText, node)
   const specs: FitSpec[] = []
@@ -516,6 +524,31 @@ export function domainPathSyntheticName(text: string) {
     .filter(part => part.length > 0)
     .map(part => part.replace(/[^\w$]/g, '_'))
   return `__fit_domain_${parts.join('_')}`
+}
+
+function domainPathText(domainPath: FitDomainPath) {
+  let text = domainPath.root
+  for (const segment of domainPath.segments) {
+    if (segment.kind === 'prop') {
+      text += `.${segment.name}`
+      continue
+    }
+    if (segment.label == null || segment.offset == null) {
+      text += '[]'
+      continue
+    }
+    if (segment.offset === 0) {
+      text += `[${segment.label}]`
+      continue
+    }
+    const sign = segment.offset < 0 ? '-' : '+'
+    text += `[${segment.label} ${sign} ${Math.abs(segment.offset)}]`
+  }
+  return publicFitText(text)
+}
+
+function escapeRegExp(text: string) {
+  return text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
 }
 
 function parseIndexLabelText(text: string): {label: string; offset: number} | null {
