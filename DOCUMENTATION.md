@@ -24,14 +24,14 @@ items[$i] // same-index label. Reusing `$i` means matching positions across coll
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
 return // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `return`.
-source-proved // earned from TypeScript source, branch facts, or a checked helper contract.
+checked // an explicit `@fit` check Freerange verified from code, not a trusted input promise.
 trusted // accepted from a `given` line.
 unknown // not proven. This is not a soft pass.
 fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // the x-ray: `fr infer path --function name`. It prints curated facts and shows which explicit checks are trusted, source-proved, not-inferred, or redundant with the covering fact.
+infer // the x-ray: `fr infer path --function name`. It prints curated facts and shows which explicit checks are trusted, checked, not-inferred, or redundant with the covering fact.
 shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that evaluated Freerange shape did not keep.
 ```
 
@@ -65,7 +65,7 @@ earn yet.
 2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains and one-sided scalar relations on params with `// @fit`; keep object paths, array paths, and grouped relations in the function block.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
-5. Use `infer` to see which function and loop checks are already source-proved. `redundant` means emitted inferred facts already cover the check; the output names the covering fact. Keep explicit checks when they are useful documentation and remove them when they are only noise.
+5. Use `infer` to see which function and loop claims already pass from code. `redundant` means emitted inferred facts already cover the check; the output names the covering fact. Keep explicit checks when they are useful documentation and remove them when they are only noise.
 6. When a report is `unknown`, decide which bucket it belongs to: missing input fact, unsupported source shape, helper boundary needing a contract, or a real missing proof feature.
 
 The goal is not to annotate everything. The goal is to make important UI code harder for an agent to silently break.
@@ -98,7 +98,7 @@ file that does not have many claims yet.
 
 `fr infer --function name path/to/file.ts` is the x-ray. It prints facts
 Freerange already knows about the return, surviving locals, supported loops,
-which explicit comments are source-proved or trusted, which comments are
+which explicit comments are checked or trusted, which comments are
 redundant with inferred facts, and which unsupported source spots blocked proof.
 
 When `check` or `doctor` prints a non-pass line, it also prints the next useful
@@ -332,7 +332,7 @@ known:
   trusted from function @fit: given width: 0..1000
   read from code: rows[].index >= 0
   branch fact from code: width - 320 <= 0
-  source-proved imported contract: layout-math.ts#clampWidth: return: 0..320
+  checked imported contract: layout-math.ts#clampWidth: return: 0..320
 ```
 
 That distinction matters. Facts from `given` are promises. Facts from code, branch splits, and imported contracts are earned from source.
@@ -698,7 +698,7 @@ function cardWidth(width: number) {
 
 Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies.
 
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
 Optional and nullable properties stay conservative:
 
@@ -1079,8 +1079,8 @@ The checker understands a small pure subset:
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
 - named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source
-- TypeScript-known imported object/array shape, without treating it as a source-proved helper contract
-- explicit named re-exports of source-proved `@fit` functions
+- TypeScript-known imported object/array shape, without treating it as a checked helper contract
+- explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
@@ -1106,7 +1106,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, declaration-only imports, wildcard `export *` barrels, or unchecked summary files as source-proved `@fit` helper contracts.
+- package imports, declaration-only imports, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning

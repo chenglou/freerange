@@ -48,7 +48,7 @@ FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > m
     trusted from function @fit: given minWidth: 0..1000
     trusted from function @fit: given width: 0..1000
     branch fact from code: minWidth - width >= 0
-    source-proved helper contract: negative-patterns.ts#negativeAtLeastMinWidth: return >= minWidth
+    checked helper contract: negative-patterns.ts#negativeAtLeastMinWidth: return >= minWidth
   missing: strict comparison cannot hold when both sides are minWidth
 UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.length
   int 0..10 as index < int 0..10 as items.length was not proven
@@ -485,8 +485,8 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols
   need: int 1..7 inside int 1..6
   known:
     int 1..7
-    source-proved helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return >= min
-    source-proved helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
+    checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return >= min
+    checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
     int 1..1 as 1
     int 6..6 as 6
     trusted from function @fit: given containerWidth: 320..2000
@@ -865,7 +865,7 @@ FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 
   need: return inside 0..100
   known:
     0..320 as return
-    source-proved imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
+    checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     int 0..0 as 0
     int 100..100 as 100
     trusted from function @fit: given width: 0..1000
@@ -875,7 +875,7 @@ FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: 
   need: return inside 0..100
   known:
     0..320 as return
-    source-proved imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
+    checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     int 0..0 as 0
     int 100..100 as 100
     trusted from function @fit: given width: 0..1000

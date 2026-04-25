@@ -73,9 +73,9 @@ bun install
 It also separates explicit function and loop comment lines into:
 
 - `trusted` — valid `given` lines
-- `source-proved` — explicit checks proven from source
+- `checked` — explicit checks proven from source
 - `not-inferred` — checks Freerange could not prove
-- `redundant` — source-proved checks already covered by emitted inferred facts, with the covering fact printed
+- `redundant` — checked claims already covered by emitted inferred facts, with the covering fact printed
 
 `redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 

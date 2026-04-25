@@ -173,7 +173,7 @@ export type FitDoctorCheck = {
   reason?: string
 }
 
-export type FitInferSpecStatus = 'source-proved' | 'trusted' | 'not-inferred'
+export type FitInferSpecStatus = 'checked' | 'trusted' | 'not-inferred'
 
 export type FitInferSpec = {
   text: string
@@ -784,7 +784,7 @@ function inferFunctionSpecReports(
     }
 
     const check = verifyCheckSpec(program.file, program, functionName, env, result, spec, [...backgroundChecks], assumptions, contractCache)
-    if (check.status === 'pass') return {text: spec.text, status: 'source-proved'}
+    if (check.status === 'pass') return {text: spec.text, status: 'checked'}
     return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
   })
 }
@@ -792,7 +792,7 @@ function inferFunctionSpecReports(
 function redundantSpecs(specs: FitInferSpec[], facts: FitInferFact[]) {
   const redundant: FitInferRedundantSpec[] = []
   for (const spec of specs) {
-    if (spec.status !== 'source-proved') continue
+    if (spec.status !== 'checked') continue
     const reason = inferredFactReasonForSpecText(spec.text, facts)
     if (reason == null) continue
     redundant.push({text: spec.text, reason})
@@ -2680,7 +2680,7 @@ function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoo
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
-    if (check?.status === 'pass') return {text: spec.text, status: 'source-proved'}
+    if (check?.status === 'pass') return {text: spec.text, status: 'checked'}
     return {text: spec.text, status: 'not-inferred', reason: check?.reason ?? check?.status ?? 'not checked'}
   })
 }
@@ -3635,7 +3635,7 @@ function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {
       spec.expression,
       linearVariable(linearNameForExpression(spec.expression)),
       null,
-      [sourceProvedContractFact(source, spec.text)],
+      [checkedContractFact(source, spec.text)],
     ),
   )
 }
@@ -3648,7 +3648,7 @@ function applySummaryComparisonSpec(
 ) {
   const leftPath = simpleResultPathText(spec.left)
   const rightPath = simpleResultPathText(spec.right)
-  const fact = sourceProvedContractFact(source, spec.text)
+  const fact = checkedContractFact(source, spec.text)
   if (leftPath != null && rightPath == null) {
     const right = evaluateSpecExpression(spec.right, context)
     if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact)
@@ -3695,8 +3695,8 @@ function applySummaryComparisonToPath(
   }
 }
 
-function sourceProvedContractFact(source: FunctionContractSource, text: string) {
-  const kind = source.kind === 'local' ? 'source-proved helper contract' : 'source-proved imported contract'
+function checkedContractFact(source: FunctionContractSource, text: string) {
+  const kind = source.kind === 'local' ? 'checked helper contract' : 'checked imported contract'
   return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }
 

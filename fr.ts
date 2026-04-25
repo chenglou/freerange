@@ -176,7 +176,7 @@ function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoct
 
   return inferCommand == null
     ? 'move the fact into a small named helper if you want an infer x-ray'
-    : `run ${inferCommand} to compare source-proved facts with this claim`
+    : `run ${inferCommand} to compare inferred facts with this claim`
 }
 
 function inferCommandForCheck(check: {file: string; functionName: string}) {

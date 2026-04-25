@@ -408,13 +408,13 @@ function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, r
   if (resolved.isExternalLibraryImport) {
     return {
       kind: 'unresolved',
-      reason: `External package imports are not source-proved @fit helpers: ${specifier}`,
+      reason: `External package imports cannot be checked as @fit helpers: ${specifier}`,
     }
   }
   if (isDeclarationExtension(resolved.extension)) {
     return {
       kind: 'unresolved',
-      reason: `Declaration-only imports are not source-proved @fit helpers: ${specifier}`,
+      reason: `Declaration-only imports cannot be checked as @fit helpers: ${specifier}`,
     }
   }
   if (!isSupportedSourceExtension(resolved.extension)) {

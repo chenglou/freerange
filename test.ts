@@ -106,14 +106,14 @@ const expectedLoopFacts = [
 const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
 const expectedLoopSpecStatuses = [
   ['given items[].height: 0..40', 'trusted'],
-  ['rows.length == items.length', 'source-proved'],
-  ['spaced(rows, gap)', 'source-proved'],
-  ['lastEnd(rows) == y - gap', 'source-proved'],
+  ['rows.length == items.length', 'checked'],
+  ['spaced(rows, gap)', 'checked'],
+  ['lastEnd(rows) == y - gap', 'checked'],
 ] as const
 const expectedLoopFunctionSpecStatuses = [
   ['given items.length: int 1..50', 'trusted'],
-  ['return.bottom >= top', 'source-proved'],
-  ['return.rows.length == items.length', 'source-proved'],
+  ['return.bottom >= top', 'checked'],
+  ['return.rows.length == items.length', 'checked'],
 ] as const
 const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
 const expectedLoopRedundantSpecs = [
@@ -147,9 +147,9 @@ const expectedSegmentedFacts = [
 ]
 const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
 const expectedSegmentedSpecStatuses = [
-  ['return.rows.length <= items.length', 'source-proved'],
-  ['return.rows[].bottom == return.rows[].top + return.rows[].height', 'source-proved'],
-  ['spaced(return.rows, gap)', 'source-proved'],
+  ['return.rows.length <= items.length', 'checked'],
+  ['return.rows[].bottom == return.rows[].top + return.rows[].height', 'checked'],
+  ['spaced(return.rows, gap)', 'checked'],
 ] as const
 const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
 if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
@@ -172,8 +172,8 @@ const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => 
 const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedRedundantSpecStatuses = [
   ['given items.length: int 0..50', 'trusted'],
-  ['return.length == items.length', 'source-proved'],
-  ['return[]: 0..3000', 'source-proved'],
+  ['return.length == items.length', 'checked'],
+  ['return[]: 0..3000', 'checked'],
 ] as const
 const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
 if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
@@ -267,7 +267,7 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   for (const loop of fn.loops) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
     addSection(lines, 'inferred', snapshotItems(functionName, 'loop', loop.facts.map(fact => fact.text)), '  ')
-    addSection(lines, 'source-proved', loop.specs.filter(spec => spec.status === 'source-proved').map(spec => spec.text), '  ')
+    addSection(lines, 'checked', loop.specs.filter(spec => spec.status === 'checked').map(spec => spec.text), '  ')
     addSection(lines, 'trusted', loop.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text), '  ')
     addSection(lines, 'not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => spec.text), '  ')
   }
@@ -471,7 +471,7 @@ function ok() {
     const check = runFr(['infer', 'layout.ts', '--function', 'ok'], dir)
     expectCli(check.exitCode === 0, 'expected fr infer to run from the main CLI', check.output)
     expectCli(check.output.includes('layout.ts:ok'), 'expected fr infer to print the function header', check.output)
-    expectCli(check.output.includes('source-proved:'), 'expected fr infer to print source-proved checks', check.output)
+    expectCli(check.output.includes('checked:'), 'expected fr infer to print checked claims', check.output)
     expectCli(check.output.includes('return: 2'), 'expected fr infer to print the checked return fact', check.output)
   })
 

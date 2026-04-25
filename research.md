@@ -123,7 +123,7 @@ High-value inference:
 - indexed loops should infer index ranges and carry whichever pushed field actually came from the loop index, not only a field literally named `index`. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized. Unsupported loop bodies can also be useful when they are only side effects on roots we can forget; preserve unrelated facts, never stale mutated-root facts.
-- `fr infer` is useful as a checker x-ray: it should show curated return/local facts and loop-local facts, not every internal linear assumption. Function and loop output should keep separating trusted givens, source-proved checks, not-inferred checks, and the narrower redundant checks already covered by emitted inferred facts. Redundant lines should name the covering fact, because otherwise the output is only a vibe. That lets authors shorten noisy `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it focused on adoption instead of turning it into an annotation writer.
+- `fr infer` is useful as a checker x-ray: it should show curated return/local facts and loop-local facts, not every internal linear assumption. Function and loop output should keep separating trusted givens, checked claims, not-inferred claims, and the narrower redundant checks already covered by emitted inferred facts. Redundant lines should name the covering fact, because otherwise the output is only a vibe. That lets authors shorten noisy `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it focused on adoption instead of turning it into an annotation writer.
 - `bun run shape-diff` is a different x-ray. It compares evaluated Freerange structural facts with TypeScript-only shape for params, locals, and returns; raw call-return probing is opt-in. It helped classify photo-gallery and Pretext blockers: TypeScript could see prompt layout, measurement, item geometry, edge hit-area, and `layoutBlockFrame` structure; the remaining work is mostly proof/report/product semantics, not object-path blindness.
 
 Corpus loop notes:
@@ -257,13 +257,13 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 
 The resolver follows named imports through TypeScript module resolution when they land on local source files, and it follows explicit named re-export barrels. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, wildcard barrels, summary files, stale-summary trust, or workspace caches.
 
-TypeScript shape piggybacking is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system. Namespace-qualified helper calls may now use a local source-proved `@fit` contract, but the contract still comes from checking source, not from TypeScript shape.
+TypeScript shape piggybacking is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system. Namespace-qualified helper calls may now use a local checked `@fit` contract, but the contract still comes from checking source, not from TypeScript shape.
 
 We tried automatic inferred return exports in branch `codex/implicit-return-summaries-experiment` (`ff3626e`). The shape was conceptually nice: prove a helper once, infer small returned-return facts, then export those facts at call sites. In practice it grew a real subsystem: summary caching, public-expression filtering, return-expression rebasing, provenance, and boundary assumptions. The demo audit did not show enough line-count win. The lines it might delete were mostly the useful public contracts we still want humans and agents to read, such as `clamp: return >= min`, `gridImageSizeX: return <= naturalSizeX`, and prompt visible-sizing caps. We only pruned the obvious `>= 0` lines already covered by concrete ranges; checked demo contracts dropped from 125 to 113. Keep `infer` as an adoption x-ray for now, not a caller-visible summary API. Revisit only if multiple real demos show repeated helper contracts that are clearly noise rather than red-line documentation.
 
 Structural equality should stay small too. Proving `return.rows == input.rows` because both sides are the same source expression is useful. Recursive object/array equality is a different feature and should wait for a real need.
 
-Reports now say whether a fact came from source, a branch split, a trusted `given`, a source-proved same-file helper contract, or a source-proved imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source proof.
+Reports now say whether a fact came from source, a branch split, a trusted `given`, a checked same-file helper contract, or a checked imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source check.
 
 ## Reports
 
@@ -286,11 +286,11 @@ Missing term:
 
 Reports should separate:
 
-- proved from source
+- checked from code
 - trusted top-level `given`
 - trusted loop-local `given`
-- source-proved same-file helper contract
-- source-proved imported contract
+- checked same-file helper contract
+- checked imported contract
 - trusted summary, if that ever exists
 - unsupported
 
