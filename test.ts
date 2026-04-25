@@ -404,6 +404,7 @@ function bad() {
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
     expectCli(check.output.includes('bad.ts:2:bad'), 'expected fr check failure output to include the spec line', check.output)
     expectCli(check.output.includes('FAIL return: 0..1'), 'expected fr check failure output', check.output)
+    expectCli(check.output.includes('next: run fr infer --function bad bad.ts'), 'expected fr check to point at infer next', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)
   })
 
@@ -442,6 +443,7 @@ function f(value: number) {
     const check = runFr(['doctor', 'doctor.ts'], dir)
     expectCli(check.exitCode === 0, 'expected fr doctor to exit 0 on inferred caller requirements', check.output)
     expectCli(check.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr doctor caller-requirement output', check.output)
+    expectCli(check.output.includes('next: add a caller given, validate before this call, or run fr infer --function f doctor.ts to see caller facts'), 'expected fr doctor to point at caller infer next', check.output)
     expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor requirement summary', check.output)
     expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr doctor summary to classify requires separately from fail', check.output)
   })
@@ -500,7 +502,7 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
 
-  console.log('cli: 8 expected behaviors')
+  console.log('cli: 10 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

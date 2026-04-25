@@ -95,12 +95,14 @@ function printCheck(check: FitCheck) {
   console.log(formatCheckLocation(check))
   console.log(`  ${check.status.toUpperCase()} ${check.text}`)
   printReason(check.reason)
+  printFollowUp('check', check)
 }
 
 function printDoctorCheck(check: FitDoctorCheck) {
   console.log(formatCheckLocation(check))
   console.log(`  ${check.status.toUpperCase()} ${check.text}`)
   printReason(check.reason)
+  printFollowUp('doctor', check)
 }
 
 function printReason(reason: string | undefined) {
@@ -110,6 +112,46 @@ function printReason(reason: string | undefined) {
 
 function printLines(text: string, indent: string) {
   for (const line of text.split('\n')) console.log(`${indent}${line}`)
+}
+
+function printFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoctorCheck) {
+  if (check.status === 'pass') return
+  const followUp = adoptionFollowUp(command, check)
+  if (followUp == null) return
+  console.log(`  next: ${followUp}`)
+}
+
+function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoctorCheck) {
+  const inferCommand = inferCommandForCheck(check)
+  if (command === 'doctor') {
+    if (check.status === 'requires') {
+      return inferCommand == null
+        ? 'add a caller given, validate before this call, or wrap the helper behind a narrower contract'
+        : `add a caller given, validate before this call, or run ${inferCommand} to see caller facts`
+    }
+    if (check.status === 'fail') {
+      return inferCommand == null
+        ? 'fix the call arguments or repair the callee precondition'
+        : `fix the call arguments, or run ${inferCommand} to inspect the caller facts`
+    }
+    return inferCommand == null
+      ? 'inspect the callsite; the callee precondition could not be proved'
+      : `run ${inferCommand} to see why the caller facts did not prove the callee precondition`
+  }
+
+  return inferCommand == null
+    ? 'move the fact into a small named helper if you want an infer x-ray'
+    : `run ${inferCommand} to compare source-proved facts with this claim`
+}
+
+function inferCommandForCheck(check: {file: string; functionName: string}) {
+  const functionName = check.functionName.split(' > ')[0]
+  if (functionName == null || functionName === '<top-level>') return null
+  return `fr infer --function ${shellArg(functionName)} ${shellArg(check.file)}`
+}
+
+function shellArg(value: string) {
+  return /^[A-Za-z0-9_./:@+-]+$/.test(value) ? value : `'${value.replaceAll("'", "'\\''")}'`
 }
 
 function formatCheckLocation(check: {file: string; line?: number; functionName: string}) {

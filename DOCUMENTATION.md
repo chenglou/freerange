@@ -90,6 +90,12 @@ Freerange already knows about the return, surviving locals, supported loops,
 which explicit comments are source-proved or trusted, which comments are
 redundant with inferred facts, and which unsupported source spots blocked proof.
 
+When `check` or `doctor` prints a non-pass line, it also prints the next useful
+adoption command when there is one. Usually that is the caller or failing
+function's `fr infer --function ...` command; for `doctor REQUIRES` it is a
+reminder to either add a caller fact, validate before the call, or wrap the
+helper behind a narrower contract.
+
 Failure reports point at the spec line when they can:
 
 ```txt
