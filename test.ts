@@ -426,6 +426,11 @@ function f() {
     expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr doctor literal-call failure output', check.output)
     expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor summary', check.output)
     expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
+
+    const combined = runFr(['check', '--calls', 'doctor.ts'], dir)
+    expectCli(combined.exitCode === 1, 'expected fr check --calls to fail on definite bad calls', combined.output)
+    expectCli(combined.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr check --calls literal-call failure output', combined.output)
+    expectCli(combined.output.includes('fr check --calls: 1 files,'), 'expected fr check --calls failure summary', combined.output)
   })
 
   await withCliFixture({
@@ -446,6 +451,12 @@ function f(value: number) {
     expectCli(check.output.includes('next: add a caller given, validate before this call, or run fr infer --function f doctor.ts to see caller facts'), 'expected fr doctor to point at caller infer next', check.output)
     expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor requirement summary', check.output)
     expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr doctor summary to classify requires separately from fail', check.output)
+
+    const combined = runFr(['check', '--calls', 'doctor.ts'], dir)
+    expectCli(combined.exitCode === 0, 'expected fr check --calls to keep caller requirements non-fatal', combined.output)
+    expectCli(combined.output.includes('fr check: 1 files,'), 'expected fr check --calls to print the claim summary', combined.output)
+    expectCli(combined.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr check --calls to print callsite requirements', combined.output)
+    expectCli(combined.output.includes('fr check --calls: 1 files,'), 'expected fr check --calls to print the call summary', combined.output)
   })
 
   await withCliFixture({
@@ -502,7 +513,7 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
 
-  console.log('cli: 10 expected behaviors')
+  console.log('cli: 12 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

@@ -72,18 +72,29 @@ The goal is not to annotate everything. The goal is to make important UI code ha
 
 ## Commands
 
-`fr check` is the normal proof command. With file args, it checks those files.
-With no args, it reads the nearest `tsconfig.json` and checks that source set.
-On success it prints only the summary:
+`fr check` is the normal proof command: it proves the claims you wrote. With
+file args, it checks those files. With no args, it reads the nearest
+`tsconfig.json` and checks that source set. On success it prints only the
+summary:
 
 ```txt
 fr check: 42 files, 115 pass, 0 fail, 0 unknown
 ```
 
-`fr doctor` is for adoption. It walks callsites more broadly and reports
-annotated helper preconditions that are definitely broken or appear to become
-caller requirements. `REQUIRES` is not a failed spec; it is a clue about where a
-caller may need a `given`, a wrapper contract, or earlier validation.
+Add `--calls` when you also want the callsite scan:
+
+```sh
+fr check --calls path/to/file.ts
+```
+
+This runs the normal claim check first, then scans annotated helper calls more
+broadly. `REQUIRES` is not a failed spec; it is a clue about where a caller may
+need a `given`, a wrapper contract, or earlier validation. Definite bad calls
+still fail.
+
+`fr doctor` is the focused version of that second half. It skips the claim gate
+and only prints the callsite scan, which is useful while adopting Freerange in a
+file that does not have many claims yet.
 
 `fr infer --function name path/to/file.ts` is the x-ray. It prints facts
 Freerange already knows about the return, surviving locals, supported loops,

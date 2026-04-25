@@ -58,7 +58,7 @@ sections[].rows[].height <= maxHeight
 There are three active tracks now:
 
 1. **Make infer/audit/report the adoption loop.**
-   `infer` should be the factual inventory agents use before writing comments. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
+   `infer` should be the factual inventory agents use before writing comments. `check` is the hard claim gate; `check --calls` adds the helper-call scan; `doctor` is that call scan by itself for adoption. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
 
 2. **Move checker knowledge toward a typed fact layer.**
    Keep public comments small. Internally, source readers now emit reusable range/equality/sequence facts, and contracts query those facts. `spaced`, same-index checks, adjacent row checks, and future view-ish concepts should avoid becoming one recognizer per demo.

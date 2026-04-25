@@ -23,22 +23,30 @@ switch (command) {
 }
 
 async function runCheck(args: string[]) {
-  const input = resolveInputPaths(args)
+  const {paths, calls} = parseCheckArgs(args)
+  const input = resolveInputPaths(paths)
   if (input == null) return
   const report = await verifyFitFiles(input.paths)
   const failed = report.checks.filter(check => check.status !== 'pass')
   for (const check of failed) printCheck(check)
   printCheckSummary('fr check', input.paths.length, report.summary)
-  if (report.phase !== 'ready') process.exitCode = 1
+
+  let phase = report.phase
+  if (calls) {
+    const printedCallKeys = new Set(failed.filter(isCallReport).map(reportKey))
+    const callReport = await doctorFitFiles(input.paths)
+    printDoctorReport('fr check --calls', input.paths.length, callReport, printedCallKeys)
+    if (callReport.phase !== 'ready') phase = 'error'
+  }
+
+  if (phase !== 'ready') process.exitCode = 1
 }
 
 async function runDoctor(args: string[]) {
   const input = resolveInputPaths(args)
   if (input == null) return
   const report = await doctorFitFiles(input.paths)
-  const notable = report.checks.filter(check => check.status !== 'pass')
-  for (const check of notable) printDoctorCheck(check)
-  printDoctorSummary('fr doctor', input.paths.length, report.summary)
+  printDoctorReport('fr doctor', input.paths.length, report)
   if (report.phase !== 'ready') process.exitCode = 1
 }
 
@@ -81,6 +89,19 @@ function parseInferArgs(args: string[]) {
   return {paths, functionName, all}
 }
 
+function parseCheckArgs(args: string[]) {
+  let calls = false
+  const paths: string[] = []
+  for (const arg of args) {
+    if (arg === '--calls') {
+      calls = true
+      continue
+    }
+    paths.push(arg)
+  }
+  return {paths, calls}
+}
+
 function resolveInputPaths(args: string[]): {paths: string[]; configFile: string | null} | null {
   const input = resolveFitProjectPaths(args)
   if (args.length === 0 && input.configFile == null) {
@@ -105,6 +126,12 @@ function printDoctorCheck(check: FitDoctorCheck) {
   printFollowUp('doctor', check)
 }
 
+function printDoctorReport(label: string, files: number, report: {checks: FitDoctorCheck[]; summary: {pass: number; fail: number; requires: number; unknown: number}}, skipKeys = new Set<string>()) {
+  const notable = report.checks.filter(check => check.status !== 'pass' && !skipKeys.has(reportKey(check)))
+  for (const check of notable) printDoctorCheck(check)
+  printDoctorSummary(label, files, report.summary)
+}
+
 function printReason(reason: string | undefined) {
   if (reason == null) return
   printLines(reason, '  ')
@@ -112,6 +139,14 @@ function printReason(reason: string | undefined) {
 
 function printLines(text: string, indent: string) {
   for (const line of text.split('\n')) console.log(`${indent}${line}`)
+}
+
+function isCallReport(check: FitCheck | FitDoctorCheck) {
+  return check.text.startsWith('call ')
+}
+
+function reportKey(check: FitCheck | FitDoctorCheck) {
+  return `${check.file}\0${check.line ?? ''}\0${check.functionName}\0${check.text}`
 }
 
 function printFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoctorCheck) {
@@ -170,7 +205,7 @@ function printDoctorSummary(label: string, files: number, summary: {pass: number
 
 function printUsage() {
   console.error('Usage:')
-  console.error('  fr check [file.ts ...]')
+  console.error('  fr check [--calls] [file.ts ...]')
   console.error('  fr doctor [file.ts ...]')
   console.error('  fr infer [--function name] [--all] [file.ts ...]')
 }
