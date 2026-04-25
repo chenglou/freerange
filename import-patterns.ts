@@ -4,8 +4,27 @@ import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
+import importedDefaultMaxAlias, {namedMaxAlias as importedNamedMaxAlias} from './import-pattern-alias-helpers'
 import {barrelClampWidth, barrelTsxClampWidth} from './import-pattern-barrel'
 import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
+
+const localAliasMax = Math.max
+const {min: localAliasMin} = Math
+const copiedLocalAliasMin = localAliasMin
+const localImportedClampAlias = importedClampWidth
+const localImportedMaxAlias = importedDefaultMaxAlias
+const localImportedNamedMaxAlias = importedNamedMaxAlias
+const namespaceImportedClampAlias = importedShapes.importedClampWidth
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+function localClampAliasTarget(width: number) {
+  return Math.min(Math.max(width, 0), 320)
+}
+
+const copiedLocalClampAlias = localClampAliasTarget
 
 /** @fit
  * given width: 0..1000
@@ -29,6 +48,56 @@ export function defaultImportedHelperContract(width: number) {
  */
 export function namespaceImportedHelperContract(width: number) {
   return importedShapes.importedClampWidth(width)
+}
+
+/** @fit
+ * given value: 0..1000
+ * given min <= max
+ * return >= min
+ * return <= max
+ */
+export function localMathAliasContract(value: number, min: number, max: number) {
+  return copiedLocalAliasMin(localAliasMax(value, min), max)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function localHelperAliasContract(width: number) {
+  return copiedLocalClampAlias(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function importedHelperConstAliasContract(width: number) {
+  return localImportedClampAlias(width)
+}
+
+/** @fit
+ * given value: 0..5
+ * return: 10
+ */
+export function importedDefaultMathAliasContract(value: number) {
+  return localImportedMaxAlias(value, 10)
+}
+
+/** @fit
+ * given value: 0..5
+ * return: 10
+ */
+export function importedNamedMathAliasContract(value: number) {
+  return localImportedNamedMaxAlias(value, 10)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function namespaceMemberAliasContract(width: number) {
+  return namespaceImportedClampAlias(width)
 }
 
 /** @fit

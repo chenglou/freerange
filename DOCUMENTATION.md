@@ -212,7 +212,7 @@ Freerange starts from claims, not from the whole file.
 - `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
+- Helper preconditions are reported when the helper call is inside the value being proved. If the call cannot satisfy a `given`, the report prints the caller-side obligation, such as `missing at call site: 0 <= cols - w`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
 
 Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
 
@@ -698,6 +698,16 @@ function cardWidth(width: number) {
 
 Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies.
 
+Ordinary top-level `const` bindings of known helpers work too:
+
+```ts
+const {min, max} = Math
+const clampValue = clampWidth
+export default max
+```
+
+Every hop must be statically known: a top-level `const`, import, or export whose final target is a supported `Math` call, a same-file helper, or a local-source imported helper. Mutable helper bindings are not followed.
+
 TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
 Optional and nullable properties stay conservative:
@@ -1078,7 +1088,7 @@ The checker understands a small pure subset:
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source
+- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source; top-level `const` helper bindings can point at those same targets
 - TypeScript-known imported object/array shape, without treating it as a checked helper contract
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread

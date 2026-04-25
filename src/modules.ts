@@ -22,6 +22,8 @@ export type FitModule<TGlobal> = {
   typeChecker: ts.TypeChecker | null
   globals: Map<string, TGlobal>
   functions: Map<string, FitFunction>
+  callAliases: Map<string, FitCallAlias>
+  unsupportedCallAliases: Map<string, string>
   fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
   exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
@@ -85,6 +87,21 @@ export type FitResolvedExport<TModule> =
       kind: 'unresolved'
       exportedName: string
       reason: string
+    }
+
+export type FitCallAlias =
+  | {
+      kind: 'math'
+      name: string
+    }
+  | {
+      kind: 'identifier'
+      name: string
+    }
+  | {
+      kind: 'namespace-member'
+      namespace: string
+      exportedName: string
     }
 
 export type TopLevelGlobalReader<TGlobal> = (declaration: ts.VariableDeclaration) => {name: string; value: TGlobal} | null
@@ -191,6 +208,8 @@ function parseFitModule<TGlobal>(
 ): FitModule<TGlobal> {
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, FitFunction>()
+  const callAliases = new Map<string, FitCallAlias>()
+  const unsupportedCallAliases = new Map<string, string>()
   const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
   const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
@@ -218,20 +237,38 @@ function parseFitModule<TGlobal>(
     }
     if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
       const functionInitializer = supportedFunctionInitializer(statement.expression)
-      if (functionInitializer == null) continue
+      if (functionInitializer == null) {
+        const alias = callAliasFromExpression(statement.expression)
+        if (alias != null) {
+          callAliases.set('default', alias)
+          exports.set('default', {kind: 'local', localName: 'default'})
+        }
+        continue
+      }
       collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction)
       exports.set('default', {kind: 'local', localName: 'default'})
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
+    const isConst = isConstVariableStatement(statement)
+    const isExported = hasModifier(statement, ts.SyntaxKind.ExportKeyword)
     for (const declaration of statement.declarationList.declarations) {
       if (ts.isIdentifier(declaration.name)) {
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
         if (functionInitializer != null) {
           collectFitFunction(sourceText, declaration.name.text, functionInitializer, statement, functions, fitFunctions, specsByFunction)
         }
-        if (hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+        const alias = functionInitializer == null && declaration.initializer != null
+          ? callAliasFromExpression(declaration.initializer)
+          : null
+        if (alias != null) collectCallAlias(declaration.name.text, alias, isConst, callAliases, unsupportedCallAliases)
+        if (isExported) {
           exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
+        }
+      } else if (ts.isObjectBindingPattern(declaration.name) && declaration.initializer != null && isIdentifierText(declaration.initializer, 'Math')) {
+        for (const alias of mathDestructuringAliases(declaration.name)) {
+          collectCallAlias(alias.localName, {kind: 'math', name: alias.exportedName}, isConst, callAliases, unsupportedCallAliases)
+          if (isExported) exports.set(alias.localName, {kind: 'local', localName: alias.localName})
         }
       }
       const global = readGlobal(declaration)
@@ -240,7 +277,7 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, fitFunctions, specsByFunction, exports, imports}
+  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, exports, imports}
 }
 
 function collectClassMemberFunctions(
@@ -282,6 +319,64 @@ function classMemberFunctionName(className: string, member: ts.MethodDeclaration
 
 function supportedFunctionInitializer(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {
   return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression) ? expression : null
+}
+
+function isConstVariableStatement(statement: ts.VariableStatement) {
+  return (ts.getCombinedNodeFlags(statement.declarationList) & ts.NodeFlags.Const) !== 0
+}
+
+function collectCallAlias(
+  localName: string,
+  alias: FitCallAlias,
+  isConst: boolean,
+  callAliases: Map<string, FitCallAlias>,
+  unsupportedCallAliases: Map<string, string>,
+) {
+  if (isConst) callAliases.set(localName, alias)
+  else unsupportedCallAliases.set(localName, mutableCallAliasReason(localName))
+}
+
+function mutableCallAliasReason(name: string) {
+  return `${name} is a mutable helper alias; Freerange only follows const helper aliases`
+}
+
+function callAliasFromExpression(expression: ts.Expression): FitCallAlias | null {
+  const unwrapped = unwrapAliasExpression(expression)
+  if (ts.isIdentifier(unwrapped)) return {kind: 'identifier', name: unwrapped.text}
+  if (!ts.isPropertyAccessExpression(unwrapped)) return null
+  if (!ts.isIdentifier(unwrapped.name)) return null
+  if (isIdentifierText(unwrapped.expression, 'Math')) return {kind: 'math', name: unwrapped.name.text}
+  if (ts.isIdentifier(unwrapped.expression)) {
+    return {kind: 'namespace-member', namespace: unwrapped.expression.text, exportedName: unwrapped.name.text}
+  }
+  return null
+}
+
+function unwrapAliasExpression(expression: ts.Expression): ts.Expression {
+  if (ts.isParenthesizedExpression(expression)) return unwrapAliasExpression(expression.expression)
+  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
+    return unwrapAliasExpression(expression.expression)
+  }
+  if (ts.isNonNullExpression(expression)) return unwrapAliasExpression(expression.expression)
+  return expression
+}
+
+function isIdentifierText(node: ts.Node, text: string): node is ts.Identifier {
+  return ts.isIdentifier(node) && node.text === text
+}
+
+function mathDestructuringAliases(pattern: ts.ObjectBindingPattern): {localName: string; exportedName: string}[] {
+  const aliases: {localName: string; exportedName: string}[] = []
+  for (const element of pattern.elements) {
+    if (element.dotDotDotToken != null || element.initializer != null) continue
+    if (!ts.isIdentifier(element.name)) continue
+    const exportedName = element.propertyName == null
+      ? element.name.text
+      : ts.isIdentifier(element.propertyName) ? element.propertyName.text : null
+    if (exportedName == null) continue
+    aliases.push({localName: element.name.text, exportedName})
+  }
+  return aliases
 }
 
 function loadImports<TGlobal>(

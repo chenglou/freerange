@@ -45,7 +45,7 @@ bun install
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
 - [src/proof-rules.ts](./src/proof-rules.ts) — small named comparison proof rules with shared prove/report obligations
-- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, and export/import indexing
+- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, export/import indexing, and static helper-binding indexing
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/bound-index.ts](./src/bound-index.ts) — same-index labels and adjacent-label spec checks backed by sequence facts
@@ -59,7 +59,7 @@ bun install
 - [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
 - [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list
 - [test.ts](./test.ts) — pattern-suite runner
-- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
+- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-alias-helpers.ts](./import-pattern-alias-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet
 
 ## Infer Tool

@@ -32,6 +32,8 @@ FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: return < 4
     assumed from input: given value: 0..10
     inferred from branch: -value + 4 <= 0
   missing: strict comparison cannot hold when both sides are 4
+UNKNOWN negative-patterns.ts:negativeMutableMathAlias: return >= 0
+  mutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases
 FAIL negative-patterns.ts:negativeHandwrittenMinOperandBoundIsNotStrict: return < 4
   int 4..4 as 4 < int 4..4 as 4 is false
   need: 4 < 4
@@ -202,8 +204,8 @@ UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: return >=
 FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: call box.bottom: requires this.height: -100..1000
   called function requires this.height: -100..1000
   this call passes this.height is -Infinity..Infinity
-  missing: this.height >= -100
-  missing: this.height <= 1000
+  missing at call site: box.height >= -100
+  missing at call site: box.height <= 1000
 FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
   range was -Infinity..Infinity as (this.top + this.height), expected inside 0..2000
   need: (this.top + this.height) inside 0..2000
@@ -520,7 +522,7 @@ UNKNOWN negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: 
 FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
   called function requires max >= min
   this call passes max = 5 and min = 10
-  missing: max >= min
+  missing at call site: 5 >= 10
 FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: return.rows[].index: int 1..49
   range was int 0..49 as rows[].index, expected inside int 1..49
   need: rows[].index inside int 1..49
@@ -598,7 +600,7 @@ UNKNOWN negative-patterns.ts:negativeUnboundedPromptHeight: return.visibleHeight
 FAIL negative-patterns.ts:negativeInvertedClampBounds: call negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
   called function requires max >= min
   this call passes max = 0 and min = 1
-  missing: max >= min
+  missing at call site: 0 >= 1
 FAIL negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
   range was -Infinity..Infinity as total, expected inside 0..0
   need: total inside 0..0
@@ -832,7 +834,7 @@ FAIL negative-patterns.ts:default: return.x: 50..100
 FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): requires container >= containee
   called function requires container >= containee
   this call passes container = 3 and containee = 4
-  missing: container >= containee
+  missing at call site: 3 >= 4
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   imported helper contract was not available
   helper: unannotatedImportedClamp from ./negative-import-helpers

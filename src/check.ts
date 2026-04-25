@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   loadFitProject,
   resolveFitExport,
+  type FitCallAlias,
   type FitFunction,
   type FitImportBinding,
   type FitModule,
@@ -237,6 +238,27 @@ export type FitShapeOptions = {
 type Program = FitModule<NumberValue>
 
 type ImportedBinding = FitImportBinding<Program>
+
+type ResolvedCallTarget =
+  | {
+      kind: 'math'
+      name: string
+    }
+  | {
+      kind: 'function'
+      module: Program
+      functionName: string
+      imported?: {
+        localName: string
+        binding: Extract<ImportedBinding, {kind: 'resolved'}>
+      }
+    }
+  | {
+      kind: 'unresolved'
+      reason: string
+    }
+
+type CallSiteBindings = Map<string, string>
 
 export type FunctionContractProof =
   | {status: 'verifying'}
@@ -3042,13 +3064,14 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
 
   const functionName = expression.expression.text
-  const fn = context.program.functions.get(functionName)
-  if (fn == null) return evaluateImportedCall(functionName, expression, context)
-  return evaluateLocalFunctionCall(functionName, fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
-    callText: `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
-    callLine: lineNumberForNode(context.program.sourceFile, expression),
-    fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
-  })
+  const fallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
+  return evaluateResolvedCallTarget(
+    functionName,
+    resolveIdentifierCallTarget(context.program, functionName),
+    expression,
+    context,
+    fallback,
+  )
 }
 
 function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.PropertyAccessExpression, context: EvalContext): Value | null {
@@ -3060,6 +3083,7 @@ function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.Prope
     callText: `${access.getText(context.program.sourceFile)}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
     callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
+    callSiteBindings: callSiteBindingsFor(member.fn, expression.arguments, context.program.sourceFile, access.expression.getText(context.program.sourceFile)),
   })
 }
 
@@ -3072,6 +3096,7 @@ function evaluateClassGetterAccess(expression: ts.PropertyAccessExpression, cont
     callText: expression.getText(context.program.sourceFile),
     callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback,
+    callSiteBindings: callSiteBindingsFor(member.fn, [], context.program.sourceFile, expression.expression.getText(context.program.sourceFile)),
   })
 }
 
@@ -3115,6 +3140,7 @@ function evaluateLocalFunctionCall(
     callLine?: number | undefined
     fallback: Value | null
     thisValue?: Value | undefined
+    callSiteBindings?: CallSiteBindings | undefined
   },
 ): Value {
   if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
@@ -3123,6 +3149,7 @@ function evaluateLocalFunctionCall(
     record: shouldRecordCallObligations(context),
     callLine: options.callLine,
     thisValue: options.thisValue,
+    callSiteBindings: options.callSiteBindings,
   })
 
   const env = programGlobalEnv(context.program)
@@ -3182,45 +3209,131 @@ function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext
   return fallback ?? unknown(`Array.at(${offset}) element values are not tracked`)
 }
 
-function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
-  const binding = context.program.imports.get(functionName)
-  const structuralFallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
-  if (binding == null) return structuralFallback ?? unknown(`Unknown function ${functionName}`)
-  if (binding.kind === 'unresolved') return structuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
-  return evaluateResolvedImportedCall(functionName, binding, expression, context, structuralFallback)
+function resolveIdentifierCallTarget(program: Program, name: string, seen = new Set<string>()): ResolvedCallTarget {
+  if (program.functions.has(name)) return {kind: 'function', module: program, functionName: name}
+
+  const key = `${program.sourceId}#${name}`
+  if (seen.has(key)) return {kind: 'unresolved', reason: `Cyclic call alias at ${program.file}#${name}`}
+  seen.add(key)
+
+  const alias = program.callAliases.get(name)
+  if (alias != null) return resolveCallAliasTarget(program, alias, seen)
+
+  const unsupportedAlias = program.unsupportedCallAliases.get(name)
+  if (unsupportedAlias != null) return {kind: 'unresolved', reason: unsupportedAlias}
+
+  const binding = program.imports.get(name)
+  if (binding == null) return {kind: 'unresolved', reason: `Unknown function ${name}`}
+  if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: importedContractUnavailableReason(name, binding, binding.reason)}
+  return resolveImportedBindingCallTarget(name, binding, seen)
 }
 
-function evaluateResolvedImportedCall(functionName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, expression: ts.CallExpression, context: EvalContext, structuralFallback: Value | null): Value {
-  const exported = resolveFitExport(binding.module, binding.exportedName)
-  if (exported.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, exported.reason))
+function resolveCallAliasTarget(program: Program, alias: FitCallAlias, seen: Set<string>): ResolvedCallTarget {
+  switch (alias.kind) {
+    case 'math':
+      return {kind: 'math', name: alias.name}
+    case 'identifier':
+      return resolveIdentifierCallTarget(program, alias.name, seen)
+    case 'namespace-member':
+      return resolveNamespaceMemberCallTarget(program, alias.namespace, alias.exportedName, seen)
+  }
+}
 
-  const fn = exported.module.functions.get(exported.localName)
-  if (fn == null) return unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that symbol is not a supported function`))
-  const specs = exported.module.specsByFunction.get(exported.localName) ?? []
-  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${binding.exportedName}Result`, fn.node, exported.module))
-  if (specs.length === 0) return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, `resolved to ${exported.module.file}#${exported.localName}, but that function has no @fit contract`))
-  if (fn.node.parameters.length !== expression.arguments.length) return unknown(`Call arity mismatch for imported function ${binding.exportedName}`)
-  if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${binding.exportedName} contract was not used outside a @fit claim`)
-  const source = {
-    sourceFile: exported.module.file,
-    sourceFunctionName: fn.name,
+function resolveNamespaceMemberCallTarget(program: Program, namespace: string, exportedName: string, seen: Set<string>): ResolvedCallTarget {
+  const binding = program.imports.get(namespace)
+  if (binding == null || binding.exportedName !== '*') {
+    return {kind: 'unresolved', reason: `${namespace}.${exportedName} is not a supported namespace import call target`}
+  }
+  if (binding.kind === 'unresolved') {
+    return {kind: 'unresolved', reason: importedContractUnavailableReason(`${namespace}.${exportedName}`, binding, binding.reason)}
+  }
+  return resolveExportedCallTarget(`${namespace}.${exportedName}`, binding, exportedName, seen)
+}
+
+function resolveImportedBindingCallTarget(localName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, seen: Set<string>): ResolvedCallTarget {
+  return resolveExportedCallTarget(localName, binding, binding.exportedName, seen)
+}
+
+function resolveExportedCallTarget(localName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, exportedName: string, seen: Set<string>): ResolvedCallTarget {
+  const exported = resolveFitExport(binding.module, exportedName)
+  if (exported.kind === 'unresolved') return {kind: 'unresolved', reason: importedContractUnavailableReason(localName, binding, exported.reason)}
+
+  const target = resolveIdentifierCallTarget(exported.module, exported.localName, seen)
+  if (target.kind === 'function') return {...target, imported: {localName, binding}}
+  return target
+}
+
+function evaluateResolvedCallTarget(
+  callName: string,
+  target: ResolvedCallTarget,
+  expression: ts.CallExpression,
+  context: EvalContext,
+  structuralFallback: Value | null,
+): Value {
+  if (target.kind === 'math') return evaluateMathCall(target.name, expression.arguments, context)
+  if (target.kind === 'unresolved') return structuralFallback ?? unknown(target.reason)
+
+  const fn = target.module.functions.get(target.functionName)
+  if (fn == null) return structuralFallback ?? unknown(`Resolved call target ${target.functionName} is not a supported function`)
+  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
+  const callText = `${callName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
+  const callLine = lineNumberForNode(context.program.sourceFile, expression)
+  const callSiteBindings = callSiteBindingsFor(fn, expression.arguments, context.program.sourceFile)
+
+  if (target.module === context.program) {
+    return evaluateLocalFunctionCall(target.functionName, fn, argumentValues, context, {
+      callText,
+      callLine,
+      fallback: structuralFallback,
+      callSiteBindings,
+    })
   }
 
-  const proof = verifyFunctionContract(exported.module, exported.localName, context.contractCache)
-  if (proof.status !== 'pass') return unknown(importedContractFailureReason(functionName, binding, proof))
+  return evaluateImportedFunctionCall(callName, target, fn, argumentValues, callText, callLine, context, structuralFallback, callSiteBindings)
+}
 
-  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
+function evaluateImportedFunctionCall(
+  callName: string,
+  target: Extract<ResolvedCallTarget, {kind: 'function'}>,
+  fn: FitFunction,
+  argumentValues: Value[],
+  callText: string,
+  callLine: number,
+  context: EvalContext,
+  structuralFallback: Value | null,
+  callSiteBindings: CallSiteBindings,
+): Value {
+  const specs = target.module.specsByFunction.get(target.functionName) ?? []
+  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${target.functionName}Result`, fn.node, target.module))
+  if (target.imported == null) return resolvedStructuralFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
+  if (specs.length === 0) {
+    return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(
+      callName,
+      target.imported.binding,
+      `resolved to ${target.module.file}#${target.functionName}, but that function has no @fit contract`,
+    ))
+  }
+  if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for imported function ${target.functionName}`)
+  if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
+
+  const proof = verifyFunctionContract(target.module, target.functionName, context.contractCache)
+  if (proof.status !== 'pass') return unknown(importedContractFailureReason(callName, target.imported.binding, proof))
+
   const obligations = verifyCallGivenSpecs(
-    exported.module,
+    target.module,
     fn,
-    `${functionName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
+    callText,
     argumentValues,
     context,
-    {record: true, callLine: lineNumberForNode(context.program.sourceFile, expression)},
+    {record: true, callLine, callSiteBindings},
   )
-  if (obligations !== 'pass') return unknown(`Imported call ${binding.exportedName} precondition was not proven`)
+  if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(functionName, exported.module, fn, specs, argumentValues, context.contractCache, {...source, kind: 'imported'}, resolvedStructuralFallback ?? unknownResultValue(specs, exported.module))
+  return valueWithFunctionContractSummary(callName, target.module, fn, specs, argumentValues, context.contractCache, {
+    kind: 'imported',
+    sourceFile: target.module.file,
+    sourceFunctionName: fn.name,
+  }, resolvedStructuralFallback ?? unknownResultValue(specs, target.module))
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
@@ -3249,8 +3362,10 @@ function evaluateNamespaceImportedCall(expression: ts.CallExpression, target: ts
   if (binding?.exportedName !== '*') return null
   const functionName = `${target.expression.text}.${target.name.text}`
   const structuralFallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
-  if (binding.kind === 'unresolved') return structuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
-  return evaluateResolvedImportedCall(functionName, {...binding, exportedName: target.name.text}, expression, context, structuralFallback)
+  const resolved = binding.kind === 'unresolved'
+    ? {kind: 'unresolved', reason: importedContractUnavailableReason(functionName, binding, binding.reason)} satisfies ResolvedCallTarget
+    : resolveExportedCallTarget(functionName, binding, target.name.text, new Set())
+  return evaluateResolvedCallTarget(functionName, resolved, expression, context, structuralFallback)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -3752,13 +3867,79 @@ function setFiniteArrayElementValue(current: Value | undefined, expr: string, in
   return {...base, elements}
 }
 
+function callSiteBindingsFor(
+  fn: FitFunction,
+  args: readonly ts.Expression[],
+  sourceFile: ts.SourceFile,
+  thisText?: string,
+): CallSiteBindings {
+  const bindings: CallSiteBindings = new Map()
+  if (thisText != null) bindings.set('this', callSiteValueText(thisText))
+  for (let i = 0; i < fn.node.parameters.length; i++) {
+    const argument = args[i]
+    if (argument == null) continue
+    bindCallSitePattern(fn.node.parameters[i]!.name, argument.getText(sourceFile), bindings)
+  }
+  return bindings
+}
+
+function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: CallSiteBindings) {
+  if (ts.isIdentifier(name)) {
+    bindings.set(name.text, callSiteValueText(sourceText))
+    return
+  }
+  if (ts.isObjectBindingPattern(name)) {
+    const base = callSitePropertyBaseText(sourceText)
+    for (const element of name.elements) {
+      if (element.dotDotDotToken != null) continue
+      const propertyName = bindingElementPropertyName(element)
+      if (propertyName == null) continue
+      bindCallSitePattern(element.name, `${base}.${propertyName}`, bindings)
+    }
+    return
+  }
+  if (ts.isArrayBindingPattern(name)) {
+    const base = callSitePropertyBaseText(sourceText)
+    forEachArrayBindingElement(name, (elementName, index, isRest) => {
+      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, bindings)
+    })
+  }
+}
+
+function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
+  if (bindings == null || bindings.size === 0) return text
+  let result = text
+  for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
+    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, 'g'), replacement)
+  }
+  return result
+}
+
+function callSiteValueText(text: string) {
+  const trimmed = text.trim()
+  return isSimpleCallSiteText(trimmed) ? trimmed : `(${trimmed})`
+}
+
+function callSitePropertyBaseText(text: string) {
+  const trimmed = text.trim()
+  return isSimpleCallSiteText(trimmed) ? trimmed : `(${trimmed})`
+}
+
+function isSimpleCallSiteText(text: string) {
+  return /^(?:this|[A-Za-z_$][\w$]*|-?\d+(?:\.\d+)?)(?:(?:\.[A-Za-z_$][\w$]*)|(?:\[[^\]]+\]))*$/.test(text)
+}
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 function verifyCallGivenSpecs(
   calleeProgram: Program,
   fn: FitFunction,
   callText: string,
   argumentValues: Value[],
   context: EvalContext,
-  options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined},
+  options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
 ) {
   const specs = calleeProgram.specsByFunction.get(fn.name) ?? []
   const env = programGlobalEnv(calleeProgram)
@@ -3771,13 +3952,13 @@ function verifyCallGivenSpecs(
     if (spec.kind === 'given-range') {
       const value = evaluateSpecExpression(spec.expression, calleeContext)
       status = proveRangeSpec(value, spec.range, calleeContext)
-      if (status.status !== 'pass') status = withCallRangeReason(status, value, spec)
+      if (status.status !== 'pass') status = withCallRangeReason(status, value, spec, options.callSiteBindings)
     }
     if (spec.kind === 'given-comparison') {
       const left = evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluateSpecExpression(spec.right, calleeContext)
       status = proveComparison(left, spec.op, right, calleeContext.assumptions)
-      if (status.status !== 'pass') status = withCallComparisonReason(status, left, right, spec)
+      if (status.status !== 'pass') status = withCallComparisonReason(status, left, right, spec, options.callSiteBindings)
     }
     if (status == null) continue
     if (options.record) {
@@ -3804,6 +3985,7 @@ function withCallRangeReason(
   status: {status: FitCheckStatus; reason?: string},
   value: Value,
   spec: Extract<FitSpec, {kind: 'given-range'}>,
+  callSiteBindings: CallSiteBindings | undefined,
 ): {status: FitCheckStatus; reason?: string} {
   if (value.kind !== 'number') return status
   return {
@@ -3811,12 +3993,12 @@ function withCallRangeReason(
     reason: [
       `called function requires ${spec.expression}: ${formatRangeSpec(spec.range)}`,
       `this call passes ${formatCallBinding(spec.expression, value)}`,
-      ...missingBoundsForRange(value, spec.range),
+      ...missingBoundsForRange(value, spec.range, callSiteBindings),
     ].join('\n'),
   }
 }
 
-function missingBoundsForRange(value: NumberValue, range: FitRange) {
+function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBindings: CallSiteBindings | undefined) {
   const lower = range.lowerValue == null ? null : numberValue(range.lowerValue, range.lowerValue, Number.isInteger(range.lowerValue), range.lower, Number.isFinite(range.lowerValue) ? linearConstant(range.lowerValue) : null)
   const upper = range.upperValue == null ? null : numberValue(range.upperValue, range.upperValue, Number.isInteger(range.upperValue), range.upper, Number.isFinite(range.upperValue) ? linearConstant(range.upperValue) : null)
   return rangeSpecMissingBounds(
@@ -3829,7 +4011,7 @@ function missingBoundsForRange(value: NumberValue, range: FitRange) {
       upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
       integer: false,
     },
-  )
+  ).map(line => callSiteMissingLineFromReportLine(line, callSiteBindings))
 }
 
 function withCallComparisonReason(
@@ -3837,18 +4019,32 @@ function withCallComparisonReason(
   left: Value,
   right: Value,
   spec: Extract<FitSpec, {kind: 'given-comparison'}>,
+  callSiteBindings: CallSiteBindings | undefined,
 ): {status: FitCheckStatus; reason?: string} {
   if (left.kind !== 'number' || right.kind !== 'number') return status
+  const missing = comparisonNeed(left, spec.op, right)
+  const callSiteMissing = callSiteText(missing, callSiteBindings)
   const lines = [
     `called function requires ${spec.left} ${spec.op} ${spec.right}`,
     `this call passes ${formatCallBinding(spec.left, left)} and ${formatCallBinding(spec.right, right)}`,
   ]
-  if (status.status === 'unknown') lines.push(`could not prove ${comparisonNeed(left, spec.op, right)}`)
-  lines.push(`missing: ${comparisonNeed(left, spec.op, right)}`)
+  if (status.status === 'unknown') lines.push(`could not prove ${callSiteMissing}`)
+  lines.push(callSiteMissingLine(missing, callSiteBindings))
   return {
     ...status,
     reason: lines.join('\n'),
   }
+}
+
+function callSiteMissingLineFromReportLine(line: string, callSiteBindings: CallSiteBindings | undefined) {
+  const prefix = 'missing: '
+  if (!line.startsWith(prefix)) return line
+  return callSiteMissingLine(line.slice(prefix.length), callSiteBindings)
+}
+
+function callSiteMissingLine(missing: string, callSiteBindings: CallSiteBindings | undefined) {
+  const callSite = callSiteText(missing, callSiteBindings)
+  return callSite === missing ? `missing: ${missing}` : `missing at call site: ${callSite}`
 }
 
 function formatCallBinding(name: string, value: NumberValue) {

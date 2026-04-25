@@ -424,12 +424,14 @@ function f() {
     expectCli(check.exitCode === 1, 'expected fr doctor to exit 1 on a definite bad literal call', check.output)
     expectCli(check.output.includes('doctor.ts:8:f'), 'expected fr doctor failure output to include the call line', check.output)
     expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr doctor literal-call failure output', check.output)
+    expectCli(check.output.includes('missing at call site: 20 <= 10'), 'expected fr doctor to print the caller-side missing obligation', check.output)
     expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor summary', check.output)
     expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
 
     const combined = runFr(['check', '--calls', 'doctor.ts'], dir)
     expectCli(combined.exitCode === 1, 'expected fr check --calls to fail on definite bad calls', combined.output)
     expectCli(combined.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr check --calls literal-call failure output', combined.output)
+    expectCli(combined.output.includes('missing at call site: 20 <= 10'), 'expected fr check --calls to print the caller-side missing obligation', combined.output)
     expectCli(combined.output.includes('fr check --calls: 1 files,'), 'expected fr check --calls failure summary', combined.output)
   })
 

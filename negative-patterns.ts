@@ -37,6 +37,15 @@ export function negativeMathMinOperandBoundIsNotStrict(value: number) {
   return Math.min(value, 4)
 }
 
+let mutableMaxAlias = Math.max
+
+/** @fit
+ * return >= 0
+ */
+export function negativeMutableMathAlias(value: number) {
+  return mutableMaxAlias(value, 0)
+}
+
 /** @fit
  * given value: 0..10
  * return < 4
