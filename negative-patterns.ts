@@ -408,6 +408,32 @@ export function negativeRunningTotalNeedsNonNegativeItem(items: {height: number}
 }
 
 /** @fit
+ * given items.length: int 1..10
+ * return: 0..10
+ */
+export function negativeSelfReferentialAccumulatorRhs(items: number[]) {
+  let total = 1
+  for (const _item of items) {
+    total += total
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 1..10
+ * given items[].height: 0..5
+ * given minHeight: 0..5
+ * return >= 10
+ */
+export function negativeLoopResetAssignmentIsNotAccumulator(items: {height: number}[], minHeight: number) {
+  let total = 10
+  for (const item of items) {
+    total = Math.max(item.height, minHeight)
+  }
+  return total
+}
+
+/** @fit
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: -40..40

@@ -24,7 +24,7 @@ export type LoopSourceContext = {
   isSideEffectFreeExpression: (expression: ts.Expression) => boolean
 }
 
-export type ConditionalLoopAdd = {
+export type LoopScalarAdd = {
   targetName: string
   increment: NumberValue
 }
@@ -95,13 +95,17 @@ export function readGuardedLoopPushes(
   return pushes.length === 0 ? null : pushes
 }
 
-export function readConditionalLoopAdd(statement: ts.Statement, context: LoopSourceContext): ConditionalLoopAdd | null {
+export function readConditionalLoopAdd(statement: ts.Statement, context: LoopSourceContext): LoopScalarAdd | null {
   if (!ts.isIfStatement(statement) || statement.elseStatement != null) return null
-  const add = plusEqualsFromStatement(statement.thenStatement)
+  return readLoopScalarAdd(statement.thenStatement, context)
+}
+
+export function readLoopScalarAdd(statement: ts.Statement, context: LoopSourceContext): LoopScalarAdd | null {
+  const add = scalarAddFromStatement(statement)
   if (add == null) return null
-  const increment = context.evaluateExpression(add.right, context.env)
+  const increment = context.evaluateExpression(add.incrementExpression, context.env)
   if (increment.kind !== 'number') return null
-  return {targetName: add.left.text, increment}
+  return {targetName: add.targetName, increment}
 }
 
 export function readLoopExtremumAssignment(statement: ts.Statement, context: LoopSourceContext): LoopExtremum | null {
@@ -227,17 +231,65 @@ function isResettableScalarAssignment(
   return reset.min >= tracked.min && reset.max <= tracked.max
 }
 
-function plusEqualsFromStatement(statement: ts.Statement): (ts.BinaryExpression & {left: ts.Identifier}) | null {
-  if (ts.isExpressionStatement(statement) && isIdentifierPlusEquals(statement.expression)) return statement.expression
+function scalarAddFromStatement(statement: ts.Statement): {targetName: string; incrementExpression: ts.Expression} | null {
+  if (ts.isExpressionStatement(statement)) return scalarAddFromExpression(statement.expression)
   if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
   const child = statement.statements[0]
-  return child != null && ts.isExpressionStatement(child) && isIdentifierPlusEquals(child.expression) ? child.expression : null
+  return child != null && ts.isExpressionStatement(child) ? scalarAddFromExpression(child.expression) : null
 }
 
-function isIdentifierPlusEquals(expression: ts.Expression): expression is ts.BinaryExpression & {left: ts.Identifier} {
-  return ts.isBinaryExpression(expression)
-    && expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
-    && ts.isIdentifier(expression.left)
+function scalarAddFromExpression(expression: ts.Expression): {targetName: string; incrementExpression: ts.Expression} | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const targetName = identifierName(expression.left)
+  if (targetName == null) return null
+
+  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
+    return expressionReferencesIdentifier(expression.right, targetName) ? null : {targetName, incrementExpression: expression.right}
+  }
+
+  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
+  const incrementExpression = selfAddIncrementExpression(expression.right, targetName)
+  if (incrementExpression == null || expressionReferencesIdentifier(incrementExpression, targetName)) return null
+  return {targetName, incrementExpression}
+}
+
+function selfAddIncrementExpression(expression: ts.Expression, targetName: string): ts.Expression | null {
+  const unwrapped = unwrapExpression(expression)
+  if (!ts.isBinaryExpression(unwrapped) || unwrapped.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
+  if (identifierName(unwrapped.left) === targetName) return unwrapped.right
+  if (identifierName(unwrapped.right) === targetName) return unwrapped.left
+  return null
+}
+
+function identifierName(expression: ts.Expression): string | null {
+  const unwrapped = unwrapExpression(expression)
+  return ts.isIdentifier(unwrapped) ? unwrapped.text : null
+}
+
+function expressionReferencesIdentifier(expression: ts.Expression, name: string) {
+  let found = false
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (ts.isPropertyAccessExpression(node)) {
+      visit(node.expression)
+      return
+    }
+    if (ts.isPropertyAssignment(node)) {
+      visit(node.initializer)
+      return
+    }
+    if (ts.isShorthandPropertyAssignment(node)) {
+      found = node.name.text === name
+      return
+    }
+    if (ts.isIdentifier(node) && node.text === name) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(expression)
+  return found
 }
 
 function indexedLoopSource(expression: ts.Expression, indexName: string): {kind: 'array' | 'limit'; expression: ts.Expression} | null {

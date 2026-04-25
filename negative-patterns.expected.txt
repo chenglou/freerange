@@ -297,6 +297,10 @@ UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >=
     trusted from function @fit: given items.length: int 0..50
     trusted from function @fit: given items[].height: -40..40
   missing: items[].height >= 0
+UNKNOWN negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
+  Unsupported for-of body statement: total += total
+UNKNOWN negative-patterns.ts:negativeLoopResetAssignmentIsNotAccumulator: return >= 10
+  Unsupported for-of body statement: total = Math.max(item.height, minHeight)
 UNKNOWN negative-patterns.ts:negativeScalarPushLoopNeedsNonNegativeStep: return[] >= 0
   wildcard comparison means every return[] item must satisfy: return[] >= 0
   -Infinity..Infinity as rows[] >= int 0..0 as 0 was not proven

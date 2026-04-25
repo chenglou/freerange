@@ -511,6 +511,78 @@ export function runningTotalPerItemHeight(items: {height: number}[]) {
 
 /** @fit
  * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function runningTotalAssignmentPerItemHeight(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total = total + item.height
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function runningTotalCommutedAssignmentPerItemHeight(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total = item.height + total
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given minHeight: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function runningTotalPlusMaxStep(items: {height: number}[], minHeight: number) {
+  let total = 0
+  for (const item of items) {
+    total += Math.max(item.height, minHeight)
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given minHeight: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function runningTotalAssignmentPlusMaxStep(items: {height: number}[], minHeight: number) {
+  let total = 0
+  for (const item of items) {
+    total = Math.max(item.height, minHeight) + total
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function indexedRunningTotalAssignmentPerItemHeight(items: {height: number}[]) {
+  let total = 0
+  for (let i = 0; i < items.length; i++) {
+    total = total + items[i]!.height
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
  * given top: 0..1000
  * given step: 0..40
  * return.length == items.length

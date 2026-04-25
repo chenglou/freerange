@@ -88,6 +88,7 @@ import {
   readGuardedLoopPushes,
   readLoopExtremumAssignment,
   readLoopPush,
+  readLoopScalarAdd,
   type IndexedLoopShape,
   type LoopSourceContext,
 } from './loop-source.ts'
@@ -2250,12 +2251,9 @@ function evaluateForOfStatementCore(
       continue
     }
 
-    if (ts.isExpressionStatement(child) && ts.isBinaryExpression(child.expression) && child.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
-      if (!ts.isIdentifier(child.expression.left)) return unknown('Running-sum loop expected a simple += target')
-      const targetName = child.expression.left.text
-      const increment = evaluateExpression(child.expression.right, loopContext)
-      if (increment.kind !== 'number') return unknown('Running-sum loop increment expected a number')
-      pendingAdds.set(targetName, increment)
+    const scalarAdd = readLoopScalarAdd(child, loopSource)
+    if (scalarAdd != null) {
+      pendingAdds.set(scalarAdd.targetName, scalarAdd.increment)
       continue
     }
 
@@ -2401,12 +2399,9 @@ function evaluateForStatementCore(
       continue
     }
 
-    if (ts.isExpressionStatement(child) && ts.isBinaryExpression(child.expression) && child.expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) {
-      if (!ts.isIdentifier(child.expression.left)) return unknown('Indexed running-sum loop expected a simple += target')
-      const targetName = child.expression.left.text
-      const increment = evaluateExpression(child.expression.right, loopContext)
-      if (increment.kind !== 'number') return unknown('Indexed running-sum loop increment expected a number')
-      pendingAdds.set(targetName, increment)
+    const scalarAdd = readLoopScalarAdd(child, loopSource)
+    if (scalarAdd != null) {
+      pendingAdds.set(scalarAdd.targetName, scalarAdd.increment)
       continue
     }
 

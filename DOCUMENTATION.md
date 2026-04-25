@@ -812,6 +812,14 @@ function totalHeight(items: {height: number}[]) {
 }
 ```
 
+The update can also be a direct self-assignment when the added expression does
+not read the accumulator:
+
+```ts
+total = total + item.height
+total = Math.max(item.height, minHeight) + total
+```
+
 Guarded totals and counts work too:
 
 ```ts
@@ -850,7 +858,8 @@ This is useful when the increment or candidate range is known. It is not general
 
 ```ts
 items.reduce(...)
-total = total + item.height
+total = Math.max(item.height, minHeight)
+total += Math.max(total, item.height)
 Math.max(...items.map(item => item.width))
 ```
 
