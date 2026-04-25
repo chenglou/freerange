@@ -30,11 +30,10 @@ fr check path/to/file.ts
 ```
 
 Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
-Use `fr check --calls` when you want the normal claim gate plus the broad
+Use `fr check --calls` when you want the usual written checks plus the broad
 call-precondition scan. `fr doctor` runs only that callsite scan during adoption.
-Use `fr infer --function name path/to/file.ts` when you want the x-ray: the facts
-source already proves, the explicit checks it covers, and the spots where proof
-stopped.
+Use `fr infer --function name path/to/file.ts` when you want the inferred facts:
+what Freerange found, which explicit checks they cover, and where proof stopped.
 
 See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 

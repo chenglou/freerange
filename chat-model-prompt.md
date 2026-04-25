@@ -35,7 +35,7 @@ Rules:
 - `given ...` lines are assumptions / preconditions.
 - Bare lines are facts the checker must prove.
 - Unsupported syntax is a parser error, not prose.
-- Top-level `given` facts are trusted.
+- Top-level `given` facts are assumed.
 - Same-file helper calls prove the callee's `given` facts at the call site.
 - A `@fit` block can sit directly above supported loops:
 
@@ -59,7 +59,7 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-Loop specs use the same language. Loop-local `given` facts are trusted from that point forward. Bare loop checks are checked after the loop. Loop specs name locals directly; they do not have `return`.
+Loop specs use the same language. Loop-local `given` facts are assumed from that point forward. Bare loop checks are checked after the loop. Loop specs name locals directly; they do not have `return`.
 
 Current supported facts include:
 
@@ -187,7 +187,7 @@ and only add something like `rectInside(child, parent)` if the repeated shape de
 - Keep app code natural. Do not rewrite app code into checker-shaped helper calls.
 - Keep annotations concise enough that humans might read them and agents can write them safely.
 - Parser should yell on bad syntax. No recovery heuristics, no legacy aliases.
-- Reports should be honest about assumptions. A future report should make trusted top-level and loop-local `given` facts loud.
+- Reports should be honest about assumptions. A future report should make assumed top-level and loop-local `given` facts loud.
 - Add a positive pattern and a negative expected message for each new proof shape.
 - Module/import summaries are future work; today helper tracking is same-file and transitive.
 - We want this to compose with spec-driven development. A future LLM might translate prose to structured facts under the hood, but the committed layer should still be deterministic and checkable.

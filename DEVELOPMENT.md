@@ -12,9 +12,9 @@ bun install
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
-- `bun run fr infer path/to/file.ts --function name` — main CLI x-ray for inferred facts, explicit checks, redundancy, and unsupported proof spots
+- `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run verify path/to/file.ts` — old JSON-report inspection helper
-- `bun run infer path/to/file.ts --function name` — dev-only x-ray of inferred facts and explicit contract lines
+- `bun run infer path/to/file.ts --function name` — dev-only view of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
@@ -53,7 +53,7 @@ bun install
 - [fr.ts](./fr.ts) — main CLI entrypoint
 - [verify.ts](./verify.ts) — old ad hoc JSON-report CLI
 - [infer.ts](./infer.ts) — dev-only inferred-facts CLI
-- [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape piggyback diagnostic
+- [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape comparison diagnostic
 - [bench.ts](./bench.ts) — dev-only coarse timing helper
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
 - [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
@@ -72,7 +72,7 @@ bun install
 
 It also separates explicit function and loop comment lines into:
 
-- `trusted` — valid `given` lines
+- `assumptions` — valid `given` lines
 - `checked` — explicit checks proven from source
 - `not-inferred` — checks Freerange could not prove
 - `redundant` — checked claims already covered by emitted inferred facts, with the covering fact printed
@@ -105,7 +105,10 @@ measurement, the useful result may simply be "not a Freerange seam yet."
 
 ## Shape Diff Tool
 
-`bun run shape-diff path/to/file.ts --function name` is the TS piggyback x-ray. It answers a narrower question than `infer`: did Freerange lose because it did not know an object/array shape that TypeScript already knew?
+`bun run shape-diff path/to/file.ts --function name` compares object/array
+structure Freerange kept with structure TypeScript can see. It answers a
+narrower question than `infer`: did Freerange lose because it did not know an
+object/array shape that TypeScript already knew?
 
 It compares TypeScript shape against evaluated Freerange shape for params, locals, and returns. Raw call-return probing is opt-in with `--calls`, because calls are often consumed by a later local or return value. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
 

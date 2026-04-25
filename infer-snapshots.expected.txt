@@ -115,7 +115,7 @@ loop 790: for (const item of items)
     nondecreasing(rows.top)
     spaced(rows, gap)
     lastEnd(rows) == y - gap
-  trusted:
+  assumptions:
     given items[].height: 0..40
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout
 return:

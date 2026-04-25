@@ -105,13 +105,13 @@ const expectedLoopFacts = [
 ]
 const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
 const expectedLoopSpecStatuses = [
-  ['given items[].height: 0..40', 'trusted'],
+  ['given items[].height: 0..40', 'assumed'],
   ['rows.length == items.length', 'checked'],
   ['spaced(rows, gap)', 'checked'],
   ['lastEnd(rows) == y - gap', 'checked'],
 ] as const
 const expectedLoopFunctionSpecStatuses = [
-  ['given items.length: int 1..50', 'trusted'],
+  ['given items.length: int 1..50', 'assumed'],
   ['return.bottom >= top', 'checked'],
   ['return.rows.length == items.length', 'checked'],
 ] as const
@@ -171,7 +171,7 @@ const expectedRedundantFacts = [
 const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => redundantFacts.get(fact) !== reason)
 const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedRedundantSpecStatuses = [
-  ['given items.length: int 0..50', 'trusted'],
+  ['given items.length: int 0..50', 'assumed'],
   ['return.length == items.length', 'checked'],
   ['return[]: 0..3000', 'checked'],
 ] as const
@@ -268,7 +268,7 @@ function formatInferSnapshot(paths: string[], functionName: string) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
     addSection(lines, 'inferred', snapshotItems(functionName, 'loop', loop.facts.map(fact => fact.text)), '  ')
     addSection(lines, 'checked', loop.specs.filter(spec => spec.status === 'checked').map(spec => spec.text), '  ')
-    addSection(lines, 'trusted', loop.specs.filter(spec => spec.status === 'trusted').map(spec => spec.text), '  ')
+    addSection(lines, 'assumptions', loop.specs.filter(spec => spec.status === 'assumed').map(spec => spec.text), '  ')
     addSection(lines, 'not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => spec.text), '  ')
   }
   addSection(lines, 'unsupported', fn.unsupported.filter(line => line.startsWith('Forgot unsupported')))

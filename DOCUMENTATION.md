@@ -1,6 +1,6 @@
 # Freerange Documentation
 
-Freerange is a static checker for strict `@fit` comments over ordinary TypeScript. It is intentionally small: comments state facts, source code earns them, and reports say where proof stopped.
+Freerange is a static checker for strict `@fit` comments over ordinary TypeScript.
 
 The first big use-case is UI layout, because layout bugs are easy for agents to write and hard to verify from screenshots alone. The same approach should grow beyond layout: data-to-view cardinality, hit targets, scroll anchoring, text ranges, animation bounds, and other small invariants that matter in UI code.
 
@@ -8,8 +8,8 @@ The first big use-case is UI layout, because layout bugs are easy for agents to 
 
 ```ts
 @fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
-given width: 0..1000 // trusted input fact. Think precondition, not proof.
-given this.width: 0..1000 // trusted input fact for an instance method/getter.
+given width: 0..1000 // input assumption. Think precondition, not proof.
+given this.width: 0..1000 // input assumption for an instance method/getter.
 return.width: 0..320 // check fact. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.
 a..b // JavaScript number in the inclusive interval from a to b.
@@ -24,15 +24,15 @@ items[$i] // same-index label. Reusing `$i` means matching positions across coll
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
 return // the returned value of a function-level spec.
 loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `return`.
-checked // an explicit `@fit` check Freerange verified from code, not a trusted input promise.
-trusted // accepted from a `given` line.
+checked // an explicit `@fit` check Freerange verified from code.
+assumptions // valid `given` lines in `infer` output.
 unknown // not proven. This is not a soft pass.
 fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // the x-ray: `fr infer path --function name`. It prints curated facts and shows which explicit checks are trusted, checked, not-inferred, or redundant with the covering fact.
-shape-diff // the dev x-ray for TypeScript shape piggybacking. It shows object/array shape TypeScript knows that evaluated Freerange shape did not keep.
+infer // `fr infer path --function name`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
+shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
 ```
 
 ## Adoption
@@ -87,19 +87,19 @@ Add `--calls` when you also want the callsite scan:
 fr check --calls path/to/file.ts
 ```
 
-This runs the normal claim check first, then scans annotated helper calls more
+This checks the claims you wrote first, then scans annotated helper calls more
 broadly. `REQUIRES` is not a failed spec; it is a clue about where a caller may
 need a `given`, a wrapper contract, or earlier validation. Definite bad calls
 still fail.
 
-`fr doctor` is the focused version of that second half. It skips the claim gate
-and only prints the callsite scan, which is useful while adopting Freerange in a
-file that does not have many claims yet.
+`fr doctor` is the focused version of that second half. It skips checking written
+claims and only prints the callsite scan, which is useful while adopting
+Freerange in a file that does not have many claims yet.
 
-`fr infer --function name path/to/file.ts` is the x-ray. It prints facts
-Freerange already knows about the return, surviving locals, supported loops,
-which explicit comments are checked or trusted, which comments are
-redundant with inferred facts, and which unsupported source spots blocked proof.
+`fr infer --function name path/to/file.ts` prints facts Freerange inferred about
+the return, surviving locals, and supported loops. It also shows which explicit
+comments are checked or assumed, which comments are redundant with inferred
+facts, and which unsupported source spots blocked proof.
 
 When `check` or `doctor` prints a non-pass line, it also prints the next useful
 adoption command when there is one. Usually that is the caller or failing
@@ -114,7 +114,7 @@ layout.ts:17:placeRows
   UNKNOWN return.rows[$i + 1].top >= return.rows[$i].bottom + gap
   need: rows[$i + 1].top >= rows[$i].bottom + gap
   known:
-    trusted from function @fit: given gap: 0..20
+    assumed from input: given gap: 0..20
   missing: a sequence relation for adjacent row positions
 ```
 
@@ -139,7 +139,7 @@ function cappedOverflow(
 }
 ```
 
-Param `// @fit` comments are trusted input facts, exactly as if they were lifted to `given` lines in the function block. Use them for boring scalar domains and small scalar relations:
+Param `// @fit` comments are input assumptions, exactly as if they were lifted to `given` lines in the function block. Use them for boring scalar domains and small scalar relations:
 
 ```ts
 /** @fit
@@ -271,7 +271,7 @@ return {
 }
 ```
 
-There it is a check, not a trusted `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
+There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
 
 Branch-local facts use ordinary TypeScript branches. Put the fact on the value made inside that branch; Freerange carries the `if` or ternary condition while checking it:
 
@@ -329,9 +329,9 @@ A useful report says where facts came from:
 
 ```txt
 known:
-  trusted from function @fit: given width: 0..1000
-  read from code: rows[].index >= 0
-  branch fact from code: width - 320 <= 0
+  assumed from input: given width: 0..1000
+  inferred from code: rows[].index >= 0
+  inferred from branch: width - 320 <= 0
   checked imported contract: layout-math.ts#clampWidth: return: 0..320
 ```
 
@@ -407,7 +407,7 @@ function impossibleChain(left: number, middle: number, right: number) {
 }
 ```
 
-Loop-level `given` works the same way, but is trusted from that point in the function forward.
+Loop-level `given` works the same way, but is assumed from that point in the function forward.
 
 ## Ranges
 
@@ -668,7 +668,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not trust the summary when the call preconditions are missing or false.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
 
 Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `return.length == 4`, `return[2] >= 0`, and `return[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
@@ -724,7 +724,7 @@ imported helper contract was not available
 helper: clampWidth from ./layout-math
 reason: resolved to layout-math.ts#clampWidth, but that function has no @fit contract
 
-imported helper contract failed in source before this call could trust it
+imported helper contract failed in source before this call could use it
 helper: clampWidth from ./layout-math
 failed check: layout-math.ts:clampWidth: return: 0..320
 ```

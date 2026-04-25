@@ -5,7 +5,7 @@ FAIL negative-patterns.ts:negativeOutputRange: return: int 0..4
     int 5..15 as (value + 5)
     int 0..0 as 0
     int 4..4 as 4
-    trusted from function @fit: given value: int 0..10
+    assumed from input: given value: int 0..10
   missing: (value + 5) <= 4
 FAIL negative-patterns.ts:negativeComparison: return.high < return.low
   10..15 as (value + 10) < 0..5 as value is false
@@ -13,7 +13,7 @@ FAIL negative-patterns.ts:negativeComparison: return.high < return.low
   known:
     10..15 as (value + 10)
     0..5 as value
-    trusted from function @fit: given value: 0..5
+    assumed from input: given value: 0..5
   missing: given (value + 10) < value
 FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
   int 0..0 as (width - width) < int 0..0 as 0 is false
@@ -21,33 +21,33 @@ FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
   known:
     int 0..0 as (width - width)
     int 0..0 as 0
-    trusted from function @fit: given width: 0..1000
-    branch fact from code: width - 320 <= 0
+    assumed from input: given width: 0..1000
+    inferred from branch: width - 320 <= 0
   missing: strict comparison cannot hold when both sides are (width - width)
 FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: return < 4
   int 4..4 as 4 < int 4..4 as 4 is false
   need: 4 < 4
   known:
     int 4..4 as 4
-    trusted from function @fit: given value: 0..10
-    branch fact from code: -value + 4 <= 0
+    assumed from input: given value: 0..10
+    inferred from branch: -value + 4 <= 0
   missing: strict comparison cannot hold when both sides are 4
 FAIL negative-patterns.ts:negativeHandwrittenMinOperandBoundIsNotStrict: return < 4
   int 4..4 as 4 < int 4..4 as 4 is false
   need: 4 < 4
   known:
     int 4..4 as 4
-    trusted from function @fit: given value: 0..10
-    branch fact from code: -value + 4 <= 0
+    assumed from input: given value: 0..10
+    inferred from branch: -value + 4 <= 0
   missing: strict comparison cannot hold when both sides are 4
 FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > minWidth
   0..1000 as minWidth > 0..1000 as minWidth is false by exact linear facts
   need: minWidth > minWidth
   known:
     0..1000 as minWidth
-    trusted from function @fit: given minWidth: 0..1000
-    trusted from function @fit: given width: 0..1000
-    branch fact from code: minWidth - width >= 0
+    assumed from input: given minWidth: 0..1000
+    assumed from input: given width: 0..1000
+    inferred from branch: minWidth - width >= 0
     checked helper contract: negative-patterns.ts#negativeAtLeastMinWidth: return >= minWidth
   missing: strict comparison cannot hold when both sides are minWidth
 UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.length
@@ -56,8 +56,8 @@ UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.l
   known:
     int 0..10 as index
     int 0..10 as items.length
-    trusted from function @fit: given items.length: int 0..10
-    trusted from function @fit: given index: int 0..10
+    assumed from input: given items.length: int 0..10
+    assumed from input: given index: int 0..10
   missing: given index < items.length
 FAIL negative-patterns.ts:negativeArrayLengthCallGiven: call negativeNeedsShortArray(items): requires items.length: int 0..10
   called function requires items.length: int 0..10
@@ -69,7 +69,7 @@ FAIL negative-patterns.ts:negativeHalfOpenUpperExcludesLength: return: int 0..<i
   known:
     int 1..50 as items.length
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 1..50
+    assumed from input: given items.length: int 1..50
   missing: items.length < items.length
 UNKNOWN negative-patterns.ts:negativeFloorDivisionDoesNotCoverTotal: return >= total
   int 0..1200000 as (floor((total / count)) * count) >= int 0..6000 as total was not proven
@@ -77,8 +77,8 @@ UNKNOWN negative-patterns.ts:negativeFloorDivisionDoesNotCoverTotal: return >= t
   known:
     int 0..1200000 as (floor((total / count)) * count)
     int 0..6000 as total
-    trusted from function @fit: given total: int 0..6000
-    trusted from function @fit: given count: int 1..200
+    assumed from input: given total: int 0..6000
+    assumed from input: given count: int 1..200
   missing: given (floor((total / count)) * count) >= total
 UNKNOWN negative-patterns.ts:negativeCeilDivisionNeedsPositiveCount: return >= total
   int 0..1200000 as (ceil((total / count)) * count) >= int 0..6000 as total was not proven
@@ -86,8 +86,8 @@ UNKNOWN negative-patterns.ts:negativeCeilDivisionNeedsPositiveCount: return >= t
   known:
     int 0..1200000 as (ceil((total / count)) * count)
     int 0..6000 as total
-    trusted from function @fit: given total: int 0..6000
-    trusted from function @fit: given count: int -200..-1
+    assumed from input: given total: int 0..6000
+    assumed from input: given count: int -200..-1
   missing: count > 0
 UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: return < count
   int 0..1000 as floor((pointer / cellSize)) < int 1..10 as count was not proven
@@ -95,10 +95,10 @@ UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: return < coun
   known:
     int 0..1000 as floor((pointer / cellSize))
     int 1..10 as count
-    trusted from function @fit: given pointer: 0..1000
-    trusted from function @fit: given cellSize: int 1..100
-    trusted from function @fit: given count: int 1..10
-    branch fact from code: pointer >= (count * cellSize)
+    assumed from input: given pointer: 0..1000
+    assumed from input: given cellSize: int 1..100
+    assumed from input: given count: int 1..10
+    inferred from branch: pointer >= (count * cellSize)
   missing: pointer < count * cellSize
 UNKNOWN negative-patterns.ts:negativeFlattenedGridHitIndexNeedsYBound: return < countX * _countY
   int 0..Infinity as ((floor((py / blockSize)) * countX) + floor((px / blockSize))) < int 1..Infinity as (countX * _countY) was not proven
@@ -106,11 +106,12 @@ UNKNOWN negative-patterns.ts:negativeFlattenedGridHitIndexNeedsYBound: return < 
   known:
     int 0..Infinity as ((floor((py / blockSize)) * countX) + floor((px / blockSize)))
     int 1..Infinity as (countX * _countY)
-    trusted from function @fit: given px: 0..Infinity
-    trusted from function @fit: given py: 0..Infinity
-    trusted from function @fit: given blockSize: 1..Infinity
-    trusted from function @fit: given countX: int 1..Infinity
-    trusted from function @fit: given _countY: int 1..Infinity
+    assumed from input: given px: 0..Infinity
+    assumed from input: given py: 0..Infinity
+    assumed from input: given blockSize: 1..Infinity
+    assumed from input: given countX: int 1..Infinity
+    assumed from input: given _countY: int 1..Infinity
+    assumed from input: given px < countX * blockSize
   missing: py < _countY * blockSize
 UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled <= return.limit
   -2000..2000 as (content * scale) <= -2000..2000 as (available * scale) was not proven
@@ -118,10 +119,10 @@ UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled 
   known:
     -2000..2000 as (content * scale)
     -2000..2000 as (available * scale)
-    trusted from function @fit: given content: 0..1000
-    trusted from function @fit: given available: 0..1000
-    trusted from function @fit: given scale: -2..2
-    trusted from function @fit: given content <= available
+    assumed from input: given content: 0..1000
+    assumed from input: given available: 0..1000
+    assumed from input: given scale: -2..2
+    assumed from input: given content <= available
   missing: scale >= 0
 UNKNOWN negative-patterns.ts:negativeModuloNeedsPositiveCount: return < count
   Modulo is only supported for non-negative values and positive divisors
@@ -131,9 +132,9 @@ UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minW
   known:
     0..1000 as width
     0..1000 as minWidth
-    trusted from function @fit: given width: 0..1000
-    trusted from function @fit: given minWidth: 0..1000
-    branch fact from code: -minWidth + width <= 0
+    assumed from input: given width: 0..1000
+    assumed from input: given minWidth: 0..1000
+    inferred from branch: -minWidth + width <= 0
   missing: given width >= minWidth
 FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
   range was 0..200, expected inside 0..100
@@ -142,7 +143,7 @@ FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
     0..200
     int 0..0 as 0
     int 100..100 as 100
-    trusted from function @fit: given width: 0..100
+    assumed from input: given width: 0..100
   missing: 0..200 <= 100
 FAIL negative-patterns.ts:negativeMathSignCanBeNegative: return: int 0..1
   range was int -1..1 as sign(value), expected inside int 0..1
@@ -151,7 +152,7 @@ FAIL negative-patterns.ts:negativeMathSignCanBeNegative: return: int 0..1
     int -1..1 as sign(value)
     int 0..0 as 0
     int 1..1 as 1
-    trusted from function @fit: given value: -10..10
+    assumed from input: given value: -10..10
   missing: sign(value) >= 0
 FAIL negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: return[]: int 1..<limit
   range was int 0..999 as values[], expected inside int 1..<limit
@@ -160,9 +161,9 @@ FAIL negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: return[]:
     int 0..999 as values[]
     int 1..1 as 1
     int 1..1000 as limit
-    trusted from function @fit: given limit: int 1..1000
-    read from code: values[] >= 0
-    read from code: values[] < limit
+    assumed from input: given limit: int 1..1000
+    inferred from code: values[] >= 0
+    inferred from code: values[] < limit
   missing: values[] >= 1
 UNKNOWN negative-patterns.ts:negativeUnboundedWidthNeedsCap: return <= 500
   0.5..Infinity as (width / 2) <= int 500..500 as 500 was not proven
@@ -170,7 +171,7 @@ UNKNOWN negative-patterns.ts:negativeUnboundedWidthNeedsCap: return <= 500
   known:
     0.5..Infinity as (width / 2)
     int 500..500 as 500
-    trusted from function @fit: given width: 1..Infinity
+    assumed from input: given width: 1..Infinity
   missing: given (width / 2) <= 500
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: return.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, step) >= 0..1000 as top was not proven
@@ -178,9 +179,9 @@ UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: return.bott
   known:
     -Infinity..Infinity as runningSum(top, items.length, step)
     0..1000 as top
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given top: 0..1000
-    trusted from function @fit: given step: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given top: 0..1000
+    assumed from input: given step: -40..40
   missing: step >= 0
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
@@ -195,8 +196,8 @@ UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: return >=
   known:
     -100..2000 as (this.top + this.height)
     0..1000 as this.top
-    trusted from function @fit: given this.top: 0..1000
-    trusted from function @fit: given this.height: -100..1000
+    assumed from input: given this.top: 0..1000
+    assumed from input: given this.height: -100..1000
   missing: given (this.top + this.height) >= this.top
 FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: call box.bottom: requires this.height: -100..1000
   called function requires this.height: -100..1000
@@ -210,7 +211,7 @@ FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2
     -Infinity..Infinity as (this.top + this.height)
     int 0..0 as 0
     int 2000..2000 as 2000
-    trusted from function @fit: given box.top: 0..1000
+    assumed from input: given box.top: 0..1000
   missing: (this.top + this.height) >= 0
   missing: (this.top + this.height) <= 2000
 UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows, otherGap)
@@ -254,7 +255,7 @@ UNKNOWN negative-patterns.ts:negativeObjectFieldDomainTooWide: return.height >= 
   known:
     -20..40 as item.height
     int 0..0 as 0
-    trusted from function @fit: given item.height: -20..40
+    assumed from input: given item.height: -20..40
   missing: given item.height >= 0
 FAIL negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: return.x: 0..100
   range was -10..100 as base.x, expected inside 0..100
@@ -263,8 +264,8 @@ FAIL negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: return.x: 0..100
     -10..100 as base.x
     int 0..0 as 0
     int 100..100 as 100
-    trusted from function @fit: given base.x: -10..100
-    trusted from function @fit: given y: 0..100
+    assumed from input: given base.x: -10..100
+    assumed from input: given y: 0..100
   missing: base.x >= 0
 UNKNOWN negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows == other.rows
   Non-number equality is only proven for the same source expression
@@ -277,9 +278,9 @@ FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
     -Infinity..Infinity as items[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given index: int 0..49
-    trusted from function @fit: given index < items.length
+    assumed from input: given items.length: int 1..50
+    assumed from input: given index: int 0..49
+    assumed from input: given index < items.length
   missing: items[].height >= 0
   missing: items[].height <= 40
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: return.bottom >= top
@@ -288,9 +289,9 @@ UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: re
   known:
     -Infinity..Infinity as runningSum(top, items.length, items[].height)
     0..1000 as top
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: -40..40
-    trusted from function @fit: given top: 0..1000
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: -40..40
+    assumed from input: given top: 0..1000
   missing: items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
@@ -305,8 +306,8 @@ UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >=
   known:
     -Infinity..Infinity as runningSum(0, items.length, items[].height)
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
   Unsupported for-of body statement: total += total
@@ -319,9 +320,9 @@ UNKNOWN negative-patterns.ts:negativeScalarPushLoopNeedsNonNegativeStep: return[
   known:
     -Infinity..Infinity as rows[]
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given top: 0..1000
-    trusted from function @fit: given step: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given top: 0..1000
+    assumed from input: given step: -40..40
   missing: given rows[] >= 0
 UNKNOWN negative-patterns.ts:negativeConditionalRunningTotalNeedsNonNegativeItem: return >= 0
   -2000..2000 as total >= int 0..0 as 0 was not proven
@@ -329,8 +330,8 @@ UNKNOWN negative-patterns.ts:negativeConditionalRunningTotalNeedsNonNegativeItem
   known:
     -2000..2000 as total
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
   missing: given total >= 0
 FAIL negative-patterns.ts:negativeRunningMaxNeedsItemBound: return: 0..80
   range was 0..120 as maxWidth, expected inside 0..80
@@ -339,8 +340,8 @@ FAIL negative-patterns.ts:negativeRunningMaxNeedsItemBound: return: 0..80
     0..120 as maxWidth
     int 0..0 as 0
     int 80..80 as 80
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].width: 0..120
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].width: 0..120
   missing: maxWidth <= 80
 UNKNOWN negative-patterns.ts:negativeRunningMinNeedsItemBound: return >= 0
   -20..80 as minWidth >= int 0..0 as 0 was not proven
@@ -348,8 +349,8 @@ UNKNOWN negative-patterns.ts:negativeRunningMinNeedsItemBound: return >= 0
   known:
     -20..80 as minWidth
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].width: -20..80
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].width: -20..80
   missing: given minWidth >= 0
 UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.top)
   nondecreasing(rows.top) was not inferred
@@ -367,11 +368,11 @@ UNKNOWN negative-patterns.ts:negativeWildcardRowsNeedParentBottom: return.rows[]
   known:
     0..3540 as (rows[].top + items[].height)
     0..2000 as parent.bottom
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..40
-    trusted from function @fit: given top: 0..1000
-    trusted from function @fit: given gap: 0..10
-    trusted from function @fit: given parent.bottom: 0..2000
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..40
+    assumed from input: given top: 0..1000
+    assumed from input: given gap: 0..10
+    assumed from input: given parent.bottom: 0..2000
   missing: given (rows[].top + items[].height) <= parent.bottom
 UNKNOWN negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: return.sections[].rows[].height <= maxHeight
   wildcard comparison means every return.sections[].rows[] item must satisfy: return.sections[].rows[].height <= maxHeight
@@ -380,8 +381,8 @@ UNKNOWN negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: return.s
   known:
     0..40 as sections[].rows[].height
     0..30 as maxHeight
-    trusted from function @fit: given sections[].rows[].height: 0..40
-    trusted from function @fit: given maxHeight: 0..30
+    assumed from input: given sections[].rows[].height: 0..40
+    assumed from input: given maxHeight: 0..30
   missing: given sections[].rows[].height <= maxHeight
 UNKNOWN negative-patterns.ts:negativeWildcardComparisonNeedsScalar: return.rows[].top <= return.boxes[].bottom
   Wildcard comparisons support one wildcard side and one scalar side
@@ -392,10 +393,10 @@ UNKNOWN negative-patterns.ts:negativeSameIndexNeedsMatchingLengths: return.rows[
   known:
     int 0..10 as rows.length
     int 0..20 as boxes.length
-    trusted from function @fit: given rows.length: int 0..10
-    trusted from function @fit: given boxes.length: int 0..20
-    trusted from function @fit: given rows[].top: 0..10
-    trusted from function @fit: given boxes[].bottom: 0..10
+    assumed from input: given rows.length: int 0..10
+    assumed from input: given boxes.length: int 0..20
+    assumed from input: given rows[].top: 0..10
+    assumed from input: given boxes[].bottom: 0..10
   missing: given rows.length == boxes.length
 UNKNOWN negative-patterns.ts:negativeAdjacentBoundIndexNeedsNondecreasingRows: return.rows[$i].top <= return.rows[$i + 1].top
   return.rows[$i].top <= return.rows[$i + 1].top was not inferred
@@ -422,10 +423,10 @@ UNKNOWN negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: ret
   known:
     -500..600 as ((container - containee) / 2)
     int 0..0 as 0
-    trusted from function @fit: given containee: 0..1000
-    trusted from function @fit: given padding: -100..100
-    trusted from function @fit: given container: 0..1200
-    trusted from function @fit: given container >= containee + padding
+    assumed from input: given containee: 0..1000
+    assumed from input: given padding: -100..100
+    assumed from input: given container: 0..1200
+    assumed from input: given container >= containee + padding
   missing: padding >= 0
 UNKNOWN negative-patterns.ts:negativeExtentEndCatchesEmptyRows: extentEnd(return.rows, top) == return.bottom
   -10..3500 as extentEnd(rows, top) == -10..3500 as (runningSum(top, items.length, (items[].height + gap)) - gap) was not proven
@@ -433,10 +434,10 @@ UNKNOWN negative-patterns.ts:negativeExtentEndCatchesEmptyRows: extentEnd(return
   known:
     -10..3500 as extentEnd(rows, top)
     -10..3500 as (runningSum(top, items.length, (items[].height + gap)) - gap)
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: 0..40
-    trusted from function @fit: given top: 0..1000
-    trusted from function @fit: given gap: 0..10
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    assumed from input: given top: 0..1000
+    assumed from input: given gap: 0..10
   missing: given extentEnd(rows, top) == (runningSum(top, items.length, (items[].height + gap)) - gap)
 FAIL negative-patterns.ts:negativeMapRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
@@ -445,8 +446,8 @@ FAIL negative-patterns.ts:negativeMapRowsNeedFieldDomain: return.rows[].height: 
     -40..40 as items[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
 FAIL negative-patterns.ts:negativeMapIndexCanBeZero: return.rows[].index: int 1..49
   range was int 0..49 as mapIndex(items), expected inside int 1..49
@@ -455,10 +456,10 @@ FAIL negative-patterns.ts:negativeMapIndexCanBeZero: return.rows[].index: int 1.
     int 0..49 as mapIndex(items)
     int 1..1 as 1
     int 49..49 as 49
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..40
-    read from code: mapIndex(items) >= 0
-    read from code: mapIndex(items) < items.length
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: mapIndex(items) >= 0
+    inferred from code: mapIndex(items) < items.length
   missing: mapIndex(items) >= 1
 FAIL negative-patterns.ts:negativeMapBlockRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
@@ -467,8 +468,8 @@ FAIL negative-patterns.ts:negativeMapBlockRowsNeedFieldDomain: return.rows[].hei
     -40..40 as items[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
 FAIL negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
@@ -477,8 +478,8 @@ FAIL negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].
     -40..40 as items[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
 FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols: int 1..6
   range was int 1..7, expected inside int 1..6
@@ -489,7 +490,7 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols
     checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
     int 1..1 as 1
     int 6..6 as 6
-    trusted from function @fit: given containerWidth: 320..2000
+    assumed from input: given containerWidth: 320..2000
   missing: int 1..7 <= 6
 FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
   int 10..10 as min <= int 2..2 as 2 is false
@@ -527,10 +528,10 @@ FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: return.rows[].index
     int 0..49 as rows[].index
     int 1..1 as 1
     int 49..49 as 49
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..40
-    read from code: rows[].index >= 0
-    read from code: rows[].index < items.length
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: rows[].index >= 0
+    inferred from code: rows[].index < items.length
   missing: rows[].index >= 1
 UNKNOWN negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[].rowIndex: int 0..<items.length
   range was int 1..50 as (rowIndex + 1), expected inside int 0..<items.length
@@ -539,8 +540,8 @@ UNKNOWN negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[]
     int 1..50 as (rowIndex + 1)
     int 0..0 as 0
     int 1..50 as items.length
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..40
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..40
   missing: (rowIndex + 1) < items.length
 UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: return.bottom >= params.top
   -Infinity..Infinity as runningSum(params.top, params.items.length, params.items[].height) >= 0..1000 as params.top was not proven
@@ -548,9 +549,9 @@ UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: retur
   known:
     -Infinity..Infinity as runningSum(params.top, params.items.length, params.items[].height)
     0..1000 as params.top
-    trusted from function @fit: given params.items.length: int 1..50
-    trusted from function @fit: given params.items[].height: -40..40
-    trusted from function @fit: given params.top: 0..1000
+    assumed from input: given params.items.length: int 1..50
+    assumed from input: given params.items[].height: -40..40
+    assumed from input: given params.top: 0..1000
   missing: params.items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
@@ -573,8 +574,8 @@ UNKNOWN negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: in
     int 1..Infinity as (focused + 1)
     int 0..0 as 0
     int 1..50 as items.length
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given focused: int 0..<items.length
+    assumed from input: given items.length: int 1..50
+    assumed from input: given focused: int 0..<items.length
   missing: (focused + 1) < items.length
 UNKNOWN negative-patterns.ts:negativeMissingRowBottom: return.bottom == return.top + return.height
   -1..1039 as ((row.top + row.height) - 1) == 0..1040 as (row.top + row.height) was not proven
@@ -582,8 +583,8 @@ UNKNOWN negative-patterns.ts:negativeMissingRowBottom: return.bottom == return.t
   known:
     -1..1039 as ((row.top + row.height) - 1)
     0..1040 as (row.top + row.height)
-    trusted from function @fit: given row.top: 0..1000
-    trusted from function @fit: given row.height: 0..40
+    assumed from input: given row.top: 0..1000
+    assumed from input: given row.height: 0..40
   missing: given ((row.top + row.height) - 1) == (row.top + row.height)
 UNKNOWN negative-patterns.ts:negativeUnboundedPromptHeight: return.visibleHeight <= availableHeight
   0..Infinity as prompt.height <= 0..200 as availableHeight was not proven
@@ -591,8 +592,8 @@ UNKNOWN negative-patterns.ts:negativeUnboundedPromptHeight: return.visibleHeight
   known:
     0..Infinity as prompt.height
     0..200 as availableHeight
-    trusted from function @fit: given prompt.height: 0..Infinity
-    trusted from function @fit: given availableHeight: 0..200
+    assumed from input: given prompt.height: 0..Infinity
+    assumed from input: given availableHeight: 0..200
   missing: given prompt.height <= availableHeight
 FAIL negative-patterns.ts:negativeInvertedClampBounds: call negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
   called function requires max >= min
@@ -604,8 +605,8 @@ FAIL negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
   known:
     -Infinity..Infinity as total
     int 0..0 as 0
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[]: 0..10
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[]: 0..10
   missing: total >= 0
   missing: total <= 0
 UNKNOWN negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows.length == items.length
@@ -614,9 +615,9 @@ UNKNOWN negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows
   known:
     int 0..50 as rows.length
     int 0..50 as items.length
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: 0..40
-    read from code: rows.length <= items.length
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: rows.length <= items.length
   missing: given rows.length == items.length
 UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: return.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, items[].height) >= 0..1000 as top was not proven
@@ -624,10 +625,10 @@ UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: 
   known:
     -Infinity..Infinity as runningSum(top, items.length, items[].height)
     0..1000 as top
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: -40..40
-    trusted from function @fit: given top: 0..1000
-    read from code: rows.length <= items.length
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
+    assumed from input: given top: 0..1000
+    inferred from code: rows.length <= items.length
   missing: items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: return.rows.length == items.length
   int 0..50 as rows.length == int 0..50 as items.length was not proven
@@ -635,9 +636,9 @@ UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: retu
   known:
     int 0..50 as rows.length
     int 0..50 as items.length
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: 0..40
-    read from code: rows.length <= items.length
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: rows.length <= items.length
   missing: given rows.length == items.length
 UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.rows.length == items.length
   int 0..50 as rows.length == int 0..50 as items.length was not proven
@@ -645,9 +646,9 @@ UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.
   known:
     int 0..50 as rows.length
     int 0..50 as items.length
-    trusted from function @fit: given items.length: int 0..50
-    trusted from function @fit: given items[].height: 0..40
-    read from code: rows.length <= items.length
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: rows.length <= items.length
   missing: given rows.length == items.length
 FAIL negative-patterns.ts:negativeForOfConditionalPushNeedsItemBound: return.rows[].height: 0..40
   range was 0..100 as rows[].height, expected inside 0..40
@@ -656,9 +657,9 @@ FAIL negative-patterns.ts:negativeForOfConditionalPushNeedsItemBound: return.row
     0..100 as rows[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..100
-    read from code: rows.length <= items.length
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..100
+    inferred from code: rows.length <= items.length
   missing: rows[].height <= 40
 UNKNOWN negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
@@ -673,8 +674,8 @@ FAIL negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[]
     -Infinity..Infinity as return.rows[].height
     int 0..0 as 0
     int 40..40 as 40
-    trusted from function @fit: given items.length: int 1..50
-    trusted from function @fit: given items[].height: 0..40
+    assumed from input: given items.length: int 1..50
+    assumed from input: given items[].height: 0..40
   missing: return.rows[].height >= 0
   missing: return.rows[].height <= 40
 UNKNOWN negative-patterns.ts:negativeFunctionGivenCannotNameReturn: given return: 0..10
@@ -688,7 +689,7 @@ FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
   known:
     100..200 as width
     int 50..50 as 50
-    trusted from function @fit: given width: 100..200
+    assumed from input: given width: 100..200
   missing: given width <= 50
 FAIL negative-patterns.ts:negativeGivenComparisonsCannotBothHold: given width <= 50
   no input can satisfy both given width >= 100 and given width <= 50
@@ -736,7 +737,7 @@ UNKNOWN negative-patterns.ts:negativeArrowFunctionContract: return >= min
   known:
     -Infinity..Infinity as (min - 1)
     -Infinity..Infinity as min
-    branch fact from code: min - value - 1 <= 0
+    inferred from branch: min - value - 1 <= 0
   missing: given (min - 1) >= min
 UNKNOWN negative-patterns.ts:negativeDestructuredArrowParamClaim: return >= width
   -Infinity..Infinity as (width - 1) >= -Infinity..Infinity as width was not proven
@@ -751,7 +752,7 @@ UNKNOWN negative-patterns.ts:negativeArrayDestructuredLocalClaim: return >= valu
   known:
     -1..9 as (value - 1)
     0..10 as value
-    trusted from function @fit: given value: 0..10
+    assumed from input: given value: 0..10
   missing: given (value - 1) >= value
 FAIL negative-patterns.ts:negativeInlineParamComparison: given value > max
   no input can satisfy this with the earlier given lines
@@ -760,7 +761,7 @@ FAIL negative-patterns.ts:negativeInlineParamComparison: given value > max
   known:
     0..50 as value
     100..200 as max
-    trusted from function @fit: given value: 0..50
+    assumed from input: given value: 0..50
   missing: given value > max
 UNKNOWN negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
   given comparisons only support input paths, numbers, and simple arithmetic
@@ -778,7 +779,7 @@ UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch:
   known:
     int -1..999 as (focused - 1)
     int 0..0 as 0
-    trusted from function @fit: given focused: int 0..1000
+    assumed from input: given focused: int 0..1000
   missing: given (focused - 1) >= 0
 FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return: int 0..1000
   range was int -1..999 as (focused - 1), expected inside int 0..1000
@@ -787,7 +788,7 @@ FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: re
     int -1..999 as (focused - 1)
     int 0..0 as 0
     int 1000..1000 as 1000
-    trusted from function @fit: given focused: int 0..1000
+    assumed from input: given focused: int 0..1000
   missing: (focused - 1) >= 0
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   given comparisons only support input paths, numbers, and simple arithmetic
@@ -823,10 +824,10 @@ FAIL negative-patterns.ts:default: return.x: 50..100
     -50..150 as (rect.left + ((rect.right - rect.left) / 2))
     int 50..50 as 50
     int 100..100 as 100
-    trusted from function @fit: given rect.left: 0..100
-    trusted from function @fit: given rect.right: 0..100
-    trusted from function @fit: given rect.top: 0..100
-    trusted from function @fit: given rect.bottom: 0..100
+    assumed from input: given rect.left: 0..100
+    assumed from input: given rect.right: 0..100
+    assumed from input: given rect.top: 0..100
+    assumed from input: given rect.bottom: 0..100
   missing: (rect.left + ((rect.right - rect.left) / 2)) >= 50
 FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): requires container >= containee
   called function requires container >= containee
@@ -849,7 +850,7 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperDefaultImportNeedsFit:
   helper: unannotatedDefaultImportedClamp (default) from ./negative-import-helpers
   reason: resolved to negative-import-helpers.ts#unannotatedDefaultImportedClamp, but that function has no @fit contract
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperSourceContractFails: return: 0..100
-  imported helper contract failed in source before this call could trust it
+  imported helper contract failed in source before this call could use it
   helper: importedClampWithBadContract from ./negative-import-helpers
   failed check: negative-import-helpers.ts:importedClampWithBadContract: return: 0..100
   range was 0..320 as min(width, 320), expected inside 0..100
@@ -858,7 +859,7 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperSourceContractFails: r
     0..320 as min(width, 320)
     int 0..0 as 0
     int 100..100 as 100
-    trusted from function @fit: given width: 0..1000
+    assumed from input: given width: 0..1000
   missing: min(width, 320) <= 100
 FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 0..100
   range was 0..320 as return, expected inside 0..100
@@ -868,7 +869,7 @@ FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 
     checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     int 0..0 as 0
     int 100..100 as 100
-    trusted from function @fit: given width: 0..1000
+    assumed from input: given width: 0..1000
   missing: return <= 100
 FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: return: 0..100
   range was 0..320 as return, expected inside 0..100
@@ -878,7 +879,7 @@ FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: 
     checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     int 0..0 as 0
     int 100..100 as 100
-    trusted from function @fit: given width: 0..1000
+    assumed from input: given width: 0..1000
   missing: return <= 100
 UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: return == width + importedChromeX + 1
   16..1016 as (width + importedChromeX) == 17..1017 as ((width + importedChromeX) + 1) was not proven
@@ -886,7 +887,7 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: ret
   known:
     16..1016 as (width + importedChromeX)
     17..1017 as ((width + importedChromeX) + 1)
-    trusted from function @fit: given width: 0..1000
+    assumed from input: given width: 0..1000
   missing: given (width + importedChromeX) == ((width + importedChromeX) + 1)
 UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
   Optional property input.rows is not in the static layout subset

@@ -162,7 +162,6 @@ function knownProofContextMany(values: ReportNumberValue[], assumptions: ReportL
   const lines = values.flatMap(knownValueFacts)
   for (const assumption of assumptions) {
     lines.push(formatKnownFact(assumption))
-    if (lines.length >= 12) break
   }
   return [...new Set(lines)]
 }
@@ -175,13 +174,13 @@ function formatKnownFact(assumption: ReportLinearConstraint): string {
   const fact = publicFitText(assumption.text ?? formatLinearConstraint(assumption))
   switch (assumption.source) {
     case 'function-given':
-      return `trusted from function @fit: ${fact}`
+      return `assumed from input: ${fact}`
     case 'loop-given':
-      return `trusted from loop @fit: ${fact}`
+      return `assumed from loop @fit: ${fact}`
     case 'code':
-      return `read from code: ${fact}`
+      return `inferred from code: ${fact}`
     case 'branch':
-      return `branch fact from code: ${fact}`
+      return `inferred from branch: ${fact}`
     case 'contract':
       return fact
   }

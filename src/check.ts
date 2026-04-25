@@ -173,7 +173,7 @@ export type FitDoctorCheck = {
   reason?: string
 }
 
-export type FitInferSpecStatus = 'checked' | 'trusted' | 'not-inferred'
+export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
 
 export type FitInferSpec = {
   text: string
@@ -271,7 +271,7 @@ type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
 
 const maxInlineDepth = 12
 
-type TrustedGivenSpec =
+type AssumedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
   | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
 
@@ -374,11 +374,11 @@ function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: M
 
   bindFunctionInputParameters(fn, specs, program, env)
 
-  const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
-  for (const given of trustedGivens) {
+  const {assumedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
   const context: EvalContext = {
     program,
     file: program.file,
@@ -489,14 +489,14 @@ function verifyFunctionSpecs(
 
   bindFunctionInputParameters(fn, specs, program, env)
 
-  const {trustedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
+  const {assumedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
 
-  for (const given of trustedGivens) {
+  for (const given of assumedGivens) {
     if (given.kind !== 'range') continue
     applyGivenRangeSpec(env, given.spec)
   }
 
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache)
   checks.push(...impossibleChecks)
   const hasBodyClaims = functionHasBodyClaims(specs) || functionHasBodyFitComment(program, fn)
   const context: EvalContext = {
@@ -534,11 +534,11 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
 
   bindFunctionInputParameters(fn, specs, program, env)
 
-  const {trustedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
-  for (const given of trustedGivens) {
+  const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
   const inferUnsupported: string[] = []
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
   const state = evaluateFunctionBodyState(fn, context)
@@ -608,11 +608,11 @@ function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractC
 
   bindFunctionInputParameters(fn, specs, program, env)
 
-  const {trustedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
-  for (const given of trustedGivens) {
+  const {assumedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, trustedGivens, contractCache)
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
   const baseEnv = new Map(env)
   const state = evaluateFunctionBodyState(fn, context)
@@ -779,7 +779,7 @@ function inferFunctionSpecReports(
   return specs.map(spec => {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
       const check = checkByText.get(spec.text)
-      if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
+      if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
 
@@ -1051,8 +1051,8 @@ function validateGivenSpecs(
   specs: FitSpec[],
   allowedRoots: string[],
   source: Extract<FactSource, 'function-given' | 'loop-given'>,
-): {trustedGivens: TrustedGivenSpec[]; checks: FitCheck[]} {
-  const trustedGivens: TrustedGivenSpec[] = []
+): {assumedGivens: AssumedGivenSpec[]; checks: FitCheck[]} {
+  const assumedGivens: AssumedGivenSpec[] = []
   const checks: FitCheck[] = []
   const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
 
@@ -1076,14 +1076,14 @@ function validateGivenSpecs(
         continue
       }
       ranges.push(spec)
-      trustedGivens.push({kind: 'range', spec, source})
+      assumedGivens.push({kind: 'range', spec, source})
       continue
     }
 
-    trustedGivens.push({kind: 'comparison', spec, source})
+    assumedGivens.push({kind: 'comparison', spec, source})
   }
 
-  return {trustedGivens, checks}
+  return {assumedGivens, checks}
 }
 
 function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
@@ -1207,7 +1207,7 @@ function collectGivenAssumptions(
   functionName: string,
   env: Map<string, Value>,
   inputRoots: string[],
-  givens: TrustedGivenSpec[],
+  givens: AssumedGivenSpec[],
   contractCache: Map<string, FunctionContractProof>,
 ): {assumptions: LinearConstraint[]; checks: FitCheck[]} {
   const assumptions: LinearConstraint[] = []
@@ -2677,7 +2677,7 @@ function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoo
   return specs.map(spec => {
     const check = checkByText.get(spec.text)
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
-      if (check == null || check.status === 'pass') return {text: spec.text, status: 'trusted'}
+      if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
     if (check?.status === 'pass') return {text: spec.text, status: 'checked'}
@@ -2750,10 +2750,10 @@ function expressionMentionsIdentifier(expression: ts.Expression, name: string): 
 
 function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
-  const {trustedGivens, checks} = validateGivenSpecs(context.file, functionName, specs, context.inputRoots, 'loop-given')
+  const {assumedGivens, checks} = validateGivenSpecs(context.file, functionName, specs, context.inputRoots, 'loop-given')
   context.checks.push(...checks)
 
-  for (const given of trustedGivens) {
+  for (const given of assumedGivens) {
     if (given.kind !== 'range') continue
     applyGivenRangeSpec(context.env, given.spec)
   }
@@ -2763,7 +2763,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
     functionName,
     context.env,
     context.inputRoots,
-    trustedGivens,
+    assumedGivens,
     context.contractCache,
   )
   context.checks.push(...impossibleChecks)
@@ -3563,7 +3563,7 @@ function importedContractUnavailableReason(localName: string, binding: ImportedB
 function importedContractFailureReason(localName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, proof: FunctionContractProof) {
   if (proof.status === 'verifying') return importedContractUnavailableReason(localName, binding, 'contract is already being verified')
   const failed = proof.checks.find(check => check.status !== 'pass')
-  const head = proof.status === 'fail' ? 'imported helper contract failed in source before this call could trust it' : 'imported helper contract was not proven in source before this call could trust it'
+  const head = proof.status === 'fail' ? 'imported helper contract failed in source before this call could use it' : 'imported helper contract was not proven in source before this call could use it'
   if (failed == null) {
     return [
       head,

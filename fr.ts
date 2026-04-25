@@ -175,7 +175,7 @@ function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoct
   }
 
   return inferCommand == null
-    ? 'move the fact into a small named helper if you want an infer x-ray'
+    ? 'move the fact into a small named helper if you want inferred facts'
     : `run ${inferCommand} to compare inferred facts with this claim`
 }
 

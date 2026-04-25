@@ -37,7 +37,7 @@ run check
 use reports to classify the gap
 ```
 
-This keeps comments immediately adoptable in chunks. A separate spec compiler or agent can sit on top later, but the core checker should stay boring: comments state facts, source code earns them, and reports say where proof stopped.
+This keeps comments immediately adoptable in chunks. A separate spec compiler or agent can sit on top later, but the core checker should stay boring.
 
 ## Spec-Driven Demos
 
@@ -116,15 +116,15 @@ High-value inference:
 - TS shapes are worth reading before asking for more comments. Arrays get non-negative integer lengths; object/interface/type-alias/union/intersection shapes let sparse `@fit` comments still evaluate natural code. The useful boundary is now `src/shapes.ts`: TypeScript can tell us structural shape across imported aliases, utility types, generic instantiations, property-access calls, namespace-imported structural calls, and helper returns, but it must not give Freerange numeric ranges, sequence facts, or proof obligations. The walk is deliberately depth/width bounded so broad parser/library types do not become our problem.
 - `items.map(...)` preserves length, simple field domains, and optional callback index facts. Expression callbacks and tiny block callbacks with consts/return branches are enough for the code we have seen; source order can come later when there is a public fact that needs it.
 - `items.filter(...)` is worth supporting as a boring subsequence summary: output items keep the source item domain and output length is at most source length. Do not let that grow into predicate logic yet.
-- Inline `// @fit 0..foo` is now placement-sensitive in the useful way: on params it is a trusted input domain, exactly like a lifted `given`; on locals and object fields it is a targeted check. That keeps boring scalar domains and red-line variables next to the code without turning `given` into a local escape hatch.
+- Inline `// @fit 0..foo` is now placement-sensitive in the useful way: on params it is an input assumption, exactly like a lifted `given`; on locals and object fields it is a targeted check. That keeps boring scalar domains and red-line variables next to the code without turning `given` into a local escape hatch.
 - append-only `for...of` can infer length, scalar-array element shape, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - Loop inference should keep splitting source reading from meaning. `src/loop-source.ts` can recognize narrow TypeScript shapes, but it should emit pushes, scalar updates, guards, and extrema. `src/loop-summary.ts` is the boundary for turning those summaries into array element facts and sequence facts.
 - conditional push should infer `rows.length <= items.length`, not equal length. Subsequence/source order can come later when a fact needs it.
 - indexed loops should infer index ranges and carry whichever pushed field actually came from the loop index, not only a field literally named `index`. One-to-one source order can come later when a fact needs it.
 - thin running sums like `total += row.height`, guarded sums like `if (...) total += row.height`, and simple `min = Math.min(min, row.width)` / `max = Math.max(max, row.width)` assignment loops give numeric ranges. Next reducer-like work should be cleaner reports when those measures feed later facts.
 - mutation like `sort`, `reverse`, `splice`, and indexed assignment should kill sequence facts unless summarized. Unsupported loop bodies can also be useful when they are only side effects on roots we can forget; preserve unrelated facts, never stale mutated-root facts.
-- `fr infer` is useful as a checker x-ray: it should show curated return/local facts and loop-local facts, not every internal linear assumption. Function and loop output should keep separating trusted givens, checked claims, not-inferred claims, and the narrower redundant checks already covered by emitted inferred facts. Redundant lines should name the covering fact, because otherwise the output is only a vibe. That lets authors shorten noisy `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it focused on adoption instead of turning it into an annotation writer.
-- `bun run shape-diff` is a different x-ray. It compares evaluated Freerange structural facts with TypeScript-only shape for params, locals, and returns; raw call-return probing is opt-in. It helped classify photo-gallery and Pretext blockers: TypeScript could see prompt layout, measurement, item geometry, edge hit-area, and `layoutBlockFrame` structure; the remaining work is mostly proof/report/product semantics, not object-path blindness.
+- `fr infer` is useful as an inferred-facts view: it should show curated return/local facts and loop-local facts, not every internal linear assumption. Function and loop output should keep separating input assumptions, checked claims, not-inferred claims, and the narrower redundant checks already covered by emitted inferred facts. Redundant lines should name the covering fact, because otherwise the output is only a vibe. That lets authors shorten noisy `@fit` comments without losing the important guarantees. The important examples now live in `infer-snapshots.expected.txt`, so losing inference coverage is a normal test failure. Keep it focused on adoption instead of turning it into an annotation writer.
+- `bun run shape-diff` compares evaluated Freerange structural facts with TypeScript-only shape for params, locals, and returns; raw call-return probing is opt-in. It helped classify photo-gallery and Pretext blockers: TypeScript could see prompt layout, measurement, item geometry, edge hit-area, and `layoutBlockFrame` structure; the remaining work is mostly proof/report/product semantics, not object-path blindness.
 
 Corpus loop notes:
 
@@ -257,13 +257,13 @@ Imports should find contracts, not turn Freerange into a second TypeScript compi
 
 The resolver follows named imports through TypeScript module resolution when they land on local source files, and it follows explicit named re-export barrels. That is enough for relative helpers, `.tsx` helpers, and `tsconfig` path aliases without committing to package exports, declaration-only imports, wildcard barrels, summary files, stale-summary trust, or workspace caches.
 
-TypeScript shape piggybacking is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system. Namespace-qualified helper calls may now use a local checked `@fit` contract, but the contract still comes from checking source, not from TypeScript shape.
+TypeScript shape comparison is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system. Namespace-qualified helper calls may now use a local checked `@fit` contract, but the contract still comes from checking source, not from TypeScript shape.
 
-We tried automatic inferred return exports in branch `codex/implicit-return-summaries-experiment` (`ff3626e`). The shape was conceptually nice: prove a helper once, infer small returned-return facts, then export those facts at call sites. In practice it grew a real subsystem: summary caching, public-expression filtering, return-expression rebasing, provenance, and boundary assumptions. The demo audit did not show enough line-count win. The lines it might delete were mostly the useful public contracts we still want humans and agents to read, such as `clamp: return >= min`, `gridImageSizeX: return <= naturalSizeX`, and prompt visible-sizing caps. We only pruned the obvious `>= 0` lines already covered by concrete ranges; checked demo contracts dropped from 125 to 113. Keep `infer` as an adoption x-ray for now, not a caller-visible summary API. Revisit only if multiple real demos show repeated helper contracts that are clearly noise rather than red-line documentation.
+We tried automatic inferred return exports in branch `codex/implicit-return-summaries-experiment` (`ff3626e`). The shape was conceptually nice: prove a helper once, infer small returned-return facts, then export those facts at call sites. In practice it grew a real subsystem: summary caching, public-expression filtering, return-expression rebasing, provenance, and boundary assumptions. The demo audit did not show enough line-count win. The lines it might delete were mostly the useful public contracts we still want humans and agents to read, such as `clamp: return >= min`, `gridImageSizeX: return <= naturalSizeX`, and prompt visible-sizing caps. We only pruned the obvious `>= 0` lines already covered by concrete ranges; checked demo contracts dropped from 125 to 113. Keep `infer` as an adoption tool for now, not a caller-visible summary API. Revisit only if multiple real demos show repeated helper contracts that are clearly noise rather than red-line documentation.
 
 Structural equality should stay small too. Proving `return.rows == input.rows` because both sides are the same source expression is useful. Recursive object/array equality is a different feature and should wait for a real need.
 
-Reports now say whether a fact came from source, a branch split, a trusted `given`, a checked same-file helper contract, or a checked imported contract. Keep that boundary visible if trusted summaries ever land; do not let a checked-in summary launder a failed source check.
+Reports now say whether a fact came from source, a branch split, an assumed `given`, a checked same-file helper contract, or a checked imported contract. Keep that boundary visible if assumed summaries ever land; do not let a checked-in summary launder a failed source check.
 
 ## Reports
 
@@ -286,12 +286,13 @@ Missing term:
 
 Reports should separate:
 
-- checked from code
-- trusted top-level `given`
-- trusted loop-local `given`
+- inferred from code
+- inferred from branch
+- assumed input `given`
+- assumed loop-local `given`
 - checked same-file helper contract
 - checked imported contract
-- trusted summary, if that ever exists
+- assumed summary, if that ever exists
 - unsupported
 
 For shared-factor arithmetic, missing facts should name the small human obligation. If the code has:
@@ -335,7 +336,7 @@ Before adding an atom, require:
 - Start with tiny abstract domains. Intervals, path-sensitive narrowing, append-only sequence facts, and exact string facts carried farther than heavier numeric theories would have early.
 - Split intervals by layout seams. Column bands, line-left / line-interior / line-right regions, and branch-local facts were clearer than one giant interval.
 - Preserve remembered expressions when possible. Keeping an expression around after a clear `Math.min` / `Math.max` winner helped prove center-line and aspect-ratio facts without a heavier solver.
-- Read source by default. Use summaries only for genuinely opaque helper boundaries, and make the report say which helper was trusted.
+- Read source by default. Use summaries only for genuinely opaque helper boundaries, and make the report say which helper was assumed.
 - Use mutation/red probes as research signals. They are good for finding holes in the proof surface, but they should not become verifier guarantees.
 - `life-calendar` was a useful hard numeric example: `**`, `Math.sqrt`, `Math.ceil`, integer facts after `ceil(life / countX)`, and half-open grid hit testing.
 - Bad `given` lines are not harmless. Reject small linear contradictions before proof, including chained comparisons, so the rest of the checker never gets to prove from an empty input set.

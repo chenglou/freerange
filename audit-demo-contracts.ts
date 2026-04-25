@@ -3,14 +3,14 @@ import {inferFitFiles, type FitInferFunctionReport} from './src/check.ts'
 
 type Counts = {
   functions: number
-  trusted: number
+  assumed: number
   checked: number
   notInferred: number
   redundant: number
   likelyRemovable: number
   publicLooking: number
   keepers: number
-  loopTrusted: number
+  loopAssumed: number
   loopChecked: number
   loopNotInferred: number
   loopRedundant: number
@@ -82,18 +82,18 @@ for (const fn of report.functions) {
 }
 
 console.log(`demo functions: ${totals.functions}`)
-console.log(`function specs: ${totals.checked} checked, ${totals.trusted} trusted, ${totals.notInferred} not-inferred`)
+console.log(`function specs: ${totals.checked} checked, ${totals.assumed} assumed, ${totals.notInferred} not-inferred`)
 console.log(`function redundancy: ${totals.redundant} redundant (${totals.likelyRemovable} likely removable, ${totals.publicLooking} public-looking), ${totals.keepers} checked keepers`)
-console.log(`loop specs: ${totals.loopChecked} checked, ${totals.loopTrusted} trusted, ${totals.loopNotInferred} not-inferred`)
+console.log(`loop specs: ${totals.loopChecked} checked, ${totals.loopAssumed} assumed, ${totals.loopNotInferred} not-inferred`)
 console.log(`loop redundancy: ${totals.loopRedundant} redundant (${totals.loopLikelyRemovable} likely removable, ${totals.loopPublicLooking} public-looking), ${totals.loopKeepers} checked keepers`)
 console.log()
 
 for (const [file, counts] of [...byFile.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-  if (counts.checked === 0 && counts.trusted === 0 && counts.loopChecked === 0 && counts.loopTrusted === 0) continue
+  if (counts.checked === 0 && counts.assumed === 0 && counts.loopChecked === 0 && counts.loopAssumed === 0) continue
   console.log(`${file}:`)
-  console.log(`  functions: ${counts.checked} checked, ${counts.trusted} trusted, ${counts.redundant} redundant (${counts.likelyRemovable} likely removable, ${counts.publicLooking} public-looking), ${counts.keepers} keepers`)
-  if (counts.loopChecked > 0 || counts.loopTrusted > 0 || counts.loopRedundant > 0) {
-    console.log(`  loops: ${counts.loopChecked} checked, ${counts.loopTrusted} trusted, ${counts.loopRedundant} redundant (${counts.loopLikelyRemovable} likely removable, ${counts.loopPublicLooking} public-looking), ${counts.loopKeepers} keepers`)
+  console.log(`  functions: ${counts.checked} checked, ${counts.assumed} assumed, ${counts.redundant} redundant (${counts.likelyRemovable} likely removable, ${counts.publicLooking} public-looking), ${counts.keepers} keepers`)
+  if (counts.loopChecked > 0 || counts.loopAssumed > 0 || counts.loopRedundant > 0) {
+    console.log(`  loops: ${counts.loopChecked} checked, ${counts.loopAssumed} assumed, ${counts.loopRedundant} redundant (${counts.loopLikelyRemovable} likely removable, ${counts.loopPublicLooking} public-looking), ${counts.loopKeepers} keepers`)
   }
 }
 
@@ -109,42 +109,39 @@ const likelyRemovable = redundantItems.filter(item => item.recommendation === 'l
 if (likelyRemovable.length > 0) {
   console.log()
   console.log('likely removable redundant specs:')
-  for (const item of likelyRemovable.slice(0, 40)) {
+  for (const item of likelyRemovable) {
     console.log(`  ${redundantItemLabel(item)}: ${item.text} (covered by ${item.reason})`)
   }
-  if (likelyRemovable.length > 40) console.log(`  ... ${likelyRemovable.length - 40} more`)
 }
 
 const publicLooking = redundantItems.filter(item => item.recommendation === 'public-looking')
 if (publicLooking.length > 0) {
   console.log()
   console.log('public-looking redundant specs:')
-  for (const item of publicLooking.slice(0, 40)) {
+  for (const item of publicLooking) {
     console.log(`  ${redundantItemLabel(item)}: ${item.text} (covered by ${item.reason})`)
   }
-  if (publicLooking.length > 40) console.log(`  ... ${publicLooking.length - 40} more`)
 }
 
 if (keepers.length > 0) {
   console.log()
   console.log('checked keepers:')
-  for (const item of keepers.slice(0, 40)) {
+  for (const item of keepers) {
     console.log(`  ${item.file}:${item.functionName}: ${item.text}`)
   }
-  if (keepers.length > 40) console.log(`  ... ${keepers.length - 40} more`)
 }
 
 function emptyCounts(): Counts {
   return {
     functions: 0,
-    trusted: 0,
+    assumed: 0,
     checked: 0,
     notInferred: 0,
     redundant: 0,
     likelyRemovable: 0,
     publicLooking: 0,
     keepers: 0,
-    loopTrusted: 0,
+    loopAssumed: 0,
     loopChecked: 0,
     loopNotInferred: 0,
     loopRedundant: 0,
@@ -158,7 +155,7 @@ function addFunction(counts: Counts, fn: FitInferFunctionReport) {
   counts.functions++
   const redundant = new Set(fn.redundant.map(spec => spec.text))
   for (const spec of fn.specs) {
-    if (spec.status === 'trusted') counts.trusted++
+    if (spec.status === 'assumed') counts.assumed++
     if (spec.status === 'checked') counts.checked++
     if (spec.status === 'not-inferred') counts.notInferred++
     if (spec.status === 'checked' && !redundant.has(spec.text)) counts.keepers++
@@ -173,7 +170,7 @@ function addFunction(counts: Counts, fn: FitInferFunctionReport) {
   for (const loop of fn.loops) {
     const loopRedundant = new Set(loop.redundant.map(spec => spec.text))
     for (const spec of loop.specs) {
-      if (spec.status === 'trusted') counts.loopTrusted++
+      if (spec.status === 'assumed') counts.loopAssumed++
       if (spec.status === 'checked') counts.loopChecked++
       if (spec.status === 'not-inferred') counts.loopNotInferred++
       if (spec.status === 'checked' && !loopRedundant.has(spec.text)) counts.loopKeepers++
