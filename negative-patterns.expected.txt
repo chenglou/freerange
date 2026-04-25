@@ -802,6 +802,20 @@ FAIL negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height:
     int 40..40 as 40
   missing: input[1].height >= 0
   missing: input[1].height <= 40
+UNKNOWN negative-patterns.ts:negativeOptionalTupleShapeIsNotExactLength: return.length == 2
+  int 1..2 as input.length == int 2..2 as 2 was not proven
+  need: input.length == 2
+  known:
+    int 1..2 as input.length
+    int 2..2 as 2
+  missing: given input.length == 2
+UNKNOWN negative-patterns.ts:negativeRestTupleShapeIsNotExactLength: return.length == 2
+  int 1..Infinity as input.length == int 2..2 as 2 was not proven
+  need: input.length == 2
+  known:
+    int 1..Infinity as input.length
+    int 2..2 as 2
+  missing: given input.length == 2
 FAIL negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
   need: (rect.left + ((rect.right - rect.left) / 2)) inside 50..100

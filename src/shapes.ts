@@ -152,33 +152,55 @@ function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecke
     return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen, depth)
   }
   if (checker.isTupleType(type)) {
-    let element: Value | null = null
-    for (const member of checker.getTypeArguments(type as ts.TypeReference)) {
-      const memberValue = valueFromTsType(expr, member, checker, location, seen, depth)
-      if (memberValue == null) return null
-      element = element == null ? memberValue : joinValues(element, memberValue)
-    }
-    return element
+    return joinedTupleElementTsValue(expr, checker.getTypeArguments(type as ts.TypeReference), checker, location, seen, depth)
   }
   const elementType = type.getNumberIndexType()
   return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen, depth)
 }
 
 function tupleArrayTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): ArrayValue | null {
+  const members = checker.getTypeArguments(type as ts.TypeReference)
+  if (!isRequiredFixedTuple(type)) {
+    return unknownArray(expr, tupleLengthRangeValue(expr, type), joinedTupleElementTsValue(`${expr}[]`, members, checker, location, seen, depth))
+  }
+
   const elements: Value[] = []
   let element: Value | null = null
-  for (const [index, member] of checker.getTypeArguments(type as ts.TypeReference).entries()) {
+  for (const [index, member] of members.entries()) {
     const memberValue = valueFromTsType(`${expr}[${index}]`, member, checker, location, seen, depth)
     if (memberValue == null) return null
     elements.push(memberValue)
     element = element == null ? memberValue : joinValues(element, memberValue)
   }
-  return {kind: 'array', length: tupleLengthValue(expr, elements.length), elements, element, expr, summary: null}
+  return {kind: 'array', length: tupleLengthRangeValue(expr, type), elements, element, expr, summary: null}
 }
 
-function tupleLengthValue(expr: string, length: number) {
+function isRequiredFixedTuple(type: ts.Type) {
+  const target = (type as ts.TupleTypeReference).target
+  return target.minLength === target.fixedLength
+    && (target.combinedFlags & ts.ElementFlags.Variable) === 0
+    && target.elementFlags.every(flag => flag === ts.ElementFlags.Required)
+}
+
+function joinedTupleElementTsValue(expr: string, members: readonly ts.Type[], checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
+  let element: Value | null = null
+  for (const member of members) {
+    const memberValue = valueFromTsType(expr, member, checker, location, seen, depth)
+    if (memberValue == null) return null
+    element = element == null ? memberValue : joinValues(element, memberValue)
+  }
+  return element
+}
+
+function tupleLengthRangeValue(expr: string, type: ts.Type) {
+  const target = (type as ts.TupleTypeReference).target
+  const maxLength = (target.combinedFlags & ts.ElementFlags.Variable) === 0 ? target.fixedLength : Number.POSITIVE_INFINITY
+  return tupleLengthValue(expr, target.minLength, maxLength)
+}
+
+function tupleLengthValue(expr: string, minLength: number, maxLength: number) {
   const lengthExpr = `${expr}.length`
-  return numberValue(length, length, true, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
+  return numberValue(minLength, maxLength, true, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
 }
 
 export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undefined, program: ShapeProgram, seen: Set<string>): Value | null {
@@ -214,7 +236,7 @@ function valueFromTupleSyntaxType(expr: string, type: ts.TupleTypeNode, program:
     elements.push(value)
     element = element == null ? value : joinValues(element, value)
   }
-  return {kind: 'array', length: tupleLengthValue(expr, elements.length), elements, element, expr, summary: null}
+  return {kind: 'array', length: tupleLengthValue(expr, elements.length, elements.length), elements, element, expr, summary: null}
 }
 
 function tupleElementType(element: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {

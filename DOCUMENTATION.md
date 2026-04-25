@@ -751,7 +751,8 @@ Supported today:
 - `items[].height: 0..40`
 - array literal length and item values
 - finite array/tuple element access like `return[2] >= 0`
-- TypeScript-known tuple slots, including fixed length and per-slot shape
+- TypeScript-known required fixed tuple slots, including fixed length and per-slot shape
+- optional/rest tuple shapes keep safe length ranges, but do not expose exact per-slot facts
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
 - bounded literal indexing

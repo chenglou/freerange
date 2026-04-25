@@ -1196,11 +1196,27 @@ export function negativeLoopGivenCannotNameRows(items: number[]) {
 export const negativeTopLevelInlineCallGiven = negativeNeedsContainerFit(4, 3) // @fit -1..0
 
 type NegativeTypedTupleRows = [{height: number}, {height: number}]
+type NegativeOptionalTupleRows = [{height: number}, {height: number}?]
+type NegativeRestTupleRows = [{height: number}, ...{height: number}[]]
 
 /** @fit
  * return[1].height: 0..40
  */
 export function negativeTypedTupleShapeIsNotNumeric(input: NegativeTypedTupleRows) {
+  return input
+}
+
+/** @fit
+ * return.length == 2
+ */
+export function negativeOptionalTupleShapeIsNotExactLength(input: NegativeOptionalTupleRows) {
+  return input
+}
+
+/** @fit
+ * return.length == 2
+ */
+export function negativeRestTupleShapeIsNotExactLength(input: NegativeRestTupleRows) {
   return input
 }
 
