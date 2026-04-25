@@ -165,6 +165,26 @@ export function ternaryBranchJoin(value: number) {
 }
 
 /** @fit
+ * given value: 0..100
+ * given max: 10..50
+ * return: 0..50
+ * return <= max
+ */
+export function handwrittenMinTernary(value: number, max: number) {
+  return value < max ? value : max
+}
+
+/** @fit
+ * given value: 0..100
+ * given min: 10..50
+ * return: 10..100
+ * return >= min
+ */
+export function handwrittenMaxTernary(value: number, min: number) {
+  return value > min ? value : min
+}
+
+/** @fit
  * given value: 2..8
  * return.floorValue: int 1..4
  * return.ceilValue: int 1..4
@@ -489,6 +509,35 @@ export function segmentedStackRows(items: {height: number}[], top: number, gap: 
       const rowBottom = rowTop + rowHeight
       rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
       nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
+ */
+export function segmentedStackRowsInlineBottom(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      rows.push({top: rowTop, height: rowHeight, bottom: rowTop + rowHeight})
+      nextRowTop = rowTop + rowHeight + gap
       rowHeight = 0
     }
   }
@@ -887,6 +936,37 @@ export function mapBlockRowsWithDestructure(items: {height: number}[]) {
 
 /** @fit
  * given items.length: int 1..50
+ * given items[].height: 0..100
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * return.rows[].index: int 0..49
+ * return.rows[].index < items.length
+ */
+export function mapFunctionBlockRows(items: {height: number}[]) {
+  const rows = items.map(function (item, index) {
+    const height = clampLayoutValue(item.height, 0, 40)
+    return {index, height}
+  })
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ */
+export function mapIfBranchRows(items: {height: number}[]) {
+  const rows = items.map(item => {
+    const {height} = item
+    if (height < 0) return {height: 0}
+    return {height}
+  })
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
  * given items[].height: 0..40
  * return.rows.length == items.length
  * return.rows[].height: 0..40
@@ -952,6 +1032,25 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
     if (item.visible) rows.push({height: item.height})
   }
   return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * return.rows.length <= items.length
+ * return.rows[].top: 0..3000
+ * return.rows[].height: 0..40
+ * return.bottom >= top
+ */
+export function conditionalPushRowsWithCursor(items: {height: number; visible: boolean}[], top: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    if (item.visible) rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows, bottom: y}
 }
 
 /** @fit
@@ -1138,6 +1237,20 @@ export function forgettableLoopNamedCallPreservesUnrelated(
   return kept // @fit 0..10
 }
 
+export function forgettableWhileLoopPreservesUnrelated(
+  items: number[],
+  value: number, // @fit 0..10
+) {
+  let scratch = 0
+  let i = 0
+  const kept = value
+  while (i < items.length) {
+    scratch += items[i]!
+    i++
+  }
+  return kept // @fit 0..10
+}
+
 /** @fit
  * return.length == 2
  * return[1]: 0..10
@@ -1184,6 +1297,17 @@ export function localHelperPostconditionRange(containerWidth: number) {
   return {cols}
 }
 
+type TypedTupleRows = [{height: number}, {height: number}]
+
+/** @fit
+ * return.length == 2
+ * return[0].height == input[0].height
+ * return[1].height == input[1].height
+ */
+export function typedTupleSlotShape(input: TypedTupleRows) {
+  return input
+}
+
 /** @fit
  * given items.length: int 0..100
  * return: int 0..100
@@ -1216,12 +1340,28 @@ export function arrayLiteralAtLast() {
 }
 
 /** @fit
+ * return: int 20..20
+ */
+export function arrayLiteralAtSecondLast() {
+  return [10, 20, 30].at(-2)!
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
  * return: 0..40
  */
 export function arrayAtLastKeepsElementDomain(items: number[]) {
   return items.at(-1)!
+}
+
+/** @fit
+ * given items.length: int 2..50
+ * given items[]: 0..40
+ * return: 0..40
+ */
+export function arrayAtSecondLastKeepsElementDomain(items: number[]) {
+  return items.at(-2)!
 }
 
 /** @fit

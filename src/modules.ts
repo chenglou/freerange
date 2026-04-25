@@ -198,12 +198,14 @@ function parseFitModule<TGlobal>(
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement)) {
-      const functionName = statement.name?.text ?? (hasModifier(statement, ts.SyntaxKind.DefaultKeyword) ? 'default' : null)
+      const isDefaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
+      const functionName = statement.name?.text ?? (isDefaultExport ? 'default' : null)
       if (functionName == null) continue
       collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction)
-      if (statement.name != null && hasModifier(statement, ts.SyntaxKind.ExportKeyword)) {
+      if (statement.name != null && hasModifier(statement, ts.SyntaxKind.ExportKeyword) && !isDefaultExport) {
         exports.set(functionName, {kind: 'local', localName: functionName})
       }
+      if (isDefaultExport) exports.set('default', {kind: 'local', localName: functionName})
       continue
     }
     if (ts.isClassDeclaration(statement) && statement.name != null) {
@@ -218,6 +220,7 @@ function parseFitModule<TGlobal>(
       const functionInitializer = supportedFunctionInitializer(statement.expression)
       if (functionInitializer == null) continue
       collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction)
+      exports.set('default', {kind: 'local', localName: 'default'})
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
@@ -295,23 +298,17 @@ function loadImports<TGlobal>(
     const importClause = statement.importClause
     const importIsTypeOnly = importClause?.isTypeOnly === true
     if (importClause?.name != null) {
-      module.imports.set(importClause.name.text, {
-        kind: 'unresolved',
-        exportedName: 'default',
-        specifier,
-        reason: importIsTypeOnly ? `Type-only imports cannot provide @fit helpers: ${specifier}` : 'default imports are not supported for @fit helpers',
-      })
+      module.imports.set(importClause.name.text, importIsTypeOnly
+        ? unresolvedImport('default', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
+        : sourceImportBinding(module, modules, resolution, readGlobal, timing, 'default', specifier))
     }
 
     const namedBindings = importClause?.namedBindings
     if (namedBindings == null) continue
     if (ts.isNamespaceImport(namedBindings)) {
-      module.imports.set(namedBindings.name.text, {
-        kind: 'unresolved',
-        exportedName: '*',
-        specifier,
-        reason: importIsTypeOnly ? `Type-only imports cannot provide @fit helpers: ${specifier}` : 'namespace imports are not supported for @fit helpers',
-      })
+      module.imports.set(namedBindings.name.text, importIsTypeOnly
+        ? unresolvedImport('*', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
+        : sourceImportBinding(module, modules, resolution, readGlobal, timing, '*', specifier))
       continue
     }
     if (!ts.isNamedImports(namedBindings)) continue
@@ -320,35 +317,32 @@ function loadImports<TGlobal>(
       const localName = element.name.text
       const exportedName = element.propertyName?.text ?? localName
       if (statement.importClause?.isTypeOnly === true || element.isTypeOnly) {
-        module.imports.set(localName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: `Type-only imports cannot provide @fit helpers: ${specifier}`,
-        })
+        module.imports.set(localName, unresolvedImport(exportedName, specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`))
         continue
       }
 
-      const resolved = resolveImport(module, specifier, resolution, timing)
-      if (resolved.kind === 'unresolved') {
-        module.imports.set(localName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: resolved.reason,
-        })
-        continue
-      }
-
-      const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
-      module.imports.set(localName, {
-        kind: 'resolved',
-        exportedName,
-        specifier,
-        module: importedModule,
-      })
+      module.imports.set(localName, sourceImportBinding(module, modules, resolution, readGlobal, timing, exportedName, specifier))
     }
   }
+}
+
+function unresolvedImport<TGlobal>(exportedName: string, specifier: string, reason: string): FitImportBinding<FitModule<TGlobal>> {
+  return {kind: 'unresolved', exportedName, specifier, reason}
+}
+
+function sourceImportBinding<TGlobal>(
+  module: FitModule<TGlobal>,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
+  exportedName: string,
+  specifier: string,
+): FitImportBinding<FitModule<TGlobal>> {
+  const resolved = resolveImport(module, specifier, resolution, timing)
+  if (resolved.kind === 'unresolved') return unresolvedImport(exportedName, specifier, resolved.reason)
+  const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
+  return {kind: 'resolved', exportedName, specifier, module: importedModule}
 }
 
 function loadReExports<TGlobal>(

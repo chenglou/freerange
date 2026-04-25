@@ -57,7 +57,6 @@ export type GuardedLoopPush = LoopPush & {
 export type SegmentedStackPush = {
   cursorName: string
   topName: string
-  bottomName: string
   gap: NumberValue
 }
 

@@ -38,6 +38,14 @@ export function negativeMathMinOperandBoundIsNotStrict(value: number) {
 }
 
 /** @fit
+ * given value: 0..10
+ * return < 4
+ */
+export function negativeHandwrittenMinOperandBoundIsNotStrict(value: number) {
+  return value < 4 ? value : 4
+}
+
+/** @fit
  * given minWidth: 0..1000
  * given width: 0..1000
  * return >= minWidth
@@ -280,6 +288,30 @@ export function negativeSegmentedStackRowsNeedMatchingBottom(items: {height: num
       const rowBottom = rowTop + rowHeight + 1
       rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
       nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows, gap}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ */
+export function negativeSegmentedStackRowsInlineBottomNeedsMatchingBottom(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      rows.push({top: rowTop, height: rowHeight, bottom: rowTop + rowHeight + 1})
+      nextRowTop = rowTop + rowHeight + gap
       rowHeight = 0
     }
   }
@@ -695,6 +727,19 @@ export function negativeMapBlockRowsNeedFieldDomain(items: {height: number}[]) {
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * return.rows[].height: 0..40
+ */
+export function negativeMapFunctionRowsNeedFieldDomain(items: {height: number}[]) {
+  const rows = items.map(function (item) {
+    const {height} = item
+    return {height}
+  })
+  return {rows}
+}
+
+/** @fit
  * given min: -1000..1000
  * given value: -1000..1000
  * given max: -1000..1000
@@ -730,6 +775,16 @@ export function negativeForgettableLoopStillForgetsMutatedRoot(items: number[]) 
   let scratch = 0
   for (let i = 1; i < items.length - 1; i++) {
     scratch += negativeLoopReadHelper(i)
+  }
+  return scratch // @fit 0
+}
+
+export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
+  let scratch = 0
+  let i = 0
+  while (i < items.length) {
+    scratch += items[i]!
+    i++
   }
   return scratch // @fit 0
 }
@@ -872,6 +927,22 @@ export function negativeConditionalPushIsNotSameLength(items: {height: number; v
     if (item.visible) rows.push({height: item.height})
   }
   return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * given top: 0..1000
+ * return.bottom >= top
+ */
+export function negativeConditionalPushCursorNeedsNonNegativeItem(items: {height: number; visible: boolean}[], top: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    if (item.visible) rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return {rows, bottom: y}
 }
 
 /** @fit
@@ -1061,11 +1132,11 @@ export function negativeGivenComparisonCannotIndexArray(items: number[], index: 
 }
 
 /** @fit
- * given items.length: int 2..50
+ * given items.length: int 1..50
  * given items[]: 0..40
  * return: 0..40
  */
-export function negativeArrayAtOnlySupportsLast(items: number[]) {
+export function negativeArrayAtNegativeIndexNeedsEnoughLength(items: number[]) {
   return items.at(-2)!
 }
 
@@ -1123,6 +1194,15 @@ export function negativeLoopGivenCannotNameRows(items: number[]) {
 }
 
 export const negativeTopLevelInlineCallGiven = negativeNeedsContainerFit(4, 3) // @fit -1..0
+
+type NegativeTypedTupleRows = [{height: number}, {height: number}]
+
+/** @fit
+ * return[1].height: 0..40
+ */
+export function negativeTypedTupleShapeIsNotNumeric(input: NegativeTypedTupleRows) {
+  return input
+}
 
 /** @fit
  * given rect.left: 0..100

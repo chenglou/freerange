@@ -267,6 +267,8 @@ type EvalFlow =
   | {kind: 'return'; value: Value}
   | {kind: 'fallthrough'}
 
+type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
+
 const maxInlineDepth = 12
 
 type TrustedGivenSpec =
@@ -1884,6 +1886,11 @@ function evaluateStatementsFlow(statements: ts.NodeArray<ts.Statement>, context:
       if (result != null) return {kind: 'return', value: result}
       continue
     }
+    if (ts.isWhileStatement(statement) || ts.isDoStatement(statement)) {
+      const result = evaluateForgettableWhileStatement(statement, context)
+      if (result != null) return {kind: 'return', value: result}
+      continue
+    }
     if (ts.isExpressionStatement(statement)) {
       const result = applyExpressionStatement(statement.expression, context)
       if (result != null) return {kind: 'return', value: result}
@@ -2267,8 +2274,8 @@ function evaluateForOfStatementCore(
     return unknown(`Unsupported for-of body statement: ${child.getText(context.program.sourceFile)}`)
   }
 
-  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0 || pendingAdds.size > 0)) {
-    return unknown('Conditional push loops support one guarded push and no cursor update')
+  if (conditionalPushedArrays.length > 0 && (conditionalPushedArrays.length > 1 || pushedArrays.length > 0)) {
+    return unknown('Conditional push loops support one guarded push array')
   }
   if (conditionalAdds.size > 0 && (pushedArrays.length > 0 || conditionalPushedArrays.length > 0 || pendingAdds.size > 0 || pendingExtrema.size > 0)) {
     return unknown('Conditional running-sum loops support guarded += statements only')
@@ -2506,6 +2513,16 @@ function evaluateForgettableForStatement(statement: ts.ForStatement, context: Ev
   return null
 }
 
+function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, context: EvalContext): Value | null {
+  if (!isSideEffectFreeExpression(statement.expression)) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
+  const forgotten = forgettableMutationRoots(statement.statement)
+  if (forgotten == null) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
+  for (const root of forgotten) forgetRoot(context.env, root)
+  const kind = ts.isWhileStatement(statement) ? 'while' : 'do while'
+  addInferUnsupported(context, `Forgot unsupported ${kind} loop side effects: ${loopHeaderText(statement, context.program.sourceFile)}`)
+  return null
+}
+
 function isForgettableForStatement(statement: ts.ForStatement) {
   const indexName = forgettableForIndexName(statement.initializer)
   return indexName != null
@@ -2548,6 +2565,9 @@ function forgettableMutationRoots(statement: ts.Statement): string[] | null {
   if (!ts.isExpressionStatement(statement)) return null
 
   const expression = statement.expression
+  if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
+    && (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken)
+    && ts.isIdentifier(expression.operand)) return [expression.operand.text]
   if (ts.isCallExpression(expression) && isPushCall(expression) && expression.arguments.every(isSideEffectFreeExpression)) return [expression.expression.expression.text]
   if (ts.isBinaryExpression(expression)) {
     const root = assignmentRootName(expression.left)
@@ -2665,7 +2685,7 @@ function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoo
   })
 }
 
-function loopHeaderText(statement: ts.ForOfStatement | ts.ForStatement, sourceFile: ts.SourceFile) {
+function loopHeaderText(statement: ts.ForOfStatement | ts.ForStatement | ts.WhileStatement | ts.DoStatement, sourceFile: ts.SourceFile) {
   const text = statement.getText(sourceFile)
   const bodyStart = text.indexOf('{')
   const header = bodyStart === -1 ? text : text.slice(0, bodyStart)
@@ -2945,6 +2965,8 @@ function combineNumberCases(
 function evaluateConditional(expression: ts.ConditionalExpression, context: EvalContext): Value {
   const extentEnd = evaluateExtentEndConditional(expression, context)
   if (extentEnd != null) return extentEnd
+  const choice = evaluateConditionalChoice(expression, context)
+  if (choice != null) return choice
 
   const condition = evaluateConditionFacts(expression.condition, context)
   switch (condition.truth) {
@@ -2966,6 +2988,36 @@ function evaluateConditional(expression: ts.ConditionalExpression, context: Eval
   }
 }
 
+function evaluateConditionalChoice(expression: ts.ConditionalExpression, context: EvalContext): Value | null {
+  if (!ts.isBinaryExpression(expression.condition)) return null
+  const op = expression.condition.operatorToken.kind
+  if (
+    op !== ts.SyntaxKind.LessThanToken
+    && op !== ts.SyntaxKind.LessThanEqualsToken
+    && op !== ts.SyntaxKind.GreaterThanToken
+    && op !== ts.SyntaxKind.GreaterThanEqualsToken
+  ) return null
+
+  const leftText = expression.condition.left.getText(context.program.sourceFile)
+  const rightText = expression.condition.right.getText(context.program.sourceFile)
+  const trueText = expression.whenTrue.getText(context.program.sourceFile)
+  const falseText = expression.whenFalse.getText(context.program.sourceFile)
+  const trueIsLeft = sameExpressionText(trueText, leftText)
+  const trueIsRight = sameExpressionText(trueText, rightText)
+  const falseIsLeft = sameExpressionText(falseText, leftText)
+  const falseIsRight = sameExpressionText(falseText, rightText)
+  if (!((trueIsLeft && falseIsRight) || (trueIsRight && falseIsLeft))) return null
+
+  const left = evaluateExpression(expression.condition.left, context)
+  const right = evaluateExpression(expression.condition.right, context)
+  if (left.kind !== 'number' || right.kind !== 'number') return null
+
+  if (op === ts.SyntaxKind.LessThanToken || op === ts.SyntaxKind.LessThanEqualsToken) {
+    return trueIsLeft ? minNumberPair(left, right, context.assumptions) : maxNumberPair(left, right, context.assumptions)
+  }
+  return trueIsLeft ? maxNumberPair(left, right, context.assumptions) : minNumberPair(left, right, context.assumptions)
+}
+
 function evaluateCall(expression: ts.CallExpression, context: EvalContext): Value {
   if (ts.isIdentifier(expression.expression) && expression.expression.text === 'lastEnd') return evaluateLastEndCall(expression, context)
   if (ts.isIdentifier(expression.expression) && expression.expression.text === 'extentEnd') return evaluateExtentEndCall(expression, context)
@@ -2982,10 +3034,10 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     if (mapResult != null) return mapResult
     const filterResult = evaluateArrayFilterCall(expression, context)
     if (filterResult != null) return filterResult
-    const namespaceImportReason = namespaceImportCallReason(target, context)
+    const namespaceImportResult = evaluateNamespaceImportedCall(expression, target, context)
+    if (namespaceImportResult != null) return namespaceImportResult
     const fallback = expressionStructuralFallback(expression, context)
     if (fallback != null) return fallback
-    if (namespaceImportReason != null) return unknown(namespaceImportReason)
   }
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
 
@@ -3111,21 +3163,23 @@ function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext
   if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'at') return null
   const target = evaluateExpression(expression.expression.expression, context)
   if (target.kind !== 'array') return unknown('Array.at expected an array')
-  if (expression.arguments.length !== 1 || numericLiteralValue(expression.arguments[0]!) !== -1) {
-    return unknown('Array.at only supports at(-1)')
+  const offset = expression.arguments.length === 1 ? numericLiteralValue(expression.arguments[0]!) : null
+  if (offset == null || !Number.isInteger(offset) || offset >= 0) {
+    return unknown('Array.at only supports constant negative indexes')
   }
 
-  const nonEmpty = proveComparison(target.length, '>=', numberValue(1, 1, true, '1', linearConstant(1)), context.assumptions)
-  if (nonEmpty.status !== 'pass') return unknown(`Array.at(-1) expected a non-empty array; length was ${formatRange(target.length)}`)
+  const requiredLength = -offset
+  const longEnough = proveComparison(target.length, '>=', numberValue(requiredLength, requiredLength, true, `${requiredLength}`, linearConstant(requiredLength)), context.assumptions)
+  if (longEnough.status !== 'pass') return unknown(`Array.at(${offset}) expected length >= ${requiredLength}; length was ${formatRange(target.length)}`)
 
   const fallback = expressionStructuralFallback(expression, context)
   if (target.elements != null) {
-    if (context.insideLoop === true) return fallback ?? unknown('Array.at(-1) on finite local arrays inside loops is not supported')
-    const value = target.elements[target.elements.length - 1]
-    return value == null ? unknown('Array.at(-1) has no last element') : valueWithStructuralFallback(value, fallback)
+    if (context.insideLoop === true) return fallback ?? unknown(`Array.at(${offset}) on finite local arrays inside loops is not supported`)
+    const value = target.elements[target.elements.length + offset]
+    return value == null ? unknown(`Array.at(${offset}) has no matching element`) : valueWithStructuralFallback(value, fallback)
   }
   if (target.element != null) return valueWithStructuralFallback(target.element, fallback)
-  return fallback ?? unknown('Array.at(-1) element values are not tracked')
+  return fallback ?? unknown(`Array.at(${offset}) element values are not tracked`)
 }
 
 function evaluateImportedCall(functionName: string, expression: ts.CallExpression, context: EvalContext): Value {
@@ -3133,7 +3187,10 @@ function evaluateImportedCall(functionName: string, expression: ts.CallExpressio
   const structuralFallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
   if (binding == null) return structuralFallback ?? unknown(`Unknown function ${functionName}`)
   if (binding.kind === 'unresolved') return structuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
+  return evaluateResolvedImportedCall(functionName, binding, expression, context, structuralFallback)
+}
 
+function evaluateResolvedImportedCall(functionName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, expression: ts.CallExpression, context: EvalContext, structuralFallback: Value | null): Value {
   const exported = resolveFitExport(binding.module, binding.exportedName)
   if (exported.kind === 'unresolved') return unknown(importedContractUnavailableReason(functionName, binding, exported.reason))
 
@@ -3186,11 +3243,14 @@ function withCallObligationRecordingWhen<T>(context: EvalContext, enabled: boole
   }
 }
 
-function namespaceImportCallReason(target: ts.PropertyAccessExpression, context: EvalContext): string | null {
+function evaluateNamespaceImportedCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, context: EvalContext): Value | null {
   if (!ts.isIdentifier(target.expression)) return null
   const binding = context.program.imports.get(target.expression.text)
-  if (binding?.kind !== 'unresolved' || binding.exportedName !== '*') return null
-  return importedContractUnavailableReason(`${target.expression.text}.${target.name.text}`, binding, binding.reason)
+  if (binding?.exportedName !== '*') return null
+  const functionName = `${target.expression.text}.${target.name.text}`
+  const structuralFallback = structuralShape(valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program))
+  if (binding.kind === 'unresolved') return structuralFallback ?? unknown(importedContractUnavailableReason(functionName, binding, binding.reason))
+  return evaluateResolvedImportedCall(functionName, {...binding, exportedName: target.name.text}, expression, context, structuralFallback)
 }
 
 function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -3198,7 +3258,7 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   const source = evaluateExpression(expression.expression.expression, context)
   if (source.kind !== 'array') return unknown('Array.map expected an array')
   const callback = expression.arguments[0]
-  if (callback == null || expression.arguments.length !== 1 || !ts.isArrowFunction(callback)) return unknown('Array.map expects one arrow callback')
+  if (callback == null || expression.arguments.length !== 1 || !isArrayCallbackFunction(callback)) return unknown('Array.map expects one arrow or function callback')
   const params = simpleArrayCallbackParams(callback)
   if (params == null) return unknown('Array.map callback expected one simple item parameter and optional index parameter')
   const sourceName = source.expr ?? expression.expression.expression.getText(context.program.sourceFile)
@@ -3210,9 +3270,7 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
     context.assumptions = mergeAssumptions(context.assumptions, indexedElementPathAssumptions(index, source.length))
   }
   const callbackContext = {...context, env}
-  const element = ts.isExpression(callback.body)
-    ? evaluateExpression(callback.body, callbackContext)
-    : evaluateArrayMapCallbackBlock(callback.body, callbackContext)
+  const element = evaluateArrayMapCallbackBody(callback, callbackContext)
   const mapped = {
     kind: 'array',
     length: source.length,
@@ -3224,20 +3282,95 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
   return valueWithStructuralFallback(mapped, expressionStructuralFallback(expression, context))
 }
 
+function isArrayCallbackFunction(expression: ts.Expression): expression is ArrayCallbackFunction {
+  return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)
+}
+
+function evaluateArrayMapCallbackBody(callback: ArrayCallbackFunction, context: EvalContext): Value {
+  if (ts.isExpression(callback.body)) return evaluateExpression(callback.body, context)
+  return evaluateArrayMapCallbackBlock(callback.body, context)
+}
+
 function evaluateArrayMapCallbackBlock(block: ts.Block, context: EvalContext): Value {
-  for (const statement of block.statements) {
+  const flow = evaluateArrayMapCallbackStatements(block.statements, context)
+  return flow.kind === 'return' ? flow.value : unknown('Array.map callback block did not return')
+}
+
+function evaluateArrayMapCallbackStatements(statements: ts.NodeArray<ts.Statement>, context: EvalContext, startIndex = 0): EvalFlow {
+  for (let index = startIndex; index < statements.length; index++) {
+    const statement = statements[index]!
     if (ts.isVariableStatement(statement)) {
-      if (!isConstDeclarationList(statement.declarationList)) return unknown('Array.map callback block supports const bindings and return only')
+      if (!isConstDeclarationList(statement.declarationList)) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
       bindVariableStatement(statement, context)
       continue
     }
     if (ts.isReturnStatement(statement)) {
-      if (statement.expression == null) return unknown('Array.map callback block return expected an expression')
-      return evaluateExpression(statement.expression, context)
+      if (statement.expression == null) return {kind: 'return', value: unknown('Array.map callback block return expected an expression')}
+      return {kind: 'return', value: evaluateExpression(statement.expression, context)}
     }
-    return unknown('Array.map callback block supports const bindings and return only')
+    if (ts.isIfStatement(statement)) return evaluateArrayMapCallbackIfStatement(statement, context, statements, index + 1)
+    return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
   }
-  return unknown('Array.map callback block did not return')
+  return {kind: 'fallthrough'}
+}
+
+function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
+  if (!isSideEffectFreeExpression(statement.expression)) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
+  const condition = evaluateConditionFacts(statement.expression, context)
+  if (condition.truth === 'true') return evaluateArrayMapCallbackBranchStatement(statement.thenStatement, context)
+  if (condition.truth === 'false') {
+    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateArrayMapCallbackBranchStatement(statement.elseStatement, context)
+  }
+
+  const trueContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.trueAssumptions)
+  const falseContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.falseAssumptions)
+  const trueFlow = evaluateArrayMapCallbackBranchStatement(statement.thenStatement, trueContext)
+  const falseFlow = statement.elseStatement == null
+    ? {kind: 'fallthrough'} satisfies EvalFlow
+    : evaluateArrayMapCallbackBranchStatement(statement.elseStatement, falseContext)
+  if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
+    return {
+      kind: 'return',
+      value: joinValues(
+        valueWithAssumptions(trueFlow.value, condition.trueAssumptions),
+        valueWithAssumptions(falseFlow.value, condition.falseAssumptions),
+      ),
+    }
+  }
+  if (trueFlow.kind === 'return') {
+    const falseContinuationFlow = evaluateArrayMapCallbackStatements(statements, falseContext, nextIndex)
+    const falseContinuation = valueWithAssumptions(
+      falseContinuationFlow.kind === 'return' ? falseContinuationFlow.value : unknown('Array.map callback block did not return'),
+      condition.falseAssumptions,
+    )
+    return {kind: 'return', value: joinValues(valueWithAssumptions(trueFlow.value, condition.trueAssumptions), falseContinuation)}
+  }
+  if (falseFlow.kind === 'return') {
+    const trueContinuationFlow = evaluateArrayMapCallbackStatements(statements, trueContext, nextIndex)
+    const trueContinuation = valueWithAssumptions(
+      trueContinuationFlow.kind === 'return' ? trueContinuationFlow.value : unknown('Array.map callback block did not return'),
+      condition.trueAssumptions,
+    )
+    return {kind: 'return', value: joinValues(trueContinuation, valueWithAssumptions(falseFlow.value, condition.falseAssumptions))}
+  }
+  context.env = joinEnvironments(
+    envWithAssumptions(trueContext.env, condition.trueAssumptions),
+    envWithAssumptions(falseContext.env, condition.falseAssumptions),
+  )
+  return {kind: 'fallthrough'}
+}
+
+function evaluateArrayMapCallbackBranchStatement(statement: ts.Statement, context: EvalContext): EvalFlow {
+  if (ts.isReturnStatement(statement)) {
+    if (statement.expression == null) return {kind: 'return', value: unknown('Array.map callback block return expected an expression')}
+    return {kind: 'return', value: evaluateExpression(statement.expression, context)}
+  }
+  if (!ts.isBlock(statement)) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
+  return evaluateArrayMapCallbackStatements(statement.statements, context)
+}
+
+function unsupportedArrayMapCallbackBlock(): Value {
+  return unknown('Array.map callback block supports const bindings, if branches, and return only')
 }
 
 function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -3265,7 +3398,7 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
   return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
 }
 
-function simpleArrayCallbackParams(callback: ts.ArrowFunction): {itemName: string; indexName: string | null} | null {
+function simpleArrayCallbackParams(callback: ArrayCallbackFunction): {itemName: string; indexName: string | null} | null {
   const itemParam = callback.parameters[0]
   const indexParam = callback.parameters[1]
   if (itemParam == null || callback.parameters.length > 2 || !ts.isIdentifier(itemParam.name)) return null
@@ -3448,7 +3581,7 @@ function importedContractFailureReason(localName: string, binding: Extract<Impor
 function importedHelperLabel(localName: string, binding: ImportedBinding) {
   const importedName = binding.exportedName === '*'
     ? `${localName} (namespace)`
-    : binding.exportedName === localName ? localName : `${localName} (${binding.exportedName})`
+    : binding.exportedName === localName || localName.endsWith(`.${binding.exportedName}`) ? localName : `${localName} (${binding.exportedName})`
   return `${importedName} from ${binding.specifier}`
 }
 

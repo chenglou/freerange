@@ -6,7 +6,9 @@ import {
   type Value,
 } from './domain.ts'
 import {
+  linearAdd,
   numericLiteralValue,
+  sameLinear,
   unwrapExpression,
 } from './linear.ts'
 import {
@@ -185,20 +187,35 @@ function readSegmentedStackAdvance(
 
   const heightName = pushPropertyIdentifier(push, 'height')
   const bottomName = pushPropertyIdentifier(push, 'bottom')
-  if (heightName == null || bottomName == null) return null
+  if (heightName == null) return null
 
-  const bottomInitializer = localInitializers.get(bottomName)
-  if (bottomInitializer == null || !expressionIsIdentifierSum(bottomInitializer, push.topName, heightName)) return null
+  const bottomInitializer = bottomName == null ? null : localInitializers.get(bottomName)
+  const bottomMatches = bottomInitializer == null
+    ? pushedBottomMatchesTopPlusHeight(push)
+    : expressionIsIdentifierSum(bottomInitializer, push.topName, heightName) || expressionIsIdentifierSum(bottomInitializer, topSourceName, heightName)
+  if (!bottomMatches) return null
 
-  const gapExpression = otherSideOfIdentifierSum(assignment.right, bottomName)
+  const gapExpression = (bottomName == null ? null : otherSideOfIdentifierSum(assignment.right, bottomName))
+    ?? gapAfterTopAndHeight(assignment.right, [push.topName, topSourceName], heightName)
   if (gapExpression == null) return null
   const gap = context.evaluateExpression(gapExpression, context.env)
   if (gap.kind !== 'number' || gap.expr == null) return null
-  return {cursorName, topName: push.topName, bottomName, gap}
+  return {cursorName, topName: push.topName, gap}
 }
 
 function pushPropertyIdentifier(push: LoopPush, prop: string): string | null {
   return push.cursorPaths.find(cursorPath => cursorPath.path.length === 1 && cursorPath.path[0] === prop)?.targetName ?? null
+}
+
+function pushedBottomMatchesTopPlusHeight(push: LoopPush) {
+  if (push.element?.kind !== 'object') return false
+  const top = push.element.props.get('top')
+  const height = push.element.props.get('height')
+  const bottom = push.element.props.get('bottom')
+  if (top?.kind !== 'number' || height?.kind !== 'number' || bottom?.kind !== 'number') return false
+  if (top.linear == null || height.linear == null || bottom.linear == null) return false
+  const expectedBottom = linearAdd(top.linear, height.linear)
+  return expectedBottom != null && sameLinear(bottom.linear, expectedBottom)
 }
 
 function expressionIsIdentifierSum(expression: ts.Expression, leftName: string, rightName: string) {
@@ -212,6 +229,24 @@ function otherSideOfIdentifierSum(expression: ts.Expression, name: string): ts.E
   if (ts.isIdentifier(unwrapped.left) && unwrapped.left.text === name) return unwrapped.right
   if (ts.isIdentifier(unwrapped.right) && unwrapped.right.text === name) return unwrapped.left
   return null
+}
+
+function gapAfterTopAndHeight(expression: ts.Expression, topNames: string[], heightName: string): ts.Expression | null {
+  const terms = plusTerms(expression)
+  const remaining = [...terms]
+  const topIndex = remaining.findIndex(term => ts.isIdentifier(term) && topNames.includes(term.text))
+  if (topIndex < 0) return null
+  remaining.splice(topIndex, 1)
+  const heightIndex = remaining.findIndex(term => ts.isIdentifier(term) && term.text === heightName)
+  if (heightIndex < 0) return null
+  remaining.splice(heightIndex, 1)
+  return remaining.length === 1 ? remaining[0]! : null
+}
+
+function plusTerms(expression: ts.Expression): ts.Expression[] {
+  const unwrapped = unwrapExpression(expression)
+  if (!ts.isBinaryExpression(unwrapped) || unwrapped.operatorToken.kind !== ts.SyntaxKind.PlusToken) return [unwrapped]
+  return [...plusTerms(unwrapped.left), ...plusTerms(unwrapped.right)]
 }
 
 function isResettableScalarAssignment(

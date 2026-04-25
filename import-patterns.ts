@@ -1,6 +1,6 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows, importedTupleCenter} from './import-pattern-helpers'
+import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows, importedTupleCenter} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
@@ -13,6 +13,22 @@ import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
  */
 export function importedHelperContract(width: number) {
   return importedClampWidth(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function defaultImportedHelperContract(width: number) {
+  return defaultImportedClampWidth(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function namespaceImportedHelperContract(width: number) {
+  return importedShapes.importedClampWidth(width)
 }
 
 /** @fit

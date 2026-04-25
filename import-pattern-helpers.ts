@@ -11,6 +11,14 @@ export function importedClampWidth(width: number) {
 }
 
 /** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export default function defaultImportedClampWidth(width: number) {
+  return Math.min(width, importPatternCap)
+}
+
+/** @fit
  * given value: 0..10
  * return: 4..14
  */

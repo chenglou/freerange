@@ -273,6 +273,13 @@ return focused > 0
 
 Function-level `return` facts still mean every return after the branches are joined.
 
+Exact-operand ternaries written as hand-rolled min/max also keep their branch facts:
+
+```ts
+const capped = width < max ? width : max // like Math.min(width, max)
+const raised = height < min ? min : height // like Math.max(height, min)
+```
+
 Simple side-effecting branches can fall through too. Freerange joins the two local environments after the `if`:
 
 ```ts
@@ -289,7 +296,7 @@ function pickWidth(width: number) {
 }
 ```
 
-Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot.
+Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot. Unsupported `while` / `do while` loops get the same treatment when their condition is side-effect-free and the body only mutates clear local roots.
 
 ## Reading Results
 
@@ -620,7 +627,7 @@ function overflow(width: number) {
 }
 ```
 
-That works because either `capped == width`, or `capped == 320` and `width >= 320`.
+That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. It does not treat arbitrary conditionals as min/max.
 
 ## Helpers
 
@@ -672,7 +679,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read exported numeric constants from those local modules. It does not inline imported function bodies.
+Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies.
 
 TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a source-proved `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
@@ -712,7 +719,7 @@ export {clampWidth} from './layout-math'
 export {clampWidth as cardClampWidth} from './layout-math'
 ```
 
-This is intentionally small: package imports, declaration-only imports, namespace imports, default imports, and wildcard `export *` barrels stay opaque for now.
+This is intentionally small: package imports, declaration-only imports, wildcard `export *` barrels, and unchecked summary files stay opaque for now.
 
 ## Arrays
 
@@ -738,14 +745,15 @@ Supported today:
 - `items[].height: 0..40`
 - array literal length and item values
 - finite array/tuple element access like `return[2] >= 0`
+- TypeScript-known tuple slots, including fixed length and per-slot shape
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
 - bounded literal indexing
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
-- `items.at(-1)` when `items.length >= 1`; other `.at(...)` forms are not in the static subset yet
+- `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
-- simple block-bodied `items.map(...)` callbacks with local `const` bindings and a `return`
+- small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, side-effect-free return branches, and a final `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 - same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
@@ -772,7 +780,7 @@ function mapRows(items: {height: number}[]) {
 }
 ```
 
-The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are just local `const` bindings plus a `return`; this keeps normal code normal without turning callbacks into a public Freerange language.
+The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, side-effect-free `if` branches that return, and a final `return`. That keeps normal code normal without turning callbacks into a public Freerange language.
 
 `filter` support is even smaller:
 
@@ -965,13 +973,13 @@ function visibleRows(items: {height: number; visible: boolean}[]) {
 }
 ```
 
-The same weaker fact works in the supported indexed loop shape.
+The same weaker fact works in the supported indexed loop shape. The guarded block may also update a simple numeric cursor; the honest length fact is still `rows.length <= items.length`.
 
 It does not claim equal length.
 
 Segmented row loops can also prove the row-boundary shape when the guarded block
-pushes one row, advances the next row cursor by `bottom + gap`, and resets the
-per-row max:
+pushes one row, advances the next row cursor by `bottom + gap` or the equivalent
+`top + height + gap`, and resets the per-row max:
 
 ```ts
 /** @fit
@@ -994,9 +1002,8 @@ function segmentedRows(items: {height: number}[], top: number, gap: number) {
     rowHeight = Math.max(rowHeight, item.height)
     if (i % 3 === 2 || i === items.length - 1) {
       const rowTop = nextRowTop
-      const rowBottom = rowTop + rowHeight
-      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
-      nextRowTop = rowBottom + gap
+      rows.push({top: rowTop, height: rowHeight, bottom: rowTop + rowHeight})
+      nextRowTop = rowTop + rowHeight + gap
       rowHeight = 0
     }
   }
@@ -1047,19 +1054,19 @@ The checker understands a small pure subset:
 - numeric top-level constants
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
-- ternaries
+- ternaries, including exact-operand min/max forms like `a < b ? a : b`
 - return-style `if` guards and simple fall-through `if` / `else` branches
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported numeric constants and exported `@fit` functions when TypeScript resolves them to local source
+- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source
 - TypeScript-known imported object/array shape, without treating it as a source-proved helper contract
 - explicit named re-exports of source-proved `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
-- expression-bodied `items.map(...)`, plus tiny block-bodied callbacks with local `const` bindings and `return`; TypeScript can fill structural callback return shape while source still owns the array length
+- expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary: same item domain, length no larger than source length
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
@@ -1067,12 +1074,12 @@ The checker understands a small pure subset:
 - append-only `for...of` row loops
 - simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
 - simple numeric-limit indexed loops such as `for (let i = 0; i < limit; i++) values.push(i)`
-- guarded conditional pushes inside supported `for...of` and indexed loops
+- guarded conditional pushes inside supported `for...of` and indexed loops, including simple cursor updates in the guarded block
 - guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations
 - same-index labels in comparisons, plus adjacent `$i + 1` comparisons backed by inferred sequence facts
 - shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
-- conservative skipping for unsupported indexed-style `for` loops whose header and body are read-only except for roots Freerange forgets
+- conservative skipping for unsupported indexed-style `for`, `while`, and `do while` loops whose conditions and bodies are read-only except for roots Freerange forgets
 
 Anything outside this surface should become `unknown`, not a fake proof.
 
@@ -1081,7 +1088,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, declaration-only imports, namespace/default imports, or wildcard `export *` barrels as source-proved `@fit` helper contracts. Namespace imports can still provide TypeScript structural shape; they cannot provide trusted numeric postconditions.
+- package imports, declaration-only imports, wildcard `export *` barrels, or unchecked summary files as source-proved `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning

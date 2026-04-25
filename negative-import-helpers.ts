@@ -2,6 +2,10 @@ export function unannotatedImportedClamp(width: number) {
   return Math.min(width, 320)
 }
 
+export default function unannotatedDefaultImportedClamp(width: number) {
+  return Math.min(width, 320)
+}
+
 /** @fit
  * given width: 0..1000
  * return: 0..100

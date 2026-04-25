@@ -1,13 +1,17 @@
 import * as ts from 'typescript'
 import {
   joinValues,
+  linearNameForExpression,
+  numberValue,
   unknown,
   unknownArray,
   unknownArrayLength,
   unknownNumber,
   unknownObject,
+  type ArrayValue,
   type Value,
 } from './domain.ts'
+import {linearVariable} from './linear.ts'
 
 export type ShapeProgram = {
   sourceId: string
@@ -107,6 +111,10 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
     return value
   }
 
+  if (checker.isTupleType(type)) {
+    return tupleArrayTsValue(expr, type, checker, location, seen, depth + 1)
+  }
+
   if (checker.isArrayLikeType(type)) {
     const element = arrayElementTsValue(`${expr}[]`, type, checker, location, seen, depth + 1)
     return unknownArray(expr, unknownArrayLength(expr), element)
@@ -156,6 +164,23 @@ function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecke
   return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen, depth)
 }
 
+function tupleArrayTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): ArrayValue | null {
+  const elements: Value[] = []
+  let element: Value | null = null
+  for (const [index, member] of checker.getTypeArguments(type as ts.TypeReference).entries()) {
+    const memberValue = valueFromTsType(`${expr}[${index}]`, member, checker, location, seen, depth)
+    if (memberValue == null) return null
+    elements.push(memberValue)
+    element = element == null ? memberValue : joinValues(element, memberValue)
+  }
+  return {kind: 'array', length: tupleLengthValue(expr, elements.length), elements, element, expr, summary: null}
+}
+
+function tupleLengthValue(expr: string, length: number) {
+  const lengthExpr = `${expr}.length`
+  return numberValue(length, length, true, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
+}
+
 export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undefined, program: ShapeProgram, seen: Set<string>): Value | null {
   if (type == null) return null
 
@@ -168,12 +193,34 @@ export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undef
   if (ts.isArrayTypeNode(type)) {
     return unknownArray(expr, unknownArrayLength(expr), valueFromSyntaxTypeShape(`${expr}[]`, type.elementType, program, seen))
   }
+  if (ts.isTupleTypeNode(type)) return valueFromTupleSyntaxType(expr, type, program, seen)
   if (ts.isUnionTypeNode(type)) return valueFromUnionSyntaxType(expr, type, program, seen)
   if (ts.isIntersectionTypeNode(type)) return valueFromIntersectionSyntaxType(expr, type, program, seen)
   if (ts.isLiteralTypeNode(type)) return unknown(`Literal values are not in the static layout subset: ${expr}`)
   if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
   if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
   return valueFromTypeNodeShape(expr, type, program)
+}
+
+function valueFromTupleSyntaxType(expr: string, type: ts.TupleTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
+  const elements: Value[] = []
+  let element: Value | null = null
+  for (const [index, tupleElement] of type.elements.entries()) {
+    const elementType = tupleElementType(tupleElement)
+    if (elementType == null) return valueFromTypeNodeShape(expr, type, program)
+    const value = valueFromSyntaxTypeShape(`${expr}[${index}]`, elementType, program, seen)
+      ?? valueFromTypeNodeShape(`${expr}[${index}]`, elementType, program)
+    if (value == null) return null
+    elements.push(value)
+    element = element == null ? value : joinValues(element, value)
+  }
+  return {kind: 'array', length: tupleLengthValue(expr, elements.length), elements, element, expr, summary: null}
+}
+
+function tupleElementType(element: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {
+  if (ts.isNamedTupleMember(element)) return element.dotDotDotToken == null && element.questionToken == null ? element.type : null
+  if (ts.isOptionalTypeNode(element) || ts.isRestTypeNode(element)) return null
+  return element
 }
 
 function valueFromTypeReference(expr: string, type: ts.TypeReferenceNode, program: ShapeProgram, seen: Set<string>): Value | null {
