@@ -18,10 +18,11 @@ export function proveAdjacentComparison(array: ArrayValue, target: AdjacentCompa
 }
 
 export function hasNondecreasingProp(array: ArrayValue, prop: string) {
+  const path = propPath(prop)
   return proveAdjacentComparison(array, {
-    left: {item: 'next', path: [prop]},
+    left: {item: 'next', path},
     op: '>=',
-    right: {terms: [{item: 'previous', path: [prop]}], addends: []},
+    right: {terms: [{item: 'previous', path}], addends: []},
   })
 }
 
@@ -90,4 +91,8 @@ function sequenceExpressionText(collection: string, expression: SequenceExpressi
 function sequenceTermText(collection: string, term: SequenceTerm) {
   const suffix = term.path.length === 0 ? '' : `.${term.path.join('.')}`
   return `${collection}[${term.item === 'next' ? '$i + 1' : '$i'}]${suffix}`
+}
+
+function propPath(prop: string) {
+  return prop.split('.').filter(part => part.length > 0)
 }

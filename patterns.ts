@@ -485,6 +485,26 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], top: numb
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * return.rows.length == items.length
+ * return.rows[].rowRect.height: 0..40
+ * nondecreasing(return.rows.rowRect.top)
+ * return.rows[$i + 1].rowRect.top == return.rows[$i].rowRect.top + return.rows[$i].rowRect.height + gap
+ */
+export function nestedRowRectRunningSumLoop(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    rows.push({rowRect: {top: y, height: item.height}, source: item})
+    y += item.height + gap
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
  * given top: 0..1000

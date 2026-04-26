@@ -4668,10 +4668,15 @@ function syntaxToComparison(kind: ts.SyntaxKind): ComparisonOperator {
 
 function sequencePropArgument(args: string[], context: EvalContext): {array: ArrayValue; prop: string} | null {
   if (args.length !== 1) return null
-  const expression = unwrapExpression(parseExpression(args[0]!))
-  if (!ts.isPropertyAccessExpression(expression)) return null
-  const array = evaluateExpression(expression.expression, context)
-  return array.kind === 'array' ? {array, prop: expression.name.text} : null
+  let expression = unwrapExpression(parseExpression(args[0]!))
+  const path: string[] = []
+  while (ts.isPropertyAccessExpression(expression)) {
+    path.unshift(expression.name.text)
+    const array = evaluateExpression(expression.expression, context)
+    if (array.kind === 'array') return {array, prop: path.join('.')}
+    expression = unwrapExpression(expression.expression)
+  }
+  return null
 }
 
 function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExpr?: string): NumberValue | null {

@@ -46,6 +46,7 @@ export type LoopPush = {
   length: NumberValue
   element: Value | null
   topName: string | null
+  topPath: string[] | null
   height: NumberValue | null
   cursorPaths: {path: string[]; targetName: string}[]
 }
@@ -73,7 +74,7 @@ export type AppendClock = {
 }
 
 export type AppendRecurrence = {
-  prop: string
+  path: string[]
   start: NumberValue
   advance: NumberValue
   size: NumberValue
@@ -152,7 +153,7 @@ export function segmentedStackSummary(push: GuardedLoopPush, element: Value | nu
   if (height?.kind !== 'number') return null
   const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
   const clock = appendClockFromElement(push.arrayName, push.length, element, {
-    prop: 'top',
+    path: push.topPath ?? ['top'],
     start: unknownNumber(`${push.arrayName}[].top`),
     advance,
     size: height,
@@ -195,8 +196,9 @@ export function sequenceSummaryFromLoopPush(
   options: {assumptions: LinearConstraint[]; resolveNumber: (expr: string) => NumberValue | null},
 ): ArraySummary | null {
   if (push.topName == null || push.height == null || update == null) return null
+  if (push.topPath == null) return null
   const clock = appendClockFromElement(push.arrayName, push.length, push.element, {
-    prop: 'top',
+    path: push.topPath,
     start: update.start,
     advance: update.increment,
     size: push.height,
@@ -239,11 +241,11 @@ function sequenceSummaryFromAppendClock(
 ): ArraySummary | null {
   const recurrence = clock.recurrence
   if (recurrence == null) return null
-  const summary: ArraySummary = {relations: [], nondecreasingProps: [], advances: [{prop: recurrence.prop, value: recurrence.advance}], spaced: [], lastEnd: null, extentEnds: []}
+  const summary: ArraySummary = {relations: [], nondecreasingProps: [], advances: [{prop: pathText(recurrence.path), value: recurrence.advance}], spaced: [], lastEnd: null, extentEnds: []}
   const advanceIsNonnegative = recurrence.advance.min >= 0
     && (options.assumptions == null
       || proveComparison(recurrence.advance, '>=', numberValue(0, 0, true, '0', linearConstant(0)), options.assumptions).status === 'pass')
-  if (advanceIsNonnegative) addNondecreasingRelation(summary, recurrence.prop)
+  if (advanceIsNonnegative) addNondecreasingRelation(summary, recurrence.path)
 
   const advanceExpr = recurrence.advance.expr
   const sizeExpr = recurrence.size.expr
@@ -251,9 +253,9 @@ function sequenceSummaryFromAppendClock(
   const gapExpr = spacedGapExpr(advanceExpr, sizeExpr)
   if (gapExpr == null) return summary
 
-  summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
-  addSpacedRelations(summary, clock, recurrence.prop, sizeExpr, gapExpr)
-  if (!options.includeExtentEnd) return summary
+  addSpacedRelations(summary, clock, recurrence.path, sizeExpr, gapExpr)
+  if (samePath(recurrence.path, ['top'])) summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
+  if (!options.includeExtentEnd || !samePath(recurrence.path, ['top'])) return summary
 
   const nonEmptyEnd = lastEndFromLoopEnd(nonEmptyLoopEnd(recurrence.start, recurrence.advance, clock.length), gapExpr, options.resolveNumber)
   if (clock.length.min >= 1) summary.lastEnd = nonEmptyEnd
@@ -262,32 +264,32 @@ function sequenceSummaryFromAppendClock(
   return summary
 }
 
-function addNondecreasingRelation(summary: ArraySummary, prop: string) {
-  summary.nondecreasingProps.push(prop)
+function addNondecreasingRelation(summary: ArraySummary, path: string[]) {
+  summary.nondecreasingProps.push(pathText(path))
   summary.relations.push({
     kind: 'adjacent-comparison',
-    left: nextTerm([prop]),
+    left: nextTerm(path),
     op: '>=',
-    right: {terms: [previousTerm([prop])], addends: []},
+    right: {terms: [previousTerm(path)], addends: []},
   })
 }
 
-function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topProp: string, sizeExpr: string, gapExpr: string) {
+function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topPath: string[], sizeExpr: string, gapExpr: string) {
   const heightPath = pathForStreamValue(clock, sizeExpr)
   if (heightPath != null) {
     summary.relations.push({
       kind: 'adjacent-comparison',
-      left: nextTerm([topProp]),
+      left: nextTerm(topPath),
       op: '==',
-      right: {terms: [previousTerm([topProp]), previousTerm(heightPath)], addends: addendsForGap(gapExpr)},
+      right: {terms: [previousTerm(topPath), previousTerm(heightPath)], addends: addendsForGap(gapExpr)},
     })
   }
 
-  const bottomPath = pathForStreamSum(clock, [topProp], heightPath, sizeExpr)
+  const bottomPath = pathForStreamSum(clock, topPath, heightPath, sizeExpr)
   if (bottomPath != null) {
     summary.relations.push({
       kind: 'adjacent-comparison',
-      left: nextTerm([topProp]),
+      left: nextTerm(topPath),
       op: '==',
       right: {terms: [previousTerm(bottomPath)], addends: addendsForGap(gapExpr)},
     })
@@ -318,6 +320,10 @@ function pathValue(clock: AppendClock, path: string[]): Value | null {
 
 function samePath(left: string[], right: string[]) {
   return left.length === right.length && left.every((part, index) => part === right[index])
+}
+
+function pathText(path: string[]) {
+  return path.join('.')
 }
 
 function addendsForGap(gapExpr: string) {
