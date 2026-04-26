@@ -90,6 +90,20 @@ export function rangeSpecMissingBounds(
   return lines
 }
 
+export function finiteRangeSpecFailureReason(
+  value: ReportNumberValue,
+  range: FitRange,
+  producedValues: number[] | null,
+) {
+  const expectedRange = formatRangeSpec(range)
+  const lines = [
+    `value was ${formatRange(value)}, expected one of ${expectedRange}`,
+  ]
+  if (producedValues != null) lines.push(`branches produced ${producedValues.map(formatNumber).join(', ')}`)
+  lines.push(`missing: ${exprText(value)} in {${(range.finiteValues ?? []).map(formatNumber).join(', ')}}`)
+  return lines.join('\n')
+}
+
 export function comparisonNeed(left: ReportNumberValue, op: ComparisonOperator, right: ReportNumberValue) {
   return `${exprText(left)} ${op} ${exprText(right)}`
 }
@@ -119,6 +133,7 @@ export function formatExpectedRange(min: number, max: number, isInteger: boolean
 }
 
 export function formatRangeSpec(range: FitRange) {
+  if (range.finiteValues != null) return publicFitText(range.text)
   const prefix = range.valueKind === 'int' ? 'int ' : ''
   return publicFitText(`${prefix}${range.lower}${range.upperInclusive ? '..' : '..<'}${range.upper}`)
 }

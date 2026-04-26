@@ -6,6 +6,7 @@ import {
 import {
   cleanLinear,
   linearAdd,
+  linearConstant,
   linearScale,
   linearSubtract,
   linearVariable,
@@ -118,6 +119,38 @@ export function numberValue(
     return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, isInteger: false, expr, linear: clean, cases, provenance: cleanProvenance}
   }
   return {kind: 'number', min: cleanMin, max: cleanMax, isInteger, expr, linear: clean, cases, provenance: cleanProvenance}
+}
+
+export function finiteNumberValue(
+  values: number[],
+  expr: string | null,
+  linear: LinearExpr | null = expr == null ? null : linearVariable(linearNameForExpression(expr)),
+  provenance: string[] = [],
+): NumberValue {
+  const finiteValues = finiteNumberSetValues(values)
+  if (finiteValues.length === 0) return unknownNumber(expr ?? '<empty finite set>')
+  const min = finiteValues[0]!
+  const max = finiteValues[finiteValues.length - 1]!
+  const isInteger = finiteValues.every(Number.isInteger)
+  const value = numberValue(min, max, isInteger, expr, linear, null, provenance)
+  return withNumberCases(value, finiteValues.map(choice => ({
+    value: numberValue(choice, choice, Number.isInteger(choice), String(choice), linearConstant(choice), null, provenance),
+    assumptions: [],
+  })))
+}
+
+export function finiteNumberSet(value: NumberValue): number[] | null {
+  const branches = value.cases == null ? [plainNumber(value)] : value.cases.map(branch => branch.value)
+  const values: number[] = []
+  for (const branch of branches) {
+    if (branch.min !== branch.max || !Number.isFinite(branch.min)) return null
+    values.push(branch.min)
+  }
+  return finiteNumberSetValues(values)
+}
+
+function finiteNumberSetValues(values: number[]) {
+  return [...new Set(values.filter(Number.isFinite))].sort((left, right) => left - right)
 }
 
 export function unknownNumber(name: string): NumberValue {

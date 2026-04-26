@@ -22,6 +22,7 @@ export type FitRange = {
   upperValue: number | null
   lowerInclusive: boolean
   upperInclusive: boolean
+  finiteValues?: number[]
   text: string
 }
 
@@ -303,6 +304,22 @@ function parseRangeText(text: string): FitRange | null {
   if (valueKindMatch == null) return null
   const body = valueKindMatch[2]!.trim()
   const valueKind = valueKindMatch[1] == null ? 'number' : 'int'
+  const finiteValues = parseFiniteSetText(body)
+  if (finiteValues != null) {
+    const lower = Math.min(...finiteValues)
+    const upper = Math.max(...finiteValues)
+    return {
+      valueKind,
+      lower: String(lower),
+      upper: String(upper),
+      lowerValue: lower,
+      upperValue: upper,
+      lowerInclusive: true,
+      upperInclusive: true,
+      finiteValues,
+      text,
+    }
+  }
   const bounds = splitRangeBounds(body)
   if (bounds != null) {
     const {upperInclusive} = bounds
@@ -334,6 +351,18 @@ function parseRangeText(text: string): FitRange | null {
     }
   }
   return null
+}
+
+function parseFiniteSetText(text: string): number[] | null {
+  if (!text.includes('|')) return null
+  const values: number[] = []
+  for (const part of text.split('|')) {
+    const value = parseRangeBoundNumber(part.trim())
+    if (value == null || !Number.isFinite(value)) return null
+    values.push(value)
+  }
+  const unique = [...new Set(values)]
+  return unique.length === 0 ? null : unique.sort((left, right) => left - right)
 }
 
 function splitRangeBounds(text: string): {lower: string; upper: string; upperInclusive: boolean} | null {

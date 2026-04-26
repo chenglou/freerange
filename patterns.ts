@@ -1388,6 +1388,22 @@ export function nestedBranchLocalReturnChecks(focused: number) {
 }
 
 /** @fit
+ * given navSizeX: 82 | 214
+ * return: 82 | 214
+ * return >= 82
+ * return <= 214
+ */
+export function literalUnionGivenPassesThrough(navSizeX: number) {
+  return navSizeX
+}
+
+export function literalUnionGivenOnParam(
+  searchSlot: number, // @fit 0 | 40 | 200 | 213
+) {
+  return searchSlot + 14 // @fit 14 | 54 | 214 | 227
+}
+
+/** @fit
  * given count: int 1..50
  * given focused: int 0..<count
  * return.targetIndex: int 0..49

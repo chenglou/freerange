@@ -15,6 +15,7 @@ return.width: 0..320 // check fact. Freerange must prove this from source.
 a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
+0 | 40 | 200 // exact finite numeric set.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
@@ -420,11 +421,12 @@ Loop-level `given` works the same way, but is assumed from that point in the fun
  */
 ```
 
-`a..b` means a JavaScript number in that inclusive interval. A single expression like `2` is shorthand for `2..2`. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive:
+`a..b` means a JavaScript number in that inclusive interval. A single expression like `2` is shorthand for `2..2`. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive. A small `|` list means the value must be exactly one of those numeric choices:
 
 ```ts
 index: int 0..<items.length
 scale: 0..Infinity
+modeOffset: 0 | 40 | 200 | 213
 ```
 
 Lower-exclusive and open-ended range spellings are not part of the language right now. Use a comparison when that is the clearer fact:

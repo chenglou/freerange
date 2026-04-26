@@ -1230,6 +1230,29 @@ export function negativeRestTupleShapeIsNotExactLength(input: NegativeRestTupleR
 }
 
 /** @fit
+ * given navSizeX: 82 | 214
+ * return: 40 | 120
+ */
+export function negativeUnionReturnOutsideSet(navSizeX: number) {
+  return navSizeX
+}
+
+/** @fit
+ * given navSizeX: 82 | 214
+ * return >= 82
+ */
+function negativeUnionGivenCallee(navSizeX: number) {
+  return navSizeX
+}
+
+/** @fit
+ * return >= 82
+ */
+export function negativeUnionGivenCallerOutsideSet() {
+  return negativeUnionGivenCallee(150)
+}
+
+/** @fit
  * given rect.left: 0..100
  * given rect.right: 0..100
  * given rect.top: 0..100

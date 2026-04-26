@@ -3,6 +3,7 @@ import {
   publicFitText,
 } from './parser.ts'
 import {
+  finiteNumberSet,
   type NumberValue,
   type Value,
 } from './domain.ts'
@@ -20,6 +21,7 @@ export type FitRangeFact = {
   min: number
   max: number
   isInteger: boolean
+  values?: number[]
 }
 
 export type FitEqualityFact = {
@@ -113,6 +115,20 @@ export function numberFacts(path: string, value: NumberValue): FitInferFact[] {
   if (value.expr != null && !sameExpressionText(path, value.expr)) {
     facts.push({kind: 'equality', source: 'equality', text: publicFitText(`${path} == ${value.expr}`), path: publicFitText(path), expression: publicFitText(value.expr)})
   }
+  const finite = finiteNumberSet(value)
+  if (finite != null && finite.length > 1) {
+    facts.push({
+      kind: 'range',
+      source: 'range',
+      text: publicFitText(`${path}: ${finite.map(formatNumber).join(' | ')}`),
+      path: publicFitText(path),
+      min: finite[0]!,
+      max: finite[finite.length - 1]!,
+      isInteger: finite.every(Number.isInteger),
+      values: finite,
+    })
+    return facts
+  }
   if (isInterestingNumberRange(value)) {
     facts.push({
       kind: 'range',
@@ -125,6 +141,12 @@ export function numberFacts(path: string, value: NumberValue): FitInferFact[] {
     })
   }
   return facts
+}
+
+function formatNumber(value: number) {
+  if (value === Number.POSITIVE_INFINITY) return 'Infinity'
+  if (value === Number.NEGATIVE_INFINITY) return '-Infinity'
+  return String(value)
 }
 
 export function uniqueFacts(facts: FitInferFact[]): FitInferFact[] {
