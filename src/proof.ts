@@ -353,6 +353,7 @@ function singleLinearBound(linear: LinearExpr) {
 export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: FactSource = 'code'): LinearConstraint | null {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
+  if (diff == null && text == null && (left.expr == null || right.expr == null)) return null
   const integerStrict = diff != null && (op === '>' || op === '<') && left.isInteger && right.isInteger
   return {
     diff,
