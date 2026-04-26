@@ -1182,6 +1182,16 @@ export function pathSensitiveMinOverflow(width: number) {
 
 /** @fit
  * given width: 0..1000
+ * return.overflow >= 0
+ */
+export function pathSensitiveMinOverflowTernaryInset(width: number, folder: boolean) {
+  const inset = folder ? 108 : 68
+  const capped = Math.min(width, inset)
+  return {overflow: width - capped}
+}
+
+/** @fit
+ * given width: 0..1000
  * given padding: 0..120
  * return.content: 0..1000
  * return.leftover >= 0
@@ -1401,6 +1411,13 @@ export function literalUnionGivenOnParam(
   searchSlot: number, // @fit 0 | 40 | 200 | 213
 ) {
   return searchSlot + 14 // @fit 14 | 54 | 214 | 227
+}
+
+/** @fit
+ * return: 0 | 100
+ */
+export function literalUnionBranchReturn(folder: boolean) {
+  return folder ? 0 : 100
 }
 
 /** @fit
