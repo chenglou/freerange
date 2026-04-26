@@ -1370,6 +1370,14 @@ export function arrayLiteralIndex(index: number) {
 }
 
 /** @fit
+ * given index: 0 | 2
+ * return: 10 | 30
+ */
+export function arrayLiteralFiniteIndexCases(index: number) {
+  return [10, 20, 30][index]
+}
+
+/** @fit
  * return: int 30..30
  */
 export function arrayLiteralAtLast() {

@@ -1169,6 +1169,14 @@ export function negativeArrayAtNegativeIndexNeedsEnoughLength(items: number[]) {
 }
 
 /** @fit
+ * given index: 0 | 2
+ * return: 20 | 40
+ */
+export function negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot(index: number) {
+  return [10, 20, 30][index]
+}
+
+/** @fit
  * given items.length: int 1..10
  */
 export function negativeLoopLengthDerivedIndexDoesNotUseInitialArray(items: number[]) {
