@@ -720,6 +720,18 @@ type TypedShapeParams = {
   items: {height: number}[]
 }
 
+type OptionalRowsShape = {
+  rows?: {height: number}[]
+}
+
+/** @fit
+ * return >= 0
+ */
+export function guardedOptionalRowsLength(input: OptionalRowsShape) {
+  if (input.rows == null) return 0
+  return input.rows.length
+}
+
 declare const structuralShapeApi: {
   wrapRows(items: {height: number}[]): {rows: {height: number}[]}
   row(item: {height: number}): {height: number; cells: {width: number}[]}
