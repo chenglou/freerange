@@ -482,7 +482,7 @@ export function joinValues(left: Value, right: Value): Value {
       null,
       mergeProvenance(left, right),
     )
-    if (left.cases == null && right.cases == null) return joined
+    if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
   }
   if (left.kind === 'object' && right.kind === 'object') {
@@ -510,6 +510,23 @@ export function joinValues(left: Value, right: Value): Value {
     }
   }
   return unknown('Branches returned incompatible value shapes')
+}
+
+function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, joined: NumberValue) {
+  if (left.cases != null || right.cases != null) return true
+  const sameRange = left.min === right.min && left.max === right.max && left.isInteger === right.isInteger
+  const sameExpr = (left.expr ?? null) === (right.expr ?? null)
+  const sameLinearity = (left.linear == null && right.linear == null)
+    || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
+  if (sameRange && sameExpr && sameLinearity) return false
+  return isUsefulNumberCase(left) && isUsefulNumberCase(right) && isUsefulNumberCase(joined)
+}
+
+function isUsefulNumberCase(value: NumberValue) {
+  return value.expr != null
+    || value.linear != null
+    || value.min !== Number.NEGATIVE_INFINITY
+    || value.max !== Number.POSITIVE_INFINITY
 }
 
 export function binaryExpr(left: NumberValue, op: string, right: NumberValue) {

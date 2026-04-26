@@ -1238,6 +1238,13 @@ export function negativeUnionReturnOutsideSet(navSizeX: number) {
 }
 
 /** @fit
+ * return: 0 | 100
+ */
+export function negativeUnionBranchInsideBoundsOutsideSet(folder: boolean) {
+  return folder ? 0 : 50
+}
+
+/** @fit
  * given navSizeX: 82 | 214
  * return >= 82
  */

@@ -290,6 +290,17 @@ return focused > 0
 ```
 
 Function-level `return` facts still mean every return after the branches are joined.
+When branches produce distinct concrete values, the joined value can stay a small
+finite set:
+
+```ts
+/** @fit
+ * return: 0 | 100
+ */
+function tabOffset(isPinned: boolean) {
+  return isPinned ? 0 : 100
+}
+```
 
 Exact-operand ternaries written as hand-rolled min/max also keep their branch facts:
 
