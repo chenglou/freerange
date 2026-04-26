@@ -1299,12 +1299,39 @@ function conditionalClampLayoutValue(min: number, value: number, max: number) {
 }
 
 /** @fit
+ * given min: -1000..1000
+ * given value: -1000..1000
+ * given max: -1000..1000
+ * given max >= min
+ * return >= min
+ * return <= max
+ */
+function ifClampLayoutValue(min: number, value: number, max: number) {
+  let next = value
+  if (next < min) {
+    next = min
+  }
+  if (next > max) {
+    next = max
+  }
+  return next
+}
+
+/** @fit
  * given containerWidth: 320..2000
  * return.cols: int 1..7
  */
 export function localHelperPostconditionRange(containerWidth: number) {
   const cols = conditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7)
   return {cols}
+}
+
+/** @fit
+ * given value: -1000..1000
+ * return: 0..320
+ */
+export function ifClampFeedsLocalHelper(value: number) {
+  return ifClampLayoutValue(0, value, 320)
 }
 
 type TypedTupleRows = [{height: number}, {height: number}]

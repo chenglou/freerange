@@ -761,6 +761,25 @@ function negativeConditionalClampLayoutValue(min: number, value: number, max: nu
 }
 
 /** @fit
+ * given min: -1000..1000
+ * given value: -1000..1000
+ * given max: -1000..1000
+ * given max >= min
+ * return >= min
+ * return < max
+ */
+export function negativeIfClampCanReturnMax(min: number, value: number, max: number) {
+  let next = value
+  if (next < min) {
+    next = min
+  }
+  if (next > max) {
+    next = max
+  }
+  return next
+}
+
+/** @fit
  * given containerWidth: 320..2000
  * return.cols: int 1..6
  */

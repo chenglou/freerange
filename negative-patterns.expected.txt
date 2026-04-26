@@ -483,6 +483,17 @@ FAIL negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
+FAIL negative-patterns.ts:negativeIfClampCanReturnMax: return < max
+  -1000..1000 as max < -1000..1000 as max is false by exact linear facts
+  need: max < max
+  known:
+    -1000..1000 as max
+    assumed from input: given min: -1000..1000
+    assumed from input: given value: -1000..1000
+    assumed from input: given max: -1000..1000
+    assumed from input: given max >= min
+    inferred from branch: -min + value < 0
+  missing: strict comparison cannot hold when both sides are max
 FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols: int 1..6
   range was int 1..7, expected inside int 1..6
   need: int 1..7 inside int 1..6

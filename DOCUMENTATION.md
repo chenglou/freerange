@@ -325,6 +325,23 @@ function pickWidth(width: number) {
 }
 ```
 
+Those joined branch cases can feed later branches. A normal handwritten clamp can
+therefore use assignments instead of expression-shaped `Math.min` / `Math.max`:
+
+```ts
+/** @fit
+ * given max >= min
+ * return >= min
+ * return <= max
+ */
+function clamp(value: number, min: number, max: number) {
+  let next = value
+  if (next < min) next = min
+  if (next > max) next = max
+  return next
+}
+```
+
 Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot. Unsupported `while` / `do while` loops get the same treatment when their condition is side-effect-free and the body only mutates clear local roots.
 
 ## Reading Results
@@ -657,7 +674,7 @@ function overflow(width: number) {
 }
 ```
 
-That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. It does not treat arbitrary conditionals as min/max.
+That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. For assignment-style code, it keeps small case splits across later `if` branches, which is enough for ordinary two-branch clamps. It does not treat arbitrary conditionals as min/max.
 
 ## Helpers
 

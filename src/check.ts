@@ -106,6 +106,7 @@ import {
   mergeScale,
   numericLiteralValue,
   sameExpressionText,
+  sameLinear,
   unwrapExpression,
   type LinearExpr,
 } from './linear.ts'
@@ -2167,8 +2168,8 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
     return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateBranchStatement(statement.elseStatement, context)
   }
 
-  const trueContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.trueAssumptions)
-  const falseContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.falseAssumptions)
+  const trueContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, true), condition.trueAssumptions)
+  const falseContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, false), condition.falseAssumptions)
   const trueFlow = evaluateBranchStatement(statement.thenStatement, trueContext)
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
@@ -2195,6 +2196,96 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
     envWithAssumptions(falseContext.env, condition.falseAssumptions),
   )
   return {kind: 'fallthrough'}
+}
+
+function refinedEnvForCondition(context: EvalContext, expression: ts.Expression, truth: boolean): Map<string, Value> {
+  const env = new Map(context.env)
+  const refinement = conditionCaseRefinement(context, expression, truth)
+  if (refinement == null) return env
+  const current = env.get(refinement.name)
+  if (current?.kind !== 'number' || current.cases == null) return env
+  const refined = refineNumberCasesForComparison(current, refinement.op, refinement.other, context.assumptions)
+  if (refined == null) return env
+  env.set(refinement.name, refined)
+  return env
+}
+
+function conditionCaseRefinement(
+  context: EvalContext,
+  expression: ts.Expression,
+  truth: boolean,
+): {name: string; op: ComparisonOperator; other: NumberValue} | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  if (!isComparisonSyntax(op)) return null
+  const comparison = syntaxToComparison(op)
+  const branchComparison = truth ? comparison : negatedComparison(comparison)
+  if (branchComparison == null) return null
+
+  const leftTarget = identifierComparisonTarget(context, expression.left, branchComparison, expression.right)
+  if (leftTarget != null) return leftTarget
+  return identifierComparisonTarget(context, expression.right, flipComparison(branchComparison), expression.left)
+}
+
+function identifierComparisonTarget(
+  context: EvalContext,
+  target: ts.Expression,
+  op: ComparisonOperator,
+  otherExpression: ts.Expression,
+): {name: string; op: ComparisonOperator; other: NumberValue} | null {
+  const unwrappedTarget = unwrapExpression(target)
+  if (!ts.isIdentifier(unwrappedTarget)) return null
+  const other = evaluateExpression(otherExpression, context)
+  if (other.kind !== 'number') return null
+  const stableOther = stablePlainConditionOperand(other)
+  if (stableOther == null) return null
+  return {name: unwrappedTarget.text, op, other: stableOther}
+}
+
+function stablePlainConditionOperand(value: NumberValue): NumberValue | null {
+  if (value.cases == null) return plainNumber(value)
+  const branches = numberBranches(value)
+  const first = branches[0]?.value
+  if (first == null) return null
+  return branches.every(branch => sameNumberShell(branch.value, first)) ? plainNumber(first) : null
+}
+
+function sameNumberShell(left: NumberValue, right: NumberValue) {
+  return left.min === right.min
+    && left.max === right.max
+    && left.isInteger === right.isInteger
+    && (left.expr ?? null) === (right.expr ?? null)
+    && (
+      (left.linear == null && right.linear == null)
+      || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
+    )
+}
+
+function refineNumberCasesForComparison(
+  value: NumberValue,
+  op: ComparisonOperator,
+  other: NumberValue,
+  assumptions: LinearConstraint[],
+): NumberValue | null {
+  const cases: NumberCase[] = []
+  for (const valueCase of numberBranches(value)) {
+    const caseAssumptions = mergeAssumptions(assumptions, valueCase.assumptions)
+    const status = proveComparisonPlain(valueCase.value, op, other, caseAssumptions)
+    if (status.status === 'fail') continue
+    if (status.status === 'pass') {
+      cases.push(valueCase)
+    } else {
+      const fact = comparisonConstraint(valueCase.value, op, other, undefined, 'branch')
+      if (fact == null) return null
+      cases.push({
+        value: valueCase.value,
+        assumptions: mergeAssumptions(valueCase.assumptions, [fact]),
+      })
+    }
+    if (cases.length > maxNumberCases) return null
+  }
+  if (cases.length === 0) return null
+  return withNumberCases(value, cases)
 }
 
 function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): EvalFlow {
@@ -4470,14 +4561,43 @@ function evaluateConditionFacts(expression: ts.Expression, context: EvalContext)
   const trueFact = comparisonConstraint(left, comparison, right, undefined, 'branch')
   const falseComparison = negatedComparison(comparison)
   const falseFact = falseComparison == null ? null : comparisonConstraint(left, falseComparison, right, undefined, 'branch')
-  const status = proveComparison(left, comparison, right, context.assumptions)
-  if (status.status === 'pass') return {truth: 'true', trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
-  if (status.status === 'fail') return {truth: 'false', trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
+  const truth = conditionComparisonTruth(left, comparison, right, context.assumptions)
+  if (truth === 'true') return {truth, trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
+  if (truth === 'false') return {truth, trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
   return {
     truth: 'maybe',
     trueAssumptions: trueFact == null ? [] : [trueFact],
     falseAssumptions: falseFact == null ? [] : [falseFact],
   }
+}
+
+function conditionComparisonTruth(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
+  if (left.cases == null && right.cases == null) {
+    const status = proveComparisonPlain(left, op, right, assumptions)
+    if (status.status === 'pass') return 'true'
+    if (status.status === 'fail') return 'false'
+    return 'maybe'
+  }
+
+  let sawPass = false
+  let sawFail = false
+  let sawUnknown = false
+  for (const leftCase of numberBranches(left)) {
+    for (const rightCase of numberBranches(right)) {
+      const status = proveComparisonPlain(
+        leftCase.value,
+        op,
+        rightCase.value,
+        mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions),
+      )
+      if (status.status === 'pass') sawPass = true
+      if (status.status === 'fail') sawFail = true
+      if (status.status === 'unknown') sawUnknown = true
+    }
+  }
+  if (sawPass && !sawFail && !sawUnknown) return 'true'
+  if (sawFail && !sawPass && !sawUnknown) return 'false'
+  return 'maybe'
 }
 
 function negatedComparison(op: ComparisonOperator): ComparisonOperator | null {
