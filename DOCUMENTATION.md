@@ -756,6 +756,18 @@ function maybeRows(input: MaybeRows) {
 ```
 
 Freerange reports this as unknown because `rows` may be absent.
+If ordinary TypeScript control flow narrows the property first, Freerange can use
+the narrowed shape at that expression:
+
+```ts
+/** @fit
+ * return >= 0
+ */
+function guardedRowsLength(input: MaybeRows) {
+  if (input.rows == null) return 0
+  return input.rows.length
+}
+```
 
 When an import boundary cannot be used, the report says which bucket it fell into:
 

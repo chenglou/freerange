@@ -29,6 +29,7 @@ sections[].rows[].height <= maxHeight
 - Anonymous two-collection wildcard sides like `rows[].top <= boxes[].bottom` are intentionally unsupported; use labels only when same index is the intended relation.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object/tuple shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, required fixed tuple slots, and generic call returns when TypeScript can see them.
+- Optional/nullable properties stay conservative until ordinary TypeScript control flow narrows the expression; guarded reads like `if (input.rows == null) return 0; return input.rows.length` can use the narrowed shape, but unguarded optional paths remain unknown.
 - Local array binding patterns are supported for finite arrays/tuples, including skipped slots. This lets tuple-returning geometry helpers keep ordinary destructuring like `const [, , offsetX] = getEdgeCenter(...)`.
 - Finite array/tuple indexing consumes exact finite index cases, so `index: 0 | 2` reads slots 0 and 2 without widening through slot 1.
 - Tuple element facts also survive helper/import summaries: a checked `return[2] >= 0` can feed a caller's destructured `offsetX`.
