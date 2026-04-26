@@ -36,6 +36,8 @@ import {
   callExpr,
   conditionalRunningSumNumber,
   divideNumbers,
+  finiteNumberSet,
+  finiteNumberValue,
   joinValues,
   linearNameForExpression,
   maxNumberCases,
@@ -125,6 +127,7 @@ import {
   formatExpectedRange,
   formatRangeSpec,
   formatRange,
+  finiteRangeSpecFailureReason,
   rangeSpecFailureReason,
   rangeSpecMissingBounds,
 } from './reporting.ts'
@@ -844,6 +847,9 @@ function parseFitSpecLineForInference(text: string): FitSpec | null {
 function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
   if (range == null) return null
+  if (spec.range.finiteValues != null) {
+    return range.values != null && range.values.every(value => spec.range.finiteValues!.includes(value)) ? range.text : null
+  }
   const lowerOk = spec.range.lowerValue != null
     && (spec.range.lowerInclusive ? range.min >= spec.range.lowerValue : range.min > spec.range.lowerValue)
   const upperOk = spec.range.upperValue != null
@@ -1137,6 +1143,10 @@ function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges
   if (closed != null && closed.min > closed.max) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
   for (const range of ranges) {
     if (!sameExpressionText(range.expression, spec.expression)) continue
+    if (spec.range.finiteValues != null && range.range.finiteValues != null) {
+      const overlap = spec.range.finiteValues.some(value => range.range.finiteValues!.includes(value))
+      if (!overlap) return `no input can satisfy both ${range.text} and ${spec.text}`
+    }
     const earlier = closedRangeApprox(range.range)
     if (closed == null || earlier == null) continue
     if (closed.max < earlier.min || closed.min > earlier.max) {
@@ -1350,13 +1360,15 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
 
 function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
   const closed = closedRangeApprox(spec.range)
-  const value = numberValue(
-    closed?.min ?? Number.NEGATIVE_INFINITY,
-    closed?.max ?? Number.POSITIVE_INFINITY,
-    spec.range.valueKind === 'int',
-    spec.expression,
-    linearVariable(linearNameForExpression(spec.expression)),
-  )
+  const value = spec.range.finiteValues == null
+    ? numberValue(
+      closed?.min ?? Number.NEGATIVE_INFINITY,
+      closed?.max ?? Number.POSITIVE_INFINITY,
+      spec.range.valueKind === 'int',
+      spec.expression,
+      linearVariable(linearNameForExpression(spec.expression)),
+    )
+    : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)))
   if (spec.expression.includes('[]')) {
     const domainPath = parseDomainPathText(spec.expression)
     if (domainPath != null && domainPath.segments.length > 0) {
@@ -1634,6 +1646,7 @@ function verifyCheckSpec(
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
+  if (range.finiteValues != null) return proveFiniteRangeSpec(value, range)
   if (staticRangeInside(value, range)) return {status: 'pass'}
   const lower = evaluateRangeBound(range.lower, context)
   if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower}`}
@@ -1671,6 +1684,16 @@ function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {s
   }
 }
 
+function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
+  const expected = range.finiteValues ?? []
+  const produced = finiteNumberSet(value)
+  if (produced != null && produced.every(choice => expected.includes(choice))) return {status: 'pass'}
+  return {
+    status: 'fail',
+    reason: finiteRangeSpecFailureReason(value, range, produced),
+  }
+}
+
 function expectedNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
@@ -1696,6 +1719,10 @@ function specBoundIndexContext(context: EvalContext): BoundIndexContext {
 }
 
 function staticRangeInside(value: NumberValue, range: FitRange) {
+  if (range.finiteValues != null) {
+    const produced = finiteNumberSet(value)
+    return produced != null && produced.every(choice => range.finiteValues!.includes(choice))
+  }
   if (range.valueKind === 'int' && !value.isInteger) return false
   if (range.lowerValue == null || range.upperValue == null) return false
   const lowerOk = range.lowerInclusive ? value.min >= range.lowerValue : value.min > range.lowerValue
@@ -3743,15 +3770,17 @@ function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {
   setSummaryPathValue(
     env,
     spec.expression,
-    numberValue(
-      closed.min,
-      closed.max,
-      spec.range.valueKind === 'int',
-      spec.expression,
-      linearVariable(linearNameForExpression(spec.expression)),
-      null,
-      [checkedContractFact(source, spec.text)],
-    ),
+    spec.range.finiteValues == null
+      ? numberValue(
+        closed.min,
+        closed.max,
+        spec.range.valueKind === 'int',
+        spec.expression,
+        linearVariable(linearNameForExpression(spec.expression)),
+        null,
+        [checkedContractFact(source, spec.text)],
+      )
+      : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)), [checkedContractFact(source, spec.text)]),
   )
 }
 
@@ -3999,6 +4028,9 @@ function withCallRangeReason(
 }
 
 function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBindings: CallSiteBindings | undefined) {
+  if (range.finiteValues != null) {
+    return [callSiteMissingLine(`${value.expr ?? formatRange(value)} in {${range.finiteValues.join(', ')}}`, callSiteBindings)]
+  }
   const lower = range.lowerValue == null ? null : numberValue(range.lowerValue, range.lowerValue, Number.isInteger(range.lowerValue), range.lower, Number.isFinite(range.lowerValue) ? linearConstant(range.lowerValue) : null)
   const upper = range.upperValue == null ? null : numberValue(range.upperValue, range.upperValue, Number.isInteger(range.upperValue), range.upper, Number.isFinite(range.upperValue) ? linearConstant(range.upperValue) : null)
   return rangeSpecMissingBounds(

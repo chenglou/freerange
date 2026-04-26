@@ -204,7 +204,7 @@ exist in TypeScript.
 
 ## Made Less Urgent
 
-- Numeric atoms. Existing interval math, small linear reduction, ceil/floor/modulo facts, positive scale/divide facts, and `Math.min` / `Math.max` branch facts cover a lot.
+- Numeric atoms. Existing interval math, small finite numeric sets, small linear reduction, ceil/floor/modulo facts, positive scale/divide facts, and `Math.min` / `Math.max` branch facts cover a lot.
 - Clamp atoms. Userland clamp works through helper contracts plus `Math.min` / `Math.max`.
 - `sameLength` as a primitive. Append/running-sum inference often proves length directly.
 - Early geometry atoms. Field math already works; keep writing `child.x + child.w <= parent.x + parent.w` until repeated demos earn a name like `inside`.

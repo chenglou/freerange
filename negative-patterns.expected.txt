@@ -819,6 +819,14 @@ UNKNOWN negative-patterns.ts:negativeRestTupleShapeIsNotExactLength: return.leng
     int 1..Infinity as input.length
     int 2..2 as 2
   missing: given input.length == 2
+FAIL negative-patterns.ts:negativeUnionReturnOutsideSet: return: 40 | 120
+  value was int 82..214 as navSizeX, expected one of 40 | 120
+  branches produced 82, 214
+  missing: navSizeX in {40, 120}
+FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: call negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
+  called function requires navSizeX: 82 | 214
+  this call passes navSizeX = 150
+  missing at call site: 150 in {82, 214}
 FAIL negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
   need: (rect.left + ((rect.right - rect.left) / 2)) inside 50..100

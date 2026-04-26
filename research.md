@@ -206,7 +206,7 @@ SQL is the taste reference for source/id matching: name the relation. If two col
 
 A layered IR seems better than one giant SMT encoding. This is mostly internal, but it should be visible through `infer`, audits, and report provenance:
 
-- scalar refinements: intervals, small linear facts, symbolic equality, modulo/congruence facts
+- scalar refinements: intervals, small finite sets, small linear facts, symbolic equality, modulo/congruence facts
 - object/path facts: `Field(row, "top")`, `Path(rows, i, "height")`
 - sequence facts: `Len(rows)`, `Elem(rows, i)`, append histories, source maps
 - views: spans, ranges, rects, logical rects
