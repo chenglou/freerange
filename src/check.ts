@@ -4417,12 +4417,34 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   if (lower.status !== 'pass' || upper.status !== 'pass') return unknown(`Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}`)
   const fallback = expressionStructuralFallback(expression, context)
   if (target.elements == null) return valueWithStructuralFallback(target.element ?? unknown('Array element values are not tracked'), fallback)
+  const caseValue = elementValueForIndexCases(target, index)
+  if (caseValue != null) return valueWithStructuralFallback(caseValue, fallback)
   const start = Math.max(0, Math.ceil(index.min))
   const end = Math.min(target.elements.length - 1, Math.floor(index.max))
   const valueAt = (i: number) => target.elements?.[i] ?? target.element ?? unknown('Array element values are not tracked')
   let value = start > end ? valueAt(Math.max(0, Math.ceil(index.min))) : valueAt(start)
   for (let i = start + 1; i <= end; i++) value = joinValues(value, valueAt(i))
   return valueWithStructuralFallback(value, fallback)
+}
+
+function elementValueForIndexCases(target: ArrayValue, index: NumberValue): Value | null {
+  if (target.elements == null || index.cases == null) return null
+  let value: Value | null = null
+  for (const indexCase of numberBranches(index)) {
+    const slot = exactFiniteArrayIndex(indexCase.value, target.elements.length)
+    if (slot == null) return null
+    const element = target.elements[slot] ?? target.element ?? unknown('Array element values are not tracked')
+    const elementCase = valueWithAssumptions(element, indexCase.assumptions)
+    value = value == null ? elementCase : joinValues(value, elementCase)
+  }
+  return value
+}
+
+function exactFiniteArrayIndex(index: NumberValue, length: number): number | null {
+  if (!index.isInteger || index.min !== index.max) return null
+  const slot = index.min
+  if (!Number.isInteger(slot) || slot < 0 || slot >= length) return null
+  return slot
 }
 
 function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {

@@ -30,6 +30,7 @@ sections[].rows[].height <= maxHeight
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object/tuple shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, required fixed tuple slots, and generic call returns when TypeScript can see them.
 - Local array binding patterns are supported for finite arrays/tuples, including skipped slots. This lets tuple-returning geometry helpers keep ordinary destructuring like `const [, , offsetX] = getEdgeCenter(...)`.
+- Finite array/tuple indexing consumes exact finite index cases, so `index: 0 | 2` reads slots 0 and 2 without widening through slot 1.
 - Tuple element facts also survive helper/import summaries: a checked `return[2] >= 0` can feed a caller's destructured `offsetX`.
 - `items.at(-k)` works for constant negative integer `k` when the array is long enough. Dynamic `.at(index)` and same-loop "append then read previous last" recurrences are intentionally out. The bracket spelling `items[items.length - 1]` is also kept out of that same-loop recurrence shape so we do not accidentally prove the initial array snapshot.
 - Strict integer branch facts can move by one step, so `focused > 0` proves `focused - 1 >= 0` for previous-index checks.

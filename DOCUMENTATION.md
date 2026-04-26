@@ -806,7 +806,7 @@ Supported today:
 - optional/rest tuple shapes keep safe length ranges, but do not expose exact per-slot facts
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
-- bounded literal indexing
+- bounded literal indexing; exact finite index cases like `0 | 2` only read those slots
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
