@@ -39,20 +39,26 @@ export type IndexedLoopShape = {
 
 export function readLoopPush(expression: ts.CallExpression, context: LoopSourceContext): Omit<LoopPush, 'arrayName' | 'length'> {
   const row = expression.arguments[0]
-  if (row == null) return {element: null, topName: null, height: null, cursorPaths: []}
+  if (row == null) return {element: null, topName: null, topPath: null, height: null, cursorPaths: []}
   if (!ts.isObjectLiteralExpression(row)) {
     return {
       element: context.evaluateExpression(row, context.env),
       topName: null,
+      topPath: null,
       height: null,
       cursorPaths: ts.isIdentifier(row) ? [{path: [], targetName: row.text}] : [],
     }
   }
   const topExpression = objectPropertyExpression(row, 'top')
-  const heightExpression = objectPropertyExpression(row, 'height')
-  const topName = topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null
-  const height = heightExpression == null ? null : context.evaluateExpression(heightExpression, context.env)
-  return {element: context.evaluateExpression(row, context.env), topName, height: height?.kind === 'number' ? height : null, cursorPaths: objectIdentifierPropertyPaths(row)}
+  const stackShape = readRowStackShape(row, context)
+  const topName = stackShape?.topName ?? (topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null)
+  return {
+    element: context.evaluateExpression(row, context.env),
+    topName,
+    topPath: stackShape?.topPath ?? (topName == null ? null : ['top']),
+    height: stackShape?.height ?? null,
+    cursorPaths: objectIdentifierPropertyPaths(row),
+  }
 }
 
 export function readGuardedLoopPushes(
@@ -355,6 +361,42 @@ function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: 
     if (property.name.text === name) return property.initializer
   }
   return null
+}
+
+function readRowStackShape(
+  expression: ts.ObjectLiteralExpression,
+  context: LoopSourceContext,
+): {topName: string; topPath: string[]; height: NumberValue} | null {
+  const candidates = objectPropertyCandidates(expression, 'top')
+    .filter(candidate => ts.isIdentifier(candidate.expression))
+    .sort((left, right) => left.path.length - right.path.length)
+
+  for (const candidate of candidates) {
+    const heightExpression = objectPropertyExpression(candidate.container, 'height')
+    if (heightExpression == null) continue
+    const height = context.evaluateExpression(heightExpression, context.env)
+    if (height.kind === 'number') return {topName: (candidate.expression as ts.Identifier).text, topPath: candidate.path, height}
+  }
+  return null
+}
+
+function objectPropertyCandidates(
+  expression: ts.ObjectLiteralExpression,
+  name: string,
+  prefix: string[] = [],
+): {path: string[]; expression: ts.Expression; container: ts.ObjectLiteralExpression}[] {
+  const candidates: {path: string[]; expression: ts.Expression; container: ts.ObjectLiteralExpression}[] = []
+  for (const property of expression.properties) {
+    if (ts.isShorthandPropertyAssignment(property)) {
+      if (property.name.text === name) candidates.push({path: [...prefix, property.name.text], expression: property.name, container: expression})
+      continue
+    }
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
+    const path = [...prefix, property.name.text]
+    if (property.name.text === name) candidates.push({path, expression: property.initializer, container: expression})
+    if (ts.isObjectLiteralExpression(property.initializer)) candidates.push(...objectPropertyCandidates(property.initializer, name, path))
+  }
+  return candidates
 }
 
 function objectIdentifierPropertyPaths(expression: ts.ObjectLiteralExpression, prefix: string[] = []): {path: string[]; targetName: string}[] {

@@ -94,7 +94,7 @@ locals:
   extentEnd(rows, top): -10..3500
   y == runningSum(top, items.length, (items[].height + gap))
   y: 0..3500
-loop 802: for (const item of items)
+loop 822: for (const item of items)
   inferred:
     rows.length == items.length
     rows.length: int 1..50

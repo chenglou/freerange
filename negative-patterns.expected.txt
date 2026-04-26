@@ -192,6 +192,13 @@ UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasi
     row advance for .top: -40..40 as step
     sequence facts: spaced(0)
   missing: given step >= 0
+UNKNOWN negative-patterns.ts:negativeNestedRowRectNeedsNonNegativeAdvance: return.rows[$i].rowRect.top <= return.rows[$i + 1].rowRect.top
+  return.rows[$i + 1].rowRect.top >= return.rows[$i].rowRect.top was not inferred
+  need: a matching adjacent sequence relation
+  known:
+    sequence facts: no sequence facts
+    adjacent: return.rows[$i + 1].rowRect.top == return.rows[$i].rowRect.top + return.rows[$i].rowRect.height
+  missing: recognized adjacent row relation
 UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: return >= this.top
   -100..2000 as (this.top + this.height) >= 0..1000 as this.top was not proven
   need: (this.top + this.height) >= this.top

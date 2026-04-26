@@ -236,6 +236,22 @@ export function negativeRunningSumNeedsNonNegativeStep(items: number[], top: num
   return {rows, bottom: y}
 }
 
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: -40..40
+ * given top: 0..1000
+ * return.rows[$i].rowRect.top <= return.rows[$i + 1].rowRect.top
+ */
+export function negativeNestedRowRectNeedsNonNegativeAdvance(items: {height: number}[], top: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    rows.push({rowRect: {top: y, height: item.height}})
+    y += item.height
+  }
+  return {rows}
+}
+
 export class NegativeClassMethodNeedsThisGiven {
   constructor(
     public top: number,

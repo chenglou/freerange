@@ -579,6 +579,12 @@ This does not replace the named atoms. Prefer `nondecreasing(rows.top)` and
 `spaced(rows, gap)` when those names express the intent better. Labels are the
 escape hatch for specific red lines that do not deserve a public atom.
 
+The adjacent path can be nested. If a loop pushes rows shaped like
+`{rowRect: {top, height}}`, Freerange can prove
+`nondecreasing(rows.rowRect.top)` and exact neighboring `rowRect.top` facts.
+The pathless `spaced(rows, gap)`, `lastEnd(rows)`, and `extentEnd(rows, top)`
+remain top-level row shorthands until views earn a real syntax.
+
 ## Comparisons
 
 ```ts
