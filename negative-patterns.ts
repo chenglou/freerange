@@ -848,6 +848,11 @@ export function negativeOptionalNumberNeedsPresentGuard(max?: number) {
   return Math.max(max, 0) // @fit >= max
 }
 
+export function negativeNullishFallbackNeedsNumericDefault(dimensions: {width?: number}, label: string) {
+  // @ts-expect-error This kernel intentionally keeps a non-numeric fallback.
+  return Math.max(dimensions?.width ?? label, 0) // @fit >= 0
+}
+
 export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
   let scratch = 0
   let i = 0

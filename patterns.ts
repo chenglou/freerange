@@ -1607,6 +1607,14 @@ export function typeofUndefinedGuardKeepsOptionalNumber(max?: number) {
   return 0
 }
 
+export function optionalPropertyNullishFallbackFeedsMath(dimensions: {width?: number}) {
+  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
+}
+
+export function nullableObjectOptionalChainFallbackFeedsMath(dimensions: {width: number} | null) {
+  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
+}
+
 /** @fit
  * given items.length: int 0..100
  * given index: int 0..100

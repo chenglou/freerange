@@ -797,6 +797,15 @@ function floorAtZero(max?: number) {
 }
 ```
 
+For the common "use zero when absent" shape, nullish fallback is also numeric
+when both sides are numeric:
+
+```ts
+function safeWidth(dimensions: {width?: number}) {
+  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
+}
+```
+
 Freerange also keeps source facts for a nullable value made by a branch, but only
 after an ordinary null guard proves the present side. The guard can name a local
 or a property path:
@@ -1188,7 +1197,7 @@ The checker understands a small pure subset:
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
 - return-style `if` guards and simple fall-through `if` / `else` branches
-- branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, plus `typeof value !== 'undefined'` for optional values
+- branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, `typeof value !== 'undefined'` for optional values, and numeric `??` fallbacks such as `dimensions?.width ?? 0`
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts

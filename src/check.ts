@@ -48,6 +48,7 @@ import {
   moduloNumbers,
   multiplyNumbers,
   nullValue,
+  nullableValue,
   numberBranches,
   numberValue,
   plainNumber,
@@ -3145,6 +3146,7 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, context: Eval
 
 function evaluateBinary(expression: ts.BinaryExpression, context: EvalContext): Value {
   const op = expression.operatorToken.kind
+  if (op === ts.SyntaxKind.QuestionQuestionToken) return evaluateNullishCoalescing(expression, context)
   if (isComparisonSyntax(op)) {
     return unknown('Comparison expressions are only supported in condition positions')
   }
@@ -3159,6 +3161,17 @@ function evaluateBinary(expression: ts.BinaryExpression, context: EvalContext): 
 
   const result = evaluateNumberBinary(op, left, right)
   return result.kind === 'unknown' ? expressionStructuralFallback(expression, context) ?? result : result
+}
+
+function evaluateNullishCoalescing(expression: ts.BinaryExpression, context: EvalContext): Value {
+  const fallback = expressionStructuralFallback(expression, context)
+  const left = evaluateExpression(expression.left, context)
+  if (left.kind === 'null') return valueWithStructuralFallback(evaluateExpression(expression.right, context), fallback)
+  if (left.kind === 'nullable') {
+    return valueWithStructuralFallback(joinValues(left.present, evaluateExpression(expression.right, context)), fallback)
+  }
+  if (left.kind === 'unknown') return fallback ?? left
+  return valueWithStructuralFallback(left, fallback)
 }
 
 function evaluateNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: NumberValue): Value {
@@ -4509,6 +4522,16 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
   const fallback = expressionStructuralFallback(expression, context)
   const getterResult = evaluateClassGetterAccess(expression, context, fallback)
   if (getterResult != null) return getterResult
+  const optional = hasQuestionDotToken(expression)
+  if (target.kind === 'nullable' && optional) {
+    const present = evaluatePresentPropertyAccess(target.present, expression, context, fallback)
+    return nullableValue(present, expression.getText(context.program.sourceFile), 'undefined')
+  }
+  if (target.kind === 'null' && optional) return nullValue('undefined')
+  return evaluatePresentPropertyAccess(target, expression, context, fallback)
+}
+
+function evaluatePresentPropertyAccess(target: Value, expression: ts.PropertyAccessExpression, context: EvalContext, fallback: Value | null): Value {
   if (target.kind === 'array' && expression.name.text === 'length') return target.length
   if (target.kind === 'unknown') return fallback ?? target
   if (target.kind === 'nullable') return fallback ?? unknown(`Nullable value ${target.expr ?? expression.expression.getText(context.program.sourceFile)} was not proven present`)
@@ -4520,10 +4543,21 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
-  if (target.kind === 'unknown') return expressionStructuralFallback(expression, context) ?? target
-  if (target.kind === 'nullable') return expressionStructuralFallback(expression, context) ?? unknown(`Nullable value ${target.expr ?? expression.expression.getText(context.program.sourceFile)} was not proven present`)
-  if (target.kind === 'null') return expressionStructuralFallback(expression, context) ?? unknown('Element access expected a present array')
-  if (target.kind !== 'array') return expressionStructuralFallback(expression, context) ?? unknown(`Element access expected an array`)
+  const fallback = expressionStructuralFallback(expression, context)
+  const optional = hasQuestionDotToken(expression)
+  if (target.kind === 'nullable' && optional) {
+    const present = evaluatePresentElementAccess(target.present, expression, context, fallback)
+    return nullableValue(present, expression.getText(context.program.sourceFile), 'undefined')
+  }
+  if (target.kind === 'null' && optional) return nullValue('undefined')
+  return evaluatePresentElementAccess(target, expression, context, fallback)
+}
+
+function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, context: EvalContext, fallback: Value | null): Value {
+  if (target.kind === 'unknown') return fallback ?? target
+  if (target.kind === 'nullable') return fallback ?? unknown(`Nullable value ${target.expr ?? expression.expression.getText(context.program.sourceFile)} was not proven present`)
+  if (target.kind === 'null') return fallback ?? unknown('Element access expected a present array')
+  if (target.kind !== 'array') return fallback ?? unknown(`Element access expected an array`)
   const targetRoot = expressionRootName(expression.expression)
   if (
     context.insideLoop === true
@@ -4539,7 +4573,6 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   const lower = proveComparison(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), context.assumptions)
   const upper = proveComparison(index, '<', target.length, context.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') return unknown(`Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}`)
-  const fallback = expressionStructuralFallback(expression, context)
   const sourceName = target.expr ?? expression.expression.getText(context.program.sourceFile)
   const indexText = expression.argumentExpression.getText(context.program.sourceFile)
   const accessExpr = `${sourceName}[${indexText}]`
@@ -4562,6 +4595,10 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   let value = start > end ? valueAt(Math.max(0, Math.ceil(index.min))) : valueAt(start)
   for (let i = start + 1; i <= end; i++) value = joinValues(value, valueAt(i))
   return valueWithStructuralFallback(value, fallback)
+}
+
+function hasQuestionDotToken(expression: ts.PropertyAccessExpression | ts.ElementAccessExpression) {
+  return (expression as {questionDotToken?: ts.QuestionDotToken}).questionDotToken != null
 }
 
 function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {

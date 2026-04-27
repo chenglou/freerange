@@ -533,6 +533,8 @@ UNKNOWN negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: 
   Nullable value state.previous! was not proven present
 UNKNOWN negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
   Math.max expected numbers
+UNKNOWN negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
+  Math.max expected numbers
 FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was -Infinity..Infinity as scratch, expected inside 0..0
   need: scratch inside 0..0
