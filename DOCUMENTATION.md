@@ -776,7 +776,8 @@ function guardedRowsLength(input: MaybeRows) {
 ```
 
 Freerange also keeps source facts for a nullable value made by a branch, but only
-after an ordinary null guard proves the present side:
+after an ordinary null guard proves the present side. The guard can name a local
+or a property path:
 
 ```ts
 /** @fit
@@ -787,6 +788,18 @@ function previousIndex(focused: number) {
   const previous = focused > 0 ? focused - 1 : null
   if (previous == null) return 0
   return previous
+}
+
+/** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+function previousFromState(focused: number) {
+  const state = {
+    previous: focused > 0 ? {targetIndex: focused - 1} : null,
+  }
+  if (state.previous == null) return 0
+  return state.previous.targetIndex
 }
 ```
 
@@ -1153,7 +1166,7 @@ The checker understands a small pure subset:
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
 - return-style `if` guards and simple fall-through `if` / `else` branches
-- branch-created nullable values refined by ordinary `== null` / `!= null` guards
+- branch-created nullable values and property paths refined by ordinary `== null` / `!= null` guards
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts

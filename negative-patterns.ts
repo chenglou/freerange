@@ -832,6 +832,17 @@ export function negativeNullableBranchNeedsPresentGuard(focused: number) {
   return previous
 }
 
+/** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+export function negativeNullablePropertyNeedsPresentGuard(focused: number) {
+  const state = {
+    previous: focused > 0 ? {targetIndex: focused - 1} : null,
+  }
+  return state.previous!.targetIndex
+}
+
 export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
   let scratch = 0
   let i = 0

@@ -529,6 +529,8 @@ FAIL negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return
   missing: scratch <= 0
 UNKNOWN negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
   Nullable value (focused - 1) was not proven present
+UNKNOWN negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
+  Nullable value state.previous! was not proven present
 FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was -Infinity..Infinity as scratch, expected inside 0..0
   need: scratch inside 0..0

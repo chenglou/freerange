@@ -2219,7 +2219,7 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
   const env = new Map(context.env)
   const presence = presenceCaseRefinement(context, expression, truth)
   if (presence != null) {
-    env.set(presence.name, presence.value)
+    env.set(presence.root, presence.value)
     return env
   }
   const refinement = conditionCaseRefinement(context, expression, truth)
@@ -2232,14 +2232,46 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
   return env
 }
 
-function presenceCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {name: string; value: Value} | null {
+function presenceCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
   const target = nullishComparisonTarget(expression, truth)
   if (target == null) return null
-  const unwrapped = unwrapExpression(target)
-  if (!ts.isIdentifier(unwrapped)) return null
-  const current = context.env.get(unwrapped.text)
+  const path = nullablePresencePath(target)
+  if (path == null) return null
+  const root = context.env.get(path.root)
+  const current = valueAtPropertyPath(root, path.segments)
   if (current?.kind !== 'nullable') return null
-  return {name: unwrapped.text, value: current.present}
+  const value = valueWithPropertyPathValue(root, path.segments, current.present)
+  return value == null ? null : {root: path.root, value}
+}
+
+function nullablePresencePath(expression: ts.Expression): {root: string; segments: string[]} | null {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current)) return {root: current.text, segments: []}
+  if (current.kind === ts.SyntaxKind.ThisKeyword) return {root: 'this', segments: []}
+  if (!ts.isPropertyAccessExpression(current)) return null
+  const base = nullablePresencePath(current.expression)
+  return base == null ? null : {root: base.root, segments: [...base.segments, current.name.text]}
+}
+
+function valueAtPropertyPath(value: Value | undefined, segments: string[]): Value | null {
+  if (value == null) return null
+  const [segment, ...rest] = segments
+  if (segment == null) return value
+  if (value.kind !== 'object') return null
+  return valueAtPropertyPath(value.props.get(segment), rest)
+}
+
+function valueWithPropertyPathValue(value: Value | undefined, segments: string[], replacement: Value): Value | null {
+  if (value == null) return null
+  const [segment, ...rest] = segments
+  if (segment == null) return replacement
+  if (value.kind !== 'object') return null
+  const current = value.props.get(segment)
+  const next = valueWithPropertyPathValue(current, rest, replacement)
+  if (next == null) return null
+  const props = new Map(value.props)
+  props.set(segment, next)
+  return {...value, props}
 }
 
 function conditionCaseRefinement(

@@ -1589,6 +1589,18 @@ export function nullableBranchKeepsPresentObjectFacts(count: number, focused: nu
 }
 
 /** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+export function nullablePropertyGuardKeepsPresentObjectFacts(focused: number) {
+  const state = {
+    previous: focused > 0 ? {targetIndex: focused - 1} : null,
+  }
+  if (state.previous == null) return 0
+  return state.previous.targetIndex
+}
+
+/** @fit
  * given items.length: int 0..100
  * given index: int 0..100
  * given index < items.length
