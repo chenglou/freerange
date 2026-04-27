@@ -181,11 +181,17 @@ export function expressionKeyFromText(text: string): string {
 
 export function expressionKey(expression: ts.Expression): string {
   const current = unwrapExpression(expression)
+  if (containsElementAccess(current)) return structuralExpressionKey(current)
   const linear = linearFromExpression(current)
   if (linear != null) return `linear:${linearKey(linear)}`
+  return structuralExpressionKey(current)
+}
+
+function structuralExpressionKey(current: ts.Expression): string {
   if (ts.isIdentifier(current)) return `id:${current.text}`
   if (ts.isNumericLiteral(current)) return `number:${Number(current.text)}`
   if (ts.isPropertyAccessExpression(current)) return `prop:${expressionKey(current.expression)}.${current.name.text}`
+  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) return `element:${expressionKey(current.expression)}[${expressionKey(current.argumentExpression)}]`
   if (ts.isCallExpression(current)) return `call:${callName(current.expression)}(${current.arguments.map(argument => expressionKey(argument)).join(',')})`
   if (ts.isPrefixUnaryExpression(current)) return `prefix:${current.operator}:${expressionKey(current.operand)}`
   if (ts.isBinaryExpression(current)) {
@@ -194,6 +200,20 @@ export function expressionKey(expression: ts.Expression): string {
     return `binary:${ts.SyntaxKind[op]}:${expressionKey(current.left)}:${expressionKey(current.right)}`
   }
   return `text:${current.getText()}`
+}
+
+function containsElementAccess(expression: ts.Expression): boolean {
+  const current = unwrapExpression(expression)
+  if (ts.isElementAccessExpression(current)) return true
+  if (ts.isPropertyAccessExpression(current)) return containsElementAccess(current.expression)
+  if (ts.isParenthesizedExpression(current)) return containsElementAccess(current.expression)
+  if (ts.isPrefixUnaryExpression(current)) return containsElementAccess(current.operand)
+  if (ts.isBinaryExpression(current)) return containsElementAccess(current.left) || containsElementAccess(current.right)
+  if (ts.isCallExpression(current)) {
+    if (containsElementAccess(current.expression)) return true
+    return current.arguments.some(argument => containsElementAccess(argument))
+  }
+  return false
 }
 
 export function unwrapExpression(expression: ts.Expression): ts.Expression {

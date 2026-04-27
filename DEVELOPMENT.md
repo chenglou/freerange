@@ -37,7 +37,7 @@ bun install
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
 - [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
 - [src/guarded-facts.ts](./src/guarded-facts.ts) — branch guard truth, finite case refinement, and number-case transfer helpers
-- [src/indexed-facts.ts](./src/indexed-facts.ts) — finite index specialization and symbolic element-path rebasing
+- [src/indexed-facts.ts](./src/indexed-facts.ts) — finite index specialization, symbolic element-path rebasing, and local adjacent-neighbor facts
 - [src/sequence-facts.ts](./src/sequence-facts.ts) — adjacent sequence relation queries and rendering
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries

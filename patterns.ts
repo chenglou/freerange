@@ -1482,6 +1482,26 @@ export function focusedIndexUsesAdjacentSequenceFact(items: {height: number}[], 
 }
 
 /** @fit
+ * given items.length: int 2..50
+ * given items[].height: 0..40
+ * given focused: int 0..<items.length
+ * given focused + 1 < items.length
+ * return.nextTop >= return.currentTop
+ */
+export function focusedIndexUsesForwardAdjacentSequenceFact(items: {height: number}[], focused: number) {
+  const rows = []
+  let top = 0
+  for (const item of items) {
+    rows.push({top, height: item.height})
+    top += item.height
+  }
+  return {
+    currentTop: rows[focused]!.top,
+    nextTop: rows[focused+1]!.top,
+  }
+}
+
+/** @fit
  * given focused: int 0..1000
  * return: int 0..1000
  */

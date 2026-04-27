@@ -841,7 +841,7 @@ Supported today:
 - `[...items, value]` length
 - bounded literal indexing; exact finite index cases like `0 | 2` only read those slots
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
-- symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize around `focused` and `focused - 1`
+- symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize previous/current and current/next neighborhoods once bounds prove them live
 - `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
@@ -1163,7 +1163,7 @@ The checker understands a small pure subset:
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
-- symbolic element reads with concrete path reporting, plus previous/current specialization for inferred adjacent sequence facts
+- symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
 - immediate map/filter origin facts in `fr infer`

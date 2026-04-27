@@ -1,4 +1,5 @@
 import {
+  addNumbers,
   joinValues,
   numberBranches,
   numberValue,
@@ -11,10 +12,11 @@ import {
   type NumberValue,
   type ObjectValue,
   type SequenceExpression,
+  type SequenceRelation,
   type SequenceTerm,
   type Value,
 } from './domain.ts'
-import {linearConstant} from './linear.ts'
+import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.ts'
 import {comparisonConstraint, proveComparison} from './proof.ts'
 
 export function elementValueForIndexCases(target: ArrayValue, index: NumberValue): Value | null {
@@ -48,19 +50,71 @@ export function adjacentElementAccessFacts(
   const summary = target.summary
   if (summary == null || summary.relations.length === 0) return []
   const zero = numberValue(0, 0, true, '0', linearConstant(0))
-  const hasPrevious = proveComparison(index, '>', zero, assumptions)
-  if (hasPrevious.status !== 'pass') return []
-
-  const previousAccessExpr = `${sourceName}[${indexText} - 1]`
+  const one = numberValue(1, 1, true, '1', linearConstant(1))
   const facts: LinearConstraint[] = []
-  for (const relation of summary.relations) {
+
+  const hasPrevious = proveComparison(index, '>', zero, assumptions)
+  if (hasPrevious.status === 'pass') {
+    for (const previousAccessExpr of neighborAccessExprs(sourceName, index, indexText, -1)) {
+      facts.push(...instantiateAdjacentFacts(accessExpr, previousAccessExpr, summary.relations))
+    }
+  }
+
+  const nextIndex = addNumbers(index, one)
+  const hasNext = proveComparison(nextIndex, '<', target.length, assumptions)
+  if (hasNext.status === 'pass') {
+    for (const nextAccessExpr of neighborAccessExprs(sourceName, index, indexText, 1)) {
+      facts.push(...instantiateAdjacentFacts(nextAccessExpr, accessExpr, summary.relations))
+    }
+  }
+
+  return dedupeFacts(facts)
+}
+
+function instantiateAdjacentFacts(nextAccessExpr: string, previousAccessExpr: string, relations: SequenceRelation[]): LinearConstraint[] {
+  const facts: LinearConstraint[] = []
+  for (const relation of relations) {
     if (relation.left.item !== 'next') continue
-    const leftExpr = sequenceTermExpr(accessExpr, previousAccessExpr, relation.left)
-    const rightExpr = sequenceExpressionExpr(accessExpr, previousAccessExpr, relation.right)
+    const leftExpr = sequenceTermExpr(nextAccessExpr, previousAccessExpr, relation.left)
+    const rightExpr = sequenceExpressionExpr(nextAccessExpr, previousAccessExpr, relation.right)
     const fact = comparisonConstraint(unknownNumber(leftExpr), relation.op, unknownNumber(rightExpr), undefined, 'code')
     if (fact != null) facts.push(fact)
   }
   return facts
+}
+
+function neighborAccessExprs(sourceName: string, index: NumberValue, indexText: string, offset: -1 | 1): string[] {
+  const canonical = shiftedLinearIndexText(index.linear, offset)
+  const text = canonical ?? `${indexText} ${offset < 0 ? '-' : '+'} 1`
+  return [`${sourceName}[${text}]`]
+}
+
+function shiftedLinearIndexText(linear: LinearExpr | null, offset: -1 | 1): string | null {
+  if (linear == null || linear.terms.size !== 1) return null
+  const term = [...linear.terms.entries()][0]
+  if (term == null) return null
+  const [name, coefficient] = term
+  if (coefficient !== 1) return null
+  const constant = linear.constant + offset
+  if (!Number.isInteger(constant)) return null
+  if (constant === 0) return name
+  return constant > 0 ? `${name} + ${constant}` : `${name} - ${Math.abs(constant)}`
+}
+
+function dedupeFacts(facts: LinearConstraint[]): LinearConstraint[] {
+  const seen = new Set<string>()
+  const result: LinearConstraint[] = []
+  for (const fact of facts) {
+    const key = `${expressionFactKey(fact.leftExpr)}:${fact.op}:${expressionFactKey(fact.rightExpr)}:${fact.text ?? ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(fact)
+  }
+  return result
+}
+
+function expressionFactKey(expression: string | undefined) {
+  return expression == null ? '?' : expressionKeyFromText(expression)
 }
 
 export function valueWithRebasedElementPath(value: Value, sourceElementExpr: string, accessExpr: string): Value {

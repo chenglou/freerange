@@ -809,6 +809,20 @@ UNKNOWN negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: retur
     assumed from input: given items[].top: 0..1000
     assumed from input: given focused: int 1..<items.length
   missing: given items[focused].top == items[focused - 1].top
+UNKNOWN negative-patterns.ts:negativeForwardSymbolicSlotsAreNotSamePath: return.nextTop == return.currentTop
+  0..2000 as rows[focused+1].top == 0..2000 as rows[focused].top was not proven
+  need: rows[focused+1].top == rows[focused].top
+  known:
+    0..2000 as rows[focused+1].top
+    0..2000 as rows[focused].top
+    assumed from input: given items.length: int 2..50
+    assumed from input: given items[].height: 0..40
+    assumed from input: given focused: int 0..<items.length
+    assumed from input: given focused + 1 < items.length
+    inferred from code: rows[focused + 1].top - rows[focused].top >= 0
+    inferred from code: rows[focused + 1].top - rows[focused].top + rows[focused].height == 0
+    inferred from code: rows[focused + 1].top - rows[focused].height == 0
+  missing: given rows[focused+1].top == rows[focused].top
 UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return >= 0
   int -1..999 as (focused - 1) >= int 0..0 as 0 was not proven
   need: (focused - 1) >= 0
