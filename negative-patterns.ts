@@ -672,6 +672,22 @@ export function negativeInlineParamCallGiven(value: number) {
 }
 
 /** @fit
+ * given value: -100..100
+ * given min: 1..100
+ * given max: 1..100
+ * given min <= max
+ * return: -1..<1
+ */
+export function negativeElseIfBranchCanReturnUpper(value: number, min: number, max: number) {
+  if (value < -min) {
+    return -1
+  } else if (value > max) {
+    return 1
+  }
+  return 0
+}
+
+/** @fit
  * given containee: 0..1000
  * given container: 0..1000
  * given container >= containee

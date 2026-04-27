@@ -521,6 +521,24 @@ function ok() {
   })
 
   await withCliFixture({
+    'scout.ts': `function cap(value: number, max: number) {
+  return Math.min(value, max)
+}
+
+function f(value: number) {
+  return cap(value, 10)
+}
+`,
+  }, dir => {
+    const check = runFr(['scout', 'scout.ts', '--function', 'cap'], dir)
+    expectCli(check.exitCode === 0, 'expected fr scout to stay read-only', check.output)
+    expectCli(check.output.includes('candidate return >= value'), 'expected fr scout candidate output', check.output)
+    expectCli(check.output.includes('would require:'), 'expected fr scout requirement output', check.output)
+    expectCli(check.output.includes('UNKNOWN call cap(value, 10): requires max >= value'), 'expected fr scout call obligation output', check.output)
+    expectCli(check.output.includes('fr scout: 1 files, 2 candidates'), 'expected fr scout summary', check.output)
+  })
+
+  await withCliFixture({
     'helper.ts': `export function clamp(
   value: number,
   min: number, // @fit <= max
@@ -558,7 +576,7 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
 
-  console.log('cli: 12 expected behaviors')
+  console.log('cli: 13 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

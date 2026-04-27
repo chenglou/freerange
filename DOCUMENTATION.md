@@ -102,6 +102,13 @@ the return, surviving locals, and supported loops. It also shows which explicit
 comments are checked or assumed, which comments are redundant with inferred
 facts, and which unsupported source spots blocked proof.
 
+`fr scout --function helper path/to/file.ts` is an experimental read-only probe
+for the "what if inferred helper facts mattered?" question. It tries simple
+candidate facts like `return <= max`, prints the input facts those candidates
+would need, then scans calls against those provisional requirements. This is
+not a contract generator. It is intentionally noisier than `doctor`; use it to
+study a helper, not to decide whether a file is correct.
+
 When `check` or `doctor` prints a non-pass line, it also prints the next useful
 adoption command when there is one. Usually that is the caller or failing
 function's `fr infer --function ...` command; for `doctor REQUIRES` it is a

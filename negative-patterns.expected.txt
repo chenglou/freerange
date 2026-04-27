@@ -422,6 +422,18 @@ FAIL negative-patterns.ts:negativeInlineParamCallGiven: call negativeInlineParam
   called function requires value: 0..10
   this call passes value is 0..20
   missing: value <= 10
+FAIL negative-patterns.ts:negativeElseIfBranchCanReturnUpper: return: -1..<1
+  range was int -1..1, expected inside -1..<1
+  need: int -1..1 inside -1..<1
+  known:
+    int -1..1
+    int -1..-1 as -1
+    int 1..1 as 1
+    assumed from input: given value: -100..100
+    assumed from input: given min: 1..100
+    assumed from input: given max: 1..100
+    assumed from input: given min <= max
+  missing: int -1..1 < 1
 FAIL negative-patterns.ts:negativeRelationalCallGiven: call negativeNeedsContainerFit(containee, container): requires container >= containee
   called function requires container >= containee
   this call passes container is 0..50 and containee is 100..200

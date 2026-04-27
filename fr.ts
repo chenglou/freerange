@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import {inferFitFiles} from './src/check.ts'
+import {inferFitFiles, scoutFitFiles, type FitScoutReport} from './src/check.ts'
 import {printInferReport} from './src/infer-output.ts'
 import {doctorFitFiles, type FitCheck, type FitDoctorCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
@@ -17,9 +17,38 @@ switch (command) {
   case 'infer':
     await runInfer(args)
     break
+  case 'scout':
+    await runScout(args)
+    break
   default:
     printUsage()
     process.exitCode = 2
+}
+
+async function runScout(args: string[]) {
+  const {paths, functionName} = parseScoutArgs(args)
+  const input = resolveInputPaths(paths)
+  if (input == null) return
+  const report = scoutFitFiles(input.paths, functionName == null ? {} : {functionName})
+  printScoutReport('fr scout', input.paths.length, report)
+}
+
+function parseScoutArgs(args: string[]) {
+  let functionName: string | undefined
+  const paths: string[] = []
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]!
+    if (arg === '--function') {
+      functionName = args[++index]
+      continue
+    }
+    if (arg.startsWith('--function=')) {
+      functionName = arg.slice('--function='.length)
+      continue
+    }
+    paths.push(arg)
+  }
+  return {paths, functionName}
 }
 
 async function runCheck(args: string[]) {
@@ -110,6 +139,18 @@ function resolveInputPaths(args: string[]): {paths: string[]; configFile: string
     return null
   }
   return input
+}
+
+function printScoutReport(label: string, files: number, report: FitScoutReport) {
+  for (const candidate of report.candidates) {
+    console.log(`${candidate.file}:${candidate.functionName}`)
+    console.log(`  candidate ${candidate.fact}`)
+    console.log('  would require:')
+    for (const requirement of candidate.requirements) console.log(`    ${requirement}`)
+  }
+  const notable = report.checks.filter(check => check.status !== 'pass')
+  for (const check of notable) printDoctorCheck(check)
+  console.log(`${label}: ${files} files, ${report.summary.candidates} candidates, ${report.summary.pass} pass, ${report.summary.fail} fail, ${report.summary.requires} requires, ${report.summary.unknown} unknown`)
 }
 
 function printCheck(check: FitCheck) {
@@ -208,4 +249,5 @@ function printUsage() {
   console.error('  fr check [--calls] [file.ts ...]')
   console.error('  fr doctor [file.ts ...]')
   console.error('  fr infer [--function name] [--all] [file.ts ...]')
+  console.error('  fr scout [--function name] [file.ts ...]')
 }

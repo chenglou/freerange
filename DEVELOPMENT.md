@@ -13,6 +13,7 @@ bun install
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
 - `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
+- `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
 - `bun run verify path/to/file.ts` — old JSON-report inspection helper
 - `bun run infer path/to/file.ts --function name` — dev-only view of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter

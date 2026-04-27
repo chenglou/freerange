@@ -195,6 +195,26 @@ export type FitDoctorCheck = {
   reason?: string
 }
 
+export type FitScoutCandidate = {
+  file: string
+  functionName: string
+  fact: string
+  requirements: string[]
+}
+
+export type FitScoutReport = {
+  files: string[]
+  candidates: FitScoutCandidate[]
+  checks: FitDoctorCheck[]
+  summary: {
+    candidates: number
+    pass: number
+    fail: number
+    requires: number
+    unknown: number
+  }
+}
+
 export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
 
 export type FitInferSpec = {
@@ -349,6 +369,37 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
     }
   }
   return {files: paths, functions}
+}
+
+export function scoutFitFiles(paths: string[], options: {functionName?: string} = {}): FitScoutReport {
+  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const programs = [...project.modules.values()]
+  const candidates = programs.flatMap(program => [...program.functions.values()]
+    .filter(fn => options.functionName == null || fn.name === options.functionName)
+    .flatMap(fn => scoutFunctionCandidates(program, fn)))
+  const scoutSpecs = scoutRequirementSpecsByFunction(programs, candidates)
+  const savedSpecs = replaceFunctionSpecs(programs, scoutSpecs)
+  const checks: FitDoctorCheck[] = []
+
+  try {
+    const contractCache = new Map<string, FunctionContractProof>()
+    for (const program of project.entries) checks.push(...doctorFitProgram(program, contractCache))
+  } finally {
+    restoreFunctionSpecs(savedSpecs)
+  }
+
+  return {
+    files: paths,
+    candidates,
+    checks,
+    summary: {
+      candidates: candidates.length,
+      pass: checks.filter(check => check.status === 'pass').length,
+      fail: checks.filter(check => check.status === 'fail').length,
+      requires: checks.filter(check => check.status === 'requires').length,
+      unknown: checks.filter(check => check.status === 'unknown').length,
+    },
+  }
 }
 
 export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {
@@ -618,6 +669,138 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     redundant: redundantSpecs(specReports, resultFacts),
     loops,
     unsupported: [...new Set(unsupported)],
+  }
+}
+
+function scoutFunctionCandidates(program: Program, fn: FitFunction): FitScoutCandidate[] {
+  const env = programGlobalEnv(program)
+  const inputRoots = functionInputRoots(program, fn)
+  bindFunctionInputParameters(fn, [], program, env)
+
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env,
+    inputRoots,
+    stack: [fn.name],
+    checks: [],
+    assumptions: [],
+    contractCache: new Map(),
+    callObligations: 'silent',
+  }
+  const state = evaluateFunctionBodyState(fn, context)
+  if (state.result.kind !== 'number') return []
+
+  const candidates: FitScoutCandidate[] = []
+  for (const paramName of scoutNumericParameterNames(fn, env)) {
+    for (const op of ['>=', '<='] as const) {
+      const fact = `return ${op} ${paramName}`
+      const spec = parseFitSpecLine(fact)
+      if (spec.kind !== 'check-comparison') continue
+      const check = verifyCheckSpec(program.file, program, fn.name, env, state.result, spec, [], state.assumptions, new Map())
+      const requirements = scoutRequirementsFromReason(check.reason)
+      if (requirements.length === 0) continue
+      candidates.push({file: program.file, functionName: fn.name, fact, requirements})
+    }
+  }
+  return uniqueScoutCandidates(candidates)
+}
+
+function scoutNumericParameterNames(fn: FitFunction, env: Map<string, Value>): string[] {
+  const names: string[] = []
+  for (const param of fn.node.parameters) {
+    if (!ts.isIdentifier(param.name)) continue
+    const value = env.get(param.name.text)
+    if (value?.kind === 'number') names.push(param.name.text)
+  }
+  return names
+}
+
+function scoutRequirementsFromReason(reason: string | undefined): string[] {
+  if (reason == null) return []
+  const requirements: string[] = []
+  for (const line of reason.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('missing: given ')) continue
+    const requirement = tryParseScoutRequirement(trimmed.slice('missing: '.length))
+    if (requirement != null) requirements.push(requirement)
+  }
+  return [...new Set(requirements)]
+}
+
+function tryParseScoutRequirement(text: string): string | null {
+  try {
+    const spec = parseFitSpecLine(text)
+    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') return null
+    if (spec.text.includes(fitReturnPublicRoot)) return null
+    return spec.text
+  } catch {
+    return null
+  }
+}
+
+function uniqueScoutCandidates(candidates: FitScoutCandidate[]): FitScoutCandidate[] {
+  const seen = new Set<string>()
+  const unique: FitScoutCandidate[] = []
+  for (const candidate of candidates) {
+    const key = `${candidate.file}\0${candidate.functionName}\0${candidate.fact}\0${candidate.requirements.join('\0')}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(candidate)
+  }
+  return unique
+}
+
+function scoutRequirementSpecsByFunction(programs: Program[], candidates: FitScoutCandidate[]): Map<Program, Map<string, FitSpec[]>> {
+  const programsByFile = new Map(programs.map(program => [program.file, program]))
+  const specsByProgram = new Map<Program, Map<string, FitSpec[]>>()
+  const seen = new Set<string>()
+
+  for (const candidate of candidates) {
+    const program = programsByFile.get(candidate.file)
+    if (program == null) continue
+    let specsByFunction = specsByProgram.get(program)
+    if (specsByFunction == null) {
+      specsByFunction = new Map()
+      specsByProgram.set(program, specsByFunction)
+    }
+    const specs = specsByFunction.get(candidate.functionName) ?? []
+    for (const requirement of candidate.requirements) {
+      const key = `${candidate.file}\0${candidate.functionName}\0${requirement}`
+      if (seen.has(key)) continue
+      seen.add(key)
+      specs.push(parseFitSpecLine(requirement))
+    }
+    specsByFunction.set(candidate.functionName, specs)
+  }
+
+  return specsByProgram
+}
+
+type SavedFunctionSpecs = Map<Program, Map<string, FitSpec[] | undefined>>
+
+function replaceFunctionSpecs(programs: Program[], specsByProgram: Map<Program, Map<string, FitSpec[]>>): SavedFunctionSpecs {
+  const saved: SavedFunctionSpecs = new Map()
+  for (const program of programs) {
+    const savedProgramSpecs = new Map<string, FitSpec[] | undefined>()
+    saved.set(program, savedProgramSpecs)
+    const scoutSpecs = specsByProgram.get(program) ?? new Map()
+    for (const functionName of program.functions.keys()) {
+      savedProgramSpecs.set(functionName, program.specsByFunction.get(functionName))
+      const specs = scoutSpecs.get(functionName)
+      if (specs == null || specs.length === 0) program.specsByFunction.delete(functionName)
+      else program.specsByFunction.set(functionName, specs)
+    }
+  }
+  return saved
+}
+
+function restoreFunctionSpecs(saved: SavedFunctionSpecs) {
+  for (const [program, specsByFunction] of saved) {
+    for (const [functionName, specs] of specsByFunction) {
+      if (specs == null) program.specsByFunction.delete(functionName)
+      else program.specsByFunction.set(functionName, specs)
+    }
   }
 }
 
@@ -2265,7 +2448,7 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
   const condition = evaluateConditionFacts(statement.expression, context)
   if (condition.truth === 'true') return evaluateBranchStatement(statement.thenStatement, context)
   if (condition.truth === 'false') {
-    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateBranchStatement(statement.elseStatement, context)
+    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateElseBranchStatement(statement.elseStatement, context, statements, nextIndex)
   }
 
   const trueContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, true), condition.trueAssumptions)
@@ -2273,7 +2456,7 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
   const trueFlow = evaluateBranchStatement(statement.thenStatement, trueContext)
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
-    : evaluateBranchStatement(statement.elseStatement, falseContext)
+    : evaluateElseBranchStatement(statement.elseStatement, falseContext, statements, nextIndex)
   if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
     return {
       kind: 'return',
@@ -2296,6 +2479,12 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
     envWithAssumptions(falseContext.env, condition.falseAssumptions),
   )
   return {kind: 'fallthrough'}
+}
+
+function evaluateElseBranchStatement(statement: ts.Statement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
+  return ts.isIfStatement(statement)
+    ? evaluateIfStatement(statement, context, statements, nextIndex)
+    : evaluateBranchStatement(statement, context)
 }
 
 function refinedEnvForCondition(context: EvalContext, expression: ts.Expression, truth: boolean): Map<string, Value> {
@@ -3718,7 +3907,7 @@ function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context:
   const condition = evaluateConditionFacts(statement.expression, context)
   if (condition.truth === 'true') return evaluateArrayMapCallbackBranchStatement(statement.thenStatement, context)
   if (condition.truth === 'false') {
-    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateArrayMapCallbackBranchStatement(statement.elseStatement, context)
+    return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateArrayMapCallbackElseBranchStatement(statement.elseStatement, context, statements, nextIndex)
   }
 
   const trueContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, true), condition.trueAssumptions)
@@ -3726,7 +3915,7 @@ function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context:
   const trueFlow = evaluateArrayMapCallbackBranchStatement(statement.thenStatement, trueContext)
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
-    : evaluateArrayMapCallbackBranchStatement(statement.elseStatement, falseContext)
+    : evaluateArrayMapCallbackElseBranchStatement(statement.elseStatement, falseContext, statements, nextIndex)
   if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
     return {
       kind: 'return',
@@ -3757,6 +3946,12 @@ function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context:
     envWithAssumptions(falseContext.env, condition.falseAssumptions),
   )
   return {kind: 'fallthrough'}
+}
+
+function evaluateArrayMapCallbackElseBranchStatement(statement: ts.Statement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
+  return ts.isIfStatement(statement)
+    ? evaluateArrayMapCallbackIfStatement(statement, context, statements, nextIndex)
+    : evaluateArrayMapCallbackBranchStatement(statement, context)
 }
 
 function evaluateArrayMapCallbackBranchStatement(statement: ts.Statement, context: EvalContext): EvalFlow {
