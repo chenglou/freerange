@@ -66,6 +66,7 @@ import {
   type ArrayValue,
   type FactSource,
   type LinearConstraint,
+  type NullishKind,
   type NumberCase,
   type NumberValue,
   type Value,
@@ -308,6 +309,12 @@ type EvalFlow =
   | {kind: 'fallthrough'}
 
 type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
+
+type PresenceGuard = {
+  target: ts.Expression
+  nullish: NullishKind
+  presentWhenTrue: boolean
+}
 
 const maxInlineDepth = 12
 
@@ -2254,13 +2261,14 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
 }
 
 function presenceCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
-  const target = nullishComparisonTarget(expression, truth)
-  if (target == null) return null
-  const path = nullablePresencePath(target)
+  const guard = presenceGuardForCondition(expression)
+  if (guard == null || truth !== guard.presentWhenTrue) return null
+  const path = nullablePresencePath(guard.target)
   if (path == null) return null
   const root = context.env.get(path.root)
   const current = valueAtPropertyPath(root, path.segments)
   if (current?.kind !== 'nullable') return null
+  if (!presenceGuardExcludesAbsent(current.absent, guard.nullish)) return null
   const value = valueWithPropertyPathValue(root, path.segments, current.present)
   return value == null ? null : {root: path.root, value}
 }
@@ -2312,21 +2320,57 @@ function conditionCaseRefinement(
   return identifierComparisonTarget(context, expression.right, flipComparison(branchComparison), expression.left)
 }
 
-function nullishComparisonTarget(expression: ts.Expression, truth: boolean): ts.Expression | null {
+function presenceGuardForCondition(expression: ts.Expression): PresenceGuard | null {
+  return typeofUndefinedPresenceGuard(expression) ?? nullishPresenceGuard(expression)
+}
+
+function typeofUndefinedPresenceGuard(expression: ts.Expression): PresenceGuard | null {
   if (!ts.isBinaryExpression(expression)) return null
   const op = expression.operatorToken.kind
   if (!isNullishComparisonSyntax(op)) return null
-  const target = isNullishLiteral(expression.left) ? expression.right : isNullishLiteral(expression.right) ? expression.left : null
+
+  const left = typeofUndefinedSide(expression.left, expression.right)
+  const right = typeofUndefinedSide(expression.right, expression.left)
+  const target = left ?? right
   if (target == null) return null
-  const equalsNull = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
-  const presentWhenConditionTrue = !equalsNull
-  return truth === presentWhenConditionTrue ? target : null
+  const equalsUndefined = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
+  return {target, nullish: 'undefined', presentWhenTrue: !equalsUndefined}
 }
 
-function isNullishLiteral(expression: ts.Expression) {
+function typeofUndefinedSide(typeofExpression: ts.Expression, literalExpression: ts.Expression): ts.Expression | null {
+  const literal = unwrapExpression(literalExpression)
+  if (!ts.isStringLiteral(literal) || literal.text !== 'undefined') return null
+  const current = unwrapExpression(typeofExpression)
+  return ts.isTypeOfExpression(current) ? current.expression : null
+}
+
+function nullishPresenceGuard(expression: ts.Expression): PresenceGuard | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  if (!isNullishComparisonSyntax(op)) return null
+  const left = nullishLiteralKind(expression.left)
+  const right = nullishLiteralKind(expression.right)
+  const target = left != null ? expression.right : right != null ? expression.left : null
+  const literalKind = left ?? right
+  if (target == null || literalKind == null) return null
+  const loose = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.ExclamationEqualsToken
+  const equalsNullish = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
+  return {
+    target,
+    nullish: loose ? 'nullish' : literalKind,
+    presentWhenTrue: !equalsNullish,
+  }
+}
+
+function nullishLiteralKind(expression: ts.Expression): NullishKind | null {
   const unwrapped = unwrapExpression(expression)
-  return unwrapped.kind === ts.SyntaxKind.NullKeyword
-    || (ts.isIdentifier(unwrapped) && unwrapped.text === 'undefined')
+  if (unwrapped.kind === ts.SyntaxKind.NullKeyword) return 'null'
+  if (ts.isIdentifier(unwrapped) && unwrapped.text === 'undefined') return 'undefined'
+  return null
+}
+
+function presenceGuardExcludesAbsent(absent: NullishKind, guard: NullishKind) {
+  return guard === 'nullish' || absent === guard
 }
 
 function isNullishComparisonSyntax(kind: ts.SyntaxKind) {
@@ -4658,25 +4702,30 @@ function evaluateConditionFacts(expression: ts.Expression, context: EvalContext)
 }
 
 function evaluatePresenceConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts | null {
-  if (!ts.isBinaryExpression(expression)) return null
-  const op = expression.operatorToken.kind
-  if (!isNullishComparisonSyntax(op)) return null
-  const targetExpression = isNullishLiteral(expression.left)
-    ? expression.right
-    : isNullishLiteral(expression.right)
-      ? expression.left
-      : null
-  if (targetExpression == null) return null
-  const target = evaluateExpression(targetExpression, context)
-  const equalsNull = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
-  const presentTruth = equalsNull ? 'false' : 'true'
-  const nullTruth = equalsNull ? 'true' : 'false'
+  const guard = presenceGuardForCondition(expression)
+  if (guard == null) return null
+  const target = evaluateExpression(guard.target, context)
+  const presentTruth = guard.presentWhenTrue ? 'true' : 'false'
   const truth = target.kind === 'null'
-    ? nullTruth
-    : target.kind === 'nullable' || target.kind === 'unknown'
+    ? knownAbsentPresenceTruth('null', guard)
+    : target.kind === 'nullable'
+      ? nullablePresenceTruth(target.absent, guard, presentTruth)
+      : target.kind === 'unknown'
       ? 'maybe'
       : presentTruth
   return {truth, trueAssumptions: [], falseAssumptions: []}
+}
+
+function nullablePresenceTruth(absent: NullishKind, guard: PresenceGuard, presentTruth: 'true' | 'false'): 'true' | 'false' | 'maybe' {
+  const absentTruth = knownAbsentPresenceTruth(absent, guard)
+  return absentTruth === presentTruth ? presentTruth : 'maybe'
+}
+
+function knownAbsentPresenceTruth(absent: NullishKind, guard: PresenceGuard): 'true' | 'false' | 'maybe' {
+  if (guard.nullish === 'nullish') return guard.presentWhenTrue ? 'false' : 'true'
+  if (absent === 'nullish') return 'maybe'
+  if (absent === guard.nullish) return guard.presentWhenTrue ? 'false' : 'true'
+  return guard.presentWhenTrue ? 'true' : 'false'
 }
 
 function isComparisonSyntax(kind: ts.SyntaxKind) {

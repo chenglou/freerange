@@ -843,6 +843,11 @@ export function negativeNullablePropertyNeedsPresentGuard(focused: number) {
   return state.previous!.targetIndex
 }
 
+export function negativeOptionalNumberNeedsPresentGuard(max?: number) {
+  // @ts-expect-error This kernel intentionally checks the missing present guard.
+  return Math.max(max, 0) // @fit >= max
+}
+
 export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
   let scratch = 0
   let i = 0

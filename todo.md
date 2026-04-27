@@ -29,7 +29,7 @@ sections[].rows[].height <= maxHeight
 - Anonymous two-collection wildcard sides like `rows[].top <= boxes[].bottom` are intentionally unsupported; use labels only when same index is the intended relation.
 - Array mutation is conservative: `reverse` and `sort` forget sequence facts, while `splice` and indexed assignment forget length/item facts.
 - Array lengths default to non-negative integers, and TypeScript-backed array/object/tuple shapes are used even when no `given` line names the path yet. This includes imported type aliases/interfaces, utility types like `Pick`, required fixed tuple slots, and generic call returns when TypeScript can see them.
-- Optional/nullable properties stay conservative until ordinary TypeScript control flow narrows the expression; guarded reads like `if (input.rows == null) return 0; return input.rows.length` can use the narrowed shape, and branch-created nullable locals or property paths keep their present-side numeric facts after `== null` / `!= null` guards. Unguarded optional paths remain unknown.
+- Optional/nullable values stay conservative until ordinary TypeScript control flow narrows the expression; guarded reads like `if (input.rows == null) return 0; return input.rows.length` can use the narrowed shape, optional numeric params can be used after `typeof value !== 'undefined'`, and branch-created nullable locals or property paths keep their present-side numeric facts after `== null` / `!= null` guards. Unguarded optional paths remain unknown.
 - Local array binding patterns are supported for finite arrays/tuples, including skipped slots. This lets tuple-returning geometry helpers keep ordinary destructuring like `const [, , offsetX] = getEdgeCenter(...)`.
 - Finite array/tuple indexing consumes exact finite index cases, so `index: 0 | 2` reads slots 0 and 2 without widening through slot 1.
 - Tuple element facts also survive helper/import summaries: a checked `return[2] >= 0` can feed a caller's destructured `offsetX`.
@@ -57,7 +57,7 @@ sections[].rows[].height <= maxHeight
 
 ## Do Next
 
-There are three active tracks now:
+Active tracks now:
 
 1. **Make infer/audit/report the adoption loop.**
    `infer` should be the factual inventory agents use before writing comments. `check` proves the written claims; `check --calls` adds the helper-call scan; `doctor` is that call scan by itself for adoption. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
@@ -91,6 +91,12 @@ Keep this visible so shape work and IR cleanup do not erase the boring proof/rep
    Current infer sweep across checked demos after the first small pruning pass: 56 explicit checks pass from code, 98 input facts are assumed, 0 are not-inferred, 34 are redundant because emitted inferred facts already cover them, and 22 remain keepers. The audit now splits redundant lines into likely-removable noise and public-looking contracts so pruning stays conservative.
 
    Corpus loop has started in `/Users/chenglou/github/freerange-corpus`. The first pressure set was `tldraw`, `dagre`, `xyflow`, `d3-scale`, and `masonry`; the second read-only sweep added `floating-ui`, `dnd-kit`, `react-grid-layout`, `d3-dag`, `Chart.js`, and `fabric.js`. `xyflow` found named `const` arrow helpers, destructured params, silent helper summaries, interval multiplication over unbounded non-negative values, tuple geometry returns, tuple-slot helper summaries, fall-through branch joins, and conservative scalar/object assignment forgetting. `d3-scale` added `Math.sign` pressure. `dagre` added numeric-limit range-loop pressure. `tldraw` confirmed small precision helpers fit the current surface. `floating-ui` now has a checked `clamp` through `export const min/max = Math.min/max`, which is the right size for static helper-binding support. New read-only lessons: class methods/getters with `this` are the natural home for geometry specs in `dnd-kit` and `fabric.js`, and the first local source-checking support has landed; Interact uses tiny anonymous default-exported helpers for geometry; axis-parametric property access is the big `floating-ui` shape; `react-grid-layout` mostly wants current arithmetic plus better tuple/indexed-param ergonomics; `Chart.js` and `d3-dag` quickly move into sorted-window loops, browser-owned measurement, and graph mutation.
+   Latest per-file corpus sweep after declaration-map source recovery: 38 annotated files, 118 pass, 0 fail, 0 unknown; doctor found 2 pass and 12 unknown call-precondition checks. There are no remaining `External package` or `Declaration-only` import blockers in the annotated sweep. New blocker buckets:
+   - `tldraw`: declaration maps now recover `@tldraw/editor` source for `clampToRange`; the honest blocker is `packages/editor/src/lib/primitives/utils.ts#clamp` having no `@fit`, and direct `infer clamp` then hits the overload/optional-`max` source shape (`Math.max expected numbers`).
+   - `react-grid-layout`: doctor mainly wants missing input facts for clamp bounds, e.g. `0 <= cols - w`, `0 <= maxRows - h`, `0 <= cols`, and `0 <= maxRows`.
+   - `xyflow`: a mix of missing input facts (`minZoom <= maxZoom`, `1 <= min`) and conservative optional-property shape around `dimensions.width/height`.
+   - `2d-geometry` and `litegraph`: imports resolve to local source now; blockers are missing helper contracts on boolean geometry predicates like `EQ`, `EQ_0`, `GT`, `isPointInRect`, and `isInRectangle`.
+   - `moveable`: still an environment/dependency-resolution probe. `@scena/matrix`, `@daybrush/utils`, `framework-utils`, and `css-to-mat` are not installed/resolved in this checkout, so do not treat those as Freerange declaration-map failures.
 
 5. **Add more realistic red mistakes.**
    Keep adding small negative kernels for mistakes agents actually make: wrong gap, off-by-one target index, missing row bottom, inverted clamp bounds, unbounded prompt height, stale row spacing after a loop refactor. The report wording is part of the feature.
@@ -145,7 +151,7 @@ What it deliberately does not do:
 - no linear facts, sequence facts, or proof obligations from TypeScript
 - no imported function body inlining
 - no trusting declaration files as checked helper contracts; declaration maps only recover local source
-- no optional/nullable property optimism
+- no unguarded optional/nullable optimism
 - no unbounded TypeScript walk through giant parser/library types
 
 `shape-diff` was useful on the real pressure points:
@@ -221,7 +227,7 @@ exist in TypeScript.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are assumed from that point forward, not proved against earlier state.
-- TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, required fixed tuple slots, safe optional/rest tuple length ranges, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, property-access call shape, namespace-imported structural call shape, unions, and intersections. Optional/rest tuple slots, optional and nullable properties, and huge types are still conservative unknowns.
+- TS shape reading now uses TypeScript as a structural oracle. It handles arrays, readonly arrays, required fixed tuple slots, safe optional/rest tuple length ranges, object type literals, local and imported interfaces/type aliases, simple utility types, generic return instantiations, property-access call shape, namespace-imported structural call shape, unions, intersections, and guarded optional/nullable values. Optional/rest tuple slots, unguarded optional/nullable values, and huge types are still conservative unknowns.
 - Anonymous wildcard comparisons support one collection at a time. The same collection may appear on both sides. Labeled same-index comparisons can relate two collections when their lengths are proven equal. Adjacent formulas work only over one collection and only when a sequence relation was inferred; all-pairs and source/id matching are still unsupported.
 - Mutation handling only forgets facts; it does not infer precise facts after mutation.
 - Scalar accumulation support is thin: target-free `+=` and `total = total + delta` running sums, guarded `+=`, and simple min/max assignment loops work, but no `reduce`, spread aggregates, or public aggregate syntax yet.

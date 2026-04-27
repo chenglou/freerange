@@ -34,6 +34,8 @@ export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | '
 
 export type Value = NumberValue | ObjectValue | ArrayValue | NullValue | NullableValue | UnknownValue
 
+export type NullishKind = 'null' | 'undefined' | 'nullish'
+
 export type NumberValue = {
   kind: 'number'
   min: number
@@ -68,6 +70,7 @@ export type NullValue = {
 export type NullableValue = {
   kind: 'nullable'
   present: Value
+  absent: NullishKind
   expr: string | null
 }
 
@@ -220,11 +223,15 @@ export function nullValue(expr: string | null = 'null'): NullValue {
   return {kind: 'null', expr}
 }
 
-export function nullableValue(present: Value, expr: string | null = null): NullableValue | UnknownValue {
+export function nullableValue(present: Value, expr: string | null = null, absent: NullishKind = 'null'): NullableValue | UnknownValue {
   if (present.kind === 'unknown') return present
   if (present.kind === 'null') return unknown('Nullable value had no present branch')
-  if (present.kind === 'nullable') return {...present, expr: expr ?? present.expr}
-  return {kind: 'nullable', present, expr}
+  if (present.kind === 'nullable') return {...present, absent: mergeNullishKind(present.absent, absent), expr: expr ?? present.expr}
+  return {kind: 'nullable', present, absent, expr}
+}
+
+export function mergeNullishKind(left: NullishKind, right: NullishKind): NullishKind {
+  return left === right ? left : 'nullish'
 }
 
 export function unknown(reason: string): UnknownValue {
@@ -576,19 +583,19 @@ export function joinValues(left: Value, right: Value): Value {
     }
   }
   if (left.kind === 'null' && right.kind === 'null') return nullValue(left.expr ?? right.expr)
-  if (left.kind === 'nullable' && right.kind === 'null') return left
-  if (left.kind === 'null' && right.kind === 'nullable') return right
+  if (left.kind === 'nullable' && right.kind === 'null') return {...left, absent: mergeNullishKind(left.absent, 'null')}
+  if (left.kind === 'null' && right.kind === 'nullable') return {...right, absent: mergeNullishKind('null', right.absent)}
   if (left.kind === 'nullable' && right.kind === 'nullable') {
     const present = joinValues(left.present, right.present)
-    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null, mergeNullishKind(left.absent, right.absent))
   }
   if (left.kind === 'nullable') {
     const present = joinValues(left.present, right)
-    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null, left.absent)
   }
   if (right.kind === 'nullable') {
     const present = joinValues(left, right.present)
-    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null, right.absent)
   }
   if (left.kind === 'null') return nullableValue(right, right.expr)
   if (right.kind === 'null') return nullableValue(left, left.expr)

@@ -2,6 +2,8 @@ import * as ts from 'typescript'
 import {
   joinValues,
   linearNameForExpression,
+  mergeNullishKind,
+  nullableValue,
   numberValue,
   unknown,
   unknownArray,
@@ -9,6 +11,7 @@ import {
   unknownNumber,
   unknownObject,
   type ArrayValue,
+  type NullishKind,
   type Value,
 } from './domain.ts'
 import {linearVariable} from './linear.ts'
@@ -93,22 +96,22 @@ function isBroadUnknownNumber(value: Value) {
 function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
   if (depth > maxTsShapeDepth) return null
   if (seen.has(type)) return unknownObject(expr)
-  if (isNullishTsType(type)) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
+  if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
   if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
 
   if (type.isUnion()) {
-    if (type.types.some(isNullishTsType)) return unknown(`Optional or nullable value is not in the static layout subset: ${expr}`)
     if (type.types.length > maxTsShapeUnionMembers) return null
-    let value: Value | null = null
-    for (const member of type.types) {
-      const next = valueFromTsType(expr, member, checker, location, seen, depth + 1)
-      if (next == null) return null
-      value = value == null ? next : joinValues(value, next)
+    const nullish = unionNullishKind(type.types)
+    const members = type.types.filter(member => tsNullishKind(member) == null)
+    if (nullish != null) {
+      if (members.length === 0) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
+      const present = joinedTsUnionValue(expr, members, checker, location, seen, depth)
+      return present == null ? null : nullableValue(present, expr, nullish)
     }
-    return value
+    return joinedTsUnionValue(expr, members, checker, location, seen, depth)
   }
 
   if (checker.isTupleType(type)) {
@@ -130,20 +133,48 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
     const name = property.getName()
     if (name === 'prototype' || name.startsWith('__@')) continue
     const propExpr = `${expr}.${name}`
-    if ((property.flags & ts.SymbolFlags.Optional) !== 0) {
-      props.set(name, unknown(`Optional property ${propExpr} is not in the static layout subset`))
-      continue
-    }
     const propType = checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration ?? location)
     const value = valueFromTsType(propExpr, propType, checker, property.valueDeclaration ?? location, seen, depth + 1)
-    props.set(name, value ?? unknown(`Unsupported TypeScript property shape: ${propExpr}`))
+      ?? unknown(`Unsupported TypeScript property shape: ${propExpr}`)
+    props.set(name, (property.flags & ts.SymbolFlags.Optional) !== 0 && value.kind !== 'nullable'
+      ? nullableValue(value, propExpr, 'undefined')
+      : value)
   }
   seen.delete(type)
   return {kind: 'object', props, expr}
 }
 
-function isNullishTsType(type: ts.Type) {
-  return (type.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0
+function joinedTsUnionValue(
+  expr: string,
+  members: readonly ts.Type[],
+  checker: ts.TypeChecker,
+  location: ts.Node,
+  seen: Set<ts.Type>,
+  depth: number,
+): Value | null {
+  let value: Value | null = null
+  for (const member of members) {
+    const next = valueFromTsType(expr, member, checker, location, seen, depth + 1)
+    if (next == null) return null
+    value = value == null ? next : joinValues(value, next)
+  }
+  return value
+}
+
+function unionNullishKind(types: readonly ts.Type[]): NullishKind | null {
+  let result: NullishKind | null = null
+  for (const type of types) {
+    const kind = tsNullishKind(type)
+    if (kind == null) continue
+    result = result == null ? kind : mergeNullishKind(result, kind)
+  }
+  return result
+}
+
+function tsNullishKind(type: ts.Type): NullishKind | null {
+  if ((type.flags & ts.TypeFlags.Null) !== 0) return 'null'
+  if ((type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) return 'undefined'
+  return null
 }
 
 function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
@@ -269,13 +300,40 @@ function valueFromTypeReference(expr: string, type: ts.TypeReferenceNode, progra
 }
 
 function valueFromUnionSyntaxType(expr: string, type: ts.UnionTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
+  const nullish = unionSyntaxNullishKind(type.types)
+  const members = type.types.filter(member => syntaxNullishKind(member) == null)
+  if (nullish != null) {
+    if (members.length === 0) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
+    const present = joinedUnionSyntaxValue(expr, members, program, seen)
+    return present == null ? null : nullableValue(present, expr, nullish)
+  }
+  return joinedUnionSyntaxValue(expr, members, program, seen)
+}
+
+function joinedUnionSyntaxValue(expr: string, members: readonly ts.TypeNode[], program: ShapeProgram, seen: Set<string>): Value | null {
   let value: Value | null = null
-  for (const member of type.types) {
+  for (const member of members) {
     const next = valueFromSyntaxTypeShape(expr, member, program, seen)
     if (next == null) return null
     value = value == null ? next : joinValues(value, next)
   }
   return value
+}
+
+function unionSyntaxNullishKind(types: readonly ts.TypeNode[]): NullishKind | null {
+  let result: NullishKind | null = null
+  for (const type of types) {
+    const kind = syntaxNullishKind(type)
+    if (kind == null) continue
+    result = result == null ? kind : mergeNullishKind(result, kind)
+  }
+  return result
+}
+
+function syntaxNullishKind(type: ts.TypeNode): NullishKind | null {
+  if (type.kind === ts.SyntaxKind.UndefinedKeyword || type.kind === ts.SyntaxKind.VoidKeyword) return 'undefined'
+  if (ts.isLiteralTypeNode(type) && type.literal.kind === ts.SyntaxKind.NullKeyword) return 'null'
+  return null
 }
 
 function valueFromIntersectionSyntaxType(expr: string, type: ts.IntersectionTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
@@ -308,10 +366,11 @@ function objectValueFromTypeMembers(expr: string, members: ts.NodeArray<ts.TypeE
     const name = propertyNameText(member.name)
     if (name == null) continue
     const propExpr = `${expr}.${name}`
-    const value = member.questionToken == null
-      ? valueFromSyntaxTypeShape(propExpr, member.type, program, seen) ?? valueFromTypeNodeShape(propExpr, member.type, program) ?? unknownNumber(propExpr)
-      : unknown(`Optional property ${propExpr} is not in the static layout subset`)
-    props.set(name, value)
+    const value = valueFromSyntaxTypeShape(propExpr, member.type, program, seen) ?? valueFromTypeNodeShape(propExpr, member.type, program) ?? unknownNumber(propExpr)
+    const prop = member.questionToken == null || value.kind === 'nullable'
+      ? value
+      : nullableValue(value, propExpr, 'undefined')
+    props.set(name, prop)
   }
   return {kind: 'object', props, expr}
 }

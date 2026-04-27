@@ -279,7 +279,7 @@ FAIL negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: return.x: 0..100
 UNKNOWN negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows == other.rows
   Non-number equality is only proven for the same source expression
 UNKNOWN negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
-  Optional property optionalStructuralShapeApi.wrapRows(items).rows is not in the static layout subset
+  Nullable value optionalStructuralShapeApi.wrapRows(items).rows was not proven present
 FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
   range was -Infinity..Infinity as items[index].height, expected inside 0..40
   need: items[index].height inside 0..40
@@ -531,6 +531,8 @@ UNKNOWN negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: in
   Nullable value (focused - 1) was not proven present
 UNKNOWN negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
   Nullable value state.previous! was not proven present
+UNKNOWN negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
+  Math.max expected numbers
 FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was -Infinity..Infinity as scratch, expected inside 0..0
   need: scratch inside 0..0
@@ -970,7 +972,7 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: ret
     assumed from input: given width: 0..1000
   missing: given (width + importedChromeX) == ((width + importedChromeX) + 1)
 UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
-  Optional property input.rows is not in the static layout subset
+  Nullable value input.rows was not proven present
 UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
   -Infinity..Infinity as importedTupleWithOneOffset(value)[] >= int 0..0 as 0 was not proven
   need: importedTupleWithOneOffset(value)[] >= 0

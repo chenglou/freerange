@@ -1600,6 +1600,13 @@ export function nullablePropertyGuardKeepsPresentObjectFacts(focused: number) {
   return state.previous.targetIndex
 }
 
+export function typeofUndefinedGuardKeepsOptionalNumber(max?: number) {
+  if (typeof max !== 'undefined') {
+    return Math.max(max, 0) // @fit >= max
+  }
+  return 0
+}
+
 /** @fit
  * given items.length: int 0..100
  * given index: int 0..100

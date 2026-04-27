@@ -756,7 +756,7 @@ Every hop must be statically known: a top-level `const`, import, or export whose
 
 TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
-Optional and nullable properties stay conservative:
+Optional and nullable values stay conservative:
 
 ```ts
 type MaybeRows = {
@@ -782,6 +782,18 @@ the narrowed shape at that expression:
 function guardedRowsLength(input: MaybeRows) {
   if (input.rows == null) return 0
   return input.rows.length
+}
+```
+
+The same applies to optional numeric params. A guard that proves the undefined
+side is gone lets normal math use the value:
+
+```ts
+function floorAtZero(max?: number) {
+  if (typeof max !== 'undefined') {
+    return Math.max(max, 0) // @fit >= max
+  }
+  return 0
 }
 ```
 
@@ -1176,7 +1188,7 @@ The checker understands a small pure subset:
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
 - return-style `if` guards and simple fall-through `if` / `else` branches
-- branch-created nullable values and property paths refined by ordinary `== null` / `!= null` guards
+- branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, plus `typeof value !== 'undefined'` for optional values
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
