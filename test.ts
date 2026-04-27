@@ -241,6 +241,20 @@ if (missingEqualityRedundantFacts.length > 0) {
   console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
 }
 
+const callSiteTextReport = inferFitFiles(['patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
+const callSiteTextFacts = new Set(callSiteTextReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedCallSiteTextFacts = [
+  'return == max(0, min(value, (position.cols - w)))',
+]
+const missingCallSiteTextFacts = expectedCallSiteTextFacts.filter(fact => !callSiteTextFacts.has(fact))
+if (missingCallSiteTextFacts.length > 0) {
+  console.error('expected call-site inferred text changed')
+  console.error(missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer call-site text: ${expectedCallSiteTextFacts.length} expected facts`)
+}
+
 const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['patterns.ts'], 'typedObjectParamArrayShape'),
   formatInferSnapshot(['patterns.ts'], 'propertyAccessCallShape'),

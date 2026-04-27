@@ -4329,7 +4329,7 @@ function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
   if (bindings == null || bindings.size === 0) return text
   let result = text
   for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
-    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, 'g'), () => replacement)
+    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$]|\\s*\\()`, 'g'), () => replacement)
   }
   return result
 }
