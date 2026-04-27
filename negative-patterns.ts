@@ -804,6 +804,29 @@ export function negativeLocalHelperPostconditionTooNarrow(containerWidth: number
   return {cols}
 }
 
+/** @fit
+ * given bounds.min: -1000..1000
+ * given bounds.max: -1000..1000
+ * given value: -1000..1000
+ * return >= bounds.min
+ */
+export function negativeAliasHelperPreconditionNeedsComparison(bounds: {min: number; max: number}, value: number) {
+  const low = bounds.min
+  const high = bounds.max
+  return negativeConditionalClampLayoutValue(low, value, high)
+}
+
+/** @fit
+ * given extent[0][0]: -1000..1000
+ * given extent[1][0]: -990..1000
+ * given width: 0..10
+ * given value: -1000..1000
+ * return >= extent[0][0]
+ */
+export function negativeFixedElementHelperPreconditionNeedsComparison(extent: [[number, number], [number, number]], width: number, value: number) {
+  return negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width)
+}
+
 export function negativeSilentHelperSummaryRequiresPrecondition() {
   const clamped = negativeConditionalClampLayoutValue(10, 0, 2)
   return {
@@ -867,6 +890,15 @@ export function negativeScalarStringishMutationForgetsMutatedRoot(items: number[
   let path = ''
   path += `M ${items.length}`
   return path // @fit 0
+}
+
+/** @fit
+ * given box.width: 0..10
+ * return >= 0
+ */
+export function negativeObjectMutationForgetsInputPath(box: {width: number}) {
+  box.width = -1
+  return box.width
 }
 
 /** @fit

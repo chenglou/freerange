@@ -1267,6 +1267,48 @@ export function userlandClamp(value: number) {
   return clampLayoutValue(value, 0, 320)
 }
 
+/** @fit
+ * given bounds.min: -1000..1000
+ * given bounds.max: -1000..1000
+ * given bounds.min <= bounds.max
+ * given value: -1000..1000
+ * return >= bounds.min
+ * return <= bounds.max
+ */
+export function userlandClampThroughScalarAliases(bounds: {min: number; max: number}, value: number) {
+  const low = bounds.min
+  const high = bounds.max
+  const min = low
+  const max = high
+  return clampLayoutValue(value, min, max)
+}
+
+/** @fit
+ * given position.cols: 0..1000
+ * given w: 0..position.cols
+ * given value: -1000..1000
+ * return >= 0
+ * return <= position.cols - w
+ */
+export function userlandClampThroughArithmeticAlias(position: {cols: number}, w: number, value: number) {
+  const {cols} = position
+  const max = cols - w
+  return clampLayoutValue(value, 0, max)
+}
+
+/** @fit
+ * given extent[0][0]: -1000..1000
+ * given extent[1][0]: -1000..1000
+ * given width: 0..10
+ * given value: -1000..1000
+ * given extent[0][0] <= extent[1][0] - width
+ * return >= extent[0][0]
+ * return <= extent[1][0] - width
+ */
+export function userlandClampThroughFixedElementPaths(extent: [[number, number], [number, number]], width: number, value: number) {
+  return clampLayoutValue(value, extent[0][0], extent[1][0] - width)
+}
+
 export function silentHelperSummaryFeedsReturnField(
   containerWidth: number, // @fit 320..2000
 ) {

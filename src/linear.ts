@@ -36,6 +36,7 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
   if (ts.isNumericLiteral(expression)) return linearConstant(Number(expression.text))
   if (ts.isIdentifier(expression)) return linearVariable(expression.text)
   if (ts.isPropertyAccessExpression(expression)) return linearVariable(expression.getText())
+  if (ts.isElementAccessExpression(expression) && isFixedElementAccessExpression(expression)) return linearVariable(expression.getText())
   if (ts.isParenthesizedExpression(expression)) return linearFromExpression(expression.expression)
   if (ts.isPrefixUnaryExpression(expression)) {
     const operand = linearFromExpression(expression.operand)
@@ -66,6 +67,14 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
     default:
       return null
   }
+}
+
+function isFixedElementAccessExpression(expression: ts.ElementAccessExpression): boolean {
+  if (numericLiteralValue(expression.argumentExpression) == null) return false
+  if (ts.isIdentifier(expression.expression) || expression.expression.kind === ts.SyntaxKind.ThisKeyword) return true
+  if (ts.isPropertyAccessExpression(expression.expression)) return true
+  if (ts.isElementAccessExpression(expression.expression)) return isFixedElementAccessExpression(expression.expression)
+  return false
 }
 
 export function linearAdd(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {

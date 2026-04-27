@@ -317,6 +317,10 @@ type PresenceGuard = {
   presentWhenTrue: boolean
 }
 
+type LocalizeOptions = {
+  preserveLinear?: boolean
+}
+
 const maxInlineDepth = 12
 
 type AssumedGivenSpec =
@@ -954,19 +958,19 @@ function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program:
   }
 }
 
-function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>) {
+function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, options: LocalizeOptions = {}) {
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const param = fn.node.parameters[i]!
     const value = argumentValues[i] ?? unknown(`Missing argument ${i} for ${fn.name}`)
-    bindPatternFromValue(param.name, value, env)
+    bindPatternFromValue(param.name, value, env, options)
   }
 }
 
 function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, thisValue?: Value) {
   if (functionHasInstanceThisInput(fn)) {
-    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this'))
+    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
   }
-  bindFunctionArgumentParameters(fn, argumentValues, env)
+  bindFunctionArgumentParameters(fn, argumentValues, env, {preserveLinear: true})
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
@@ -975,9 +979,9 @@ function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Progr
     ?? unknownObject('param')
 }
 
-function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<string, Value>) {
+function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<string, Value>, options: LocalizeOptions = {}) {
   if (ts.isIdentifier(name)) {
-    env.set(name.text, localizeValue(value, name.text))
+    env.set(name.text, localizeValue(value, name.text, options))
     return
   }
   if (ts.isObjectBindingPattern(name)) {
@@ -991,25 +995,25 @@ function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<strin
       const prop = value.kind === 'object'
         ? value.props.get(propertyName) ?? unknownNumber(`${value.expr ?? 'param'}.${propertyName}`)
         : unknown(`Destructuring property ${propertyName} expected an object`)
-      bindPatternFromValue(element.name, prop, env)
+      bindPatternFromValue(element.name, prop, env, options)
     }
     return
   }
   if (ts.isArrayBindingPattern(name)) {
-    bindArrayPatternFromValue(name, value, env)
+    bindArrayPatternFromValue(name, value, env, options)
     return
   }
   bindUnknownPattern(name, env)
 }
 
-function bindArrayPatternFromValue(name: ts.ArrayBindingPattern, value: Value, env: Map<string, Value>) {
+function bindArrayPatternFromValue(name: ts.ArrayBindingPattern, value: Value, env: Map<string, Value>, options: LocalizeOptions = {}) {
   forEachArrayBindingElement(name, (elementName, index, isRest) => {
     if (isRest) {
       bindUnknownPattern(elementName, env)
       return
     }
     const item = arrayPatternElementValue(value, index)
-    bindPatternFromValue(elementName, item, env)
+    bindPatternFromValue(elementName, item, env, options)
   })
 }
 
@@ -1027,21 +1031,29 @@ function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
   }
 }
 
-function localizeValue(value: Value, expr: string): Value {
+function localizeValue(value: Value, expr: string, options: LocalizeOptions = {}): Value {
   if (value.kind === 'number') {
-    return numberValue(value.min, value.max, value.isInteger, expr, linearVariable(linearNameForExpression(expr)), null, value.provenance)
+    return numberValue(
+      value.min,
+      value.max,
+      value.isInteger,
+      expr,
+      options.preserveLinear === true ? value.linear : linearVariable(linearNameForExpression(expr)),
+      options.preserveLinear === true ? value.cases : null,
+      value.provenance,
+    )
   }
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, localizeValue(prop, `${expr}.${name}`))
+    for (const [name, prop] of value.props) props.set(name, localizeValue(prop, `${expr}.${name}`, options))
     return {...value, props, expr}
   }
   if (value.kind === 'array') {
     return {
       ...value,
-      length: localizeValue(value.length, `${expr}.length`) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map((element, index) => localizeValue(element, `${expr}[${index}]`)),
-      element: value.element == null ? null : localizeValue(value.element, `${expr}[]`),
+      length: localizeValue(value.length, `${expr}.length`, options) as NumberValue,
+      elements: value.elements == null ? null : value.elements.map((element, index) => localizeValue(element, `${expr}[${index}]`, options)),
+      element: value.element == null ? null : localizeValue(value.element, `${expr}[]`, options),
       expr,
     }
   }
@@ -1223,6 +1235,9 @@ function isGivenRangeExpression(expression: ts.Expression): boolean {
   if (ts.isIdentifier(expression)) return true
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
   if (ts.isPropertyAccessExpression(expression)) return isGivenRangeExpression(expression.expression)
+  if (ts.isElementAccessExpression(expression)) {
+    return numericLiteralValue(expression.argumentExpression) != null && isGivenRangeExpression(expression.expression)
+  }
   if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
   return false
 }
@@ -1232,6 +1247,9 @@ function isGivenComparisonExpression(expression: ts.Expression): boolean {
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
   if (numericLiteralValue(expression) != null) return true
   if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
+  if (ts.isElementAccessExpression(expression)) {
+    return numericLiteralValue(expression.argumentExpression) != null && isGivenComparisonExpression(expression.expression)
+  }
   if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
   if (ts.isPrefixUnaryExpression(expression)) {
     return (expression.operator === ts.SyntaxKind.PlusToken || expression.operator === ts.SyntaxKind.MinusToken)
@@ -2146,14 +2164,15 @@ function applyCallExpressionStatement(expression: ts.CallExpression, context: Ev
   if (targetName == null) return unknown(`Unsupported mutation target: ${expression.expression.expression.getText(context.program.sourceFile)}`)
   const target = context.env.get(targetName)
   if (target?.kind !== 'array') return unknown(`${targetName}.${expression.expression.name.text} expected an array`)
+  const targetNames = mutationTargetRoots(expression.expression.expression, context)
 
   switch (expression.expression.name.text) {
     case 'reverse':
     case 'sort':
-      context.env.set(targetName, arrayWithoutSequenceFacts(target))
+      for (const name of targetNames) markArrayOrderMutated(context, name)
       return null
     case 'splice':
-      context.env.set(targetName, arrayWithUnknownContents(targetName, target))
+      for (const name of targetNames) markRootMutated(context, name)
       return null
     default:
       return unknown(`Unsupported array mutation: ${expression.getText(context.program.sourceFile)}`)
@@ -2165,22 +2184,9 @@ function applyAssignmentStatement(expression: ts.BinaryExpression, context: Eval
     context.env.set(expression.left.text, evaluateExpression(expression.right, context))
     return null
   }
-  const targetName = mutationTargetRoot(expression.left)
-  if (targetName == null) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
-  const target = context.env.get(targetName)
-  if (target?.kind === 'array') {
-    context.env.set(targetName, arrayWithUnknownContents(targetName, target))
-    return null
-  }
-  if (target?.kind === 'object') {
-    context.env.set(targetName, unknownObject(targetName))
-    return null
-  }
-  if (target?.kind === 'number') {
-    context.env.set(targetName, unknownNumber(targetName))
-    return null
-  }
-  context.env.set(targetName, unknown(`Unsupported assignment changed ${targetName}`))
+  const targetNames = mutationTargetRoots(expression.left, context)
+  if (targetNames.length === 0) return unknown(`Unsupported assignment target: ${expression.left.getText(context.program.sourceFile)}`)
+  for (const targetName of targetNames) markRootMutated(context, targetName)
   return null
 }
 
@@ -2190,6 +2196,60 @@ function mutationTargetRoot(expression: ts.Expression): string | null {
   if (ts.isParenthesizedExpression(expression)) return mutationTargetRoot(expression.expression)
   if (ts.isNonNullExpression(expression)) return mutationTargetRoot(expression.expression)
   return null
+}
+
+function mutationTargetRoots(expression: ts.Expression, context: EvalContext): string[] {
+  const root = expressionRootName(expression) ?? mutationTargetRoot(expression)
+  if (root == null) return []
+  const roots = [root]
+  const value = context.env.get(root)
+  const aliasedRoot = value == null ? null : referenceRootName(value)
+  if (aliasedRoot != null && aliasedRoot !== root) roots.push(aliasedRoot)
+  return [...new Set(roots)]
+}
+
+function referenceRootName(value: Value): string | null {
+  if (value.kind !== 'object' && value.kind !== 'array') return null
+  return value.expr == null ? null : rootNameFromExpressionText(value.expr)
+}
+
+function rootNameFromExpressionText(text: string): string | null {
+  const match = /^(?:this|[A-Za-z_$][\w$]*)/.exec(text)
+  return match?.[0] ?? null
+}
+
+function markRootMutated(context: EvalContext, root: string) {
+  const rootValue = context.env.get(root)
+  context.env.set(root, mutatedRootValue(root, rootValue))
+
+  for (const [name, value] of context.env) {
+    if (name === root) continue
+    if (referenceRootName(value) !== root) continue
+    context.env.set(name, mutatedRootValue(name, value))
+  }
+}
+
+function markArrayOrderMutated(context: EvalContext, root: string) {
+  const rootValue = context.env.get(root)
+  if (rootValue?.kind === 'array') context.env.set(root, arrayWithoutSequenceFacts(rootValue))
+
+  for (const [name, value] of context.env) {
+    if (name === root || value.kind !== 'array') continue
+    if (referenceRootName(value) !== root) continue
+    context.env.set(name, arrayWithoutSequenceFacts(value))
+  }
+}
+
+function mutatedRootValue(root: string, value: Value | undefined): Value {
+  const expr = mutatedRootName(root)
+  if (value?.kind === 'array') return arrayWithUnknownContents(expr, {...value, expr})
+  if (value?.kind === 'object') return unknownObject(expr)
+  if (value?.kind === 'number') return unknownNumber(expr)
+  return unknown(`Unsupported assignment changed ${root}`)
+}
+
+function mutatedRootName(root: string) {
+  return `${root}$mutated`
 }
 
 function arrayWithoutSequenceFacts(array: ArrayValue): ArrayValue {
@@ -3306,12 +3366,13 @@ function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.Prope
   const member = classMemberFunctionForPropertyAccess(access, context)
   if (member == null || !ts.isMethodDeclaration(member.fn.node)) return null
   const receiver = evaluateExpression(access.expression, context)
-  return evaluateLocalFunctionCall(member.functionName, member.fn, expression.arguments.map(argument => evaluateExpression(argument, context)), context, {
+  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
+  return evaluateLocalFunctionCall(member.functionName, member.fn, argumentValues, context, {
     thisValue: receiver,
     callText: `${access.getText(context.program.sourceFile)}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
     callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
-    callSiteBindings: callSiteBindingsFor(member.fn, expression.arguments, context.program.sourceFile, access.expression.getText(context.program.sourceFile)),
+    callSiteBindings: callSiteBindingsFor(member.fn, expression.arguments, context.program.sourceFile, access.expression.getText(context.program.sourceFile), argumentValues),
   })
 }
 
@@ -3506,7 +3567,7 @@ function evaluateResolvedCallTarget(
   const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
   const callText = `${callName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
   const callLine = lineNumberForNode(context.program.sourceFile, expression)
-  const callSiteBindings = callSiteBindingsFor(fn, expression.arguments, context.program.sourceFile)
+  const callSiteBindings = callSiteBindingsFor(fn, expression.arguments, context.program.sourceFile, undefined, argumentValues)
 
   if (target.module === context.program) {
     return evaluateLocalFunctionCall(target.functionName, fn, argumentValues, context, {
@@ -4125,15 +4186,20 @@ function callSiteBindingsFor(
   args: readonly ts.Expression[],
   sourceFile: ts.SourceFile,
   thisText?: string,
+  argumentValues?: readonly Value[],
 ): CallSiteBindings {
   const bindings: CallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const argument = args[i]
     if (argument == null) continue
-    bindCallSitePattern(fn.node.parameters[i]!.name, argument.getText(sourceFile), bindings)
+    bindCallSitePattern(fn.node.parameters[i]!.name, callSiteArgumentText(argument.getText(sourceFile), argumentValues?.[i]), bindings)
   }
   return bindings
+}
+
+function callSiteArgumentText(sourceText: string, value: Value | undefined) {
+  return value?.kind === 'number' && value.expr != null ? value.expr : sourceText
 }
 
 function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: CallSiteBindings) {
@@ -4163,7 +4229,7 @@ function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
   if (bindings == null || bindings.size === 0) return text
   let result = text
   for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
-    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, 'g'), replacement)
+    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$])`, 'g'), () => replacement)
   }
   return result
 }

@@ -390,6 +390,7 @@ Range `given` lines name one input path:
 given width: 0..1000
 given item.height: 0..40
 given items[].height: 0..40
+given extent[1][0]: 0..1000
 ```
 
 Comparison `given` lines can use simple arithmetic over input paths:
@@ -397,9 +398,10 @@ Comparison `given` lines can use simple arithmetic over input paths:
 ```ts
 given container >= containee + padding
 given index < items.length
+given child.width <= extent[1][0] - extent[0][0]
 ```
 
-They cannot call methods, index arrays by a local index, or put derived expressions on the range side:
+Fixed tuple/array slots like `extent[1][0]` are input paths. Dynamic reads like `items[index]` are source expressions and need the index bounds proven from code. `given` lines cannot call methods, index arrays by a local index, or put derived expressions on the range side:
 
 ```ts
 // Not accepted as input facts.
@@ -714,7 +716,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange may use that summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange keeps the caller's bottomed-out numeric expressions through local aliases and helper parameters, so a local `const max = cols - w` can satisfy a helper's `given min <= max` from `given w <= params.cols`. It may use a proven summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
 
 Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `return.length == 4`, `return[2] >= 0`, and `return[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
