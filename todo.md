@@ -48,7 +48,7 @@ sections[].rows[].height <= maxHeight
 - `items.map(...)` preserves length, item field domains, optional callback index facts, and a same-index origin fact for expression callbacks and tiny block callbacks with local `const` bindings, side-effect-free return branches, and `return`.
 - `items.filter(...)` preserves item domains, records an order-preserving subset origin fact, and proves only the subsequence length fact: `filtered.length <= items.length`. Map/filter chains compose this origin back to the base source for `fr infer`.
 - Unsupported indexed-style `for`, `while`, and `do while` loops can preserve unrelated facts only when their headers/conditions and bodies are read-only except for roots the checker forgets. Mutated roots become unknown.
-- Named, default, and namespace-qualified local imports can call exported functions with `@fit` contracts when TypeScript resolves them to local source. Named imports can also read exported numeric constants. Top-level `const` helper bindings can point at supported `Math` calls, same-file helpers, or local-source imported helpers; mutable helper bindings are reported instead of followed. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
+- Named, default, and namespace-qualified local imports can call exported functions with `@fit` contracts when TypeScript resolves them to local source, or when a declaration file has a single-source map back to local source. Named imports can also read exported numeric constants. Top-level `const` helper bindings can point at supported `Math` calls, same-file helpers, or local-source imported helpers; mutable helper bindings are reported instead of followed. Cross-file calls use the contract as a summary; imported bodies are not inlined at the call site.
 - Proven helper summaries can narrow stored locals silently when the call preconditions prove. The checker emits call-precondition report lines only when a surrounding claim or `doctor` asked for them; otherwise missing preconditions simply prevent the summary from being used.
 - `fr infer path --function name` prints return/local facts and supported loop-local facts. It separates function and loop specs into assumptions, checked, not-inferred, and redundant lines, and redundant lines name the covering inferred fact. A curated slice is snapshotted in `infer-snapshots.expected.txt`; this is not an annotation writer.
 - Reports propagate unknown identifiers through element/binary expressions and render fixed tuple lengths as `return.length == 5` instead of internal length-building noise.
@@ -144,7 +144,7 @@ What it deliberately does not do:
 - no numeric ranges from TypeScript types
 - no linear facts, sequence facts, or proof obligations from TypeScript
 - no imported function body inlining
-- no trusting declaration files as checked helper contracts
+- no trusting declaration files as checked helper contracts; declaration maps only recover local source
 - no optional/nullable property optimism
 - no unbounded TypeScript walk through giant parser/library types
 
@@ -214,7 +214,7 @@ exist in TypeScript.
 
 ## Current Limitations
 
-- Import support is deliberately tiny: named/default/namespace-qualified helper imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, exported numeric constants for named imports, explicit named re-exports, and top-level `const` helper bindings whose final target is already in the supported call set. Packages, declaration-only imports, wildcard barrels, summary files, and stale-summary policy are still out.
+- Import support is deliberately tiny: named/default/namespace-qualified helper imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, single-source declaration maps back to local source, exported numeric constants for named imports, explicit named re-exports, and top-level `const` helper bindings whose final target is already in the supported call set. Published packages, declaration-only imports without local source maps, wildcard barrels, summary files, and stale-summary policy are still out.
 - Import failure reports distinguish unavailable contracts, unsupported import shapes, and imported contracts that failed in source.
 - No public views yet.
 - Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, simple opposing linear comparison bounds, short chained linear contradictions, and obvious range/comparison chain contradictions are caught, not every possible inconsistent set.

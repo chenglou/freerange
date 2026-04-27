@@ -917,6 +917,10 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: return: 0.
   imported helper contract was not available
   helper: missingImportedClamp from @fit-fixtures/missing-import-helper
   reason: Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
+UNKNOWN negative-import-patterns.ts:negativeImportedHelperDeclarationMapMissing: return: 0..320
+  imported helper contract was not available
+  helper: unmappedDeclaredClampWidth from @fit-fixtures/import-pattern-declared-package-no-map
+  reason: Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: return: 0..320
   imported helper contract was not available
   helper: barrelUnannotatedClamp from ./negative-import-barrel

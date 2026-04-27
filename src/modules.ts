@@ -500,16 +500,24 @@ function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, r
       reason: `Could not resolve ${specifier} from ${module.file} with TypeScript module resolution`,
     }
   }
+  if (isDeclarationExtension(resolved.extension)) {
+    const sourceId = sourceFromDeclarationMap(resolved.resolvedFileName)
+    if (sourceId != null) return {kind: 'source', sourceId}
+    if (resolved.isExternalLibraryImport) {
+      return {
+        kind: 'unresolved',
+        reason: `External package imports cannot be checked as @fit helpers: ${specifier}`,
+      }
+    }
+    return {
+      kind: 'unresolved',
+      reason: `Declaration-only imports cannot be checked as @fit helpers: ${specifier}`,
+    }
+  }
   if (resolved.isExternalLibraryImport) {
     return {
       kind: 'unresolved',
       reason: `External package imports cannot be checked as @fit helpers: ${specifier}`,
-    }
-  }
-  if (isDeclarationExtension(resolved.extension)) {
-    return {
-      kind: 'unresolved',
-      reason: `Declaration-only imports cannot be checked as @fit helpers: ${specifier}`,
     }
   }
   if (!isSupportedSourceExtension(resolved.extension)) {
@@ -649,11 +657,78 @@ function isSupportedSourceExtension(extension: string) {
     || extension === ts.Extension.Cts
 }
 
+function sourceFromDeclarationMap(declarationFile: string): string | null {
+  const mapFile = declarationMapPath(declarationFile)
+  if (mapFile == null) return null
+  const mapText = readFile(mapFile)
+  if (mapText == null) return null
+
+  let map: unknown
+  try {
+    map = JSON.parse(mapText)
+  } catch {
+    return null
+  }
+
+  const sourceRoot = declarationMapSourceRoot(map)
+  const sources = declarationMapSources(map)
+  if (sources == null || sources.length !== 1) return null
+  const source = sources[0]!
+  const sourceId = resolveSourceMapSource(mapFile, sourceRoot, source)
+
+  return sourceId != null && isSupportedSourcePath(sourceId) && fileExists(sourceId) && !isNodeModulesPath(sourceId)
+    ? sourceId
+    : null
+}
+
+function declarationMapPath(declarationFile: string): string | null {
+  const normalized = normalizePath(declarationFile)
+  const sidecar = `${normalized}.map`
+  if (fileExists(sidecar)) return sidecar
+
+  const text = readFile(normalized)
+  if (text == null) return null
+  const match = /\/\/# sourceMappingURL=([^\s*]+)/.exec(text)
+  if (match?.[1] == null || match[1].includes('://')) return null
+  const mapFile = normalizePath(ts.sys.resolvePath(`${dirname(normalized)}/${match[1]}`))
+  return fileExists(mapFile) ? mapFile : null
+}
+
+function declarationMapSources(map: unknown): string[] | null {
+  if (typeof map !== 'object' || map == null || !('sources' in map)) return null
+  const sources = map.sources
+  return Array.isArray(sources) && sources.every(source => typeof source === 'string') ? sources : null
+}
+
+function declarationMapSourceRoot(map: unknown): string {
+  if (typeof map !== 'object' || map == null || !('sourceRoot' in map)) return ''
+  return typeof map.sourceRoot === 'string' ? map.sourceRoot : ''
+}
+
+function resolveSourceMapSource(mapFile: string, sourceRoot: string, source: string): string | null {
+  if (source.includes('://')) return null
+  const base = dirname(mapFile)
+  const root = sourceRoot === ''
+    ? base
+    : isAbsolutePath(sourceRoot)
+      ? sourceRoot
+      : `${base}/${sourceRoot}`
+  return normalizePath(ts.sys.resolvePath(isAbsolutePath(source) ? source : `${root}/${source}`))
+}
+
 function isSupportedSourcePath(path: string) {
   return !path.endsWith('.d.ts')
     && !path.endsWith('.d.mts')
     && !path.endsWith('.d.cts')
     && (path.endsWith('.ts') || path.endsWith('.tsx') || path.endsWith('.mts') || path.endsWith('.cts'))
+}
+
+function isAbsolutePath(path: string) {
+  return path.startsWith('/') || /^[A-Za-z]:\//.test(normalizePath(path))
+}
+
+function isNodeModulesPath(path: string) {
+  return normalizePath(path).split('/').includes('node_modules')
 }
 
 function toSourceId(path: string) {

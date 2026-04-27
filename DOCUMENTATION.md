@@ -30,7 +30,7 @@ assumptions // valid `given` lines in `infer` output.
 unknown // not proven. This is not a soft pass.
 fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
-imported contract // an exported helper contract from local source, reached through TypeScript module resolution.
+imported contract // an exported helper contract from local source, reached through TypeScript module resolution or a local declaration map.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
 infer // `fr infer path --function name`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
 shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
@@ -742,7 +742,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies.
+Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
 
 Ordinary top-level `const` bindings of known helpers work too:
 
@@ -832,7 +832,7 @@ export {clampWidth} from './layout-math'
 export {clampWidth as cardClampWidth} from './layout-math'
 ```
 
-This is intentionally small: package imports, declaration-only imports, wildcard `export *` barrels, and unchecked summary files stay opaque for now.
+This is intentionally small: package imports only work when TypeScript lands on local source or a declaration map points back to one local source file. Declaration-only imports without that source map, wildcard `export *` barrels, and unchecked summary files stay opaque.
 
 ## Arrays
 
@@ -1181,7 +1181,7 @@ The checker understands a small pure subset:
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source; top-level `const` helper bindings can point at those same targets
+- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
 - TypeScript-known imported object/array shape, without treating it as a checked helper contract
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
@@ -1211,7 +1211,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- package imports, declaration-only imports, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
+- published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning

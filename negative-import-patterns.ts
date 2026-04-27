@@ -5,6 +5,7 @@ import unannotatedDefaultImportedClamp, {importedClampWithBadContract, importedT
 import {barrelClampWidth} from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
+import {unmappedDeclaredClampWidth} from '@fit-fixtures/import-pattern-declared-package-no-map'
 import type {ImportedOptionalRows} from './negative-import-helpers'
 // @ts-expect-error unresolved import fixture for Freerange's TypeScript resolver boundary.
 import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
@@ -23,6 +24,14 @@ export function negativeImportedHelperNeedsFit(width: number) {
  */
 export function negativeImportedHelperUnresolved(width: number) {
   return missingImportedClamp(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function negativeImportedHelperDeclarationMapMissing(width: number) {
+  return unmappedDeclaredClampWidth(width)
 }
 
 /** @fit

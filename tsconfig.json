@@ -8,6 +8,8 @@
     "types": [],
     "jsx": "preserve",
     "paths": {
+      "@fit-fixtures/import-pattern-declared-package": ["./import-pattern-declared-package"],
+      "@fit-fixtures/import-pattern-declared-package-no-map": ["./import-pattern-declared-package-no-map"],
       "@fit-fixtures/*": ["./*"]
     },
     "isolatedModules": true,

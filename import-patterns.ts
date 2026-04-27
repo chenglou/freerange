@@ -4,6 +4,7 @@ import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
+import {declaredClampWidth} from '@fit-fixtures/import-pattern-declared-package'
 import importedDefaultMaxAlias, {namedMaxAlias as importedNamedMaxAlias} from './import-pattern-alias-helpers'
 import {barrelClampWidth, barrelTsxClampWidth} from './import-pattern-barrel'
 import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
@@ -130,6 +131,14 @@ export function importedHelperWildcardContract(items: {height: number}[]) {
  */
 export function importedHelperTsconfigAliasContract(width: number) {
   return aliasImportedClampWidth(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function importedHelperDeclarationMapContract(width: number) {
+  return declaredClampWidth(width)
 }
 
 /** @fit
