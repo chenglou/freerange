@@ -434,6 +434,16 @@ function impossibleComparison(width: number) {
 function impossibleChain(left: number, middle: number, right: number) {
   return {left, middle, right}
 }
+
+/** @fit
+ * given left >= middle
+ * given middle >= right
+ * given right: 20..30
+ * given left: 0..10
+ */
+function impossibleRangeChain(left: number, middle: number, right: number) {
+  return {left, middle, right}
+}
 ```
 
 Loop-level `given` works the same way, but is assumed from that point in the function forward.

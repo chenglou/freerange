@@ -1269,7 +1269,20 @@ function collectGivenAssumptions(
       const lower = evaluateRangeBound(spec.range.lower, context)
       const upper = evaluateRangeBound(spec.range.upper, context)
       if (lower.kind !== 'number' || upper.kind !== 'number') continue
-      assumptions.push(...rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source))
+      const facts = rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source)
+      const contradiction = givenRangeContradictionReason(facts, assumptions)
+      if (contradiction != null) {
+        checks.push({
+          file,
+          ...(spec.line == null ? {} : {line: spec.line}),
+          functionName,
+          text: spec.text,
+          status: 'fail',
+          reason: contradiction,
+        })
+        continue
+      }
+      assumptions.push(...facts)
       continue
     }
 
@@ -1308,6 +1321,14 @@ function collectGivenAssumptions(
     }
   }
   return {assumptions, checks}
+}
+
+function givenRangeContradictionReason(facts: LinearConstraint[], assumptions: LinearConstraint[]): string | null {
+  for (const fact of facts) {
+    const contradiction = givenComparisonContradictionReason(fact, assumptions)
+    if (contradiction != null) return contradiction
+  }
+  return null
 }
 
 function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext, source: FactSource): LinearConstraint | null {

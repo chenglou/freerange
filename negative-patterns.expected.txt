@@ -731,6 +731,8 @@ FAIL negative-patterns.ts:negativeGivenComparisonsCannotTransitivelyHold: given 
   no input can satisfy this with the earlier given lines; they already rule out right > left
 UNKNOWN negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: given width + 1: 0..10
   given range must name one input path, not a derived expression
+FAIL negative-patterns.ts:negativeGivenRangeCannotFitEarlierChain: given left: 0..10
+  no input can satisfy this with the earlier given lines; they already rule out left: 0..10
 FAIL negative-patterns.ts:negativeInlineSideRange: index: int 0..3
   range was int 4..4 as 4, expected inside int 0..3
   need: 4 inside int 0..3

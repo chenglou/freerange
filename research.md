@@ -344,7 +344,7 @@ Before adding an atom, require:
 - Read source by default. Use summaries only for genuinely opaque helper boundaries, and make the report say which helper was assumed.
 - Use mutation/red probes as research signals. They are good for finding holes in the proof surface, but they should not become verifier guarantees.
 - `life-calendar` was a useful hard numeric example: `**`, `Math.sqrt`, `Math.ceil`, integer facts after `ceil(life / countX)`, and half-open grid hit testing.
-- Bad `given` lines are not harmless. Reject small linear contradictions before proof, including chained comparisons, so the rest of the checker never gets to prove from an empty input set.
+- Bad `given` lines are not harmless. Reject small linear contradictions before proof, including chained comparisons and obvious range/comparison chains, so the rest of the checker never gets to prove from an empty input set.
 
 ## Did Not Earn Itself
 

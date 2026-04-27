@@ -1139,6 +1139,16 @@ export function negativeGivenRangeCannotDescribeDerivedExpression(width: number)
   return width
 }
 
+/** @fit
+ * given left >= middle
+ * given middle >= right
+ * given right: 20..30
+ * given left: 0..10
+ */
+export function negativeGivenRangeCannotFitEarlierChain(left: number, middle: number, right: number) {
+  return {left, middle, right}
+}
+
 export function negativeInlineSideRange() {
   const index = 4 // @fit int 0..3
   return index

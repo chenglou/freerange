@@ -76,7 +76,7 @@ There are three active tracks now:
 Keep this visible so shape work and IR cleanup do not erase the boring proof/report/demo work that was already worth doing.
 
 1. **Keep tightening input honesty.**
-   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, and small chained contradictions like `left >= middle`, `middle >= right`, `right > left` are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
+   `given` now only names input roots. Range facts must name one input path; comparison facts allow input paths, numbers, and simple arithmetic. Empty ranges, direct range contradictions, simple opposing comparisons like `given width >= 100` plus `given width <= 50`, small chained contradictions like `left >= middle`, `middle >= right`, `right > left`, and obvious range/comparison chain contradictions are rejected before later checks can lean on them. Next useful step: keep widening that contradiction check only where reports stay obvious.
 
 2. **Keep helper/import report lines boring and precise.**
    Comparison reports now say `assumed from input`, `assumed from loop @fit`, `inferred from code`, `inferred from branch`, `checked helper contract`, or `checked imported contract`. Small comparison proof rules point at their missing obligation when possible: `scale >= 0` instead of repeating `content * scale <= available * scale`, `pointer < count * cellSize` instead of repeating `floor(pointer / cellSize) < count`, `py < countY * blockSize` for flattened grid hit indices, and `count > 0` for ceil-division coverage. Next report work is likely narrower missing-fact text for unsupported loop/indexed-product shapes in real demos.
@@ -217,7 +217,7 @@ exist in TypeScript.
 - Import support is deliberately tiny: named/default/namespace-qualified helper imports can use TypeScript resolution to local source, including relative paths, `tsconfig` path aliases, exported numeric constants for named imports, explicit named re-exports, and top-level `const` helper bindings whose final target is already in the supported call set. Packages, declaration-only imports, wildcard barrels, summary files, and stale-summary policy are still out.
 - Import failure reports distinguish unavailable contracts, unsupported import shapes, and imported contracts that failed in source.
 - No public views yet.
-- Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, simple opposing linear comparison bounds, and short chained linear contradictions are caught, not every possible inconsistent set.
+- Impossible `given` checks are still small: empty ranges, direct contradictions against earlier ranges, simple opposing linear comparison bounds, short chained linear contradictions, and obvious range/comparison chain contradictions are caught, not every possible inconsistent set.
 - `given` root checks are intentionally strict; loop-level `given` cannot describe local aliases yet.
 - Loop-level `@fit` only attaches to supported `for...of` and indexed `for` loops.
 - Loop-local `given` facts that pass the input-root check are assumed from that point forward, not proved against earlier state.
