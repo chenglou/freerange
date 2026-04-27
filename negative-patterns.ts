@@ -827,6 +827,15 @@ export function negativeFixedElementHelperPreconditionNeedsComparison(extent: [[
   return negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width)
 }
 
+/** @fit
+ * given _index: int 0..10
+ * given _items[_index][0]: 0..10
+ * return >= 0
+ */
+export function negativeFixedElementPathCannotHideDynamicIndex(_items: number[][], _index: number) {
+  return 0
+}
+
 export function negativeSilentHelperSummaryRequiresPrecondition() {
   const clamped = negativeConditionalClampLayoutValue(10, 0, 2)
   return {

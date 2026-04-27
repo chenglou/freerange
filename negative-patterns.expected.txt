@@ -214,15 +214,15 @@ FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: call box.bot
   missing at call site: box.height >= -100
   missing at call site: box.height <= 1000
 FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
-  range was -Infinity..Infinity as (this.top + this.height), expected inside 0..2000
-  need: (this.top + this.height) inside 0..2000
+  range was -Infinity..Infinity as (box.top + box.height), expected inside 0..2000
+  need: (box.top + box.height) inside 0..2000
   known:
-    -Infinity..Infinity as (this.top + this.height)
+    -Infinity..Infinity as (box.top + box.height)
     int 0..0 as 0
     int 2000..2000 as 2000
     assumed from input: given box.top: 0..1000
-  missing: (this.top + this.height) >= 0
-  missing: (this.top + this.height) <= 2000
+  missing: (box.top + box.height) >= 0
+  missing: (box.top + box.height) <= 2000
 UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows, otherGap)
   spaced(return.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap
@@ -518,40 +518,42 @@ UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: cal
   could not prove bounds.max >= bounds.min
   missing at call site: bounds.max >= bounds.min
 UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: return >= bounds.min
-  -1000..1000 as max >= -1000..1000 as bounds.min was not proven
-  need: max >= bounds.min
+  -1000..1000 as bounds.max >= -1000..1000 as bounds.min was not proven
+  need: bounds.max >= bounds.min
   known:
-    -1000..1000 as max
+    -1000..1000 as bounds.max
     -1000..1000 as bounds.min
     assumed from input: given bounds.min: -1000..1000
     assumed from input: given bounds.max: -1000..1000
     assumed from input: given value: -1000..1000
     inferred from branch: -bounds.max + value > 0
-  missing: given max >= bounds.min
+  missing: given bounds.max >= bounds.min
 UNKNOWN negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: call negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min
   called function requires max >= min
   this call passes max is -Infinity..Infinity and min is -Infinity..Infinity
-  could not prove ((extent[1][0] - width)) >= extent[0][0]
-  missing at call site: ((extent[1][0] - width)) >= extent[0][0]
+  could not prove (extent[1][0] - width) >= extent[0][0]
+  missing at call site: (extent[1][0] - width) >= extent[0][0]
 UNKNOWN negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: return >= extent[0][0]
-  -Infinity..Infinity as max >= -Infinity..Infinity as extent[0][0] was not proven
-  need: max >= extent[0][0]
+  -Infinity..Infinity as (extent[1][0] - width) >= -Infinity..Infinity as extent[0][0] was not proven
+  need: (extent[1][0] - width) >= extent[0][0]
   known:
-    -Infinity..Infinity as max
+    -Infinity..Infinity as (extent[1][0] - width)
     -Infinity..Infinity as extent[0][0]
     assumed from input: given extent[0][0]: -1000..1000
     assumed from input: given extent[1][0]: -990..1000
     assumed from input: given width: 0..10
     assumed from input: given value: -1000..1000
     inferred from branch: -extent[1][0] + value + width > 0
-  missing: given max >= extent[0][0]
+  missing: given (extent[1][0] - width) >= extent[0][0]
+UNKNOWN negative-patterns.ts:negativeFixedElementPathCannotHideDynamicIndex: given _items[_index][0]: 0..10
+  given range must name one input path, not a derived expression
 FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
-  int 10..10 as min <= int 2..2 as 2 is false
-  need: min <= 2
+  int 10..10 as 10 <= int 2..2 as 2 is false
+  need: 10 <= 2
   known:
-    int 10..10 as min
+    int 10..10 as 10
     int 2..2 as 2
-  missing: given min <= 2
+  missing: given 10 <= 2
 FAIL negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return: 0
   range was -Infinity..Infinity as scratch, expected inside 0..0
   need: scratch inside 0..0
@@ -579,13 +581,13 @@ FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: retur
 UNKNOWN negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: return: 0
   Unsupported += changed path
 UNKNOWN negative-patterns.ts:negativeObjectMutationForgetsInputPath: return >= 0
-  -Infinity..Infinity as box$mutated.width >= int 0..0 as 0 was not proven
-  need: box$mutated.width >= 0
+  -Infinity..Infinity as boxAfterMutation.width >= int 0..0 as 0 was not proven
+  need: boxAfterMutation.width >= 0
   known:
-    -Infinity..Infinity as box$mutated.width
+    -Infinity..Infinity as boxAfterMutation.width
     int 0..0 as 0
     assumed from input: given box.width: 0..10
-  missing: given box$mutated.width >= 0
+  missing: given boxAfterMutation.width >= 0
 FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
   called function requires max >= min
   this call passes max = 5 and min = 10

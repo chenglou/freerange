@@ -36,7 +36,7 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
   if (ts.isNumericLiteral(expression)) return linearConstant(Number(expression.text))
   if (ts.isIdentifier(expression)) return linearVariable(expression.text)
   if (ts.isPropertyAccessExpression(expression)) return linearVariable(expression.getText())
-  if (ts.isElementAccessExpression(expression) && isFixedElementAccessExpression(expression)) return linearVariable(expression.getText())
+  if (ts.isElementAccessExpression(expression) && isFixedElementPathExpression(expression)) return linearVariable(expression.getText())
   if (ts.isParenthesizedExpression(expression)) return linearFromExpression(expression.expression)
   if (ts.isPrefixUnaryExpression(expression)) {
     const operand = linearFromExpression(expression.operand)
@@ -69,11 +69,13 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
   }
 }
 
-function isFixedElementAccessExpression(expression: ts.ElementAccessExpression): boolean {
-  if (numericLiteralValue(expression.argumentExpression) == null) return false
-  if (ts.isIdentifier(expression.expression) || expression.expression.kind === ts.SyntaxKind.ThisKeyword) return true
-  if (ts.isPropertyAccessExpression(expression.expression)) return true
-  if (ts.isElementAccessExpression(expression.expression)) return isFixedElementAccessExpression(expression.expression)
+export function isFixedElementPathExpression(expression: ts.Expression): boolean {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current) || current.kind === ts.SyntaxKind.ThisKeyword) return true
+  if (ts.isPropertyAccessExpression(current)) return isFixedElementPathExpression(current.expression)
+  if (ts.isElementAccessExpression(current)) {
+    return numericLiteralValue(current.argumentExpression) != null && isFixedElementPathExpression(current.expression)
+  }
   return false
 }
 

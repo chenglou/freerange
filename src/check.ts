@@ -124,6 +124,7 @@ import {
   mergeScale,
   numericLiteralValue,
   sameExpressionText,
+  isFixedElementPathExpression,
   unwrapExpression,
   type LinearExpr,
 } from './linear.ts'
@@ -1232,12 +1233,7 @@ function givenComparisonExpressionProblem(text: string): string | null {
 }
 
 function isGivenRangeExpression(expression: ts.Expression): boolean {
-  if (ts.isIdentifier(expression)) return true
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
-  if (ts.isPropertyAccessExpression(expression)) return isGivenRangeExpression(expression.expression)
-  if (ts.isElementAccessExpression(expression)) {
-    return numericLiteralValue(expression.argumentExpression) != null && isGivenRangeExpression(expression.expression)
-  }
+  if (isFixedElementPathExpression(expression)) return true
   if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
   return false
 }
@@ -1247,9 +1243,7 @@ function isGivenComparisonExpression(expression: ts.Expression): boolean {
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
   if (numericLiteralValue(expression) != null) return true
   if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
-  if (ts.isElementAccessExpression(expression)) {
-    return numericLiteralValue(expression.argumentExpression) != null && isGivenComparisonExpression(expression.expression)
-  }
+  if (ts.isElementAccessExpression(expression)) return isFixedElementPathExpression(expression)
   if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
   if (ts.isPrefixUnaryExpression(expression)) {
     return (expression.operator === ts.SyntaxKind.PlusToken || expression.operator === ts.SyntaxKind.MinusToken)
@@ -2249,7 +2243,7 @@ function mutatedRootValue(root: string, value: Value | undefined): Value {
 }
 
 function mutatedRootName(root: string) {
-  return `${root}$mutated`
+  return `${root}AfterMutation`
 }
 
 function arrayWithoutSequenceFacts(array: ArrayValue): ArrayValue {
@@ -3461,18 +3455,19 @@ function evaluateLocalFunctionCall(
   const fallbackResult = result.kind === 'unknown'
     ? fallbackShape ?? result
     : valueWithStructuralFallback(result, fallbackShape)
+  const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
   const specs = context.program.specsByFunction.get(functionName) ?? []
-  if (specs.length === 0) return fallbackResult
-  if (obligations !== 'pass') return fallbackResult
+  if (specs.length === 0) return callSiteFallbackResult
+  if (obligations !== 'pass') return callSiteFallbackResult
 
   const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
-  if (proof.status !== 'pass') return fallbackResult
+  if (proof.status !== 'pass') return callSiteFallbackResult
 
   return valueWithFunctionContractSummary(functionName, context.program, fn, specs, argumentValues, context.contractCache, {
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
-  }, fallbackResult, options.thisValue)
+  }, fallbackResult, options.thisValue, options.callSiteBindings)
 }
 
 function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext): Value | null {
@@ -3622,7 +3617,7 @@ function evaluateImportedFunctionCall(
     kind: 'imported',
     sourceFile: target.module.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(specs, target.module))
+  }, resolvedStructuralFallback ?? unknownResultValue(specs, target.module), undefined, callSiteBindings)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
@@ -4022,6 +4017,7 @@ function valueWithFunctionContractSummary(
   source: FunctionContractSource,
   result: Value,
   thisValue?: Value,
+  callSiteBindings?: CallSiteBindings,
 ): Value {
   const env = programGlobalEnv(program)
   bindFunctionCallInputs(fn, argumentValues, env, thisValue)
@@ -4039,23 +4035,42 @@ function valueWithFunctionContractSummary(
   }
 
   for (const spec of specs) {
-    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, source)
+    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, context, source)
   }
   for (const spec of specs) {
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
   }
 
-  return env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
+  const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
+  return valueWithCallSiteText(summary, callSiteBindings)
 }
 
-function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'check-range'}>, source: FunctionContractSource) {
+function applySummaryRangeSpec(
+  env: Map<string, Value>,
+  spec: Extract<FitSpec, {kind: 'check-range'}>,
+  context: EvalContext,
+  source: FunctionContractSource,
+) {
   if (simpleResultPathText(spec.expression) == null) return
   const closed = closedRangeApprox(spec.range)
   if (closed == null) return
+  const current = evaluateSpecExpression(spec.expression, context)
   setSummaryPathValue(
     env,
     spec.expression,
-    spec.range.finiteValues == null
+    summaryRangeValue(current, spec, closed, source),
+  )
+}
+
+function summaryRangeValue(
+  current: Value,
+  spec: Extract<FitSpec, {kind: 'check-range'}>,
+  closed: {min: number; max: number},
+  source: FunctionContractSource,
+): NumberValue {
+  const provenance = [checkedContractFact(source, spec.text)]
+  if (current.kind !== 'number') {
+    return spec.range.finiteValues == null
       ? numberValue(
         closed.min,
         closed.max,
@@ -4063,9 +4078,22 @@ function applySummaryRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {
         spec.expression,
         linearVariable(linearNameForExpression(spec.expression)),
         null,
-        [checkedContractFact(source, spec.text)],
+        provenance,
       )
-      : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)), [checkedContractFact(source, spec.text)]),
+      : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)), provenance)
+  }
+
+  const expr = current.expr ?? spec.expression
+  const linear = current.linear ?? linearVariable(linearNameForExpression(expr))
+  if (spec.range.finiteValues != null) return finiteNumberValue(spec.range.finiteValues, expr, linear, mergeProvenance(current, provenance))
+  return numberValue(
+    Math.max(current.min, closed.min),
+    Math.min(current.max, closed.max),
+    current.isInteger || spec.range.valueKind === 'int',
+    expr,
+    linear,
+    null,
+    mergeProvenance(current, provenance),
   )
 }
 
@@ -4181,6 +4209,78 @@ function setFiniteArrayElementValue(current: Value | undefined, expr: string, in
   return {...base, elements}
 }
 
+function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
+  if (bindings == null || bindings.size === 0) return value
+  if (value.kind === 'number') return numberWithCallSiteText(value, bindings)
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) props.set(name, valueWithCallSiteText(prop, bindings))
+    return {...value, props, expr: maybeCallSiteText(value.expr, bindings)}
+  }
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      length: numberWithCallSiteText(value.length, bindings),
+      elements: value.elements == null ? null : value.elements.map(element => valueWithCallSiteText(element, bindings)),
+      element: value.element == null ? null : valueWithCallSiteText(value.element, bindings),
+      expr: maybeCallSiteText(value.expr, bindings),
+      summary: arraySummaryWithCallSiteText(value.summary, bindings),
+    }
+  }
+  if (value.kind === 'nullable') {
+    return {...value, present: valueWithCallSiteText(value.present, bindings), expr: maybeCallSiteText(value.expr, bindings)}
+  }
+  if (value.kind === 'null') return {...value, expr: maybeCallSiteText(value.expr, bindings)}
+  return value
+}
+
+function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings): NumberValue {
+  return {
+    ...value,
+    expr: maybeCallSiteText(value.expr, bindings),
+    cases: value.cases == null ? null : value.cases.map(choice => ({
+      value: numberWithCallSiteText(choice.value, bindings),
+      assumptions: choice.assumptions.map(assumption => constraintWithCallSiteText(assumption, bindings)),
+    })),
+  }
+}
+
+function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: CallSiteBindings): ArraySummary | null {
+  if (summary == null) return null
+  return {
+    origin: summary.origin == null ? null : {...summary.origin, sourceExpr: callSiteText(summary.origin.sourceExpr, bindings)},
+    relations: summary.relations.map(relation => ({
+      ...relation,
+      right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
+    })),
+    nondecreasingProps: summary.nondecreasingProps,
+    advances: summary.advances.map(fact => ({...fact, value: numberWithCallSiteText(fact.value, bindings)})),
+    spaced: summary.spaced.map(fact => ({
+      gapExpr: callSiteText(fact.gapExpr, bindings),
+      heightExpr: callSiteText(fact.heightExpr, bindings),
+      advanceExpr: callSiteText(fact.advanceExpr, bindings),
+    })),
+    lastEnd: summary.lastEnd == null ? null : numberWithCallSiteText(summary.lastEnd, bindings),
+    extentEnds: summary.extentEnds.map(fact => ({
+      emptyExpr: callSiteText(fact.emptyExpr, bindings),
+      nonEmptyExpr: callSiteText(fact.nonEmptyExpr, bindings),
+      value: numberWithCallSiteText(fact.value, bindings),
+    })),
+  }
+}
+
+function constraintWithCallSiteText(assumption: LinearConstraint, bindings: CallSiteBindings): LinearConstraint {
+  return {
+    ...assumption,
+    ...(assumption.leftExpr == null ? {} : {leftExpr: callSiteText(assumption.leftExpr, bindings)}),
+    ...(assumption.rightExpr == null ? {} : {rightExpr: callSiteText(assumption.rightExpr, bindings)}),
+  }
+}
+
+function maybeCallSiteText(text: string | null, bindings: CallSiteBindings) {
+  return text == null ? null : callSiteText(text, bindings)
+}
+
 function callSiteBindingsFor(
   fn: FitFunction,
   args: readonly ts.Expression[],
@@ -4236,16 +4336,23 @@ function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
 
 function callSiteValueText(text: string) {
   const trimmed = text.trim()
-  return isSimpleCallSiteText(trimmed) ? trimmed : `(${trimmed})`
+  return isSimpleCallSiteText(trimmed) || isParenthesizedCallSiteText(trimmed) ? trimmed : `(${trimmed})`
 }
 
 function callSitePropertyBaseText(text: string) {
-  const trimmed = text.trim()
-  return isSimpleCallSiteText(trimmed) ? trimmed : `(${trimmed})`
+  return callSiteValueText(text)
 }
 
 function isSimpleCallSiteText(text: string) {
   return /^(?:this|[A-Za-z_$][\w$]*|-?\d+(?:\.\d+)?)(?:(?:\.[A-Za-z_$][\w$]*)|(?:\[[^\]]+\]))*$/.test(text)
+}
+
+function isParenthesizedCallSiteText(text: string) {
+  try {
+    return ts.isParenthesizedExpression(parseExpression(text))
+  } catch {
+    return false
+  }
 }
 
 function escapeRegExp(text: string) {
