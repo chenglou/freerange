@@ -106,6 +106,20 @@ if (missingFilterInferFacts.length > 0) {
   console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
 }
 
+const filterMapInferReport = inferFitFiles(['patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
+const filterMapInferFacts = new Set(filterMapInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedFilterMapInferFacts = [
+  'return.rows is an order-preserving subset of items',
+]
+const missingFilterMapInferFacts = expectedFilterMapInferFacts.filter(fact => !filterMapInferFacts.has(fact))
+if (missingFilterMapInferFacts.length > 0) {
+  console.error('expected filter-map inferred facts changed')
+  console.error(missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
+}
+
 const loopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'localLoopAnnotation'})
 const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]

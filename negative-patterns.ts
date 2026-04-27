@@ -1023,6 +1023,18 @@ export function negativeFilteredRowsAreNotAlwaysSameLength(items: {height: numbe
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return.rows.length == items.length
+ */
+export function negativeFilteredMappedRowsAreNotAlwaysSameLength(items: {height: number; visible: boolean}[]) {
+  const rows = items
+    .filter(item => item.visible)
+    .map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..100
  * return.rows[].height: 0..40

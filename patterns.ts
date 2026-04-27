@@ -1112,6 +1112,19 @@ export function filteredRowsKeepElementDomain(items: {height: number; visible: b
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ */
+export function filteredMappedRowsKeepBaseLineage(items: {height: number; visible: boolean}[]) {
+  const rows = items
+    .filter(item => item.visible)
+    .map(item => ({height: item.height}))
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
  * return.rows[].height: 0..40

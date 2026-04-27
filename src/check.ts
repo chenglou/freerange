@@ -3510,7 +3510,7 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
     elements: null,
     element,
     expr: null,
-    summary: emptyArraySummary({kind: 'identity', sourceExpr: sourceName}),
+    summary: emptyArraySummary(mapOrigin(source, sourceName)),
   } satisfies ArrayValue
   return valueWithStructuralFallback(mapped, expressionStructuralFallback(expression, context))
 }
@@ -3626,9 +3626,20 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
     elements: null,
     element: source.element,
     expr: null,
-    summary: emptyArraySummary({kind: 'subsequence', sourceExpr: source.expr ?? expression.expression.expression.getText(context.program.sourceFile)}),
+    summary: emptyArraySummary(filterOrigin(source, source.expr ?? expression.expression.expression.getText(context.program.sourceFile))),
   } satisfies ArrayValue
   return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
+}
+
+function mapOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
+  const origin = source.summary?.origin
+  if (origin?.kind === 'subsequence') return {kind: 'subsequence', sourceExpr: origin.sourceExpr}
+  if (origin?.kind === 'identity') return {kind: 'identity', sourceExpr: origin.sourceExpr}
+  return {kind: 'identity', sourceExpr}
+}
+
+function filterOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
+  return {kind: 'subsequence', sourceExpr: source.summary?.origin?.sourceExpr ?? sourceExpr}
 }
 
 function emptyArraySummary(origin: ArrayOrigin | null): ArraySummary {

@@ -847,6 +847,7 @@ Supported today:
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, side-effect-free return branches, and a final `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
+- map/filter chains preserve the base origin fact for `fr infer`, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 - same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
 - adjacent labels over one collection, e.g. `rows[$i].top <= rows[$i + 1].top` and inferred row-spacing relations like `rows[$i + 1].top >= rows[$i].bottom + gap`
@@ -1166,7 +1167,7 @@ The checker understands a small pure subset:
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
-- immediate map/filter origin facts in `fr infer`
+- composed map/filter origin facts in `fr infer`
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`

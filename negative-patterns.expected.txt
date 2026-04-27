@@ -672,6 +672,16 @@ UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.
     assumed from input: given items[].height: 0..40
     inferred from code: rows.length <= items.length
   missing: given rows.length == items.length
+UNKNOWN negative-patterns.ts:negativeFilteredMappedRowsAreNotAlwaysSameLength: return.rows.length == items.length
+  int 0..50 as rows.length == int 0..50 as items.length was not proven
+  need: rows.length == items.length
+  known:
+    int 0..50 as rows.length
+    int 0..50 as items.length
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    inferred from code: rows.length <= items.length
+  missing: given rows.length == items.length
 FAIL negative-patterns.ts:negativeForOfConditionalPushNeedsItemBound: return.rows[].height: 0..40
   range was 0..100 as rows[].height, expected inside 0..40
   need: rows[].height inside 0..40
