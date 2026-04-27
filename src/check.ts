@@ -47,6 +47,7 @@ import {
   mergeProvenance,
   moduloNumbers,
   multiplyNumbers,
+  nullValue,
   numberBranches,
   numberValue,
   plainNumber,
@@ -60,6 +61,8 @@ import {
   unknownObject,
   valueWithAssumptions,
   withNumberCases,
+  type ArrayOrigin,
+  type ArraySummary,
   type ArrayValue,
   type FactSource,
   type LinearConstraint,
@@ -67,6 +70,19 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {
+  combineNumberCases,
+  comparisonConditionFacts,
+  negatedComparison,
+  refineNumberCasesForComparison,
+  stablePlainConditionOperand,
+  type ConditionFacts,
+} from './guarded-facts.ts'
+import {
+  adjacentElementAccessFacts,
+  elementValueForIndexCases,
+  valueWithRebasedElementPath,
+} from './indexed-facts.ts'
 import {
   applyLoopExtrema,
   applySegmentedStackCursorUpdate,
@@ -106,7 +122,6 @@ import {
   mergeScale,
   numericLiteralValue,
   sameExpressionText,
-  sameLinear,
   unwrapExpression,
   type LinearExpr,
 } from './linear.ts'
@@ -120,7 +135,6 @@ import {
   proveComparisonPlain,
   rangeFactsFromBounds,
   type NonNegativeFact,
-  type Truth,
 } from './proof.ts'
 import {
   comparisonNeed,
@@ -755,6 +769,7 @@ function shapeFactTexts(root: string, value: Value | null): string[] {
 
 function shapeFactsFromValue(path: string, value: Value): string[] {
   if (value.kind === 'unknown') return []
+  if (value.kind === 'null' || value.kind === 'nullable') return []
   if (value.kind === 'number') {
     if (!isStructuralShapePath(path)) return []
     const facts = numberFacts(path, value).map(fact => fact.text)
@@ -1697,6 +1712,8 @@ function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: Fit
 
 function expectedNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
+  if (value.kind === 'nullable') return `Nullable value ${value.expr ?? '<value>'} was not proven present`
+  if (value.kind === 'null') return 'Expected a number, got null'
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
 }
 
@@ -2200,6 +2217,11 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
 
 function refinedEnvForCondition(context: EvalContext, expression: ts.Expression, truth: boolean): Map<string, Value> {
   const env = new Map(context.env)
+  const presence = presenceCaseRefinement(context, expression, truth)
+  if (presence != null) {
+    env.set(presence.name, presence.value)
+    return env
+  }
   const refinement = conditionCaseRefinement(context, expression, truth)
   if (refinement == null) return env
   const current = env.get(refinement.name)
@@ -2208,6 +2230,16 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
   if (refined == null) return env
   env.set(refinement.name, refined)
   return env
+}
+
+function presenceCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {name: string; value: Value} | null {
+  const target = nullishComparisonTarget(expression, truth)
+  if (target == null) return null
+  const unwrapped = unwrapExpression(target)
+  if (!ts.isIdentifier(unwrapped)) return null
+  const current = context.env.get(unwrapped.text)
+  if (current?.kind !== 'nullable') return null
+  return {name: unwrapped.text, value: current.present}
 }
 
 function conditionCaseRefinement(
@@ -2227,6 +2259,30 @@ function conditionCaseRefinement(
   return identifierComparisonTarget(context, expression.right, flipComparison(branchComparison), expression.left)
 }
 
+function nullishComparisonTarget(expression: ts.Expression, truth: boolean): ts.Expression | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  if (!isNullishComparisonSyntax(op)) return null
+  const target = isNullishLiteral(expression.left) ? expression.right : isNullishLiteral(expression.right) ? expression.left : null
+  if (target == null) return null
+  const equalsNull = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
+  const presentWhenConditionTrue = !equalsNull
+  return truth === presentWhenConditionTrue ? target : null
+}
+
+function isNullishLiteral(expression: ts.Expression) {
+  const unwrapped = unwrapExpression(expression)
+  return unwrapped.kind === ts.SyntaxKind.NullKeyword
+    || (ts.isIdentifier(unwrapped) && unwrapped.text === 'undefined')
+}
+
+function isNullishComparisonSyntax(kind: ts.SyntaxKind) {
+  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    || kind === ts.SyntaxKind.EqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsToken
+}
+
 function identifierComparisonTarget(
   context: EvalContext,
   target: ts.Expression,
@@ -2240,52 +2296,6 @@ function identifierComparisonTarget(
   const stableOther = stablePlainConditionOperand(other)
   if (stableOther == null) return null
   return {name: unwrappedTarget.text, op, other: stableOther}
-}
-
-function stablePlainConditionOperand(value: NumberValue): NumberValue | null {
-  if (value.cases == null) return plainNumber(value)
-  const branches = numberBranches(value)
-  const first = branches[0]?.value
-  if (first == null) return null
-  return branches.every(branch => sameNumberShell(branch.value, first)) ? plainNumber(first) : null
-}
-
-function sameNumberShell(left: NumberValue, right: NumberValue) {
-  return left.min === right.min
-    && left.max === right.max
-    && left.isInteger === right.isInteger
-    && (left.expr ?? null) === (right.expr ?? null)
-    && (
-      (left.linear == null && right.linear == null)
-      || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
-    )
-}
-
-function refineNumberCasesForComparison(
-  value: NumberValue,
-  op: ComparisonOperator,
-  other: NumberValue,
-  assumptions: LinearConstraint[],
-): NumberValue | null {
-  const cases: NumberCase[] = []
-  for (const valueCase of numberBranches(value)) {
-    const caseAssumptions = mergeAssumptions(assumptions, valueCase.assumptions)
-    const status = proveComparisonPlain(valueCase.value, op, other, caseAssumptions)
-    if (status.status === 'fail') continue
-    if (status.status === 'pass') {
-      cases.push(valueCase)
-    } else {
-      const fact = comparisonConstraint(valueCase.value, op, other, undefined, 'branch')
-      if (fact == null) return null
-      cases.push({
-        value: valueCase.value,
-        assumptions: mergeAssumptions(valueCase.assumptions, [fact]),
-      })
-    }
-    if (cases.length > maxNumberCases) return null
-  }
-  if (cases.length === 0) return null
-  return withNumberCases(value, cases)
 }
 
 function evaluateBranchStatement(statement: ts.Statement, context: EvalContext): EvalFlow {
@@ -2997,6 +3007,7 @@ function evaluateExpression(expression: ts.Expression, context: EvalContext): Va
     const value = Number(expression.text)
     return numberValue(value, value, Number.isInteger(value), expression.text, linearConstant(value))
   }
+  if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
   if (ts.isIdentifier(expression)) return context.env.get(expression.text) ?? unknown(unknownIdentifierReason(expression.text))
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return context.env.get('this') ?? unknown('Unknown identifier this')
   if (ts.isParenthesizedExpression(expression)) return evaluateExpression(expression.expression, context)
@@ -3081,27 +3092,6 @@ function evaluatePlainNumberBinary(op: ts.SyntaxKind, left: NumberValue, right: 
   }
 }
 
-function combineNumberCases(
-  left: NumberValue,
-  right: NumberValue,
-  evaluate: (left: NumberValue, right: NumberValue) => Value,
-): NumberCase[] | null {
-  if (left.cases == null && right.cases == null) return null
-  const cases: NumberCase[] = []
-  for (const leftCase of numberBranches(left)) {
-    for (const rightCase of numberBranches(right)) {
-      const value = evaluate(leftCase.value, rightCase.value)
-      if (value.kind !== 'number') return null
-      cases.push({
-        value,
-        assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions),
-      })
-      if (cases.length > maxNumberCases) return null
-    }
-  }
-  return cases
-}
-
 function evaluateConditional(expression: ts.ConditionalExpression, context: EvalContext): Value {
   const extentEnd = evaluateExtentEndConditional(expression, context)
   if (extentEnd != null) return extentEnd
@@ -3115,13 +3105,23 @@ function evaluateConditional(expression: ts.ConditionalExpression, context: Eval
     case 'false':
       return evaluateExpression(expression.whenFalse, context)
     case 'maybe':
+      const trueContext = contextWithEnvAndAssumptions(
+        context,
+        refinedEnvForCondition(context, expression.condition, true),
+        condition.trueAssumptions,
+      )
+      const falseContext = contextWithEnvAndAssumptions(
+        context,
+        refinedEnvForCondition(context, expression.condition, false),
+        condition.falseAssumptions,
+      )
       return valueWithStructuralFallback(joinValues(
         valueWithAssumptions(
-          evaluateExpression(expression.whenTrue, contextWithAssumptions(context, condition.trueAssumptions)),
+          evaluateExpression(expression.whenTrue, trueContext),
           condition.trueAssumptions,
         ),
         valueWithAssumptions(
-          evaluateExpression(expression.whenFalse, contextWithAssumptions(context, condition.falseAssumptions)),
+          evaluateExpression(expression.whenFalse, falseContext),
           condition.falseAssumptions,
         ),
       ), expressionStructuralFallback(expression, context))
@@ -3510,7 +3510,7 @@ function evaluateArrayMapCall(expression: ts.CallExpression, context: EvalContex
     elements: null,
     element,
     expr: null,
-    summary: null,
+    summary: emptyArraySummary({kind: 'identity', sourceExpr: sourceName}),
   } satisfies ArrayValue
   return valueWithStructuralFallback(mapped, expressionStructuralFallback(expression, context))
 }
@@ -3555,8 +3555,8 @@ function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context:
     return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateArrayMapCallbackBranchStatement(statement.elseStatement, context)
   }
 
-  const trueContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.trueAssumptions)
-  const falseContext = contextWithEnvAndAssumptions(context, new Map(context.env), condition.falseAssumptions)
+  const trueContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, true), condition.trueAssumptions)
+  const falseContext = contextWithEnvAndAssumptions(context, refinedEnvForCondition(context, statement.expression, false), condition.falseAssumptions)
   const trueFlow = evaluateArrayMapCallbackBranchStatement(statement.thenStatement, trueContext)
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
@@ -3626,9 +3626,21 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
     elements: null,
     element: source.element,
     expr: null,
-    summary: null,
+    summary: emptyArraySummary({kind: 'subsequence', sourceExpr: source.expr ?? expression.expression.expression.getText(context.program.sourceFile)}),
   } satisfies ArrayValue
   return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
+}
+
+function emptyArraySummary(origin: ArrayOrigin | null): ArraySummary {
+  return {
+    origin,
+    relations: [],
+    nondecreasingProps: [],
+    advances: [],
+    spaced: [],
+    lastEnd: null,
+    extentEnds: [],
+  }
 }
 
 function simpleArrayCallbackParams(callback: ArrayCallbackFunction): {itemName: string; indexName: string | null} | null {
@@ -4391,6 +4403,8 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
   if (getterResult != null) return getterResult
   if (target.kind === 'array' && expression.name.text === 'length') return target.length
   if (target.kind === 'unknown') return fallback ?? target
+  if (target.kind === 'nullable') return fallback ?? unknown(`Nullable value ${target.expr ?? expression.expression.getText(context.program.sourceFile)} was not proven present`)
+  if (target.kind === 'null') return fallback ?? unknown(`Property access ${expression.name.text} expected a present object`)
   if (target.kind !== 'object') return fallback ?? unknown(`Property access ${expression.name.text} expected an object`)
   const value = target.props.get(expression.name.text) ?? (target.expr == null ? unknown(`Unknown property ${expression.name.text}`) : unknownNumber(`${target.expr}.${expression.name.text}`))
   return valueWithStructuralFallback(value, fallback)
@@ -4399,6 +4413,8 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, context
 function evaluateElementAccess(expression: ts.ElementAccessExpression, context: EvalContext): Value {
   const target = evaluateExpression(expression.expression, context)
   if (target.kind === 'unknown') return expressionStructuralFallback(expression, context) ?? target
+  if (target.kind === 'nullable') return expressionStructuralFallback(expression, context) ?? unknown(`Nullable value ${target.expr ?? expression.expression.getText(context.program.sourceFile)} was not proven present`)
+  if (target.kind === 'null') return expressionStructuralFallback(expression, context) ?? unknown('Element access expected a present array')
   if (target.kind !== 'array') return expressionStructuralFallback(expression, context) ?? unknown(`Element access expected an array`)
   const targetRoot = expressionRootName(expression.expression)
   if (
@@ -4416,7 +4432,20 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   const upper = proveComparison(index, '<', target.length, context.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') return unknown(`Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}`)
   const fallback = expressionStructuralFallback(expression, context)
-  if (target.elements == null) return valueWithStructuralFallback(target.element ?? unknown('Array element values are not tracked'), fallback)
+  const sourceName = target.expr ?? expression.expression.getText(context.program.sourceFile)
+  const indexText = expression.argumentExpression.getText(context.program.sourceFile)
+  const accessExpr = `${sourceName}[${indexText}]`
+  const sourceElementExpr = `${sourceName}[]`
+  const adjacentFacts = adjacentElementAccessFacts(target, index, sourceName, indexText, accessExpr, context.assumptions)
+  if (adjacentFacts.length > 0) context.assumptions = mergeAssumptions(context.assumptions, adjacentFacts)
+  if (target.elements == null) {
+    const element = target.element == null
+      ? unknown('Array element values are not tracked')
+      : context.insideLoop === true
+        ? target.element
+        : valueWithRebasedElementPath(target.element, sourceElementExpr, accessExpr)
+    return valueWithStructuralFallback(element, fallback)
+  }
   const caseValue = elementValueForIndexCases(target, index)
   if (caseValue != null) return valueWithStructuralFallback(caseValue, fallback)
   const start = Math.max(0, Math.ceil(index.min))
@@ -4425,26 +4454,6 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, context: 
   let value = start > end ? valueAt(Math.max(0, Math.ceil(index.min))) : valueAt(start)
   for (let i = start + 1; i <= end; i++) value = joinValues(value, valueAt(i))
   return valueWithStructuralFallback(value, fallback)
-}
-
-function elementValueForIndexCases(target: ArrayValue, index: NumberValue): Value | null {
-  if (target.elements == null || index.cases == null) return null
-  let value: Value | null = null
-  for (const indexCase of numberBranches(index)) {
-    const slot = exactFiniteArrayIndex(indexCase.value, target.elements.length)
-    if (slot == null) return null
-    const element = target.elements[slot] ?? target.element ?? unknown('Array element values are not tracked')
-    const elementCase = valueWithAssumptions(element, indexCase.assumptions)
-    value = value == null ? elementCase : joinValues(value, elementCase)
-  }
-  return value
-}
-
-function exactFiniteArrayIndex(index: NumberValue, length: number): number | null {
-  if (!index.isInteger || index.min !== index.max) return null
-  const slot = index.min
-  if (!Number.isInteger(slot) || slot < 0 || slot >= length) return null
-  return slot
 }
 
 function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {
@@ -4572,69 +4581,38 @@ function unknownIdentifierReason(name: string) {
   return `Unknown identifier ${name}`
 }
 
-function evaluateConditionFacts(expression: ts.Expression, context: EvalContext): {truth: Truth; trueAssumptions: LinearConstraint[]; falseAssumptions: LinearConstraint[]} {
+function evaluateConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts {
+  const presence = evaluatePresenceConditionFacts(expression, context)
+  if (presence != null) return presence
   if (!ts.isBinaryExpression(expression)) return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   const op = expression.operatorToken.kind
   if (!isComparisonSyntax(op)) return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   const left = evaluateExpression(expression.left, context)
   const right = evaluateExpression(expression.right, context)
   if (left.kind !== 'number' || right.kind !== 'number') return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
-  const comparison = syntaxToComparison(op)
-  const trueFact = comparisonConstraint(left, comparison, right, undefined, 'branch')
-  const falseComparison = negatedComparison(comparison)
-  const falseFact = falseComparison == null ? null : comparisonConstraint(left, falseComparison, right, undefined, 'branch')
-  const truth = conditionComparisonTruth(left, comparison, right, context.assumptions)
-  if (truth === 'true') return {truth, trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
-  if (truth === 'false') return {truth, trueAssumptions: trueFact == null ? [] : [trueFact], falseAssumptions: falseFact == null ? [] : [falseFact]}
-  return {
-    truth: 'maybe',
-    trueAssumptions: trueFact == null ? [] : [trueFact],
-    falseAssumptions: falseFact == null ? [] : [falseFact],
-  }
+  return comparisonConditionFacts(left, syntaxToComparison(op), right, context.assumptions)
 }
 
-function conditionComparisonTruth(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
-  if (left.cases == null && right.cases == null) {
-    const status = proveComparisonPlain(left, op, right, assumptions)
-    if (status.status === 'pass') return 'true'
-    if (status.status === 'fail') return 'false'
-    return 'maybe'
-  }
-
-  let sawPass = false
-  let sawFail = false
-  let sawUnknown = false
-  for (const leftCase of numberBranches(left)) {
-    for (const rightCase of numberBranches(right)) {
-      const status = proveComparisonPlain(
-        leftCase.value,
-        op,
-        rightCase.value,
-        mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions),
-      )
-      if (status.status === 'pass') sawPass = true
-      if (status.status === 'fail') sawFail = true
-      if (status.status === 'unknown') sawUnknown = true
-    }
-  }
-  if (sawPass && !sawFail && !sawUnknown) return 'true'
-  if (sawFail && !sawPass && !sawUnknown) return 'false'
-  return 'maybe'
-}
-
-function negatedComparison(op: ComparisonOperator): ComparisonOperator | null {
-  switch (op) {
-    case '==':
-      return null
-    case '>=':
-      return '<'
-    case '<=':
-      return '>'
-    case '>':
-      return '<='
-    case '<':
-      return '>='
-  }
+function evaluatePresenceConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  if (!isNullishComparisonSyntax(op)) return null
+  const targetExpression = isNullishLiteral(expression.left)
+    ? expression.right
+    : isNullishLiteral(expression.right)
+      ? expression.left
+      : null
+  if (targetExpression == null) return null
+  const target = evaluateExpression(targetExpression, context)
+  const equalsNull = op === ts.SyntaxKind.EqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsEqualsToken
+  const presentTruth = equalsNull ? 'false' : 'true'
+  const nullTruth = equalsNull ? 'true' : 'false'
+  const truth = target.kind === 'null'
+    ? nullTruth
+    : target.kind === 'nullable' || target.kind === 'unknown'
+      ? 'maybe'
+      : presentTruth
+  return {truth, trueAssumptions: [], falseAssumptions: []}
 }
 
 function isComparisonSyntax(kind: ts.SyntaxKind) {

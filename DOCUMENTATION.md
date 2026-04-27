@@ -775,6 +775,21 @@ function guardedRowsLength(input: MaybeRows) {
 }
 ```
 
+Freerange also keeps source facts for a nullable value made by a branch, but only
+after an ordinary null guard proves the present side:
+
+```ts
+/** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+function previousIndex(focused: number) {
+  const previous = focused > 0 ? focused - 1 : null
+  if (previous == null) return 0
+  return previous
+}
+```
+
 When an import boundary cannot be used, the report says which bucket it fell into:
 
 ```txt
@@ -826,6 +841,7 @@ Supported today:
 - `[...items, value]` length
 - bounded literal indexing; exact finite index cases like `0 | 2` only read those slots
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
+- symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize around `focused` and `focused - 1`
 - `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
@@ -858,6 +874,10 @@ function mapRows(items: {height: number}[]) {
 
 The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, side-effect-free `if` branches that return, and a final `return`. That keeps normal code normal without turning callbacks into a public Freerange language.
 
+`fr infer` also prints the immediate origin fact for maps, such as
+`return.rows follows items by index`. It is an inferred fact, not a new public
+annotation.
+
 `filter` support is even smaller:
 
 ```ts
@@ -873,7 +893,7 @@ function visibleRows(items: {height: number; visible: boolean}[]) {
 }
 ```
 
-Freerange treats this as a subsequence: same item domain, length between zero and the source length. It does not prove `rows.length == items.length`, and it does not reason about the predicate beyond requiring a simple side-effect-free expression.
+Freerange treats this as a subsequence: same item domain, length between zero and the source length. It does not prove `rows.length == items.length`, and it does not reason about the predicate beyond requiring a simple side-effect-free expression. `fr infer` prints this as an order-preserving subset fact.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
@@ -1132,6 +1152,7 @@ The checker understands a small pure subset:
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
 - return-style `if` guards and simple fall-through `if` / `else` branches
+- branch-created nullable values refined by ordinary `== null` / `!= null` guards
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
@@ -1142,8 +1163,10 @@ The checker understands a small pure subset:
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
+- symbolic element reads with concrete path reporting, plus previous/current specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
-- expression-bodied `items.filter(...)` as a subsequence summary: same item domain, length no larger than source length
+- expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
+- immediate map/filter origin facts in `fr infer`
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`

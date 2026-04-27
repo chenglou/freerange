@@ -11,7 +11,7 @@ import {sameExpressionText} from './linear.ts'
 import {formatExpectedRange} from './reporting.ts'
 import {sequenceRelationText} from './sequence-facts.ts'
 
-export type FitInferFact = FitRangeFact | FitEqualityFact | FitSequenceFact
+export type FitInferFact = FitRangeFact | FitEqualityFact | FitSequenceFact | FitOriginFact
 
 export type FitRangeFact = {
   kind: 'range'
@@ -42,6 +42,15 @@ export type FitSequenceFact = {
     | {kind: 'adjacent-comparison'}
 }
 
+export type FitOriginFact = {
+  kind: 'origin'
+  source: 'origin'
+  text: string
+  fact:
+    | {kind: 'identity'; path: string; sourcePath: string}
+    | {kind: 'subsequence'; path: string; sourcePath: string}
+}
+
 export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
   const facts: FitInferFact[] = []
   for (const [name, value] of finalEnv) {
@@ -53,6 +62,7 @@ export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<str
 
 export function factsFromValue(path: string, value: Value): FitInferFact[] {
   if (value.kind === 'unknown') return []
+  if (value.kind === 'null' || value.kind === 'nullable') return []
   if (value.kind === 'number') return numberFacts(path, value)
   if (value.kind === 'object') {
     const facts: FitInferFact[] = []
@@ -65,6 +75,17 @@ export function factsFromValue(path: string, value: Value): FitInferFact[] {
   const facts = numberFacts(`${path}.length`, value.length)
   if (value.element != null) facts.push(...factsFromValue(`${path}[]`, value.element))
   if (value.summary != null) {
+    if (value.summary.origin != null) {
+      const sourcePath = publicFitText(value.summary.origin.sourceExpr)
+      facts.push({
+        kind: 'origin',
+        source: 'origin',
+        text: value.summary.origin.kind === 'identity'
+          ? `${publicFitText(path)} follows ${sourcePath} by index`
+          : `${publicFitText(path)} is an order-preserving subset of ${sourcePath}`,
+        fact: {kind: value.summary.origin.kind, path: publicFitText(path), sourcePath},
+      })
+    }
     for (const prop of value.summary.nondecreasingProps) {
       facts.push({
         kind: 'sequence',

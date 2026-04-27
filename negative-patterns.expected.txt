@@ -281,17 +281,17 @@ UNKNOWN negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows =
 UNKNOWN negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
   Optional property optionalStructuralShapeApi.wrapRows(items).rows is not in the static layout subset
 FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
-  range was -Infinity..Infinity as items[].height, expected inside 0..40
-  need: items[].height inside 0..40
+  range was -Infinity..Infinity as items[index].height, expected inside 0..40
+  need: items[index].height inside 0..40
   known:
-    -Infinity..Infinity as items[].height
+    -Infinity..Infinity as items[index].height
     int 0..0 as 0
     int 40..40 as 40
     assumed from input: given items.length: int 1..50
     assumed from input: given index: int 0..49
     assumed from input: given index < items.length
-  missing: items[].height >= 0
-  missing: items[].height <= 40
+  missing: items[index].height >= 0
+  missing: items[index].height <= 40
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: return.bottom >= top
   -Infinity..Infinity as runningSum(top, items.length, items[].height) >= 0..1000 as top was not proven
   need: runningSum(top, items.length, items[].height) >= top
@@ -527,6 +527,8 @@ FAIL negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return
     int 0..0 as 0
   missing: scratch >= 0
   missing: scratch <= 0
+UNKNOWN negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
+  Nullable value (focused - 1) was not proven present
 FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was -Infinity..Infinity as scratch, expected inside 0..0
   need: scratch inside 0..0
@@ -797,6 +799,16 @@ UNKNOWN negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArra
   Array length-derived index on finite local arrays inside loops is not supported
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
   Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length
+UNKNOWN negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: return.current == return.previous
+  0..1000 as items[focused].top == 0..1000 as items[focused - 1].top was not proven
+  need: items[focused].top == items[focused - 1].top
+  known:
+    0..1000 as items[focused].top
+    0..1000 as items[focused - 1].top
+    assumed from input: given items.length: int 2..50
+    assumed from input: given items[].top: 0..1000
+    assumed from input: given focused: int 1..<items.length
+  missing: given items[focused].top == items[focused - 1].top
 UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return >= 0
   int -1..999 as (focused - 1) >= int 0..0 as 0 was not proven
   need: (focused - 1) >= 0

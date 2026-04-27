@@ -81,6 +81,7 @@ const expectedInferFacts = [
   'return.rows.length == params.items.length',
   'return.rows.length: int 0..Infinity',
   'return.rows[].height == params.items[].height',
+  'return.rows follows params.items by index',
 ]
 const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
 if (missingInferFacts.length > 0) {
@@ -89,6 +90,20 @@ if (missingInferFacts.length > 0) {
   process.exitCode = 1
 } else {
   console.log(`infer: ${expectedInferFacts.length} expected facts`)
+}
+
+const filterInferReport = inferFitFiles(['patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
+const filterInferFacts = new Set(filterInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedFilterInferFacts = [
+  'return.rows is an order-preserving subset of items',
+]
+const missingFilterInferFacts = expectedFilterInferFacts.filter(fact => !filterInferFacts.has(fact))
+if (missingFilterInferFacts.length > 0) {
+  console.error('expected filter inferred facts changed')
+  console.error(missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
 }
 
 const loopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'localLoopAnnotation'})

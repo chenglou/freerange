@@ -823,6 +823,15 @@ export function negativeForgettableLoopStillForgetsMutatedRoot(items: number[]) 
   return scratch // @fit 0
 }
 
+/** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+export function negativeNullableBranchNeedsPresentGuard(focused: number) {
+  const previous = focused > 0 ? focused - 1 : null
+  return previous
+}
+
 export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
   let scratch = 0
   let i = 0
@@ -1213,6 +1222,19 @@ export function negativeLoopLengthDerivedIndexDoesNotUseInitialArray(items: numb
 export function negativePredecessorIndexNeedsStrictPositiveBranch(items: number[], focused: number) {
   if (focused >= 0) return items[focused - 1]!
   return items[0]!
+}
+
+/** @fit
+ * given items.length: int 2..50
+ * given items[].top: 0..1000
+ * given focused: int 1..<items.length
+ * return.current == return.previous
+ */
+export function negativeDifferentSymbolicSlotsAreNotSamePath(items: {top: number}[], focused: number) {
+  return {
+    current: items[focused]!.top,
+    previous: items[focused - 1]!.top,
+  }
 }
 
 /** @fit

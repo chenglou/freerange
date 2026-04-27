@@ -13,12 +13,9 @@ import {
   mergeAssumptions,
   numberBranches,
   numberValue,
-  type ArrayValue,
   type FactSource,
   type LinearConstraint,
   type NumberValue,
-  type ObjectValue,
-  type UnknownValue,
   type Value,
 } from './domain.ts'
 import {
@@ -473,8 +470,10 @@ function nonNegativeFact(diff: LinearExpr, strict: boolean, text?: string): NonN
   return {diff, strict, ...(text == null ? {} : {text})}
 }
 
-function nonNumberReason(value: ObjectValue | ArrayValue | UnknownValue) {
+function nonNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
+  if (value.kind === 'nullable') return `Nullable value ${value.expr ?? '<value>'} was not proven present`
+  if (value.kind === 'null') return 'Expected a number, got null'
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
 }
 

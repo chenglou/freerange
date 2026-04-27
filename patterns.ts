@@ -1453,6 +1453,35 @@ export function strictIntegerPredecessorArrayIndex(items: number[], focused: num
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given focused: int 0..<items.length
+ * return.current: 0..40
+ */
+export function focusedIndexKeepsElementDomain(items: {height: number}[], focused: number) {
+  return {current: items[focused]!.height}
+}
+
+/** @fit
+ * given items.length: int 2..50
+ * given items[].height: 0..40
+ * given focused: int 1..<items.length
+ * return.currentTop >= return.previousTop
+ */
+export function focusedIndexUsesAdjacentSequenceFact(items: {height: number}[], focused: number) {
+  const rows = []
+  let top = 0
+  for (const item of items) {
+    rows.push({top, height: item.height})
+    top += item.height
+  }
+  return {
+    previousTop: rows[focused - 1]!.top,
+    currentTop: rows[focused]!.top,
+  }
+}
+
+/** @fit
  * given focused: int 0..1000
  * return: int 0..1000
  */
@@ -1503,6 +1532,27 @@ export function ternaryBranchLocalFieldChecks(count: number, focused: number) {
       count,
       targetIndex: focused, // @fit == 0
     }
+}
+
+/** @fit
+ * given focused: int 0..50
+ * return: int 0..49
+ */
+export function nullableBranchKeepsPresentNumberFacts(focused: number) {
+  const previous = focused > 0 ? focused - 1 : null
+  if (previous == null) return 0
+  return previous
+}
+
+/** @fit
+ * given count: int 1..50
+ * given focused: int 0..<count
+ * return.targetIndex: int 0..49
+ * return.targetIndex < count
+ */
+export function nullableBranchKeepsPresentObjectFacts(count: number, focused: number) {
+  const previous = focused > 0 ? {count, targetIndex: focused - 1} : null
+  return previous != null ? previous : {count, targetIndex: focused}
 }
 
 /** @fit

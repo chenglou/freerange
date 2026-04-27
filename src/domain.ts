@@ -30,7 +30,7 @@ export type LinearConstraint = {
 
 export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
-export type Value = NumberValue | ObjectValue | ArrayValue | UnknownValue
+export type Value = NumberValue | ObjectValue | ArrayValue | NullValue | NullableValue | UnknownValue
 
 export type NumberValue = {
   kind: 'number'
@@ -58,7 +58,19 @@ export type ArrayValue = {
   summary: ArraySummary | null
 }
 
+export type NullValue = {
+  kind: 'null'
+  expr: string | null
+}
+
+export type NullableValue = {
+  kind: 'nullable'
+  present: Value
+  expr: string | null
+}
+
 export type ArraySummary = {
+  origin?: ArrayOrigin | null
   relations: SequenceRelation[]
   nondecreasingProps: string[]
   advances: {prop: string; value: NumberValue}[]
@@ -66,6 +78,10 @@ export type ArraySummary = {
   lastEnd: NumberValue | null
   extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: NumberValue}[]
 }
+
+export type ArrayOrigin =
+  | {kind: 'identity'; sourceExpr: string}
+  | {kind: 'subsequence'; sourceExpr: string}
 
 export type SequenceRelation = {
   kind: 'adjacent-comparison'
@@ -198,6 +214,17 @@ export function unknownArray(name: string, length: NumberValue = unknownArrayLen
   }
 }
 
+export function nullValue(expr: string | null = 'null'): NullValue {
+  return {kind: 'null', expr}
+}
+
+export function nullableValue(present: Value, expr: string | null = null): NullableValue | UnknownValue {
+  if (present.kind === 'unknown') return present
+  if (present.kind === 'null') return unknown('Nullable value had no present branch')
+  if (present.kind === 'nullable') return {...present, expr: expr ?? present.expr}
+  return {kind: 'nullable', present, expr}
+}
+
 export function unknown(reason: string): UnknownValue {
   return {kind: 'unknown', reason}
 }
@@ -242,6 +269,9 @@ export function valueWithAssumptions(value: Value, assumptions: LinearConstraint
       },
     }
   }
+  if (value.kind === 'nullable') {
+    return {...value, present: valueWithAssumptions(value.present, assumptions)}
+  }
   return value
 }
 
@@ -253,6 +283,7 @@ export function mergeArraySummary(left: ArraySummary | null, right: ArraySummary
   if (left == null) return right
   if (right == null) return left
   return {
+    origin: sameArrayOrigin(left.origin ?? null, right.origin ?? null) ? left.origin ?? right.origin ?? null : null,
     relations: [...left.relations, ...right.relations].filter((fact, index, facts) => facts.findIndex(other => sameSequenceRelation(other, fact)) === index),
     nondecreasingProps: [...new Set([...left.nondecreasingProps, ...right.nondecreasingProps])],
     advances: [...left.advances, ...right.advances].filter((fact, index, facts) => facts.findIndex(other => sameAdvanceFact(other, fact)) === index),
@@ -272,6 +303,7 @@ function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null)
   if (left === right) return true
   if (left == null || right == null) return false
   if ((left.lastEnd?.expr ?? null) !== (right.lastEnd?.expr ?? null)) return false
+  if (!sameArrayOrigin(left.origin ?? null, right.origin ?? null)) return false
   if (left.relations.length !== right.relations.length) return false
   if (!left.relations.every((fact, index) => sameSequenceRelation(fact, right.relations[index]!))) return false
   if (left.nondecreasingProps.join('|') !== right.nondecreasingProps.join('|')) return false
@@ -281,6 +313,12 @@ function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null)
   if (!left.spaced.every((fact, index) => sameSpacedFact(fact, right.spaced[index]!))) return false
   if (left.extentEnds.length !== right.extentEnds.length) return false
   return left.extentEnds.every((fact, index) => sameExtentEndFact(fact, right.extentEnds[index]!))
+}
+
+function sameArrayOrigin(left: ArrayOrigin | null, right: ArrayOrigin | null) {
+  if (left === right) return true
+  if (left == null || right == null) return false
+  return left.kind === right.kind && sameExpressionText(left.sourceExpr, right.sourceExpr)
 }
 
 function sameAdvanceFact(left: ArraySummary['advances'][number], right: ArraySummary['advances'][number]) {
@@ -509,6 +547,23 @@ export function joinValues(left: Value, right: Value): Value {
       summary: sameArraySummary(left.summary, right.summary) ? left.summary : null,
     }
   }
+  if (left.kind === 'null' && right.kind === 'null') return nullValue(left.expr ?? right.expr)
+  if (left.kind === 'nullable' && right.kind === 'null') return left
+  if (left.kind === 'null' && right.kind === 'nullable') return right
+  if (left.kind === 'nullable' && right.kind === 'nullable') {
+    const present = joinValues(left.present, right.present)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+  }
+  if (left.kind === 'nullable') {
+    const present = joinValues(left.present, right)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+  }
+  if (right.kind === 'nullable') {
+    const present = joinValues(left, right.present)
+    return nullableValue(present, left.expr != null && left.expr === right.expr ? left.expr : null)
+  }
+  if (left.kind === 'null') return nullableValue(right, right.expr)
+  if (right.kind === 'null') return nullableValue(left, left.expr)
   return unknown('Branches returned incompatible value shapes')
 }
 
