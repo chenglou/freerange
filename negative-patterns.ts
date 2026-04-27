@@ -193,6 +193,17 @@ export function negativeBranchAssignmentJoinsBothSides(width: number) {
   return chosen
 }
 
+/** @fit
+ * given step: -10..10
+ * return > 1
+ */
+export function negativeThrowGuardOnlyProvesPositive(step: number) {
+  if (step <= 0) {
+    throw new Error('step must be positive')
+  }
+  return step
+}
+
 export function negativeMathSignCanBeNegative(
   value: number, // @fit -10..10
 ) {

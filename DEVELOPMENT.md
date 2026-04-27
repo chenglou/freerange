@@ -14,8 +14,6 @@ bun install
 - `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
 - `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
-- `bun run verify path/to/file.ts` — old JSON-report inspection helper
-- `bun run infer path/to/file.ts --function name` — dev-only view of inferred facts and explicit contract lines
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
@@ -43,7 +41,10 @@ bun install
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
-- [src/infer-output.ts](./src/infer-output.ts) — shared pretty-printer for `fr infer` and the dev `infer.ts` helper
+- [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
+- [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
+- [src/scout.ts](./src/scout.ts) — scout candidate and provisional-requirement bookkeeping
+- [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
@@ -54,8 +55,6 @@ bun install
 - [src/bound-index.ts](./src/bound-index.ts) — same-index labels and adjacent-label spec checks backed by sequence facts
 - [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
 - [fr.ts](./fr.ts) — main CLI entrypoint
-- [verify.ts](./verify.ts) — old ad hoc JSON-report CLI
-- [infer.ts](./infer.ts) — dev-only inferred-facts CLI
 - [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape comparison diagnostic
 - [bench.ts](./bench.ts) — dev-only coarse timing helper
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
@@ -67,7 +66,7 @@ bun install
 
 ## Infer Tool
 
-`bun run fr infer path/to/file.ts --function name` is for us and for adoption-minded agents, not public annotation generation. The older `bun run infer ...` script prints the same shape for local debugging. It prints curated facts the checker already knows:
+`bun run fr infer path/to/file.ts --function name` is for us and for adoption-minded agents, not public annotation generation. It prints curated facts the checker already knows:
 
 - `return` facts from the returned value
 - `locals` from locals that survive to the return

@@ -349,6 +349,20 @@ function clamp(value: number, min: number, max: number) {
 }
 ```
 
+Guard branches that throw are treated as exits. The code after the `if` keeps the
+facts from the surviving path:
+
+```ts
+/** @fit
+ * given step: -10..10
+ * return > 0
+ */
+function positiveStep(step: number) {
+  if (step <= 0) throw new Error('step must be positive')
+  return step
+}
+```
+
 Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot. Unsupported `while` / `do while` loops get the same treatment when their condition is side-effect-free and the body only mutates clear local roots.
 
 ## Reading Results
@@ -1205,7 +1219,7 @@ The checker understands a small pure subset:
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
-- return-style `if` guards and simple fall-through `if` / `else` branches
+- return-style `if` guards, `throw` guards, and simple fall-through `if` / `else` branches
 - branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, `typeof value !== 'undefined'` for optional values, and numeric `??` fallbacks such as `dimensions?.width ?? 0`
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads

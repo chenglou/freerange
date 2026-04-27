@@ -362,6 +362,26 @@ export function branchAssignmentFallsThrough(width: number) {
 }
 
 /** @fit
+ * given step: -10..10
+ * return > 0
+ */
+export function throwGuardNarrowsPositive(step: number) {
+  if (step <= 0) {
+    throw new Error('step must be positive')
+  }
+  return step
+}
+
+/** @fit
+ * given step: -10..10
+ * return > 0
+ */
+export function returnBranchIgnoresThrowingPath(step: number) {
+  if (step > 0) return step
+  throw new Error('step must be positive')
+}
+
+/** @fit
  * given value: -100..100
  * given min: 1..100
  * given max: 1..100

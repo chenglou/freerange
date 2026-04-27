@@ -172,6 +172,30 @@ import {
   uniqueFacts,
   type FitInferFact,
 } from './facts.ts'
+import {
+  inferFunctionSpecReports,
+  redundantSpecs,
+  topUnknownReason,
+  type FitInferRedundantSpec,
+  type FitInferSpec,
+  type FitInferSpecStatus,
+} from './infer-report.ts'
+import {
+  replaceFunctionSpecs,
+  restoreFunctionSpecs,
+  scoutNumericParameterNames,
+  scoutRequirementSpecsByFunction,
+  scoutRequirementsFromReason,
+  uniqueScoutCandidates,
+  type FitScoutCandidate,
+  type FitScoutReport,
+} from './scout.ts'
+import {
+  callSiteBindingsFor,
+  callSiteText,
+  valueWithCallSiteText,
+  type CallSiteBindings,
+} from './call-site-text.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
 
@@ -195,38 +219,8 @@ export type FitDoctorCheck = {
   reason?: string
 }
 
-export type FitScoutCandidate = {
-  file: string
-  functionName: string
-  fact: string
-  requirements: string[]
-}
-
-export type FitScoutReport = {
-  files: string[]
-  candidates: FitScoutCandidate[]
-  checks: FitDoctorCheck[]
-  summary: {
-    candidates: number
-    pass: number
-    fail: number
-    requires: number
-    unknown: number
-  }
-}
-
-export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
-
-export type FitInferSpec = {
-  text: string
-  status: FitInferSpecStatus
-  reason?: string
-}
-
-export type FitInferRedundantSpec = {
-  text: string
-  reason: string
-}
+export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
+export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
 
 export type FitInferLoopSpecStatus = FitInferSpecStatus
 export type FitInferLoopSpec = FitInferSpec
@@ -299,8 +293,6 @@ type ResolvedCallTarget =
       reason: string
     }
 
-type CallSiteBindings = Map<string, string>
-
 export type FunctionContractProof =
   | {status: 'verifying'}
   | {status: FitCheckStatus; checks: FitCheck[]}
@@ -328,6 +320,7 @@ type EvalContext = {
 
 type EvalFlow =
   | {kind: 'return'; value: Value}
+  | {kind: 'exit'}
   | {kind: 'fallthrough'}
 
 type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
@@ -648,11 +641,22 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const state = evaluateFunctionBodyState(fn, context)
   const resultFacts = factsFromValue(fitReturnInternalRoot, state.result)
   const localFacts = localFactsFromEnv(env, state.env)
-  const specReports = inferFunctionSpecReports(program, functionName, specs, env, state.result, [
+  const backgroundChecks = [
     ...givenChecks,
     ...checks,
     ...context.checks,
-  ], state.assumptions, contractCache)
+  ]
+  const specReports = inferFunctionSpecReports(specs, backgroundChecks, spec => verifyCheckSpec(
+    program.file,
+    program,
+    functionName,
+    env,
+    state.result,
+    spec,
+    [...backgroundChecks],
+    state.assumptions,
+    contractCache,
+  ))
   const unsupported = [
     ...givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
@@ -704,104 +708,6 @@ function scoutFunctionCandidates(program: Program, fn: FitFunction): FitScoutCan
     }
   }
   return uniqueScoutCandidates(candidates)
-}
-
-function scoutNumericParameterNames(fn: FitFunction, env: Map<string, Value>): string[] {
-  const names: string[] = []
-  for (const param of fn.node.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    const value = env.get(param.name.text)
-    if (value?.kind === 'number') names.push(param.name.text)
-  }
-  return names
-}
-
-function scoutRequirementsFromReason(reason: string | undefined): string[] {
-  if (reason == null) return []
-  const requirements: string[] = []
-  for (const line of reason.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed.startsWith('missing: given ')) continue
-    const requirement = tryParseScoutRequirement(trimmed.slice('missing: '.length))
-    if (requirement != null) requirements.push(requirement)
-  }
-  return [...new Set(requirements)]
-}
-
-function tryParseScoutRequirement(text: string): string | null {
-  try {
-    const spec = parseFitSpecLine(text)
-    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') return null
-    if (spec.text.includes(fitReturnPublicRoot)) return null
-    return spec.text
-  } catch {
-    return null
-  }
-}
-
-function uniqueScoutCandidates(candidates: FitScoutCandidate[]): FitScoutCandidate[] {
-  const seen = new Set<string>()
-  const unique: FitScoutCandidate[] = []
-  for (const candidate of candidates) {
-    const key = `${candidate.file}\0${candidate.functionName}\0${candidate.fact}\0${candidate.requirements.join('\0')}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(candidate)
-  }
-  return unique
-}
-
-function scoutRequirementSpecsByFunction(programs: Program[], candidates: FitScoutCandidate[]): Map<Program, Map<string, FitSpec[]>> {
-  const programsByFile = new Map(programs.map(program => [program.file, program]))
-  const specsByProgram = new Map<Program, Map<string, FitSpec[]>>()
-  const seen = new Set<string>()
-
-  for (const candidate of candidates) {
-    const program = programsByFile.get(candidate.file)
-    if (program == null) continue
-    let specsByFunction = specsByProgram.get(program)
-    if (specsByFunction == null) {
-      specsByFunction = new Map()
-      specsByProgram.set(program, specsByFunction)
-    }
-    const specs = specsByFunction.get(candidate.functionName) ?? []
-    for (const requirement of candidate.requirements) {
-      const key = `${candidate.file}\0${candidate.functionName}\0${requirement}`
-      if (seen.has(key)) continue
-      seen.add(key)
-      specs.push(parseFitSpecLine(requirement))
-    }
-    specsByFunction.set(candidate.functionName, specs)
-  }
-
-  return specsByProgram
-}
-
-type SavedFunctionSpecs = Map<Program, Map<string, FitSpec[] | undefined>>
-
-function replaceFunctionSpecs(programs: Program[], specsByProgram: Map<Program, Map<string, FitSpec[]>>): SavedFunctionSpecs {
-  const saved: SavedFunctionSpecs = new Map()
-  for (const program of programs) {
-    const savedProgramSpecs = new Map<string, FitSpec[] | undefined>()
-    saved.set(program, savedProgramSpecs)
-    const scoutSpecs = specsByProgram.get(program) ?? new Map()
-    for (const functionName of program.functions.keys()) {
-      savedProgramSpecs.set(functionName, program.specsByFunction.get(functionName))
-      const specs = scoutSpecs.get(functionName)
-      if (specs == null || specs.length === 0) program.specsByFunction.delete(functionName)
-      else program.specsByFunction.set(functionName, specs)
-    }
-  }
-  return saved
-}
-
-function restoreFunctionSpecs(saved: SavedFunctionSpecs) {
-  for (const [program, specsByFunction] of saved) {
-    for (const [functionName, specs] of specsByFunction) {
-      if (specs == null) program.specsByFunction.delete(functionName)
-      else program.specsByFunction.set(functionName, specs)
-    }
-  }
 }
 
 type FunctionShapeState = {
@@ -996,137 +902,6 @@ function compactNodeText(node: ts.Node, sourceFile: ts.SourceFile) {
 
 function isStructuralShapePath(path: string) {
   return path.includes('.') || path.includes('[]')
-}
-
-function inferFunctionSpecReports(
-  program: Program,
-  functionName: string,
-  specs: FitSpec[],
-  env: Map<string, Value>,
-  result: Value,
-  backgroundChecks: FitCheck[],
-  assumptions: LinearConstraint[],
-  contractCache: Map<string, FunctionContractProof>,
-): FitInferSpec[] {
-  const checkByText = new Map<string, FitCheck>()
-  for (const check of backgroundChecks) {
-    if (!checkByText.has(check.text)) checkByText.set(check.text, check)
-  }
-
-  return specs.map(spec => {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
-      const check = checkByText.get(spec.text)
-      if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
-      return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
-    }
-
-    const check = verifyCheckSpec(program.file, program, functionName, env, result, spec, [...backgroundChecks], assumptions, contractCache)
-    if (check.status === 'pass') return {text: spec.text, status: 'checked'}
-    return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
-  })
-}
-
-function redundantSpecs(specs: FitInferSpec[], facts: FitInferFact[]) {
-  const redundant: FitInferRedundantSpec[] = []
-  for (const spec of specs) {
-    if (spec.status !== 'checked') continue
-    const reason = inferredFactReasonForSpecText(spec.text, facts)
-    if (reason == null) continue
-    redundant.push({text: spec.text, reason})
-  }
-  return redundant
-}
-
-function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) {
-  const exactFact = facts.find(fact => fact.text === specText)
-  if (exactFact != null) return exactFact.text
-
-  const spec = parseFitSpecLineForInference(specText)
-  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
-  if (spec.kind === 'check-atom') return null
-  if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
-  return comparisonFactReasonForSpec(spec, facts)
-}
-
-function parseFitSpecLineForInference(text: string): FitSpec | null {
-  try {
-    return parseFitSpecLine(text)
-  } catch {
-    return null
-  }
-}
-
-function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
-  const range = inferredRangeFactForExpression(facts, spec.expression)
-  if (range == null) return null
-  if (spec.range.finiteValues != null) {
-    return range.values != null && range.values.every(value => spec.range.finiteValues!.includes(value)) ? range.text : null
-  }
-  const lowerOk = spec.range.lowerValue != null
-    && (spec.range.lowerInclusive ? range.min >= spec.range.lowerValue : range.min > spec.range.lowerValue)
-  const upperOk = spec.range.upperValue != null
-    && (spec.range.upperInclusive ? range.max <= spec.range.upperValue : range.max < spec.range.upperValue)
-  return lowerOk
-    && upperOk
-    && (spec.range.valueKind !== 'int' || range.isInteger)
-    ? range.text
-    : null
-}
-
-function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
-  const leftRange = inferredRangeFactForExpression(facts, spec.left)
-  const rightRange = inferredRangeFactForExpression(facts, spec.right)
-  const leftNumber = numberText(spec.left)
-  const rightNumber = numberText(spec.right)
-
-  switch (spec.op) {
-    case '>=':
-      if (leftRange != null && rightNumber != null && leftRange.min >= rightNumber) return leftRange.text
-      if (leftNumber != null && rightRange != null && leftNumber >= rightRange.max) return rightRange.text
-      return null
-    case '>':
-      if (leftRange != null && rightNumber != null && leftRange.min > rightNumber) return leftRange.text
-      if (leftNumber != null && rightRange != null && leftNumber > rightRange.max) return rightRange.text
-      return null
-    case '<=':
-      if (leftRange != null && rightNumber != null && leftRange.max <= rightNumber) return leftRange.text
-      if (leftNumber != null && rightRange != null && leftNumber <= rightRange.min) return rightRange.text
-      return null
-    case '<':
-      if (leftRange != null && rightNumber != null && leftRange.max < rightNumber) return leftRange.text
-      if (leftNumber != null && rightRange != null && leftNumber < rightRange.min) return rightRange.text
-      return null
-    case '==':
-      return equalityFactReasonForSpec(spec, facts)
-  }
-}
-
-function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
-  for (const fact of facts) {
-    const inferred = parseFitSpecLineForInference(fact.text)
-    if (inferred?.kind !== 'check-comparison' || inferred.op !== '==') continue
-    const sameOrder = sameExpressionText(spec.left, inferred.left) && sameExpressionText(spec.right, inferred.right)
-    const flipped = sameExpressionText(spec.left, inferred.right) && sameExpressionText(spec.right, inferred.left)
-    if (sameOrder || flipped) return fact.text
-  }
-  return null
-}
-
-function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
-  for (const fact of facts) {
-    if (fact.kind === 'range' && sameExpressionText(fact.path, expression)) return fact
-  }
-  return null
-}
-
-function numberText(text: string): number | null {
-  const value = Number(text)
-  return Number.isFinite(value) ? value : null
-}
-
-function topUnknownReason(value: Value): string[] {
-  if (value.kind === 'unknown') return [value.reason]
-  return []
 }
 
 function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program: Program, env: Map<string, Value>) {
@@ -2157,7 +1932,7 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 
 function evaluateStatements(statements: ts.NodeArray<ts.Statement>, context: EvalContext, startIndex = 0): Value {
   const flow = evaluateStatementsFlow(statements, context, startIndex)
-  return flow.kind === 'return' ? flow.value : unknown(`Function ${context.stack.at(-1) ?? '<unknown>'} did not return`)
+  return flow.kind === 'return' ? flow.value : unknown(functionDidNotReturnReason(context))
 }
 
 function evaluateStatementsFlow(statements: ts.NodeArray<ts.Statement>, context: EvalContext, startIndex = 0): EvalFlow {
@@ -2189,12 +1964,13 @@ function evaluateStatementsFlow(statements: ts.NodeArray<ts.Statement>, context:
     }
     if (ts.isIfStatement(statement)) {
       const flow = evaluateIfStatement(statement, context, statements, index + 1)
-      if (flow.kind === 'return') return flow
+      if (flow.kind !== 'fallthrough') return flow
       continue
     }
     if (ts.isReturnStatement(statement)) {
       return {kind: 'return', value: evaluateReturnStatement(statement, context)}
     }
+    if (ts.isThrowStatement(statement)) return {kind: 'exit'}
     return {kind: 'return', value: unknown(`Unsupported statement in ${context.stack.at(-1) ?? '<unknown>'}: ${statement.getText(context.program.sourceFile)}`)}
   }
 
@@ -2457,28 +2233,61 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
     : evaluateElseBranchStatement(statement.elseStatement, falseContext, statements, nextIndex)
-  if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
-    return {
-      kind: 'return',
-      value: joinValues(
-        valueWithAssumptions(trueFlow.value, condition.trueAssumptions),
-        valueWithAssumptions(falseFlow.value, condition.falseAssumptions),
-      ),
-    }
+  if (isNonFallthroughFlow(trueFlow) && isNonFallthroughFlow(falseFlow)) {
+    return joinNonFallthroughFlows(trueFlow, condition.trueAssumptions, falseFlow, condition.falseAssumptions, functionDidNotReturnReason(context))
+  }
+  if (trueFlow.kind === 'exit') {
+    context.env = envWithAssumptions(falseContext.env, condition.falseAssumptions)
+    context.assumptions = falseContext.assumptions
+    return {kind: 'fallthrough'}
+  }
+  if (falseFlow.kind === 'exit') {
+    context.env = envWithAssumptions(trueContext.env, condition.trueAssumptions)
+    context.assumptions = trueContext.assumptions
+    return {kind: 'fallthrough'}
   }
   if (trueFlow.kind === 'return') {
-    const falseContinuation = valueWithAssumptions(evaluateStatements(statements, falseContext, nextIndex), condition.falseAssumptions)
-    return {kind: 'return', value: joinValues(valueWithAssumptions(trueFlow.value, condition.trueAssumptions), falseContinuation)}
+    const falseContinuation = evaluateStatementsFlow(statements, falseContext, nextIndex)
+    return joinNonFallthroughFlows(trueFlow, condition.trueAssumptions, falseContinuation, condition.falseAssumptions, functionDidNotReturnReason(context))
   }
   if (falseFlow.kind === 'return') {
-    const trueContinuation = valueWithAssumptions(evaluateStatements(statements, trueContext, nextIndex), condition.trueAssumptions)
-    return {kind: 'return', value: joinValues(trueContinuation, valueWithAssumptions(falseFlow.value, condition.falseAssumptions))}
+    const trueContinuation = evaluateStatementsFlow(statements, trueContext, nextIndex)
+    return joinNonFallthroughFlows(trueContinuation, condition.trueAssumptions, falseFlow, condition.falseAssumptions, functionDidNotReturnReason(context))
   }
   context.env = joinEnvironments(
     envWithAssumptions(trueContext.env, condition.trueAssumptions),
     envWithAssumptions(falseContext.env, condition.falseAssumptions),
   )
   return {kind: 'fallthrough'}
+}
+
+function functionDidNotReturnReason(context: EvalContext) {
+  return `Function ${context.stack.at(-1) ?? '<unknown>'} did not return`
+}
+
+function isNonFallthroughFlow(flow: EvalFlow) {
+  return flow.kind !== 'fallthrough'
+}
+
+function joinNonFallthroughFlows(
+  leftFlow: EvalFlow,
+  leftAssumptions: LinearConstraint[],
+  rightFlow: EvalFlow,
+  rightAssumptions: LinearConstraint[],
+  fallthroughReason: string,
+): EvalFlow {
+  const left = flowReturnValue(leftFlow, leftAssumptions, fallthroughReason)
+  const right = flowReturnValue(rightFlow, rightAssumptions, fallthroughReason)
+  if (left == null && right == null) return {kind: 'exit'}
+  if (left == null) return {kind: 'return', value: right!}
+  if (right == null) return {kind: 'return', value: left}
+  return {kind: 'return', value: joinValues(left, right)}
+}
+
+function flowReturnValue(flow: EvalFlow, assumptions: LinearConstraint[], fallthroughReason: string): Value | null {
+  if (flow.kind === 'exit') return null
+  const value = flow.kind === 'return' ? flow.value : unknown(fallthroughReason)
+  return valueWithAssumptions(value, assumptions)
 }
 
 function evaluateElseBranchStatement(statement: ts.Statement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
@@ -2643,6 +2452,7 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
   if (ts.isReturnStatement(statement)) {
     return {kind: 'return', value: evaluateReturnStatement(statement, context)}
   }
+  if (ts.isThrowStatement(statement)) return {kind: 'exit'}
   if (!ts.isBlock(statement)) return {kind: 'return', value: unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)}
   return evaluateStatementsFlow(statement.statements, context)
 }
@@ -3896,7 +3706,12 @@ function evaluateArrayMapCallbackStatements(statements: ts.NodeArray<ts.Statemen
       if (statement.expression == null) return {kind: 'return', value: unknown('Array.map callback block return expected an expression')}
       return {kind: 'return', value: evaluateExpression(statement.expression, context)}
     }
-    if (ts.isIfStatement(statement)) return evaluateArrayMapCallbackIfStatement(statement, context, statements, index + 1)
+    if (ts.isIfStatement(statement)) {
+      const flow = evaluateArrayMapCallbackIfStatement(statement, context, statements, index + 1)
+      if (flow.kind !== 'fallthrough') return flow
+      continue
+    }
+    if (ts.isThrowStatement(statement)) return {kind: 'exit'}
     return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
   }
   return {kind: 'fallthrough'}
@@ -3916,30 +3731,26 @@ function evaluateArrayMapCallbackIfStatement(statement: ts.IfStatement, context:
   const falseFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'} satisfies EvalFlow
     : evaluateArrayMapCallbackElseBranchStatement(statement.elseStatement, falseContext, statements, nextIndex)
-  if (trueFlow.kind === 'return' && falseFlow.kind === 'return') {
-    return {
-      kind: 'return',
-      value: joinValues(
-        valueWithAssumptions(trueFlow.value, condition.trueAssumptions),
-        valueWithAssumptions(falseFlow.value, condition.falseAssumptions),
-      ),
-    }
+  if (isNonFallthroughFlow(trueFlow) && isNonFallthroughFlow(falseFlow)) {
+    return joinNonFallthroughFlows(trueFlow, condition.trueAssumptions, falseFlow, condition.falseAssumptions, arrayMapCallbackDidNotReturnReason)
+  }
+  if (trueFlow.kind === 'exit') {
+    context.env = envWithAssumptions(falseContext.env, condition.falseAssumptions)
+    context.assumptions = falseContext.assumptions
+    return {kind: 'fallthrough'}
+  }
+  if (falseFlow.kind === 'exit') {
+    context.env = envWithAssumptions(trueContext.env, condition.trueAssumptions)
+    context.assumptions = trueContext.assumptions
+    return {kind: 'fallthrough'}
   }
   if (trueFlow.kind === 'return') {
     const falseContinuationFlow = evaluateArrayMapCallbackStatements(statements, falseContext, nextIndex)
-    const falseContinuation = valueWithAssumptions(
-      falseContinuationFlow.kind === 'return' ? falseContinuationFlow.value : unknown('Array.map callback block did not return'),
-      condition.falseAssumptions,
-    )
-    return {kind: 'return', value: joinValues(valueWithAssumptions(trueFlow.value, condition.trueAssumptions), falseContinuation)}
+    return joinNonFallthroughFlows(trueFlow, condition.trueAssumptions, falseContinuationFlow, condition.falseAssumptions, arrayMapCallbackDidNotReturnReason)
   }
   if (falseFlow.kind === 'return') {
     const trueContinuationFlow = evaluateArrayMapCallbackStatements(statements, trueContext, nextIndex)
-    const trueContinuation = valueWithAssumptions(
-      trueContinuationFlow.kind === 'return' ? trueContinuationFlow.value : unknown('Array.map callback block did not return'),
-      condition.trueAssumptions,
-    )
-    return {kind: 'return', value: joinValues(trueContinuation, valueWithAssumptions(falseFlow.value, condition.falseAssumptions))}
+    return joinNonFallthroughFlows(trueContinuationFlow, condition.trueAssumptions, falseFlow, condition.falseAssumptions, arrayMapCallbackDidNotReturnReason)
   }
   context.env = joinEnvironments(
     envWithAssumptions(trueContext.env, condition.trueAssumptions),
@@ -3959,6 +3770,7 @@ function evaluateArrayMapCallbackBranchStatement(statement: ts.Statement, contex
     if (statement.expression == null) return {kind: 'return', value: unknown('Array.map callback block return expected an expression')}
     return {kind: 'return', value: evaluateExpression(statement.expression, context)}
   }
+  if (ts.isThrowStatement(statement)) return {kind: 'exit'}
   if (!ts.isBlock(statement)) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
   return evaluateArrayMapCallbackStatements(statement.statements, context)
 }
@@ -3966,6 +3778,8 @@ function evaluateArrayMapCallbackBranchStatement(statement: ts.Statement, contex
 function unsupportedArrayMapCallbackBlock(): Value {
   return unknown('Array.map callback block supports const bindings, if branches, and return only')
 }
+
+const arrayMapCallbackDidNotReturnReason = 'Array.map callback block did not return'
 
 function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalContext): Value | null {
   if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'filter') return null
@@ -4402,156 +4216,6 @@ function setFiniteArrayElementValue(current: Value | undefined, expr: string, in
   }
   elements[index] = value
   return {...base, elements}
-}
-
-function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
-  if (bindings == null || bindings.size === 0) return value
-  if (value.kind === 'number') return numberWithCallSiteText(value, bindings)
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, valueWithCallSiteText(prop, bindings))
-    return {...value, props, expr: maybeCallSiteText(value.expr, bindings)}
-  }
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      length: numberWithCallSiteText(value.length, bindings),
-      elements: value.elements == null ? null : value.elements.map(element => valueWithCallSiteText(element, bindings)),
-      element: value.element == null ? null : valueWithCallSiteText(value.element, bindings),
-      expr: maybeCallSiteText(value.expr, bindings),
-      summary: arraySummaryWithCallSiteText(value.summary, bindings),
-    }
-  }
-  if (value.kind === 'nullable') {
-    return {...value, present: valueWithCallSiteText(value.present, bindings), expr: maybeCallSiteText(value.expr, bindings)}
-  }
-  if (value.kind === 'null') return {...value, expr: maybeCallSiteText(value.expr, bindings)}
-  return value
-}
-
-function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings): NumberValue {
-  return {
-    ...value,
-    expr: maybeCallSiteText(value.expr, bindings),
-    cases: value.cases == null ? null : value.cases.map(choice => ({
-      value: numberWithCallSiteText(choice.value, bindings),
-      assumptions: choice.assumptions.map(assumption => constraintWithCallSiteText(assumption, bindings)),
-    })),
-  }
-}
-
-function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: CallSiteBindings): ArraySummary | null {
-  if (summary == null) return null
-  return {
-    origin: summary.origin == null ? null : {...summary.origin, sourceExpr: callSiteText(summary.origin.sourceExpr, bindings)},
-    relations: summary.relations.map(relation => ({
-      ...relation,
-      right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
-    })),
-    nondecreasingProps: summary.nondecreasingProps,
-    advances: summary.advances.map(fact => ({...fact, value: numberWithCallSiteText(fact.value, bindings)})),
-    spaced: summary.spaced.map(fact => ({
-      gapExpr: callSiteText(fact.gapExpr, bindings),
-      heightExpr: callSiteText(fact.heightExpr, bindings),
-      advanceExpr: callSiteText(fact.advanceExpr, bindings),
-    })),
-    lastEnd: summary.lastEnd == null ? null : numberWithCallSiteText(summary.lastEnd, bindings),
-    extentEnds: summary.extentEnds.map(fact => ({
-      emptyExpr: callSiteText(fact.emptyExpr, bindings),
-      nonEmptyExpr: callSiteText(fact.nonEmptyExpr, bindings),
-      value: numberWithCallSiteText(fact.value, bindings),
-    })),
-  }
-}
-
-function constraintWithCallSiteText(assumption: LinearConstraint, bindings: CallSiteBindings): LinearConstraint {
-  return {
-    ...assumption,
-    ...(assumption.leftExpr == null ? {} : {leftExpr: callSiteText(assumption.leftExpr, bindings)}),
-    ...(assumption.rightExpr == null ? {} : {rightExpr: callSiteText(assumption.rightExpr, bindings)}),
-  }
-}
-
-function maybeCallSiteText(text: string | null, bindings: CallSiteBindings) {
-  return text == null ? null : callSiteText(text, bindings)
-}
-
-function callSiteBindingsFor(
-  fn: FitFunction,
-  args: readonly ts.Expression[],
-  sourceFile: ts.SourceFile,
-  thisText?: string,
-  argumentValues?: readonly Value[],
-): CallSiteBindings {
-  const bindings: CallSiteBindings = new Map()
-  if (thisText != null) bindings.set('this', callSiteValueText(thisText))
-  for (let i = 0; i < fn.node.parameters.length; i++) {
-    const argument = args[i]
-    if (argument == null) continue
-    bindCallSitePattern(fn.node.parameters[i]!.name, callSiteArgumentText(argument.getText(sourceFile), argumentValues?.[i]), bindings)
-  }
-  return bindings
-}
-
-function callSiteArgumentText(sourceText: string, value: Value | undefined) {
-  return value?.kind === 'number' && value.expr != null ? value.expr : sourceText
-}
-
-function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: CallSiteBindings) {
-  if (ts.isIdentifier(name)) {
-    bindings.set(name.text, callSiteValueText(sourceText))
-    return
-  }
-  if (ts.isObjectBindingPattern(name)) {
-    const base = callSitePropertyBaseText(sourceText)
-    for (const element of name.elements) {
-      if (element.dotDotDotToken != null) continue
-      const propertyName = bindingElementPropertyName(element)
-      if (propertyName == null) continue
-      bindCallSitePattern(element.name, `${base}.${propertyName}`, bindings)
-    }
-    return
-  }
-  if (ts.isArrayBindingPattern(name)) {
-    const base = callSitePropertyBaseText(sourceText)
-    forEachArrayBindingElement(name, (elementName, index, isRest) => {
-      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, bindings)
-    })
-  }
-}
-
-function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
-  if (bindings == null || bindings.size === 0) return text
-  let result = text
-  for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
-    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$]|\\s*\\()`, 'g'), () => replacement)
-  }
-  return result
-}
-
-function callSiteValueText(text: string) {
-  const trimmed = text.trim()
-  return isSimpleCallSiteText(trimmed) || isParenthesizedCallSiteText(trimmed) ? trimmed : `(${trimmed})`
-}
-
-function callSitePropertyBaseText(text: string) {
-  return callSiteValueText(text)
-}
-
-function isSimpleCallSiteText(text: string) {
-  return /^(?:this|[A-Za-z_$][\w$]*|-?\d+(?:\.\d+)?)(?:(?:\.[A-Za-z_$][\w$]*)|(?:\[[^\]]+\]))*$/.test(text)
-}
-
-function isParenthesizedCallSiteText(text: string) {
-  try {
-    return ts.isParenthesizedExpression(parseExpression(text))
-  } catch {
-    return false
-  }
-}
-
-function escapeRegExp(text: string) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 function verifyCallGivenSpecs(

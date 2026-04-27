@@ -147,6 +147,15 @@ FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
     int 100..100 as 100
     assumed from input: given width: 0..100
   missing: 0..200 <= 100
+UNKNOWN negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
+  -10..10 as step > int 1..1 as 1 was not proven
+  need: step > 1
+  known:
+    -10..10 as step
+    int 1..1 as 1
+    assumed from input: given step: -10..10
+    inferred from branch: step > 0
+  missing: given step > 1
 FAIL negative-patterns.ts:negativeMathSignCanBeNegative: return: int 0..1
   range was int -1..1 as sign(value), expected inside int 0..1
   need: sign(value) inside int 0..1
