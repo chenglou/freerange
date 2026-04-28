@@ -13,6 +13,7 @@ export type CallSiteBindings = Map<string, string>
 export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
   if (bindings == null || bindings.size === 0) return value
   if (value.kind === 'number') return numberWithCallSiteText(value, bindings)
+  if (value.kind === 'literal') return {...value, expr: maybeCallSiteText(value.expr, bindings)}
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
     for (const [name, prop] of value.props) props.set(name, valueWithCallSiteText(prop, bindings))

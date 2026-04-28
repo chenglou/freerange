@@ -309,6 +309,25 @@ function tabOffset(isPinned: boolean) {
 }
 ```
 
+Finite TypeScript literal domains also narrow through ordinary branches. This is
+useful for layout code that has two named modes but one shared helper:
+
+```ts
+type ColumnKind = 'ordered' | 'inverted'
+
+function thresholds(kind: ColumnKind, x: number) {
+  if (kind === 'ordered') {
+    return {y: x + 100, u: x + 300}
+  }
+  return {y: x + 300, u: x + 100}
+}
+```
+
+Freerange understands real finite TS unions of string literals and booleans, and
+it can narrow object discriminants such as `spec.kind` through `if`, ternary, and
+small `switch` branches. Broad `string`, string operations, parser-style
+switches, and arbitrary semantic predicates stay opaque.
+
 Exact-operand ternaries written as hand-rolled min/max also keep their branch facts:
 
 ```ts
@@ -1215,11 +1234,12 @@ The checker understands a small pure subset:
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
+- finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
 - numeric top-level constants
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
-- return-style `if` guards, `throw` guards, and simple fall-through `if` / `else` branches
+- return-style `if` guards, `throw` guards, simple fall-through `if` / `else` branches, and small finite-literal `switch` branches
 - branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, `typeof value !== 'undefined'` for optional values, and numeric `??` fallbacks such as `dimensions?.width ?? 0`
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
@@ -1260,7 +1280,7 @@ Not supported yet:
 - rest params and default params
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
-- strings, booleans, branded types, and semantic narrowing beyond structural object/array shape
+- broad strings, string operations, branded types, and semantic narrowing beyond finite literal/object/array shape
 - public lambdas, `forall`, arbitrary folds, prose-as-truth
 - numeric ghost parameters like `0..$n`, all-pairs labels, source/id matching labels, and adjacent formulas not backed by an inferred sequence fact
 - geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`

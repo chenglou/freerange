@@ -2,8 +2,10 @@ import * as ts from 'typescript'
 import {
   joinValues,
   linearNameForExpression,
+  literalValue,
   mergeNullishKind,
   nullableValue,
+  finiteNumberValue,
   numberValue,
   unknown,
   unknownArray,
@@ -97,11 +99,8 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if (depth > maxTsShapeDepth) return null
   if (seen.has(type)) return unknownObject(expr)
   if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
-  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
-
+  const literal = literalValueFromTsType(expr, type)
+  if (literal != null) return literal
   if (type.isUnion()) {
     if (type.types.length > maxTsShapeUnionMembers) return null
     const nullish = unionNullishKind(type.types)
@@ -113,6 +112,10 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
     }
     return joinedTsUnionValue(expr, members, checker, location, seen, depth)
   }
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
+  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return literalValue([false, true], expr)
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
 
   if (checker.isTupleType(type)) {
     return tupleArrayTsValue(expr, type, checker, location, seen, depth + 1)
@@ -142,6 +145,21 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   }
   seen.delete(type)
   return {kind: 'object', props, expr}
+}
+
+function literalValueFromTsType(expr: string, type: ts.Type): Value | null {
+  if (type.isNumberLiteral()) return finiteNumberValue([type.value], expr)
+  if (type.isStringLiteral()) return literalValue([type.value], expr)
+  const booleanLiteral = booleanLiteralFromTsType(type)
+  return booleanLiteral == null ? null : literalValue([booleanLiteral], expr)
+}
+
+function booleanLiteralFromTsType(type: ts.Type): boolean | null {
+  if ((type.flags & ts.TypeFlags.BooleanLiteral) === 0) return null
+  const intrinsicName = (type as {intrinsicName?: string}).intrinsicName
+  if (intrinsicName === 'true') return true
+  if (intrinsicName === 'false') return false
+  return null
 }
 
 function joinedTsUnionValue(
@@ -240,7 +258,7 @@ export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undef
   if (ts.isParenthesizedTypeNode(type)) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
   if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
   if (type.kind === ts.SyntaxKind.NumberKeyword) return unknownNumber(expr)
-  if (type.kind === ts.SyntaxKind.BooleanKeyword) return unknown(`Boolean values are not in the static layout subset: ${expr}`)
+  if (type.kind === ts.SyntaxKind.BooleanKeyword) return literalValue([false, true], expr)
   if (type.kind === ts.SyntaxKind.StringKeyword) return unknown(`String values are not in the static layout subset: ${expr}`)
   if (type.kind === ts.SyntaxKind.ObjectKeyword) return unknownObject(expr)
   if (ts.isArrayTypeNode(type)) {
@@ -249,10 +267,23 @@ export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undef
   if (ts.isTupleTypeNode(type)) return valueFromTupleSyntaxType(expr, type, program, seen)
   if (ts.isUnionTypeNode(type)) return valueFromUnionSyntaxType(expr, type, program, seen)
   if (ts.isIntersectionTypeNode(type)) return valueFromIntersectionSyntaxType(expr, type, program, seen)
-  if (ts.isLiteralTypeNode(type)) return unknown(`Literal values are not in the static layout subset: ${expr}`)
+  if (ts.isLiteralTypeNode(type)) return valueFromLiteralSyntaxType(expr, type)
   if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
   if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
   return valueFromTypeNodeShape(expr, type, program)
+}
+
+function valueFromLiteralSyntaxType(expr: string, type: ts.LiteralTypeNode): Value {
+  const literal = type.literal
+  if (ts.isStringLiteral(literal) || ts.isNoSubstitutionTemplateLiteral(literal)) return literalValue([literal.text], expr)
+  if (ts.isNumericLiteral(literal)) return finiteNumberValue([Number(literal.text)], expr)
+  if (literal.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
+  if (literal.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
+  if (ts.isPrefixUnaryExpression(literal) && ts.isNumericLiteral(literal.operand)) {
+    const value = Number(literal.operand.text)
+    return finiteNumberValue([literal.operator === ts.SyntaxKind.MinusToken ? -value : value], expr)
+  }
+  return unknown(`Literal value is not in the static layout subset: ${expr}`)
 }
 
 function valueFromTupleSyntaxType(expr: string, type: ts.TupleTypeNode, program: ShapeProgram, seen: Set<string>): Value | null {

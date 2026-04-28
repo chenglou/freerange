@@ -42,6 +42,21 @@ FAIL negative-patterns.ts:negativeHandwrittenMinOperandBoundIsNotStrict: return 
     assumed from input: given value: 0..10
     inferred from branch: -value + 4 <= 0
   missing: strict comparison cannot hold when both sides are 4
+UNKNOWN negative-patterns.ts:negativeFiniteLiteralDiscriminantWrongBranch: return.ordered.yThresholdX > return.ordered.uThresholdX
+  100..1100 as (panelX + 100) > 300..1300 as (panelX + 300) was not proven
+  need: (panelX + 100) > (panelX + 300)
+  known:
+    100..1100 as (panelX + 100)
+    300..1300 as (panelX + 300)
+    assumed from input: given panelX: 0..1000
+  missing: given (panelX + 100) > (panelX + 300)
+FAIL negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresholdX < return.uThresholdX
+  100..1100 as (panelX + 100) < 100..1100 as (panelX + 100) is false by exact linear facts
+  need: (panelX + 100) < (panelX + 100)
+  known:
+    100..1100 as (panelX + 100)
+    assumed from input: given panelX: 0..1000
+  missing: strict comparison cannot hold when both sides are (panelX + 100)
 FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > minWidth
   0..1000 as minWidth > 0..1000 as minWidth is false by exact linear facts
   need: minWidth > minWidth

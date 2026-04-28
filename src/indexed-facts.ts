@@ -119,6 +119,7 @@ function expressionFactKey(expression: string | undefined) {
 
 export function valueWithRebasedElementPath(value: Value, sourceElementExpr: string, accessExpr: string): Value {
   if (value.kind === 'number') return numberWithRebasedElementPath(value, sourceElementExpr, accessExpr)
+  if (value.kind === 'literal') return {...value, expr: rebaseElementExpr(value.expr, sourceElementExpr, accessExpr)}
   if (value.kind === 'object') return objectWithRebasedElementPath(value, sourceElementExpr, accessExpr)
   if (value.kind === 'array') {
     return {

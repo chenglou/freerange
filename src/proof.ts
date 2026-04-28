@@ -474,6 +474,7 @@ function nonNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
   if (value.kind === 'nullable') return `Nullable value ${value.expr ?? '<value>'} was not proven present`
   if (value.kind === 'null') return 'Expected a number, got null'
+  if (value.kind === 'literal') return 'Expected a number, got a literal value'
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
 }
 

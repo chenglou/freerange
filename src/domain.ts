@@ -32,9 +32,10 @@ export type LinearConstraint = {
 
 export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
-export type Value = NumberValue | ObjectValue | ArrayValue | NullValue | NullableValue | UnknownValue
+export type Value = NumberValue | LiteralValue | ObjectValue | ArrayValue | NullValue | NullableValue | UnknownValue
 
 export type NullishKind = 'null' | 'undefined' | 'nullish'
+export type LiteralPrimitive = string | boolean
 
 export type NumberValue = {
   kind: 'number'
@@ -44,6 +45,13 @@ export type NumberValue = {
   expr: string | null
   linear: LinearExpr | null
   cases: NumberCase[] | null
+  provenance: string[]
+}
+
+export type LiteralValue = {
+  kind: 'literal'
+  values: LiteralPrimitive[]
+  expr: string | null
   provenance: string[]
 }
 
@@ -174,6 +182,29 @@ function finiteNumberSetValues(values: number[]) {
   return [...new Set(values.filter(Number.isFinite))].sort((left, right) => left - right)
 }
 
+export function literalValue(values: LiteralPrimitive[], expr: string | null, provenance: string[] = []): LiteralValue | UnknownValue {
+  const finiteValues = finiteLiteralSetValues(values)
+  if (finiteValues.length === 0) return unknown(`Empty finite literal set: ${expr ?? '<literal>'}`)
+  if (finiteValues.length > maxNumberCases) return unknown(`Finite literal set exceeded ${maxNumberCases} choices: ${expr ?? '<literal>'}`)
+  return {kind: 'literal', values: finiteValues, expr, provenance: [...new Set(provenance)]}
+}
+
+export function finiteLiteralSetValues(values: LiteralPrimitive[]) {
+  const seen = new Set<string>()
+  const result: LiteralPrimitive[] = []
+  for (const value of values) {
+    const key = literalKey(value)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(value)
+  }
+  return result.sort((left, right) => literalKey(left).localeCompare(literalKey(right)))
+}
+
+export function literalKey(value: LiteralPrimitive) {
+  return `${typeof value}:${String(value)}`
+}
+
 export function unknownNumber(name: string): NumberValue {
   return {
     kind: 'number',
@@ -187,7 +218,7 @@ export function unknownNumber(name: string): NumberValue {
   }
 }
 
-export function mergeProvenance(...items: (NumberValue | string[])[]) {
+export function mergeProvenance(...items: (NumberValue | LiteralValue | string[])[]) {
   const lines: string[] = []
   for (const item of items) {
     lines.push(...(Array.isArray(item) ? item : item.provenance))
@@ -259,6 +290,7 @@ export function valueWithAssumptions(value: Value, assumptions: LinearConstraint
       assumptions: mergeAssumptions(branch.assumptions, assumptions),
     })))
   }
+  if (value.kind === 'literal') return value
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
     for (const [name, prop] of value.props) props.set(name, valueWithAssumptions(prop, assumptions))
@@ -557,6 +589,13 @@ export function joinValues(left: Value, right: Value): Value {
     )
     if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
+  }
+  if (left.kind === 'literal' && right.kind === 'literal') {
+    return literalValue(
+      [...left.values, ...right.values],
+      left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
+      mergeProvenance(left, right),
+    )
   }
   if (left.kind === 'object' && right.kind === 'object') {
     const keys = new Set([...left.props.keys(), ...right.props.keys()])

@@ -156,6 +156,83 @@ export function sameFilePureHelperCall(value: number) {
   return addPatternGap(value)
 }
 
+type LiteralColumnSpec =
+  | {kind: 'ordered'; panelWidth: number}
+  | {kind: 'inverted'; panelWidth: number}
+
+function literalColumnGeometry(spec: LiteralColumnSpec, panelX: number) {
+  switch (spec.kind) {
+    case 'ordered': {
+      const yThresholdX = panelX + 100
+      const uThresholdX = panelX + 300
+      return {
+        kind: spec.kind,
+        yThresholdX,
+        uThresholdX,
+        emptyIntervalWidth: uThresholdX - yThresholdX,
+        collapseValueY: spec.panelWidth,
+      }
+    }
+    case 'inverted': {
+      const yThresholdX = panelX + 300
+      const uThresholdX = panelX + 100
+      return {
+        kind: spec.kind,
+        yThresholdX,
+        uThresholdX,
+        emptyIntervalWidth: 0,
+        collapseValueY: spec.panelWidth,
+      }
+    }
+  }
+}
+
+function literalIfColumnGeometry(kind: 'ordered' | 'inverted', panelX: number) {
+  if (kind === 'ordered') {
+    const yThresholdX = panelX + 100
+    const uThresholdX = panelX + 300
+    return {kind, yThresholdX, uThresholdX}
+  }
+  const yThresholdX = panelX + 300
+  const uThresholdX = panelX + 100
+  return {kind, yThresholdX, uThresholdX}
+}
+
+function booleanLiteralOffset(useFallback: boolean, top: number) {
+  if (useFallback) return {slotY: top + 36}
+  return {slotY: top}
+}
+
+/** @fit
+ * given panelX: 0..1000
+ * return.ordered.yThresholdX < return.ordered.uThresholdX
+ * return.ordered.emptyIntervalWidth == 200
+ * return.inverted.yThresholdX > return.inverted.uThresholdX
+ * return.inverted.emptyIntervalWidth == 0
+ * return.ifOrdered.yThresholdX < return.ifOrdered.uThresholdX
+ * return.ifInverted.yThresholdX > return.ifInverted.uThresholdX
+ */
+export function finiteLiteralDiscriminantsSpecialize(panelX: number) {
+  return {
+    ordered: literalColumnGeometry({kind: 'ordered', panelWidth: 400}, panelX),
+    inverted: literalColumnGeometry({kind: 'inverted', panelWidth: 400}, panelX),
+    ifOrdered: literalIfColumnGeometry('ordered', panelX),
+    ifInverted: literalIfColumnGeometry('inverted', panelX),
+  }
+}
+
+/** @fit
+ * given top: 0..1000
+ * return.inline.slotY == top
+ * return.fallback.slotY == top + 36
+ */
+export function booleanLiteralBranchesSpecialize(top: number) {
+  return {
+    inline: booleanLiteralOffset(false, top),
+    fallback: booleanLiteralOffset(true, top),
+  }
+}
+
 /** @fit
  * given value: int 0..10
  * return: int 3..7

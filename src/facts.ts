@@ -63,6 +63,7 @@ export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<str
 export function factsFromValue(path: string, value: Value): FitInferFact[] {
   if (value.kind === 'unknown') return []
   if (value.kind === 'null' || value.kind === 'nullable') return []
+  if (value.kind === 'literal') return []
   if (value.kind === 'number') return numberFacts(path, value)
   if (value.kind === 'object') {
     const facts: FitInferFact[] = []

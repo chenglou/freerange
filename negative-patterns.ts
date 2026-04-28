@@ -54,6 +54,54 @@ export function negativeHandwrittenMinOperandBoundIsNotStrict(value: number) {
   return value < 4 ? value : 4
 }
 
+type NegativeLiteralColumnSpec =
+  | {kind: 'ordered'; panelWidth: number}
+  | {kind: 'inverted'; panelWidth: number}
+
+function negativeLiteralColumnGeometry(spec: NegativeLiteralColumnSpec, panelX: number) {
+  switch (spec.kind) {
+    case 'ordered': {
+      const yThresholdX = panelX + 100
+      const uThresholdX = panelX + 300
+      return {yThresholdX, uThresholdX, emptyIntervalWidth: uThresholdX - yThresholdX}
+    }
+    case 'inverted': {
+      const yThresholdX = panelX + 300
+      const uThresholdX = panelX + 100
+      return {yThresholdX, uThresholdX, emptyIntervalWidth: 0}
+    }
+  }
+}
+
+/** @fit
+ * given panelX: 0..1000
+ * return.ordered.yThresholdX > return.ordered.uThresholdX
+ */
+export function negativeFiniteLiteralDiscriminantWrongBranch(panelX: number) {
+  return {
+    ordered: negativeLiteralColumnGeometry({kind: 'ordered', panelWidth: 400}, panelX),
+  }
+}
+
+function negativeBroadStringColumnGeometry(kind: string, panelX: number) {
+  if (kind === 'ordered') {
+    const yThresholdX = panelX + 100
+    const uThresholdX = panelX + 300
+    return {yThresholdX, uThresholdX}
+  }
+  const yThresholdX = panelX + 300
+  const uThresholdX = panelX + 100
+  return {yThresholdX, uThresholdX}
+}
+
+/** @fit
+ * given panelX: 0..1000
+ * return.yThresholdX < return.uThresholdX
+ */
+export function negativeBroadStringDoesNotBecomeFinite(kind: string, panelX: number) {
+  return negativeBroadStringColumnGeometry(kind, panelX)
+}
+
 /** @fit
  * given minWidth: 0..1000
  * given width: 0..1000

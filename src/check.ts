@@ -35,11 +35,14 @@ import {
   addNumbers,
   callExpr,
   conditionalRunningSumNumber,
+  finiteLiteralSetValues,
   divideNumbers,
   finiteNumberSet,
   finiteNumberValue,
   joinValues,
   linearNameForExpression,
+  literalKey,
+  literalValue,
   maxNumberCases,
   mergeArraySummary,
   mergeAssumptions,
@@ -67,6 +70,8 @@ import {
   type ArrayValue,
   type FactSource,
   type LinearConstraint,
+  type LiteralPrimitive,
+  type LiteralValue,
   type NullishKind,
   type NumberCase,
   type NumberValue,
@@ -872,6 +877,7 @@ function shapeFactTexts(root: string, value: Value | null): string[] {
 function shapeFactsFromValue(path: string, value: Value): string[] {
   if (value.kind === 'unknown') return []
   if (value.kind === 'null' || value.kind === 'nullable') return []
+  if (value.kind === 'literal') return []
   if (value.kind === 'number') {
     if (!isStructuralShapePath(path)) return []
     const facts = numberFacts(path, value).map(fact => fact.text)
@@ -1002,6 +1008,7 @@ function localizeValue(value: Value, expr: string, options: LocalizeOptions = {}
       value.provenance,
     )
   }
+  if (value.kind === 'literal') return {...value, expr}
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
     for (const [name, prop] of value.props) props.set(name, localizeValue(prop, `${expr}.${name}`, options))
@@ -1713,6 +1720,7 @@ function expectedNumberReason(value: Exclude<Value, NumberValue>) {
   if (value.kind === 'unknown') return value.reason
   if (value.kind === 'nullable') return `Nullable value ${value.expr ?? '<value>'} was not proven present`
   if (value.kind === 'null') return 'Expected a number, got null'
+  if (value.kind === 'literal') return 'Expected a number, got a literal value'
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
 }
 
@@ -1964,6 +1972,11 @@ function evaluateStatementsFlow(statements: ts.NodeArray<ts.Statement>, context:
     }
     if (ts.isIfStatement(statement)) {
       const flow = evaluateIfStatement(statement, context, statements, index + 1)
+      if (flow.kind !== 'fallthrough') return flow
+      continue
+    }
+    if (ts.isSwitchStatement(statement)) {
+      const flow = evaluateSwitchStatement(statement, context)
       if (flow.kind !== 'fallthrough') return flow
       continue
     }
@@ -2261,6 +2274,73 @@ function evaluateIfStatement(statement: ts.IfStatement, context: EvalContext, st
   return {kind: 'fallthrough'}
 }
 
+function evaluateSwitchStatement(statement: ts.SwitchStatement, context: EvalContext): EvalFlow {
+  const discriminant = evaluateExpression(statement.expression, context)
+  if (discriminant.kind !== 'literal') {
+    return {kind: 'return', value: unknown(`Switch expected a finite literal discriminant: ${statement.expression.getText(context.program.sourceFile)}`)}
+  }
+  const path = nullablePresencePath(statement.expression)
+  const remaining = new Map(discriminant.values.map(value => [literalKey(value), value]))
+  let pendingValues: LiteralPrimitive[] = []
+  let joined: EvalFlow | null = null
+  let sawDefault = false
+
+  for (const clause of statement.caseBlock.clauses) {
+    if (ts.isCaseClause(clause)) {
+      const value = switchCaseLiteralValue(clause.expression, context)
+      if (value == null) return {kind: 'return', value: unknown(`Switch case expected a finite literal: ${clause.expression.getText(context.program.sourceFile)}`)}
+      pendingValues.push(value)
+      if (clause.statements.length === 0) continue
+    }
+
+    const branchValues = ts.isDefaultClause(clause)
+      ? [...remaining.values()]
+      : switchMatchingValues(discriminant, pendingValues)
+    pendingValues = []
+    if (ts.isDefaultClause(clause)) sawDefault = true
+    if (branchValues.length === 0) continue
+
+    const branchContext = contextWithSwitchLiteralValues(context, path, branchValues)
+    const flow = evaluateSwitchClauseStatements(clause.statements, branchContext)
+    if (flow.kind === 'fallthrough') {
+      return {kind: 'return', value: unknown(`Switch fallthrough is not supported: ${statement.expression.getText(context.program.sourceFile)}`)}
+    }
+    joined = joined == null
+      ? flow
+      : joinNonFallthroughFlows(joined, [], flow, [], functionDidNotReturnReason(context))
+    for (const value of branchValues) remaining.delete(literalKey(value))
+  }
+
+  if (pendingValues.length > 0) return {kind: 'return', value: unknown(`Switch fallthrough is not supported: ${statement.expression.getText(context.program.sourceFile)}`)}
+  if (joined == null) return {kind: 'fallthrough'}
+  if (!sawDefault && remaining.size > 0) {
+    return {kind: 'return', value: unknown(`Switch did not cover every finite literal case: ${statement.expression.getText(context.program.sourceFile)}`)}
+  }
+  return joined
+}
+
+function evaluateSwitchClauseStatements(statements: ts.NodeArray<ts.Statement>, context: EvalContext): EvalFlow {
+  if (statements.length === 1 && ts.isBlock(statements[0]!)) return evaluateStatementsFlow(statements[0]!.statements, context)
+  return evaluateStatementsFlow(statements, context)
+}
+
+function switchCaseLiteralValue(expression: ts.Expression, context: EvalContext): LiteralPrimitive | null {
+  const value = evaluateExpression(expression, context)
+  return value.kind === 'literal' && value.values.length === 1 ? value.values[0]! : null
+}
+
+function switchMatchingValues(discriminant: LiteralValue, caseValues: LiteralPrimitive[]) {
+  const caseKeys = new Set(caseValues.map(literalKey))
+  return discriminant.values.filter(value => caseKeys.has(literalKey(value)))
+}
+
+function contextWithSwitchLiteralValues(context: EvalContext, path: {root: string; segments: string[]} | null, values: LiteralPrimitive[]): EvalContext {
+  if (path == null) return context
+  const keys = new Set(values.map(literalKey))
+  const refined = refineLiteralPath(context, path, value => keys.has(literalKey(value)))
+  return refined == null ? context : {...context, env: new Map(context.env).set(refined.root, refined.value)}
+}
+
 function functionDidNotReturnReason(context: EvalContext) {
   return `Function ${context.stack.at(-1) ?? '<unknown>'} did not return`
 }
@@ -2303,6 +2383,11 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
     env.set(presence.root, presence.value)
     return env
   }
+  const literal = literalCaseRefinement(context, expression, truth)
+  if (literal != null) {
+    env.set(literal.root, literal.value)
+    return env
+  }
   const refinement = conditionCaseRefinement(context, expression, truth)
   if (refinement == null) return env
   const current = env.get(refinement.name)
@@ -2311,6 +2396,59 @@ function refinedEnvForCondition(context: EvalContext, expression: ts.Expression,
   if (refined == null) return env
   env.set(refinement.name, refined)
   return env
+}
+
+function literalCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
+  const truthy = literalTruthyRefinement(context, expression, truth)
+  if (truthy != null) return truthy
+  return literalEqualityRefinement(context, expression, truth)
+}
+
+function literalTruthyRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
+  const path = nullablePresencePath(expression)
+  if (path == null) return null
+  return refineLiteralPath(context, path, value => literalPrimitiveTruthy(value) === truth)
+}
+
+function literalEqualityRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
+  if (!ts.isBinaryExpression(expression)) return null
+  const equalsWhenTrue = equalitySyntaxTruthyMeaning(expression.operatorToken.kind)
+  if (equalsWhenTrue == null) return null
+  const keepMatches = truth === equalsWhenTrue
+  const left = literalComparisonTarget(context, expression.left, expression.right)
+  if (left != null) return refineLiteralPath(context, left.path, value => keepMatches === left.values.some(other => literalKey(other) === literalKey(value)))
+  const right = literalComparisonTarget(context, expression.right, expression.left)
+  if (right != null) return refineLiteralPath(context, right.path, value => keepMatches === right.values.some(other => literalKey(other) === literalKey(value)))
+  return null
+}
+
+function literalComparisonTarget(
+  context: EvalContext,
+  targetExpression: ts.Expression,
+  otherExpression: ts.Expression,
+): {path: {root: string; segments: string[]}; values: LiteralPrimitive[]} | null {
+  const path = nullablePresencePath(targetExpression)
+  if (path == null) return null
+  const target = valueAtPropertyPath(context.env.get(path.root), path.segments)
+  if (target?.kind !== 'literal') return null
+  const other = evaluateExpression(otherExpression, context)
+  return other.kind === 'literal' ? {path, values: other.values} : null
+}
+
+function refineLiteralPath(
+  context: EvalContext,
+  path: {root: string; segments: string[]},
+  keep: (value: LiteralPrimitive) => boolean,
+): {root: string; value: Value} | null {
+  const root = context.env.get(path.root)
+  const current = valueAtPropertyPath(root, path.segments)
+  if (current?.kind !== 'literal') return null
+  const filtered = current.values.filter(keep)
+  if (filtered.length === 0 || filtered.length === current.values.length) return null
+  const replacement = literalValue(filtered, current.expr, current.provenance)
+  if (replacement.kind === 'unknown') return null
+  const value = valueWithPropertyPathValue(root, path.segments, replacement)
+  return value == null ? null : {root: path.root, value}
 }
 
 function presenceCaseRefinement(context: EvalContext, expression: ts.Expression, truth: boolean): {root: string; value: Value} | null {
@@ -3158,6 +3296,9 @@ function evaluateExpression(expression: ts.Expression, context: EvalContext): Va
     const value = Number(expression.text)
     return numberValue(value, value, Number.isInteger(value), expression.text, linearConstant(value))
   }
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expression.getText(context.program.sourceFile))
+  if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
+  if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
   if (ts.isIdentifier(expression)) return context.env.get(expression.text) ?? unknown(unknownIdentifierReason(expression.text))
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return context.env.get('this') ?? unknown('Unknown identifier this')
@@ -4761,6 +4902,8 @@ function unknownIdentifierReason(name: string) {
 function evaluateConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts {
   const presence = evaluatePresenceConditionFacts(expression, context)
   if (presence != null) return presence
+  const literal = evaluateLiteralConditionFacts(expression, context)
+  if (literal != null) return literal
   if (!ts.isBinaryExpression(expression)) return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   const op = expression.operatorToken.kind
   if (!isComparisonSyntax(op)) return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
@@ -4768,6 +4911,59 @@ function evaluateConditionFacts(expression: ts.Expression, context: EvalContext)
   const right = evaluateExpression(expression.right, context)
   if (left.kind !== 'number' || right.kind !== 'number') return {truth: 'maybe', trueAssumptions: [], falseAssumptions: []}
   return comparisonConditionFacts(left, syntaxToComparison(op), right, context.assumptions)
+}
+
+function evaluateLiteralConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts | null {
+  if (!ts.isBinaryExpression(expression)) {
+    const value = evaluateExpression(expression, context)
+    return value.kind === 'literal' ? literalTruthConditionFacts(value) : null
+  }
+
+  const equalsWhenTrue = equalitySyntaxTruthyMeaning(expression.operatorToken.kind)
+  if (equalsWhenTrue == null) return null
+  const left = evaluateExpression(expression.left, context)
+  const right = evaluateExpression(expression.right, context)
+  if (left.kind !== 'literal' || right.kind !== 'literal') return null
+  const equalityTruth = literalEqualityTruth(left, right)
+  const truth = equalsWhenTrue ? equalityTruth : invertTruth(equalityTruth)
+  return {truth, trueAssumptions: [], falseAssumptions: []}
+}
+
+function literalTruthConditionFacts(value: LiteralValue): ConditionFacts {
+  const truthValues = finiteLiteralSetValues(value.values.map(literalPrimitiveTruthy))
+  const truth = truthValues.length === 1 ? truthValues[0]! ? 'true' : 'false' : 'maybe'
+  return {truth, trueAssumptions: [], falseAssumptions: []}
+}
+
+function literalPrimitiveTruthy(value: LiteralPrimitive) {
+  return value !== false && value !== ''
+}
+
+function literalEqualityTruth(left: LiteralValue, right: LiteralValue): 'true' | 'false' | 'maybe' {
+  const rightKeys = new Set(right.values.map(literalKey))
+  const overlap = left.values.some(value => rightKeys.has(literalKey(value)))
+  if (!overlap) return 'false'
+  if (left.values.length === 1 && right.values.length === 1 && literalKey(left.values[0]!) === literalKey(right.values[0]!)) return 'true'
+  return 'maybe'
+}
+
+function invertTruth(truth: 'true' | 'false' | 'maybe') {
+  if (truth === 'true') return 'false'
+  if (truth === 'false') return 'true'
+  return 'maybe'
+}
+
+function equalitySyntaxTruthyMeaning(kind: ts.SyntaxKind): boolean | null {
+  switch (kind) {
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+      return true
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+      return false
+    default:
+      return null
+  }
 }
 
 function evaluatePresenceConditionFacts(expression: ts.Expression, context: EvalContext): ConditionFacts | null {
