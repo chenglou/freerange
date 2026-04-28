@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {type FitDoctorCheck} from './check.ts'
+import {type FitDoctorCheck} from './check-types.ts'
 import {type FitFunction, type FitModule} from './modules.ts'
 import {
   fitReturnPublicRoot,

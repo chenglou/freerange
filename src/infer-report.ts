@@ -1,4 +1,8 @@
-import {type FitCheck} from './check.ts'
+import {
+  type FitCheck,
+  type FitInferRedundantSpec,
+  type FitInferSpec,
+} from './check-types.ts'
 import {type FitInferFact} from './facts.ts'
 import {
   parseFitSpecLine,
@@ -7,18 +11,7 @@ import {
 import {type Value} from './domain.ts'
 import {sameExpressionText} from './linear.ts'
 
-export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
-
-export type FitInferSpec = {
-  text: string
-  status: FitInferSpecStatus
-  reason?: string
-}
-
-export type FitInferRedundantSpec = {
-  text: string
-  reason: string
-}
+export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './check-types.ts'
 
 export function inferFunctionSpecReports(
   specs: FitSpec[],

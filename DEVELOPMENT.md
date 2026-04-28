@@ -34,6 +34,8 @@ bun install
 ## Important Files
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
 - [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
 - [src/guarded-facts.ts](./src/guarded-facts.ts) — branch guard truth, finite case refinement, and number-case transfer helpers
 - [src/indexed-facts.ts](./src/indexed-facts.ts) — finite index specialization, symbolic element-path rebasing, and local adjacent-neighbor facts

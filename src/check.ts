@@ -4,14 +4,7 @@ import {
   resolveFitExport,
   type FitCallAlias,
   type FitFunction,
-  type FitImportBinding,
-  type FitModule,
 } from './modules.ts'
-import {
-  proveBoundIndexComparisonSpec,
-  proveBoundIndexRangeSpec,
-  type BoundIndexContext,
-} from './bound-index.ts'
 import {
   parseDomainPathText,
   parseExpression,
@@ -32,12 +25,41 @@ import {
   type FitSpec,
 } from './parser.ts'
 import {
+  evaluateRangeBound as evaluateParsedRangeBound,
+  evaluateSpecExpression as evaluateParsedSpecExpression,
+  proveRangeSpec as proveParsedRangeSpec,
+  verifyCheckSpec as verifyParsedCheckSpec,
+  type CheckSpecHooks,
+} from './check-specs.ts'
+import {
+  type ArrayCallbackFunction,
+  type AssumedGivenSpec,
+  type EvalContext,
+  type EvalFlow,
+  type FitCheck,
+  type FitCheckStatus,
+  type FitDoctorCheck,
+  type FitInferFunctionReport,
+  type FitInferLoopReport,
+  type FitInferLoopSpec,
+  type FitInferReport,
+  type FitShapeInsight,
+  type FitShapeOptions,
+  type FitShapeReport,
+  type FunctionContractProof,
+  type FunctionContractSource,
+  type ImportedBinding,
+  type LocalizeOptions,
+  type PresenceGuard,
+  type Program,
+  type ResolvedCallTarget,
+} from './check-types.ts'
+import {
   addNumbers,
   callExpr,
   conditionalRunningSumNumber,
   finiteLiteralSetValues,
   divideNumbers,
-  finiteNumberSet,
   finiteNumberValue,
   joinValues,
   linearNameForExpression,
@@ -150,8 +172,6 @@ import {
   formatExpectedRange,
   formatRangeSpec,
   formatRange,
-  finiteRangeSpecFailureReason,
-  rangeSpecFailureReason,
   rangeSpecMissingBounds,
 } from './reporting.ts'
 import {
@@ -163,27 +183,16 @@ import {
   valueWithStructuralFallback,
 } from './shapes.ts'
 import {
-  adjacentComparisonText,
-  hasNondecreasingProp,
-  provedSpacing,
-  proveAdjacentComparison,
-  sequenceRelationText,
-} from './sequence-facts.ts'
-import {
   factsFromEnvRoots,
   factsFromValue,
   localFactsFromEnv,
   numberFacts,
   uniqueFacts,
-  type FitInferFact,
 } from './facts.ts'
 import {
   inferFunctionSpecReports,
   redundantSpecs,
   topUnknownReason,
-  type FitInferRedundantSpec,
-  type FitInferSpec,
-  type FitInferSpecStatus,
 } from './infer-report.ts'
 import {
   replaceFunctionSpecs,
@@ -202,158 +211,25 @@ import {
   type CallSiteBindings,
 } from './call-site-text.ts'
 
-export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
-
-export type FitCheck = {
-  file: string
-  line?: number
-  functionName: string
-  text: string
-  status: FitCheckStatus
-  reason?: string
-}
-
-export type FitDoctorStatus = 'pass' | 'fail' | 'requires' | 'unknown'
-
-export type FitDoctorCheck = {
-  file: string
-  line?: number
-  functionName: string
-  text: string
-  status: FitDoctorStatus
-  reason?: string
-}
-
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
-
-export type FitInferLoopSpecStatus = FitInferSpecStatus
-export type FitInferLoopSpec = FitInferSpec
-
-export type FitInferLoopReport = {
-  line: number
-  kind: 'for-of' | 'for'
-  header: string
-  facts: FitInferFact[]
-  specs: FitInferLoopSpec[]
-  redundant: FitInferRedundantSpec[]
-  unsupported: string[]
-}
-
-export type FitInferFunctionReport = {
-  file: string
-  functionName: string
-  facts: FitInferFact[]
-  locals: FitInferFact[]
-  specs: FitInferSpec[]
-  redundant: FitInferRedundantSpec[]
-  loops: FitInferLoopReport[]
-  unsupported: string[]
-}
-
-export type FitInferReport = {
-  files: string[]
-  functions: FitInferFunctionReport[]
-}
-
-export type FitShapeInsight = {
-  file: string
-  functionName: string
-  subject: string
-  freerange: string[]
-  typescript: string[]
-}
-
-export type FitShapeReport = {
-  files: string[]
-  insights: FitShapeInsight[]
-}
-
-export type FitShapeOptions = {
-  functionName?: string
-  all?: boolean
-  calls?: boolean
-}
-
-type Program = FitModule<NumberValue>
-
-type ImportedBinding = FitImportBinding<Program>
-
-type ResolvedCallTarget =
-  | {
-      kind: 'math'
-      name: string
-    }
-  | {
-      kind: 'function'
-      module: Program
-      functionName: string
-      imported?: {
-        localName: string
-        binding: Extract<ImportedBinding, {kind: 'resolved'}>
-      }
-    }
-  | {
-      kind: 'unresolved'
-      reason: string
-    }
-
-export type FunctionContractProof =
-  | {status: 'verifying'}
-  | {status: FitCheckStatus; checks: FitCheck[]}
-
-type WildcardUse =
-  | {kind: 'none'}
-  | {kind: 'one'; collection: string}
-  | {kind: 'unsupported'; reason: string}
-
-type EvalContext = {
-  program: Program
-  file: string
-  env: Map<string, Value>
-  inputRoots: string[]
-  stack: string[]
-  checks: FitCheck[]
-  assumptions: LinearConstraint[]
-  contractCache: Map<string, FunctionContractProof>
-  callObligations?: 'record' | 'silent'
-  objectPath?: string[]
-  inferLoops?: FitInferLoopReport[]
-  inferUnsupported?: string[]
-  insideLoop?: true
-}
-
-type EvalFlow =
-  | {kind: 'return'; value: Value}
-  | {kind: 'exit'}
-  | {kind: 'fallthrough'}
-
-type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
-
-type PresenceGuard = {
-  target: ts.Expression
-  nullish: NullishKind
-  presentWhenTrue: boolean
-}
-
-type LocalizeOptions = {
-  preserveLinear?: boolean
-}
+export type {
+  FitCheck,
+  FitCheckStatus,
+  FitDoctorCheck,
+  FitDoctorStatus,
+  FitInferFunctionReport,
+  FitInferLoopReport,
+  FitInferLoopSpec,
+  FitInferLoopSpecStatus,
+  FitInferReport,
+  FitShapeInsight,
+  FitShapeOptions,
+  FitShapeReport,
+  FunctionContractProof,
+} from './check-types.ts'
 
 const maxInlineDepth = 12
-
-type AssumedGivenSpec =
-  | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
-  | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
-
-type ImportedContractSource = {
-  sourceFile: string
-  sourceFunctionName: string
-}
-
-type FunctionContractSource = ImportedContractSource & {
-  kind: 'imported' | 'local'
-}
 
 export function inferFitFiles(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInferReport {
   const project = loadFitProject(paths, readTopLevelNumberGlobal)
@@ -1590,6 +1466,12 @@ function evaluateDomainPathSegments(current: Value, expr: string, segments: FitD
   return unknown(`${publicFitText(`${expr}.${segment.name}`)} expected an object`)
 }
 
+const checkSpecHooks: CheckSpecHooks = {
+  evaluateExpression: (expression, context) => evaluateExpression(expression, context),
+  evaluateDomainPath: (domainPath, context) => evaluateDomainPath(domainPath, context),
+  parsePrintedNumber,
+}
+
 function verifyCheckSpec(
   file: string,
   program: Program,
@@ -1601,320 +1483,19 @@ function verifyCheckSpec(
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck {
-  const env = new Map(baseEnv)
-  env.set(fitReturnInternalRoot, result)
-  const inputRoots = [...baseEnv.keys(), fitReturnInternalRoot]
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
-  const boundIndexContext = specBoundIndexContext(context)
-
-  if (spec.kind === 'check-range') {
-    const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
-    if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
-      return {
-        file,
-        ...(spec.line == null ? {} : {line: spec.line}),
-        functionName,
-        text: spec.text,
-        status: boundIndexCheck.status,
-        ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
-      }
-    }
-    const value = evaluateSpecExpression(spec.expression, context)
-    const status = proveRangeSpec(value, spec.range, context)
-    return {
-      file,
-      ...(spec.line == null ? {} : {line: spec.line}),
-      functionName,
-      text: spec.text,
-      status: status.status,
-      ...(status.reason == null ? {} : {reason: status.reason}),
-    }
-  }
-
-  if (spec.kind === 'check-atom') return verifyAtomSpec(file, functionName, spec, context)
-
-  const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
-  if (boundIndexCheck != null) {
-    return {
-      file,
-      ...(spec.line == null ? {} : {line: spec.line}),
-      functionName,
-      text: spec.text,
-      status: boundIndexCheck.status,
-      ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
-    }
-  }
-
-  const wildcardCheck = checkWildcardComparisonShape(spec.left, spec.right)
-  if (wildcardCheck.kind === 'unsupported') {
-    return {file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'unknown', reason: wildcardCheck.reason}
-  }
-
-  const left = evaluateSpecExpression(spec.left, context)
-  const right = evaluateSpecExpression(spec.right, context)
-  const status = proveComparison(left, spec.op, right, context.assumptions)
-  const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
-    ? `wildcard comparison means every ${publicFitText(wildcardCheck.collection)} item must satisfy: ${spec.text}\n${status.reason}`
-    : status.reason
-  return {
-    file,
-    ...(spec.line == null ? {} : {line: spec.line}),
-    functionName,
-    text: spec.text,
-    status: status.status,
-    ...(reason == null ? {} : {reason}),
-  }
+  return verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
 }
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
-  if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
-  if (range.finiteValues != null) return proveFiniteRangeSpec(value, range)
-  if (staticRangeInside(value, range)) return {status: 'pass'}
-  const lower = evaluateRangeBound(range.lower, context)
-  if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower}`}
-  const upper = evaluateRangeBound(range.upper, context)
-  if (upper.kind !== 'number') return {status: 'unknown', reason: `Range upper bound is not a number: ${range.upper}`}
-
-  const lowerStatus = proveComparison(value, range.lowerInclusive ? '>=' : '>', lower, context.assumptions)
-  const upperStatus = proveComparison(value, range.upperInclusive ? '<=' : '<', upper, context.assumptions)
-  const integerStatus: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
-    ? {status: 'fail', reason: `need: ${value.expr ?? formatRange(value)} to be integer`}
-    : {status: 'pass'}
-
-  if (lowerStatus.status === 'pass' && upperStatus.status === 'pass' && integerStatus.status === 'pass') return {status: 'pass'}
-  const missing = {
-    lower: lowerStatus.status !== 'pass',
-    upper: upperStatus.status !== 'pass',
-    integer: integerStatus.status !== 'pass',
-  }
-  const definitelyOutsideLower = range.lowerValue != null
-    && lowerStatus.status !== 'pass'
-    && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue)
-  const definitelyOutsideUpper = range.upperValue != null
-    && upperStatus.status !== 'pass'
-    && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue)
-  const status: FitCheckStatus = lowerStatus.status === 'fail'
-    || upperStatus.status === 'fail'
-    || integerStatus.status === 'fail'
-    || definitelyOutsideLower
-    || definitelyOutsideUpper
-    ? 'fail'
-    : 'unknown'
-  return {
-    status,
-    reason: rangeSpecFailureReason(value, range, lower, upper, context.assumptions, missing),
-  }
-}
-
-function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
-  const expected = range.finiteValues ?? []
-  const produced = finiteNumberSet(value)
-  if (produced != null && produced.every(choice => expected.includes(choice))) return {status: 'pass'}
-  return {
-    status: 'fail',
-    reason: finiteRangeSpecFailureReason(value, range, produced),
-  }
-}
-
-function expectedNumberReason(value: Exclude<Value, NumberValue>) {
-  if (value.kind === 'unknown') return value.reason
-  if (value.kind === 'nullable') return `Nullable value ${value.expr ?? '<value>'} was not proven present`
-  if (value.kind === 'null') return 'Expected a number, got null'
-  if (value.kind === 'literal') return 'Expected a number, got a literal value'
-  return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
-}
-
-function specBoundIndexContext(context: EvalContext): BoundIndexContext {
-  return {
-    assumptions: context.assumptions,
-    evaluateDomainPath: domainPath => evaluateDomainPath(domainPath, context),
-    evaluateSpecExpression: text => evaluateSpecExpression(text, context),
-    nondecreasingFailureReason,
-    proveAdjacentComparison: (collectionPath, comparison) => {
-      const collection = evaluateDomainPath(collectionPath, context)
-      if (collection.kind !== 'array') return {status: 'unknown', reason: `${domainPathText(collectionPath)} expected an array`}
-      if (proveAdjacentComparison(collection, comparison)) return {status: 'pass'}
-      const collectionText = domainPathText(collectionPath)
-      return {
-        status: 'unknown',
-        reason: adjacentComparisonFailureReason(adjacentComparisonText(collectionText, comparison), collectionText, collection),
-      }
-    },
-  }
-}
-
-function staticRangeInside(value: NumberValue, range: FitRange) {
-  if (range.finiteValues != null) {
-    const produced = finiteNumberSet(value)
-    return produced != null && produced.every(choice => range.finiteValues!.includes(choice))
-  }
-  if (range.valueKind === 'int' && !value.isInteger) return false
-  if (range.lowerValue == null || range.upperValue == null) return false
-  const lowerOk = range.lowerInclusive ? value.min >= range.lowerValue : value.min > range.lowerValue
-  const upperOk = range.upperInclusive ? value.max <= range.upperValue : value.max < range.upperValue
-  return lowerOk && upperOk
+  return proveParsedRangeSpec(value, range, context, checkSpecHooks)
 }
 
 function evaluateRangeBound(text: string, context: EvalContext): Value {
-  const printed = parsePrintedNumber(text)
-  if (printed != null) return numberValue(printed, printed, Number.isInteger(printed), text, Number.isFinite(printed) ? linearConstant(printed) : null)
-  return evaluateSpecExpression(text, context)
-}
-
-function checkWildcardComparisonShape(left: string, right: string): WildcardUse {
-  const leftUse = wildcardUse(left)
-  if (leftUse.kind === 'unsupported') return leftUse
-  const rightUse = wildcardUse(right)
-  if (rightUse.kind === 'unsupported') return rightUse
-
-  if (leftUse.kind === 'one' && rightUse.kind === 'one') {
-    if (leftUse.collection === rightUse.collection) return leftUse
-    return {kind: 'unsupported', reason: 'Wildcard comparisons support one wildcard side and one scalar side'}
-  }
-  return leftUse.kind === 'one' ? leftUse : rightUse
-}
-
-function wildcardUse(text: string): WildcardUse {
-  const collections = new Set<string>()
-  for (const domainPath of parseFitExpression(text).domainPaths.values()) {
-    const itemCount = domainPath.segments.filter(segment => segment.kind === 'item').length
-    if (itemCount === 0) continue
-    collections.add(domainPathCollectionText(domainPath))
-  }
-  if (collections.size === 0) return {kind: 'none'}
-  if (collections.size > 1) return {kind: 'unsupported', reason: `Wildcard comparisons support one collection at a time: ${text}`}
-  return {kind: 'one', collection: [...collections][0]!}
-}
-
-function domainPathCollectionText(domainPath: FitDomainPath) {
-  const lastItemIndex = domainPath.segments.findLastIndex(segment => segment.kind === 'item')
-  let collection = domainPath.root
-  for (let index = 0; index <= lastItemIndex; index++) {
-    const segment = domainPath.segments[index]!
-    if (segment.kind === 'item') {
-      collection = `${collection}[]`
-      continue
-    }
-    collection = `${collection}.${segment.name}`
-  }
-  return publicFitText(collection)
-}
-
-function domainPathText(domainPath: FitDomainPath) {
-  let text = domainPath.root
-  for (const segment of domainPath.segments) {
-    if (segment.kind === 'prop') {
-      text += `.${segment.name}`
-      continue
-    }
-    text += '[]'
-  }
-  return publicFitText(text)
+  return evaluateParsedRangeBound(text, context, checkSpecHooks)
 }
 
 function evaluateSpecExpression(text: string, context: EvalContext): Value {
-  const parsed = parseFitExpression(text)
-  if (parsed.domainPaths.size === 0) return evaluateExpression(parsed.expression, context)
-
-  const env = new Map(context.env)
-  for (const [name, domainPath] of parsed.domainPaths) env.set(name, evaluateDomainPath(domainPath, context))
-  return evaluateExpression(parsed.expression, {...context, env})
-}
-
-function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): FitCheck {
-  const status = proveAtomSpec(spec, context)
-  return {
-    file,
-    ...(spec.line == null ? {} : {line: spec.line}),
-    functionName,
-    text: spec.text,
-    status: status.status,
-    ...(status.reason == null ? {} : {reason: status.reason}),
-  }
-}
-
-function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
-  switch (spec.name) {
-    case 'nondecreasing':
-      return proveNondecreasingAtom(spec, context)
-    case 'spaced':
-      return proveSpacedAtom(spec, context)
-    default:
-      return {status: 'unknown', reason: `Unknown layout atom ${spec.name}`}
-  }
-}
-
-function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
-  const target = sequencePropArgument(spec.args, context)
-  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects return.rows.top'}
-  if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass'}
-  return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target)}
-}
-
-function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
-  if (spec.args.length !== 2) return {status: 'unknown', reason: 'spaced expects spaced(rows, gap)'}
-  const rows = evaluateSpecExpression(spec.args[0]!, context)
-  const gap = evaluateSpecExpression(spec.args[1]!, context)
-  if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array'}
-  if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression'}
-  if (provedSpacing(rows, gap.expr) != null) return {status: 'pass'}
-  return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr)}
-}
-
-function nondecreasingFailureReason(text: string, target: {array: ArrayValue; prop: string}) {
-  const lines = [
-    `${text} was not inferred`,
-    `need: every next .${target.prop} >= previous .${target.prop}`,
-  ]
-  const known: string[] = []
-  const advance = target.array.summary?.advances.find(fact => fact.prop === target.prop)
-  if (advance != null) known.push(`row advance for .${target.prop}: ${formatRange(advance.value)}`)
-  known.push(`sequence facts: ${formatArraySummary(target.array)}`)
-  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-
-  if (advance?.value.expr != null) {
-    lines.push(`missing: given ${advance.value.expr} >= 0`)
-  } else {
-    lines.push(`missing: sequence facts for .${target.prop}`)
-  }
-  return lines.join('\n')
-}
-
-function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
-  const lines = [
-    `${text} was not inferred`,
-    `need: every next row top == previous top + previous height + ${gapExpr}`,
-  ]
-  const known: string[] = []
-  const provedSpacing = rows.summary?.spaced[0]
-  if (provedSpacing != null) {
-    known.push(`loop proved: row advance ${provedSpacing.advanceExpr} = previous height ${provedSpacing.heightExpr} + ${provedSpacing.gapExpr}`)
-  }
-  known.push(`sequence facts: ${formatArraySummary(rows)}`)
-  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-
-  if (provedSpacing != null) {
-    lines.push(`missing: given ${provedSpacing.gapExpr} == ${gapExpr}`)
-  } else {
-    lines.push('missing: recognized adjacent row spacing')
-  }
-  return lines.join('\n')
-}
-
-function adjacentComparisonFailureReason(text: string, collectionText: string, rows: ArrayValue) {
-  const knownRelations = rows.summary?.relations
-    .filter(relation => relation.op === '==')
-    .map(relation => sequenceRelationText(collectionText, relation)) ?? []
-  const known = [
-    `sequence facts: ${formatArraySummary(rows)}`,
-    ...knownRelations.map(relation => `adjacent: ${relation}`),
-  ]
-  return [
-    `${text} was not inferred`,
-    'need: a matching adjacent sequence relation',
-    `known:\n${known.map(line => `  ${line}`).join('\n')}`,
-    'missing: recognized adjacent row relation',
-  ].join('\n')
+  return evaluateParsedSpecExpression(text, context, checkSpecHooks)
 }
 
 function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
@@ -5020,19 +4601,6 @@ function syntaxToComparison(kind: ts.SyntaxKind): ComparisonOperator {
     default:
       throw new Error(`Not a comparison syntax: ${ts.SyntaxKind[kind]}`)
   }
-}
-
-function sequencePropArgument(args: string[], context: EvalContext): {array: ArrayValue; prop: string} | null {
-  if (args.length !== 1) return null
-  let expression = unwrapExpression(parseExpression(args[0]!))
-  const path: string[] = []
-  while (ts.isPropertyAccessExpression(expression)) {
-    path.unshift(expression.name.text)
-    const array = evaluateExpression(expression.expression, context)
-    if (array.kind === 'array') return {array, prop: path.join('.')}
-    expression = unwrapExpression(expression.expression)
-  }
-  return null
 }
 
 function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExpr?: string): NumberValue | null {
