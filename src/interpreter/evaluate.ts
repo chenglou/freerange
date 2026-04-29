@@ -48,6 +48,10 @@ export type InterpreterFunctionResult = {
   issues: InterpreterIssue[]
 }
 
+export type InterpreterBodyResult = InterpreterFunctionResult & {
+  env: Map<string, Value>
+}
+
 type PathSegment =
   | {kind: 'prop'; name: string}
   | {kind: 'index'; index: number}
@@ -68,6 +72,17 @@ export function evaluateInterpreterFunction(program: Program, functionName: stri
   }
   const value = invokeFitFunction(fn, [], frame, program, frame.env)
   return {value, issues: frame.issues}
+}
+
+export function evaluateInterpreterFunctionBody(program: Program, fn: FitFunction, env: Map<string, Value>, stack: string[] = [fn.name]): InterpreterBodyResult {
+  const frame: InterpreterFrame = {
+    program,
+    env: new Map(env),
+    issues: [],
+    stack,
+  }
+  const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
+  return {value, env: frame.env, issues: frame.issues}
 }
 
 function invokeFitFunction(
@@ -96,6 +111,14 @@ function invokeFunctionNode(
   frame: InterpreterFrame,
 ): Value {
   bindParameters(fn.parameters, argumentValues, frame)
+  return evaluateFunctionNodeBody(name, fn, frame)
+}
+
+function evaluateFunctionNodeBody(
+  name: string,
+  fn: FitFunctionNode | ArrayCallbackFunction,
+  frame: InterpreterFrame,
+): Value {
   if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) return evaluateExpression(fn.body, frame)
   if (fn.body == null) return noteUnsupported(frame, `Function ${name} has no body`)
   if (!ts.isBlock(fn.body)) return noteUnsupported(frame, `Function ${name} body is unsupported`)

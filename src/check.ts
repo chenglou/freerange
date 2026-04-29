@@ -256,6 +256,7 @@ import {
   functionInputRoots,
   isFunctionLikeWithBody,
 } from './function-shape.ts'
+import {evaluateInterpreterFunctionBody} from './interpreter/evaluate.ts'
 
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
@@ -848,10 +849,21 @@ function rangeFactForExpression(fact: string, expression: string): {isInteger: b
   if (!fact.startsWith(`${expression}: `)) return null
   const text = fact.slice(expression.length + 2)
   const match = /^(int )?(-?(?:\d+(?:\.\d+)?|Infinity))\.\.(-?(?:\d+(?:\.\d+)?|Infinity))$/.exec(text)
-  if (match == null) return null
+  if (match == null) return finiteNumberUnionRange(text)
   const min = parsePrintedNumber(match[2]!)
   const max = parsePrintedNumber(match[3]!)
   return min == null || max == null ? null : {isInteger: match[1] != null, min, max}
+}
+
+function finiteNumberUnionRange(text: string): {isInteger: boolean; min: number; max: number} | null {
+  const values = text.split('|').map(part => parsePrintedNumber(part.trim()))
+  if (values.length <= 1 || values.some(value => value == null)) return null
+  const numbers = values as number[]
+  return {
+    isInteger: numbers.every(Number.isInteger),
+    min: Math.min(...numbers),
+    max: Math.max(...numbers),
+  }
 }
 
 function parsePrintedNumber(text: string): number | null {
@@ -1506,6 +1518,50 @@ function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
 }
 
 function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} {
+  const fresh = evaluateFunctionBodyStateFresh(fn, context)
+  if (fresh != null) return fresh
+  return evaluateFunctionBodyStateLegacy(fn, context)
+}
+
+function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} | null {
+  if (!freshInterpreterEligible(fn, context)) return null
+  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack)
+  if (result.issues.length > 0) return null
+  return {result: result.value, env: result.env, assumptions: context.assumptions}
+}
+
+function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolean {
+  if (context.callObligations != null || context.objectPath != null || context.inferLoops != null || context.inferUnsupported != null || context.insideLoop === true) return false
+  if (fn.node.body == null) return false
+  let eligible = true
+  const visit = (node: ts.Node) => {
+    if (!eligible) return
+    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
+    if (
+      ts.isIfStatement(node)
+      || ts.isSwitchStatement(node)
+      || ts.isForStatement(node)
+      || ts.isForOfStatement(node)
+      || ts.isWhileStatement(node)
+      || ts.isDoStatement(node)
+      || ts.isThrowStatement(node)
+      || ts.isTryStatement(node)
+      || ts.isConditionalExpression(node)
+    ) {
+      eligible = false
+      return
+    }
+    if (hasFitComment(context.program.sourceText, node)) {
+      eligible = false
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(fn.node.body)
+  return eligible
+}
+
+function evaluateFunctionBodyStateLegacy(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} {
   if (fn.node.body == null) {
     return {
       result: unknown(`Function ${fn.name} has no body`),
