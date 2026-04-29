@@ -27,6 +27,8 @@ case matrix nested iife/map/defaults: interpreter-matrix-patterns.ts:matrixNeste
   return[][].spring.k: int 290..290
   return[][].spring.b: int 30..30
   return[][].index: int 0..1
+  fact return[] follows matrixInput.groups[].items by index
+  fact return follows matrixInput.groups by index
 case matrix default param order: interpreter-matrix-patterns.ts:matrixDefaultParamOrder
   return.pos: int 0..0
   return.k: int 10..10
@@ -40,6 +42,7 @@ case matrix filter/map literal booleans: interpreter-matrix-patterns.ts:matrixFi
   return[0]: int 1..1
   return[1]: int 3..3
   return[]: int 1..3
+  fact return is an order-preserving subset of items
 case matrix for-of push visible rows: interpreter-matrix-patterns.ts:matrixForOfPushVisibleRows
   return.length: int 2..2
   return[0].height: int 2..2
@@ -53,3 +56,4 @@ case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMat
   return.length: int 1..1
   return[0].value: int -1..-1
   return[].value: int -1..-1
+  fact return follows source by index

@@ -8,6 +8,11 @@ import {
   forEachArrayBindingElement,
 } from '../binding-patterns.ts'
 import {
+  emptyArraySummary,
+  filterOrigin,
+  mapOrigin,
+} from '../array-summary.ts'
+import {
   addNumbers,
   divideNumbers,
   joinValues,
@@ -27,6 +32,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {indexedElementPathValue} from '../loop-summary.ts'
 import {
   linearConstant,
   numericLiteralValue,
@@ -34,6 +40,7 @@ import {
 import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {expressionRootName} from '../source-expressions.ts'
+import {localizeFreshContainerValue} from '../value-localize.ts'
 import {
   childFrame,
   frameWithProgram,
@@ -203,7 +210,17 @@ function evaluateVariableDeclaration(declaration: ts.VariableDeclaration, frame:
   const value = declaration.initializer == null
     ? unknown(`Uninitialized local ${declaration.name.getText(frame.program.sourceFile)}`)
     : evaluateExpression(declaration.initializer, frame)
-  bindPattern(declaration.name, value, frame)
+  bindPattern(declaration.name, declarationValue(declaration.name, value, declaration.initializer), frame)
+}
+
+function declarationValue(name: ts.BindingName, value: Value, initializer: ts.Expression | undefined): Value {
+  if (!ts.isIdentifier(name) || initializer == null) return value
+  return isFreshContainerInitializer(initializer) ? localizeFreshContainerValue(value, name.text, {preserveLinear: true}) : value
+}
+
+function isFreshContainerInitializer(expression: ts.Expression): boolean {
+  const unwrapped = unwrapExpression(expression)
+  return ts.isObjectLiteralExpression(unwrapped) || ts.isArrayLiteralExpression(unwrapped)
 }
 
 function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -655,32 +672,49 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'map callback must be an inline function')
-  const elements = source.elements ?? (source.element == null ? [] : [source.element])
+  const sourceExpr = sourceExpression(source, target.expression, frame)
   const mapped: Value[] = []
-  let element: Value | null = null
-  for (let index = 0; index < elements.length; index++) {
-    const item = elements[index]!
-    const result = invokeInlineFunction(
-      '<map>',
-      callbackFn,
-      [
-        item,
-        numberValue(index, index, true, `${index}`, linearConstant(index)),
-        source,
-      ],
-      frame,
-    )
-    mapped.push(result)
-    element = mergeElementValue(element, result)
+  let finiteElement: Value | null = null
+  if (source.elements != null) {
+    for (let index = 0; index < source.elements.length; index++) {
+      const item = source.elements[index]!
+      const result = invokeInlineFunction(
+        '<map>',
+        callbackFn,
+        [
+          item,
+          numberValue(index, index, true, `${index}`, linearConstant(index)),
+          source,
+        ],
+        frame,
+      )
+      mapped.push(result)
+      finiteElement = mergeElementValue(finiteElement, result)
+    }
   }
+  const abstractElement = evaluateMapElement(source, sourceExpr, callbackFn, frame)
   return {
     kind: 'array',
-    length: numberValue(mapped.length, mapped.length, true, `${expression.getText(frame.program.sourceFile)}.length`, linearConstant(mapped.length)),
-    elements: mapped,
-    element,
+    length: source.length,
+    elements: source.elements == null ? null : mapped,
+    element: abstractElement ?? finiteElement,
     expr: expression.getText(frame.program.sourceFile),
-    summary: null,
+    summary: emptyArraySummary(mapOrigin(source, sourceExpr)),
   }
+}
+
+function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
+  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  return invokeInlineFunction(
+    '<map-element>',
+    callbackFn,
+    [
+      item,
+      indexedElementPathValue(`mapIndex(${sourceExpr})`, source.length),
+      source,
+    ],
+    frame,
+  )
 }
 
 function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
@@ -689,6 +723,8 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function')
+  const sourceExpr = sourceExpression(source, target.expression, frame)
+  const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
   if (source.elements == null) {
     return {
       kind: 'array',
@@ -696,7 +732,7 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
       elements: null,
       element: source.element,
       expr: expression.getText(frame.program.sourceFile),
-      summary: source.summary == null ? null : {...source.summary, origin: {kind: 'subsequence', sourceExpr: source.expr ?? target.expression.getText(frame.program.sourceFile)}},
+      summary,
     }
   }
 
@@ -731,8 +767,12 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
     elements: sawUnknownPredicate ? null : elements,
     element,
     expr: expression.getText(frame.program.sourceFile),
-    summary: source.summary == null ? null : {...source.summary, origin: {kind: 'subsequence', sourceExpr: source.expr ?? target.expression.getText(frame.program.sourceFile)}},
+    summary,
   }
+}
+
+function sourceExpression(source: ArrayValue, expression: ts.Expression, frame: InterpreterFrame): string {
+  return source.expr ?? expression.getText(frame.program.sourceFile)
 }
 
 function evaluatedArguments(args: ts.NodeArray<ts.Expression>, frame: InterpreterFrame): Value[] {

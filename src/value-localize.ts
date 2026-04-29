@@ -36,3 +36,17 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
   }
   return value
 }
+
+export function localizeFreshContainerValue(value: Value, expr: string, options: LocalizeOptions = {}): Value {
+  if (value.kind === 'array') return localizeValue(value, expr, options)
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) {
+      props.set(name, prop.kind === 'object' || prop.kind === 'array'
+        ? localizeFreshContainerValue(prop, `${expr}.${name}`, options)
+        : prop)
+    }
+    return {...value, props, expr}
+  }
+  return value
+}

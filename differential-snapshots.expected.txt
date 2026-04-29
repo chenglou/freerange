@@ -33,7 +33,7 @@ infer interpreter matrix: interpreter-matrix-patterns.ts:matrixNestedIifeMapDefa
   return[][].spring.b: int 30..30
   return[][].spring.k == 290
   return[][].spring.k: int 290..290
-  return[][].spring.pos == (matrixInput.groups[].items[].pos)
+  return[][].spring.pos == matrixInput.groups[].items[].pos
   return[][].spring.pos: int 4..12
   return[] follows matrixInput.groups[].items by index
   return follows matrixInput.groups by index

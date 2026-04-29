@@ -8,6 +8,11 @@ import {
 import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
+  emptyArraySummary,
+  filterOrigin,
+  mapOrigin,
+} from './array-summary.ts'
+import {
   parseDomainPathText,
   parseExpression,
   parseFitExpression,
@@ -96,8 +101,6 @@ import {
   unknownObject,
   valueWithAssumptions,
   withNumberCases,
-  type ArrayOrigin,
-  type ArraySummary,
   type ArrayValue,
   type FactSource,
   type LinearConstraint,
@@ -1531,7 +1534,7 @@ function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): 
 }
 
 function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolean {
-  if (context.callObligations != null || context.objectPath != null || context.inferLoops != null || context.inferUnsupported != null || context.insideLoop === true) return false
+  if (context.callObligations != null || context.objectPath != null || context.insideLoop === true) return false
   if (fn.node.body == null) return false
   let eligible = true
   const visit = (node: ts.Node) => {
@@ -1545,6 +1548,10 @@ function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolea
       || ts.isThrowStatement(node)
       || ts.isTryStatement(node)
     ) {
+      eligible = false
+      return
+    }
+    if (context.inferLoops != null && ts.isForOfStatement(node)) {
       eligible = false
       return
     }
@@ -3697,29 +3704,6 @@ function evaluateArrayFilterCall(expression: ts.CallExpression, context: EvalCon
     summary: emptyArraySummary(filterOrigin(source, source.expr ?? expression.expression.expression.getText(context.program.sourceFile))),
   } satisfies ArrayValue
   return valueWithStructuralFallback(filtered, expressionStructuralFallback(expression, context))
-}
-
-function mapOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
-  const origin = source.summary?.origin
-  if (origin?.kind === 'subsequence') return {kind: 'subsequence', sourceExpr: origin.sourceExpr}
-  if (origin?.kind === 'identity') return {kind: 'identity', sourceExpr: origin.sourceExpr}
-  return {kind: 'identity', sourceExpr}
-}
-
-function filterOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
-  return {kind: 'subsequence', sourceExpr: source.summary?.origin?.sourceExpr ?? sourceExpr}
-}
-
-function emptyArraySummary(origin: ArrayOrigin | null): ArraySummary {
-  return {
-    origin,
-    relations: [],
-    nondecreasingProps: [],
-    advances: [],
-    spaced: [],
-    lastEnd: null,
-    extentEnds: [],
-  }
 }
 
 function simpleArrayCallbackParams(callback: ArrayCallbackFunction): {itemName: string; indexName: string | null} | null {
