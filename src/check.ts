@@ -197,6 +197,15 @@ import {
   topUnknownReason,
 } from './infer-report.ts'
 import {
+  contextWithAssumptions,
+  contextWithEnvAndAssumptions,
+  envWithAssumptions,
+  functionDidNotReturnReason,
+  isNonFallthroughFlow,
+  joinEnvironments,
+  joinNonFallthroughFlows,
+} from './interpreter-state.ts'
+import {
   replaceFunctionSpecs,
   restoreFunctionSpecs,
   scoutNumericParameterNames,
@@ -2150,35 +2159,6 @@ function contextWithSwitchLiteralValues(context: EvalContext, path: {root: strin
   return refined == null ? context : {...context, env: new Map(context.env).set(refined.root, refined.value)}
 }
 
-function functionDidNotReturnReason(context: EvalContext) {
-  return `Function ${context.stack.at(-1) ?? '<unknown>'} did not return`
-}
-
-function isNonFallthroughFlow(flow: EvalFlow) {
-  return flow.kind !== 'fallthrough'
-}
-
-function joinNonFallthroughFlows(
-  leftFlow: EvalFlow,
-  leftAssumptions: LinearConstraint[],
-  rightFlow: EvalFlow,
-  rightAssumptions: LinearConstraint[],
-  fallthroughReason: string,
-): EvalFlow {
-  const left = flowReturnValue(leftFlow, leftAssumptions, fallthroughReason)
-  const right = flowReturnValue(rightFlow, rightAssumptions, fallthroughReason)
-  if (left == null && right == null) return {kind: 'exit'}
-  if (left == null) return {kind: 'return', value: right!}
-  if (right == null) return {kind: 'return', value: left}
-  return {kind: 'return', value: joinValues(left, right)}
-}
-
-function flowReturnValue(flow: EvalFlow, assumptions: LinearConstraint[], fallthroughReason: string): Value | null {
-  if (flow.kind === 'exit') return null
-  const value = flow.kind === 'return' ? flow.value : unknown(fallthroughReason)
-  return valueWithAssumptions(value, assumptions)
-}
-
 function evaluateElseBranchStatement(statement: ts.Statement, context: EvalContext, statements: ts.NodeArray<ts.Statement>, nextIndex: number): EvalFlow {
   return ts.isIfStatement(statement)
     ? evaluateIfStatement(statement, context, statements, nextIndex)
@@ -2402,32 +2382,6 @@ function evaluateBranchStatement(statement: ts.Statement, context: EvalContext):
   if (ts.isThrowStatement(statement)) return {kind: 'exit'}
   if (!ts.isBlock(statement)) return {kind: 'return', value: unknown(`Unsupported branch statement: ${statement.getText(context.program.sourceFile)}`)}
   return evaluateStatementsFlow(statement.statements, context)
-}
-
-function contextWithEnvAndAssumptions(context: EvalContext, env: Map<string, Value>, assumptions: LinearConstraint[]): EvalContext {
-  return {
-    ...context,
-    env,
-    assumptions: assumptions.length === 0 ? context.assumptions : mergeAssumptions(context.assumptions, assumptions),
-  }
-}
-
-function envWithAssumptions(env: Map<string, Value>, assumptions: LinearConstraint[]): Map<string, Value> {
-  if (assumptions.length === 0) return env
-  const next = new Map<string, Value>()
-  for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions))
-  return next
-}
-
-function joinEnvironments(left: Map<string, Value>, right: Map<string, Value>): Map<string, Value> {
-  const next = new Map<string, Value>()
-  const keys = new Set([...left.keys(), ...right.keys()])
-  for (const key of keys) {
-    const leftValue = left.get(key)
-    const rightValue = right.get(key)
-    next.set(key, leftValue == null || rightValue == null ? unknown(`Local ${key} only exists on one branch`) : joinValues(leftValue, rightValue))
-  }
-  return next
 }
 
 function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalContext): Value {
@@ -5018,8 +4972,4 @@ function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExp
     sameExpressionText(fact.emptyExpr, emptyExpr)
     && (nonEmptyExpr == null || sameExpressionText(fact.nonEmptyExpr, nonEmptyExpr))
   )?.value ?? null
-}
-
-function contextWithAssumptions(context: EvalContext, assumptions: LinearConstraint[]): EvalContext {
-  return assumptions.length === 0 ? context : {...context, assumptions: mergeAssumptions(context.assumptions, assumptions)}
 }

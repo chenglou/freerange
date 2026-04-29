@@ -40,6 +40,7 @@ bun install
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers
 - [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
 - [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
 - [src/guarded-facts.ts](./src/guarded-facts.ts) — branch guard truth, finite case refinement, and number-case transfer helpers
