@@ -81,7 +81,7 @@ Do not swap the engine in one move. Build the new core in parallel, then compare
 Current parallel core:
 
 - `src/interpreter/context.ts`: frames, issues, and flow
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, local calls, ordered defaults, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, and simple alias-preserving mutation
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, and simple alias-preserving mutation
 - `src/interpreter/format.ts`: value-tree snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
 

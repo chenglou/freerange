@@ -552,6 +552,9 @@ function writeLiteralFilter(frame: InterpreterFrame, path: ValuePath, current: E
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
+  if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
+    return evaluateMathCall(target.name.text, expression.arguments, frame, expression)
+  }
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
@@ -563,6 +566,64 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     if (imported != null) return invokeFitFunction(imported.fn, evaluatedArguments(expression.arguments, frame), frame, imported.program, rootFrame(imported.program).env)
   }
   return noteUnsupported(frame, `Unsupported call ${expression.getText(frame.program.sourceFile)}`)
+}
+
+function evaluateMathCall(name: string, args: ts.NodeArray<ts.Expression>, frame: InterpreterFrame, expression: ts.CallExpression): Value {
+  const values = args.map(arg => evaluateExpression(arg, frame))
+  if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`)
+  const numbers = values as NumberValue[]
+  switch (name) {
+    case 'min':
+      return evaluateMathMinMax('min', numbers, frame, expression)
+    case 'max':
+      return evaluateMathMinMax('max', numbers, frame, expression)
+    case 'floor':
+      return evaluateUnaryMath(name, numbers, frame, value => value.isInteger ? value : numberValue(Math.floor(value.min), Math.floor(value.max), true, `floor(${value.expr ?? 'value'})`))
+    case 'ceil':
+      return evaluateUnaryMath(name, numbers, frame, value => value.isInteger ? value : numberValue(Math.ceil(value.min), Math.ceil(value.max), true, `ceil(${value.expr ?? 'value'})`))
+    case 'round':
+      return evaluateUnaryMath(name, numbers, frame, value => value.isInteger ? value : numberValue(Math.round(value.min), Math.round(value.max), true, `round(${value.expr ?? 'value'})`))
+    case 'trunc':
+      return evaluateUnaryMath(name, numbers, frame, value => value.isInteger ? value : numberValue(Math.trunc(value.min), Math.trunc(value.max), true, `trunc(${value.expr ?? 'value'})`))
+    case 'sqrt':
+      return evaluateUnaryMath(name, numbers, frame, value => value.min < 0 ? unknown('Math.sqrt expected a non-negative number') : numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, `sqrt(${value.expr ?? 'value'})`))
+    case 'abs':
+      return evaluateUnaryMath(name, numbers, frame, absNumber)
+    case 'sign':
+      return evaluateUnaryMath(name, numbers, frame, signNumber)
+    default:
+      return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`)
+  }
+}
+
+function evaluateMathMinMax(kind: 'min' | 'max', values: NumberValue[], frame: InterpreterFrame, _expression: ts.CallExpression): Value {
+  if (values.length === 0) return noteUnsupported(frame, `Math.${kind} expected at least one argument`)
+  return values.slice(1).reduce((current, value) => {
+    return kind === 'min'
+      ? numberValue(Math.min(current.min, value.min), Math.min(current.max, value.max), current.isInteger && value.isInteger, `min(${current.expr ?? 'left'}, ${value.expr ?? 'right'})`)
+      : numberValue(Math.max(current.min, value.min), Math.max(current.max, value.max), current.isInteger && value.isInteger, `max(${current.expr ?? 'left'}, ${value.expr ?? 'right'})`)
+  }, values[0]!)
+}
+
+function evaluateUnaryMath(name: string, values: NumberValue[], frame: InterpreterFrame, evaluate: (value: NumberValue) => Value): Value {
+  if (values.length !== 1) return noteUnsupported(frame, `Math.${name} expected one argument`)
+  return evaluate(values[0]!)
+}
+
+function absNumber(value: NumberValue): NumberValue {
+  const max = Math.max(Math.abs(value.min), Math.abs(value.max))
+  if (value.min >= 0) return value
+  if (value.max <= 0) return numberValue(-value.max, -value.min, value.isInteger, `abs(${value.expr ?? 'value'})`)
+  return numberValue(0, max, value.isInteger, `abs(${value.expr ?? 'value'})`)
+}
+
+function signNumber(value: NumberValue): NumberValue {
+  if (value.min === 0 && value.max === 0) return numberValue(0, 0, true, `sign(${value.expr ?? 'value'})`)
+  if (value.min > 0) return numberValue(1, 1, true, `sign(${value.expr ?? 'value'})`)
+  if (value.max < 0) return numberValue(-1, -1, true, `sign(${value.expr ?? 'value'})`)
+  if (value.min >= 0) return numberValue(0, 1, true, `sign(${value.expr ?? 'value'})`)
+  if (value.max <= 0) return numberValue(-1, 0, true, `sign(${value.expr ?? 'value'})`)
+  return numberValue(-1, 1, true, `sign(${value.expr ?? 'value'})`)
 }
 
 function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {

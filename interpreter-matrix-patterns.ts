@@ -68,3 +68,8 @@ export function matrixForOfPushVisibleRows(): {height: number}[] {
   }
   return rows
 }
+
+export function matrixMathClampColumns(width: number): number {
+  const raw = Math.floor(width / 240)
+  return Math.max(1, Math.min(raw, 7))
+}

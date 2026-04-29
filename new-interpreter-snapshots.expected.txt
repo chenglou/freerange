@@ -45,6 +45,8 @@ case matrix for-of push visible rows: interpreter-matrix-patterns.ts:matrixForOf
   return[0].height: int 2..2
   return[1].height: int 6..6
   return[].height: int 2..6
+case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
+  return: int 1..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
