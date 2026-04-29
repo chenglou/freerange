@@ -66,6 +66,16 @@ case matrix indexed array param rows: interpreter-matrix-patterns.ts:matrixIndex
   return.rows[].height: any number
   return.rows[].sourceIndex: int 0..Infinity
   fact return.rows follows items by index
+case matrix indexed array guarded rows: interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedRows
+  return.rows.length: int 0..Infinity
+  return.rows[].height: any number
+  return.rows[].sourceIndex: int 0..Infinity
+  fact return.rows is an order-preserving subset of items
+case matrix indexed array guarded cursor values: interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedCursorValues
+  return.rows.length: int 0..Infinity
+  return.rows[]: int 10..Infinity
+  return.bottom: int 10..Infinity
+  fact return.rows is an order-preserving subset of items
 case matrix indexed array cursor values: interpreter-matrix-patterns.ts:matrixIndexedArrayCursorValues
   return.rows.length: int 0..Infinity
   return.rows[]: int 10..Infinity
@@ -92,9 +102,9 @@ case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:nega
 case negative indexed loop starts at one surface: interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
   return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
   unsupported negativeMatrixIndexedLoopStartsAtOne: Indexed for loops support for (let i = 0; i < limit; i++) style loops
-case negative indexed array guarded push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedPush
-  return: unknown (Indexed for loop body only supports local bindings and direct push calls: if (item > 0) values.push(item))
-  unsupported negativeMatrixIndexedArrayGuardedPush: Indexed for loop body only supports local bindings and direct push calls: if (item > 0) values.push(item)
+case negative indexed array guarded else surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
+  return: unknown (Indexed for loop guarded pushes do not support else branches)
+  unsupported negativeMatrixIndexedArrayGuardedElse: Indexed for loop guarded pushes do not support else branches
 case negative indexed array pushes into source surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
   return: unknown (Indexed for loop cannot push into its source array)
   unsupported negativeMatrixIndexedArrayPushesIntoSource: Indexed for loop cannot push into its source array

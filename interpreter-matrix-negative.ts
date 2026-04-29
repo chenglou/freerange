@@ -62,11 +62,12 @@ export function negativeMatrixIndexedLoopStartsAtOne(limit: number = 5): number[
   return values
 }
 
-export function negativeMatrixIndexedArrayGuardedPush(items: number[]): number[] {
+export function negativeMatrixIndexedArrayGuardedElse(items: {value: number; visible: boolean}[]): number[] {
   const values = []
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!
-    if (item > 0) values.push(item)
+    if (item.visible) values.push(item.value)
+    else values.push(0)
   }
   return values
 }

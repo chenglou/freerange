@@ -134,11 +134,21 @@ type IndexedForPushRecord = {
   path: ValuePath
   count: number
   initialEmpty: boolean
+  conditional: boolean
 }
 
 type IndexedForPushResult =
-  | {kind: 'ok'; push: InterpreterLoopPush | null; initialEmpty: boolean}
+  | {kind: 'ok'; push: InterpreterLoopPush | null; initialEmpty: boolean; conditional: boolean}
   | {kind: 'error'; value: Value}
+
+type IndexedForGuardedContext = {
+  indexName: string
+  length: NumberValue
+  source: ArrayValue | null
+  order: number
+  loop: InterpreterLoopContext
+  pushedArrays: Map<string, IndexedForPushRecord>
+}
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
   const frame = rootFrame(program)
@@ -502,7 +512,19 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
         const push = evaluateIndexedForPush(child.expression, pushPath, shape.indexName, length, bound.origin?.source ?? null, order, frame)
         if (push.kind === 'error') return {kind: 'return', value: push.value}
         if (push.push != null) loop.pushes.push(push.push)
-        rememberIndexedForPush(pushedArrays, pushPath, push.initialEmpty)
+        rememberIndexedForPush(pushedArrays, pushPath, push.initialEmpty, push.conditional)
+        continue
+      }
+      if (ts.isIfStatement(child)) {
+        const guardError = evaluateIndexedForGuardedStatement(child, {
+          indexName: shape.indexName,
+          length,
+          source: bound.origin?.source ?? null,
+          order,
+          loop,
+          pushedArrays,
+        }, frame)
+        if (guardError != null) return {kind: 'return', value: guardError}
         continue
       }
       return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
@@ -514,6 +536,56 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function evaluateIndexedForGuardedStatement(
+  statement: ts.IfStatement,
+  context: IndexedForGuardedContext,
+  frame: InterpreterFrame,
+): Value | null {
+  if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches')
+  if (!isSideEffectFreeExpression(statement.expression)) return noteUnsupported(frame, 'Indexed for loop guards must be side-effect-free')
+  const thenFrame = branchFrame(frame, statement.expression, true, '<indexed-if-true>')
+  const elseFrame = branchFrame(frame, statement.expression, false, '<indexed-if-false>')
+  thenFrame.conditionalDepth++
+  try {
+    const error = evaluateIndexedForGuardedBody(statement.thenStatement, context, thenFrame)
+    if (error != null) return error
+  } finally {
+    thenFrame.conditionalDepth--
+  }
+  frame.env = joinFrameEnvs(thenFrame.env, elseFrame.env)
+  return null
+}
+
+function evaluateIndexedForGuardedBody(
+  statement: ts.Statement,
+  context: IndexedForGuardedContext,
+  frame: InterpreterFrame,
+): Value | null {
+  const statements = ts.isBlock(statement) ? statement.statements : [statement]
+  for (const child of statements) {
+    if (ts.isVariableStatement(child)) {
+      for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
+      continue
+    }
+    if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
+      const pushPath = pathFromExpression(child.expression.expression.expression, frame)
+      if (pushPath == null) return noteUnsupported(frame, `Unsupported push target ${child.expression.expression.expression.getText(frame.program.sourceFile)}`)
+      const push = evaluateIndexedForPush(child.expression, pushPath, context.indexName, context.length, context.source, context.order, frame)
+      if (push.kind === 'error') return push.value
+      if (push.push != null) context.loop.pushes.push(push.push)
+      rememberIndexedForPush(context.pushedArrays, pushPath, push.initialEmpty, push.conditional)
+      continue
+    }
+    if (ts.isIfStatement(child)) {
+      const error = evaluateIndexedForGuardedStatement(child, context, frame)
+      if (error != null) return error
+      continue
+    }
+    return noteUnsupported(frame, `Indexed for loop guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)
+  }
+  return null
 }
 
 function indexedForLoopContext(bound: IndexedForLoopBound, length: NumberValue, frame: InterpreterFrame): InterpreterLoopContext {
@@ -611,10 +683,11 @@ function evaluateIndexedForPush(
   return {
     kind: 'ok',
     initialEmpty,
+    conditional: frame.conditionalDepth > 0,
     push: path.segments.length === 0 ? {
       arrayName: path.root,
       order,
-      conditional: false,
+      conditional: frame.conditionalDepth > 0,
       length: lengthValue,
       element,
       base: current,
@@ -623,10 +696,14 @@ function evaluateIndexedForPush(
   }
 }
 
-function rememberIndexedForPush(records: Map<string, IndexedForPushRecord>, path: ValuePath, initialEmpty: boolean) {
+function rememberIndexedForPush(records: Map<string, IndexedForPushRecord>, path: ValuePath, initialEmpty: boolean, conditional: boolean) {
   const key = valuePathExpression(path)
   const current = records.get(key)
-  records.set(key, current == null ? {path, count: 1, initialEmpty} : {...current, count: current.count + 1})
+  records.set(key, current == null ? {path, count: 1, initialEmpty, conditional} : {
+    ...current,
+    count: current.count + 1,
+    conditional: current.conditional || conditional,
+  })
 }
 
 function finalizeIndexedForPushedArrays(records: Map<string, IndexedForPushRecord>, origin: IndexedForLoopOrigin | null, frame: InterpreterFrame) {
@@ -634,7 +711,7 @@ function finalizeIndexedForPushedArrays(records: Map<string, IndexedForPushRecor
     const value = readPath(record.path, frame)
     if (value.kind !== 'array') continue
     const summary = origin != null && record.count === 1 && record.initialEmpty
-      ? mergeArraySummary(value.summary, emptyArraySummary(mapOrigin(origin.source, origin.sourceExpr)))
+      ? mergeArraySummary(value.summary, emptyArraySummary(record.conditional ? filterOrigin(origin.source, origin.sourceExpr) : mapOrigin(origin.source, origin.sourceExpr)))
       : value.summary
     writePath(record.path, {...value, elements: null, summary}, frame)
   }

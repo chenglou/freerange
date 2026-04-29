@@ -154,6 +154,41 @@ export function matrixIndexedArrayParamRows(items: {height: number}[]): {rows: {
 }
 
 /** @fit
+ * given items.length: int 0..20
+ * given items[].height: 0..80
+ */
+export function matrixIndexedArrayGuardedRows(items: {height: number; visible: boolean}[]): {rows: {height: number; sourceIndex: number}[]} {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) {
+      rows.push({height: item.height, sourceIndex: i})
+    }
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given top: 0..1000
+ * given step: 0..40
+ */
+export function matrixIndexedArrayGuardedCursorValues(
+  items: {visible: boolean}[],
+  top: number = 10,
+  step: number = 2,
+): {rows: number[]; bottom: number} {
+  const rows = []
+  let y = top
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) rows.push(y)
+    y += step
+  }
+  return {rows, bottom: y}
+}
+
+/** @fit
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: 0..40
