@@ -78,6 +78,14 @@ export function matrixForOfParamRows(items: {height: number}[]): {rows: {height:
   return {rows}
 }
 
+export function matrixForOfParamVisibleRows(items: {height: number; visible: boolean}[]): {rows: {height: number}[]} {
+  const rows = []
+  for (const item of items) {
+    if (item.visible) rows.push({height: item.height})
+  }
+  return {rows}
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))

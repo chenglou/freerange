@@ -47,6 +47,13 @@ infer matrix abstract for-of param rows
   local rows.length: int 0..Infinity
   local rows[].height == items[].height
   local rows follows items by index
+infer matrix abstract guarded for-of rows
+  return return.rows.length: int 0..Infinity
+  return return.rows[].height == items[].height
+  return return.rows is an order-preserving subset of items
+  local rows.length: int 0..Infinity
+  local rows[].height == items[].height
+  local rows is an order-preserving subset of items
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

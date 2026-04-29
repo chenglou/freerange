@@ -306,6 +306,11 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
         evaluateExpression(child.expression, frame)
         continue
       }
+      if (ts.isIfStatement(child)) {
+        const flow = evaluateIfStatement(child, frame)
+        if (flow.kind !== 'fallthrough') return flow
+        continue
+      }
       return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
   } finally {

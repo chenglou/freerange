@@ -618,7 +618,7 @@ export function joinValues(left: Value, right: Value): Value {
         : null,
       element: mergeElementValue(left.element, right.element),
       expr: left.expr != null && left.expr === right.expr ? left.expr : null,
-      summary: sameArraySummary(left.summary, right.summary) ? left.summary : null,
+      summary: joinArraySummary(left, right),
     }
   }
   if (left.kind === 'null' && right.kind === 'null') return nullValue(left.expr ?? right.expr)
@@ -639,6 +639,31 @@ export function joinValues(left: Value, right: Value): Value {
   if (left.kind === 'null') return nullableValue(right, right.expr)
   if (right.kind === 'null') return nullableValue(left, left.expr)
   return unknown('Branches returned incompatible value shapes')
+}
+
+function joinArraySummary(left: ArrayValue, right: ArrayValue): ArraySummary | null {
+  if (sameArraySummary(left.summary, right.summary)) return left.summary
+  return originSummaryFromEmptyBranch(left, right) ?? originSummaryFromEmptyBranch(right, left)
+}
+
+function originSummaryFromEmptyBranch(emptyCandidate: ArrayValue, other: ArrayValue): ArraySummary | null {
+  const origin = other.summary?.origin
+  if (origin == null || !isDefinitelyEmptyArray(emptyCandidate)) return null
+  return {
+    origin,
+    relations: [],
+    nondecreasingProps: [],
+    advances: [],
+    spaced: [],
+    lastEnd: null,
+    extentEnds: [],
+  }
+}
+
+function isDefinitelyEmptyArray(value: ArrayValue) {
+  return value.length.max === 0
+    && value.element == null
+    && (value.elements == null || value.elements.length === 0)
 }
 
 function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, joined: NumberValue) {
