@@ -120,9 +120,9 @@ helper behind a narrower contract.
 Failure reports point at the spec line when they can:
 
 ```txt
-layout.ts:17:placeRows
-  UNKNOWN return.rows[$i + 1].top >= return.rows[$i].bottom + gap
-  need: rows[$i + 1].top >= rows[$i].bottom + gap
+layout.ts:17
+  UNKNOWN could not prove return.rows[$i + 1].top >= return.rows[$i].bottom + gap
+  scope: placeRows
   known:
     assumed from input: given gap: 0..20
   missing: a sequence relation for adjacent row positions

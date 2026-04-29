@@ -445,7 +445,8 @@ function bad() {
   }, dir => {
     const check = runFr(['check', 'bad.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
-    expectCli(check.output.includes('bad.ts:2:bad'), 'expected fr check failure output to include the spec line', check.output)
+    expectCli(check.output.includes('bad.ts:2'), 'expected fr check failure output to include the spec line', check.output)
+    expectCli(check.output.includes('scope: bad'), 'expected fr check failure output to include the function scope', check.output)
     expectCli(check.output.includes('FAIL return: 0..1'), 'expected fr check failure output', check.output)
     expectCli(check.output.includes('next: run fr infer --function bad bad.ts'), 'expected fr check to point at infer next', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)

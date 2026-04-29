@@ -154,8 +154,10 @@ function printScoutReport(label: string, files: number, report: FitScoutReport) 
 }
 
 function printCheck(check: FitCheck) {
-  console.log(formatCheckLocation(check))
-  console.log(`  ${check.status.toUpperCase()} ${check.text}`)
+  console.log(formatCheckSourceLocation(check))
+  console.log(`  ${formatCheckStatusLine(check)}`)
+  console.log(`  scope: ${check.functionName}`)
+  if (check.boundaryLine != null && check.boundaryLine !== check.line) console.log(`  checked at: line ${check.boundaryLine}`)
   printReason(check.reason)
   printFollowUp('check', check)
 }
@@ -215,9 +217,14 @@ function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoct
       : `run ${inferCommand} to see why the caller facts did not prove the callee precondition`
   }
 
-  return inferCommand == null
-    ? 'move the fact into a small named helper if you want inferred facts'
-    : `run ${inferCommand} to compare inferred facts with this claim`
+  if (inferCommand != null) return `run ${inferCommand} to compare inferred facts with this claim`
+  return hasCheckBoundary(check)
+    ? 'move the construction into a small named helper if you want inferred facts'
+    : 'move the fact into a small named helper if you want inferred facts'
+}
+
+function hasCheckBoundary(check: FitCheck | FitDoctorCheck) {
+  return 'boundaryLine' in check && check.boundaryLine != null
 }
 
 function inferCommandForCheck(check: {file: string; functionName: string}) {
@@ -234,6 +241,16 @@ function formatCheckLocation(check: {file: string; line?: number; functionName: 
   return check.line == null
     ? `${check.file}:${check.functionName}`
     : `${check.file}:${check.line}:${check.functionName}`
+}
+
+function formatCheckSourceLocation(check: {file: string; line?: number}) {
+  return check.line == null ? check.file : `${check.file}:${check.line}`
+}
+
+function formatCheckStatusLine(check: FitCheck) {
+  return check.status === 'unknown'
+    ? `UNKNOWN could not prove ${check.text}`
+    : `${check.status.toUpperCase()} ${check.text}`
 }
 
 function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; unknown: number}) {

@@ -119,7 +119,7 @@ export function verifyCheckSpec(
   const right = evaluateSpecExpression(spec.right, context, hooks)
   const status = proveComparison(left, spec.op, right, context.assumptions)
   const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
-    ? `wildcard comparison means every ${publicFitText(wildcardCheck.collection)} item must satisfy: ${spec.text}\n${status.reason}`
+    ? `applies to: every item in ${wildcardCollectionLabel(wildcardCheck.collection)}\n${status.reason}`
     : status.reason
   return {
     file,
@@ -129,6 +129,11 @@ export function verifyCheckSpec(
     status: status.status,
     ...(reason == null ? {} : {reason}),
   }
+}
+
+function wildcardCollectionLabel(collection: string) {
+  const text = publicFitText(collection)
+  return text.endsWith('[]') ? text.slice(0, -2) : text
 }
 
 export function proveRangeSpec(value: Value, range: FitRange, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {

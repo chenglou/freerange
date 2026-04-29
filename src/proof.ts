@@ -96,11 +96,11 @@ export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, 
   if (mathTruth === 'true') return {status: 'pass'}
   const truth = compareRanges(left, op, right)
   if (truth === 'true') return {status: 'pass'}
-  if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, op, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
+  if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
   const linearTruth = compareLinear(left, op, right, assumptions)
   if (linearTruth === 'true') return {status: 'pass'}
-  if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, op, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
-  return {status: 'unknown', reason: comparisonFailureReason(left, op, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
+  if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
+  return {status: 'unknown', reason: comparisonFailureReason(left, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
 }
 
 function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue): Truth {

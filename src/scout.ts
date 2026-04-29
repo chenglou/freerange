@@ -43,11 +43,18 @@ export function scoutRequirementsFromReason(reason: string | undefined): string[
   const requirements: string[] = []
   for (const line of reason.split('\n')) {
     const trimmed = line.trim()
-    if (!trimmed.startsWith('missing: given ')) continue
-    const requirement = tryParseScoutRequirement(trimmed.slice('missing: '.length))
+    const requirementText = scoutRequirementText(trimmed)
+    if (requirementText == null) continue
+    const requirement = tryParseScoutRequirement(requirementText)
     if (requirement != null) requirements.push(requirement)
   }
   return [...new Set(requirements)]
+}
+
+function scoutRequirementText(line: string) {
+  if (line.startsWith('missing fact: ')) return `given ${line.slice('missing fact: '.length)}`
+  if (line.startsWith('missing: given ')) return line.slice('missing: '.length)
+  return null
 }
 
 export function uniqueScoutCandidates(candidates: FitScoutCandidate[]): FitScoutCandidate[] {

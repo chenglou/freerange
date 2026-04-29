@@ -565,6 +565,12 @@ function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
   return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
 }
 
+type CheckBoundary = Pick<FitCheck, 'boundaryLine'>
+
+function checkBoundaryForNode(sourceFile: ts.SourceFile, node: ts.Node): CheckBoundary {
+  return {boundaryLine: lineNumberForNode(sourceFile, node)}
+}
+
 function verifyFunctionSpecs(
   file: string,
   program: Program,
@@ -1230,10 +1236,11 @@ function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, re
   return {file, functionName, text: spec.text, status: 'unknown', reason, ...(spec.line == null ? {} : {line: spec.line})}
 }
 
-function typeUnsupportedChecks(file: string, functionName: string, unsupported: TypeContractUnsupported[]): FitCheck[] {
+function typeUnsupportedChecks(file: string, functionName: string, unsupported: TypeContractUnsupported[], boundary?: CheckBoundary): FitCheck[] {
   return unsupported.map(problem => ({
     file,
     functionName,
+    ...boundary,
     text: problem.text,
     status: 'unknown',
     reason: problem.reason,
@@ -1241,8 +1248,8 @@ function typeUnsupportedChecks(file: string, functionName: string, unsupported: 
   }))
 }
 
-function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContractUnsupported[]) {
-  context.checks.push(...typeUnsupportedChecks(context.file, context.stack.join(' > '), unsupported))
+function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContractUnsupported[], boundary?: CheckBoundary) {
+  context.checks.push(...typeUnsupportedChecks(context.file, context.stack.join(' > '), unsupported, boundary))
 }
 
 function collectGivenAssumptions(
@@ -1617,8 +1624,10 @@ function verifyCheckSpec(
   checks: FitCheck[],
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
+  boundary?: CheckBoundary,
 ): FitCheck {
-  return verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
+  const check = verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
+  return boundary == null ? check : {...check, ...boundary}
 }
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
@@ -1723,8 +1732,9 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     : evaluateExpression(declaration.initializer!, context)
   const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
   bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
-  pushTypeUnsupportedChecks(context, typeContract.unsupported)
-  verifyLocalFitSpecs(typeSpecs, context)
+  const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
+  pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
+  verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary)
 }
 
 function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
@@ -1739,7 +1749,7 @@ function verifyLocalFitSpecs(specs: FitCheckSpec[], context: EvalContext) {
   verifyCheckSpecsWithResult(specs, unknown('Inline @fit checks do not use return'), context)
 }
 
-function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, context: EvalContext) {
+function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, context: EvalContext, boundary?: CheckBoundary) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -1752,6 +1762,7 @@ function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, contex
       [...context.checks],
       context.assumptions,
       context.contractCache,
+      boundary,
     ))
   }
 }
@@ -2362,8 +2373,9 @@ function evaluateReturnExpression(expression: ts.Expression, inlineNode: ts.Node
   const evaluate = () => evaluateExpressionWithObjectPath(expression, context, [fitReturnPublicRoot])
   const value = specs.length > 0 || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
   verifyInlineSpecsForValue(specs, value, context)
-  pushTypeUnsupportedChecks(context, typeContract.unsupported)
-  verifyCheckSpecsWithResult(typeSpecs, value, context)
+  const boundary = checkBoundaryForNode(context.program.sourceFile, inlineNode)
+  pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
+  verifyCheckSpecsWithResult(typeSpecs, value, context, boundary)
   return value
 }
 

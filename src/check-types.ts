@@ -18,6 +18,7 @@ export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
 export type FitCheck = {
   file: string
   line?: number
+  boundaryLine?: number
   functionName: string
   text: string
   status: FitCheckStatus

@@ -40,19 +40,16 @@ const linearEpsilon = 1e-9
 
 export function comparisonFailureReason(
   left: ReportNumberValue,
-  op: ComparisonOperator,
   right: ReportNumberValue,
   assumptions: ReportLinearConstraint[],
   result: string,
   missing: string,
 ) {
-  const lines = [
-    `${formatRange(left)} ${op} ${formatRange(right)} ${result}`,
-    `need: ${comparisonNeed(left, op, right)}`,
-  ]
+  const lines: string[] = []
+  if (result !== 'was not proven') lines.push(`result: ${result}`)
   const known = knownProofContext(left, right, assumptions)
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-  lines.push(`missing: ${missing}`)
+  lines.push(formatMissingComparison(missing))
   return lines.join('\n')
 }
 
@@ -67,7 +64,6 @@ export function rangeSpecFailureReason(
   const expectedRange = formatRangeSpec(range)
   const lines = [
     `range was ${formatRange(value)}, expected inside ${expectedRange}`,
-    `need: ${exprText(value)} inside ${expectedRange}`,
   ]
   const known = knownProofContextMany([value, lower, upper], assumptions)
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
@@ -118,9 +114,10 @@ export function formatArraySummary(value: ReportArrayValue) {
 }
 
 export function formatRange(value: ReportNumberValue) {
+  const expr = value.expr == null ? null : publicFitText(value.expr)
+  if (expr != null && value.min === value.max && Number.isFinite(value.min) && expr === formatNumber(value.min)) return expr
   const range = formatExpectedRange(value.min, value.max, value.isInteger)
-  const expr = value.expr == null ? '' : ` as ${publicFitText(value.expr)}`
-  return `${range}${expr}`
+  return expr == null ? range : `${range} as ${expr}`
 }
 
 function exprText(value: ReportNumberValue) {
@@ -128,6 +125,7 @@ function exprText(value: ReportNumberValue) {
 }
 
 export function formatExpectedRange(min: number, max: number, isInteger: boolean) {
+  if (min === -Infinity && max === Infinity) return isInteger ? 'any integer' : 'any number'
   const prefix = isInteger ? 'int ' : ''
   return `${prefix}${formatNumber(min)}..${formatNumber(max)}`
 }
@@ -182,7 +180,21 @@ function knownProofContextMany(values: ReportNumberValue[], assumptions: ReportL
 }
 
 function knownValueFacts(value: ReportNumberValue) {
-  return [formatRange(value), ...(value.provenance ?? [])]
+  const fact = knownValueFact(value)
+  return [...(fact == null ? [] : [fact]), ...(value.provenance ?? [])]
+}
+
+function knownValueFact(value: ReportNumberValue) {
+  const expr = value.expr == null ? null : publicFitText(value.expr)
+  if (expr != null && value.min === value.max && Number.isFinite(value.min) && expr === formatNumber(value.min)) return null
+  if (expr == null) return formatRange(value)
+  return `${expr}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`
+}
+
+function formatMissingComparison(missing: string) {
+  return missing.startsWith('given ')
+    ? `missing fact: ${missing.slice('given '.length)}`
+    : `missing: ${missing}`
 }
 
 function formatKnownFact(assumption: ReportLinearConstraint): string {
