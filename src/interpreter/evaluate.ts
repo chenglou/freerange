@@ -55,7 +55,6 @@ import {
 import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {valueFromSyntaxTypeShape} from '../shapes.ts'
-import {expressionRootName} from '../source-expressions.ts'
 import {localizeFreshContainerValue} from '../value-localize.ts'
 import {
   comparisonConstraint,
@@ -73,6 +72,17 @@ import {
   type LoopFrame,
   type LoopAppend,
 } from './context.ts'
+import {
+  exactInteger,
+  pathFromExpression as pathFromSourceExpression,
+  readArrayIndexValue,
+  readPath,
+  readPropertyValue,
+  valueExpr,
+  valuePathExpression,
+  writePath,
+  type ValuePath,
+} from './value-path.ts'
 
 export type InterpreterFunctionResult = {
   value: Value
@@ -82,15 +92,6 @@ export type InterpreterFunctionResult = {
 export type InterpreterBodyResult = InterpreterFunctionResult & {
   env: Map<string, Value>
   assumptions: LinearConstraint[]
-}
-
-type PathSegment =
-  | {kind: 'prop'; name: string}
-  | {kind: 'index'; index: number}
-
-type ValuePath = {
-  root: string
-  segments: PathSegment[]
 }
 
 type PendingLoopScalarAdd = {
@@ -1234,13 +1235,6 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   return readPropertyValue(target, expression.name.text, expression.getText(frame.program.sourceFile))
 }
 
-function readPropertyValue(target: Value, name: string, expr: string): Value {
-  if (target.kind === 'object') return target.props.get(name) ?? unknownNumber(expr)
-  if (target.kind === 'array' && name === 'length') return target.length
-  if (target.kind === 'nullable') return readPropertyValue(target.present, name, expr)
-  return unknown(`${expr} expected an object`)
-}
-
 function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   const target = evaluateExpression(expression.expression, frame)
   if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported')
@@ -1248,12 +1242,6 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: In
   const exactIndex = exactInteger(index)
   if (exactIndex == null) return target.kind === 'array' && target.element != null ? target.element : unknownNumber(expression.getText(frame.program.sourceFile))
   return readArrayIndexValue(target, exactIndex, expression.getText(frame.program.sourceFile))
-}
-
-function readArrayIndexValue(target: Value, index: number, expr: string): Value {
-  if (target.kind === 'array') return target.elements?.[index] ?? target.element ?? unknownNumber(expr)
-  if (target.kind === 'nullable') return readArrayIndexValue(target.present, index, expr)
-  return unknown(`${expr} expected an array`)
 }
 
 function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, frame: InterpreterFrame): Value {
@@ -1745,108 +1733,7 @@ function importedFunction(name: string, program: Program): {program: Program; fn
 }
 
 function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame): ValuePath | null {
-  const unwrapped = unwrapExpression(expression)
-  if (ts.isIdentifier(unwrapped)) return {root: unwrapped.text, segments: []}
-  if (ts.isPropertyAccessExpression(unwrapped)) {
-    const parent = pathFromExpression(unwrapped.expression, frame)
-    return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: unwrapped.name.text}]}
-  }
-  if (ts.isElementAccessExpression(unwrapped) && unwrapped.argumentExpression != null) {
-    const parent = pathFromExpression(unwrapped.expression, frame)
-    const index = exactInteger(evaluateExpression(unwrapped.argumentExpression, frame))
-    return parent == null || index == null ? null : {...parent, segments: [...parent.segments, {kind: 'index', index}]}
-  }
-  const root = expressionRootName(unwrapped)
-  return root == null ? null : {root, segments: []}
-}
-
-function valuePathExpression(path: ValuePath): string {
-  let expr = path.root
-  for (const segment of path.segments) {
-    expr += segment.kind === 'prop' ? `.${segment.name}` : `[${segment.index}]`
-  }
-  return expr
-}
-
-function readPath(path: ValuePath, frame: InterpreterFrame): Value {
-  const root = frame.env.get(path.root)
-  if (root == null) return noteUnsupported(frame, `Unknown assignment root ${path.root}`)
-  return readPathSegments(root, path.segments)
-}
-
-function readPathSegments(value: Value, segments: PathSegment[]): Value {
-  const segment = segments[0]
-  if (segment == null) return value
-  if (segment.kind === 'prop') return readPathSegments(readPropertyValue(value, segment.name, `${valueExpr(value) ?? 'value'}.${segment.name}`), segments.slice(1))
-  return readPathSegments(readArrayIndexValue(value, segment.index, `${valueExpr(value) ?? 'value'}[${segment.index}]`), segments.slice(1))
-}
-
-function writePath(path: ValuePath, value: Value, frame: InterpreterFrame) {
-  const current = frame.env.get(path.root) ?? unknownObject(path.root)
-  if (path.segments.length === 0) {
-    frame.env.set(path.root, value)
-    return
-  }
-  const containerPath = path.segments.slice(0, -1)
-  const oldContainer = readPathSegments(current, containerPath)
-  const updated = setPathSegments(current, path.segments, value)
-  const newContainer = readPathSegments(updated, containerPath)
-  if (oldContainer.kind === 'object' || oldContainer.kind === 'array') {
-    for (const [name, envValue] of frame.env) {
-      frame.env.set(name, replaceSharedValue(envValue, oldContainer, newContainer))
-    }
-  }
-  frame.env.set(path.root, updated)
-}
-
-function setPathSegments(current: Value, segments: PathSegment[], value: Value): Value {
-  const segment = segments[0]
-  if (segment == null) return value
-  if (segment.kind === 'prop') {
-    if (current.kind === 'array' && segment.name === 'length' && value.kind === 'number') return {...current, length: value}
-    const base = current.kind === 'object' ? current : unknownObject(valueExpr(current) ?? 'object')
-    const props = new Map(base.props)
-    props.set(segment.name, setPathSegments(props.get(segment.name) ?? unknownObject(segment.name), segments.slice(1), value))
-    return {...base, props}
-  }
-  const base = current.kind === 'array' ? current : unknownArray(valueExpr(current) ?? 'array')
-  const elements = base.elements == null ? [] : [...base.elements]
-  while (elements.length <= segment.index) elements.push(unknownNumber(`${base.expr ?? 'array'}[${elements.length}]`))
-  elements[segment.index] = setPathSegments(elements[segment.index]!, segments.slice(1), value)
-  let element: Value | null = null
-  for (const item of elements) element = mergeElementValue(element, item)
-  return {
-    ...base,
-    elements,
-    element,
-    length: numberValue(elements.length, elements.length, true, `${base.expr ?? 'array'}.length`, linearConstant(elements.length)),
-  }
-}
-
-function replaceSharedValue(value: Value, from: Value, to: Value): Value {
-  if (value === from) return to
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    let changed = false
-    for (const [name, prop] of value.props) {
-      const next = replaceSharedValue(prop, from, to)
-      if (next !== prop) changed = true
-      props.set(name, next)
-    }
-    return changed ? {...value, props} : value
-  }
-  if (value.kind === 'array') {
-    const elements = value.elements == null ? null : value.elements.map(element => replaceSharedValue(element, from, to))
-    const element = value.element == null ? null : replaceSharedValue(value.element, from, to)
-    const changed = element !== value.element
-      || (elements != null && value.elements != null && elements.some((item, index) => item !== value.elements![index]))
-    return changed ? {...value, elements, element} : value
-  }
-  if (value.kind === 'nullable') {
-    const present = replaceSharedValue(value.present, from, to)
-    return present === value.present ? value : {...value, present}
-  }
-  return value
+  return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
 }
 
 function unwrapExpression(expression: ts.Expression): ts.Expression {
@@ -1967,25 +1854,7 @@ function literalBoolean(value: Value): boolean | null {
   return value.kind === 'literal' && value.values.length === 1 && typeof value.values[0] === 'boolean' ? value.values[0] : null
 }
 
-function exactInteger(value: Value): number | null {
-  return value.kind === 'number' && value.min === value.max && value.isInteger ? value.min : null
-}
-
 function propertyNameText(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
   return null
-}
-
-function valueExpr(value: Value): string | null {
-  switch (value.kind) {
-    case 'number':
-    case 'literal':
-    case 'object':
-    case 'array':
-    case 'null':
-    case 'nullable':
-      return value.expr
-    case 'unknown':
-      return null
-  }
 }
