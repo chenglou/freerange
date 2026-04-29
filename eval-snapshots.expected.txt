@@ -84,6 +84,20 @@ infer matrix indexed limit range
   local values.length == limit
   local values.length: int 0..30
   local values[]: int 0..29
+infer matrix indexed array param rows
+  return return.rows.length == items.length
+  return return.rows.length: int 0..20
+  return return.rows[].height == items[].height
+  return return.rows[].height: 0..80
+  return return.rows[].sourceIndex == rows[].sourceIndex
+  return return.rows[].sourceIndex: int 0..19
+  return return.rows follows items by index
+  local rows.length == items.length
+  local rows.length: int 0..20
+  local rows[].height == items[].height
+  local rows[].height: 0..80
+  local rows[].sourceIndex: int 0..19
+  local rows follows items by index
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

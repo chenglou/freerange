@@ -61,6 +61,11 @@ case matrix abstract running max: interpreter-matrix-patterns.ts:matrixForOfPara
 case matrix indexed limit range: interpreter-matrix-patterns.ts:matrixIndexedLimitRange
   return.length: int 5..5
   return[]: int 0..4
+case matrix indexed array param rows: interpreter-matrix-patterns.ts:matrixIndexedArrayParamRows
+  return.rows.length: int 0..Infinity
+  return.rows[].height: any number
+  return.rows[].sourceIndex: int 0..Infinity
+  fact return.rows follows items by index
 case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
@@ -82,3 +87,9 @@ case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:nega
 case negative indexed loop starts at one surface: interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
   return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
   unsupported negativeMatrixIndexedLoopStartsAtOne: Indexed for loops support for (let i = 0; i < limit; i++) style loops
+case negative indexed array guarded push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedPush
+  return: unknown (Indexed for loop body only supports local bindings and direct push calls: if (item > 0) values.push(item))
+  unsupported negativeMatrixIndexedArrayGuardedPush: Indexed for loop body only supports local bindings and direct push calls: if (item > 0) values.push(item)
+case negative indexed array pushes into source surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
+  return: unknown (Indexed for loop cannot push into its source array)
+  unsupported negativeMatrixIndexedArrayPushesIntoSource: Indexed for loop cannot push into its source array

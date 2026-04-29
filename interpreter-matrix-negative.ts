@@ -61,3 +61,19 @@ export function negativeMatrixIndexedLoopStartsAtOne(limit: number = 5): number[
   }
   return values
 }
+
+export function negativeMatrixIndexedArrayGuardedPush(items: number[]): number[] {
+  const values = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item > 0) values.push(item)
+  }
+  return values
+}
+
+export function negativeMatrixIndexedArrayPushesIntoSource(items: number[]): number[] {
+  for (let i = 0; i < items.length; i++) {
+    items.push(i)
+  }
+  return items
+}

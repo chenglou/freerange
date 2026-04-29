@@ -111,7 +111,27 @@ type AbstractLoopScalarAdd = {
 
 type IndexedForLoopShape = {
   indexName: string
-  limitExpression: ts.Expression
+  source: IndexedForLoopSource
+}
+
+type IndexedForLoopSource =
+  | {kind: 'limit'; expression: ts.Expression}
+  | {kind: 'array'; expression: ts.Expression; lengthExpression: ts.Expression}
+
+type IndexedForLoopBound = {
+  length: NumberValue
+  expression: ts.Expression
+  origin: IndexedForLoopOrigin | null
+}
+
+type IndexedForLoopOrigin = {
+  source: ArrayValue
+  sourceExpr: string
+}
+
+type IndexedForPushRecord = {
+  path: ValuePath
+  count: number
 }
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
@@ -432,42 +452,55 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   const shape = indexedForLoopShape(statement)
   if (shape == null) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops')}
   if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only')}
-  const limit = evaluateExpression(shape.limitExpression, frame)
-  if (limit.kind !== 'number') return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a number')}
-  if (!limit.isInteger || limit.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer')}
+  const bound = evaluateIndexedForLoopBound(shape, frame)
+  if ('error' in bound) return {kind: 'return', value: bound.error}
+  if (!bound.length.isInteger || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer')}
 
   const scopedNames = [shape.indexName, ...blockScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
-  const length = indexedLoopLength(limit, shape.limitExpression, frame)
+  const length = indexedLoopLength(bound.length, bound.expression, frame)
   const indexValue = indexedElementPathValue(shape.indexName, length)
   frame.env.set(shape.indexName, indexValue)
   frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
   try {
-    const pushedArrays = new Set<string>()
+    const pushedArrays = new Map<string, IndexedForPushRecord>()
     for (const child of statement.statement.statements) {
       if (ts.isVariableStatement(child)) {
         for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
         continue
       }
       if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-        const pushError = evaluateIndexedForPush(child.expression, shape.indexName, length, frame)
+        const pushPath = pathFromExpression(child.expression.expression.expression, frame)
+        if (pushPath == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported push target ${child.expression.expression.expression.getText(frame.program.sourceFile)}`)}
+        const pushError = evaluateIndexedForPush(child.expression, pushPath, shape.indexName, length, bound.origin?.source ?? null, frame)
         if (pushError != null) return {kind: 'return', value: pushError}
-        const path = pathFromExpression(child.expression.expression.expression, frame)
-        if (path != null && path.segments.length === 0) pushedArrays.add(path.root)
+        rememberIndexedForPush(pushedArrays, pushPath)
         continue
       }
       return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
-    for (const arrayName of pushedArrays) {
-      const value = frame.env.get(arrayName)
-      if (value?.kind === 'array') {
-        frame.env.set(arrayName, {...value, elements: null})
-      }
-    }
+    finalizeIndexedForPushedArrays(pushedArrays, bound.origin, frame)
   } finally {
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function evaluateIndexedForLoopBound(shape: IndexedForLoopShape, frame: InterpreterFrame): IndexedForLoopBound | {error: Value} {
+  if (shape.source.kind === 'limit') {
+    const length = evaluateExpression(shape.source.expression, frame)
+    return length.kind === 'number'
+      ? {length, expression: shape.source.expression, origin: null}
+      : {error: noteUnsupported(frame, 'Indexed for loop limit expected a number')}
+  }
+
+  const source = evaluateExpression(shape.source.expression, frame)
+  if (source.kind !== 'array') return {error: noteUnsupported(frame, 'Indexed for loop source expected an array')}
+  return {
+    length: source.length,
+    expression: shape.source.lengthExpression,
+    origin: {source, sourceExpr: sourceExpression(source, shape.source.expression, frame)},
+  }
 }
 
 function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | null {
@@ -482,7 +515,14 @@ function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | 
   if (!ts.isBinaryExpression(condition) || condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
   if (!isIdentifierNamed(condition.left, indexName)) return null
   if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
-  return {indexName, limitExpression: condition.right}
+  return {indexName, source: indexedForLoopSource(condition.right)}
+}
+
+function indexedForLoopSource(expression: ts.Expression): IndexedForLoopSource {
+  const current = unwrapExpression(expression)
+  return ts.isPropertyAccessExpression(current) && current.name.text === 'length'
+    ? {kind: 'array', expression: current.expression, lengthExpression: current}
+    : {kind: 'limit', expression}
 }
 
 function indexedLoopIncrements(expression: ts.Expression, indexName: string): boolean {
@@ -504,18 +544,20 @@ function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame:
 
 function evaluateIndexedForPush(
   expression: ts.CallExpression & {expression: ts.PropertyAccessExpression},
+  path: ValuePath,
   indexName: string,
   length: NumberValue,
+  source: ArrayValue | null,
   frame: InterpreterFrame,
 ): Value | null {
-  const path = pathFromExpression(expression.expression.expression, frame)
-  if (path == null) return noteUnsupported(frame, `Unsupported push target ${expression.expression.expression.getText(frame.program.sourceFile)}`)
   const current = readPath(path, frame)
   if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${expression.expression.expression.getText(frame.program.sourceFile)}`)
+  if (source != null && current === source) return noteUnsupported(frame, 'Indexed for loop cannot push into its source array')
   if (expression.arguments.length !== 1) return noteUnsupported(frame, 'Indexed for loop push supports one item per iteration')
   const argument = expression.arguments[0]!
   const rawElement = evaluateExpression(argument, frame)
-  const element = indexedLoopValue(rawElement, indexName, path.root, [], length)
+  const targetExpr = valuePathExpression(path)
+  const element = indexedLoopValue(rawElement, indexName, targetExpr, [], length)
   const lengthValue = current.length.min === 0 && current.length.max === 0 ? length : addNumbers(current.length, length)
   writePath(path, {
     ...current,
@@ -524,26 +566,43 @@ function evaluateIndexedForPush(
     element: mergeElementValue(current.element, element),
   }, frame)
   frame.assumptions = mergeAssumptions(frame.assumptions, ...expressionIndexPaths(argument, indexName).map(indexPath => {
-    return indexedElementAssumptions(indexedElementPathValue(loopElementPathExpression(path.root, indexPath), length), length)
+    return indexedElementAssumptions(indexedElementPathValue(loopElementPathExpression(targetExpr, indexPath), length), length)
   }))
   return null
 }
 
-function indexedLoopValue(value: Value, indexName: string, arrayName: string, path: string[], length: NumberValue): Value {
-  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(loopElementPathExpression(arrayName, path), length)
+function rememberIndexedForPush(records: Map<string, IndexedForPushRecord>, path: ValuePath) {
+  const key = valuePathExpression(path)
+  const current = records.get(key)
+  records.set(key, current == null ? {path, count: 1} : {...current, count: current.count + 1})
+}
+
+function finalizeIndexedForPushedArrays(records: Map<string, IndexedForPushRecord>, origin: IndexedForLoopOrigin | null, frame: InterpreterFrame) {
+  for (const record of records.values()) {
+    const value = readPath(record.path, frame)
+    if (value.kind !== 'array') continue
+    const summary = origin != null && record.count === 1
+      ? mergeArraySummary(value.summary, emptyArraySummary(mapOrigin(origin.source, origin.sourceExpr)))
+      : value.summary
+    writePath(record.path, {...value, elements: null, summary}, frame)
+  }
+}
+
+function indexedLoopValue(value: Value, indexName: string, arrayExpr: string, path: string[], length: NumberValue): Value {
+  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(loopElementPathExpression(arrayExpr, path), length)
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, indexedLoopValue(prop, indexName, arrayName, [...path, name], length))
+    for (const [name, prop] of value.props) props.set(name, indexedLoopValue(prop, indexName, arrayExpr, [...path, name], length))
     return {...value, props}
   }
   if (value.kind === 'array') {
     return {
       ...value,
-      elements: value.elements == null ? null : value.elements.map(element => indexedLoopValue(element, indexName, arrayName, [...path, '[]'], length)),
-      element: value.element == null ? null : indexedLoopValue(value.element, indexName, arrayName, [...path, '[]'], length),
+      elements: value.elements == null ? null : value.elements.map(element => indexedLoopValue(element, indexName, arrayExpr, [...path, '[]'], length)),
+      element: value.element == null ? null : indexedLoopValue(value.element, indexName, arrayExpr, [...path, '[]'], length),
     }
   }
-  if (value.kind === 'nullable') return {...value, present: indexedLoopValue(value.present, indexName, arrayName, path, length)}
+  if (value.kind === 'nullable') return {...value, present: indexedLoopValue(value.present, indexName, arrayExpr, path, length)}
   return value
 }
 
@@ -1525,6 +1584,14 @@ function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame):
   }
   const root = expressionRootName(unwrapped)
   return root == null ? null : {root, segments: []}
+}
+
+function valuePathExpression(path: ValuePath): string {
+  let expr = path.root
+  for (const segment of path.segments) {
+    expr += segment.kind === 'prop' ? `.${segment.name}` : `[${segment.index}]`
+  }
+  return expr
 }
 
 function readPath(path: ValuePath, frame: InterpreterFrame): Value {

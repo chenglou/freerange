@@ -140,6 +140,19 @@ export function matrixIndexedLimitRange(limit: number = 5): number[] {
   return values
 }
 
+/** @fit
+ * given items.length: int 0..20
+ * given items[].height: 0..80
+ */
+export function matrixIndexedArrayParamRows(items: {height: number}[]): {rows: {height: number; sourceIndex: number}[]} {
+  const rows = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rows.push({height: item.height, sourceIndex: i})
+  }
+  return {rows}
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))
