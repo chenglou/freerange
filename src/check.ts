@@ -5,6 +5,8 @@ import {
   type FitCallAlias,
   type FitFunction,
 } from './modules.ts'
+import {readTopLevelGlobal} from './module-values.ts'
+export {readTopLevelGlobal} from './module-values.ts'
 import {
   parseDomainPathText,
   parseExpression,
@@ -228,6 +230,11 @@ import {
   type TypeContractResult,
   type TypeContractUnsupported,
 } from './type-contracts.ts'
+import {
+  checkBoundaryForNode,
+  lineNumberForNode,
+  type CheckBoundary,
+} from './source-boundary.ts'
 
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
@@ -310,80 +317,6 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
 
 export function createFunctionContractCache(): Map<string, FunctionContractProof> {
   return new Map<string, FunctionContractProof>()
-}
-
-export function readTopLevelGlobal(declaration: ts.VariableDeclaration): {name: string; value: Value} | null {
-  if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
-  if ((ts.getCombinedNodeFlags(declaration.parent) & ts.NodeFlags.Const) === 0) return null
-  const value = topLevelLiteralValue(declaration.initializer, declaration.name.text)
-  if (value == null) return null
-  return {
-    name: declaration.name.text,
-    value,
-  }
-}
-
-function topLevelLiteralValue(expression: ts.Expression, expr: string): Value | null {
-  if (ts.isParenthesizedExpression(expression)) return topLevelLiteralValue(expression.expression, expr)
-  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
-    return topLevelLiteralValue(expression.expression, expr)
-  }
-  const numeric = numericLiteralValue(expression)
-  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), expr, linearConstant(numeric))
-  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expr)
-  if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
-  if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
-  if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue(expr)
-  if (ts.isObjectLiteralExpression(expression)) return topLevelObjectLiteralValue(expression, expr)
-  if (ts.isArrayLiteralExpression(expression)) return topLevelArrayLiteralValue(expression, expr)
-  return null
-}
-
-function topLevelObjectLiteralValue(expression: ts.ObjectLiteralExpression, expr: string): Value | null {
-  const props = new Map<string, Value>()
-  for (const property of expression.properties) {
-    if (!ts.isPropertyAssignment(property)) return null
-    const name = propertyNameText(property.name)
-    if (name == null) return null
-    const value = topLevelLiteralValue(property.initializer, `${expr}.${name}`)
-    if (value == null) return null
-    props.set(name, value)
-  }
-  return {kind: 'object', props, expr}
-}
-
-function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: string): Value | null {
-  let elementValue: Value | null = null
-  const elements: Value[] = []
-  for (let index = 0; index < expression.elements.length; index++) {
-    const element = expression.elements[index]!
-    if (ts.isSpreadElement(element)) return null
-    const value = topLevelLiteralValue(element, `${expr}[${index}]`)
-    if (value == null) return null
-    elements.push(value)
-    elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
-  }
-  const length = numberValue(expression.elements.length, expression.elements.length, true, `${expr}.length`, linearConstant(expression.elements.length))
-  return {kind: 'array', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
-}
-
-function valueWithoutNumberCases(value: Value): Value {
-  if (value.kind === 'number') return {...value, cases: null}
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      length: valueWithoutNumberCases(value.length) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(valueWithoutNumberCases),
-      element: value.element == null ? null : valueWithoutNumberCases(value.element),
-    }
-  }
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, valueWithoutNumberCases(prop))
-    return {...value, props}
-  }
-  if (value.kind === 'nullable') return {...value, present: valueWithoutNumberCases(value.present)}
-  return value
 }
 
 export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
@@ -632,16 +565,6 @@ function isFunctionLikeWithBody(node: ts.Node) {
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
-}
-
-function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
-  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
-}
-
-type CheckBoundary = Pick<FitCheck, 'boundaryLine'>
-
-function checkBoundaryForNode(sourceFile: ts.SourceFile, node: ts.Node): CheckBoundary {
-  return {boundaryLine: lineNumberForNode(sourceFile, node)}
 }
 
 function verifyFunctionSpecs(
@@ -1910,11 +1833,6 @@ function bindingElementPropertyName(element: ts.BindingElement): string | null {
   if (element.propertyName == null) return ts.isIdentifier(element.name) ? element.name.text : null
   if (ts.isIdentifier(element.propertyName)) return element.propertyName.text
   if (ts.isStringLiteral(element.propertyName) || ts.isNumericLiteral(element.propertyName)) return element.propertyName.text
-  return null
-}
-
-function propertyNameText(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
   return null
 }
 
