@@ -1,6 +1,6 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedRows, importedTupleCenter} from './import-pattern-helpers'
+import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
@@ -203,4 +203,46 @@ export function namespaceImportedStructuralShape(items: {height: number}[]) {
 export function importedTupleSummaryFeedsDestructure(sourceX: number, sourceY: number, targetX: number, targetY: number) {
   const [, , offsetX, offsetY] = importedTupleCenter(sourceX, sourceY, targetX, targetY)
   return ['path', 0, 0, offsetX, offsetY]
+}
+
+type ImportedLiteralSpring = {
+  pos: number
+  k: number // @fit > 0
+  b: number // @fit > 0
+}
+
+function importedLiteralSpring(
+  pos: number,
+  k: number = 290, // @fit > 0
+  b: number = 30, // @fit > 0
+): ImportedLiteralSpring {
+  return {pos, k, b}
+}
+
+type ImportedLiteralSpringBox = {
+  spring: ImportedLiteralSpring
+}
+
+export function importedLiteralArrayMapDefaultFields(): ImportedLiteralSpringBox[] {
+  return importedLiteralSpringData.map(item => ({spring: importedLiteralSpring(item.position)}))
+}
+
+export function importedLiteralArrayMapDefaultFieldsThroughIife(): ImportedLiteralSpringBox[] {
+  return (() => {
+    const marker = {count: 0}
+    return importedLiteralSpringData.map(item => {
+      marker.count = marker.count + 1
+      return {spring: importedLiteralSpring(item.position)}
+    })
+  })()
+}
+
+type ImportedNestedLiteralSpringBox = {
+  springs: ImportedLiteralSpring[]
+}
+
+export function importedNestedLiteralArrayMapDefaultFields(): ImportedNestedLiteralSpringBox[] {
+  return importedNestedLiteralSpringData.groups.map(group => ({
+    springs: group.items.map(item => importedLiteralSpring(item.position)),
+  }))
 }

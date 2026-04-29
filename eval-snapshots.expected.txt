@@ -1,0 +1,50 @@
+check photo-gallery spring defaults through imported data
+  summary: 26 pass, 0 fail, 0 unknown
+  PASS photo-gallery/index.ts:22:<top-level>: data[].sizeX.k > 0
+  PASS photo-gallery/index.ts:23:<top-level>: data[].sizeX.b > 0
+  PASS photo-gallery/index.ts:22:<top-level>: data[].fxFactor.k > 0
+  PASS photo-gallery/index.ts:23:<top-level>: data[].fxFactor.b > 0
+infer matrix nested iife/map/defaults
+  return return.length == matrixInput.groups.length
+  return return.length: int 2..2
+  return return[].length == matrixInput.groups[].items.length
+  return return[].length: int 1..2
+  return return[][].index == mapIndex(matrixInput.groups[].items)
+  return return[][].index: int 0..1
+  return return[][].spring.b == 30
+  return return[][].spring.b: int 30..30
+  return return[][].spring.k == 290
+  return return[][].spring.k: int 290..290
+  return return[][].spring.pos == (matrixInput.groups[].items[].pos)
+  return return[][].spring.pos: int 4..12
+  return return[] follows matrixInput.groups[].items by index
+  return return follows matrixInput.groups by index
+infer matrix default param order
+  return return.b == b
+  return return.b: int 11..11
+  return return.k == k
+  return return.k: int 10..10
+  return return.pos == 0
+  return return.pos: int 0..0
+  local base == 10
+  local base: int 10..10
+infer imported literal nested map/defaults
+  return return.length == importedNestedLiteralSpringData.groups.length
+  return return.length: int 2..2
+  return return[].springs.length == importedNestedLiteralSpringData.groups[].items.length
+  return return[].springs.length: int 1..2
+  return return[].springs[].b == 30
+  return return[].springs[].b: int 30..30
+  return return[].springs[].k == 290
+  return return[].springs[].k: int 290..290
+  return return[].springs[].pos == (importedNestedLiteralSpringData.groups[].items[].position)
+  return return[].springs[].pos: int 4..8
+  return return[].springs follows importedNestedLiteralSpringData.groups[].items by index
+  return return follows importedNestedLiteralSpringData.groups by index
+shape imported literal nested map/defaults shape
+  import-patterns.ts:importedNestedLiteralArrayMapDefaultFields: call importedNestedLiteralSpringData.groups.map(group => ({ springs: group.items.map(item => importedLiteralSpring(item.position)), }))
+    typescript shape.length: int 0..Infinity
+    typescript shape[].springs.length: int 0..Infinity
+    typescript shape[].springs[].b: number
+    typescript shape[].springs[].k: number
+    typescript shape[].springs[].pos: number

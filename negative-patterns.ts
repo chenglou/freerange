@@ -1608,6 +1608,34 @@ export function negativeUnionGivenCallerOutsideSet() {
   return negativeUnionGivenCallee(150)
 }
 
+type NegativeDefaultSpring = {
+  k: number // @fit > 0
+}
+
+function negativeDefaultSpring(
+  k: number = -1, // @fit > 0
+): NegativeDefaultSpring {
+  return {k}
+}
+
+export function negativeDefaultArgumentViolatesGiven(): NegativeDefaultSpring {
+  return negativeDefaultSpring()
+}
+
+export const negativeIifeDefaultArgumentViolatesType: NegativeDefaultSpring = ((k: number = -1) => ({k}))()
+
+type NegativeMutatedMapItem = {
+  value: number // @fit > 0
+}
+
+export function negativeMapCallbackMutationForgetsReturnedFact(): NegativeMutatedMapItem[] {
+  const item = {value: 1}
+  return [item].map(entry => {
+    entry.value = -1
+    return {value: entry.value}
+  })
+}
+
 /** @fit
  * given rect.left: 0..100
  * given rect.right: 0..100

@@ -19,11 +19,16 @@ type Spring = {
   pos: number
   dest: number
   v: number
-  k: number
-  b: number
+  k: number // @fit > 0
+  b: number // @fit > 0
 }
 
-function spring(pos: number, v = 0, k = 290, b = 30): Spring {
+function spring(
+  pos: number,
+  v = 0,
+  k: number = 290, // @fit > 0
+  b: number = 30, // @fit > 0
+): Spring {
   return {pos, dest: pos, v, k, b} // k = stiffness, b = damping. Try https://chenglou.me/react-motion/demos/demo5-spring-parameters-chooser/
 }
 function springStep(config: Spring): void {

@@ -6,7 +6,7 @@ import {
   parseFitSpecLine,
   type FitSpec,
 } from './parser.ts'
-import {type NumberValue, type Value} from './domain.ts'
+import {type Value} from './domain.ts'
 
 export type FitScoutCandidate = {
   file: string
@@ -69,7 +69,7 @@ export function uniqueScoutCandidates(candidates: FitScoutCandidate[]): FitScout
   return unique
 }
 
-export function scoutRequirementSpecsByFunction<Program extends FitModule<NumberValue>>(
+export function scoutRequirementSpecsByFunction<Program extends FitModule<unknown>>(
   programs: Program[],
   candidates: FitScoutCandidate[],
 ): Map<Program, Map<string, FitSpec[]>> {
@@ -98,9 +98,9 @@ export function scoutRequirementSpecsByFunction<Program extends FitModule<Number
   return specsByProgram
 }
 
-export type SavedFunctionSpecs<Program extends FitModule<NumberValue>> = Map<Program, Map<string, FitSpec[] | undefined>>
+export type SavedFunctionSpecs<Program extends FitModule<unknown>> = Map<Program, Map<string, FitSpec[] | undefined>>
 
-export function replaceFunctionSpecs<Program extends FitModule<NumberValue>>(
+export function replaceFunctionSpecs<Program extends FitModule<unknown>>(
   programs: Program[],
   specsByProgram: Map<Program, Map<string, FitSpec[]>>,
 ): SavedFunctionSpecs<Program> {
@@ -119,7 +119,7 @@ export function replaceFunctionSpecs<Program extends FitModule<NumberValue>>(
   return saved
 }
 
-export function restoreFunctionSpecs<Program extends FitModule<NumberValue>>(saved: SavedFunctionSpecs<Program>) {
+export function restoreFunctionSpecs<Program extends FitModule<unknown>>(saved: SavedFunctionSpecs<Program>) {
   for (const [program, specsByFunction] of saved) {
     for (const [functionName, specs] of specsByFunction) {
       if (specs == null) program.specsByFunction.delete(functionName)

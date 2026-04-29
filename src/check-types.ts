@@ -3,7 +3,6 @@ import type {
   FactSource,
   LinearConstraint,
   NullishKind,
-  NumberValue,
   Value,
 } from './domain.ts'
 import type {FitInferFact} from './facts.ts'
@@ -97,7 +96,7 @@ export type FitShapeOptions = {
   calls?: boolean
 }
 
-export type Program = FitModule<NumberValue>
+export type Program = FitModule<Value>
 
 export type ImportedBinding = FitImportBinding<Program>
 

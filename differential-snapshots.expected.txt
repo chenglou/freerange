@@ -1,0 +1,40 @@
+check positive patterns: 447 pass, 0 fail, 0 unknown
+check negative patterns: 53 pass, 72 fail, 96 unknown
+  FAIL negative-patterns.ts:negativeOutputRange: return: int 0..4
+  FAIL negative-patterns.ts:negativeComparison: return.high < return.low
+  FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
+  FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: return < 4
+  UNKNOWN negative-patterns.ts:negativeMutableMathAlias: return >= 0
+  FAIL negative-patterns.ts:negativeHandwrittenMinOperandBoundIsNotStrict: return < 4
+  UNKNOWN negative-patterns.ts:negativeFiniteLiteralDiscriminantWrongBranch: return.ordered.yThresholdX > return.ordered.uThresholdX
+  FAIL negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresholdX < return.uThresholdX
+  FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > minWidth
+  UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.length
+  FAIL negative-patterns.ts:negativeArrayLengthCallGiven: call negativeNeedsShortArray(items): requires items.length: int 0..10
+  FAIL negative-patterns.ts:negativeHalfOpenUpperExcludesLength: return: int 0..<items.length
+check photo-gallery type fields: 26 pass, 0 fail, 0 unknown
+doctor photo-gallery calls: 12 pass, 0 fail, 0 requires, 0 unknown
+infer map block rows: patterns.ts:mapBlockRowsWithDestructure
+  return.rows.length == items.length
+  return.rows.length: int 1..50
+  return.rows[].height == items[].height
+  return.rows[].height: 0..40
+  return.rows[].index == mapIndex(items)
+  return.rows[].index: int 0..49
+  return.rows follows items by index
+infer interpreter matrix: interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
+  return.length == matrixInput.groups.length
+  return.length: int 2..2
+  return[].length == matrixInput.groups[].items.length
+  return[].length: int 1..2
+  return[][].index == mapIndex(matrixInput.groups[].items)
+  return[][].index: int 0..1
+  return[][].spring.b == 30
+  return[][].spring.b: int 30..30
+  return[][].spring.k == 290
+  return[][].spring.k: int 290..290
+  return[][].spring.pos == (matrixInput.groups[].items[].pos)
+  return[][].spring.pos: int 4..12
+  return[] follows matrixInput.groups[].items by index
+  return follows matrixInput.groups by index
+shape property access call shape: patterns.ts:propertyAccessCallShape

@@ -241,7 +241,7 @@ export type {
 const maxInlineDepth = 12
 
 export function inferFitFiles(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInferReport {
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const project = loadFitProject(paths, readTopLevelGlobal)
   const contractCache = new Map<string, FunctionContractProof>()
   const functions: FitInferFunctionReport[] = []
   for (const program of project.entries) {
@@ -255,7 +255,7 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
 }
 
 export function scoutFitFiles(paths: string[], options: {functionName?: string} = {}): FitScoutReport {
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const project = loadFitProject(paths, readTopLevelGlobal)
   const programs = [...project.modules.values()]
   const candidates = programs.flatMap(program => [...program.functions.values()]
     .filter(fn => options.functionName == null || fn.name === options.functionName)
@@ -286,7 +286,7 @@ export function scoutFitFiles(paths: string[], options: {functionName?: string} 
 }
 
 export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const project = loadFitProject(paths, readTopLevelGlobal)
   const contractCache = new Map<string, FunctionContractProof>()
   const insights: FitShapeInsight[] = []
   for (const program of project.entries) {
@@ -303,14 +303,78 @@ export function createFunctionContractCache(): Map<string, FunctionContractProof
   return new Map<string, FunctionContractProof>()
 }
 
-export function readTopLevelNumberGlobal(declaration: ts.VariableDeclaration): {name: string; value: NumberValue} | null {
+export function readTopLevelGlobal(declaration: ts.VariableDeclaration): {name: string; value: Value} | null {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
-  const literal = numericLiteralValue(declaration.initializer)
-  if (literal == null) return null
+  if ((ts.getCombinedNodeFlags(declaration.parent) & ts.NodeFlags.Const) === 0) return null
+  const value = topLevelLiteralValue(declaration.initializer, declaration.name.text)
+  if (value == null) return null
   return {
     name: declaration.name.text,
-    value: numberValue(literal, literal, Number.isInteger(literal), declaration.name.text, linearConstant(literal)),
+    value,
   }
+}
+
+function topLevelLiteralValue(expression: ts.Expression, expr: string): Value | null {
+  if (ts.isParenthesizedExpression(expression)) return topLevelLiteralValue(expression.expression, expr)
+  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
+    return topLevelLiteralValue(expression.expression, expr)
+  }
+  const numeric = numericLiteralValue(expression)
+  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), expr, linearConstant(numeric))
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expr)
+  if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
+  if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
+  if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue(expr)
+  if (ts.isObjectLiteralExpression(expression)) return topLevelObjectLiteralValue(expression, expr)
+  if (ts.isArrayLiteralExpression(expression)) return topLevelArrayLiteralValue(expression, expr)
+  return null
+}
+
+function topLevelObjectLiteralValue(expression: ts.ObjectLiteralExpression, expr: string): Value | null {
+  const props = new Map<string, Value>()
+  for (const property of expression.properties) {
+    if (!ts.isPropertyAssignment(property)) return null
+    const name = propertyNameText(property.name)
+    if (name == null) return null
+    const value = topLevelLiteralValue(property.initializer, `${expr}.${name}`)
+    if (value == null) return null
+    props.set(name, value)
+  }
+  return {kind: 'object', props, expr}
+}
+
+function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: string): Value | null {
+  let elementValue: Value | null = null
+  const elements: Value[] = []
+  for (let index = 0; index < expression.elements.length; index++) {
+    const element = expression.elements[index]!
+    if (ts.isSpreadElement(element)) return null
+    const value = topLevelLiteralValue(element, `${expr}[${index}]`)
+    if (value == null) return null
+    elements.push(value)
+    elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
+  }
+  const length = numberValue(expression.elements.length, expression.elements.length, true, `${expr}.length`, linearConstant(expression.elements.length))
+  return {kind: 'array', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
+}
+
+function valueWithoutNumberCases(value: Value): Value {
+  if (value.kind === 'number') return {...value, cases: null}
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      length: valueWithoutNumberCases(value.length) as NumberValue,
+      elements: value.elements == null ? null : value.elements.map(valueWithoutNumberCases),
+      element: value.element == null ? null : valueWithoutNumberCases(value.element),
+    }
+  }
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) props.set(name, valueWithoutNumberCases(prop))
+    return {...value, props}
+  }
+  if (value.kind === 'nullable') return {...value, present: valueWithoutNumberCases(value.present)}
+  return value
 }
 
 export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
@@ -1068,13 +1132,13 @@ function programGlobalEnv(program: Program): Map<string, Value> {
   return env
 }
 
-function importedGlobalValue(localName: string, binding: ImportedBinding): NumberValue | null {
+function importedGlobalValue(localName: string, binding: ImportedBinding): Value | null {
   if (binding.kind === 'unresolved') return null
   const exported = resolveFitExport(binding.module, binding.exportedName)
   if (exported.kind === 'unresolved') return null
   const value = exported.module.globals.get(exported.localName)
   if (value == null) return null
-  return numberValue(value.min, value.max, value.isInteger, localName, value.linear, null, value.provenance)
+  return localizeValue(value, localName, {preserveLinear: true})
 }
 
 function validateGivenSpecs(
@@ -1837,6 +1901,11 @@ function bindingElementPropertyName(element: ts.BindingElement): string | null {
   if (element.propertyName == null) return ts.isIdentifier(element.name) ? element.name.text : null
   if (ts.isIdentifier(element.propertyName)) return element.propertyName.text
   if (ts.isStringLiteral(element.propertyName) || ts.isNumericLiteral(element.propertyName)) return element.propertyName.text
+  return null
+}
+
+function propertyNameText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
   return null
 }
 
@@ -2603,7 +2672,7 @@ function evaluateForStatementCore(
       continue
     }
 
-    const forgotten = forgettableMutationRoots(child)
+    const forgotten = forgettableMutationRoots(child, loopContext)
     if (forgotten != null) {
       for (const root of forgotten) forgottenRoots.add(root)
       addInferUnsupported(context, `Forgot unsupported indexed loop side effect: ${child.getText(context.program.sourceFile)}`)
@@ -2690,7 +2759,7 @@ function indexedLoopSourceValue(shape: IndexedLoopShape, context: EvalContext): 
 
 function evaluateForgettableForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
   if (!isForgettableForStatement(statement)) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
-  const forgotten = forgettableMutationRoots(statement.statement)
+  const forgotten = forgettableMutationRoots(statement.statement, context)
   if (forgotten == null) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
   for (const root of forgotten) forgetRoot(context.env, root)
   addInferUnsupported(context, `Forgot unsupported for loop side effects: ${loopHeaderText(statement, context.program.sourceFile)}`)
@@ -2699,7 +2768,7 @@ function evaluateForgettableForStatement(statement: ts.ForStatement, context: Ev
 
 function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, context: EvalContext): Value | null {
   if (!isSideEffectFreeExpression(statement.expression)) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
-  const forgotten = forgettableMutationRoots(statement.statement)
+  const forgotten = forgettableMutationRoots(statement.statement, context)
   if (forgotten == null) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
   for (const root of forgotten) forgetRoot(context.env, root)
   const kind = ts.isWhileStatement(statement) ? 'while' : 'do while'
@@ -2735,31 +2804,62 @@ function incrementorOnlyTouchesIndex(expression: ts.Expression, indexName: strin
   return isSideEffectFreeExpression(expression.right)
 }
 
-function forgettableMutationRoots(statement: ts.Statement): string[] | null {
+function forgettableMutationRoots(statement: ts.Statement, context?: EvalContext): string[] | null {
   if (ts.isBlock(statement)) {
     const roots: string[] = []
     for (const child of statement.statements) {
-      const childRoots = forgettableMutationRoots(child)
+      const childRoots = forgettableMutationRoots(child, context)
       if (childRoots == null) return null
       roots.push(...childRoots)
     }
     return [...new Set(roots)]
   }
-  if (ts.isIfStatement(statement) && statement.elseStatement == null && isSideEffectFreeExpression(statement.expression)) return forgettableMutationRoots(statement.thenStatement)
+  if (ts.isIfStatement(statement) && statement.elseStatement == null && isSideEffectFreeExpression(statement.expression)) return forgettableMutationRoots(statement.thenStatement, context)
   if (!ts.isExpressionStatement(statement)) return null
 
   const expression = statement.expression
   if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
     && (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken)
-    && ts.isIdentifier(expression.operand)) return [expression.operand.text]
-  if (ts.isCallExpression(expression) && isPushCall(expression) && expression.arguments.every(isSideEffectFreeExpression)) return [expression.expression.expression.text]
+    && ts.isIdentifier(expression.operand)) return knownMutationRoots([expression.operand.text], context)
+  if (ts.isCallExpression(expression) && isPushCall(expression) && expression.arguments.every(isSideEffectFreeExpression)) {
+    return knownMutationRoots([expression.expression.expression.text], context)
+  }
+  if (ts.isCallExpression(expression)) {
+    const roots = forgettableCallMutationRoots(expression, context)
+    return roots == null ? null : knownMutationRoots(roots, context)
+  }
   if (ts.isBinaryExpression(expression)) {
     const root = assignmentRootName(expression.left)
     if (root == null) return null
     if (!isSideEffectFreeExpression(expression.right)) return null
-    if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken || expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) return [root]
+    if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken || expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) {
+      const roots = context == null ? [root] : mutationTargetRoots(expression.left, context)
+      return knownMutationRoots(roots, context)
+    }
   }
   return null
+}
+
+function forgettableCallMutationRoots(expression: ts.CallExpression, context?: EvalContext): string[] | null {
+  if (!expression.arguments.every(isSideEffectFreeExpression)) return null
+  if (!ts.isPropertyAccessExpression(expression.expression)) return null
+  const receiver = expression.expression.expression
+  const receiverRoots = context == null
+    ? nonNullStrings(expressionRootName(receiver) ?? mutationTargetRoot(receiver))
+    : mutationTargetRoots(receiver, context)
+  if (receiverRoots.length === 0) return null
+  const roots = [...receiverRoots]
+  for (const argument of expression.arguments) roots.push(...expressionRootNames(argument, []))
+  return [...new Set(roots)]
+}
+
+function nonNullStrings(value: string | null): string[] {
+  return value == null ? [] : [value]
+}
+
+function knownMutationRoots(roots: string[], context?: EvalContext): string[] | null {
+  if (context == null) return roots
+  return roots.every(root => context.env.has(root)) ? roots : null
 }
 
 function isSideEffectFreeExpression(expression: ts.Expression): boolean {
@@ -3228,6 +3328,8 @@ function evaluateCall(expression: ts.CallExpression, context: EvalContext): Valu
     const fallback = expressionStructuralFallback(expression, context)
     if (fallback != null) return fallback
   }
+  const iifeResult = evaluateIifeCall(expression, context)
+  if (iifeResult != null) return iifeResult
   if (!ts.isIdentifier(expression.expression)) return unknown('Only named pure calls are supported')
 
   const functionName = expression.expression.text
@@ -3245,13 +3347,14 @@ function evaluateClassMethodCall(expression: ts.CallExpression, access: ts.Prope
   const member = classMemberFunctionForPropertyAccess(access, context)
   if (member == null || !ts.isMethodDeclaration(member.fn.node)) return null
   const receiver = evaluateExpression(access.expression, context)
-  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
-  return evaluateLocalFunctionCall(member.functionName, member.fn, argumentValues, context, {
+  const callArguments = evaluateFunctionCallArguments(member.fn, expression.arguments, context, context.program, receiver)
+  if (callArguments.kind === 'invalid') return unknown(callArguments.reason)
+  return evaluateLocalFunctionCall(member.functionName, member.fn, callArguments.values, context, {
     thisValue: receiver,
     callText: `${access.getText(context.program.sourceFile)}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`,
     callLine: lineNumberForNode(context.program.sourceFile, expression),
     fallback: valueFromCallReturnShape(expression.getText(context.program.sourceFile), expression, context.program),
-    callSiteBindings: callSiteBindingsFor(member.fn, expression.arguments, context.program.sourceFile, access.expression.getText(context.program.sourceFile), argumentValues),
+    callSiteBindings: callSiteBindingsFor(member.fn, expression.arguments, context.program.sourceFile, access.expression.getText(context.program.sourceFile), callArguments.values, callArguments.texts),
   })
 }
 
@@ -3356,6 +3459,130 @@ function evaluateLocalFunctionCall(
   }, fallbackResult, options.thisValue, options.callSiteBindings)
 }
 
+type FunctionCallArguments =
+  | {kind: 'valid'; values: Value[]; texts: string[]; env: Map<string, Value>}
+  | {kind: 'invalid'; reason: string}
+
+function evaluateFunctionCallArguments(
+  fn: FitFunction,
+  args: ts.NodeArray<ts.Expression>,
+  callerContext: EvalContext,
+  calleeProgram: Program,
+  thisValue?: Value,
+  baseEnv?: Map<string, Value>,
+): FunctionCallArguments {
+  if (args.length > fn.node.parameters.length) return {kind: 'invalid', reason: `Call arity mismatch for ${fn.name}`}
+
+  const env = new Map(baseEnv ?? programGlobalEnv(calleeProgram))
+  if (functionHasInstanceThisInput(fn)) {
+    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
+  }
+
+  const values: Value[] = []
+  const texts: string[] = []
+  for (let index = 0; index < fn.node.parameters.length; index++) {
+    const param = fn.node.parameters[index]!
+    const argument = args[index]
+    if (argument == null && param.initializer == null) return {kind: 'invalid', reason: `Call arity mismatch for ${fn.name}`}
+    const value = argument == null
+      ? evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram)
+      : evaluateExpression(argument, callerContext)
+    values.push(value)
+    texts.push(argument == null ? param.initializer!.getText(calleeProgram.sourceFile) : argument.getText(callerContext.program.sourceFile))
+    bindPatternFromValue(param.name, value, env, {preserveLinear: true})
+  }
+
+  return {kind: 'valid', values, texts, env}
+}
+
+function evaluateDefaultArgument(
+  param: ts.ParameterDeclaration,
+  fn: FitFunction,
+  env: Map<string, Value>,
+  callerContext: EvalContext,
+  calleeProgram: Program,
+): Value {
+  return evaluateExpression(param.initializer!, {
+    program: calleeProgram,
+    file: calleeProgram.file,
+    env,
+    inputRoots: functionInputRoots(calleeProgram, fn),
+    stack: [...callerContext.stack, `${fn.name} default`],
+    checks: shouldRecordCallObligations(callerContext) ? callerContext.checks : [],
+    assumptions: callerContext.assumptions,
+    contractCache: callerContext.contractCache,
+    ...(callerContext.callObligations == null ? {} : {callObligations: callerContext.callObligations}),
+  })
+}
+
+function evaluateIifeCall(expression: ts.CallExpression, context: EvalContext): Value | null {
+  const target = iifeFunctionTarget(expression.expression)
+  if (target == null) return null
+  const fn = {name: '<iife>', node: target, specNode: target} satisfies FitFunction
+  const callArguments = evaluateFunctionCallArguments(fn, expression.arguments, context, context.program, undefined, context.env)
+  if (callArguments.kind === 'invalid') return unknown(callArguments.reason)
+
+  const iifeContext: EvalContext = {
+    program: context.program,
+    file: context.file,
+    env: callArguments.env,
+    inputRoots: iifeInputRoots(context, target),
+    stack: [...context.stack, '<iife>'],
+    checks: shouldRecordCallObligations(context) ? context.checks : [],
+    assumptions: context.assumptions,
+    contractCache: context.contractCache,
+    ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
+  }
+  const result = ts.isBlock(target.body)
+    ? evaluateStatements(target.body.statements, iifeContext)
+    : evaluateReturnExpression(target.body, target, iifeContext)
+  context.assumptions = iifeContext.assumptions
+  propagateIifeMutations(context.env, iifeContext.env, iifeLocalRoots(target))
+
+  const fallback = valueFromFunctionReturnShape('<iife>Result', target, context.program)
+    ?? valueFromSyntaxTypeShape('<iife>Result', target.type, context.program, new Set())
+  return valueWithStructuralFallback(result, fallback)
+}
+
+function iifeFunctionTarget(expression: ts.Expression): ArrayCallbackFunction | null {
+  if (ts.isParenthesizedExpression(expression)) return iifeFunctionTarget(expression.expression)
+  if (ts.isNonNullExpression(expression)) return iifeFunctionTarget(expression.expression)
+  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) return iifeFunctionTarget(expression.expression)
+  return isArrayCallbackFunction(expression) ? expression : null
+}
+
+function iifeInputRoots(context: EvalContext, target: ArrayCallbackFunction): string[] {
+  const roots = [...context.inputRoots]
+  for (const param of target.parameters) roots.push(...bindingNames(param.name))
+  return [...new Set(roots)]
+}
+
+function iifeLocalRoots(target: ArrayCallbackFunction): Set<string> {
+  const roots = new Set<string>()
+  for (const param of target.parameters) {
+    for (const name of bindingNames(param.name)) roots.add(name)
+  }
+  if (ts.isBlock(target.body)) {
+    const visit = (node: ts.Node) => {
+      if (node !== target.body && isFunctionLikeWithBody(node)) return
+      if (ts.isVariableDeclaration(node)) {
+        for (const name of bindingNames(node.name)) roots.add(name)
+      }
+      ts.forEachChild(node, visit)
+    }
+    visit(target.body)
+  }
+  return roots
+}
+
+function propagateIifeMutations(outerEnv: Map<string, Value>, iifeEnv: Map<string, Value>, localRoots: Set<string>) {
+  for (const root of outerEnv.keys()) {
+    if (localRoots.has(root)) continue
+    const value = iifeEnv.get(root)
+    if (value != null) outerEnv.set(root, value)
+  }
+}
+
 function evaluateArrayAtCall(expression: ts.CallExpression, context: EvalContext): Value | null {
   if (!ts.isPropertyAccessExpression(expression.expression) || expression.expression.name.text !== 'at') return null
   const target = evaluateExpression(expression.expression.expression, context)
@@ -3445,13 +3672,14 @@ function evaluateResolvedCallTarget(
 
   const fn = target.module.functions.get(target.functionName)
   if (fn == null) return structuralFallback ?? unknown(`Resolved call target ${target.functionName} is not a supported function`)
-  const argumentValues = expression.arguments.map(argument => evaluateExpression(argument, context))
+  const callArguments = evaluateFunctionCallArguments(fn, expression.arguments, context, target.module)
+  if (callArguments.kind === 'invalid') return structuralFallback ?? unknown(callArguments.reason)
   const callText = `${callName}(${expression.arguments.map(argument => argument.getText(context.program.sourceFile)).join(', ')})`
   const callLine = lineNumberForNode(context.program.sourceFile, expression)
-  const callSiteBindings = callSiteBindingsFor(fn, expression.arguments, context.program.sourceFile, undefined, argumentValues)
+  const callSiteBindings = callSiteBindingsFor(fn, expression.arguments, context.program.sourceFile, undefined, callArguments.values, callArguments.texts)
 
   if (target.module === context.program) {
-    return evaluateLocalFunctionCall(target.functionName, fn, argumentValues, context, {
+    return evaluateLocalFunctionCall(target.functionName, fn, callArguments.values, context, {
       callText,
       callLine,
       fallback: structuralFallback,
@@ -3459,7 +3687,7 @@ function evaluateResolvedCallTarget(
     })
   }
 
-  return evaluateImportedFunctionCall(callName, target, fn, argumentValues, callText, callLine, context, structuralFallback, callSiteBindings)
+  return evaluateImportedFunctionCall(callName, target, fn, callArguments.values, callText, callLine, context, structuralFallback, callSiteBindings)
 }
 
 function evaluateImportedFunctionCall(
@@ -3599,6 +3827,12 @@ function evaluateArrayMapCallbackStatements(statements: ts.NodeArray<ts.Statemen
       if (flow.kind !== 'fallthrough') return flow
       continue
     }
+    if (ts.isExpressionStatement(statement)) {
+      const forgotten = forgettableMutationRoots(statement, context)
+      if (forgotten == null) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
+      for (const root of forgotten) markRootMutated(context, root)
+      continue
+    }
     if (ts.isThrowStatement(statement)) return {kind: 'exit'}
     return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
   }
@@ -3664,7 +3898,7 @@ function evaluateArrayMapCallbackBranchStatement(statement: ts.Statement, contex
 }
 
 function unsupportedArrayMapCallbackBlock(): Value {
-  return unknown('Array.map callback block supports const bindings, if branches, and return only')
+  return unknown('Array.map callback block supports const bindings, clear mutations, if branches, and return only')
 }
 
 const arrayMapCallbackDidNotReturnReason = 'Array.map callback block did not return'

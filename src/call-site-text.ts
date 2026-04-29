@@ -42,13 +42,15 @@ export function callSiteBindingsFor(
   sourceFile: ts.SourceFile,
   thisText?: string,
   argumentValues?: readonly Value[],
+  argumentTexts?: readonly string[],
 ): CallSiteBindings {
   const bindings: CallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const argument = args[i]
-    if (argument == null) continue
-    bindCallSitePattern(fn.node.parameters[i]!.name, callSiteArgumentText(argument.getText(sourceFile), argumentValues?.[i]), bindings)
+    const sourceText = argumentTexts?.[i] ?? (argument == null ? null : argument.getText(sourceFile))
+    if (sourceText == null) continue
+    bindCallSitePattern(fn.node.parameters[i]!.name, callSiteArgumentText(sourceText, argumentValues?.[i]), bindings)
   }
   return bindings
 }

@@ -811,7 +811,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported numeric constants from those local modules. It does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
+Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. It does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
 
 Ordinary top-level `const` bindings of known helpers work too:
 
@@ -958,7 +958,7 @@ Supported today:
 - `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
-- small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, side-effect-free return branches, and a final `return`
+- small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, clear mutation statements whose changed roots can be forgotten, side-effect-free return branches, and a final `return`
 - `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
 - map/filter chains preserve the base origin fact for `fr infer`, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
@@ -986,7 +986,7 @@ function mapRows(items: {height: number}[]) {
 }
 ```
 
-The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, side-effect-free `if` branches that return, and a final `return`. That keeps normal code normal without turning callbacks into a public Freerange language.
+The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, clear mutations, side-effect-free `if` branches that return, and a final `return`. A clear mutation means Freerange can name the changed root and forget it before continuing. That keeps normal code normal without turning callbacks into a public Freerange language.
 
 `fr infer` also prints the immediate origin fact for maps, such as
 `return.rows follows items by index`. It is an inferred fact, not a new public
@@ -1257,13 +1257,15 @@ Loop `given` lines can describe function inputs. They cannot describe loop-built
 The checker understands a small pure subset:
 
 - function declarations, named `const` arrow/function expressions, and anonymous default-exported function/arrow boundaries
+- immediately-invoked arrow/function expressions, evaluated with their surrounding local bindings
 - class methods and getters, with `this` as an input root for instance members
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
+- omitted trailing arguments that use simple default parameter initializers
 - local type/interface `// @fit` contracts on required fields and sibling relations, including nested object fields and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
-- numeric top-level constants
+- top-level `const` literals: numbers, strings, booleans, `null`, and plain object/array literals made from those pieces
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
@@ -1273,14 +1275,14 @@ The checker understands a small pure subset:
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported numeric constants, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
+- named imports of exported top-level `const` literals, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
 - TypeScript-known imported object/array shape, without treating it as a checked helper contract
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, bounded indexing
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
-- expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
+- expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
 - composed map/filter origin facts in `fr infer`
 - simple `for...of` scalar running sums with direct or guarded `+=`
@@ -1305,7 +1307,7 @@ Not supported yet:
 - browser runs, screenshots, runtime traces, sampled sweeps
 - published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
-- rest params and default params
+- rest params, destructured default params, and treating explicit `undefined` as an omitted default
 - type-field contracts on optional fields, imported type declarations, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning

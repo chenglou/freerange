@@ -1,0 +1,4 @@
+check react-grid-layout core check: 6 pass, 0 fail, 0 unknown
+doctor react-grid-layout core doctor: 6 pass, 0 fail, 0 requires, 0 unknown
+check xyflow general/resizer check: 27 pass, 0 fail, 0 unknown
+doctor xyflow general/resizer doctor: 15 pass, 0 fail, 0 requires, 0 unknown

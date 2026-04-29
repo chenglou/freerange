@@ -814,6 +814,18 @@ FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: call negativeUnion
   called function requires navSizeX: 82 | 214
   this call passes navSizeX = 150
   missing at call site: 150 in {82, 214}
+FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: call negativeDefaultSpring(): requires k > 0
+  called function requires k > 0
+  this call passes k = -1
+  missing at call site: -1 > 0
+FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: return.k > 0
+  result: is false
+  missing fact: -1 > 0
+UNKNOWN negative-patterns.ts:negativeMapCallbackMutationForgetsReturnedFact: return[].value > 0
+  applies to: every item in return
+  known:
+    entryAfterMutation.value: any number
+  missing fact: entryAfterMutation.value > 0
 FAIL negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
   known:
@@ -827,6 +839,11 @@ FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): req
   called function requires container >= containee
   this call passes container = 3 and containee = 4
   missing at call site: 3 >= 4
+FAIL negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
+  result: is false
+  known:
+    k: int -1..-1
+  missing fact: k > 0
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   imported helper contract was not available
   helper: unannotatedImportedClamp from ./negative-import-helpers
@@ -882,3 +899,15 @@ UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEv
   known:
     importedTupleWithOneOffset(value)[]: any number
   missing fact: importedTupleWithOneOffset(value)[] >= 0
+FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: call matrixNegativeDefault(): requires value >= 0
+  called function requires value >= 0
+  this call passes value = -1
+  missing at call site: -1 >= 0
+FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: return.value >= 0
+  result: is false
+  missing fact: -1 >= 0
+UNKNOWN interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias: return[].value > 0
+  applies to: every item in return
+  known:
+    itemAfterMutation.value: any number
+  missing fact: itemAfterMutation.value > 0

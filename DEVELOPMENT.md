@@ -17,6 +17,10 @@ bun install
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
+- `bun run verify:eval` — curated abstract-evaluation snapshots for facts, shapes, and unsupported stops we do not want to lose during evaluator work
+- `bun run verify:differential` — compact public-output snapshot for future old-engine/new-engine comparisons
+- `bun run verify:corpus` — reproducible external corpus probes when `/Users/chenglou/github/freerange-corpus` is present
+- `bun run verify:bench` — loose performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
 - `bun run check` — pattern tests, demo contracts, typecheck, and lint
 
@@ -28,6 +32,7 @@ bun install
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
+- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [differential-snapshots.expected.txt](./differential-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, abstract evaluation, future evaluator differentials, and external corpus probes
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -59,7 +64,13 @@ bun install
 - [fr.ts](./fr.ts) — main CLI entrypoint
 - [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape comparison diagnostic
 - [bench.ts](./bench.ts) — dev-only coarse timing helper
+- [bench-core.ts](./bench-core.ts) — shared benchmark runner used by `bench` and the budget guard
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
+- [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — abstract-evaluation golden snapshot runner
+- [verify-differential-snapshots.ts](./verify-differential-snapshots.ts) — compact public behavior snapshot runner for future evaluator rewrites
+- [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus probe runner and manifest
+- [verify-bench-budget.ts](./verify-bench-budget.ts) — loose performance budget guard for the demo verifier
+- [snapshot.ts](./snapshot.ts) — tiny snapshot compare/update helper for dev-only harnesses
 - [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
 - [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list
 - [test.ts](./test.ts) — pattern-suite runner
@@ -85,6 +96,8 @@ It also separates explicit function and loop comment lines into:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
+Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for abstract-evaluator facts that are too specific for the public `infer` catalog but important during evaluator refactors: nested literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
+
 Treat `infer`, `audit:demos`, and normal reports as one adoption loop: inspect
 what source proves, keep the human-important `@fit` comments, then classify any
 remaining failure as missing input fact, unsupported source shape, helper
@@ -97,6 +110,8 @@ Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier.
 Keep external repo experiments outside this checkout. The current scratch space
 is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
 bring only general Freerange fixes back into this repo.
+
+[corpus-probes.ts](./corpus-probes.ts) is the small reproducible subset. Keep it boring: a path list plus the command kind. If a probe becomes useful enough to guard, add it there and update [corpus-probes.expected.txt](./corpus-probes.expected.txt). If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
 
 A good corpus iteration is one of two small loops:
 
@@ -144,3 +159,5 @@ Before adding a public name, write down:
 - why the name is not demo-specific
 
 Prefer better source inference before more public syntax. If ordinary TypeScript already says the thing clearly, make Freerange understand that code instead of asking the user to write a cleverer comment.
+
+Snapshot harnesses accept `--update` when the current behavior is the new baseline, for example `bun verify-eval-snapshots.ts --update`. Update snapshots only after reading the diff and deciding the behavior is intentional.

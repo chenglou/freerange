@@ -1,7 +1,7 @@
 import {
   createFunctionContractCache,
   doctorFitProgram,
-  readTopLevelNumberGlobal,
+  readTopLevelGlobal,
   verifyFitProgram,
   type FitCheck,
   type FitDoctorCheck,
@@ -39,7 +39,7 @@ export type FitDoctorReport = {
 export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
   const checks: FitCheck[] = []
   const contractCache = createFunctionContractCache()
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const project = loadFitProject(paths, readTopLevelGlobal)
   for (const program of project.entries) checks.push(...verifyFitProgram(program, contractCache))
 
   const summary = {
@@ -58,7 +58,7 @@ export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
 export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> {
   const checks: FitDoctorCheck[] = []
   const contractCache = createFunctionContractCache()
-  const project = loadFitProject(paths, readTopLevelNumberGlobal)
+  const project = loadFitProject(paths, readTopLevelGlobal)
   for (const program of project.entries) checks.push(...doctorFitProgram(program, contractCache))
 
   const summary = {
@@ -76,6 +76,6 @@ export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> 
 }
 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
-  const program = buildFitSourceModule(file, sourceText, readTopLevelNumberGlobal)
+  const program = buildFitSourceModule(file, sourceText, readTopLevelGlobal)
   return verifyFitProgram(program, createFunctionContractCache())
 }

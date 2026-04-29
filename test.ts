@@ -2,8 +2,8 @@ import {inferFitFiles} from './src/check.ts'
 import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 
-const positiveFiles = ['patterns.ts', 'import-patterns.ts']
-const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts']
+const positiveFiles = ['patterns.ts', 'import-patterns.ts', 'interpreter-matrix-patterns.ts']
+const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts', 'interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('.', import.meta.url).pathname

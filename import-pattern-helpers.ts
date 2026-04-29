@@ -1,6 +1,16 @@
 const importPatternCap = 320
 const importPatternGap = 4
 export const importedChromeX = 16
+export const importedLiteralSpringData = [
+  {position: 4},
+  {position: 8},
+]
+export const importedNestedLiteralSpringData = {
+  groups: [
+    {items: [{position: 4}, {position: 6}]},
+    {items: [{position: 8}]},
+  ],
+}
 
 /** @fit
  * given width: 0..1000
