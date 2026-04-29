@@ -44,6 +44,7 @@ bun install
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers
 - [src/module-values.ts](./src/module-values.ts) — top-level `const` literal reader used during module loading
+- [src/value-localize.ts](./src/value-localize.ts) — abstract value relabeling for parameters, imports, and wildcard element paths
 - [src/source-boundary.ts](./src/source-boundary.ts) — source line and check-boundary helpers
 - [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
 - [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer

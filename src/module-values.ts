@@ -11,6 +11,7 @@ import {
   linearConstant,
   numericLiteralValue,
 } from './linear.ts'
+import {localizeValue} from './value-localize.ts'
 
 export function readTopLevelGlobal(declaration: ts.VariableDeclaration): {name: string; value: Value} | null {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
@@ -61,30 +62,10 @@ function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: 
     const value = topLevelLiteralValue(element, `${expr}[${index}]`)
     if (value == null) return null
     elements.push(value)
-    elementValue = mergeElementValue(elementValue, localizeTopLevelValue(value, `${expr}[]`))
+    elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
   }
   const length = numberValue(expression.elements.length, expression.elements.length, true, `${expr}.length`, linearConstant(expression.elements.length))
   return {kind: 'array', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
-}
-
-function localizeTopLevelValue(value: Value, expr: string): Value {
-  if (value.kind === 'number') return {...value, expr}
-  if (value.kind === 'literal') return {...value, expr}
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, localizeTopLevelValue(prop, `${expr}.${name}`))
-    return {...value, props, expr}
-  }
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      length: localizeTopLevelValue(value.length, `${expr}.length`) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map((element, index) => localizeTopLevelValue(element, `${expr}[${index}]`)),
-      element: value.element == null ? null : localizeTopLevelValue(value.element, `${expr}[]`),
-      expr,
-    }
-  }
-  return value
 }
 
 function valueWithoutNumberCases(value: Value): Value {
