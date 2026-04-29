@@ -109,3 +109,11 @@ export function negativeMatrixIndexedMixedExtremumAndCursor(items: {width: numbe
   }
   return maxWidth + total
 }
+
+export function negativeMatrixTryCatchUnsupported(): number {
+  try {
+    return 1
+  } catch {
+    return 2
+  }
+}

@@ -280,8 +280,14 @@ function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame
   })
 }
 
-function evaluateStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame): InterpreterFlow {
-  for (const statement of statements) {
+function evaluateStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame, startIndex = 0): InterpreterFlow {
+  for (let index = startIndex; index < statements.length; index++) {
+    const statement = statements[index]!
+    if (ts.isIfStatement(statement)) {
+      const flow = evaluateIfStatement(statement, frame, statements, index + 1)
+      if (flow.kind !== 'fallthrough') return flow
+      continue
+    }
     const flow = evaluateStatement(statement, frame)
     if (flow.kind !== 'fallthrough') return flow
   }
@@ -304,8 +310,8 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   if (ts.isForStatement(statement)) return evaluateForStatement(statement, frame)
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
-  noteUnsupported(frame, `Unsupported statement ${statement.getText(frame.program.sourceFile)}`)
-  return {kind: 'fallthrough'}
+  if (ts.isThrowStatement(statement)) return {kind: 'exit'}
+  return {kind: 'return', value: noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`)}
 }
 
 function evaluateVariableDeclaration(declaration: ts.VariableDeclaration, frame: InterpreterFrame) {
@@ -325,21 +331,36 @@ function isFreshContainerInitializer(expression: ts.Expression): boolean {
   return ts.isObjectLiteralExpression(unwrapped) || ts.isArrayLiteralExpression(unwrapped)
 }
 
-function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame): InterpreterFlow {
+function evaluateIfStatement(
+  statement: ts.IfStatement,
+  frame: InterpreterFrame,
+  continuation?: ts.NodeArray<ts.Statement>,
+  nextIndex = 0,
+): InterpreterFlow {
   const truth = literalBoolean(evaluateExpression(statement.expression, frame))
   if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
   const thenFrame = branchFrame(frame, statement.expression, true, '<if-true>', evaluateExpression)
   const elseFrame = branchFrame(frame, statement.expression, false, '<if-false>', evaluateExpression)
-  const thenFlow = evaluateConditionalBranch(statement.thenStatement, thenFrame)
-  const elseFlow: InterpreterFlow = statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, elseFrame)
-  if (thenFlow.kind === 'return' && elseFlow.kind === 'return') return {kind: 'return', value: joinValues(thenFlow.value, elseFlow.value)}
-  if (thenFlow.kind === 'return') {
+  const thenFlow = evaluateConditionalBranchWithContinuation(statement.thenStatement, thenFrame, continuation, nextIndex)
+  const elseFlow: InterpreterFlow = statement.elseStatement == null
+    ? {kind: 'fallthrough'}
+    : evaluateConditionalBranchWithContinuation(statement.elseStatement, elseFrame, continuation, nextIndex)
+  if (thenFlow.kind !== 'fallthrough' && elseFlow.kind !== 'fallthrough') return joinCompletedFlows(thenFlow, elseFlow, frame)
+  if (continuation != null) {
+    if (thenFlow.kind !== 'fallthrough') {
+      return joinCompletedFlows(thenFlow, evaluateStatements(continuation, elseFrame, nextIndex), frame)
+    }
+    if (elseFlow.kind !== 'fallthrough') {
+      return joinCompletedFlows(evaluateStatements(continuation, thenFrame, nextIndex), elseFlow, frame)
+    }
+  }
+  if (thenFlow.kind !== 'fallthrough') {
     frame.env = elseFrame.env
     return {kind: 'fallthrough'}
   }
-  if (elseFlow.kind === 'return') {
+  if (elseFlow.kind !== 'fallthrough') {
     frame.env = thenFrame.env
     return {kind: 'fallthrough'}
   }
@@ -347,8 +368,34 @@ function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame)
   return {kind: 'fallthrough'}
 }
 
+function joinCompletedFlows(left: InterpreterFlow, right: InterpreterFlow, frame: InterpreterFrame): InterpreterFlow {
+  const leftValue = completedFlowValue(left, frame)
+  const rightValue = completedFlowValue(right, frame)
+  if (leftValue == null && rightValue == null) return {kind: 'exit'}
+  if (leftValue == null) return {kind: 'return', value: rightValue!}
+  if (rightValue == null) return {kind: 'return', value: leftValue}
+  return {kind: 'return', value: joinValues(leftValue, rightValue)}
+}
+
+function completedFlowValue(flow: InterpreterFlow, frame: InterpreterFrame): Value | null {
+  if (flow.kind === 'exit') return null
+  if (flow.kind === 'return') return flow.value
+  return unknown(`Function ${frame.stack.at(-1) ?? '<unknown>'} did not return`)
+}
+
 function evaluateBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
   return ts.isBlock(statement) ? evaluateStatements(statement.statements, frame) : evaluateStatement(statement, frame)
+}
+
+function evaluateConditionalBranchWithContinuation(
+  statement: ts.Statement,
+  frame: InterpreterFrame,
+  continuation: ts.NodeArray<ts.Statement> | undefined,
+  nextIndex: number,
+): InterpreterFlow {
+  return continuation != null && ts.isIfStatement(statement)
+    ? evaluateIfStatement(statement, frame, continuation, nextIndex)
+    : evaluateConditionalBranch(statement, frame)
 }
 
 function evaluateConditionalBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {

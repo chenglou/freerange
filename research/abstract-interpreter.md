@@ -88,9 +88,10 @@ Current parallel core:
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, continuation-aware `if`/`else if` joins, throw exits, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
+- `verify-differential-snapshots.ts`: compact legacy/fresh comparison counts for deciding what to migrate next
 
 The fresh core is now allowed to answer `infer` for eligible bodies without loop reports. That includes unannotated finite `for..of` loops. Annotated loops still stay on the old evaluator because those reports are not just return values; they include loop-local checked/assumed/not-inferred bookkeeping.
 
@@ -107,6 +108,10 @@ Guarded scalar totals are a separate small loop-effect shape: `if (item.visible)
 The first consolidation pass after the indexed-loop sprint made scalar effects explicit and added a shared loop body walker. Fresh `for..of` and indexed loops now share one pending effect object, one effect recognizer, one effect finalizer, and the same "scalar effects must be terminal" body ordering rule. The next vocabulary pass renamed symbolic loop frames and append records directly in the code, so `for..of` and indexed loops no longer hide behind the older reducer/push names internally. Push/origin handling is still split because the two loop sources earn those facts differently.
 
 The fresh core also has the first indexed `for` loop shapes: `for (let i = 0; i < limit; i++) values.push(i)` and `for (let i = 0; i < items.length; i++) rows.push(...)`. The limit must already be a non-negative integer. Array-source loops bind `items[i]` through the normal array element domain, carry one-push-per-item origin for separate target arrays, and give pushed index fields the same element-path range and comparison assumptions as the old indexed loop path. Guarded indexed pushes keep element facts and become order-preserving subsets, and indexed append loops can apply trailing scalar cursor updates such as `y += step` after guarded or unguarded pushes. Sequence/spacing summaries for guarded indexed cursor loops and loop-local `@fit` reports are still legacy-only.
+
+Control-flow joins are now explicit enough for the migration pass: an unknown `if` can join a completed branch with the remaining statements, so `if (...) return ...; return ...` and `else if` ladders keep all return cases. `throw` is a completed non-returning branch, which lets guard clauses narrow the surviving path. Unsupported statements now stop with one unknown result at the source boundary instead of falling through and adding a second fake "did not return" issue.
+
+The differential harness deliberately compares rendered abstract facts, not internal data structures. That keeps it useful while the fresh interpreter is allowed to be more precise than legacy. The next migration work should use the non-match list as a map: first unsupported source families, then missing check/report side effects, then real precision differences.
 
 Old extraction order, still useful as a map of remaining semantic families:
 

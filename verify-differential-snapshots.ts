@@ -1,4 +1,4 @@
-import {inferFitFiles, inspectFitShapes} from './src/check.ts'
+import {inferFitFiles, inspectFitShapes, inspectInterpreterDifferentials} from './src/check.ts'
 import {doctorFitFiles, verifyFitFiles} from './src/reports.ts'
 import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 
@@ -12,6 +12,7 @@ await addDoctorSummary('photo-gallery calls', ['photo-gallery/index.ts'])
 addInferSummary('map block rows', ['patterns.ts'], 'mapBlockRowsWithDestructure')
 addInferSummary('interpreter matrix', ['interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
 addShapeSummary('property access call shape', ['patterns.ts'], 'propertyAccessCallShape')
+addInterpreterDifferentialSummary('fresh interpreter matrix', ['interpreter-matrix-patterns.ts'])
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'differential snapshots')) process.exitCode = 1
 
@@ -48,5 +49,18 @@ function addShapeSummary(label: string, paths: string[], functionName: string) {
     lines.push(`  ${insight.subject}`)
     for (const fact of insight.freerange.slice(0, 8)) lines.push(`    freerange ${fact}`)
     for (const fact of insight.typescript.slice(0, 8)) lines.push(`    typescript ${fact}`)
+  }
+}
+
+function addInterpreterDifferentialSummary(label: string, paths: string[]) {
+  const differentials = inspectInterpreterDifferentials(paths, {all: true})
+  const matches = differentials.filter(item => item.status === 'match').length
+  const unsupported = differentials.filter(item => item.status === 'fresh-unsupported').length
+  const different = differentials.filter(item => item.status === 'different').length
+  lines.push(`interpreter ${label}: ${matches} match, ${different} different, ${unsupported} fresh-unsupported`)
+  for (const item of differentials.filter(item => item.status !== 'match').slice(0, 10)) {
+    lines.push(`  ${item.status.toUpperCase()} ${displayWorkspaceFile(item.file)}:${item.functionName}`)
+    for (const line of item.legacy.slice(0, 4)) lines.push(`    legacy ${line}`)
+    for (const line of item.fresh.slice(0, 4)) lines.push(`    fresh ${line}`)
   }
 }

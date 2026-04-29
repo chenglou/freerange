@@ -19,7 +19,7 @@ bun install
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run verify:eval` — curated abstract-evaluation snapshots for facts, shapes, and unsupported stops we do not want to lose during evaluator work
 - `bun run verify:interpreter` — run the fresh parallel interpreter on focused kernels and snapshot the abstract return values it builds
-- `bun run verify:differential` — compact public-output snapshot for future old-engine/new-engine comparisons
+- `bun run verify:differential` — compact public-output snapshot plus fresh/legacy interpreter comparison counts for the rewrite
 - `bun run verify:corpus` — reproducible external corpus probes when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
@@ -77,7 +77,7 @@ bun install
 - [bench-core.ts](./bench-core.ts) — shared benchmark runner used by `bench` and the budget guard
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
 - [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — abstract-evaluation golden snapshot runner
-- [verify-differential-snapshots.ts](./verify-differential-snapshots.ts) — compact public behavior snapshot runner for future evaluator rewrites
+- [verify-differential-snapshots.ts](./verify-differential-snapshots.ts) — compact public behavior snapshot runner and fresh/legacy interpreter comparison map for evaluator rewrites
 - [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus probe runner and manifest
 - [verify-bench-budget.ts](./verify-bench-budget.ts) — loose performance budget guard for the demo verifier
 - [snapshot.ts](./snapshot.ts) — tiny snapshot compare/update helper for dev-only harnesses

@@ -28,6 +28,8 @@ addCase('matrix indexed array guarded rows', ['interpreter-matrix-patterns.ts'],
 addCase('matrix indexed array guarded cursor values', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedCursorValues')
 addCase('matrix indexed array cursor values', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayCursorValues')
 addCase('matrix Math clamp columns', ['interpreter-matrix-patterns.ts'], 'matrixMathClampColumns')
+addCase('matrix else-if continuation', ['interpreter-matrix-patterns.ts'], 'matrixElseIfContinuation')
+addCase('matrix throw guard narrows positive', ['interpreter-matrix-patterns.ts'], 'matrixThrowGuardNarrowsPositive')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 addCase('negative cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
@@ -39,6 +41,7 @@ addCase('negative indexed array pushes into source surface', ['interpreter-matri
 addCase('negative indexed cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedCursorUpdateBeforePush')
 addCase('negative indexed conditional else count surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedConditionalElseCount')
 addCase('negative indexed mixed extremum/cursor surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedMixedExtremumAndCursor')
+addCase('negative try/catch surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixTryCatchUnsupported')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 

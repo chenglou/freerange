@@ -237,3 +237,14 @@ export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))
 }
+
+export function matrixElseIfContinuation(value: number): number {
+  if (value < 0) return -1
+  else if (value > 0) return 1
+  return 0
+}
+
+export function matrixThrowGuardNarrowsPositive(value: number): number {
+  if (value < 0) throw new Error('negative')
+  return value
+}

@@ -87,6 +87,10 @@ case matrix indexed array cursor values: interpreter-matrix-patterns.ts:matrixIn
   fact return.rows follows items by index
 case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
+case matrix else-if continuation: interpreter-matrix-patterns.ts:matrixElseIfContinuation
+  return: int -1..1
+case matrix throw guard narrows positive: interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
+  return: 0..Infinity
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
@@ -121,3 +125,14 @@ case negative indexed conditional else count surface: interpreter-matrix-negativ
 case negative indexed mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
   return: unknown (Indexed for loop scalar extrema support extrema updates only)
   unsupported negativeMatrixIndexedMixedExtremumAndCursor: Indexed for loop scalar extrema support extrema updates only
+case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
+  return: unknown (Unsupported statement in negativeMatrixTryCatchUnsupported: try {
+    return 1
+  } catch {
+    return 2
+  })
+  unsupported negativeMatrixTryCatchUnsupported: Unsupported statement in negativeMatrixTryCatchUnsupported: try {
+    return 1
+  } catch {
+    return 2
+  }

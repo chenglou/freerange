@@ -260,6 +260,11 @@ import {
   isFunctionLikeWithBody,
 } from './function-shape.ts'
 import {evaluateInterpreterFunctionBody} from './interpreter/evaluate.ts'
+import {
+  formatInterpreterFacts,
+  formatInterpreterIssues,
+  formatInterpreterValue,
+} from './interpreter/format.ts'
 
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
@@ -280,6 +285,16 @@ export type {
 } from './check-types.ts'
 
 const maxInlineDepth = 12
+
+export type FitInterpreterDifferentialStatus = 'match' | 'different' | 'fresh-unsupported'
+
+export type FitInterpreterDifferential = {
+  file: string
+  functionName: string
+  status: FitInterpreterDifferentialStatus
+  legacy: string[]
+  fresh: string[]
+}
 
 export function inferFitFiles(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInferReport {
   const project = loadFitProject(paths, readTopLevelGlobal)
@@ -338,6 +353,20 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
     }
   }
   return {files: paths, insights}
+}
+
+export function inspectInterpreterDifferentials(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInterpreterDifferential[] {
+  const project = loadFitProject(paths, readTopLevelGlobal)
+  const contractCache = new Map<string, FunctionContractProof>()
+  const differentials: FitInterpreterDifferential[] = []
+  for (const program of project.entries) {
+    for (const [functionName, fn] of program.functions) {
+      if (options.functionName != null && functionName !== options.functionName) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
+      differentials.push(inspectInterpreterDifferential(program, fn, contractCache))
+    }
+  }
+  return differentials
 }
 
 export function createFunctionContractCache(): Map<string, FunctionContractProof> {
@@ -1531,6 +1560,70 @@ function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): 
   const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions)
   if (result.issues.length > 0) return null
   return {result: result.value, env: result.env, assumptions: result.assumptions}
+}
+
+function inspectInterpreterDifferential(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInterpreterDifferential {
+  const input = interpreterDifferentialInput(program, fn, contractCache)
+  const legacyContext: EvalContext = {
+    program,
+    file: program.file,
+    env: new Map(input.env),
+    inputRoots: input.inputRoots,
+    stack: [fn.name],
+    checks: [],
+    assumptions: [...input.assumptions],
+    contractCache,
+  }
+  const legacyState = evaluateFunctionBodyStateLegacy(fn, legacyContext)
+  const freshResult = evaluateInterpreterFunctionBody(program, fn, new Map(input.env), [fn.name], input.assumptions)
+  const legacy = interpreterDifferentialLines(input.env, legacyState, legacyContext.checks, [])
+  const fresh = interpreterDifferentialLines(input.env, {
+    result: freshResult.value,
+    env: freshResult.env,
+    assumptions: freshResult.assumptions,
+  }, [], formatInterpreterIssues(freshResult.issues))
+  return {
+    file: program.file,
+    functionName: fn.name,
+    status: freshResult.issues.length > 0 ? 'fresh-unsupported' : sameLines(legacy, fresh) ? 'match' : 'different',
+    legacy,
+    fresh,
+  }
+}
+
+function interpreterDifferentialInput(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>) {
+  const specs = program.specsByFunction.get(fn.name) ?? []
+  const inputSpecs = functionInputSpecs(program, fn, specs)
+  const env = programGlobalEnv(program)
+  const inputRoots = functionInputRoots(program, fn)
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
+
+  const {assumedGivens} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
+  for (const given of assumedGivens) {
+    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+  }
+  const {assumptions} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache)
+  return {env, inputRoots, assumptions}
+}
+
+function interpreterDifferentialLines(
+  baseEnv: Map<string, Value>,
+  state: {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]},
+  checks: FitCheck[],
+  issues: string[],
+) {
+  const lines = [
+    ...formatInterpreterValue(state.result),
+    ...formatInterpreterFacts(state.result),
+    ...localFactsFromEnv(baseEnv, state.env).map(fact => `local ${fact.text}`),
+    ...checks.map(check => `check ${check.status} ${check.text}${check.reason == null ? '' : `: ${check.reason}`}`),
+    ...issues.map(issue => `issue ${issue}`),
+  ]
+  return [...new Set(lines)]
+}
+
+function sameLines(left: string[], right: string[]) {
+  return left.length === right.length && left.every((line, index) => line === right[index])
 }
 
 function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolean {
