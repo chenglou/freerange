@@ -5,7 +5,6 @@ import type {
 } from '../check-types.ts'
 import {
   bindingElementPropertyName,
-  bindingNames,
   forEachArrayBindingElement,
 } from '../binding-patterns.ts'
 import {
@@ -99,6 +98,14 @@ import {
   literalBoolean,
 } from './refine.ts'
 import {evaluateMathCall} from './math.ts'
+import {
+  blockScopedNames,
+  forOfBodyScopedNames,
+  forOfItemName,
+  forOfScopedNames,
+  restoreScopedValues,
+  saveScopedValues,
+} from './scope.ts'
 
 export type InterpreterFunctionResult = {
   value: Value
@@ -661,41 +668,6 @@ function finalizeIndexedAppendedArrays(records: Map<string, IndexedAppendRecord>
       : value.summary
     writePath(record.path, {...value, elements: null, summary}, frame)
   }
-}
-
-function forOfItemName(initializer: ts.ForInitializer): string | null {
-  if (!ts.isVariableDeclarationList(initializer)) return null
-  const declaration = initializer.declarations[0]
-  return declaration != null && ts.isIdentifier(declaration.name) ? declaration.name.text : null
-}
-
-function forOfScopedNames(initializer: ts.ForInitializer): string[] {
-  if (!ts.isVariableDeclarationList(initializer)) return []
-  return initializer.declarations.flatMap(declaration => bindingNames(declaration.name))
-}
-
-function forOfBodyScopedNames(statement: ts.Statement): string[] {
-  return ts.isBlock(statement) ? blockScopedNames(statement) : []
-}
-
-function saveScopedValues(env: Map<string, Value>, names: string[]): Map<string, Value | null> {
-  const values = new Map<string, Value | null>()
-  for (const name of names) values.set(name, env.get(name) ?? null)
-  return values
-}
-
-function restoreScopedValues(env: Map<string, Value>, values: Map<string, Value | null>) {
-  for (const [name, value] of values) {
-    if (value == null) env.delete(name)
-    else env.set(name, value)
-  }
-}
-
-function blockScopedNames(block: ts.Block): string[] {
-  return block.statements.flatMap(statement => {
-    if (!ts.isVariableStatement(statement)) return []
-    return statement.declarationList.declarations.flatMap(declaration => bindingNames(declaration.name))
-  })
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {

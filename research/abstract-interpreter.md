@@ -86,6 +86,7 @@ Current parallel core:
 - `src/interpreter/loop-values.ts`: index-derived element values, cursor replacement inside appended elements, and loop append shapes for sequence summaries
 - `src/interpreter/math.ts`: numeric `Math.*` primitives
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
+- `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
 - `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
