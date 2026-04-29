@@ -31,6 +31,10 @@ case matrix default param order: interpreter-matrix-patterns.ts:matrixDefaultPar
   return.pos: int 0..0
   return.k: int 10..10
   return.b: int 11..11
+case matrix if refines nonnegative: interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
+  return: 0..Infinity
+case matrix ternary literal join: interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
+  return: int 3..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias

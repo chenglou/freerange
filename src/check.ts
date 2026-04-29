@@ -1538,15 +1538,13 @@ function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolea
     if (!eligible) return
     if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
     if (
-      ts.isIfStatement(node)
-      || ts.isSwitchStatement(node)
+      ts.isSwitchStatement(node)
       || ts.isForStatement(node)
       || ts.isForOfStatement(node)
       || ts.isWhileStatement(node)
       || ts.isDoStatement(node)
       || ts.isThrowStatement(node)
       || ts.isTryStatement(node)
-      || ts.isConditionalExpression(node)
     ) {
       eligible = false
       return

@@ -12,6 +12,8 @@ const lines: string[] = []
 
 addCase('matrix nested iife/map/defaults', ['interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
 addCase('matrix default param order', ['interpreter-matrix-patterns.ts'], 'matrixDefaultParamOrder')
+addCase('matrix if refines nonnegative', ['interpreter-matrix-patterns.ts'], 'matrixIfRefinesNonnegative')
+addCase('matrix ternary literal join', ['interpreter-matrix-patterns.ts'], 'matrixTernaryLiteralJoin')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 

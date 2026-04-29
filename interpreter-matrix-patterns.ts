@@ -45,3 +45,12 @@ export function matrixDefaultParamOrder(): MatrixSpring {
   const base = 10
   return ((k: number = base, b: number = k + 1) => matrixSpring(0, k, b))()
 }
+
+export function matrixIfRefinesNonnegative(value: number): number {
+  if (value < 0) return 0
+  return value
+}
+
+export function matrixTernaryLiteralJoin(value: number): number {
+  return value > 5 ? 7 : 3
+}
