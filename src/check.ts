@@ -1540,7 +1540,6 @@ function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolea
     if (
       ts.isSwitchStatement(node)
       || ts.isForStatement(node)
-      || ts.isForOfStatement(node)
       || ts.isWhileStatement(node)
       || ts.isDoStatement(node)
       || ts.isThrowStatement(node)

@@ -59,3 +59,12 @@ export function matrixFilterMapLiteralBooleans(): number[] {
   const items = [{value: 1, keep: true}, {value: -1, keep: false}, {value: 3, keep: true}]
   return items.filter(item => item.keep).map(item => item.value)
 }
+
+export function matrixForOfPushVisibleRows(): {height: number}[] {
+  const items = [{height: 2, visible: true}, {height: 4, visible: false}, {height: 6, visible: true}]
+  const rows = []
+  for (const item of items) {
+    if (item.visible) rows.push({height: item.height})
+  }
+  return rows
+}

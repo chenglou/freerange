@@ -15,6 +15,7 @@ addCase('matrix default param order', ['interpreter-matrix-patterns.ts'], 'matri
 addCase('matrix if refines nonnegative', ['interpreter-matrix-patterns.ts'], 'matrixIfRefinesNonnegative')
 addCase('matrix ternary literal join', ['interpreter-matrix-patterns.ts'], 'matrixTernaryLiteralJoin')
 addCase('matrix filter/map literal booleans', ['interpreter-matrix-patterns.ts'], 'matrixFilterMapLiteralBooleans')
+addCase('matrix for-of push visible rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfPushVisibleRows')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 

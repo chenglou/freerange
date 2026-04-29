@@ -23,6 +23,7 @@ import {
   unknownArray,
   unknownNumber,
   unknownObject,
+  type ArrayValue,
   type NumberValue,
   type Value,
 } from '../domain.ts'
@@ -191,6 +192,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
     evaluateExpression(statement.expression, frame)
     return {kind: 'fallthrough'}
   }
+  if (ts.isForOfStatement(statement)) return evaluateForOfStatement(statement, frame)
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   noteUnsupported(frame, `Unsupported statement ${statement.getText(frame.program.sourceFile)}`)
@@ -228,6 +230,38 @@ function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame)
 
 function evaluateBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
   return ts.isBlock(statement) ? evaluateStatements(statement.statements, frame) : evaluateStatement(statement, frame)
+}
+
+function evaluateForOfStatement(statement: ts.ForOfStatement, frame: InterpreterFrame): InterpreterFlow {
+  if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported')}
+  const source = evaluateExpression(statement.expression, frame)
+  if (source.kind !== 'array' || source.elements == null) {
+    return {kind: 'return', value: noteUnsupported(frame, `for..of expected a finite array: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  }
+  for (const element of source.elements) {
+    bindForOfInitializer(statement.initializer, element, frame)
+    const flow = evaluateBranch(statement.statement, frame)
+    if (flow.kind !== 'fallthrough') return flow
+  }
+  return {kind: 'fallthrough'}
+}
+
+function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
+  if (ts.isVariableDeclarationList(initializer)) {
+    const declaration = initializer.declarations[0]
+    if (declaration == null || initializer.declarations.length !== 1) {
+      noteUnsupported(frame, 'for..of supports one loop binding')
+      return
+    }
+    bindPattern(declaration.name, value, frame)
+    return
+  }
+  const path = pathFromExpression(initializer, frame)
+  if (path == null) {
+    noteUnsupported(frame, `Unsupported for..of assignment target ${initializer.getText(frame.program.sourceFile)}`)
+    return
+  }
+  writePath(path, value, frame)
 }
 
 function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame): Value {
@@ -518,6 +552,7 @@ function writeLiteralFilter(frame: InterpreterFrame, path: ValuePath, current: E
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
+  if (ts.isPropertyAccessExpression(target) && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
   if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
@@ -528,6 +563,29 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     if (imported != null) return invokeFitFunction(imported.fn, evaluatedArguments(expression.arguments, frame), frame, imported.program, rootFrame(imported.program).env)
   }
   return noteUnsupported(frame, `Unsupported call ${expression.getText(frame.program.sourceFile)}`)
+}
+
+function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
+  const path = pathFromExpression(target.expression, frame)
+  if (path == null) return noteUnsupported(frame, `Unsupported push target ${target.expression.getText(frame.program.sourceFile)}`)
+  const current = readPath(path, frame)
+  if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`)
+  const values = evaluatedArguments(expression.arguments, frame)
+  const elements = current.elements == null ? [] : [...current.elements]
+  elements.push(...values)
+  let element: Value | null = current.element
+  for (const value of values) element = mergeElementValue(element, value)
+  const nextLength = current.elements == null
+    ? numberValue(current.length.min + values.length, current.length.max + values.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
+    : numberValue(elements.length, elements.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
+  const next: ArrayValue = {
+    ...current,
+    length: nextLength,
+    elements,
+    element,
+  }
+  writePath(path, next, frame)
+  return next.length
 }
 
 function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
