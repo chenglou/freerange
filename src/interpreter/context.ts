@@ -2,6 +2,7 @@ import type {Program} from '../check-types.ts'
 import {
   joinValues,
   unknown,
+  type ArrayValue,
   type Value,
 } from '../domain.ts'
 import {programGlobalEnv} from '../program-env.ts'
@@ -17,6 +18,13 @@ export type InterpreterFrame = {
   env: Map<string, Value>
   issues: InterpreterIssue[]
   stack: string[]
+  loopStack: InterpreterLoopContext[]
+  conditionalDepth: number
+}
+
+export type InterpreterLoopContext = {
+  source: ArrayValue
+  sourceExpr: string
 }
 
 export type InterpreterFlow =
@@ -30,6 +38,8 @@ export function rootFrame(program: Program): InterpreterFrame {
     env: programGlobalEnv(program),
     issues: [],
     stack: [],
+    loopStack: [],
+    conditionalDepth: 0,
   }
 }
 
@@ -39,6 +49,8 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     env,
     issues: parent.issues,
     stack: [...parent.stack, name],
+    loopStack: [...parent.loopStack],
+    conditionalDepth: parent.conditionalDepth,
   }
 }
 
@@ -48,6 +60,8 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     env,
     issues: parent.issues,
     stack: [...parent.stack, name],
+    loopStack: [...parent.loopStack],
+    conditionalDepth: parent.conditionalDepth,
   }
 }
 

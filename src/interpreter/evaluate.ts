@@ -17,6 +17,7 @@ import {
   divideNumbers,
   joinValues,
   literalValue,
+  mergeArraySummary,
   mergeElementValue,
   moduloNumbers,
   multiplyNumbers,
@@ -89,6 +90,8 @@ export function evaluateInterpreterFunctionBody(program: Program, fn: FitFunctio
     env: new Map(env),
     issues: [],
     stack,
+    loopStack: [],
+    conditionalDepth: 0,
   }
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
   return {value, env: frame.env, issues: frame.issues}
@@ -225,13 +228,13 @@ function isFreshContainerInitializer(expression: ts.Expression): boolean {
 
 function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame): InterpreterFlow {
   const truth = literalBoolean(evaluateExpression(statement.expression, frame))
-  if (truth === true) return evaluateBranch(statement.thenStatement, frame)
-  if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateBranch(statement.elseStatement, frame)
+  if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
+  if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
   const thenFrame = branchFrame(frame, statement.expression, true, '<if-true>')
   const elseFrame = branchFrame(frame, statement.expression, false, '<if-false>')
-  const thenFlow = evaluateBranch(statement.thenStatement, thenFrame)
-  const elseFlow: InterpreterFlow = statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateBranch(statement.elseStatement, elseFrame)
+  const thenFlow = evaluateConditionalBranch(statement.thenStatement, thenFrame)
+  const elseFlow: InterpreterFlow = statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, elseFrame)
   if (thenFlow.kind === 'return' && elseFlow.kind === 'return') return {kind: 'return', value: joinValues(thenFlow.value, elseFlow.value)}
   if (thenFlow.kind === 'return') {
     frame.env = elseFrame.env
@@ -249,18 +252,40 @@ function evaluateBranch(statement: ts.Statement, frame: InterpreterFrame): Inter
   return ts.isBlock(statement) ? evaluateStatements(statement.statements, frame) : evaluateStatement(statement, frame)
 }
 
+function evaluateConditionalBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
+  frame.conditionalDepth++
+  try {
+    return evaluateBranch(statement, frame)
+  } finally {
+    frame.conditionalDepth--
+  }
+}
+
 function evaluateForOfStatement(statement: ts.ForOfStatement, frame: InterpreterFrame): InterpreterFlow {
   if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported')}
   const source = evaluateExpression(statement.expression, frame)
   if (source.kind !== 'array' || source.elements == null) {
     return {kind: 'return', value: noteUnsupported(frame, `for..of expected a finite array: ${statement.expression.getText(frame.program.sourceFile)}`)}
   }
-  for (const element of source.elements) {
-    bindForOfInitializer(statement.initializer, element, frame)
-    const flow = evaluateBranch(statement.statement, frame)
-    if (flow.kind !== 'fallthrough') return flow
+  const itemName = forOfItemName(statement.initializer)
+  const sourceExpr = sourceExpression(source, statement.expression, frame)
+  if (itemName != null) frame.loopStack.push({source, sourceExpr})
+  try {
+    for (const element of source.elements) {
+      bindForOfInitializer(statement.initializer, element, frame)
+      const flow = evaluateBranch(statement.statement, frame)
+      if (flow.kind !== 'fallthrough') return flow
+    }
+  } finally {
+    if (itemName != null) frame.loopStack.pop()
   }
   return {kind: 'fallthrough'}
+}
+
+function forOfItemName(initializer: ts.ForInitializer): string | null {
+  if (!ts.isVariableDeclarationList(initializer)) return null
+  const declaration = initializer.declarations[0]
+  return declaration != null && ts.isIdentifier(declaration.name) ? declaration.name.text : null
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
@@ -661,9 +686,19 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
     length: nextLength,
     elements,
     element,
+    summary: mergeArraySummary(current.summary, currentLoopPushSummary(frame)),
   }
   writePath(path, next, frame)
   return next.length
+}
+
+function currentLoopPushSummary(frame: InterpreterFrame) {
+  const loop = frame.loopStack.at(-1)
+  if (loop == null) return null
+  const origin = frame.conditionalDepth > 0
+    ? filterOrigin(loop.source, loop.sourceExpr)
+    : mapOrigin(loop.source, loop.sourceExpr)
+  return emptyArraySummary(origin)
 }
 
 function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
