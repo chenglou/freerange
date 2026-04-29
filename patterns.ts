@@ -939,6 +939,113 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
   return {rows, bottom: y - gap}
 }
 
+type TypeFieldSpring = {
+  pos: number
+  dest: number
+  k: number // @fit > 0
+  b: number // @fit >= 0
+}
+
+type TypeFieldRows = {
+  rows: {
+    height: number // @fit 0..40
+  }[]
+}
+
+/** @fit
+ * return > 0
+ */
+export function typeFieldParamGiven(spring: TypeFieldSpring) {
+  return spring.k
+}
+
+export function typeFieldReturnCheck(): TypeFieldSpring {
+  return {pos: 0, dest: 0, k: 290, b: 30}
+}
+
+/** @fit
+ * return > 0
+ */
+export function typeFieldCallBoundary() {
+  const spring = {pos: 0, dest: 0, k: 290, b: 30}
+  return typeFieldParamGiven(spring)
+}
+
+/** @fit
+ * return.rows[].height: 0..40
+ */
+export function typeFieldArrayElementGiven(input: TypeFieldRows) {
+  const rows = input.rows.map(row => ({height: row.height}))
+  return {rows}
+}
+
+export function typeFieldLocalBoundary() {
+  const spring: TypeFieldSpring = {pos: 0, dest: 0, k: 290, b: 30}
+  return spring
+}
+
+export function typeFieldSatisfiesReturn() {
+  return {pos: 0, dest: 0, k: 290, b: 30} satisfies TypeFieldSpring
+}
+
+export function typeFieldAsReturn() {
+  return {pos: 0, dest: 0, k: 290, b: 30} as TypeFieldSpring
+}
+
+type TypeRelationSpring = {
+  k: number
+  b: number
+  // @fit k > b
+}
+
+/** @fit
+ * high >= low
+ */
+type TypeRelationBounds = {
+  low: number
+  high: number
+}
+
+type TypeRelationRows = {
+  rows: {
+    top: number
+    bottom: number
+    // @fit bottom >= top
+    cells: {
+      left: number
+      right: number
+      // @fit right >= left
+    }[]
+  }[]
+}
+
+/** @fit
+ * return > spring.b
+ */
+export function typeRelationParamGiven(spring: TypeRelationSpring) {
+  return spring.k
+}
+
+export function typeRelationReturnCheck(): TypeRelationSpring {
+  return {k: 290, b: 30}
+}
+
+export function typeRelationBlockReturnCheck(): TypeRelationBounds {
+  return {low: 0, high: 10}
+}
+
+/** @fit
+ * return > 0
+ */
+export function typeRelationCallBoundary() {
+  const spring = {k: 290, b: 30}
+  return typeRelationParamGiven(spring)
+}
+
+export function typeRelationNestedReturnCheck(): TypeRelationRows {
+  return {rows: [{top: 0, bottom: 10, cells: [{left: 1, right: 4}]}]}
+}
+
 /** @fit
  * return >= y
  * return: 0..Infinity

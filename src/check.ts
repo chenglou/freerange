@@ -21,6 +21,8 @@ import {
   type ComparisonOperator,
   type FitDomainPath,
   type FitDomainPathSegment,
+  type FitCheckSpec,
+  type FitGivenSpec,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -210,6 +212,13 @@ import {
   valueWithCallSiteText,
   type CallSiteBindings,
 } from './call-site-text.ts'
+import {
+  typeCheckContractForTypeNode,
+  typeInputGivenContractForFunction,
+  typeReturnCheckContractForFunction,
+  type TypeContractResult,
+  type TypeContractUnsupported,
+} from './type-contracts.ts'
 
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
@@ -238,7 +247,7 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
       functions.push(inferFunctionFacts(program, fn, contractCache))
     }
   }
@@ -283,7 +292,7 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn)) continue
+      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
       insights.push(...inspectFunctionShapes(program, fn, contractCache, options))
     }
   }
@@ -308,7 +317,7 @@ export function verifyFitProgram(program: Program, contractCache: Map<string, Fu
   const checks: FitCheck[] = []
   for (const fn of program.functions.values()) {
     const specs = program.specsByFunction.get(fn.name) ?? []
-    if (specs.length === 0 && !functionHasBodyFitComment(program, fn)) continue
+    if (specs.length === 0 && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
     checks.push(...verifyFunctionSpecs(program.file, program, fn, specs, contractCache))
   }
   checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
@@ -347,12 +356,13 @@ function doctorTopLevelCalls(program: Program, contractCache: Map<string, Functi
 function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
+  const inputSpecs = functionInputSpecs(program, fn, specs)
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  bindFunctionInputParameters(fn, specs, program, env)
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
 
-  const {assumedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  const {assumedGivens} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
@@ -442,6 +452,107 @@ function functionHasBodyFitComment(program: Program, fn: FitFunction) {
   return found
 }
 
+function functionHasTypeContracts(program: Program, fn: FitFunction) {
+  return hasTypeContractWork(functionTypeGivenContract(program, fn))
+    || hasTypeContractWork(functionTypeReturnContract(program, fn))
+    || functionHasBodyTypeBoundary(program, fn)
+}
+
+function functionContractSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
+  return [
+    ...functionTypeGivenSpecs(program, fn),
+    ...explicitSpecs,
+    ...functionTypeReturnSpecs(program, fn),
+  ]
+}
+
+function functionInputSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
+  return [
+    ...functionTypeGivenSpecs(program, fn),
+    ...explicitSpecs,
+  ]
+}
+
+function functionTypeGivenSpecs(program: Program, fn: FitFunction): FitGivenSpec[] {
+  return functionTypeGivenContract(program, fn).specs
+}
+
+function functionTypeReturnSpecs(program: Program, fn: FitFunction): FitCheckSpec[] {
+  return functionTypeReturnContract(program, fn).specs
+}
+
+function functionTypeGivenContract(program: Program, fn: FitFunction): TypeContractResult<FitGivenSpec> {
+  return typeInputGivenContractForFunction(program, fn)
+}
+
+function functionTypeReturnContract(program: Program, fn: FitFunction): TypeContractResult<FitCheckSpec> {
+  return typeReturnCheckContractForFunction(program, fn)
+}
+
+function functionTypeUnsupported(program: Program, fn: FitFunction) {
+  return [
+    ...functionTypeGivenContract(program, fn).unsupported,
+    ...functionTypeReturnContract(program, fn).unsupported,
+  ]
+}
+
+function hasTypeContractWork<T extends FitCheckSpec | FitGivenSpec>(contract: TypeContractResult<T>) {
+  return contract.specs.length > 0 || contract.unsupported.length > 0
+}
+
+function functionHasBodyTypeBoundary(program: Program, fn: FitFunction) {
+  if (fn.node.body == null) return false
+  let found = false
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      if (hasTypeContractWork(typeCheckContractForTypeNode(program, node.type, node.name.text))) {
+        found = true
+        return
+      }
+      if (node.initializer != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.initializer, node.name.text))) {
+        found = true
+        return
+      }
+    }
+    if (ts.isReturnStatement(node) && node.expression != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.expression, fitReturnPublicRoot))) {
+      found = true
+      return
+    }
+    if (node === fn.node.body && ts.isExpression(node) && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node, fitReturnPublicRoot))) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(fn.node.body)
+  return found
+}
+
+function typeCheckContractForExpressionBoundary(program: Program, expression: ts.Expression, root: string): TypeContractResult<FitCheckSpec> {
+  const type = expressionBoundaryType(expression)
+  return type == null ? emptyTypeContract() : typeCheckContractForTypeNode(program, type, root)
+}
+
+function emptyTypeContract<T extends FitCheckSpec | FitGivenSpec>(): TypeContractResult<T> {
+  return {specs: [], unsupported: []}
+}
+
+function mergeTypeContracts<T extends FitCheckSpec | FitGivenSpec>(contracts: TypeContractResult<T>[]): TypeContractResult<T> {
+  return {
+    specs: contracts.flatMap(contract => contract.specs),
+    unsupported: contracts.flatMap(contract => contract.unsupported),
+  }
+}
+
+function expressionBoundaryType(expression: ts.Expression): ts.TypeNode | null {
+  if (ts.isParenthesizedExpression(expression)) return expressionBoundaryType(expression.expression)
+  if (ts.isNonNullExpression(expression)) return expressionBoundaryType(expression.expression)
+  if (ts.isSatisfiesExpression(expression) || ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) return expression.type
+  return null
+}
+
 function isFunctionLikeWithBody(node: ts.Node) {
   return ts.isFunctionDeclaration(node)
     || ts.isFunctionExpression(node)
@@ -462,12 +573,15 @@ function verifyFunctionSpecs(
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
   const functionName = fn.name
+  const inputSpecs = functionInputSpecs(program, fn, specs)
+  const contractSpecs = functionContractSpecs(program, fn, specs)
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  bindFunctionInputParameters(fn, specs, program, env)
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
 
-  const {assumedGivens, checks} = validateGivenSpecs(file, functionName, specs, inputRoots, 'function-given')
+  const {assumedGivens, checks} = validateGivenSpecs(file, functionName, inputSpecs, inputRoots, 'function-given')
+  checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
 
   for (const given of assumedGivens) {
     if (given.kind !== 'range') continue
@@ -476,7 +590,7 @@ function verifyFunctionSpecs(
 
   const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache)
   checks.push(...impossibleChecks)
-  const hasBodyClaims = functionHasBodyClaims(specs) || functionHasBodyFitComment(program, fn)
+  const hasBodyClaims = functionHasBodyClaims(contractSpecs) || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
   const context: EvalContext = {
     program,
     file,
@@ -486,12 +600,12 @@ function verifyFunctionSpecs(
     checks: [],
     assumptions,
     contractCache,
-    callObligations: functionHasBodyClaims(specs) ? 'record' : 'silent',
+    callObligations: functionHasBodyClaims(contractSpecs) ? 'record' : 'silent',
   }
   const result = hasBodyClaims ? evaluateFunctionBody(fn, context) : unknown('No body claim requested')
   if (hasBodyClaims) checks.push(...context.checks)
 
-  for (const spec of specs) {
+  for (const spec of contractSpecs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
     checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions, contractCache))
   }
@@ -506,17 +620,20 @@ function functionHasBodyClaims(specs: FitSpec[]) {
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
+  const inputSpecs = functionInputSpecs(program, fn, specs)
+  const contractSpecs = functionContractSpecs(program, fn, specs)
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
   const loops: FitInferLoopReport[] = []
 
-  bindFunctionInputParameters(fn, specs, program, env)
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
 
-  const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
   const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
+  const typeContractChecks = typeUnsupportedChecks(program.file, functionName, functionTypeUnsupported(program, fn))
   const inferUnsupported: string[] = []
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
   const state = evaluateFunctionBodyState(fn, context)
@@ -524,10 +641,11 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const localFacts = localFactsFromEnv(env, state.env)
   const backgroundChecks = [
     ...givenChecks,
+    ...typeContractChecks,
     ...checks,
     ...context.checks,
   ]
-  const specReports = inferFunctionSpecReports(specs, backgroundChecks, spec => verifyCheckSpec(
+  const specReports = inferFunctionSpecReports(contractSpecs, backgroundChecks, spec => verifyCheckSpec(
     program.file,
     program,
     functionName,
@@ -540,6 +658,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   ))
   const unsupported = [
     ...givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
+    ...typeContractChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...context.checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...inferUnsupported,
@@ -600,7 +719,7 @@ type FunctionShapeState = {
 function inspectFunctionShapes(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
   const functionName = fn.name
   const insights: FitShapeInsight[] = []
-  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn)
+  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn) || functionHasTypeContracts(program, fn)
     ? evaluateFunctionShapeState(program, fn, contractCache)
     : null
 
@@ -626,12 +745,13 @@ function inspectFunctionShapes(program: Program, fn: FitFunction, contractCache:
 function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FunctionShapeState {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
+  const inputSpecs = functionInputSpecs(program, fn, specs)
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  bindFunctionInputParameters(fn, specs, program, env)
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
 
-  const {assumedGivens} = validateGivenSpecs(program.file, functionName, specs, inputRoots, 'function-given')
+  const {assumedGivens} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
@@ -1110,6 +1230,21 @@ function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, re
   return {file, functionName, text: spec.text, status: 'unknown', reason, ...(spec.line == null ? {} : {line: spec.line})}
 }
 
+function typeUnsupportedChecks(file: string, functionName: string, unsupported: TypeContractUnsupported[]): FitCheck[] {
+  return unsupported.map(problem => ({
+    file,
+    functionName,
+    text: problem.text,
+    status: 'unknown',
+    reason: problem.reason,
+    ...(problem.line == null ? {} : {line: problem.line}),
+  }))
+}
+
+function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContractUnsupported[]) {
+  context.checks.push(...typeUnsupportedChecks(context.file, context.stack.join(' > '), unsupported))
+}
+
 function collectGivenAssumptions(
   file: string,
   program: Program,
@@ -1576,11 +1711,20 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     bindUninitializedName(declaration.name, context)
     return
   }
+  const typeContract = ts.isIdentifier(declaration.name)
+    ? mergeTypeContracts([
+      typeCheckContractForTypeNode(context.program, declaration.type, declaration.name.text),
+      typeCheckContractForExpressionBoundary(context.program, declaration.initializer, declaration.name.text),
+    ])
+    : emptyTypeContract<FitCheckSpec>()
+  const typeSpecs = typeContract.specs
   const evaluate = () => ts.isIdentifier(declaration.name)
     ? evaluateExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
     : evaluateExpression(declaration.initializer!, context)
-  const value = options.claim === true ? withCallObligationRecording(context, evaluate) : evaluate()
+  const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
   bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
+  pushTypeUnsupportedChecks(context, typeContract.unsupported)
+  verifyLocalFitSpecs(typeSpecs, context)
 }
 
 function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
@@ -1591,7 +1735,11 @@ function bindVariableStatement(statement: ts.VariableStatement, context: EvalCon
   verifyLocalFitSpecs(specs, context)
 }
 
-function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], context: EvalContext) {
+function verifyLocalFitSpecs(specs: FitCheckSpec[], context: EvalContext) {
+  verifyCheckSpecsWithResult(specs, unknown('Inline @fit checks do not use return'), context)
+}
+
+function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -1599,7 +1747,7 @@ function verifyLocalFitSpecs(specs: Extract<FitSpec, {kind: 'check-range'} | {ki
       context.program,
       context.stack.join(' > '),
       context.env,
-      unknown('Inline @fit checks do not use return'),
+      result,
       spec,
       [...context.checks],
       context.assumptions,
@@ -2209,9 +2357,13 @@ function evaluateReturnStatement(statement: ts.ReturnStatement, context: EvalCon
 
 function evaluateReturnExpression(expression: ts.Expression, inlineNode: ts.Node, context: EvalContext): Value {
   const specs = parseInlineFitSpecsForExpression(context.program.sourceText, inlineNode, fitReturnPublicRoot)
+  const typeContract = typeCheckContractForExpressionBoundary(context.program, expression, fitReturnPublicRoot)
+  const typeSpecs = typeContract.specs
   const evaluate = () => evaluateExpressionWithObjectPath(expression, context, [fitReturnPublicRoot])
-  const value = specs.length > 0 ? withCallObligationRecording(context, evaluate) : evaluate()
+  const value = specs.length > 0 || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
   verifyInlineSpecsForValue(specs, value, context)
+  pushTypeUnsupportedChecks(context, typeContract.unsupported)
+  verifyCheckSpecsWithResult(typeSpecs, value, context)
   return value
 }
 
@@ -3178,13 +3330,14 @@ function evaluateLocalFunctionCall(
     : valueWithStructuralFallback(result, fallbackShape)
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
   const specs = context.program.specsByFunction.get(functionName) ?? []
-  if (specs.length === 0) return callSiteFallbackResult
+  const contractSpecs = functionContractSpecs(context.program, fn, specs)
+  if (contractSpecs.length === 0) return callSiteFallbackResult
   if (obligations !== 'pass') return callSiteFallbackResult
 
   const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
   if (proof.status !== 'pass') return callSiteFallbackResult
 
-  return valueWithFunctionContractSummary(functionName, context.program, fn, specs, argumentValues, context.contractCache, {
+  return valueWithFunctionContractSummary(functionName, context.program, fn, contractSpecs, argumentValues, context.contractCache, {
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
@@ -3309,9 +3462,10 @@ function evaluateImportedFunctionCall(
   callSiteBindings: CallSiteBindings,
 ): Value {
   const specs = target.module.specsByFunction.get(target.functionName) ?? []
+  const contractSpecs = functionContractSpecs(target.module, fn, specs)
   const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${target.functionName}Result`, fn.node, target.module))
   if (target.imported == null) return resolvedStructuralFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
-  if (specs.length === 0) {
+  if (contractSpecs.length === 0) {
     return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(
       callName,
       target.imported.binding,
@@ -3334,11 +3488,11 @@ function evaluateImportedFunctionCall(
   )
   if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(callName, target.module, fn, specs, argumentValues, context.contractCache, {
+  return valueWithFunctionContractSummary(callName, target.module, fn, contractSpecs, argumentValues, context.contractCache, {
     kind: 'imported',
     sourceFile: target.module.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(specs, target.module), undefined, callSiteBindings)
+  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), undefined, callSiteBindings)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
@@ -3680,7 +3834,8 @@ function verifyFunctionContract(program: Program, functionName: string, contract
 
   const fn = program.functions.get(functionName)
   const specs = program.specsByFunction.get(functionName) ?? []
-  if (fn == null || specs.length === 0) {
+  const contractSpecs = fn == null ? [] : functionContractSpecs(program, fn, specs)
+  if (fn == null || contractSpecs.length === 0) {
     const proof: FunctionContractProof = {
       status: 'unknown',
       checks: [{
@@ -3948,7 +4103,7 @@ function verifyCallGivenSpecs(
   context: EvalContext,
   options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
 ) {
-  const specs = calleeProgram.specsByFunction.get(fn.name) ?? []
+  const specs = functionContractSpecs(calleeProgram, fn)
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
   bindFunctionCallInputs(fn, argumentValues, env, options.thisValue)
@@ -4036,7 +4191,7 @@ function withCallComparisonReason(
   const callSiteMissing = callSiteText(missing, callSiteBindings)
   const lines = [
     `called function requires ${spec.left} ${spec.op} ${spec.right}`,
-    `this call passes ${formatCallBinding(spec.left, left)} and ${formatCallBinding(spec.right, right)}`,
+    `this call passes ${formatCallComparisonBinding(spec, left, right)}`,
   ]
   if (status.status === 'unknown') lines.push(`could not prove ${callSiteMissing}`)
   lines.push(callSiteMissingLine(missing, callSiteBindings))
@@ -4061,6 +4216,14 @@ function formatCallBinding(name: string, value: NumberValue) {
   if (value.min === value.max) return `${name} = ${value.min}`
   const range = formatExpectedRange(value.min, value.max, value.isInteger)
   return value.expr == null || value.expr === name ? `${name} is ${range}` : `${name} is ${range} from ${value.expr}`
+}
+
+function formatCallComparisonBinding(spec: Extract<FitSpec, {kind: 'given-comparison'}>, left: NumberValue, right: NumberValue) {
+  const leftText = formatCallBinding(spec.left, left)
+  const rightText = formatCallBinding(spec.right, right)
+  if (parsePrintedNumber(spec.left) != null) return rightText
+  if (parsePrintedNumber(spec.right) != null) return leftText
+  return `${leftText} and ${rightText}`
 }
 
 function evaluateMathCall(name: string, args: ts.NodeArray<ts.Expression>, context: EvalContext): Value {

@@ -20,6 +20,8 @@ width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
 // @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
+height: number // @fit 0..40 // required type-field contract, reused at explicit typed boundaries.
+// @fit bottom >= top // type object-scope contract over sibling fields.
 items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
@@ -280,6 +282,31 @@ return {
 ```
 
 There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
+
+Required fields in local `type` and `interface` declarations can carry the same small inline comments:
+
+```ts
+type Spring = {
+  pos: number
+  dest: number
+  k: number // @fit > 0
+  b: number // @fit >= 0
+  // @fit k > b
+}
+
+type RowStack = {
+  rows: {
+    top: number
+    bottom: number
+    // @fit bottom >= top
+    height: number // @fit 0..40
+  }[]
+}
+```
+
+These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b >= 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
+
+Inside an object type, a full line like `// @fit bottom >= top` is relative to that object scope. In `RowStack`, it becomes `rows[].bottom >= rows[].top` at the boundary, and nested object/array fields get their own local sibling scope. Shorthand comments attached to one field still talk about that field: `height: number // @fit 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Type-field contracts recurse through required object fields and array element types; optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
 
 Branch-local facts use ordinary TypeScript branches. Put the fact on the value made inside that branch; Freerange carries the `if` or ternary condition while checking it:
 
@@ -796,7 +823,7 @@ export default max
 
 Every hop must be statically known: a top-level `const`, import, or export whose final target is a supported `Math` call, a same-file helper, or a local-source imported helper. Mutable helper bindings are not followed.
 
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. Local type-field contracts are the exception because they are checked `@fit` source, not TypeScript shape. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
 Optional and nullable values stay conservative:
 
@@ -1233,6 +1260,7 @@ The checker understands a small pure subset:
 - class methods and getters, with `this` as an input root for instance members
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
+- local type/interface `// @fit` contracts on required fields and sibling relations, including nested object fields and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
 - numeric top-level constants
@@ -1278,6 +1306,7 @@ Not supported yet:
 - published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and default params
+- type-field contracts on optional fields, imported type declarations, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
 - broad strings, string operations, branded types, and semantic narrowing beyond finite literal/object/array shape

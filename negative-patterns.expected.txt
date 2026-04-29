@@ -526,6 +526,77 @@ FAIL negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
+FAIL negative-patterns.ts:negativeTypeFieldReturnCheck: return.k > 0
+  int -1..-1 as -1 > int 0..0 as 0 is false
+  need: -1 > 0
+  known:
+    int -1..-1 as -1
+    int 0..0 as 0
+  missing: given -1 > 0
+FAIL negative-patterns.ts:negativeTypeFieldCallBoundary: call negativeNeedsTypeFieldSpring(spring): requires spring.k > 0
+  called function requires spring.k > 0
+  this call passes spring.k = -1
+  missing: spring.k > 0
+FAIL negative-patterns.ts:negativeTypeFieldLocalBoundary: spring.k > 0
+  int -1..-1 as -1 > int 0..0 as 0 is false
+  need: -1 > 0
+  known:
+    int -1..-1 as -1
+    int 0..0 as 0
+  missing: given -1 > 0
+FAIL negative-patterns.ts:negativeTypeFieldSatisfiesReturn: return.k > 0
+  int -1..-1 as -1 > int 0..0 as 0 is false
+  need: -1 > 0
+  known:
+    int -1..-1 as -1
+    int 0..0 as 0
+  missing: given -1 > 0
+FAIL negative-patterns.ts:negativeTypeFieldAsReturn: return.k > 0
+  int -1..-1 as -1 > int 0..0 as 0 is false
+  need: -1 > 0
+  known:
+    int -1..-1 as -1
+    int 0..0 as 0
+  missing: given -1 > 0
+FAIL negative-patterns.ts:negativeTypeFieldArrayElement: return.rows[].height: 0..40
+  range was int 100..100 as 100, expected inside 0..40
+  need: 100 inside 0..40
+  known:
+    int 100..100 as 100
+    int 0..0 as 0
+    int 40..40 as 40
+  missing: 100 <= 40
+FAIL negative-patterns.ts:negativeTypeRelationReturnCheck: return.k > return.b
+  int 1..1 as 1 > int 2..2 as 2 is false
+  need: 1 > 2
+  known:
+    int 1..1 as 1
+    int 2..2 as 2
+  missing: given 1 > 2
+FAIL negative-patterns.ts:negativeTypeRelationCallBoundary: call negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b
+  called function requires spring.k > spring.b
+  this call passes spring.k = 1 and spring.b = 2
+  missing: spring.k > spring.b
+FAIL negative-patterns.ts:negativeTypeRelationNestedReturnCheck: return.rows[].bottom >= return.rows[].top
+  wildcard comparison means every return.rows[] item must satisfy: return.rows[].bottom >= return.rows[].top
+  int 0..0 as 0 >= int 10..10 as 10 is false
+  need: 0 >= 10
+  known:
+    int 0..0 as 0
+    int 10..10 as 10
+  missing: given 0 >= 10
+FAIL negative-patterns.ts:negativeTypeRelationNestedReturnCheck: return.rows[].cells[].right >= return.rows[].cells[].left
+  wildcard comparison means every return.rows[].cells[] item must satisfy: return.rows[].cells[].right >= return.rows[].cells[].left
+  int 1..1 as 1 >= int 4..4 as 4 is false
+  need: 1 >= 4
+  known:
+    int 1..1 as 1
+    int 4..4 as 4
+  missing: given 1 >= 4
+UNKNOWN negative-patterns.ts:negativeTypeRelationCrossScope: x >= row.left
+  type @fit reference "row" is not a required field in this object scope
+UNKNOWN negative-patterns.ts:negativeTypeRelationOptional: >= 0
+  type @fit on optional fields is not supported yet
 FAIL negative-patterns.ts:negativeIfClampCanReturnMax: return < max
   -1000..1000 as max < -1000..1000 as max is false by exact linear facts
   need: max < max

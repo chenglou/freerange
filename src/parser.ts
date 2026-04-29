@@ -66,6 +66,8 @@ export type FitSpec =
     }
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
+export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
+export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
 
 const identifierPattern = '[A-Za-z_$][\\w$]*'
 const indexLabelPattern = '\\$[A-Za-z_][\\w$]*(?:\\s*[+-]\\s*\\d+)?'
@@ -75,9 +77,10 @@ export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
 const internalReturnRootPattern = /(?<![\w$.])__fit_return(?![\w$])/g
 
-type FitCommentLine = {
+export type FitCommentLine = {
   text: string
   line: number
+  pos: number
 }
 
 export function normalizeFitText(text: string) {
@@ -113,6 +116,33 @@ export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
   return specs
 }
 
+export function fitBlockSpecCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
+  const lines: FitCommentLine[] = []
+  for (const commentLines of fitCommentLines(sourceText, node)) {
+    if (commentLines.some(line => line.text === '@fit-loop')) throw new Error('Use @fit for loop specs; @fit-loop is not supported')
+    if (!commentLines.some(line => line.text === '@fit')) continue
+    for (const line of commentLines) {
+      if (line.text.length === 0 || line.text === '@fit') continue
+      if (line.text.startsWith('@fit')) throw new Error(`Unsupported @fit marker: ${line.text}`)
+      lines.push(line)
+    }
+  }
+  return lines
+}
+
+export function fitCommentLineGroupsInRange(sourceText: string, start: number, end: number): FitCommentLine[][] {
+  const commentPattern = /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g
+  commentPattern.lastIndex = start
+  const groups: FitCommentLine[][] = []
+  for (;;) {
+    const match = commentPattern.exec(sourceText)
+    if (match == null || match.index >= end) break
+    const rangeEnd = Math.min(commentPattern.lastIndex, end)
+    groups.push(commentRangeLines(sourceText, {pos: match.index, end: rangeEnd, kind: ts.SyntaxKind.SingleLineCommentTrivia, hasTrailingNewLine: false}))
+  }
+  return groups
+}
+
 export function parseFunctionFitSpecs(
   sourceText: string,
   specNode: ts.Node,
@@ -124,7 +154,7 @@ export function parseFunctionFitSpecs(
   ]
 }
 
-export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>[] {
+export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): FitGivenSpec[] {
   const lines = inlineFitCommentLines(sourceText, param)
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
@@ -140,7 +170,7 @@ export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean 
   return inlineFitCommentLines(sourceText, node).length > 0
 }
 
-export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
+export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitCheckSpec[] {
   const lines = inlineFitCommentLines(sourceText, statement)
   if (lines.length === 0) return []
   const declarations = statement.declarationList.declarations
@@ -151,8 +181,16 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
   return lines.map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
 }
 
-export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[] {
+export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitCheckSpec[] {
   return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
+}
+
+export function parseInlineGivenFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitGivenSpec[] {
+  return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, 'given-range', line.line))
+}
+
+export function inlineFitCommentLinesForNode(sourceText: string, node: ts.Node): FitCommentLine[] {
+  return inlineFitCommentLines(sourceText, node)
 }
 
 function fitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[][] {
@@ -177,7 +215,7 @@ function trailingLineFitCommentLines(sourceText: string, node: ts.Node): FitComm
   if (commentStart < 0) return []
   const line = cleanCommentLine(restOfLine.slice(commentStart))
   return line.startsWith('@fit ')
-    ? [{text: line, line: lineNumberAtPosition(sourceText, node.end + commentStart)}]
+    ? [{text: line, line: lineNumberAtPosition(sourceText, node.end + commentStart), pos: node.end + commentStart}]
     : []
 }
 
@@ -202,6 +240,7 @@ function commentRangeLines(sourceText: string, range: ts.CommentRange): FitComme
     lines.push({
       text: cleanCommentLine(rawLine),
       line: lineNumberAtPosition(sourceText, range.pos + offset),
+      pos: range.pos + offset,
     })
     offset += rawLine.length
     const next = sourceText.slice(range.pos + offset, range.pos + offset + 2)

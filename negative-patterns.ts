@@ -839,6 +839,111 @@ export function negativeMapFunctionRowsNeedFieldDomain(items: {height: number}[]
   return {rows}
 }
 
+type NegativeTypeFieldSpring = {
+  k: number // @fit > 0
+  b: number // @fit >= 0
+}
+
+type NegativeTypeFieldRows = {
+  rows: {
+    height: number // @fit 0..40
+  }[]
+}
+
+export function negativeTypeFieldReturnCheck(): NegativeTypeFieldSpring {
+  return {k: -1, b: 30}
+}
+
+function negativeNeedsTypeFieldSpring(spring: NegativeTypeFieldSpring) {
+  return spring.k
+}
+
+/** @fit
+ * return < 0
+ */
+export function negativeTypeFieldCallBoundary() {
+  const spring = {k: -1, b: 30}
+  return negativeNeedsTypeFieldSpring(spring)
+}
+
+export function negativeTypeFieldLocalBoundary() {
+  const spring: NegativeTypeFieldSpring = {k: -1, b: 30}
+  return spring
+}
+
+export function negativeTypeFieldSatisfiesReturn() {
+  return {k: -1, b: 30} satisfies NegativeTypeFieldSpring
+}
+
+export function negativeTypeFieldAsReturn() {
+  return {k: -1, b: 30} as NegativeTypeFieldSpring
+}
+
+export function negativeTypeFieldArrayElement(): NegativeTypeFieldRows {
+  return {rows: [{height: 100}]}
+}
+
+type NegativeTypeRelationSpring = {
+  k: number
+  b: number
+  // @fit k > b
+}
+
+type NegativeTypeRelationRows = {
+  rows: {
+    top: number
+    bottom: number
+    // @fit bottom >= top
+    cells: {
+      left: number
+      right: number
+      // @fit right >= left
+    }[]
+  }[]
+}
+
+type NegativeTypeRelationCrossScope = {
+  rows: {
+    left: number
+    cells: {
+      x: number
+      // @fit x >= row.left
+    }[]
+  }[]
+}
+
+type NegativeTypeRelationOptional = {
+  maybe?: number // @fit >= 0
+}
+
+export function negativeTypeRelationReturnCheck(): NegativeTypeRelationSpring {
+  return {k: 1, b: 2}
+}
+
+function negativeNeedsTypeRelationSpring(spring: NegativeTypeRelationSpring) {
+  return spring.k
+}
+
+/** @fit
+ * return > 0
+ */
+export function negativeTypeRelationCallBoundary() {
+  const spring = {k: 1, b: 2}
+  return negativeNeedsTypeRelationSpring(spring)
+}
+
+export function negativeTypeRelationNestedReturnCheck(): NegativeTypeRelationRows {
+  return {rows: [{top: 10, bottom: 0, cells: [{left: 4, right: 1}]}]}
+}
+
+export function negativeTypeRelationCrossScope(input: NegativeTypeRelationCrossScope) {
+  return input.rows.length
+}
+
+export function negativeTypeRelationOptional(input: NegativeTypeRelationOptional) {
+  return input.maybe ?? 0
+}
+
 /** @fit
  * given min: -1000..1000
  * given value: -1000..1000
