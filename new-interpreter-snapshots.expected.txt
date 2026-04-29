@@ -1,0 +1,39 @@
+case matrix nested iife/map/defaults: interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
+  return.length: int 2..2
+  return[0].length: int 2..2
+  return[0][0].spring.pos: int 4..4
+  return[0][0].spring.k: int 290..290
+  return[0][0].spring.b: int 30..30
+  return[0][0].index: int 0..0
+  return[0][1].spring.pos: int 8..8
+  return[0][1].spring.k: int 290..290
+  return[0][1].spring.b: int 30..30
+  return[0][1].index: int 1..1
+  return[0][].spring.pos: int 4..8
+  return[0][].spring.k: int 290..290
+  return[0][].spring.b: int 30..30
+  return[0][].index: int 0..1
+  return[1].length: int 1..1
+  return[1][0].spring.pos: int 12..12
+  return[1][0].spring.k: int 290..290
+  return[1][0].spring.b: int 30..30
+  return[1][0].index: int 0..0
+  return[1][].spring.pos: int 12..12
+  return[1][].spring.k: int 290..290
+  return[1][].spring.b: int 30..30
+  return[1][].index: int 0..0
+  return[].length: int 1..2
+  return[][].spring.pos: int 4..12
+  return[][].spring.k: int 290..290
+  return[][].spring.b: int 30..30
+  return[][].index: int 0..1
+case matrix default param order: interpreter-matrix-patterns.ts:matrixDefaultParamOrder
+  return.pos: int 0..0
+  return.k: int 10..10
+  return.b: int 11..11
+case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
+  return.value: int -1..-1
+case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
+  return.length: int 1..1
+  return[0].value: int -1..-1
+  return[].value: int -1..-1

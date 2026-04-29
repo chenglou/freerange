@@ -1,12 +1,12 @@
 # Abstract Interpreter Spine
 
-Freerange is already an abstract interpreter. The rewrite should make that explicit without changing behavior first.
+Freerange is already an abstract interpreter. The rewrite should make that explicit, but the old evaluator is now a reference implementation, not a cage.
 
 ## Goal
 
 Keep the public checker small: ordinary TypeScript source in, earned `@fit` facts out. The interpreter owns source evaluation; contract checking, reports, `infer`, and `doctor` query the same abstract state instead of each growing their own recognizer.
 
-First milestone: same behavior, same snapshots, clearer modules.
+First milestone: a fresh interpreter core running beside `check.ts` on focused kernels. Old snapshots catch surprises; they do not decide the design.
 
 ## Abstract Values
 
@@ -76,7 +76,16 @@ Diagnostics should point at the check location and the construction boundary whe
 
 ## Rewrite Style
 
-Do not swap the engine in one move. Extract modules in this order:
+Do not swap the engine in one move. Build the new core in parallel, then compare. Useful old helpers are fine when they describe shared concepts, but do not copy old evaluator control flow just to preserve its shape.
+
+Current parallel core:
+
+- `src/interpreter/context.ts`: frames, issues, and flow
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, local calls, ordered defaults, IIFEs, `map`, property assignment, and simple alias-preserving mutation
+- `src/interpreter/format.ts`: value-tree snapshots for the new harness
+- `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
+
+Old extraction order, still useful as a map of remaining semantic families:
 
 1. interpreter state helpers
 2. top-level literal/module value reading

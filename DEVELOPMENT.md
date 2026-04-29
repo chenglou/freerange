@@ -18,6 +18,7 @@ bun install
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run verify:eval` — curated abstract-evaluation snapshots for facts, shapes, and unsupported stops we do not want to lose during evaluator work
+- `bun run verify:interpreter` — run the fresh parallel interpreter on focused kernels and snapshot the abstract return values it builds
 - `bun run verify:differential` — compact public-output snapshot for future old-engine/new-engine comparisons
 - `bun run verify:corpus` — reproducible external corpus probes when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose performance guard for demo-contract load and verification time
@@ -32,7 +33,7 @@ bun install
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [differential-snapshots.expected.txt](./differential-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, abstract evaluation, future evaluator differentials, and external corpus probes
+- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [new-interpreter-snapshots.expected.txt](./new-interpreter-snapshots.expected.txt), [differential-snapshots.expected.txt](./differential-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, abstract evaluation, the fresh interpreter core, future evaluator differentials, and external corpus probes
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -40,6 +41,7 @@ bun install
 
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/interpreter/](./src/interpreter) — fresh parallel abstract interpreter core and value-tree snapshot formatting
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by evaluator inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers
