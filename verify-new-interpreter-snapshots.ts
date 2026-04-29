@@ -18,10 +18,12 @@ addCase('matrix ternary literal join', ['interpreter-matrix-patterns.ts'], 'matr
 addCase('matrix filter/map literal booleans', ['interpreter-matrix-patterns.ts'], 'matrixFilterMapLiteralBooleans')
 addCase('matrix for-of push visible rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfPushVisibleRows')
 addCase('matrix abstract for-of cursor values', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
+addCase('matrix abstract conditional count', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
 addCase('matrix Math clamp columns', ['interpreter-matrix-patterns.ts'], 'matrixMathClampColumns')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 addCase('negative cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
+addCase('negative conditional else count surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixConditionalElseCount')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 

@@ -68,6 +68,10 @@ infer matrix abstract for-of cursor values
   local rows follows items by index
   local y == runningSum(top, items.length, step)
   local y: 0..3000
+infer matrix abstract conditional count
+  return return == count
+  return return: int 0..50
+  local count: int 0..50
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

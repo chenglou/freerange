@@ -21,6 +21,7 @@ addInferCase('matrix for-of push visible rows', ['interpreter-matrix-patterns.ts
 addInferCase('matrix abstract for-of param rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamRows')
 addInferCase('matrix abstract guarded for-of rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamVisibleRows')
 addInferCase('matrix abstract for-of cursor values', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
+addInferCase('matrix abstract conditional count', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
 addInferCase('imported literal nested map/defaults', ['import-patterns.ts'], 'importedNestedLiteralArrayMapDefaultFields')
 addShapeCase('imported literal nested map/defaults shape', ['import-patterns.ts'], 'importedNestedLiteralArrayMapDefaultFields')
 

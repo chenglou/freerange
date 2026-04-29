@@ -3,6 +3,7 @@ import {
   joinValues,
   unknown,
   type ArrayValue,
+  type LinearConstraint,
   type NumberValue,
   type Value,
 } from '../domain.ts'
@@ -21,6 +22,7 @@ export type InterpreterFrame = {
   stack: string[]
   loopStack: InterpreterLoopContext[]
   conditionalDepth: number
+  assumptions: LinearConstraint[]
 }
 
 export type InterpreterLoopContext = {
@@ -54,6 +56,7 @@ export function rootFrame(program: Program): InterpreterFrame {
     stack: [],
     loopStack: [],
     conditionalDepth: 0,
+    assumptions: [],
   }
 }
 
@@ -65,6 +68,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     stack: [...parent.stack, name],
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
+    assumptions: [...parent.assumptions],
   }
 }
 
@@ -76,6 +80,7 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     stack: [...parent.stack, name],
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
+    assumptions: [...parent.assumptions],
   }
 }
 

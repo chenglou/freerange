@@ -1528,9 +1528,9 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 
 function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} | null {
   if (!freshInterpreterEligible(fn, context)) return null
-  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack)
+  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions)
   if (result.issues.length > 0) return null
-  return {result: result.value, env: result.env, assumptions: context.assumptions}
+  return {result: result.value, env: result.env, assumptions: result.assumptions}
 }
 
 function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolean {

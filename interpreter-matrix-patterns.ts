@@ -105,6 +105,17 @@ export function matrixForOfParamCursorValues(
   return {rows, bottom: y}
 }
 
+/** @fit
+ * given items.length: int 0..50
+ */
+export function matrixForOfParamConditionalCount(items: {visible: boolean}[]): number {
+  let count = 0
+  for (const item of items) {
+    if (item.visible) count += 1
+  }
+  return count
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))

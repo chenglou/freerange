@@ -17,6 +17,7 @@ import {
   addNumbers,
   divideNumbers,
   joinValues,
+  mergeAssumptions,
   literalValue,
   mergeArraySummary,
   mergeElementValue,
@@ -25,6 +26,7 @@ import {
   nullValue,
   numberValue,
   powerNumbers,
+  conditionalRunningSumNumber,
   runningSumNumber,
   subtractNumbers,
   unknown,
@@ -33,6 +35,7 @@ import {
   unknownObject,
   linearNameForExpression,
   type ArrayValue,
+  type LinearConstraint,
   type NumberValue,
   type Value,
 } from '../domain.ts'
@@ -52,6 +55,7 @@ import type {ComparisonOperator} from '../parser.ts'
 import {valueFromSyntaxTypeShape} from '../shapes.ts'
 import {expressionRootName} from '../source-expressions.ts'
 import {localizeFreshContainerValue} from '../value-localize.ts'
+import {conditionalRunningSumFacts} from '../proof.ts'
 import {
   childFrame,
   frameWithProgram,
@@ -71,6 +75,7 @@ export type InterpreterFunctionResult = {
 
 export type InterpreterBodyResult = InterpreterFunctionResult & {
   env: Map<string, Value>
+  assumptions: LinearConstraint[]
 }
 
 type PathSegment =
@@ -86,6 +91,8 @@ type PendingAbstractScalarAdd = {
   increment: NumberValue
   order: number
 }
+
+type PendingAbstractConditionalScalarAdd = PendingAbstractScalarAdd
 
 type AbstractLoopScalarAdd = {
   targetName: string
@@ -106,7 +113,13 @@ export function evaluateInterpreterFunction(program: Program, functionName: stri
   return {value, issues: frame.issues}
 }
 
-export function evaluateInterpreterFunctionBody(program: Program, fn: FitFunction, env: Map<string, Value>, stack: string[] = [fn.name]): InterpreterBodyResult {
+export function evaluateInterpreterFunctionBody(
+  program: Program,
+  fn: FitFunction,
+  env: Map<string, Value>,
+  stack: string[] = [fn.name],
+  assumptions: LinearConstraint[] = [],
+): InterpreterBodyResult {
   const frame: InterpreterFrame = {
     program,
     env: new Map(env),
@@ -114,9 +127,10 @@ export function evaluateInterpreterFunctionBody(program: Program, fn: FitFunctio
     stack,
     loopStack: [],
     conditionalDepth: 0,
+    assumptions: [...assumptions],
   }
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
-  return {value, env: frame.env, issues: frame.issues}
+  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
 }
 
 function invokeFitFunction(
@@ -321,6 +335,7 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
   const item = source.element ?? unknownObject(`${sourceExpr}[]`)
   const loop: InterpreterLoopContext = {source, sourceExpr, abstract: true, statementIndex: 0, pushes: []}
   const pendingAdds = new Map<string, PendingAbstractScalarAdd>()
+  const pendingConditionalAdds = new Map<string, PendingAbstractConditionalScalarAdd>()
   frame.loopStack.push(loop)
   try {
     bindForOfInitializer(statement.initializer, item, frame)
@@ -328,12 +343,27 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
     for (let index = 0; index < statement.statement.statements.length; index++) {
       const child = statement.statement.statements[index]!
       loop.statementIndex = index
+      if (isUnsupportedConditionalLoopScalarElse(child, frame)) {
+        return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of conditional running sums do not support else branches')}
+      }
+      const conditionalAdd = readAbstractConditionalLoopScalarAdd(child, frame)
+      if (conditionalAdd != null) {
+        if (pendingAdds.has(conditionalAdd.targetName) || pendingConditionalAdds.has(conditionalAdd.targetName)) {
+          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${conditionalAdd.targetName}`)}
+        }
+        if (referencesAnyIdentifier(conditionalAdd.incrementExpression, new Set([...pendingAdds.keys(), ...pendingConditionalAdds.keys()]))) {
+          return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar cursor increments cannot depend on an earlier cursor update')}
+        }
+        pendingConditionalAdds.set(conditionalAdd.targetName, {increment: conditionalAdd.increment, order: index})
+        sawScalarUpdate = true
+        continue
+      }
       const scalarAdd = readAbstractLoopScalarAdd(child, frame)
       if (scalarAdd != null) {
-        if (pendingAdds.has(scalarAdd.targetName)) {
+        if (pendingAdds.has(scalarAdd.targetName) || pendingConditionalAdds.has(scalarAdd.targetName)) {
           return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${scalarAdd.targetName}`)}
         }
-        if (referencesAnyIdentifier(scalarAdd.incrementExpression, new Set(pendingAdds.keys()))) {
+        if (referencesAnyIdentifier(scalarAdd.incrementExpression, new Set([...pendingAdds.keys(), ...pendingConditionalAdds.keys()]))) {
           return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar cursor increments cannot depend on an earlier cursor update')}
         }
         pendingAdds.set(scalarAdd.targetName, {increment: scalarAdd.increment, order: index})
@@ -361,7 +391,7 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
       }
       return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
-    const error = finalizeAbstractLoop(loop, pendingAdds, frame)
+    const error = finalizeAbstractLoop(loop, pendingAdds, pendingConditionalAdds, frame)
     if (error != null) return {kind: 'return', value: error}
   } finally {
     frame.loopStack.pop()
@@ -380,6 +410,22 @@ function readAbstractLoopScalarAdd(statement: ts.Statement, frame: InterpreterFr
   if (incrementExpression == null || referencesIdentifier(incrementExpression, targetName)) return null
   const increment = evaluateExpression(incrementExpression, frame)
   return increment.kind === 'number' ? {targetName, increment, incrementExpression} : null
+}
+
+function readAbstractConditionalLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame): AbstractLoopScalarAdd | null {
+  if (!ts.isIfStatement(statement) || statement.elseStatement != null || !isSideEffectFreeExpression(statement.expression)) return null
+  return readAbstractLoopScalarAdd(singleStatement(statement.thenStatement), frame)
+}
+
+function isUnsupportedConditionalLoopScalarElse(statement: ts.Statement, frame: InterpreterFrame): boolean {
+  return ts.isIfStatement(statement)
+    && statement.elseStatement != null
+    && isSideEffectFreeExpression(statement.expression)
+    && readAbstractLoopScalarAdd(singleStatement(statement.thenStatement), frame) != null
+}
+
+function singleStatement(statement: ts.Statement): ts.Statement {
+  return ts.isBlock(statement) && statement.statements.length === 1 ? statement.statements[0]! : statement
 }
 
 function scalarIncrementExpression(expression: ts.BinaryExpression, targetName: string): ts.Expression | null {
@@ -432,6 +478,22 @@ function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclarati
     && node.body != null
 }
 
+function isSideEffectFreeExpression(expression: ts.Expression): boolean {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current)) return true
+  if (ts.isPropertyAccessExpression(current)) return isSideEffectFreeExpression(current.expression)
+  if (ts.isElementAccessExpression(current)) return current.argumentExpression != null
+    && isSideEffectFreeExpression(current.expression)
+    && isSideEffectFreeExpression(current.argumentExpression)
+  if (ts.isNumericLiteral(current) || ts.isStringLiteral(current) || current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) return true
+  if (ts.isPrefixUnaryExpression(current)) return isSideEffectFreeExpression(current.operand)
+  if (ts.isBinaryExpression(current)) return !isAssignmentOperator(current.operatorToken.kind)
+    && isSideEffectFreeExpression(current.left)
+    && isSideEffectFreeExpression(current.right)
+  if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) return isSideEffectFreeExpression(current.expression)
+  return false
+}
+
 function abstractLoopBranchSupported(statement: ts.Statement): boolean {
   if (ts.isBlock(statement)) return statement.statements.every(abstractLoopBranchSupported)
   if (ts.isVariableStatement(statement)) return true
@@ -443,8 +505,16 @@ function abstractLoopBranchSupported(statement: ts.Statement): boolean {
   return false
 }
 
-function finalizeAbstractLoop(loop: InterpreterLoopContext, pendingAdds: Map<string, PendingAbstractScalarAdd>, frame: InterpreterFrame): Value | null {
-  if (pendingAdds.size === 0) return null
+function finalizeAbstractLoop(
+  loop: InterpreterLoopContext,
+  pendingAdds: Map<string, PendingAbstractScalarAdd>,
+  pendingConditionalAdds: Map<string, PendingAbstractConditionalScalarAdd>,
+  frame: InterpreterFrame,
+): Value | null {
+  if (pendingAdds.size === 0 && pendingConditionalAdds.size === 0) return null
+  if (pendingConditionalAdds.size > 0 && (pendingAdds.size > 0 || loop.pushes.length > 0)) {
+    return noteUnsupported(frame, 'Abstract for..of conditional running sums support guarded scalar updates only')
+  }
   const updates = new Map<string, LoopScalarUpdate>()
   for (const [targetName, pending] of pendingAdds) {
     const start = frame.env.get(targetName)
@@ -454,6 +524,13 @@ function finalizeAbstractLoop(loop: InterpreterLoopContext, pendingAdds: Map<str
       increment: pending.increment,
       end: runningSumNumber(start, loop.source.length, pending.increment),
     })
+  }
+  for (const [targetName, pending] of pendingConditionalAdds) {
+    const start = frame.env.get(targetName)
+    if (start?.kind !== 'number') return noteUnsupported(frame, `Abstract for..of scalar cursor expected ${targetName} to be a number`)
+    const end = conditionalRunningSumNumber(targetName, start, loop.source.length, pending.increment)
+    updates.set(targetName, {start, increment: pending.increment, end})
+    frame.assumptions = mergeAssumptions(frame.assumptions, conditionalRunningSumFacts(end, start, loop.source.length, pending.increment))
   }
 
   const cursorError = applyAbstractLoopCursorFacts(loop, pendingAdds, updates, frame)

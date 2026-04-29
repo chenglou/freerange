@@ -34,3 +34,12 @@ export function negativeMatrixCursorUpdateBeforePush(items: number[], step: numb
   }
   return rows
 }
+
+export function negativeMatrixConditionalElseCount(items: {visible: boolean}[]): number {
+  let count = 0
+  for (const item of items) {
+    if (item.visible) count += 1
+    else count += 2
+  }
+  return count
+}

@@ -80,7 +80,7 @@ Do not swap the engine in one move. Build the new core in parallel, then compare
 
 Current parallel core:
 
-- `src/interpreter/context.ts`: frames, issues, and flow
+- `src/interpreter/context.ts`: frames, issues, assumptions, and flow
 - `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
@@ -93,7 +93,9 @@ Fresh finite `for..of` loop pushes now record only origin lineage: unconditional
 
 When the source array is not finite but has an element domain, the fresh core can run a deliberately tiny abstract `for..of` pass for append loops. The body may bind local values, call `rows.push(...)`, or guard that push with an `if`. Unguarded pushes mean one push per source element, so the target length follows the source length. Guarded pushes keep only element facts and subsequence origin.
 
-That abstract pass now also handles trailing scalar cursor updates such as `y += step`, `y = y + step`, and `y = step + y`. The update must come after any push that reads the cursor, and the increment cannot depend on an earlier cursor update. The interpreter records cursor paths from the pushed syntax, then applies the running-sum result after the body, so `let y = top; rows.push(y); y += step` keeps both `rows[]` ranges and the final `y == runningSum(...)`. Conditional cursor updates and richer side effects still fall back to the legacy loop reader.
+That abstract pass now also handles trailing scalar cursor updates such as `y += step`, `y = y + step`, and `y = step + y`. The update must come after any push that reads the cursor, and the increment cannot depend on an earlier cursor update. The interpreter records cursor paths from the pushed syntax, then applies the running-sum result after the body, so `let y = top; rows.push(y); y += step` keeps both `rows[]` ranges and the final `y == runningSum(...)`.
+
+Guarded scalar totals are the separate small reducer shape: `if (item.visible) count += 1` or `if (item.visible) total += item.height` produces the conditional running-sum range and the extra comparison facts such as `count <= items.length` when the source proves them. For now, a guarded total loop cannot also push rows, mix in unguarded cursor updates, or use an `else` branch. Those combinations stay on the legacy path until the fresh loop state can model them directly.
 
 Old extraction order, still useful as a map of remaining semantic families:
 
