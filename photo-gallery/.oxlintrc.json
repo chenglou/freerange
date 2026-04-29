@@ -1,0 +1,31 @@
+{
+  "plugins": ["typescript", "oxc"],
+  "rules": {
+    "prefer-ts-expect-error": "error",
+    "no-unnecessary-type-assertion": "error",
+    "no-unreachable": "error",
+    "@typescript-eslint/no-explicit-any": "error",
+    "@typescript-eslint/no-unsafe-assignment": "error",
+    "@typescript-eslint/no-unsafe-return": "error",
+    "@typescript-eslint/no-unsafe-member-access": "error",
+    "@typescript-eslint/prefer-nullish-coalescing": ["error", {
+      "ignorePrimitives": {"boolean": true}
+    }],
+    "@typescript-eslint/strict-boolean-expressions": ["error", {
+      "allowNullableBoolean": true,
+      "allowString": false
+    }],
+    "@typescript-eslint/switch-exhaustiveness-check": ["error", {
+      "allowDefaultCaseForExhaustiveSwitch": false,
+      "considerDefaultExhaustiveForUnions": true,
+      "requireDefaultForNonUnion": true
+    }],
+    "@typescript-eslint/no-unnecessary-condition": ["error", {
+      "allowConstantLoopConditions": true
+    }],
+    "no-unused-expressions": ["error", {
+      "allowTernary": true,
+      "allowShortCircuit": true
+    }]
+  }
+}

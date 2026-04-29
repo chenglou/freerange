@@ -1,0 +1,16 @@
+{
+  "name": "@chenglou/photo-gallery",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "HOST=${HOST:-0.0.0.0}; PORT=${PORT:-3000}; bun ./index.html --host=$HOST:$PORT",
+    "check": "tsgo && oxlint --type-aware index.ts data.ts --ignore-pattern '*.js'"
+  },
+  "devDependencies": {
+    "@typescript/native-preview": "^7.0.0-dev.20260428.1",
+    "oxlint": "latest",
+    "oxlint-tsgolint": "latest",
+    "typescript": "^6.0.2"
+  }
+}
