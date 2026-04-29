@@ -104,6 +104,17 @@ type PendingAbstractExtremum = LoopExtremum & {
   candidateExpression: ts.Expression
 }
 
+type PendingAbstractReducers = {
+  adds: Map<string, PendingAbstractScalarAdd>
+  conditionalAdds: Map<string, PendingAbstractConditionalScalarAdd>
+  extrema: Map<string, PendingAbstractExtremum>
+}
+
+type AbstractLoopReducerCapture =
+  | {kind: 'captured'}
+  | {kind: 'unsupported'; value: Value}
+  | {kind: 'none'}
+
 type AbstractLoopScalarAdd = {
   targetName: string
   increment: NumberValue
@@ -385,9 +396,7 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
   const sourceExpr = sourceExpression(source, statement.expression, frame)
   const item = source.element ?? unknownObject(`${sourceExpr}[]`)
   const loop: InterpreterLoopContext = {source, sourceExpr, abstract: true, statementIndex: 0, pushes: []}
-  const pendingAdds = new Map<string, PendingAbstractScalarAdd>()
-  const pendingConditionalAdds = new Map<string, PendingAbstractConditionalScalarAdd>()
-  const pendingExtrema = new Map<string, PendingAbstractExtremum>()
+  const reducers = pendingAbstractReducers()
   frame.loopStack.push(loop)
   try {
     bindForOfInitializer(statement.initializer, item, frame)
@@ -395,42 +404,9 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
     for (let index = 0; index < statement.statement.statements.length; index++) {
       const child = statement.statement.statements[index]!
       loop.statementIndex = index
-      if (isUnsupportedConditionalLoopScalarElse(child, frame)) {
-        return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of conditional running sums do not support else branches')}
-      }
-      const conditionalAdd = readAbstractConditionalLoopScalarAdd(child, frame)
-      if (conditionalAdd != null) {
-        if (abstractLoopTargetAlreadyUpdated(conditionalAdd.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${conditionalAdd.targetName}`)}
-        }
-        if (referencesAnyIdentifier(conditionalAdd.incrementExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar cursor increments cannot depend on an earlier cursor update')}
-        }
-        pendingConditionalAdds.set(conditionalAdd.targetName, {increment: conditionalAdd.increment, order: index})
-        sawScalarUpdate = true
-        continue
-      }
-      const scalarAdd = readAbstractLoopScalarAdd(child, frame)
-      if (scalarAdd != null) {
-        if (abstractLoopTargetAlreadyUpdated(scalarAdd.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${scalarAdd.targetName}`)}
-        }
-        if (referencesAnyIdentifier(scalarAdd.incrementExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar cursor increments cannot depend on an earlier cursor update')}
-        }
-        pendingAdds.set(scalarAdd.targetName, {increment: scalarAdd.increment, order: index})
-        sawScalarUpdate = true
-        continue
-      }
-      const extremum = readAbstractLoopExtremumAssignment(child, frame)
-      if (extremum != null) {
-        if (abstractLoopTargetAlreadyUpdated(extremum.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${extremum.targetName}`)}
-        }
-        if (referencesAnyIdentifier(extremum.candidateExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar extrema candidates cannot depend on an earlier scalar update')}
-        }
-        pendingExtrema.set(extremum.targetName, extremum)
+      const reducer = captureAbstractLoopReducer(child, index, reducers, 'Abstract for..of', frame)
+      if (reducer.kind === 'unsupported') return {kind: 'return', value: reducer.value}
+      if (reducer.kind === 'captured') {
         sawScalarUpdate = true
         continue
       }
@@ -455,7 +431,7 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
       }
       return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
-    const error = finalizeAbstractLoop(loop, pendingAdds, pendingConditionalAdds, pendingExtrema, 'Abstract for..of', frame)
+    const error = finalizeAbstractLoop(loop, reducers, 'Abstract for..of', frame)
     if (error != null) return {kind: 'return', value: error}
   } finally {
     frame.loopStack.pop()
@@ -479,50 +455,15 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   frame.env.set(shape.indexName, indexValue)
   frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
   const loop = indexedForLoopContext(bound, length, frame)
-  const pendingAdds = new Map<string, PendingAbstractScalarAdd>()
-  const pendingConditionalAdds = new Map<string, PendingAbstractConditionalScalarAdd>()
-  const pendingExtrema = new Map<string, PendingAbstractExtremum>()
+  const reducers = pendingAbstractReducers()
   try {
     const pushedArrays = new Map<string, IndexedForPushRecord>()
     let sawScalarUpdate = false
     for (let order = 0; order < statement.statement.statements.length; order++) {
       const child = statement.statement.statements[order]!
-      if (isUnsupportedConditionalLoopScalarElse(child, frame)) {
-        return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop conditional running sums do not support else branches')}
-      }
-      const conditionalAdd = readAbstractConditionalLoopScalarAdd(child, frame)
-      if (conditionalAdd != null) {
-        if (abstractLoopTargetAlreadyUpdated(conditionalAdd.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor already updates ${conditionalAdd.targetName}`)}
-        }
-        if (referencesAnyIdentifier(conditionalAdd.incrementExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop scalar cursor increments cannot depend on an earlier cursor update')}
-        }
-        pendingConditionalAdds.set(conditionalAdd.targetName, {increment: conditionalAdd.increment, order})
-        sawScalarUpdate = true
-        continue
-      }
-      const scalarAdd = readAbstractLoopScalarAdd(child, frame)
-      if (scalarAdd != null) {
-        if (abstractLoopTargetAlreadyUpdated(scalarAdd.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor already updates ${scalarAdd.targetName}`)}
-        }
-        if (referencesAnyIdentifier(scalarAdd.incrementExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop scalar cursor increments cannot depend on an earlier cursor update')}
-        }
-        pendingAdds.set(scalarAdd.targetName, {increment: scalarAdd.increment, order})
-        sawScalarUpdate = true
-        continue
-      }
-      const extremum = readAbstractLoopExtremumAssignment(child, frame)
-      if (extremum != null) {
-        if (abstractLoopTargetAlreadyUpdated(extremum.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor already updates ${extremum.targetName}`)}
-        }
-        if (referencesAnyIdentifier(extremum.candidateExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
-          return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop scalar extrema candidates cannot depend on an earlier scalar update')}
-        }
-        pendingExtrema.set(extremum.targetName, extremum)
+      const reducer = captureAbstractLoopReducer(child, order, reducers, 'Indexed for loop', frame)
+      if (reducer.kind === 'unsupported') return {kind: 'return', value: reducer.value}
+      if (reducer.kind === 'captured') {
         sawScalarUpdate = true
         continue
       }
@@ -556,7 +497,7 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
       }
       return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
-    const cursorError = finalizeAbstractLoop(loop, pendingAdds, pendingConditionalAdds, pendingExtrema, 'Indexed for loop', frame)
+    const cursorError = finalizeAbstractLoop(loop, reducers, 'Indexed for loop', frame)
     if (cursorError != null) return {kind: 'return', value: cursorError}
     finalizeIndexedForPushedArrays(pushedArrays, bound.origin, frame)
   } finally {
@@ -794,6 +735,62 @@ function expressionIndexPaths(expression: ts.Expression | undefined, indexName: 
   return []
 }
 
+function pendingAbstractReducers(): PendingAbstractReducers {
+  return {
+    adds: new Map(),
+    conditionalAdds: new Map(),
+    extrema: new Map(),
+  }
+}
+
+function captureAbstractLoopReducer(
+  statement: ts.Statement,
+  order: number,
+  reducers: PendingAbstractReducers,
+  loopLabel: string,
+  frame: InterpreterFrame,
+): AbstractLoopReducerCapture {
+  if (isUnsupportedConditionalLoopScalarElse(statement, frame)) {
+    return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} conditional running sums do not support else branches`)}
+  }
+  const conditionalAdd = readAbstractConditionalLoopScalarAdd(statement, frame)
+  if (conditionalAdd != null) return captureAbstractLoopScalarAdd(conditionalAdd, order, reducers, loopLabel, frame, true)
+
+  const scalarAdd = readAbstractLoopScalarAdd(statement, frame)
+  if (scalarAdd != null) return captureAbstractLoopScalarAdd(scalarAdd, order, reducers, loopLabel, frame, false)
+
+  const extremum = readAbstractLoopExtremumAssignment(statement, frame)
+  if (extremum == null) return {kind: 'none'}
+  if (abstractLoopTargetAlreadyUpdated(extremum.targetName, reducers)) {
+    return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar cursor already updates ${extremum.targetName}`)}
+  }
+  if (referencesAnyIdentifier(extremum.candidateExpression, abstractLoopUpdatedTargets(reducers))) {
+    return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar extrema candidates cannot depend on an earlier scalar update`)}
+  }
+  reducers.extrema.set(extremum.targetName, extremum)
+  return {kind: 'captured'}
+}
+
+function captureAbstractLoopScalarAdd(
+  add: AbstractLoopScalarAdd,
+  order: number,
+  reducers: PendingAbstractReducers,
+  loopLabel: string,
+  frame: InterpreterFrame,
+  conditional: boolean,
+): AbstractLoopReducerCapture {
+  if (abstractLoopTargetAlreadyUpdated(add.targetName, reducers)) {
+    return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar cursor already updates ${add.targetName}`)}
+  }
+  if (referencesAnyIdentifier(add.incrementExpression, abstractLoopUpdatedTargets(reducers))) {
+    return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar cursor increments cannot depend on an earlier cursor update`)}
+  }
+  const target = {increment: add.increment, order}
+  if (conditional) reducers.conditionalAdds.set(add.targetName, target)
+  else reducers.adds.set(add.targetName, target)
+  return {kind: 'captured'}
+}
+
 function readAbstractLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame): AbstractLoopScalarAdd | null {
   if (!ts.isExpressionStatement(statement)) return null
   const expression = unwrapExpression(statement.expression)
@@ -874,21 +871,12 @@ function referencesAnyIdentifier(expression: ts.Expression, names: Set<string>):
   return false
 }
 
-function abstractLoopUpdatedTargets(
-  pendingAdds: Map<string, PendingAbstractScalarAdd>,
-  pendingConditionalAdds: Map<string, PendingAbstractConditionalScalarAdd>,
-  pendingExtrema: Map<string, PendingAbstractExtremum>,
-): Set<string> {
-  return new Set([...pendingAdds.keys(), ...pendingConditionalAdds.keys(), ...pendingExtrema.keys()])
+function abstractLoopUpdatedTargets(reducers: PendingAbstractReducers): Set<string> {
+  return new Set([...reducers.adds.keys(), ...reducers.conditionalAdds.keys(), ...reducers.extrema.keys()])
 }
 
-function abstractLoopTargetAlreadyUpdated(
-  targetName: string,
-  pendingAdds: Map<string, PendingAbstractScalarAdd>,
-  pendingConditionalAdds: Map<string, PendingAbstractConditionalScalarAdd>,
-  pendingExtrema: Map<string, PendingAbstractExtremum>,
-): boolean {
-  return pendingAdds.has(targetName) || pendingConditionalAdds.has(targetName) || pendingExtrema.has(targetName)
+function abstractLoopTargetAlreadyUpdated(targetName: string, reducers: PendingAbstractReducers): boolean {
+  return reducers.adds.has(targetName) || reducers.conditionalAdds.has(targetName) || reducers.extrema.has(targetName)
 }
 
 function referencesIdentifier(node: ts.Node, name: string): boolean {
@@ -943,21 +931,19 @@ function abstractLoopBranchSupported(statement: ts.Statement): boolean {
 
 function finalizeAbstractLoop(
   loop: InterpreterLoopContext,
-  pendingAdds: Map<string, PendingAbstractScalarAdd>,
-  pendingConditionalAdds: Map<string, PendingAbstractConditionalScalarAdd>,
-  pendingExtrema: Map<string, PendingAbstractExtremum>,
+  reducers: PendingAbstractReducers,
   loopLabel: string,
   frame: InterpreterFrame,
 ): Value | null {
-  if (pendingAdds.size === 0 && pendingConditionalAdds.size === 0 && pendingExtrema.size === 0) return null
-  if (pendingConditionalAdds.size > 0 && (pendingAdds.size > 0 || pendingExtrema.size > 0 || loop.pushes.length > 0)) {
+  if (reducers.adds.size === 0 && reducers.conditionalAdds.size === 0 && reducers.extrema.size === 0) return null
+  if (reducers.conditionalAdds.size > 0 && (reducers.adds.size > 0 || reducers.extrema.size > 0 || loop.pushes.length > 0)) {
     return noteUnsupported(frame, `${loopLabel} conditional running sums support guarded scalar updates only`)
   }
-  if (pendingExtrema.size > 0 && (pendingAdds.size > 0 || loop.pushes.length > 0)) {
+  if (reducers.extrema.size > 0 && (reducers.adds.size > 0 || loop.pushes.length > 0)) {
     return noteUnsupported(frame, `${loopLabel} scalar extrema support extrema updates only`)
   }
   const updates = new Map<string, LoopScalarUpdate>()
-  for (const [targetName, pending] of pendingAdds) {
+  for (const [targetName, pending] of reducers.adds) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`)
     updates.set(targetName, {
@@ -966,20 +952,20 @@ function finalizeAbstractLoop(
       end: runningSumNumber(start, loop.source.length, pending.increment),
     })
   }
-  for (const [targetName, pending] of pendingConditionalAdds) {
+  for (const [targetName, pending] of reducers.conditionalAdds) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`)
     const end = conditionalRunningSumNumber(targetName, start, loop.source.length, pending.increment)
     updates.set(targetName, {start, increment: pending.increment, end})
     frame.assumptions = mergeAssumptions(frame.assumptions, conditionalRunningSumFacts(end, start, loop.source.length, pending.increment))
   }
-  for (const [targetName, extremum] of pendingExtrema) {
+  for (const [targetName, extremum] of reducers.extrema) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar extremum expected ${targetName} to be a number`)
     frame.env.set(targetName, runningExtremumNumber(extremum.kind, targetName, start, loop.source.length, extremum.candidate))
   }
 
-  const cursorError = applyAbstractLoopCursorFacts(loop, pendingAdds, updates, loopLabel, frame)
+  const cursorError = applyAbstractLoopCursorFacts(loop, reducers.adds, updates, loopLabel, frame)
   if (cursorError != null) return cursorError
   for (const [targetName, update] of updates) frame.env.set(targetName, update.end)
   return null
