@@ -241,6 +241,7 @@ import {
   type CheckBoundary,
 } from './source-boundary.ts'
 import {localizeValue} from './value-localize.ts'
+import {programGlobalEnv} from './program-env.ts'
 import {
   functionHasInstanceThisInput,
   functionInputRoots,
@@ -995,25 +996,6 @@ function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
   if (ts.isArrayBindingPattern(name)) {
     forEachArrayBindingElement(name, elementName => bindUnknownPattern(elementName, env))
   }
-}
-
-function programGlobalEnv(program: Program): Map<string, Value> {
-  const env = new Map<string, Value>()
-  for (const [name, value] of program.globals) env.set(name, value)
-  for (const [localName, binding] of program.imports) {
-    const imported = importedGlobalValue(localName, binding)
-    if (imported != null) env.set(localName, imported)
-  }
-  return env
-}
-
-function importedGlobalValue(localName: string, binding: ImportedBinding): Value | null {
-  if (binding.kind === 'unresolved') return null
-  const exported = resolveFitExport(binding.module, binding.exportedName)
-  if (exported.kind === 'unresolved') return null
-  const value = exported.module.globals.get(exported.localName)
-  if (value == null) return null
-  return localizeValue(value, localName, {preserveLinear: true})
 }
 
 function validateGivenSpecs(
