@@ -58,6 +58,9 @@ case matrix abstract conditional count: interpreter-matrix-patterns.ts:matrixFor
   return: int 0..Infinity
 case matrix abstract running max: interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
   return: 0..Infinity
+case matrix indexed limit range: interpreter-matrix-patterns.ts:matrixIndexedLimitRange
+  return.length: int 5..5
+  return[]: int 0..4
 case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
@@ -76,3 +79,6 @@ case negative conditional else count surface: interpreter-matrix-negative.ts:neg
 case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
   return: unknown (Abstract for..of scalar extrema support extrema updates only)
   unsupported negativeMatrixMixedExtremumAndCursor: Abstract for..of scalar extrema support extrema updates only
+case negative indexed loop starts at one surface: interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
+  return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
+  unsupported negativeMatrixIndexedLoopStartsAtOne: Indexed for loops support for (let i = 0; i < limit; i++) style loops

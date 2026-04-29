@@ -57,7 +57,10 @@ import type {ComparisonOperator} from '../parser.ts'
 import {valueFromSyntaxTypeShape} from '../shapes.ts'
 import {expressionRootName} from '../source-expressions.ts'
 import {localizeFreshContainerValue} from '../value-localize.ts'
-import {conditionalRunningSumFacts} from '../proof.ts'
+import {
+  comparisonConstraint,
+  conditionalRunningSumFacts,
+} from '../proof.ts'
 import {
   childFrame,
   frameWithProgram,
@@ -104,6 +107,11 @@ type AbstractLoopScalarAdd = {
   targetName: string
   increment: NumberValue
   incrementExpression: ts.Expression
+}
+
+type IndexedForLoopShape = {
+  indexName: string
+  limitExpression: ts.Expression
 }
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
@@ -250,6 +258,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
     return {kind: 'fallthrough'}
   }
   if (ts.isForOfStatement(statement)) return evaluateForOfStatement(statement, frame)
+  if (ts.isForStatement(statement)) return evaluateForStatement(statement, frame)
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   noteUnsupported(frame, `Unsupported statement ${statement.getText(frame.program.sourceFile)}`)
@@ -417,6 +426,157 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
+  const shape = indexedForLoopShape(statement)
+  if (shape == null) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops')}
+  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only')}
+  const limit = evaluateExpression(shape.limitExpression, frame)
+  if (limit.kind !== 'number') return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a number')}
+  if (!limit.isInteger || limit.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer')}
+
+  const scopedNames = [shape.indexName, ...blockScopedNames(statement.statement)]
+  const scopedValues = saveScopedValues(frame.env, scopedNames)
+  const length = indexedLoopLength(limit, shape.limitExpression, frame)
+  const indexValue = indexedElementPathValue(shape.indexName, length)
+  frame.env.set(shape.indexName, indexValue)
+  frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
+  try {
+    const pushedArrays = new Set<string>()
+    for (const child of statement.statement.statements) {
+      if (ts.isVariableStatement(child)) {
+        for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
+        continue
+      }
+      if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
+        const pushError = evaluateIndexedForPush(child.expression, shape.indexName, length, frame)
+        if (pushError != null) return {kind: 'return', value: pushError}
+        const path = pathFromExpression(child.expression.expression.expression, frame)
+        if (path != null && path.segments.length === 0) pushedArrays.add(path.root)
+        continue
+      }
+      return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
+    }
+    for (const arrayName of pushedArrays) {
+      const value = frame.env.get(arrayName)
+      if (value?.kind === 'array') {
+        frame.env.set(arrayName, {...value, elements: null})
+      }
+    }
+  } finally {
+    restoreScopedValues(frame.env, scopedValues)
+  }
+  return {kind: 'fallthrough'}
+}
+
+function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | null {
+  if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
+  if (statement.initializer.declarations.length !== 1) return null
+  const declaration = statement.initializer.declarations[0]
+  if (declaration == null || !ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
+  if (numericLiteralValue(declaration.initializer) !== 0) return null
+  const indexName = declaration.name.text
+  if (statement.condition == null || statement.incrementor == null) return null
+  const condition = unwrapExpression(statement.condition)
+  if (!ts.isBinaryExpression(condition) || condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
+  if (!isIdentifierNamed(condition.left, indexName)) return null
+  if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
+  return {indexName, limitExpression: condition.right}
+}
+
+function indexedLoopIncrements(expression: ts.Expression, indexName: string): boolean {
+  const current = unwrapExpression(expression)
+  if ((ts.isPostfixUnaryExpression(current) || ts.isPrefixUnaryExpression(current))
+    && current.operator === ts.SyntaxKind.PlusPlusToken
+    && ts.isIdentifier(current.operand)
+    && current.operand.text === indexName) return true
+  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
+  return isIdentifierNamed(current.left, indexName) && numericLiteralValue(current.right) === 1
+}
+
+function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame: InterpreterFrame): NumberValue {
+  const expr = limit.expr ?? expression.getText(frame.program.sourceFile)
+  const min = Math.max(0, limit.min)
+  const max = Math.max(0, limit.max)
+  return numberValue(min, max, true, expr, limit.linear, null, limit.provenance)
+}
+
+function evaluateIndexedForPush(
+  expression: ts.CallExpression & {expression: ts.PropertyAccessExpression},
+  indexName: string,
+  length: NumberValue,
+  frame: InterpreterFrame,
+): Value | null {
+  const path = pathFromExpression(expression.expression.expression, frame)
+  if (path == null) return noteUnsupported(frame, `Unsupported push target ${expression.expression.expression.getText(frame.program.sourceFile)}`)
+  const current = readPath(path, frame)
+  if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${expression.expression.expression.getText(frame.program.sourceFile)}`)
+  if (expression.arguments.length !== 1) return noteUnsupported(frame, 'Indexed for loop push supports one item per iteration')
+  const argument = expression.arguments[0]!
+  const rawElement = evaluateExpression(argument, frame)
+  const element = indexedLoopValue(rawElement, indexName, path.root, [], length)
+  const lengthValue = current.length.min === 0 && current.length.max === 0 ? length : addNumbers(current.length, length)
+  writePath(path, {
+    ...current,
+    length: lengthValue,
+    elements: null,
+    element: mergeElementValue(current.element, element),
+  }, frame)
+  frame.assumptions = mergeAssumptions(frame.assumptions, ...expressionIndexPaths(argument, indexName).map(indexPath => {
+    return indexedElementAssumptions(indexedElementPathValue(loopElementPathExpression(path.root, indexPath), length), length)
+  }))
+  return null
+}
+
+function indexedLoopValue(value: Value, indexName: string, arrayName: string, path: string[], length: NumberValue): Value {
+  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(loopElementPathExpression(arrayName, path), length)
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) props.set(name, indexedLoopValue(prop, indexName, arrayName, [...path, name], length))
+    return {...value, props}
+  }
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      elements: value.elements == null ? null : value.elements.map(element => indexedLoopValue(element, indexName, arrayName, [...path, '[]'], length)),
+      element: value.element == null ? null : indexedLoopValue(value.element, indexName, arrayName, [...path, '[]'], length),
+    }
+  }
+  if (value.kind === 'nullable') return {...value, present: indexedLoopValue(value.present, indexName, arrayName, path, length)}
+  return value
+}
+
+function indexedElementAssumptions(value: NumberValue, length: NumberValue): LinearConstraint[] {
+  const lower = comparisonConstraint(value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
+  const upper = comparisonConstraint(value, '<', length)
+  return [lower, upper].filter((fact): fact is LinearConstraint => fact != null)
+}
+
+function expressionIndexPaths(expression: ts.Expression | undefined, indexName: string, path: string[] = []): string[][] {
+  if (expression == null) return []
+  const unwrapped = unwrapExpression(expression)
+  if (isIdentifierNamed(unwrapped, indexName)) return [path]
+  if (ts.isObjectLiteralExpression(unwrapped)) {
+    const paths: string[][] = []
+    for (const property of unwrapped.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        if (property.name.text === indexName) paths.push([...path, property.name.text])
+        continue
+      }
+      if (!ts.isPropertyAssignment(property)) continue
+      const name = propertyNameText(property.name)
+      if (name == null) continue
+      paths.push(...expressionIndexPaths(property.initializer, indexName, [...path, name]))
+    }
+    return paths
+  }
+  if (ts.isArrayLiteralExpression(unwrapped)) {
+    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
+      ? expressionIndexPaths(element.expression, indexName, [...path, '[]'])
+      : expressionIndexPaths(element, indexName, [...path, '[]']))
+  }
+  return []
 }
 
 function readAbstractLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame): AbstractLoopScalarAdd | null {

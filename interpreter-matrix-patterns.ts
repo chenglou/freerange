@@ -129,6 +129,17 @@ export function matrixForOfParamRunningMax(items: {width: number}[]): number {
   return maxWidth
 }
 
+/** @fit
+ * given limit: int 0..30
+ */
+export function matrixIndexedLimitRange(limit: number = 5): number[] {
+  const values = []
+  for (let i = 0; i < limit; i++) {
+    values.push(i)
+  }
+  return values
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))

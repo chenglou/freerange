@@ -76,6 +76,14 @@ infer matrix abstract running max
   return return == maxWidth
   return return: 0..80
   local maxWidth: 0..80
+infer matrix indexed limit range
+  return return.length == limit
+  return return.length: int 0..30
+  return return[] == values[]
+  return return[]: int 0..29
+  local values.length == limit
+  local values.length: int 0..30
+  local values[]: int 0..29
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

@@ -53,3 +53,11 @@ export function negativeMatrixMixedExtremumAndCursor(items: {width: number}[]): 
   }
   return maxWidth + total
 }
+
+export function negativeMatrixIndexedLoopStartsAtOne(limit: number = 5): number[] {
+  const values = []
+  for (let i = 1; i < limit; i++) {
+    values.push(i)
+  }
+  return values
+}
