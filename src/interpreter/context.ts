@@ -20,20 +20,20 @@ export type InterpreterFrame = {
   env: Map<string, Value>
   issues: InterpreterIssue[]
   stack: string[]
-  loopStack: InterpreterLoopContext[]
+  loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
 }
 
-export type InterpreterLoopContext = {
+export type LoopFrame = {
   source: ArrayValue
   sourceExpr: string
-  abstract: boolean
+  mode: 'finite' | 'symbolic'
   statementIndex: number
-  pushes: InterpreterLoopPush[]
+  appends: LoopAppend[]
 }
 
-export type InterpreterLoopPush = {
+export type LoopAppend = {
   arrayName: string
   order: number
   conditional: boolean
