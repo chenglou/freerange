@@ -24,3 +24,13 @@ export function negativeMatrixMapMutationForgetsAlias(): MatrixPositiveValue[] {
     return {value: item.value}
   })
 }
+
+export function negativeMatrixCursorUpdateBeforePush(items: number[], step: number = 2): number[] {
+  const rows = []
+  let y = 0
+  for (const _item of items) {
+    y += step
+    rows.push(y)
+  }
+  return rows
+}

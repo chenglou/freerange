@@ -25,22 +25,31 @@ import {
   nullValue,
   numberValue,
   powerNumbers,
+  runningSumNumber,
   subtractNumbers,
   unknown,
   unknownArray,
   unknownNumber,
   unknownObject,
+  linearNameForExpression,
   type ArrayValue,
   type NumberValue,
   type Value,
 } from '../domain.ts'
-import {indexedElementPathValue} from '../loop-summary.ts'
+import {
+  indexedElementPathValue,
+  sequenceSummaryFromLoopPush,
+  type LoopPush,
+  type LoopScalarUpdate,
+} from '../loop-summary.ts'
 import {
   linearConstant,
+  linearVariable,
   numericLiteralValue,
 } from '../linear.ts'
 import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
 import type {ComparisonOperator} from '../parser.ts'
+import {valueFromSyntaxTypeShape} from '../shapes.ts'
 import {expressionRootName} from '../source-expressions.ts'
 import {localizeFreshContainerValue} from '../value-localize.ts'
 import {
@@ -71,6 +80,17 @@ type PathSegment =
 type ValuePath = {
   root: string
   segments: PathSegment[]
+}
+
+type PendingAbstractScalarAdd = {
+  increment: NumberValue
+  order: number
+}
+
+type AbstractLoopScalarAdd = {
+  targetName: string
+  increment: NumberValue
+  incrementExpression: ts.Expression
 }
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
@@ -144,12 +164,17 @@ function bindParameters(parameters: ts.NodeArray<ts.ParameterDeclaration>, argum
   for (let index = 0; index < parameters.length; index++) {
     const param = parameters[index]!
     const argument = argumentValues[index]
-    const value = argument ?? (param.initializer == null ? unknownParamPatternValue(param.name) : evaluateExpression(param.initializer, frame))
+    const value = argument ?? (param.initializer == null ? unknownParamPatternValue(param, frame) : evaluateExpression(param.initializer, frame))
     bindPattern(param.name, value, frame)
   }
 }
 
-function unknownParamPatternValue(name: ts.BindingName): Value {
+function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
+  const shape = ts.isIdentifier(param.name)
+    ? valueFromSyntaxTypeShape(param.name.text, param.type, frame.program, new Set())
+    : null
+  if (shape != null) return shape
+  const name = param.name
   if (ts.isIdentifier(name)) return unknownNumber(name.text)
   if (ts.isArrayBindingPattern(name)) return unknownArray('param')
   return unknownObject('param')
@@ -272,7 +297,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
   const scopedNames = [...forOfScopedNames(statement.initializer), ...forOfBodyScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
-  if (itemName != null) frame.loopStack.push({source, sourceExpr, abstract: false})
+  if (itemName != null) frame.loopStack.push({source, sourceExpr, abstract: false, statementIndex: 0, pushes: []})
   try {
     for (const element of source.elements) {
       bindForOfInitializer(statement.initializer, element, frame)
@@ -294,10 +319,30 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
   const item = source.element ?? unknownObject(`${sourceExpr}[]`)
-  frame.loopStack.push({source, sourceExpr, abstract: true})
+  const loop: InterpreterLoopContext = {source, sourceExpr, abstract: true, statementIndex: 0, pushes: []}
+  const pendingAdds = new Map<string, PendingAbstractScalarAdd>()
+  frame.loopStack.push(loop)
   try {
     bindForOfInitializer(statement.initializer, item, frame)
-    for (const child of statement.statement.statements) {
+    let sawScalarUpdate = false
+    for (let index = 0; index < statement.statement.statements.length; index++) {
+      const child = statement.statement.statements[index]!
+      loop.statementIndex = index
+      const scalarAdd = readAbstractLoopScalarAdd(child, frame)
+      if (scalarAdd != null) {
+        if (pendingAdds.has(scalarAdd.targetName)) {
+          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor already updates ${scalarAdd.targetName}`)}
+        }
+        if (referencesAnyIdentifier(scalarAdd.incrementExpression, new Set(pendingAdds.keys()))) {
+          return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of scalar cursor increments cannot depend on an earlier cursor update')}
+        }
+        pendingAdds.set(scalarAdd.targetName, {increment: scalarAdd.increment, order: index})
+        sawScalarUpdate = true
+        continue
+      }
+      if (sawScalarUpdate) {
+        return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`)}
+      }
       if (ts.isVariableStatement(child)) {
         for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
         continue
@@ -307,17 +352,257 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
         continue
       }
       if (ts.isIfStatement(child)) {
+        if (!abstractLoopBranchSupported(child)) {
+          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
+        }
         const flow = evaluateIfStatement(child, frame)
         if (flow.kind !== 'fallthrough') return flow
         continue
       }
       return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
+    const error = finalizeAbstractLoop(loop, pendingAdds, frame)
+    if (error != null) return {kind: 'return', value: error}
   } finally {
     frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function readAbstractLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame): AbstractLoopScalarAdd | null {
+  if (!ts.isExpressionStatement(statement)) return null
+  const expression = unwrapExpression(statement.expression)
+  if (!ts.isBinaryExpression(expression)) return null
+  const targetName = identifierTargetName(expression.left)
+  if (targetName == null) return null
+  const incrementExpression = scalarIncrementExpression(expression, targetName)
+  if (incrementExpression == null || referencesIdentifier(incrementExpression, targetName)) return null
+  const increment = evaluateExpression(incrementExpression, frame)
+  return increment.kind === 'number' ? {targetName, increment, incrementExpression} : null
+}
+
+function scalarIncrementExpression(expression: ts.BinaryExpression, targetName: string): ts.Expression | null {
+  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) return expression.right
+  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
+  const right = unwrapExpression(expression.right)
+  if (!ts.isBinaryExpression(right) || right.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
+  if (isIdentifierNamed(right.left, targetName)) return right.right
+  if (isIdentifierNamed(right.right, targetName)) return right.left
+  return null
+}
+
+function identifierTargetName(expression: ts.Expression): string | null {
+  const target = unwrapExpression(expression)
+  return ts.isIdentifier(target) ? target.text : null
+}
+
+function isIdentifierNamed(expression: ts.Expression, name: string): boolean {
+  const target = unwrapExpression(expression)
+  return ts.isIdentifier(target) && target.text === name
+}
+
+function referencesAnyIdentifier(expression: ts.Expression, names: Set<string>): boolean {
+  for (const name of names) {
+    if (referencesIdentifier(expression, name)) return true
+  }
+  return false
+}
+
+function referencesIdentifier(node: ts.Node, name: string): boolean {
+  let found = false
+  const visit = (current: ts.Node) => {
+    if (found) return
+    if (ts.isIdentifier(current) && current.text === name) {
+      found = true
+      return
+    }
+    if (current !== node && isFunctionLikeWithBody(current)) return
+    ts.forEachChild(current, visit)
+  }
+  visit(node)
+  return found
+}
+
+function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclaration {
+  return (ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node))
+    && node.body != null
+}
+
+function abstractLoopBranchSupported(statement: ts.Statement): boolean {
+  if (ts.isBlock(statement)) return statement.statements.every(abstractLoopBranchSupported)
+  if (ts.isVariableStatement(statement)) return true
+  if (ts.isExpressionStatement(statement)) return isPushCallExpression(statement.expression)
+  if (ts.isIfStatement(statement)) {
+    return abstractLoopBranchSupported(statement.thenStatement)
+      && (statement.elseStatement == null || abstractLoopBranchSupported(statement.elseStatement))
+  }
+  return false
+}
+
+function finalizeAbstractLoop(loop: InterpreterLoopContext, pendingAdds: Map<string, PendingAbstractScalarAdd>, frame: InterpreterFrame): Value | null {
+  if (pendingAdds.size === 0) return null
+  const updates = new Map<string, LoopScalarUpdate>()
+  for (const [targetName, pending] of pendingAdds) {
+    const start = frame.env.get(targetName)
+    if (start?.kind !== 'number') return noteUnsupported(frame, `Abstract for..of scalar cursor expected ${targetName} to be a number`)
+    updates.set(targetName, {
+      start,
+      increment: pending.increment,
+      end: runningSumNumber(start, loop.source.length, pending.increment),
+    })
+  }
+
+  const cursorError = applyAbstractLoopCursorFacts(loop, pendingAdds, updates, frame)
+  if (cursorError != null) return cursorError
+  for (const [targetName, update] of updates) frame.env.set(targetName, update.end)
+  return null
+}
+
+function applyAbstractLoopCursorFacts(
+  loop: InterpreterLoopContext,
+  pendingAdds: Map<string, PendingAbstractScalarAdd>,
+  updates: Map<string, LoopScalarUpdate>,
+  frame: InterpreterFrame,
+): Value | null {
+  const arrayNames = new Set(loop.pushes.map(push => push.arrayName))
+  for (const arrayName of arrayNames) {
+    const target = frame.env.get(arrayName)
+    if (target?.kind !== 'array') continue
+    let summary = target.summary
+    const pushes = loop.pushes.filter(item => item.arrayName === arrayName)
+    let element = pushes[0]?.base.element ?? null
+    for (const push of pushes) {
+      const loopPush = abstractLoopPushShape(push, updates)
+      for (const cursorPath of loopPush.cursorPaths) {
+        const pending = pendingAdds.get(cursorPath.targetName)
+        if (pending != null && pending.order <= push.order) {
+          return noteUnsupported(frame, `Abstract for..of scalar cursor ${cursorPath.targetName} must be pushed before it is updated`)
+        }
+      }
+      element = mergeElementValue(element, abstractLoopPushElement(push, updates))
+      if (!push.conditional) {
+        const update = loopPush.topName == null ? undefined : updates.get(loopPush.topName)
+        summary = mergeArraySummary(summary, sequenceSummaryFromLoopPush(loopPush, update, {
+          assumptions: [],
+          resolveNumber: expr => resolveNumberFromEnv(expr, frame),
+        }))
+      }
+    }
+    writePath({root: arrayName, segments: []}, {
+      ...target,
+      element,
+      summary,
+    }, frame)
+  }
+  return null
+}
+
+function abstractLoopPushShape(push: InterpreterLoopContext['pushes'][number], updates: Map<string, LoopScalarUpdate>): LoopPush {
+  const cursorPaths = push.cursorPaths.filter(cursorPath => updates.has(cursorPath.targetName))
+  const topPath = cursorPaths[0]?.path ?? null
+  return {
+    arrayName: push.arrayName,
+    length: push.length,
+    element: push.element,
+    topName: cursorPaths[0]?.targetName ?? null,
+    topPath,
+    height: topPath == null ? null : heightValueForTopPath(push.element, topPath),
+    cursorPaths,
+  }
+}
+
+function abstractLoopPushElement(push: InterpreterLoopContext['pushes'][number], updates: Map<string, LoopScalarUpdate>): Value | null {
+  let element = push.element
+  for (const cursorPath of push.cursorPaths) {
+    const update = updates.get(cursorPath.targetName)
+    if (update == null || element == null) continue
+    const expr = loopElementPathExpression(push.arrayName, cursorPath.path)
+    element = setLoopElementPathValue(element, cursorPath.path, loopCursorElementValue(update, expr))
+  }
+  return element
+}
+
+function setLoopElementPathValue(value: Value, path: string[], replacement: Value): Value {
+  const [head, ...tail] = path
+  if (head == null) return replacement
+  if (head === '[]' && value.kind === 'array') {
+    return {
+      ...value,
+      elements: value.elements == null ? null : value.elements.map(element => setLoopElementPathValue(element, tail, replacement)),
+      element: value.element == null ? replacement : setLoopElementPathValue(value.element, tail, replacement),
+    }
+  }
+  if (value.kind !== 'object') return value
+  const props = new Map(value.props)
+  props.set(head, setLoopElementPathValue(props.get(head) ?? unknownObject(head), tail, replacement))
+  return {...value, props}
+}
+
+function loopElementPathExpression(arrayName: string, path: string[]): string {
+  let expr = `${arrayName}[]`
+  for (const part of path) expr += part === '[]' ? '[]' : `.${part}`
+  return expr
+}
+
+function heightValueForTopPath(value: Value | null, topPath: string[]): NumberValue | null {
+  if (topPath.at(-1) !== 'top') return null
+  const heightPath = [...topPath.slice(0, -1), 'height']
+  const height = valueAtObjectPath(value, heightPath)
+  return height?.kind === 'number' ? height : null
+}
+
+function valueAtObjectPath(value: Value | null, path: string[]): Value | null {
+  if (value == null) return null
+  const [head, ...tail] = path
+  if (head == null) return value
+  if (value.kind !== 'object') return null
+  return valueAtObjectPath(value.props.get(head) ?? null, tail)
+}
+
+function loopCursorElementValue(update: LoopScalarUpdate, expr: string): NumberValue {
+  if (update.increment.min < 0) return unknownNumber(expr)
+  return numberValue(
+    update.start.min,
+    update.end.max,
+    update.start.isInteger && update.increment.isInteger,
+    expr,
+    linearVariable(linearNameForExpression(expr)),
+  )
+}
+
+function resolveNumberFromEnv(expr: string, frame: InterpreterFrame): NumberValue | null {
+  const value = frame.env.get(expr)
+  return value?.kind === 'number' ? value : null
+}
+
+function expressionCursorPaths(expression: ts.Expression | undefined, path: string[] = []): {path: string[]; targetName: string}[] {
+  if (expression == null) return []
+  const unwrapped = unwrapExpression(expression)
+  if (ts.isIdentifier(unwrapped)) return [{path, targetName: unwrapped.text}]
+  if (ts.isObjectLiteralExpression(unwrapped)) {
+    const paths: {path: string[]; targetName: string}[] = []
+    for (const property of unwrapped.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        paths.push({path: [...path, property.name.text], targetName: property.name.text})
+        continue
+      }
+      if (!ts.isPropertyAssignment(property)) continue
+      const name = propertyNameText(property.name)
+      if (name == null) continue
+      paths.push(...expressionCursorPaths(property.initializer, [...path, name]))
+    }
+    return paths
+  }
+  if (ts.isArrayLiteralExpression(unwrapped)) {
+    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
+      ? expressionCursorPaths(element.expression, [...path, '[]'])
+      : expressionCursorPaths(element, [...path, '[]']))
+  }
+  return []
 }
 
 function forOfItemName(initializer: ts.ForInitializer): string | null {
@@ -747,12 +1032,24 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   elements.push(...values)
   let element: Value | null = current.element
   for (const value of values) element = mergeElementValue(element, value)
+  const abstractLength = loop?.abstract === true ? abstractLoopPushLength(current, loop) : null
   const nextLength = current.elements == null
     ? numberValue(current.length.min + values.length, current.length.max + values.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
     : numberValue(elements.length, elements.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
+  if (loop?.abstract === true && path.segments.length === 0) {
+    loop.pushes.push({
+      arrayName: path.root,
+      order: loop.statementIndex,
+      conditional: frame.conditionalDepth > 0,
+      length: abstractLength ?? nextLength,
+      element: values[0] ?? null,
+      base: current,
+      cursorPaths: expressionCursorPaths(expression.arguments[0]),
+    })
+  }
   const next: ArrayValue = {
     ...current,
-    length: loop?.abstract === true ? abstractLoopPushLength(current, loop) : nextLength,
+    length: abstractLength ?? nextLength,
     elements: loop?.abstract === true ? null : elements,
     element,
     summary: mergeArraySummary(current.summary, currentLoopPushSummary(frame)),

@@ -37,10 +37,12 @@ return:
   return.length: int 0..50
   return[] == rows[]
   return[]: 0..3000
+  return follows items by index
 locals:
   rows.length == items.length
   rows.length: int 0..50
   rows[]: 0..3000
+  rows follows items by index
   y == runningSum(top, items.length, step)
   y: 0..3000
 import-patterns.ts:namespaceImportedStructuralShape

@@ -3,6 +3,7 @@ import {
   joinValues,
   unknown,
   type ArrayValue,
+  type NumberValue,
   type Value,
 } from '../domain.ts'
 import {programGlobalEnv} from '../program-env.ts'
@@ -26,6 +27,18 @@ export type InterpreterLoopContext = {
   source: ArrayValue
   sourceExpr: string
   abstract: boolean
+  statementIndex: number
+  pushes: InterpreterLoopPush[]
+}
+
+export type InterpreterLoopPush = {
+  arrayName: string
+  order: number
+  conditional: boolean
+  length: NumberValue
+  element: Value | null
+  base: ArrayValue
+  cursorPaths: {path: string[]; targetName: string}[]
 }
 
 export type InterpreterFlow =

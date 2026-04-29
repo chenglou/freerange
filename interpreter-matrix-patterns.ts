@@ -86,6 +86,25 @@ export function matrixForOfParamVisibleRows(items: {height: number; visible: boo
   return {rows}
 }
 
+/** @fit
+ * given items.length: int 0..50
+ * given top: 0..1000
+ * given step: 0..40
+ */
+export function matrixForOfParamCursorValues(
+  items: number[],
+  top: number = 10,
+  step: number = 2,
+): {rows: number[]; bottom: number} {
+  const rows = []
+  let y = top
+  for (const _item of items) {
+    rows.push(y)
+    y += step
+  }
+  return {rows, bottom: y}
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))

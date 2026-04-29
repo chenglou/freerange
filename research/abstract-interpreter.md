@@ -81,7 +81,7 @@ Do not swap the engine in one move. Build the new core in parallel, then compare
 Current parallel core:
 
 - `src/interpreter/context.ts`: frames, issues, and flow
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
 
@@ -91,7 +91,9 @@ Naming rule learned during the first adoption pass: a fresh local array literal 
 
 Fresh finite `for..of` loop pushes now record only origin lineage: unconditional pushes follow the source by index, and pushes under `if` become order-preserving subsets. Sequence facts such as `spaced`, `lastEnd`, cursor recurrence, and loop-local report sections still belong to the old loop-summary path until the fresh state has explicit loop bookkeeping.
 
-When the source array is not finite but has an element domain, the fresh core can run a deliberately tiny abstract `for..of` pass for append loops. The body may bind local values, call `rows.push(...)`, or guard that push with an `if`. Unguarded pushes mean one push per source element, so the target length follows the source length. Guarded pushes keep only element facts and subsequence origin. Scalar updates and richer side effects still fall back to the legacy loop reader.
+When the source array is not finite but has an element domain, the fresh core can run a deliberately tiny abstract `for..of` pass for append loops. The body may bind local values, call `rows.push(...)`, or guard that push with an `if`. Unguarded pushes mean one push per source element, so the target length follows the source length. Guarded pushes keep only element facts and subsequence origin.
+
+That abstract pass now also handles trailing scalar cursor updates such as `y += step`, `y = y + step`, and `y = step + y`. The update must come after any push that reads the cursor, and the increment cannot depend on an earlier cursor update. The interpreter records cursor paths from the pushed syntax, then applies the running-sum result after the body, so `let y = top; rows.push(y); y += step` keeps both `rows[]` ranges and the final `y == runningSum(...)`. Conditional cursor updates and richer side effects still fall back to the legacy loop reader.
 
 Old extraction order, still useful as a map of remaining semantic families:
 
