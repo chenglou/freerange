@@ -44,7 +44,6 @@ import {
   numericLiteralValue,
 } from '../linear.ts'
 import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
-import type {ComparisonOperator} from '../parser.ts'
 import {valueFromSyntaxTypeShape} from '../shapes.ts'
 import {localizeFreshContainerValue} from '../value-localize.ts'
 import {
@@ -93,6 +92,12 @@ import {
   pendingLoopEffects,
   type PendingLoopEffects,
 } from './loop-effects.ts'
+import {
+  branchFrame,
+  compareNumbers,
+  isComparisonOperator,
+  literalBoolean,
+} from './refine.ts'
 
 export type InterpreterFunctionResult = {
   value: Value
@@ -317,8 +322,8 @@ function evaluateIfStatement(statement: ts.IfStatement, frame: InterpreterFrame)
   if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
-  const thenFrame = branchFrame(frame, statement.expression, true, '<if-true>')
-  const elseFrame = branchFrame(frame, statement.expression, false, '<if-false>')
+  const thenFrame = branchFrame(frame, statement.expression, true, '<if-true>', evaluateExpression)
+  const elseFrame = branchFrame(frame, statement.expression, false, '<if-false>', evaluateExpression)
   const thenFlow = evaluateConditionalBranch(statement.thenStatement, thenFrame)
   const elseFlow: InterpreterFlow = statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, elseFrame)
   if (thenFlow.kind === 'return' && elseFlow.kind === 'return') return {kind: 'return', value: joinValues(thenFlow.value, elseFlow.value)}
@@ -485,8 +490,8 @@ function evaluateIndexedForGuardedStatement(
 ): Value | null {
   if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches')
   if (!isSideEffectFreeExpression(statement.expression)) return noteUnsupported(frame, 'Indexed for loop guards must be side-effect-free')
-  const thenFrame = branchFrame(frame, statement.expression, true, '<indexed-if-true>')
-  const elseFrame = branchFrame(frame, statement.expression, false, '<indexed-if-false>')
+  const thenFrame = branchFrame(frame, statement.expression, true, '<indexed-if-true>', evaluateExpression)
+  const elseFrame = branchFrame(frame, statement.expression, false, '<indexed-if-false>', evaluateExpression)
   thenFrame.conditionalDepth++
   try {
     const error = evaluateIndexedForGuardedBody(statement.thenStatement, context, thenFrame)
@@ -894,93 +899,9 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
   const truth = literalBoolean(evaluateExpression(expression.condition, frame))
   if (truth === true) return evaluateExpression(expression.whenTrue, frame)
   if (truth === false) return evaluateExpression(expression.whenFalse, frame)
-  const trueFrame = branchFrame(frame, expression.condition, true, '<conditional-true>')
-  const falseFrame = branchFrame(frame, expression.condition, false, '<conditional-false>')
+  const trueFrame = branchFrame(frame, expression.condition, true, '<conditional-true>', evaluateExpression)
+  const falseFrame = branchFrame(frame, expression.condition, false, '<conditional-false>', evaluateExpression)
   return joinValues(evaluateExpression(expression.whenTrue, trueFrame), evaluateExpression(expression.whenFalse, falseFrame))
-}
-
-function branchFrame(frame: InterpreterFrame, condition: ts.Expression, truth: boolean, name: string): InterpreterFrame {
-  const branch = childFrame(frame, new Map(frame.env), name)
-  refineCondition(branch, condition, truth)
-  return branch
-}
-
-function refineCondition(frame: InterpreterFrame, condition: ts.Expression, truth: boolean) {
-  const current = unwrapExpression(condition)
-  if (ts.isBinaryExpression(current)) {
-    refineBinaryCondition(frame, current, truth)
-    return
-  }
-  refineLiteralTruthiness(frame, current, truth)
-}
-
-function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean) {
-  const comparison = comparisonForSyntax(expression.operatorToken.kind, truth)
-  if (comparison != null) {
-    if (refineNumberPath(frame, expression.left, comparison, expression.right)) return
-    refineNumberPath(frame, expression.right, flipComparison(comparison), expression.left)
-  }
-  const equalityTruth = equalityTruthForSyntax(expression.operatorToken.kind, truth)
-  if (equalityTruth != null) {
-    if (refineLiteralEquality(frame, expression.left, expression.right, equalityTruth)) return
-    refineLiteralEquality(frame, expression.right, expression.left, equalityTruth)
-  }
-}
-
-function refineNumberPath(frame: InterpreterFrame, targetExpression: ts.Expression, op: ComparisonOperator, otherExpression: ts.Expression): boolean {
-  const path = pathFromExpression(targetExpression, frame)
-  if (path == null) return false
-  const current = readPath(path, frame)
-  if (current.kind !== 'number') return false
-  const other = evaluateExpression(otherExpression, frame)
-  if (other.kind !== 'number' || other.min !== other.max) return false
-  const next = narrowNumber(current, op, other.min)
-  if (next === current) return false
-  writePath(path, next, frame)
-  return true
-}
-
-function narrowNumber(value: NumberValue, op: ComparisonOperator, other: number): NumberValue {
-  switch (op) {
-    case '==':
-      return numberValue(other, other, Number.isInteger(other), value.expr, value.linear, null, value.provenance)
-    case '>=':
-      return numberValue(Math.max(value.min, other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.provenance)
-    case '>':
-      return numberValue(Math.max(value.min, value.isInteger ? Math.floor(other) + 1 : other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.provenance)
-    case '<=':
-      return numberValue(value.min, Math.min(value.max, other), value.isInteger, value.expr, value.linear, value.cases, value.provenance)
-    case '<':
-      return numberValue(value.min, Math.min(value.max, value.isInteger ? Math.ceil(other) - 1 : other), value.isInteger, value.expr, value.linear, value.cases, value.provenance)
-  }
-}
-
-function refineLiteralTruthiness(frame: InterpreterFrame, expression: ts.Expression, truth: boolean) {
-  const path = pathFromExpression(expression, frame)
-  if (path == null) return
-  const current = readPath(path, frame)
-  if (current.kind !== 'literal') return
-  writeLiteralFilter(frame, path, current, value => Boolean(value) === truth)
-}
-
-function refineLiteralEquality(frame: InterpreterFrame, targetExpression: ts.Expression, otherExpression: ts.Expression, equal: boolean): boolean {
-  const path = pathFromExpression(targetExpression, frame)
-  if (path == null) return false
-  const current = readPath(path, frame)
-  if (current.kind !== 'literal') return false
-  const other = evaluateExpression(otherExpression, frame)
-  if (other.kind !== 'literal') return false
-  const keys = new Set(other.values.map(value => `${typeof value}:${String(value)}`))
-  writeLiteralFilter(frame, path, current, value => keys.has(`${typeof value}:${String(value)}`) === equal)
-  return true
-}
-
-function writeLiteralFilter(frame: InterpreterFrame, path: ValuePath, current: Extract<Value, {kind: 'literal'}>, keep: (value: string | boolean) => boolean) {
-  const values = current.values.filter(keep)
-  if (values.length === 0 || values.length === current.values.length) return
-  const next = literalValue(values, current.expr, current.provenance)
-  if (next.kind !== 'literal') return
-  writePath(path, next, frame)
 }
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
@@ -1243,107 +1164,4 @@ function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame):
 
 function isInlineFunction(expression: ts.Expression): expression is ArrayCallbackFunction {
   return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)
-}
-
-function isComparisonOperator(kind: ts.SyntaxKind): boolean {
-  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken
-    || kind === ts.SyntaxKind.EqualsEqualsToken
-    || kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
-    || kind === ts.SyntaxKind.ExclamationEqualsToken
-    || kind === ts.SyntaxKind.LessThanToken
-    || kind === ts.SyntaxKind.LessThanEqualsToken
-    || kind === ts.SyntaxKind.GreaterThanToken
-    || kind === ts.SyntaxKind.GreaterThanEqualsToken
-}
-
-function comparisonForSyntax(kind: ts.SyntaxKind, truth: boolean): ComparisonOperator | null {
-  const comparison = comparisonForSyntaxWhenTrue(kind)
-  if (comparison == null) return null
-  return truth ? comparison : negatedComparison(comparison)
-}
-
-function comparisonForSyntaxWhenTrue(kind: ts.SyntaxKind): ComparisonOperator | null {
-  switch (kind) {
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-      return '=='
-    case ts.SyntaxKind.LessThanToken:
-      return '<'
-    case ts.SyntaxKind.LessThanEqualsToken:
-      return '<='
-    case ts.SyntaxKind.GreaterThanToken:
-      return '>'
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-      return '>='
-    default:
-      return null
-  }
-}
-
-function negatedComparison(op: ComparisonOperator): ComparisonOperator | null {
-  switch (op) {
-    case '==':
-      return null
-    case '>=':
-      return '<'
-    case '>':
-      return '<='
-    case '<=':
-      return '>'
-    case '<':
-      return '>='
-  }
-}
-
-function flipComparison(op: ComparisonOperator): ComparisonOperator {
-  switch (op) {
-    case '==':
-      return '=='
-    case '>=':
-      return '<='
-    case '>':
-      return '<'
-    case '<=':
-      return '>='
-    case '<':
-      return '>'
-  }
-}
-
-function equalityTruthForSyntax(kind: ts.SyntaxKind, truth: boolean): boolean | null {
-  switch (kind) {
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-      return truth
-    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsToken:
-      return !truth
-    default:
-      return null
-  }
-}
-
-function compareNumbers(left: number, kind: ts.SyntaxKind, right: number): boolean {
-  switch (kind) {
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-      return left === right
-    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsToken:
-      return left !== right
-    case ts.SyntaxKind.LessThanToken:
-      return left < right
-    case ts.SyntaxKind.LessThanEqualsToken:
-      return left <= right
-    case ts.SyntaxKind.GreaterThanToken:
-      return left > right
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-      return left >= right
-    default:
-      return false
-  }
-}
-
-function literalBoolean(value: Value): boolean | null {
-  return value.kind === 'literal' && value.values.length === 1 && typeof value.values[0] === 'boolean' ? value.values[0] : null
 }
