@@ -14,6 +14,7 @@ addCase('matrix nested iife/map/defaults', ['interpreter-matrix-patterns.ts'], '
 addCase('matrix default param order', ['interpreter-matrix-patterns.ts'], 'matrixDefaultParamOrder')
 addCase('matrix if refines nonnegative', ['interpreter-matrix-patterns.ts'], 'matrixIfRefinesNonnegative')
 addCase('matrix ternary literal join', ['interpreter-matrix-patterns.ts'], 'matrixTernaryLiteralJoin')
+addCase('matrix filter/map literal booleans', ['interpreter-matrix-patterns.ts'], 'matrixFilterMapLiteralBooleans')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 

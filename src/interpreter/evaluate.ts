@@ -519,6 +519,7 @@ function writeLiteralFilter(frame: InterpreterFrame, path: ValuePath, current: E
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
+  if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
   if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
   if (ts.isIdentifier(target)) {
     const local = frame.program.functions.get(target.text)
@@ -560,6 +561,58 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
     element,
     expr: expression.getText(frame.program.sourceFile),
     summary: null,
+  }
+}
+
+function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
+  const source = evaluateExpression(target.expression, frame)
+  if (source.kind !== 'array') return noteUnsupported(frame, `filter expected an array: ${target.expression.getText(frame.program.sourceFile)}`)
+  const callback = expression.arguments[0]
+  const callbackFn = callback == null ? null : unwrapExpression(callback)
+  if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function')
+  if (source.elements == null) {
+    return {
+      kind: 'array',
+      length: numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`),
+      elements: null,
+      element: source.element,
+      expr: expression.getText(frame.program.sourceFile),
+      summary: source.summary == null ? null : {...source.summary, origin: {kind: 'subsequence', sourceExpr: source.expr ?? target.expression.getText(frame.program.sourceFile)}},
+    }
+  }
+
+  const elements: Value[] = []
+  let element: Value | null = null
+  let sawUnknownPredicate = false
+  for (let index = 0; index < source.elements.length; index++) {
+    const item = source.elements[index]!
+    const keep = invokeInlineFunction(
+      '<filter>',
+      callbackFn,
+      [
+        item,
+        numberValue(index, index, true, `${index}`, linearConstant(index)),
+        source,
+      ],
+      frame,
+    )
+    const truth = literalBoolean(keep)
+    if (truth === false) continue
+    if (truth == null) {
+      sawUnknownPredicate = true
+      element = mergeElementValue(element, item)
+      continue
+    }
+    elements.push(item)
+    element = mergeElementValue(element, item)
+  }
+  return {
+    kind: 'array',
+    length: numberValue(elements.length, sawUnknownPredicate ? source.elements.length : elements.length, true, `${expression.getText(frame.program.sourceFile)}.length`, sawUnknownPredicate ? null : linearConstant(elements.length)),
+    elements: sawUnknownPredicate ? null : elements,
+    element,
+    expr: expression.getText(frame.program.sourceFile),
+    summary: source.summary == null ? null : {...source.summary, origin: {kind: 'subsequence', sourceExpr: source.expr ?? target.expression.getText(frame.program.sourceFile)}},
   }
 }
 

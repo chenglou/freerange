@@ -35,6 +35,11 @@ case matrix if refines nonnegative: interpreter-matrix-patterns.ts:matrixIfRefin
   return: 0..Infinity
 case matrix ternary literal join: interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
   return: int 3..7
+case matrix filter/map literal booleans: interpreter-matrix-patterns.ts:matrixFilterMapLiteralBooleans
+  return.length: int 2..2
+  return[0]: int 1..1
+  return[1]: int 3..3
+  return[]: int 1..3
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias

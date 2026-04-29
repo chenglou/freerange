@@ -54,3 +54,8 @@ export function matrixIfRefinesNonnegative(value: number): number {
 export function matrixTernaryLiteralJoin(value: number): number {
   return value > 5 ? 7 : 3
 }
+
+export function matrixFilterMapLiteralBooleans(): number[] {
+  const items = [{value: 1, keep: true}, {value: -1, keep: false}, {value: 3, keep: true}]
+  return items.filter(item => item.keep).map(item => item.value)
+}
