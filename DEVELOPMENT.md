@@ -45,6 +45,7 @@ bun install
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers
 - [src/module-values.ts](./src/module-values.ts) — top-level `const` literal reader used during module loading
 - [src/program-env.ts](./src/program-env.ts) — global/import environment bootstrapping for abstract evaluation
+- [src/source-expressions.ts](./src/source-expressions.ts) — source expression root/path helpers shared by givens, mutation, and call invalidation
 - [src/value-localize.ts](./src/value-localize.ts) — abstract value relabeling for parameters, imports, and wildcard element paths
 - [src/source-boundary.ts](./src/source-boundary.ts) — source line and check-boundary helpers
 - [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
