@@ -28,6 +28,16 @@ infer matrix default param order
   return return.pos: int 0..0
   local base == 10
   local base: int 10..10
+infer matrix for-of push visible rows
+  return return.length == rows.length
+  return return.length: int 2..2
+  return return[].height: 2 | 6
+  return return is an order-preserving subset of items
+  local items.length: int 3..3
+  local items[].height: 2 | 4 | 6
+  local rows.length: int 2..2
+  local rows[].height: 2 | 6
+  local rows is an order-preserving subset of items
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

@@ -1551,7 +1551,7 @@ function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolea
       eligible = false
       return
     }
-    if (context.inferLoops != null && ts.isForOfStatement(node)) {
+    if (context.inferLoops != null && ts.isForOfStatement(node) && hasFitComment(context.program.sourceText, node)) {
       eligible = false
       return
     }

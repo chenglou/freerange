@@ -85,7 +85,7 @@ Current parallel core:
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
 
-The fresh core is now allowed to answer `infer` for eligible non-loop bodies. Loop inference still stays on the old evaluator because those reports are not just return values; they include loop-local checked/assumed/not-inferred bookkeeping.
+The fresh core is now allowed to answer `infer` for eligible bodies without loop reports. That includes unannotated finite `for..of` loops. Annotated loops still stay on the old evaluator because those reports are not just return values; they include loop-local checked/assumed/not-inferred bookkeeping.
 
 Naming rule learned during the first adoption pass: a fresh local array literal should get a local path such as `items[]`, but a fresh local object literal should keep scalar field expressions such as `imageSizeX`. The object itself can be named for aliasing and property access, but renaming every scalar leaf erases useful source equalities.
 

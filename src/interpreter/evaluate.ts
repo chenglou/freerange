@@ -5,6 +5,7 @@ import type {
 } from '../check-types.ts'
 import {
   bindingElementPropertyName,
+  bindingNames,
   forEachArrayBindingElement,
 } from '../binding-patterns.ts'
 import {
@@ -268,6 +269,8 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
     return {kind: 'return', value: noteUnsupported(frame, `for..of expected a finite array: ${statement.expression.getText(frame.program.sourceFile)}`)}
   }
   const itemName = forOfItemName(statement.initializer)
+  const scopedNames = forOfScopedNames(statement.initializer)
+  const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
   if (itemName != null) frame.loopStack.push({source, sourceExpr})
   try {
@@ -278,6 +281,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
     }
   } finally {
     if (itemName != null) frame.loopStack.pop()
+    restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
 }
@@ -286,6 +290,24 @@ function forOfItemName(initializer: ts.ForInitializer): string | null {
   if (!ts.isVariableDeclarationList(initializer)) return null
   const declaration = initializer.declarations[0]
   return declaration != null && ts.isIdentifier(declaration.name) ? declaration.name.text : null
+}
+
+function forOfScopedNames(initializer: ts.ForInitializer): string[] {
+  if (!ts.isVariableDeclarationList(initializer)) return []
+  return initializer.declarations.flatMap(declaration => bindingNames(declaration.name))
+}
+
+function saveScopedValues(env: Map<string, Value>, names: string[]): Map<string, Value | null> {
+  const values = new Map<string, Value | null>()
+  for (const name of names) values.set(name, env.get(name) ?? null)
+  return values
+}
+
+function restoreScopedValues(env: Map<string, Value>, values: Map<string, Value | null>) {
+  for (const [name, value] of values) {
+    if (value == null) env.delete(name)
+    else env.set(name, value)
+  }
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
