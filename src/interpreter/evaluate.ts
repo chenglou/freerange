@@ -115,6 +115,15 @@ type AbstractLoopReducerCapture =
   | {kind: 'unsupported'; value: Value}
   | {kind: 'none'}
 
+type FreshLoopBodyHandlers = {
+  loopLabel: string
+  unsupportedBodyMessage: (statement: ts.Statement) => string
+  unsupportedAfterReducerMessage: (statement: ts.Statement) => string
+  beforeStatement?: (order: number) => void
+  handlePush: (expression: ts.CallExpression & {expression: ts.PropertyAccessExpression}, order: number) => Value | null
+  handleIf: (statement: ts.IfStatement, order: number) => Value | null
+}
+
 type AbstractLoopScalarAdd = {
   targetName: string
   increment: NumberValue
@@ -152,7 +161,7 @@ type IndexedForPushResult =
   | {kind: 'ok'; push: InterpreterLoopPush | null; initialEmpty: boolean; conditional: boolean}
   | {kind: 'error'; value: Value}
 
-type IndexedForGuardedContext = {
+type IndexedForBodyContext = {
   indexName: string
   length: NumberValue
   source: ArrayValue | null
@@ -400,37 +409,20 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
   frame.loopStack.push(loop)
   try {
     bindForOfInitializer(statement.initializer, item, frame)
-    let sawScalarUpdate = false
-    for (let index = 0; index < statement.statement.statements.length; index++) {
-      const child = statement.statement.statements[index]!
-      loop.statementIndex = index
-      const reducer = captureAbstractLoopReducer(child, index, reducers, 'Abstract for..of', frame)
-      if (reducer.kind === 'unsupported') return {kind: 'return', value: reducer.value}
-      if (reducer.kind === 'captured') {
-        sawScalarUpdate = true
-        continue
-      }
-      if (sawScalarUpdate) {
-        return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`)}
-      }
-      if (ts.isVariableStatement(child)) {
-        for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
-        continue
-      }
-      if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-        evaluateExpression(child.expression, frame)
-        continue
-      }
-      if (ts.isIfStatement(child)) {
-        if (!abstractLoopBranchSupported(child)) {
-          return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
-        }
-        const flow = evaluateIfStatement(child, frame)
-        if (flow.kind !== 'fallthrough') return flow
-        continue
-      }
-      return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
-    }
+    const bodyError = evaluateFreshLoopBody(statement.statement.statements, reducers, {
+      loopLabel: 'Abstract for..of',
+      beforeStatement: order => {
+        loop.statementIndex = order
+      },
+      handlePush: expression => {
+        evaluateExpression(expression, frame)
+        return null
+      },
+      handleIf: child => evaluateAbstractForOfGuard(child, frame),
+      unsupportedAfterReducerMessage: child => `Abstract for..of scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedBodyMessage: child => `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
+    }, frame)
+    if (bodyError != null) return {kind: 'return', value: bodyError}
     const error = finalizeAbstractLoop(loop, reducers, 'Abstract for..of', frame)
     if (error != null) return {kind: 'return', value: error}
   } finally {
@@ -438,6 +430,15 @@ function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: Ar
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function evaluateAbstractForOfGuard(statement: ts.IfStatement, frame: InterpreterFrame): Value | null {
+  if (!abstractLoopBranchSupported(statement)) {
+    return noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${statement.getText(frame.program.sourceFile)}`)
+  }
+  const flow = evaluateIfStatement(statement, frame)
+  if (flow.kind === 'fallthrough') return null
+  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported')
 }
 
 function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -458,45 +459,28 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   const reducers = pendingAbstractReducers()
   try {
     const pushedArrays = new Map<string, IndexedForPushRecord>()
-    let sawScalarUpdate = false
-    for (let order = 0; order < statement.statement.statements.length; order++) {
-      const child = statement.statement.statements[order]!
-      const reducer = captureAbstractLoopReducer(child, order, reducers, 'Indexed for loop', frame)
-      if (reducer.kind === 'unsupported') return {kind: 'return', value: reducer.value}
-      if (reducer.kind === 'captured') {
-        sawScalarUpdate = true
-        continue
-      }
-      if (sawScalarUpdate) {
-        return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`)}
-      }
-      if (ts.isVariableStatement(child)) {
-        for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
-        continue
-      }
-      if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-        const pushPath = pathFromExpression(child.expression.expression.expression, frame)
-        if (pushPath == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported push target ${child.expression.expression.expression.getText(frame.program.sourceFile)}`)}
-        const push = evaluateIndexedForPush(child.expression, pushPath, shape.indexName, length, bound.origin?.source ?? null, order, frame)
-        if (push.kind === 'error') return {kind: 'return', value: push.value}
-        if (push.push != null) loop.pushes.push(push.push)
-        rememberIndexedForPush(pushedArrays, pushPath, push.initialEmpty, push.conditional)
-        continue
-      }
-      if (ts.isIfStatement(child)) {
-        const guardError = evaluateIndexedForGuardedStatement(child, {
-          indexName: shape.indexName,
-          length,
-          source: bound.origin?.source ?? null,
-          order,
-          loop,
-          pushedArrays,
-        }, frame)
-        if (guardError != null) return {kind: 'return', value: guardError}
-        continue
-      }
-      return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
-    }
+    const bodyError = evaluateFreshLoopBody(statement.statement.statements, reducers, {
+      loopLabel: 'Indexed for loop',
+      handlePush: (expression, order) => evaluateIndexedForPushStatement(expression, {
+        indexName: shape.indexName,
+        length,
+        source: bound.origin?.source ?? null,
+        order,
+        loop,
+        pushedArrays,
+      }, frame),
+      handleIf: (child, order) => evaluateIndexedForGuardedStatement(child, {
+        indexName: shape.indexName,
+        length,
+        source: bound.origin?.source ?? null,
+        order,
+        loop,
+        pushedArrays,
+      }, frame),
+      unsupportedAfterReducerMessage: child => `Indexed for loop scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedBodyMessage: child => `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
+    }, frame)
+    if (bodyError != null) return {kind: 'return', value: bodyError}
     const cursorError = finalizeAbstractLoop(loop, reducers, 'Indexed for loop', frame)
     if (cursorError != null) return {kind: 'return', value: cursorError}
     finalizeIndexedForPushedArrays(pushedArrays, bound.origin, frame)
@@ -506,9 +490,23 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   return {kind: 'fallthrough'}
 }
 
+function evaluateIndexedForPushStatement(
+  expression: ts.CallExpression & {expression: ts.PropertyAccessExpression},
+  context: IndexedForBodyContext,
+  frame: InterpreterFrame,
+): Value | null {
+  const pushPath = pathFromExpression(expression.expression.expression, frame)
+  if (pushPath == null) return noteUnsupported(frame, `Unsupported push target ${expression.expression.expression.getText(frame.program.sourceFile)}`)
+  const push = evaluateIndexedForPush(expression, pushPath, context.indexName, context.length, context.source, context.order, frame)
+  if (push.kind === 'error') return push.value
+  if (push.push != null) context.loop.pushes.push(push.push)
+  rememberIndexedForPush(context.pushedArrays, pushPath, push.initialEmpty, push.conditional)
+  return null
+}
+
 function evaluateIndexedForGuardedStatement(
   statement: ts.IfStatement,
-  context: IndexedForGuardedContext,
+  context: IndexedForBodyContext,
   frame: InterpreterFrame,
 ): Value | null {
   if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches')
@@ -528,7 +526,7 @@ function evaluateIndexedForGuardedStatement(
 
 function evaluateIndexedForGuardedBody(
   statement: ts.Statement,
-  context: IndexedForGuardedContext,
+  context: IndexedForBodyContext,
   frame: InterpreterFrame,
 ): Value | null {
   const statements = ts.isBlock(statement) ? statement.statements : [statement]
@@ -538,12 +536,8 @@ function evaluateIndexedForGuardedBody(
       continue
     }
     if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-      const pushPath = pathFromExpression(child.expression.expression.expression, frame)
-      if (pushPath == null) return noteUnsupported(frame, `Unsupported push target ${child.expression.expression.expression.getText(frame.program.sourceFile)}`)
-      const push = evaluateIndexedForPush(child.expression, pushPath, context.indexName, context.length, context.source, context.order, frame)
-      if (push.kind === 'error') return push.value
-      if (push.push != null) context.loop.pushes.push(push.push)
-      rememberIndexedForPush(context.pushedArrays, pushPath, push.initialEmpty, push.conditional)
+      const error = evaluateIndexedForPushStatement(child.expression, context, frame)
+      if (error != null) return error
       continue
     }
     if (ts.isIfStatement(child)) {
@@ -579,6 +573,42 @@ function evaluateIndexedForLoopBound(shape: IndexedForLoopShape, frame: Interpre
     expression: shape.source.lengthExpression,
     origin: {source, sourceExpr: sourceExpression(source, shape.source.expression, frame)},
   }
+}
+
+function evaluateFreshLoopBody(
+  statements: ts.NodeArray<ts.Statement> | ts.Statement[],
+  reducers: PendingAbstractReducers,
+  handlers: FreshLoopBodyHandlers,
+  frame: InterpreterFrame,
+): Value | null {
+  let sawReducer = false
+  for (let order = 0; order < statements.length; order++) {
+    const child = statements[order]!
+    handlers.beforeStatement?.(order)
+    const reducer = captureAbstractLoopReducer(child, order, reducers, handlers.loopLabel, frame)
+    if (reducer.kind === 'unsupported') return reducer.value
+    if (reducer.kind === 'captured') {
+      sawReducer = true
+      continue
+    }
+    if (sawReducer) return noteUnsupported(frame, handlers.unsupportedAfterReducerMessage(child))
+    if (ts.isVariableStatement(child)) {
+      for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
+      continue
+    }
+    if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
+      const error = handlers.handlePush(child.expression, order)
+      if (error != null) return error
+      continue
+    }
+    if (ts.isIfStatement(child)) {
+      const error = handlers.handleIf(child, order)
+      if (error != null) return error
+      continue
+    }
+    return noteUnsupported(frame, handlers.unsupportedBodyMessage(child))
+  }
+  return null
 }
 
 function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | null {
