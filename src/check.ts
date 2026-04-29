@@ -59,6 +59,11 @@ import {
   type ResolvedCallTarget,
 } from './check-types.ts'
 import {
+  bindingElementPropertyName,
+  bindingNames,
+  forEachArrayBindingElement,
+} from './binding-patterns.ts'
+import {
   addNumbers,
   callExpr,
   conditionalRunningSumNumber,
@@ -235,6 +240,11 @@ import {
   lineNumberForNode,
   type CheckBoundary,
 } from './source-boundary.ts'
+import {
+  functionHasInstanceThisInput,
+  functionInputRoots,
+  isFunctionLikeWithBody,
+} from './function-shape.ts'
 
 export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
@@ -557,14 +567,6 @@ function expressionBoundaryType(expression: ts.Expression): ts.TypeNode | null {
   if (ts.isNonNullExpression(expression)) return expressionBoundaryType(expression.expression)
   if (ts.isSatisfiesExpression(expression) || ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) return expression.type
   return null
-}
-
-function isFunctionLikeWithBody(node: ts.Node) {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
 }
 
 function verifyFunctionSpecs(
@@ -1022,36 +1024,6 @@ function localizeValue(value: Value, expr: string, options: LocalizeOptions = {}
     }
   }
   return value
-}
-
-function bindingNames(name: ts.BindingName): string[] {
-  if (ts.isIdentifier(name)) return [name.text]
-  const names: string[] = []
-  if (ts.isObjectBindingPattern(name)) {
-    for (const element of name.elements) names.push(...bindingNames(element.name))
-  }
-  if (ts.isArrayBindingPattern(name)) {
-    forEachArrayBindingElement(name, elementName => names.push(...bindingNames(elementName)))
-  }
-  return names
-}
-
-function functionInputRoots(program: Program, fn: FitFunction): string[] {
-  const roots = [...program.globals.keys()]
-  if (functionHasInstanceThisInput(fn)) roots.push('this')
-  for (const param of fn.node.parameters) {
-    roots.push(...bindingNames(param.name))
-  }
-  return [...new Set(roots)]
-}
-
-function functionHasInstanceThisInput(fn: FitFunction) {
-  return (ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node))
-    && !hasModifier(fn.node, ts.SyntaxKind.StaticKeyword)
-}
-
-function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
-  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
 function programGlobalEnv(program: Program): Map<string, Value> {
@@ -1812,28 +1784,11 @@ function bindArrayPattern(pattern: ts.ArrayBindingPattern, value: Value, context
   })
 }
 
-function forEachArrayBindingElement(
-  pattern: ts.ArrayBindingPattern,
-  visit: (name: ts.BindingName, index: number, isRest: boolean) => void,
-) {
-  pattern.elements.forEach((element, index) => {
-    if (ts.isOmittedExpression(element)) return
-    visit(element.name, index, element.dotDotDotToken != null)
-  })
-}
-
 function arrayPatternElementValue(value: Value, index: number): Value {
   if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
   return value.elements?.[index]
     ?? value.element
     ?? unknownNumber(`${value.expr ?? 'array'}[${index}]`)
-}
-
-function bindingElementPropertyName(element: ts.BindingElement): string | null {
-  if (element.propertyName == null) return ts.isIdentifier(element.name) ? element.name.text : null
-  if (ts.isIdentifier(element.propertyName)) return element.propertyName.text
-  if (ts.isStringLiteral(element.propertyName) || ts.isNumericLiteral(element.propertyName)) return element.propertyName.text
-  return null
 }
 
 function applyExpressionStatement(expression: ts.Expression, context: EvalContext): Value | null {

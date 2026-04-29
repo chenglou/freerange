@@ -2,6 +2,10 @@ import * as ts from 'typescript'
 import {type FitFunction} from './modules.ts'
 import {parseExpression} from './parser.ts'
 import {
+  bindingElementPropertyName,
+  forEachArrayBindingElement,
+} from './binding-patterns.ts'
+import {
   type ArraySummary,
   type LinearConstraint,
   type NumberValue,
@@ -157,23 +161,6 @@ function isParenthesizedCallSiteText(text: string) {
   } catch {
     return false
   }
-}
-
-function forEachArrayBindingElement(
-  pattern: ts.ArrayBindingPattern,
-  visit: (name: ts.BindingName, index: number, isRest: boolean) => void,
-) {
-  pattern.elements.forEach((element, index) => {
-    if (ts.isOmittedExpression(element)) return
-    visit(element.name, index, element.dotDotDotToken != null)
-  })
-}
-
-function bindingElementPropertyName(element: ts.BindingElement): string | null {
-  if (element.propertyName == null) return ts.isIdentifier(element.name) ? element.name.text : null
-  if (ts.isIdentifier(element.propertyName)) return element.propertyName.text
-  if (ts.isStringLiteral(element.propertyName) || ts.isNumericLiteral(element.propertyName)) return element.propertyName.text
-  return null
 }
 
 function escapeRegExp(text: string) {
