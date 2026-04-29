@@ -83,6 +83,23 @@ import {
   writePath,
   type ValuePath,
 } from './value-path.ts'
+import {
+  expressionCursorPaths,
+  expressionIndexPaths,
+  identifierTargetName,
+  indexedForLoopShape,
+  isAssignmentOperator,
+  isIdentifierNamed,
+  isPushCallExpression,
+  isSideEffectFreeExpression,
+  propertyNameText,
+  referencesAnyIdentifier,
+  referencesIdentifier,
+  scalarIncrementExpression,
+  symbolicForOfBranchSupported,
+  unwrapExpression,
+  type IndexedForLoopShape,
+} from './source-syntax.ts'
 
 export type InterpreterFunctionResult = {
   value: Value
@@ -130,15 +147,6 @@ type LoopScalarAdd = {
   increment: NumberValue
   incrementExpression: ts.Expression
 }
-
-type IndexedForLoopShape = {
-  indexName: string
-  source: IndexedForLoopSource
-}
-
-type IndexedForLoopSource =
-  | {kind: 'limit'; expression: ts.Expression}
-  | {kind: 'array'; expression: ts.Expression; lengthExpression: ts.Expression}
 
 type IndexedForLoopBound = {
   length: NumberValue
@@ -612,38 +620,6 @@ function evaluateLoopBodyEffects(
   return null
 }
 
-function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | null {
-  if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
-  if (statement.initializer.declarations.length !== 1) return null
-  const declaration = statement.initializer.declarations[0]
-  if (declaration == null || !ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
-  if (numericLiteralValue(declaration.initializer) !== 0) return null
-  const indexName = declaration.name.text
-  if (statement.condition == null || statement.incrementor == null) return null
-  const condition = unwrapExpression(statement.condition)
-  if (!ts.isBinaryExpression(condition) || condition.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
-  if (!isIdentifierNamed(condition.left, indexName)) return null
-  if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
-  return {indexName, source: indexedForLoopSource(condition.right)}
-}
-
-function indexedForLoopSource(expression: ts.Expression): IndexedForLoopSource {
-  const current = unwrapExpression(expression)
-  return ts.isPropertyAccessExpression(current) && current.name.text === 'length'
-    ? {kind: 'array', expression: current.expression, lengthExpression: current}
-    : {kind: 'limit', expression}
-}
-
-function indexedLoopIncrements(expression: ts.Expression, indexName: string): boolean {
-  const current = unwrapExpression(expression)
-  if ((ts.isPostfixUnaryExpression(current) || ts.isPrefixUnaryExpression(current))
-    && current.operator === ts.SyntaxKind.PlusPlusToken
-    && ts.isIdentifier(current.operand)
-    && current.operand.text === indexName) return true
-  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
-  return isIdentifierNamed(current.left, indexName) && numericLiteralValue(current.right) === 1
-}
-
 function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame: InterpreterFrame): NumberValue {
   const expr = limit.expr ?? expression.getText(frame.program.sourceFile)
   const min = Math.max(0, limit.min)
@@ -738,32 +714,6 @@ function indexedElementAssumptions(value: NumberValue, length: NumberValue): Lin
   const lower = comparisonConstraint(value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
   const upper = comparisonConstraint(value, '<', length)
   return [lower, upper].filter((fact): fact is LinearConstraint => fact != null)
-}
-
-function expressionIndexPaths(expression: ts.Expression | undefined, indexName: string, path: string[] = []): string[][] {
-  if (expression == null) return []
-  const unwrapped = unwrapExpression(expression)
-  if (isIdentifierNamed(unwrapped, indexName)) return [path]
-  if (ts.isObjectLiteralExpression(unwrapped)) {
-    const paths: string[][] = []
-    for (const property of unwrapped.properties) {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        if (property.name.text === indexName) paths.push([...path, property.name.text])
-        continue
-      }
-      if (!ts.isPropertyAssignment(property)) continue
-      const name = propertyNameText(property.name)
-      if (name == null) continue
-      paths.push(...expressionIndexPaths(property.initializer, indexName, [...path, name]))
-    }
-    return paths
-  }
-  if (ts.isArrayLiteralExpression(unwrapped)) {
-    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
-      ? expressionIndexPaths(element.expression, indexName, [...path, '[]'])
-      : expressionIndexPaths(element, indexName, [...path, '[]']))
-  }
-  return []
 }
 
 function pendingLoopEffects(): PendingLoopEffects {
@@ -875,89 +825,12 @@ function singleStatement(statement: ts.Statement): ts.Statement {
   return ts.isBlock(statement) && statement.statements.length === 1 ? statement.statements[0]! : statement
 }
 
-function scalarIncrementExpression(expression: ts.BinaryExpression, targetName: string): ts.Expression | null {
-  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) return expression.right
-  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
-  const right = unwrapExpression(expression.right)
-  if (!ts.isBinaryExpression(right) || right.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
-  if (isIdentifierNamed(right.left, targetName)) return right.right
-  if (isIdentifierNamed(right.right, targetName)) return right.left
-  return null
-}
-
-function identifierTargetName(expression: ts.Expression): string | null {
-  const target = unwrapExpression(expression)
-  return ts.isIdentifier(target) ? target.text : null
-}
-
-function isIdentifierNamed(expression: ts.Expression, name: string): boolean {
-  const target = unwrapExpression(expression)
-  return ts.isIdentifier(target) && target.text === name
-}
-
-function referencesAnyIdentifier(expression: ts.Expression, names: Set<string>): boolean {
-  for (const name of names) {
-    if (referencesIdentifier(expression, name)) return true
-  }
-  return false
-}
-
 function loopEffectTargets(effects: PendingLoopEffects): Set<string> {
   return new Set([...effects.scalarAdds.keys(), ...effects.conditionalScalarAdds.keys(), ...effects.extrema.keys()])
 }
 
 function loopEffectTargetAlreadyUpdated(targetName: string, effects: PendingLoopEffects): boolean {
   return effects.scalarAdds.has(targetName) || effects.conditionalScalarAdds.has(targetName) || effects.extrema.has(targetName)
-}
-
-function referencesIdentifier(node: ts.Node, name: string): boolean {
-  let found = false
-  const visit = (current: ts.Node) => {
-    if (found) return
-    if (ts.isIdentifier(current) && current.text === name) {
-      found = true
-      return
-    }
-    if (current !== node && isFunctionLikeWithBody(current)) return
-    ts.forEachChild(current, visit)
-  }
-  visit(node)
-  return found
-}
-
-function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclaration {
-  return (ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node))
-    && node.body != null
-}
-
-function isSideEffectFreeExpression(expression: ts.Expression): boolean {
-  const current = unwrapExpression(expression)
-  if (ts.isIdentifier(current)) return true
-  if (ts.isPropertyAccessExpression(current)) return isSideEffectFreeExpression(current.expression)
-  if (ts.isElementAccessExpression(current)) return current.argumentExpression != null
-    && isSideEffectFreeExpression(current.expression)
-    && isSideEffectFreeExpression(current.argumentExpression)
-  if (ts.isNumericLiteral(current) || ts.isStringLiteral(current) || current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) return true
-  if (ts.isPrefixUnaryExpression(current)) return isSideEffectFreeExpression(current.operand)
-  if (ts.isBinaryExpression(current)) return !isAssignmentOperator(current.operatorToken.kind)
-    && isSideEffectFreeExpression(current.left)
-    && isSideEffectFreeExpression(current.right)
-  if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) return isSideEffectFreeExpression(current.expression)
-  return false
-}
-
-function symbolicForOfBranchSupported(statement: ts.Statement): boolean {
-  if (ts.isBlock(statement)) return statement.statements.every(symbolicForOfBranchSupported)
-  if (ts.isVariableStatement(statement)) return true
-  if (ts.isExpressionStatement(statement)) return isPushCallExpression(statement.expression)
-  if (ts.isIfStatement(statement)) {
-    return symbolicForOfBranchSupported(statement.thenStatement)
-      && (statement.elseStatement == null || symbolicForOfBranchSupported(statement.elseStatement))
-  }
-  return false
 }
 
 function finalizeLoopEffects(
@@ -1118,32 +991,6 @@ function loopCursorElementValue(update: LoopScalarUpdate, expr: string): NumberV
 function resolveNumberFromEnv(expr: string, frame: InterpreterFrame): NumberValue | null {
   const value = frame.env.get(expr)
   return value?.kind === 'number' ? value : null
-}
-
-function expressionCursorPaths(expression: ts.Expression | undefined, path: string[] = []): {path: string[]; targetName: string}[] {
-  if (expression == null) return []
-  const unwrapped = unwrapExpression(expression)
-  if (ts.isIdentifier(unwrapped)) return [{path, targetName: unwrapped.text}]
-  if (ts.isObjectLiteralExpression(unwrapped)) {
-    const paths: {path: string[]; targetName: string}[] = []
-    for (const property of unwrapped.properties) {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        paths.push({path: [...path, property.name.text], targetName: property.name.text})
-        continue
-      }
-      if (!ts.isPropertyAssignment(property)) continue
-      const name = propertyNameText(property.name)
-      if (name == null) continue
-      paths.push(...expressionCursorPaths(property.initializer, [...path, name]))
-    }
-    return paths
-  }
-  if (ts.isArrayLiteralExpression(unwrapped)) {
-    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
-      ? expressionCursorPaths(element.expression, [...path, '[]'])
-      : expressionCursorPaths(element, [...path, '[]']))
-  }
-  return []
 }
 
 function forOfItemName(initializer: ts.ForInitializer): string | null {
@@ -1586,12 +1433,6 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   return next.length
 }
 
-function isPushCallExpression(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression} {
-  return ts.isCallExpression(expression)
-    && ts.isPropertyAccessExpression(expression.expression)
-    && expression.expression.name.text === 'push'
-}
-
 function symbolicLoopAppendLength(current: ArrayValue, loop: LoopFrame): NumberValue {
   if (current.length.min === 0 && current.length.max === 0) return loop.source.length
   return addNumbers(current.length, loop.source.length)
@@ -1736,19 +1577,8 @@ function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame):
   return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
 }
 
-function unwrapExpression(expression: ts.Expression): ts.Expression {
-  if (ts.isParenthesizedExpression(expression)) return unwrapExpression(expression.expression)
-  if (ts.isNonNullExpression(expression)) return unwrapExpression(expression.expression)
-  if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) return unwrapExpression(expression.expression)
-  return expression
-}
-
 function isInlineFunction(expression: ts.Expression): expression is ArrayCallbackFunction {
   return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)
-}
-
-function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
-  return kind === ts.SyntaxKind.EqualsToken || kind === ts.SyntaxKind.PlusEqualsToken
 }
 
 function isComparisonOperator(kind: ts.SyntaxKind): boolean {
@@ -1852,9 +1682,4 @@ function compareNumbers(left: number, kind: ts.SyntaxKind, right: number): boole
 
 function literalBoolean(value: Value): boolean | null {
   return value.kind === 'literal' && value.values.length === 1 && typeof value.values[0] === 'boolean' ? value.values[0] : null
-}
-
-function propertyNameText(name: ts.PropertyName): string | null {
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
-  return null
 }

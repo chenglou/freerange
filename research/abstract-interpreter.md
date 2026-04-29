@@ -81,6 +81,7 @@ Do not swap the engine in one move. Build the new core in parallel, then compare
 Current parallel core:
 
 - `src/interpreter/context.ts`: frames, issues, assumptions, and flow
+- `src/interpreter/source-syntax.ts`: small TypeScript syntax readers for loop shapes, guard safety, push calls, and cursor/index paths
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
 - `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local calls, ordered defaults, parameter type shapes for direct kernels, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, branch refinement, property assignment, simple alias-preserving mutation, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
