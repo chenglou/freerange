@@ -56,6 +56,8 @@ case matrix abstract for-of cursor values: interpreter-matrix-patterns.ts:matrix
   fact return.rows follows items by index
 case matrix abstract conditional count: interpreter-matrix-patterns.ts:matrixForOfParamConditionalCount
   return: int 0..Infinity
+case matrix abstract running max: interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
+  return: 0..Infinity
 case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
@@ -71,3 +73,6 @@ case negative cursor update before push surface: interpreter-matrix-negative.ts:
 case negative conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
   return: unknown (Abstract for..of conditional running sums do not support else branches)
   unsupported negativeMatrixConditionalElseCount: Abstract for..of conditional running sums do not support else branches
+case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
+  return: unknown (Abstract for..of scalar extrema support extrema updates only)
+  unsupported negativeMatrixMixedExtremumAndCursor: Abstract for..of scalar extrema support extrema updates only

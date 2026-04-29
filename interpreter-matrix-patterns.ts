@@ -116,6 +116,19 @@ export function matrixForOfParamConditionalCount(items: {visible: boolean}[]): n
   return count
 }
 
+/** @fit
+ * given items.length: int 0..50
+ * given items[].width: 0..80
+ */
+export function matrixForOfParamRunningMax(items: {width: number}[]): number {
+  let maxWidth = 0
+  for (const item of items) {
+    const width = item.width
+    maxWidth = Math.max(maxWidth, width)
+  }
+  return maxWidth
+}
+
 export function matrixMathClampColumns(width: number): number {
   const raw = Math.floor(width / 240)
   return Math.max(1, Math.min(raw, 7))

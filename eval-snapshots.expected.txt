@@ -72,6 +72,10 @@ infer matrix abstract conditional count
   return return == count
   return return: int 0..50
   local count: int 0..50
+infer matrix abstract running max
+  return return == maxWidth
+  return return: 0..80
+  local maxWidth: 0..80
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

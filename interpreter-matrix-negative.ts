@@ -43,3 +43,13 @@ export function negativeMatrixConditionalElseCount(items: {visible: boolean}[]):
   }
   return count
 }
+
+export function negativeMatrixMixedExtremumAndCursor(items: {width: number}[]): number {
+  let maxWidth = 0
+  let total = 0
+  for (const item of items) {
+    maxWidth = Math.max(maxWidth, item.width)
+    total += item.width
+  }
+  return maxWidth + total
+}
