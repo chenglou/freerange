@@ -38,6 +38,15 @@ infer matrix for-of push visible rows
   local rows.length: int 2..2
   local rows[].height: 2 | 6
   local rows is an order-preserving subset of items
+infer matrix abstract for-of param rows
+  return return.rows.length == items.length
+  return return.rows.length: int 0..Infinity
+  return return.rows[].height == items[].height
+  return return.rows follows items by index
+  local rows.length == items.length
+  local rows.length: int 0..Infinity
+  local rows[].height == items[].height
+  local rows follows items by index
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
   return return.length: int 2..2

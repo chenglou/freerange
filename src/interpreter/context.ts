@@ -25,6 +25,7 @@ export type InterpreterFrame = {
 export type InterpreterLoopContext = {
   source: ArrayValue
   sourceExpr: string
+  abstract: boolean
 }
 
 export type InterpreterFlow =

@@ -91,6 +91,8 @@ Naming rule learned during the first adoption pass: a fresh local array literal 
 
 Fresh finite `for..of` loop pushes now record only origin lineage: unconditional pushes follow the source by index, and pushes under `if` become order-preserving subsets. Sequence facts such as `spaced`, `lastEnd`, cursor recurrence, and loop-local report sections still belong to the old loop-summary path until the fresh state has explicit loop bookkeeping.
 
+When the source array is not finite but has an element domain, the fresh core can run a deliberately tiny abstract `for..of` pass for straight append loops. The body may bind local values and call `rows.push(...)`; that means one push per source element, so the target length follows the source length and the element facts come from the abstract pushed value. Scalar updates, branches, and richer side effects still fall back to the legacy loop reader.
+
 Old extraction order, still useful as a map of remaining semantic families:
 
 1. interpreter state helpers

@@ -52,6 +52,7 @@ import {
   type InterpreterFlow,
   type InterpreterFrame,
   type InterpreterIssue,
+  type InterpreterLoopContext,
 } from './context.ts'
 
 export type InterpreterFunctionResult = {
@@ -265,14 +266,13 @@ function evaluateConditionalBranch(statement: ts.Statement, frame: InterpreterFr
 function evaluateForOfStatement(statement: ts.ForOfStatement, frame: InterpreterFrame): InterpreterFlow {
   if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported')}
   const source = evaluateExpression(statement.expression, frame)
-  if (source.kind !== 'array' || source.elements == null) {
-    return {kind: 'return', value: noteUnsupported(frame, `for..of expected a finite array: ${statement.expression.getText(frame.program.sourceFile)}`)}
-  }
+  if (source.kind !== 'array') return {kind: 'return', value: noteUnsupported(frame, `for..of expected an array: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  if (source.elements == null) return evaluateAbstractForOfStatement(statement, source, frame)
   const itemName = forOfItemName(statement.initializer)
-  const scopedNames = forOfScopedNames(statement.initializer)
+  const scopedNames = [...forOfScopedNames(statement.initializer), ...forOfBodyScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
-  if (itemName != null) frame.loopStack.push({source, sourceExpr})
+  if (itemName != null) frame.loopStack.push({source, sourceExpr, abstract: false})
   try {
     for (const element of source.elements) {
       bindForOfInitializer(statement.initializer, element, frame)
@@ -281,6 +281,35 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
     }
   } finally {
     if (itemName != null) frame.loopStack.pop()
+    restoreScopedValues(frame.env, scopedValues)
+  }
+  return {kind: 'fallthrough'}
+}
+
+function evaluateAbstractForOfStatement(statement: ts.ForOfStatement, source: ArrayValue, frame: InterpreterFrame): InterpreterFlow {
+  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports block bodies only')}
+  const itemName = forOfItemName(statement.initializer)
+  if (itemName == null) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports simple variable bindings only')}
+  const scopedNames = [...forOfScopedNames(statement.initializer), ...blockScopedNames(statement.statement)]
+  const scopedValues = saveScopedValues(frame.env, scopedNames)
+  const sourceExpr = sourceExpression(source, statement.expression, frame)
+  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  frame.loopStack.push({source, sourceExpr, abstract: true})
+  try {
+    bindForOfInitializer(statement.initializer, item, frame)
+    for (const child of statement.statement.statements) {
+      if (ts.isVariableStatement(child)) {
+        for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
+        continue
+      }
+      if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
+        evaluateExpression(child.expression, frame)
+        continue
+      }
+      return {kind: 'return', value: noteUnsupported(frame, `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
+    }
+  } finally {
+    frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
@@ -297,6 +326,10 @@ function forOfScopedNames(initializer: ts.ForInitializer): string[] {
   return initializer.declarations.flatMap(declaration => bindingNames(declaration.name))
 }
 
+function forOfBodyScopedNames(statement: ts.Statement): string[] {
+  return ts.isBlock(statement) ? blockScopedNames(statement) : []
+}
+
 function saveScopedValues(env: Map<string, Value>, names: string[]): Map<string, Value | null> {
   const values = new Map<string, Value | null>()
   for (const name of names) values.set(name, env.get(name) ?? null)
@@ -308,6 +341,13 @@ function restoreScopedValues(env: Map<string, Value>, values: Map<string, Value 
     if (value == null) env.delete(name)
     else env.set(name, value)
   }
+}
+
+function blockScopedNames(block: ts.Block): string[] {
+  return block.statements.flatMap(statement => {
+    if (!ts.isVariableStatement(statement)) return []
+    return statement.declarationList.declarations.flatMap(declaration => bindingNames(declaration.name))
+  })
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
@@ -695,6 +735,8 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   if (path == null) return noteUnsupported(frame, `Unsupported push target ${target.expression.getText(frame.program.sourceFile)}`)
   const current = readPath(path, frame)
   if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`)
+  const loop = currentLoop(frame)
+  if (loop?.abstract === true && expression.arguments.length !== 1) return noteUnsupported(frame, 'Abstract loop push supports one item per iteration')
   const values = evaluatedArguments(expression.arguments, frame)
   const elements = current.elements == null ? [] : [...current.elements]
   elements.push(...values)
@@ -705,8 +747,8 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
     : numberValue(elements.length, elements.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
   const next: ArrayValue = {
     ...current,
-    length: nextLength,
-    elements,
+    length: loop?.abstract === true ? abstractLoopPushLength(current, loop) : nextLength,
+    elements: loop?.abstract === true ? null : elements,
     element,
     summary: mergeArraySummary(current.summary, currentLoopPushSummary(frame)),
   }
@@ -714,8 +756,23 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   return next.length
 }
 
+function isPushCallExpression(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression} {
+  return ts.isCallExpression(expression)
+    && ts.isPropertyAccessExpression(expression.expression)
+    && expression.expression.name.text === 'push'
+}
+
+function abstractLoopPushLength(current: ArrayValue, loop: InterpreterLoopContext): NumberValue {
+  if (current.length.min === 0 && current.length.max === 0) return loop.source.length
+  return addNumbers(current.length, loop.source.length)
+}
+
+function currentLoop(frame: InterpreterFrame) {
+  return frame.loopStack.at(-1) ?? null
+}
+
 function currentLoopPushSummary(frame: InterpreterFrame) {
-  const loop = frame.loopStack.at(-1)
+  const loop = currentLoop(frame)
   if (loop == null) return null
   const origin = frame.conditionalDepth > 0
     ? filterOrigin(loop.source, loop.sourceExpr)
