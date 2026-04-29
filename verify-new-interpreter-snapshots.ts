@@ -20,6 +20,8 @@ addCase('matrix for-of push visible rows', ['interpreter-matrix-patterns.ts'], '
 addCase('matrix abstract for-of cursor values', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
 addCase('matrix abstract conditional count', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
 addCase('matrix abstract running max', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamRunningMax')
+addCase('matrix indexed conditional count', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayConditionalCount')
+addCase('matrix indexed running max', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayRunningMax')
 addCase('matrix indexed limit range', ['interpreter-matrix-patterns.ts'], 'matrixIndexedLimitRange')
 addCase('matrix indexed array param rows', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayParamRows')
 addCase('matrix indexed array guarded rows', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedRows')
@@ -35,6 +37,8 @@ addCase('negative indexed loop starts at one surface', ['interpreter-matrix-nega
 addCase('negative indexed array guarded else surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedArrayGuardedElse')
 addCase('negative indexed array pushes into source surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedArrayPushesIntoSource')
 addCase('negative indexed cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedCursorUpdateBeforePush')
+addCase('negative indexed conditional else count surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedConditionalElseCount')
+addCase('negative indexed mixed extremum/cursor surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedMixedExtremumAndCursor')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 

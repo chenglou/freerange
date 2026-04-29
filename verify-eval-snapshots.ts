@@ -23,6 +23,8 @@ addInferCase('matrix abstract guarded for-of rows', ['interpreter-matrix-pattern
 addInferCase('matrix abstract for-of cursor values', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
 addInferCase('matrix abstract conditional count', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
 addInferCase('matrix abstract running max', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamRunningMax')
+addInferCase('matrix indexed conditional count', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayConditionalCount')
+addInferCase('matrix indexed running max', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayRunningMax')
 addInferCase('matrix indexed limit range', ['interpreter-matrix-patterns.ts'], 'matrixIndexedLimitRange')
 addInferCase('matrix indexed array param rows', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayParamRows')
 addInferCase('matrix indexed array guarded rows', ['interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedRows')

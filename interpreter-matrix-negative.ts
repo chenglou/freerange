@@ -88,3 +88,24 @@ export function negativeMatrixIndexedCursorUpdateBeforePush(items: number[], ste
   }
   return rows
 }
+
+export function negativeMatrixIndexedConditionalElseCount(items: {visible: boolean}[]): number {
+  let count = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) count += 1
+    else count += 2
+  }
+  return count
+}
+
+export function negativeMatrixIndexedMixedExtremumAndCursor(items: {width: number}[]): number {
+  let maxWidth = 0
+  let total = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    maxWidth = Math.max(maxWidth, item.width)
+    total += item.width
+  }
+  return maxWidth + total
+}

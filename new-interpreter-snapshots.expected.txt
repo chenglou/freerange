@@ -58,6 +58,10 @@ case matrix abstract conditional count: interpreter-matrix-patterns.ts:matrixFor
   return: int 0..Infinity
 case matrix abstract running max: interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
   return: 0..Infinity
+case matrix indexed conditional count: interpreter-matrix-patterns.ts:matrixIndexedArrayConditionalCount
+  return: int 0..Infinity
+case matrix indexed running max: interpreter-matrix-patterns.ts:matrixIndexedArrayRunningMax
+  return: 0..Infinity
 case matrix indexed limit range: interpreter-matrix-patterns.ts:matrixIndexedLimitRange
   return.length: int 5..5
   return[]: int 0..4
@@ -111,3 +115,9 @@ case negative indexed array pushes into source surface: interpreter-matrix-negat
 case negative indexed cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
   return: unknown (Indexed for loop scalar cursor updates must be the final body statements: rows.push(y))
   unsupported negativeMatrixIndexedCursorUpdateBeforePush: Indexed for loop scalar cursor updates must be the final body statements: rows.push(y)
+case negative indexed conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
+  return: unknown (Indexed for loop conditional running sums do not support else branches)
+  unsupported negativeMatrixIndexedConditionalElseCount: Indexed for loop conditional running sums do not support else branches
+case negative indexed mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
+  return: unknown (Indexed for loop scalar extrema support extrema updates only)
+  unsupported negativeMatrixIndexedMixedExtremumAndCursor: Indexed for loop scalar extrema support extrema updates only

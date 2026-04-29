@@ -130,6 +130,32 @@ export function matrixForOfParamRunningMax(items: {width: number}[]): number {
 }
 
 /** @fit
+ * given items.length: int 0..50
+ */
+export function matrixIndexedArrayConditionalCount(items: {visible: boolean}[]): number {
+  let count = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    if (item.visible) count += 1
+  }
+  return count
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].width: 0..80
+ */
+export function matrixIndexedArrayRunningMax(items: {width: number}[]): number {
+  let maxWidth = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    const width = item.width
+    maxWidth = Math.max(maxWidth, width)
+  }
+  return maxWidth
+}
+
+/** @fit
  * given limit: int 0..30
  */
 export function matrixIndexedLimitRange(limit: number = 5): number[] {
