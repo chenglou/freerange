@@ -66,6 +66,11 @@ case matrix indexed array param rows: interpreter-matrix-patterns.ts:matrixIndex
   return.rows[].height: any number
   return.rows[].sourceIndex: int 0..Infinity
   fact return.rows follows items by index
+case matrix indexed array cursor values: interpreter-matrix-patterns.ts:matrixIndexedArrayCursorValues
+  return.rows.length: int 0..Infinity
+  return.rows[]: int 10..Infinity
+  return.bottom: int 10..Infinity
+  fact return.rows follows items by index
 case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
@@ -93,3 +98,6 @@ case negative indexed array guarded push surface: interpreter-matrix-negative.ts
 case negative indexed array pushes into source surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
   return: unknown (Indexed for loop cannot push into its source array)
   unsupported negativeMatrixIndexedArrayPushesIntoSource: Indexed for loop cannot push into its source array
+case negative indexed cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
+  return: unknown (Indexed for loop scalar cursor updates must be the final body statements: rows.push(y))
+  unsupported negativeMatrixIndexedCursorUpdateBeforePush: Indexed for loop scalar cursor updates must be the final body statements: rows.push(y)

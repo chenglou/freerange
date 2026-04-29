@@ -77,3 +77,13 @@ export function negativeMatrixIndexedArrayPushesIntoSource(items: number[]): num
   }
   return items
 }
+
+export function negativeMatrixIndexedCursorUpdateBeforePush(items: number[], step: number = 2): number[] {
+  const rows = []
+  let y = 0
+  for (let i = 0; i < items.length; i++) {
+    y += step
+    rows.push(y)
+  }
+  return rows
+}

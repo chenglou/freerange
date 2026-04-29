@@ -71,6 +71,7 @@ import {
   type InterpreterFrame,
   type InterpreterIssue,
   type InterpreterLoopContext,
+  type InterpreterLoopPush,
 } from './context.ts'
 
 export type InterpreterFunctionResult = {
@@ -132,7 +133,12 @@ type IndexedForLoopOrigin = {
 type IndexedForPushRecord = {
   path: ValuePath
   count: number
+  initialEmpty: boolean
 }
+
+type IndexedForPushResult =
+  | {kind: 'ok'; push: InterpreterLoopPush | null; initialEmpty: boolean}
+  | {kind: 'error'; value: Value}
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
   const frame = rootFrame(program)
@@ -462,9 +468,30 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   const indexValue = indexedElementPathValue(shape.indexName, length)
   frame.env.set(shape.indexName, indexValue)
   frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
+  const loop = indexedForLoopContext(bound, length, frame)
+  const pendingAdds = new Map<string, PendingAbstractScalarAdd>()
+  const pendingConditionalAdds = new Map<string, PendingAbstractConditionalScalarAdd>()
+  const pendingExtrema = new Map<string, PendingAbstractExtremum>()
   try {
     const pushedArrays = new Map<string, IndexedForPushRecord>()
-    for (const child of statement.statement.statements) {
+    let sawScalarUpdate = false
+    for (let order = 0; order < statement.statement.statements.length; order++) {
+      const child = statement.statement.statements[order]!
+      const scalarAdd = readAbstractLoopScalarAdd(child, frame)
+      if (scalarAdd != null) {
+        if (abstractLoopTargetAlreadyUpdated(scalarAdd.targetName, pendingAdds, pendingConditionalAdds, pendingExtrema)) {
+          return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor already updates ${scalarAdd.targetName}`)}
+        }
+        if (referencesAnyIdentifier(scalarAdd.incrementExpression, abstractLoopUpdatedTargets(pendingAdds, pendingConditionalAdds, pendingExtrema))) {
+          return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop scalar cursor increments cannot depend on an earlier cursor update')}
+        }
+        pendingAdds.set(scalarAdd.targetName, {increment: scalarAdd.increment, order})
+        sawScalarUpdate = true
+        continue
+      }
+      if (sawScalarUpdate) {
+        return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`)}
+      }
       if (ts.isVariableStatement(child)) {
         for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
         continue
@@ -472,18 +499,29 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
       if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
         const pushPath = pathFromExpression(child.expression.expression.expression, frame)
         if (pushPath == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported push target ${child.expression.expression.expression.getText(frame.program.sourceFile)}`)}
-        const pushError = evaluateIndexedForPush(child.expression, pushPath, shape.indexName, length, bound.origin?.source ?? null, frame)
-        if (pushError != null) return {kind: 'return', value: pushError}
-        rememberIndexedForPush(pushedArrays, pushPath)
+        const push = evaluateIndexedForPush(child.expression, pushPath, shape.indexName, length, bound.origin?.source ?? null, order, frame)
+        if (push.kind === 'error') return {kind: 'return', value: push.value}
+        if (push.push != null) loop.pushes.push(push.push)
+        rememberIndexedForPush(pushedArrays, pushPath, push.initialEmpty)
         continue
       }
       return {kind: 'return', value: noteUnsupported(frame, `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)}
     }
+    const cursorError = finalizeAbstractLoop(loop, pendingAdds, pendingConditionalAdds, pendingExtrema, frame)
+    if (cursorError != null) return {kind: 'return', value: cursorError}
     finalizeIndexedForPushedArrays(pushedArrays, bound.origin, frame)
   } finally {
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function indexedForLoopContext(bound: IndexedForLoopBound, length: NumberValue, frame: InterpreterFrame): InterpreterLoopContext {
+  const expr = bound.origin?.sourceExpr ?? bound.expression.getText(frame.program.sourceFile)
+  const source = bound.origin == null
+    ? unknownArray(expr, length)
+    : {...bound.origin.source, length}
+  return {source, sourceExpr: expr, abstract: true, statementIndex: 0, pushes: []}
 }
 
 function evaluateIndexedForLoopBound(shape: IndexedForLoopShape, frame: InterpreterFrame): IndexedForLoopBound | {error: Value} {
@@ -548,17 +586,19 @@ function evaluateIndexedForPush(
   indexName: string,
   length: NumberValue,
   source: ArrayValue | null,
+  order: number,
   frame: InterpreterFrame,
-): Value | null {
+): IndexedForPushResult {
   const current = readPath(path, frame)
-  if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${expression.expression.expression.getText(frame.program.sourceFile)}`)
-  if (source != null && current === source) return noteUnsupported(frame, 'Indexed for loop cannot push into its source array')
-  if (expression.arguments.length !== 1) return noteUnsupported(frame, 'Indexed for loop push supports one item per iteration')
+  if (current.kind !== 'array') return {kind: 'error', value: noteUnsupported(frame, `push expected an array: ${expression.expression.expression.getText(frame.program.sourceFile)}`)}
+  if (source != null && current === source) return {kind: 'error', value: noteUnsupported(frame, 'Indexed for loop cannot push into its source array')}
+  if (expression.arguments.length !== 1) return {kind: 'error', value: noteUnsupported(frame, 'Indexed for loop push supports one item per iteration')}
   const argument = expression.arguments[0]!
   const rawElement = evaluateExpression(argument, frame)
   const targetExpr = valuePathExpression(path)
   const element = indexedLoopValue(rawElement, indexName, targetExpr, [], length)
   const lengthValue = current.length.min === 0 && current.length.max === 0 ? length : addNumbers(current.length, length)
+  const initialEmpty = current.length.min === 0 && current.length.max === 0
   writePath(path, {
     ...current,
     length: lengthValue,
@@ -568,20 +608,32 @@ function evaluateIndexedForPush(
   frame.assumptions = mergeAssumptions(frame.assumptions, ...expressionIndexPaths(argument, indexName).map(indexPath => {
     return indexedElementAssumptions(indexedElementPathValue(loopElementPathExpression(targetExpr, indexPath), length), length)
   }))
-  return null
+  return {
+    kind: 'ok',
+    initialEmpty,
+    push: path.segments.length === 0 ? {
+      arrayName: path.root,
+      order,
+      conditional: false,
+      length: lengthValue,
+      element,
+      base: current,
+      cursorPaths: expressionCursorPaths(argument),
+    } : null,
+  }
 }
 
-function rememberIndexedForPush(records: Map<string, IndexedForPushRecord>, path: ValuePath) {
+function rememberIndexedForPush(records: Map<string, IndexedForPushRecord>, path: ValuePath, initialEmpty: boolean) {
   const key = valuePathExpression(path)
   const current = records.get(key)
-  records.set(key, current == null ? {path, count: 1} : {...current, count: current.count + 1})
+  records.set(key, current == null ? {path, count: 1, initialEmpty} : {...current, count: current.count + 1})
 }
 
 function finalizeIndexedForPushedArrays(records: Map<string, IndexedForPushRecord>, origin: IndexedForLoopOrigin | null, frame: InterpreterFrame) {
   for (const record of records.values()) {
     const value = readPath(record.path, frame)
     if (value.kind !== 'array') continue
-    const summary = origin != null && record.count === 1
+    const summary = origin != null && record.count === 1 && record.initialEmpty
       ? mergeArraySummary(value.summary, emptyArraySummary(mapOrigin(origin.source, origin.sourceExpr)))
       : value.summary
     writePath(record.path, {...value, elements: null, summary}, frame)
