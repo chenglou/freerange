@@ -1281,7 +1281,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
 }
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
-  if (expression.text === 'undefined') return unknown('undefined value is outside the current interpreter surface')
+  if (expression.text === 'undefined') return nullValue('undefined')
   if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, 'Infinity')
   return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`)
 }

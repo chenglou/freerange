@@ -59,6 +59,14 @@ export function matrixDefaultParamOrder(): MatrixSpring {
   return ((k: number = base, b: number = k + 1) => matrixSpring(0, k, b))()
 }
 
+/** @fit
+ * return.k == 290
+ * return.b == 30
+ */
+export function matrixExplicitUndefinedDefaults(): MatrixSpring {
+  return matrixSpring(0, undefined, undefined)
+}
+
 export function matrixIfRefinesNonnegative(value: number): number {
   if (value < 0) return 0
   return value

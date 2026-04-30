@@ -17,6 +17,7 @@ await addCheckCase(
 
 addInferCase('matrix nested iife/map/defaults', ['interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
 addInferCase('matrix default param order', ['interpreter-matrix-patterns.ts'], 'matrixDefaultParamOrder')
+addInferCase('matrix explicit undefined defaults', ['interpreter-matrix-patterns.ts'], 'matrixExplicitUndefinedDefaults')
 addInferCase('matrix for-of push visible rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfPushVisibleRows')
 addInferCase('matrix abstract for-of param rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamRows')
 addInferCase('matrix abstract guarded for-of rows', ['interpreter-matrix-patterns.ts'], 'matrixForOfParamVisibleRows')

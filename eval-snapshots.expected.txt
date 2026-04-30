@@ -28,6 +28,13 @@ infer matrix default param order
   return return.pos: int 0..0
   local base == 10
   local base: int 10..10
+infer matrix explicit undefined defaults
+  return return.b == 30
+  return return.b: int 30..30
+  return return.k == 290
+  return return.k: int 290..290
+  return return.pos == 0
+  return return.pos: int 0..0
 infer matrix for-of push visible rows
   return return.length: 0 | 3
   return return[].height == items[].height

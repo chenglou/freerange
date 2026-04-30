@@ -11,6 +11,10 @@ case matrix default param order: interpreter-matrix-patterns.ts:matrixDefaultPar
   return.pos: int 0..0
   return.k: int 10..10
   return.b: int 11..11
+case matrix explicit undefined defaults: interpreter-matrix-patterns.ts:matrixExplicitUndefinedDefaults
+  return.pos: int 0..0
+  return.k: int 290..290
+  return.b: int 30..30
 case matrix if refines nonnegative: interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
   return: 0..Infinity
 case matrix ternary literal join: interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
