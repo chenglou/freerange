@@ -1,3 +1,4 @@
+import type * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
 import {
   joinValues,
@@ -7,6 +8,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import type {FitFunction} from '../modules.ts'
 import {programGlobalEnv} from '../program-env.ts'
 
 export type InterpreterIssue = {
@@ -23,6 +25,26 @@ export type InterpreterFrame = {
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
+  hooks?: InterpreterHooks
+}
+
+export type InterpreterHooks = {
+  evaluateCall?: (call: InterpreterCall, frame: InterpreterFrame) => Value | null
+}
+
+export type InterpreterCall = {
+  expression: ts.CallExpression
+  callName: string
+  program: Program
+  functionName: string
+  fn: FitFunction
+  argumentValues: Value[]
+  fallback: Value | null
+  imported?: {
+    localName: string
+    binding: Extract<import('../check-types.ts').ImportedBinding, {kind: 'resolved'}>
+  }
+  thisValue?: Value
 }
 
 export type LoopFrame = {
@@ -48,7 +70,7 @@ export type InterpreterFlow =
   | {kind: 'fallthrough'}
   | {kind: 'exit'}
 
-export function rootFrame(program: Program): InterpreterFrame {
+export function rootFrame(program: Program, hooks?: InterpreterHooks): InterpreterFrame {
   return {
     program,
     env: programGlobalEnv(program),
@@ -57,6 +79,7 @@ export function rootFrame(program: Program): InterpreterFrame {
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [],
+    ...(hooks == null ? {} : {hooks}),
   }
 }
 
@@ -69,6 +92,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
   }
 }
 
@@ -81,6 +105,7 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
   }
 }
 

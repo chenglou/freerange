@@ -265,6 +265,11 @@ import {
   isForgettableForStatement,
   isForgettableReadExpression,
 } from './interpreter/forgettable-loop.ts'
+import type {
+  InterpreterCall,
+  InterpreterFrame,
+  InterpreterHooks,
+} from './interpreter/context.ts'
 import {
   formatInterpreterFacts,
   formatInterpreterIssues,
@@ -1562,9 +1567,51 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 
 function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} | null {
   if (!freshInterpreterEligible(fn, context)) return null
-  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions)
+  const hooks = context.callObligations == null ? undefined : freshInterpreterHooks(context)
+  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions, hooks)
   if (result.issues.length > 0) return null
   return {result: result.value, env: result.env, assumptions: result.assumptions}
+}
+
+function freshInterpreterHooks(context: EvalContext): InterpreterHooks {
+  return {
+    evaluateCall: (call, frame) => evaluateFreshInterpreterCall(call, frame, context),
+  }
+}
+
+function evaluateFreshInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
+  const callContext: EvalContext = {
+    ...rootContext,
+    program: frame.program,
+    file: frame.program.file,
+    env: frame.env,
+    stack: frame.stack,
+    assumptions: frame.assumptions,
+    checks: shouldRecordCallObligations(rootContext) ? rootContext.checks : [],
+    ...(rootContext.callObligations == null ? {} : {callObligations: rootContext.callObligations}),
+  }
+  const callArguments = evaluateFunctionCallArguments(call.fn, call.expression.arguments, callContext, call.program, call.thisValue)
+  if (callArguments.kind === 'invalid') return call.fallback ?? unknown(callArguments.reason)
+
+  const callText = call.expression.getText(frame.program.sourceFile)
+  const callLine = lineNumberForNode(frame.program.sourceFile, call.expression)
+  const callSiteBindings = callSiteBindingsFor(call.fn, call.expression.arguments, frame.program.sourceFile, undefined, callArguments.values, callArguments.texts)
+  if (call.program === frame.program) {
+    return evaluateLocalFunctionCall(call.functionName, call.fn, callArguments.values, callContext, {
+      callText,
+      callLine,
+      fallback: call.fallback,
+      thisValue: call.thisValue,
+      callSiteBindings,
+    })
+  }
+  if (call.imported == null) return null
+  return evaluateImportedFunctionCall(call.callName, {
+    kind: 'function',
+    module: call.program,
+    functionName: call.functionName,
+    imported: call.imported,
+  }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings)
 }
 
 function inspectInterpreterDifferential(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInterpreterDifferential {

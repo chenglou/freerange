@@ -70,8 +70,10 @@ import {
   joinFrameEnvs,
   noteUnsupported,
   rootFrame,
+  type InterpreterCall,
   type InterpreterFlow,
   type InterpreterFrame,
+  type InterpreterHooks,
   type InterpreterIssue,
   type LoopFrame,
   type LoopAppend,
@@ -154,7 +156,13 @@ type LoopBodyHandlers = {
 
 type InterpreterCallTarget =
   | {kind: 'math'; name: string}
-  | {kind: 'function'; program: Program; fn: FitFunction}
+  | {
+      kind: 'function'
+      program: Program
+      functionName: string
+      fn: FitFunction
+      imported?: {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>}
+    }
   | {kind: 'unresolved'; reason: string}
 
 type IndexedForLoopBound = {
@@ -207,6 +215,7 @@ export function evaluateInterpreterFunctionBody(
   env: Map<string, Value>,
   stack: string[] = [fn.name],
   assumptions: LinearConstraint[] = [],
+  hooks?: InterpreterHooks,
 ): InterpreterBodyResult {
   const frame: InterpreterFrame = {
     program,
@@ -216,6 +225,7 @@ export function evaluateInterpreterFunctionBody(
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [...assumptions],
+    ...(hooks == null ? {} : {hooks}),
   }
   bindInstanceThis(fn, program, frame.env)
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
@@ -1359,18 +1369,49 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     const member = classMemberFunctionForPropertyAccess(target, frame)
     if (member != null && ts.isMethodDeclaration(member.fn.node)) {
       const receiver = evaluateExpression(target.expression, frame)
-      return valueWithStructuralFallback(invokeFitFunction(member.fn, evaluatedArguments(expression.arguments, frame), frame, frame.program, rootFrame(frame.program).env, receiver), fallback)
+      return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), {
+        kind: 'function',
+        program: frame.program,
+        functionName: member.functionName,
+        fn: member.fn,
+      }, fallback, frame, receiver)
     }
   }
   const resolved = resolveCallTarget(target, frame.program)
   if (resolved.kind === 'math') {
     return valueWithStructuralFallback(evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile)), fallback)
   }
-  if (resolved.kind === 'function') {
-    return valueWithStructuralFallback(invokeFitFunction(resolved.fn, evaluatedArguments(expression.arguments, frame), frame, resolved.program, rootFrame(resolved.program).env), fallback)
-  }
+  if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback, frame)
   if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
   return noteUnsupported(frame, resolved.reason)
+}
+
+function evaluateResolvedFunctionCall(
+  expression: ts.CallExpression,
+  callName: string,
+  target: Extract<InterpreterCallTarget, {kind: 'function'}>,
+  fallback: Value | null,
+  frame: InterpreterFrame,
+  thisValue?: Value,
+): Value {
+  const argumentValues = evaluatedArguments(expression.arguments, frame)
+  const hooked = evaluateHookedCall({
+    expression,
+    callName,
+    program: target.program,
+    functionName: target.functionName,
+    fn: target.fn,
+    argumentValues,
+    fallback,
+    ...(target.imported == null ? {} : {imported: target.imported}),
+    ...(thisValue == null ? {} : {thisValue}),
+  }, frame)
+  if (hooked != null) return hooked
+  return valueWithStructuralFallback(invokeFitFunction(target.fn, argumentValues, frame, target.program, rootFrame(target.program, frame.hooks).env, thisValue), fallback)
+}
+
+function evaluateHookedCall(call: InterpreterCall, frame: InterpreterFrame): Value | null {
+  return frame.hooks?.evaluateCall?.(call, frame) ?? null
 }
 
 function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
@@ -1567,7 +1608,7 @@ function resolveCallTarget(target: ts.Expression, program: Program): Interpreter
 
 function resolveIdentifierCallTarget(name: string, program: Program, seen = new Set<string>()): InterpreterCallTarget {
   const local = program.functions.get(name)
-  if (local != null) return {kind: 'function', program, fn: local}
+  if (local != null) return {kind: 'function', program, functionName: name, fn: local}
 
   const key = `${program.sourceId}#${name}`
   if (seen.has(key)) return {kind: 'unresolved', reason: `Cyclic call alias at ${program.file}#${name}`}
@@ -1605,7 +1646,12 @@ function resolveExportedCallTarget(
   const resolved = resolveFitExport(binding.module, exportedName)
   if (resolved.kind === 'unresolved') return {kind: 'unresolved', reason: resolved.reason}
   const target = resolveIdentifierCallTarget(resolved.localName, resolved.module, seen)
-  return target.kind === 'unresolved' ? {kind: 'unresolved', reason: `${localName} resolved to ${exportedName}: ${target.reason}`} : target
+  if (target.kind === 'unresolved') return {kind: 'unresolved', reason: `${localName} resolved to ${exportedName}: ${target.reason}`}
+  if (target.kind === 'math') return target
+  return {
+    ...target,
+    imported: target.imported ?? {localName, binding},
+  }
 }
 
 function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame): ValuePath | null {
