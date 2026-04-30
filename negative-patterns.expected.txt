@@ -975,6 +975,12 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: ret
   missing fact: (width + importedChromeX) == ((width + importedChromeX) + 1)
 UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
   Nullable value input.rows was not proven present
+FAIL negative-import-patterns.ts:negativeImportedTypeFieldReturnCheck: return.k > 0
+  result: is false
+  missing fact: -1 > 0
+FAIL negative-import-patterns.ts:negativeImportedTypeFieldArrayElement: return.rows[].height: 0..40
+  range was 100, expected inside 0..40
+  missing: 100 <= 40
 UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
   Branches returned incompatible value shapes
 FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: call matrixNegativeDefault(): requires value >= 0

@@ -100,15 +100,14 @@ function collectTypeReferenceContractSpecs(
   kind: ContractKind,
   seen: Set<string>,
 ): TypeContractResult<TypeContractSpec> {
-  if (!ts.isIdentifier(type.typeName)) return parseUnsupportedAttachedSpecs(type.getSourceFile().text, type, 'type @fit supports local simple type references')
-  const name = type.typeName.text
+  const name = ts.isIdentifier(type.typeName) ? type.typeName.text : null
   const typeArgument = type.typeArguments?.[0]
   if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
     return collectTypeContractSpecs(program, typeArgument, `${root}[]`, kind, seen)
   }
 
   const declaration = localTypeDeclarationForReference(program, type)
-  if (declaration == null) return parseUnsupportedAttachedSpecs(type.getSourceFile().text, type, 'type @fit on imported type references is not supported yet')
+  if (declaration == null) return parseUnsupportedAttachedSpecs(type.getSourceFile().text, type, 'type @fit supports source-backed type references')
   const key = `${declaration.getSourceFile().fileName}#${declaration.name?.text ?? declaration.pos}`
   if (seen.has(key)) return emptyResult()
   seen.add(key)
@@ -117,7 +116,7 @@ function collectTypeReferenceContractSpecs(
     ? collectObjectMemberContractSpecs(program, declaration.members, root, kind, seen, [declaration])
     : collectTypeAliasContractSpecs(program, declaration, root, kind, seen)
   seen.delete(key)
-  return specs
+  return declaration.getSourceFile() === program.sourceFile ? specs : relocateTypeContractLocations(specs, lineNumberForNode(type))
 }
 
 function collectTypeAliasContractSpecs(
@@ -467,23 +466,22 @@ function localTypeDeclarationForReference(
   program: Program,
   type: ts.TypeReferenceNode,
 ): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
-  if (!ts.isIdentifier(type.typeName)) return null
   const checked = typeDeclarationFromTypeChecker(program, type)
   if (checked != null) return checked
-  return localTypeDeclaration(program.sourceFile, type.typeName.text)
+  return ts.isIdentifier(type.typeName) ? localTypeDeclaration(type.getSourceFile(), type.typeName.text) : null
 }
 
 function typeDeclarationFromTypeChecker(
   program: Program,
   type: ts.TypeReferenceNode,
 ): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
-  if (program.typeChecker == null || !ts.isIdentifier(type.typeName)) return null
+  if (program.typeChecker == null) return null
   const symbol = program.typeChecker.getSymbolAtLocation(type.typeName)
   const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
     ? program.typeChecker.getAliasedSymbol(symbol)
     : symbol
   const declaration = target?.declarations?.find(isTypeContractDeclaration) ?? null
-  return declaration != null && declaration.getSourceFile() === program.sourceFile ? declaration : null
+  return declaration != null && isSupportedTypeContractSource(declaration.getSourceFile()) ? declaration : null
 }
 
 function localTypeDeclaration(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
@@ -495,6 +493,27 @@ function localTypeDeclaration(sourceFile: ts.SourceFile, name: string): ts.Inter
 
 function isTypeContractDeclaration(node: ts.Declaration): node is ts.InterfaceDeclaration | ts.TypeAliasDeclaration {
   return ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node)
+}
+
+function isSupportedTypeContractSource(sourceFile: ts.SourceFile) {
+  return !sourceFile.isDeclarationFile
+    && isSupportedTypeContractPath(sourceFile.fileName)
+    && !isNodeModulesPath(sourceFile.fileName)
+}
+
+function isSupportedTypeContractPath(file: string) {
+  return file.endsWith('.ts')
+    || file.endsWith('.tsx')
+    || file.endsWith('.mts')
+    || file.endsWith('.cts')
+}
+
+function isNodeModulesPath(file: string) {
+  return normalizePath(file).split('/').includes('node_modules')
+}
+
+function normalizePath(file: string) {
+  return file.replace(/\\/g, '/')
 }
 
 function propertyNameText(name: ts.PropertyName): string | null {
@@ -523,6 +542,18 @@ function dedupeResult<T extends TypeContractSpec>(result: TypeContractResult<T>)
     specs: dedupeSpecs(result.specs),
     unsupported: dedupeUnsupported(result.unsupported),
   }
+}
+
+function relocateTypeContractLocations<T extends TypeContractSpec>(result: TypeContractResult<T>, line: number): TypeContractResult<T> {
+  return {
+    specs: result.specs.map(spec => ({...spec, line})),
+    unsupported: result.unsupported.map(problem => ({...problem, line})),
+  }
+}
+
+function lineNumberForNode(node: ts.Node) {
+  const sourceFile = node.getSourceFile()
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
 }
 
 function dedupeSpecs<T extends TypeContractSpec>(specs: T[]): T[] {

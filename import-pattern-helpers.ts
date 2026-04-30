@@ -51,6 +51,17 @@ export type ImportedShapeRows = {
 
 export type ImportedPickedRows = Pick<ImportedShapeRows, 'rows'>
 
+export type ImportedTypeFieldSpring = {
+  k: number // @fit > 0
+  b: number // @fit > 0
+}
+
+export type ImportedTypeFieldRows = {
+  rows: {
+    height: number // @fit 0..40
+  }[]
+}
+
 export type ImportedBox<T> = {
   value: T
 }

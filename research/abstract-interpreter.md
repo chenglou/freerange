@@ -18,7 +18,7 @@ Current milestone: one interpreter owns source evaluation. The checker layer own
 - arrays: length, collection element summary, tuple/product slots, sequence summary
 - nullable / null / unknown
 
-TypeScript shape is a fallback adapter, not proof. It can say a path exists as `number`; it cannot prove the numeric domain unless source or a checked contract earned it.
+TypeScript shape is a fallback adapter, not proof. It can say a path exists as `number`; it cannot prove the numeric domain unless source or a checked contract earned it. Source-backed type-field comments count as checked contracts, even when reached through a local import.
 
 ## State
 
@@ -59,6 +59,7 @@ Module loading owns:
 
 - TypeScript-backed source and symbol resolution
 - checked function boundaries
+- source-backed type-field contract boundaries
 - imports / exports
 - top-level `const` literals
 

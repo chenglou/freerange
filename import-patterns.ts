@@ -2,7 +2,7 @@
 
 import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
-import type {ImportedPickedRows, ImportedShapeRows} from './import-pattern-helpers'
+import type {ImportedPickedRows, ImportedShapeRows, ImportedTypeFieldRows, ImportedTypeFieldSpring} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
 import {declaredClampWidth} from '@fit-fixtures/import-pattern-declared-package'
 import importedDefaultMaxAlias, {namedMaxAlias as importedNamedMaxAlias} from './import-pattern-alias-helpers'
@@ -193,6 +193,33 @@ export function importedGenericReturnShape(items: {height: number}[]) {
 export function namespaceImportedStructuralShape(items: {height: number}[]) {
   const boxed = importedShapes.importedBox(items)
   return {rows: boxed.value}
+}
+
+/** @fit
+ * return > 0
+ */
+export function importedTypeFieldParamGiven(spring: ImportedTypeFieldSpring) {
+  return spring.k
+}
+
+export function importedTypeFieldReturnCheck(): ImportedTypeFieldSpring {
+  return {k: 290, b: 30}
+}
+
+/** @fit
+ * return.rows[].height: 0..40
+ */
+export function importedTypeFieldArrayElement(input: ImportedTypeFieldRows) {
+  const rows = input.rows.map(row => ({height: row.height}))
+  return {rows}
+}
+
+/** @fit
+ * return.rows[].height: 0..40
+ */
+export function namespaceImportedTypeFieldArrayElement(input: importedShapes.ImportedTypeFieldRows) {
+  const rows = input.rows.map(row => ({height: row.height}))
+  return {rows}
 }
 
 /** @fit

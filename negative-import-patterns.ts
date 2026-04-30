@@ -6,7 +6,7 @@ import {barrelClampWidth} from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
 import {unmappedDeclaredClampWidth} from '@fit-fixtures/import-pattern-declared-package-no-map'
-import type {ImportedOptionalRows} from './negative-import-helpers'
+import type {ImportedOptionalRows, NegativeImportedTypeFieldRows, NegativeImportedTypeFieldSpring} from './negative-import-helpers'
 // @ts-expect-error unresolved import fixture for Freerange's TypeScript resolver boundary.
 import {missingImportedClamp} from '@fit-fixtures/missing-import-helper'
 
@@ -87,6 +87,14 @@ export function negativeImportedNumericConstantMismatch(width: number) {
  */
 export function negativeOptionalImportedShape(input: ImportedOptionalRows) {
   return {rows: input.rows}
+}
+
+export function negativeImportedTypeFieldReturnCheck(): NegativeImportedTypeFieldSpring {
+  return {k: -1, b: 1}
+}
+
+export function negativeImportedTypeFieldArrayElement(): NegativeImportedTypeFieldRows {
+  return {rows: [{height: 100}]}
 }
 
 /** @fit

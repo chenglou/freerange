@@ -18,6 +18,17 @@ export type ImportedOptionalRows = {
   rows?: {height: number}[]
 }
 
+export type NegativeImportedTypeFieldSpring = {
+  k: number // @fit > 0
+  b: number // @fit > 0
+}
+
+export type NegativeImportedTypeFieldRows = {
+  rows: {
+    height: number // @fit 0..40
+  }[]
+}
+
 /** @fit
  * return.length == 4
  * return[2] >= 0

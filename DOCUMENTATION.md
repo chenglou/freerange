@@ -286,7 +286,8 @@ return {
 
 There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
 
-Required fields in local `type` and `interface` declarations can carry the same small inline comments:
+Required fields in source-backed `type` and `interface` declarations can carry
+the same small inline comments:
 
 ```ts
 type Spring = {
@@ -307,7 +308,7 @@ type RowStack = {
 }
 ```
 
-These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
+These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. The type can live in the same file or in an imported local source file, including type-only imports and namespace-qualified type references. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
 
 Inside an object type, a full line like `// @fit bottom >= top` is relative to that object scope. In `RowStack`, it becomes `rows[].bottom >= rows[].top` at the boundary, and nested object/array fields get their own local sibling scope. Shorthand comments attached to one field still talk about that field: `height: number // @fit 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Type-field contracts recurse through required object fields and array element types; optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
 
@@ -814,7 +815,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. It does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
+Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
 
 Ordinary top-level `const` bindings of known helpers work too:
 
@@ -826,7 +827,7 @@ export default max
 
 Every hop must be statically known: a top-level `const`, import, or export whose final target is a supported `Math` call, a same-file helper, or a local-source imported helper. Mutable helper bindings are not followed.
 
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains. Local type-field contracts are the exception because they are checked `@fit` source, not TypeScript shape. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
+TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains by itself. Type-field contracts are the exception because they are checked `@fit` source, not TypeScript shape. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
 
 Optional and nullable values stay conservative:
 
@@ -1271,7 +1272,7 @@ The checker understands a small pure subset:
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - omitted trailing arguments that use simple default parameter initializers, plus explicit `undefined`/optional arguments falling through to those defaults
-- local type/interface `// @fit` contracts on required fields and sibling relations, including nested object fields and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
+- source-backed type/interface `// @fit` contracts on required fields and sibling relations, including imported local-source types, nested object fields, and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
 - top-level `const` literals: numbers, strings, booleans, `null`, and plain object/array literals made from those pieces
@@ -1285,7 +1286,7 @@ The checker understands a small pure subset:
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
 - named imports of exported top-level `const` literals, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
-- TypeScript-known imported object/array shape, without treating it as a checked helper contract
+- TypeScript-known imported object/array shape, without treating it as a checked helper contract; source-backed imported type-field comments are checked as type contracts
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
@@ -1317,7 +1318,7 @@ Not supported yet:
 - published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and destructured default params
-- type-field contracts on optional fields, imported type declarations, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
+- type-field contracts on optional fields, declaration-only imported types, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning
 - broad strings, string operations, branded types, and semantic narrowing beyond finite literal/object/array shape
