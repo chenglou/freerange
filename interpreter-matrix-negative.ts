@@ -110,6 +110,32 @@ export function negativeMatrixIndexedMixedExtremumAndCursor(items: {width: numbe
   return maxWidth + total
 }
 
+export function negativeMatrixGuardedExtremumUnsafeReset(items: {height: 0 | 1; endsRow: boolean}[]): {rows: {height: number}[]} {
+  const rows = []
+  let rowHeight = 0
+  for (const item of items) {
+    rowHeight = Math.max(rowHeight, item.height)
+    if (item.endsRow) {
+      rows.push({height: rowHeight})
+      rowHeight = -1
+    }
+  }
+  return {rows}
+}
+
+declare const negativeMatrixImpureLoopApi: {
+  touch(): number
+}
+
+export function negativeMatrixForgettableLoopImpureRead(items: number[], value: number): number {
+  let scratch = 0
+  const kept = value
+  for (let i = 1; i < items.length; i++) {
+    scratch += negativeMatrixImpureLoopApi.touch()
+  }
+  return kept
+}
+
 export function negativeMatrixTryCatchUnsupported(): number {
   try {
     return 1
@@ -143,4 +169,10 @@ export function negativeMatrixArrayAtDynamicUnsupported(items: number[], index: 
 export function negativeMatrixNullishFallbackString(dimensions: {width?: number}): number {
   // @ts-expect-error This kernel intentionally keeps a non-numeric fallback.
   return Math.max(dimensions?.width ?? 'wide', 0)
+}
+
+let negativeMatrixMutableMaxAlias = Math.max
+
+export function negativeMatrixMutableAliasUnsupported(value: number): number {
+  return negativeMatrixMutableMaxAlias(value, 0)
 }

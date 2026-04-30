@@ -15,6 +15,13 @@ type MatrixSwitchSpec = {
   kind: MatrixSwitchKind
 }
 
+declare const matrixShapeApi: {
+  box(items: {height: number}[]): {rows: {height: number}[]}
+}
+
+const matrixAliasMax = Math.max
+const matrixCopiedAliasMax = matrixAliasMax
+
 const matrixInput = {
   groups: [
     {items: [{pos: 4}, {pos: 8}]},
@@ -325,4 +332,27 @@ export function matrixOptionalPropertyNullishFallback(dimensions: {width?: numbe
 
 export function matrixNullableObjectOptionalFallback(dimensions: {width: number} | null): number {
   return Math.max(dimensions?.width ?? 0, 0)
+}
+
+export function matrixLocalMathAlias(value: number): number {
+  return matrixCopiedAliasMax(value, 10)
+}
+
+export function matrixPropertyAccessCallShape(items: {height: number}[]): {rows: {height: number}[]} {
+  return matrixShapeApi.box(items)
+}
+
+class MatrixClassBox {
+  constructor(
+    public width: number,
+    public height: number,
+  ) {}
+
+  area(): number {
+    return this.width * this.height
+  }
+}
+
+export function matrixClassMethodThis(box: MatrixClassBox): number {
+  return box.area()
 }

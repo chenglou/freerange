@@ -47,13 +47,13 @@ locals:
   y: 0..3000
 import-patterns.ts:namespaceImportedStructuralShape
 return:
-  return.rows.length == importedShapes.importedBox(items).value.length
+  return.rows.length == items.length
   return.rows.length: int 0..Infinity
-  return.rows[].height == importedShapes.importedBox(items).value[].height
+  return.rows[].height == items[].height
 locals:
-  boxed.value.length == importedShapes.importedBox(items).value.length
+  boxed.value.length == items.length
   boxed.value.length: int 0..Infinity
-  boxed.value[].height == importedShapes.importedBox(items).value[].height
+  boxed.value[].height == items[].height
 patterns.ts:mapBlockRowsWithDestructure
 return:
   return.rows.length == items.length

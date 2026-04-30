@@ -42,6 +42,7 @@ bun install
 - [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
 - [src/interpreter/](./src/interpreter) — fresh parallel abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting
+- [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by evaluator inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers

@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {
   ArrayCallbackFunction,
+  ImportedBinding,
   Program,
 } from '../check-types.ts'
 import {
@@ -39,15 +40,30 @@ import {
   type Value,
 } from '../domain.ts'
 import {
+  applySegmentedStackCursorUpdate,
+  conditionalPushLength,
   indexedElementPathValue,
+  loopElementFromPush,
+  pushedElementValue,
+  segmentedStackElement,
+  segmentedStackSummary,
+  type GuardedLoopPush,
+  type LoopExtremum,
 } from '../loop-summary.ts'
+import {readGuardedLoopPushes, type LoopSourceContext} from '../loop-source.ts'
 import {
   linearConstant,
   numericLiteralValue,
 } from '../linear.ts'
+import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
-import {valueFromSyntaxTypeShape} from '../shapes.ts'
-import {localizeFreshContainerValue} from '../value-localize.ts'
+import {
+  valueFromCallReturnShape,
+  valueFromFunctionReturnShape,
+  valueFromSyntaxTypeShape,
+  valueWithStructuralFallback,
+} from '../shapes.ts'
+import {localizeFreshContainerValue, localizeValue} from '../value-localize.ts'
 import {
   childFrame,
   frameWithProgram,
@@ -100,6 +116,13 @@ import {
   isComparisonOperator,
   literalBoolean,
 } from './refine.ts'
+import {comparisonConstraint} from '../proof.ts'
+import {
+  forgetRoots,
+  forgettableMutationRoots,
+  isForgettableForStatement,
+  isForgettableReadExpression,
+} from './forgettable-loop.ts'
 import {evaluateMathCall} from './math.ts'
 import {
   blockScopedNames,
@@ -128,6 +151,11 @@ type LoopBodyHandlers = {
   handlePush: (expression: ts.CallExpression & {expression: ts.PropertyAccessExpression}, order: number) => Value | null
   handleIf: (statement: ts.IfStatement, order: number) => Value | null
 }
+
+type InterpreterCallTarget =
+  | {kind: 'math'; name: string}
+  | {kind: 'function'; program: Program; fn: FitFunction}
+  | {kind: 'unresolved'; reason: string}
 
 type IndexedForLoopBound = {
   length: NumberValue
@@ -189,6 +217,7 @@ export function evaluateInterpreterFunctionBody(
     conditionalDepth: 0,
     assumptions: [...assumptions],
   }
+  bindInstanceThis(fn, program, frame.env)
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
   return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
 }
@@ -199,8 +228,52 @@ function invokeFitFunction(
   caller: InterpreterFrame,
   program: Program,
   baseEnv: Map<string, Value>,
+  thisValue?: Value,
 ): Value {
-  return invokeFunctionNode(fn.name, fn.node, argumentValues, frameWithProgram(caller, program, new Map(baseEnv), fn.name))
+  const env = new Map(baseEnv)
+  bindInstanceThis(fn, program, env, thisValue)
+  return invokeFunctionNode(fn.name, fn.node, argumentValues, frameWithProgram(caller, program, env, fn.name))
+}
+
+function bindInstanceThis(fn: FitFunction, program: Program, env: Map<string, Value>, thisValue?: Value) {
+  if (!functionHasInstanceThisInput(fn)) return
+  const fallback = classInstanceThisValue(fn, program) ?? unknownObject('this')
+  const value = thisValue == null
+    ? valueWithStructuralFallback(env.get('this') ?? fallback, fallback)
+    : valueWithStructuralFallback(localizeValue(thisValue, 'this', {preserveLinear: true}), fallback)
+  env.set('this', value)
+}
+
+function classInstanceThisValue(fn: FitFunction, program: Program): Value | null {
+  const classNode = ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node) ? fn.node.parent : null
+  if (classNode == null || !ts.isClassDeclaration(classNode)) return null
+
+  const props = new Map<string, Value>()
+  for (const member of classNode.members) {
+    if (ts.isPropertyDeclaration(member)) {
+      const name = propertyNameText(member.name)
+      if (name == null) continue
+      const expr = `this.${name}`
+      props.set(name, valueFromSyntaxTypeShape(expr, member.type, program, new Set()) ?? unknownNumber(expr))
+      continue
+    }
+    if (!ts.isConstructorDeclaration(member)) continue
+    for (const param of member.parameters) {
+      if (!isParameterProperty(param) || !ts.isIdentifier(param.name)) continue
+      const expr = `this.${param.name.text}`
+      props.set(param.name.text, valueFromSyntaxTypeShape(expr, param.type, program, new Set()) ?? unknownNumber(expr))
+    }
+  }
+  return {kind: 'object', props, expr: 'this'}
+}
+
+function isParameterProperty(param: ts.ParameterDeclaration) {
+  return ts.canHaveModifiers(param) && ts.getModifiers(param)?.some(modifier =>
+    modifier.kind === ts.SyntaxKind.PublicKeyword
+    || modifier.kind === ts.SyntaxKind.PrivateKeyword
+    || modifier.kind === ts.SyntaxKind.ProtectedKeyword
+    || modifier.kind === ts.SyntaxKind.ReadonlyKeyword,
+  ) === true
 }
 
 function invokeInlineFunction(
@@ -316,6 +389,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   }
   if (ts.isForOfStatement(statement)) return evaluateForOfStatement(statement, frame)
   if (ts.isForStatement(statement)) return evaluateForStatement(statement, frame)
+  if (ts.isWhileStatement(statement) || ts.isDoStatement(statement)) return evaluateForgettableWhileStatement(statement, frame)
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
@@ -563,6 +637,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
   const item = source.element ?? unknownObject(`${sourceExpr}[]`)
   const loop: LoopFrame = {source, sourceExpr, mode: 'symbolic', statementIndex: 0, appends: []}
   const effects = pendingLoopEffects()
+  const guardedPushes: GuardedLoopPush[] = []
   frame.loopStack.push(loop)
   try {
     bindForOfInitializer(statement.initializer, item, frame)
@@ -575,18 +650,36 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
         evaluateExpression(expression, frame)
         return null
       },
-      handleIf: child => evaluateSymbolicForOfGuard(child, frame),
+      handleIf: child => evaluateSymbolicForOfIf(child, loop, effects, guardedPushes, frame),
       unsupportedAfterEffectMessage: child => `Abstract for..of scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
       unsupportedBodyMessage: child => `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
     }, frame)
     if (bodyError != null) return {kind: 'return', value: bodyError}
     const error = finalizeLoopEffects(loop, effects, 'Abstract for..of', frame)
     if (error != null) return {kind: 'return', value: error}
+    const guardedError = finalizeGuardedLoopPushes(loop, guardedPushes, effects, 'Abstract for..of', frame)
+    if (guardedError != null) return {kind: 'return', value: guardedError}
   } finally {
     frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function evaluateSymbolicForOfIf(
+  statement: ts.IfStatement,
+  loop: LoopFrame,
+  effects: PendingLoopEffects,
+  guardedPushes: GuardedLoopPush[],
+  frame: InterpreterFrame,
+): Value | null {
+  const guarded = readGuardedPushAfterExtrema(statement, loop, effects, 'Abstract for..of', frame)
+  if (guarded != null) {
+    guardedPushes.push(...guarded)
+    return null
+  }
+  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`)
+  return evaluateSymbolicForOfGuard(statement, frame)
 }
 
 function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: InterpreterFrame): Value | null {
@@ -600,7 +693,7 @@ function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: Interprete
 
 function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
   const shape = indexedForLoopShape(statement)
-  if (shape == null) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops')}
+  if (shape == null) return evaluateForgettableForStatement(statement, frame)
   if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only')}
   const bound = evaluateIndexedForLoopBound(shape, frame)
   if ('error' in bound) return {kind: 'return', value: bound.error}
@@ -614,6 +707,7 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
   const loop = indexedForLoopContext(bound, length, frame)
   const effects = pendingLoopEffects()
+  const guardedPushes: GuardedLoopPush[] = []
   try {
     const appendedArrays = new Map<string, IndexedAppendRecord>()
     const bodyError = evaluateLoopBodyEffects(statement.statement.statements, effects, {
@@ -624,26 +718,48 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
         source: bound.origin?.source ?? null,
         order,
         loop,
-        appendedArrays,
-      }, frame),
-      handleIf: (child, order) => evaluateIndexedForGuardedStatement(child, {
+          appendedArrays,
+        }, frame),
+      handleIf: (child, order) => evaluateIndexedForIf(child, {
         indexName: shape.indexName,
         length,
         source: bound.origin?.source ?? null,
         order,
         loop,
         appendedArrays,
-      }, frame),
+      }, effects, guardedPushes, frame),
       unsupportedAfterEffectMessage: child => `Indexed for loop scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
       unsupportedBodyMessage: child => `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
     }, frame)
     if (bodyError != null) return {kind: 'return', value: bodyError}
     const cursorError = finalizeLoopEffects(loop, effects, 'Indexed for loop', frame)
     if (cursorError != null) return {kind: 'return', value: cursorError}
+    const guardedError = finalizeGuardedLoopPushes(loop, guardedPushes, effects, 'Indexed for loop', frame)
+    if (guardedError != null) return {kind: 'return', value: guardedError}
     finalizeIndexedAppendedArrays(appendedArrays, bound.origin, frame)
   } finally {
     restoreScopedValues(frame.env, scopedValues)
   }
+  return {kind: 'fallthrough'}
+}
+
+function evaluateForgettableForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
+  if (!isForgettableForStatement(statement)) {
+    return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops')}
+  }
+  const roots = forgettableMutationRoots(statement.statement, frame.env)
+  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported for loop body: ${statement.statement.getText(frame.program.sourceFile)}`)}
+  forgetRoots(frame.env, roots)
+  return {kind: 'fallthrough'}
+}
+
+function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, frame: InterpreterFrame): InterpreterFlow {
+  if (!isForgettableReadExpression(statement.expression)) {
+    return {kind: 'return', value: noteUnsupported(frame, `Unsupported while condition: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  }
+  const roots = forgettableMutationRoots(statement.statement, frame.env)
+  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported while loop body: ${statement.statement.getText(frame.program.sourceFile)}`)}
+  forgetRoots(frame.env, roots)
   return {kind: 'fallthrough'}
 }
 
@@ -659,6 +775,22 @@ function evaluateIndexedForPushStatement(
   if (result.append != null) context.loop.appends.push(result.append)
   rememberIndexedAppend(context.appendedArrays, pushPath, result.initialEmpty, result.conditional)
   return null
+}
+
+function evaluateIndexedForIf(
+  statement: ts.IfStatement,
+  context: IndexedForBodyContext,
+  effects: PendingLoopEffects,
+  guardedPushes: GuardedLoopPush[],
+  frame: InterpreterFrame,
+): Value | null {
+  const guarded = readGuardedPushAfterExtrema(statement, context.loop, effects, 'Indexed for loop', frame)
+  if (guarded != null) {
+    guardedPushes.push(...guarded)
+    return null
+  }
+  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Indexed for loop scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`)
+  return evaluateIndexedForGuardedStatement(statement, context, frame)
 }
 
 function evaluateIndexedForGuardedStatement(
@@ -748,12 +880,13 @@ function evaluateLoopBodyEffects(
       sawEffect = true
       continue
     }
-    if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
     if (ts.isVariableStatement(child)) {
+      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
       for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(declaration, frame)
       continue
     }
     if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
+      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
       const error = handlers.handlePush(child.expression, order)
       if (error != null) return error
       continue
@@ -763,7 +896,84 @@ function evaluateLoopBodyEffects(
       if (error != null) return error
       continue
     }
+    if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
     return noteUnsupported(frame, handlers.unsupportedBodyMessage(child))
+  }
+  return null
+}
+
+function readGuardedPushAfterExtrema(
+  statement: ts.IfStatement,
+  loop: LoopFrame,
+  effects: PendingLoopEffects,
+  loopLabel: string,
+  frame: InterpreterFrame,
+): GuardedLoopPush[] | null {
+  if (!hasPendingLoopEffects(effects)) return null
+  if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size === 0) return null
+  const pushes = readGuardedLoopPushes(statement, freshLoopSourceContext(frame), loop.source.length, loopExtrema(effects))
+  if (pushes == null) return null
+  if (pushes.length > 1) {
+    noteUnsupported(frame, `${loopLabel} guarded scalar flushes support one pushed array`)
+    return null
+  }
+  return pushes
+}
+
+function hasPendingLoopEffects(effects: PendingLoopEffects) {
+  return effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size > 0
+}
+
+function loopExtrema(effects: PendingLoopEffects): Map<string, LoopExtremum> {
+  const extrema = new Map<string, LoopExtremum>()
+  for (const [targetName, extremum] of effects.extrema) extrema.set(targetName, extremum)
+  return extrema
+}
+
+function freshLoopSourceContext(frame: InterpreterFrame): LoopSourceContext {
+  return {
+    env: frame.env,
+    sourceFile: frame.program.sourceFile,
+    evaluateExpression: (expression, env) => evaluateExpression(expression, {...frame, env}),
+    bindVariableStatement: (statement, env) => {
+      const localFrame = {...frame, env}
+      for (const declaration of statement.declarationList.declarations) evaluateVariableDeclaration(declaration, localFrame)
+    },
+    isSideEffectFreeExpression,
+  }
+}
+
+function finalizeGuardedLoopPushes(
+  loop: LoopFrame,
+  pushes: GuardedLoopPush[],
+  effects: PendingLoopEffects,
+  loopLabel: string,
+  frame: InterpreterFrame,
+): Value | null {
+  if (pushes.length === 0) return null
+  if (loop.appends.length > 0) return noteUnsupported(frame, `${loopLabel} guarded scalar flushes cannot mix with unguarded pushes`)
+  if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0) {
+    return noteUnsupported(frame, `${loopLabel} guarded scalar flushes support scalar extrema only`)
+  }
+  const extrema = loopExtrema(effects)
+  for (const push of pushes) {
+    const target = frame.env.get(push.arrayName)
+    if (target?.kind !== 'array') return noteUnsupported(frame, `${loopLabel} guarded push expected ${push.arrayName} to be an array`)
+    const length = conditionalPushLength(push.arrayName, loop.source.length, target.length)
+    const baseElement = loopElementFromPush(push, new Map(), extrema, loop.source.length, frame.env, frame.assumptions)
+    const element = segmentedStackElement(push, baseElement, loop.source.length, frame.env)
+    writePath({root: push.arrayName, segments: []}, {
+      ...target,
+      length,
+      elements: null,
+      element: pushedElementValue(target, element),
+      summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
+    }, frame)
+    applySegmentedStackCursorUpdate(push, element, loop.source.length, frame.env)
+    if (target.length.min === 0 && target.length.max === 0) {
+      const fact = comparisonConstraint(length, '<=', loop.source.length, `${length.expr ?? push.arrayName + '.length'} <= ${loop.source.length.expr ?? 'loop length'}`)
+      if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
+    }
   }
   return null
 }
@@ -872,6 +1082,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return frame.env.get('this') ?? noteUnsupported(frame, 'Unknown identifier this')
   if (ts.isIdentifier(expression)) return readIdentifier(expression, frame)
   if (ts.isPropertyAccessExpression(expression)) return evaluatePropertyAccess(expression, frame)
   if (ts.isElementAccessExpression(expression)) return evaluateElementAccess(expression, frame)
@@ -892,6 +1103,14 @@ function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Val
 }
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
+  const getter = classMemberFunctionForPropertyAccess(expression, frame)
+  if (getter != null && ts.isGetAccessorDeclaration(getter.fn.node)) {
+    const receiver = evaluateExpression(expression.expression, frame)
+    return valueWithStructuralFallback(
+      invokeFitFunction(getter.fn, [], frame, frame.program, rootFrame(frame.program).env, receiver),
+      valueFromFunctionReturnShape(expression.getText(frame.program.sourceFile), getter.fn.node, frame.program),
+    )
+  }
   const target = evaluateExpression(expression.expression, frame)
   const optional = hasQuestionDotToken(expression)
   if (target.kind === 'nullable' && optional) {
@@ -1127,21 +1346,31 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
+  const fallback = valueFromCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
-    return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile))
+    return valueWithStructuralFallback(evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile)), fallback)
   }
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'at') return evaluateArrayAtCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
   if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
-  if (ts.isIdentifier(target)) {
-    const local = frame.program.functions.get(target.text)
-    if (local != null) return invokeFitFunction(local, evaluatedArguments(expression.arguments, frame), frame, frame.program, rootFrame(frame.program).env)
-    const imported = importedFunction(target.text, frame.program)
-    if (imported != null) return invokeFitFunction(imported.fn, evaluatedArguments(expression.arguments, frame), frame, imported.program, rootFrame(imported.program).env)
+  if (ts.isPropertyAccessExpression(target)) {
+    const member = classMemberFunctionForPropertyAccess(target, frame)
+    if (member != null && ts.isMethodDeclaration(member.fn.node)) {
+      const receiver = evaluateExpression(target.expression, frame)
+      return valueWithStructuralFallback(invokeFitFunction(member.fn, evaluatedArguments(expression.arguments, frame), frame, frame.program, rootFrame(frame.program).env, receiver), fallback)
+    }
   }
-  return noteUnsupported(frame, `Unsupported call ${expression.getText(frame.program.sourceFile)}`)
+  const resolved = resolveCallTarget(target, frame.program)
+  if (resolved.kind === 'math') {
+    return valueWithStructuralFallback(evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile)), fallback)
+  }
+  if (resolved.kind === 'function') {
+    return valueWithStructuralFallback(invokeFitFunction(resolved.fn, evaluatedArguments(expression.arguments, frame), frame, resolved.program, rootFrame(resolved.program).env), fallback)
+  }
+  if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
+  return noteUnsupported(frame, resolved.reason)
 }
 
 function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
@@ -1328,17 +1557,89 @@ function evaluatedArguments(args: ts.NodeArray<ts.Expression>, frame: Interprete
   return args.map(arg => evaluateExpression(arg, frame))
 }
 
-function importedFunction(name: string, program: Program): {program: Program; fn: FitFunction} | null {
+function resolveCallTarget(target: ts.Expression, program: Program): InterpreterCallTarget {
+  if (ts.isIdentifier(target)) return resolveIdentifierCallTarget(target.text, program)
+  if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
+    return resolveNamespaceMemberCallTarget(target.expression.text, target.name.text, program, new Set())
+  }
+  return {kind: 'unresolved', reason: `Unsupported call ${target.getText(program.sourceFile)}`}
+}
+
+function resolveIdentifierCallTarget(name: string, program: Program, seen = new Set<string>()): InterpreterCallTarget {
+  const local = program.functions.get(name)
+  if (local != null) return {kind: 'function', program, fn: local}
+
+  const key = `${program.sourceId}#${name}`
+  if (seen.has(key)) return {kind: 'unresolved', reason: `Cyclic call alias at ${program.file}#${name}`}
+  seen.add(key)
+
+  const alias = program.callAliases.get(name)
+  if (alias != null) {
+    if (alias.kind === 'math') return {kind: 'math', name: alias.name}
+    if (alias.kind === 'identifier') return resolveIdentifierCallTarget(alias.name, program, seen)
+    return resolveNamespaceMemberCallTarget(alias.namespace, alias.exportedName, program, seen)
+  }
+
+  const unsupportedAlias = program.unsupportedCallAliases.get(name)
+  if (unsupportedAlias != null) return {kind: 'unresolved', reason: unsupportedAlias}
+
   const binding = program.imports.get(name)
-  if (binding?.kind !== 'resolved') return null
-  const resolved = resolveFitExport(binding.module, binding.exportedName)
-  if (resolved.kind === 'unresolved') return null
-  const fn = resolved.module.functions.get(resolved.localName)
-  return fn == null ? null : {program: resolved.module, fn}
+  if (binding == null) return {kind: 'unresolved', reason: `Unknown function ${name}`}
+  if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
+  return resolveExportedCallTarget(name, binding, binding.exportedName, seen)
+}
+
+function resolveNamespaceMemberCallTarget(namespace: string, exportedName: string, program: Program, seen: Set<string>): InterpreterCallTarget {
+  const binding = program.imports.get(namespace)
+  if (binding == null || binding.exportedName !== '*') return {kind: 'unresolved', reason: `Unsupported call ${namespace}.${exportedName}`}
+  if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
+  return resolveExportedCallTarget(`${namespace}.${exportedName}`, binding, exportedName, seen)
+}
+
+function resolveExportedCallTarget(
+  localName: string,
+  binding: Extract<ImportedBinding, {kind: 'resolved'}>,
+  exportedName: string,
+  seen: Set<string>,
+): InterpreterCallTarget {
+  const resolved = resolveFitExport(binding.module, exportedName)
+  if (resolved.kind === 'unresolved') return {kind: 'unresolved', reason: resolved.reason}
+  const target = resolveIdentifierCallTarget(resolved.localName, resolved.module, seen)
+  return target.kind === 'unresolved' ? {kind: 'unresolved', reason: `${localName} resolved to ${exportedName}: ${target.reason}`} : target
 }
 
 function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame): ValuePath | null {
   return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
+}
+
+function classMemberFunctionForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {functionName: string; fn: FitFunction} | null {
+  const className = classNameForPropertyAccess(access, frame)
+  if (className == null) return null
+  const functionName = `${className}.${access.name.text}`
+  const fn = frame.program.functions.get(functionName)
+  return fn == null ? null : {functionName, fn}
+}
+
+function classNameForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): string | null {
+  const checker = frame.program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(access.name)
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
+  if (
+    declaration != null
+    && (ts.isMethodDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration))
+    && ts.isClassDeclaration(declaration.parent)
+    && declaration.parent.name != null
+  ) {
+    return declaration.parent.name.text
+  }
+
+  if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
+    const current = frame.stack.at(-1)
+    const dot = current?.indexOf('.') ?? -1
+    if (current != null && dot > 0) return current.slice(0, dot)
+  }
+
+  return null
 }
 
 function isInlineFunction(expression: ts.Expression): expression is ArrayCallbackFunction {

@@ -112,6 +112,13 @@ case matrix optional property nullish fallback: interpreter-matrix-patterns.ts:m
   return: 0..Infinity
 case matrix nullable object optional fallback: interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
   return: 0..Infinity
+case matrix local Math alias: interpreter-matrix-patterns.ts:matrixLocalMathAlias
+  return: 10..Infinity
+case matrix property access call shape: interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
+  return.rows.length: int 0..Infinity
+  return.rows[].height: any number
+case matrix class method this: interpreter-matrix-patterns.ts:matrixClassMethodThis
+  return: any number
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
@@ -129,8 +136,12 @@ case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:nega
   return: unknown (Abstract for..of scalar extrema support extrema updates only)
   unsupported negativeMatrixMixedExtremumAndCursor: Abstract for..of scalar extrema support extrema updates only
 case negative indexed loop starts at one surface: interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
-  return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
-  unsupported negativeMatrixIndexedLoopStartsAtOne: Indexed for loops support for (let i = 0; i < limit; i++) style loops
+  return: unknown (Unsupported for loop body: {
+    values.push(i)
+  })
+  unsupported negativeMatrixIndexedLoopStartsAtOne: Unsupported for loop body: {
+    values.push(i)
+  }
 case negative indexed array guarded else surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
   return: unknown (Indexed for loop guarded pushes do not support else branches)
   unsupported negativeMatrixIndexedArrayGuardedElse: Indexed for loop guarded pushes do not support else branches
@@ -146,6 +157,22 @@ case negative indexed conditional else count surface: interpreter-matrix-negativ
 case negative indexed mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
   return: unknown (Indexed for loop scalar extrema support extrema updates only)
   unsupported negativeMatrixIndexedMixedExtremumAndCursor: Indexed for loop scalar extrema support extrema updates only
+case negative guarded unsafe reset surface: interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
+  return: unknown (Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
+      rows.push({height: rowHeight})
+      rowHeight = -1
+    })
+  unsupported negativeMatrixGuardedExtremumUnsafeReset: Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
+      rows.push({height: rowHeight})
+      rowHeight = -1
+    }
+case negative forgettable impure read surface: interpreter-matrix-negative.ts:negativeMatrixForgettableLoopImpureRead
+  return: unknown (Unsupported for loop body: {
+    scratch += negativeMatrixImpureLoopApi.touch()
+  })
+  unsupported negativeMatrixForgettableLoopImpureRead: Unsupported for loop body: {
+    scratch += negativeMatrixImpureLoopApi.touch()
+  }
 case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
   return: unknown (Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1
@@ -169,3 +196,6 @@ case negative array at dynamic surface: interpreter-matrix-negative.ts:negativeM
 case negative nullish fallback string surface: interpreter-matrix-negative.ts:negativeMatrixNullishFallbackString
   return: unknown (Math.max expected number arguments)
   unsupported negativeMatrixNullishFallbackString: Math.max expected number arguments
+case negative mutable alias surface: interpreter-matrix-negative.ts:negativeMatrixMutableAliasUnsupported
+  return: unknown (negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases)
+  unsupported negativeMatrixMutableAliasUnsupported: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases

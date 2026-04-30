@@ -39,6 +39,9 @@ addCase('matrix stringish mutation preserves tuple', ['interpreter-matrix-patter
 addCase('matrix typeof undefined guard', ['interpreter-matrix-patterns.ts'], 'matrixTypeofUndefinedGuard')
 addCase('matrix optional property nullish fallback', ['interpreter-matrix-patterns.ts'], 'matrixOptionalPropertyNullishFallback')
 addCase('matrix nullable object optional fallback', ['interpreter-matrix-patterns.ts'], 'matrixNullableObjectOptionalFallback')
+addCase('matrix local Math alias', ['interpreter-matrix-patterns.ts'], 'matrixLocalMathAlias')
+addCase('matrix property access call shape', ['interpreter-matrix-patterns.ts'], 'matrixPropertyAccessCallShape')
+addCase('matrix class method this', ['interpreter-matrix-patterns.ts'], 'matrixClassMethodThis')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 addCase('negative cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
@@ -50,11 +53,14 @@ addCase('negative indexed array pushes into source surface', ['interpreter-matri
 addCase('negative indexed cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedCursorUpdateBeforePush')
 addCase('negative indexed conditional else count surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedConditionalElseCount')
 addCase('negative indexed mixed extremum/cursor surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedMixedExtremumAndCursor')
+addCase('negative guarded unsafe reset surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixGuardedExtremumUnsafeReset')
+addCase('negative forgettable impure read surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixForgettableLoopImpureRead')
 addCase('negative try/catch surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixTryCatchUnsupported')
 addCase('negative switch broad string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchBroadStringUnsupported')
 addCase('negative switch fallthrough surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchFallthroughUnsupported')
 addCase('negative array at dynamic surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixArrayAtDynamicUnsupported')
 addCase('negative nullish fallback string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixNullishFallbackString')
+addCase('negative mutable alias surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMutableAliasUnsupported')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 
