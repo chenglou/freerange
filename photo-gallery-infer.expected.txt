@@ -41,7 +41,6 @@ assumptions:
   given config.b > 0
 unsupported:
   unsupported springStep: Function springStep did not return
-  Function springStep did not return
 
 function springGoToEnd
 assumptions:
@@ -49,7 +48,6 @@ assumptions:
   given config.b > 0
 unsupported:
   unsupported springGoToEnd: Function springGoToEnd did not return
-  Function springGoToEnd did not return
 
 function clamp
 checked:
@@ -69,19 +67,16 @@ locals:
 function isDebug
 unsupported:
   unsupported isDebug: Unknown identifier debug
-  Unknown identifier debug
 
 function springForEach
 unsupported:
   unsupported springForEach: Unknown identifier data
   unsupported springForEach line 163: for..of expected an array source, but data is not proven array-valued
-  for..of expected an array source, but data is not proven array-valued
 
 function stepSprings
 unsupported:
   unsupported stepSprings: Unknown identifier data
   unsupported stepSprings line 169: for..of expected an array source, but data is not proven array-valued
-  for..of expected an array source, but data is not proven array-valued
 
 function stepSpring
 assumptions:
@@ -89,7 +84,6 @@ assumptions:
   given s.b > 0
 unsupported:
   unsupported stepSpring line 180: Indexed for loops support block bodies only
-  Indexed for loops support block bodies only
 
 function hitTest2DMode
 assumptions:
@@ -107,7 +101,6 @@ assumptions:
   given data[].fxFactor.b > 0
 unsupported:
   unsupported hitTest2DMode > <indexed-if-true>: Indexed for loop guarded bodies only support local bindings and direct push calls: return i
-  Indexed for loop guarded bodies only support local bindings and direct push calls: return i
 
 function hitTest1DMode
 assumptions:
@@ -177,4 +170,3 @@ unsupported:
   unsupported render > <conditional-false> line 252: Property access expected an object path: window.scrollX
   unsupported render: Unsupported call window.location.hash.slice
   unsupported render line 255: Indexed for loops support block bodies only
-  Indexed for loops support block bodies only

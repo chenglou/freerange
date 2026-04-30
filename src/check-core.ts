@@ -68,6 +68,7 @@ import {
   inferFunctionSpecReports,
   redundantSpecs,
   topUnknownReason,
+  uniqueUnsupported,
 } from './infer-report.ts'
 import {
   replaceFunctionSpecs,
@@ -464,7 +465,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     specs: specReports,
     redundant: redundantSpecs(specReports, resultFacts),
     loops,
-    unsupported: [...new Set(unsupported)],
+    unsupported: uniqueUnsupported(unsupported),
   }
 }
 

@@ -52,6 +52,29 @@ export function topUnknownReason(value: Value): string[] {
   return []
 }
 
+export function uniqueUnsupported(lines: string[]) {
+  const contextualReasons = new Set<string>()
+  for (const line of lines) {
+    const reason = contextualUnsupportedReason(line)
+    if (reason != null) contextualReasons.add(reason)
+  }
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const line of lines) {
+    if (contextualReasons.has(line) && !line.startsWith('unsupported ')) continue
+    if (seen.has(line)) continue
+    seen.add(line)
+    result.push(line)
+  }
+  return result
+}
+
+function contextualUnsupportedReason(line: string): string | null {
+  if (!line.startsWith('unsupported ')) return null
+  const separator = line.indexOf(': ')
+  return separator === -1 ? null : line.slice(separator + 2)
+}
+
 function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) {
   const exactFact = facts.find(fact => fact.text === specText)
   if (exactFact != null) return exactFact.text
