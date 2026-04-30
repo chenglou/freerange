@@ -1,5 +1,6 @@
 import {
   average,
+  benchStats,
   type BenchRun,
   formatLoadTiming,
   formatMs,
@@ -36,6 +37,9 @@ if (args.includes('--help') || args.includes('-h')) {
   }
 
   if (runs.length > 1) {
+    const stats = benchStats(runs)
+    console.log(`cold: ${formatMs(stats.cold.totalMs)} total (${formatMs(stats.cold.loadMs)} load, ${formatMs(stats.cold.verifyMs)} verify)`)
+    console.log(`warm median: ${formatMs(stats.warmMedianTotalMs)} total (${formatMs(stats.warmMedianLoadMs)} load, ${formatMs(stats.warmMedianVerifyMs)} verify) over ${stats.warmRuns.length} run${stats.warmRuns.length === 1 ? '' : 's'}`)
     console.log(`median: ${formatMs(median(runs.map(run => run.totalMs)))} total`)
     console.log(`average: ${formatMs(average(runs.map(run => run.totalMs)))} total`)
   }

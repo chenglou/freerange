@@ -1,5 +1,5 @@
 check photo-gallery spring defaults through imported data
-  summary: 26 pass, 0 fail, 0 unknown
+  summary: 4 pass, 0 fail, 0 unknown
   PASS photo-gallery/index.ts:22:<top-level>: data[].sizeX.k > 0
   PASS photo-gallery/index.ts:23:<top-level>: data[].sizeX.b > 0
   PASS photo-gallery/index.ts:22:<top-level>: data[].fxFactor.k > 0

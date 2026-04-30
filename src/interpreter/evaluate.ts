@@ -72,7 +72,7 @@ import {
   valueFromSyntaxTypeShape,
   valueWithStructuralFallback,
 } from '../shapes.ts'
-import {localizeFreshContainerValue, localizeValue} from '../value-localize.ts'
+import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
 import {
   childFrame,
   frameWithProgram,
@@ -85,6 +85,7 @@ import {
   type InterpreterFrame,
   type InterpreterHooks,
   type InterpreterIssue,
+  type InterpreterLoopClaim,
   type LoopFrame,
   type LoopAppend,
 } from './context.ts'
@@ -129,7 +130,11 @@ import {
   literalBoolean,
 } from './refine.ts'
 import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
-import {formatRange} from '../reporting.ts'
+import {publicFitText} from '../parser.ts'
+import {
+  formatArraySummary,
+  formatRange,
+} from '../reporting.ts'
 import {
   forgetRoot,
   forgetRoots,
@@ -241,6 +246,30 @@ export function evaluateInterpreterFunctionBody(
   }
   bindInstanceThis(fn, program, frame.env)
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
+  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+}
+
+export function evaluateInterpreterExpression(
+  program: Program,
+  expression: ts.Expression,
+  env: Map<string, Value>,
+  stack: string[] = [],
+  assumptions: LinearConstraint[] = [],
+  hooks?: InterpreterHooks,
+  objectPath?: string[],
+): InterpreterBodyResult {
+  const frame: InterpreterFrame = {
+    program,
+    env: new Map(env),
+    issues: [],
+    stack,
+    loopStack: [],
+    conditionalDepth: 0,
+    assumptions: [...assumptions],
+    ...(hooks == null ? {} : {hooks}),
+    ...(objectPath == null ? {} : {objectPath}),
+  }
+  const value = evaluateExpression(expression, frame)
   return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
 }
 
@@ -416,7 +445,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
   if (ts.isThrowStatement(statement)) return {kind: 'exit'}
-  return {kind: 'return', value: noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`)}
+  return {kind: 'return', value: noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`, statement)}
 }
 
 function evaluateVariableStatement(statement: ts.VariableStatement, frame: InterpreterFrame) {
@@ -435,10 +464,10 @@ function evaluateVariableDeclaration(statement: ts.VariableStatement, declaratio
 
 function declarationValue(name: ts.BindingName, value: Value, initializer: ts.Expression | undefined): Value {
   if (!ts.isIdentifier(name) || initializer == null) return value
-  return isFreshContainerInitializer(initializer) ? localizeFreshContainerValue(value, name.text, {preserveLinear: true}) : value
+  return isContainerLiteralInitializer(initializer) ? localizeContainerLiteralValue(value, name.text, {preserveLinear: true}) : value
 }
 
-function isFreshContainerInitializer(expression: ts.Expression): boolean {
+function isContainerLiteralInitializer(expression: ts.Expression): boolean {
   const unwrapped = unwrapExpression(expression)
   return ts.isObjectLiteralExpression(unwrapped) || ts.isArrayLiteralExpression(unwrapped)
 }
@@ -681,10 +710,19 @@ function evaluateSwitchClauseStatements(statements: ts.NodeArray<ts.Statement>, 
 }
 
 function evaluateForOfStatement(statement: ts.ForOfStatement, frame: InterpreterFrame): InterpreterFlow {
-  if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported')}
+  const claim: InterpreterLoopClaim = {kind: 'for-of', statement, factRoots: new Set()}
+  return evaluateLoop(claim, frame, () => evaluateForOfStatementCore(statement, frame, claim))
+}
+
+function evaluateLoop(claim: InterpreterLoopClaim, frame: InterpreterFrame, evaluate: () => InterpreterFlow): InterpreterFlow {
+  return frame.hooks?.evaluateLoop?.(claim, frame, evaluate) ?? evaluate()
+}
+
+function evaluateForOfStatementCore(statement: ts.ForOfStatement, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
+  if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported', statement)}
   const source = evaluateExpression(statement.expression, frame)
-  if (source.kind !== 'array') return {kind: 'return', value: noteUnsupported(frame, `for..of expected an array: ${statement.expression.getText(frame.program.sourceFile)}`)}
-  if (source.elements == null) return evaluateSymbolicForOfStatement(statement, source, frame)
+  if (source.kind !== 'array') return {kind: 'return', value: noteUnsupported(frame, `for..of expected an array source, but ${statement.expression.getText(frame.program.sourceFile)} is not proven array-valued`, statement.expression)}
+  if (source.elements == null) return evaluateSymbolicForOfStatement(statement, source, frame, claim)
   const itemName = forOfItemName(statement.initializer)
   const scopedNames = [...forOfScopedNames(statement.initializer), ...forOfBodyScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
@@ -703,10 +741,10 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
   return {kind: 'fallthrough'}
 }
 
-function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: ArrayValue, frame: InterpreterFrame): InterpreterFlow {
-  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports block bodies only')}
+function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: ArrayValue, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
+  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports block bodies only', statement.statement)}
   const itemName = forOfItemName(statement.initializer)
-  if (itemName == null) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports simple variable bindings only')}
+  if (itemName == null) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports simple variable bindings only', statement.initializer)}
   const scopedNames = [...forOfScopedNames(statement.initializer), ...blockScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
@@ -727,14 +765,13 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
         return null
       },
       handleIf: child => evaluateSymbolicForOfIf(child, loop, effects, guardedPushes, frame),
-      unsupportedAfterEffectMessage: child => `Abstract for..of scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
-      unsupportedBodyMessage: child => `Abstract for..of body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedAfterEffectMessage: child => `Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedBodyMessage: child => `Abstract for..of expected a simple append/reducer body: local bindings, direct array.push(value), supported if guards, and final scalar cursor/extrema updates; got ${child.getText(frame.program.sourceFile)}`,
     }, frame)
     if (bodyError != null) return {kind: 'return', value: bodyError}
-    const error = finalizeLoopEffects(loop, effects, 'Abstract for..of', frame)
+    const error = finalizeLoopEffectsAndGuardedPushes(loop, effects, guardedPushes, 'Abstract for..of', frame)
     if (error != null) return {kind: 'return', value: error}
-    const guardedError = finalizeGuardedLoopPushes(loop, guardedPushes, effects, 'Abstract for..of', frame)
-    if (guardedError != null) return {kind: 'return', value: guardedError}
+    addLoopFactRoots(claim, loop, effects, guardedPushes)
   } finally {
     frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
@@ -754,26 +791,31 @@ function evaluateSymbolicForOfIf(
     guardedPushes.push(...guarded)
     return null
   }
-  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`)
+  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`, statement)
   return evaluateSymbolicForOfGuard(statement, frame)
 }
 
 function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: InterpreterFrame): Value | null {
   if (!symbolicForOfBranchSupported(statement)) {
-    return noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${statement.getText(frame.program.sourceFile)}`)
+    return noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${statement.getText(frame.program.sourceFile)}`, statement)
   }
   const flow = evaluateIfStatement(statement, frame)
   if (flow.kind === 'fallthrough') return null
-  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported')
+  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported', statement)
 }
 
 function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
+  const claim: InterpreterLoopClaim = {kind: 'for', statement, factRoots: new Set()}
+  return evaluateLoop(claim, frame, () => evaluateForStatementCore(statement, frame, claim))
+}
+
+function evaluateForStatementCore(statement: ts.ForStatement, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
   const shape = indexedForLoopShape(statement)
   if (shape == null) return evaluateForgettableForStatement(statement, frame)
-  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only')}
+  if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only', statement.statement)}
   const bound = evaluateIndexedForLoopBound(shape, frame)
   if ('error' in bound) return {kind: 'return', value: bound.error}
-  if (!bound.length.isInteger || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer')}
+  if (!bound.length.isInteger || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer', statement.condition ?? statement)}
 
   const scopedNames = [shape.indexName, ...blockScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
@@ -784,6 +826,7 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
   const loop = indexedForLoopContext(bound, length, frame)
   const effects = pendingLoopEffects()
   const guardedPushes: GuardedLoopPush[] = []
+  frame.loopStack.push(loop)
   try {
     const appendedArrays = new Map<string, IndexedAppendRecord>()
     const bodyError = evaluateLoopBodyEffects(statement.statement.statements, effects, {
@@ -804,16 +847,17 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
         loop,
         appendedArrays,
       }, effects, guardedPushes, frame),
-      unsupportedAfterEffectMessage: child => `Indexed for loop scalar cursor updates must be the final body statements: ${child.getText(frame.program.sourceFile)}`,
-      unsupportedBodyMessage: child => `Indexed for loop body only supports local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedAfterEffectMessage: child => `Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: ${child.getText(frame.program.sourceFile)}`,
+      unsupportedBodyMessage: child => `Indexed for loop expected a simple append/reducer body: local bindings, direct array.push(value), supported if guards, and final scalar cursor/extrema updates; got ${child.getText(frame.program.sourceFile)}`,
     }, frame)
     if (bodyError != null) return {kind: 'return', value: bodyError}
-    const cursorError = finalizeLoopEffects(loop, effects, 'Indexed for loop', frame)
+    const cursorError = finalizeLoopEffectsAndGuardedPushes(loop, effects, guardedPushes, 'Indexed for loop', frame)
     if (cursorError != null) return {kind: 'return', value: cursorError}
-    const guardedError = finalizeGuardedLoopPushes(loop, guardedPushes, effects, 'Indexed for loop', frame)
-    if (guardedError != null) return {kind: 'return', value: guardedError}
     finalizeIndexedAppendedArrays(appendedArrays, bound.origin, frame)
+    addLoopFactRoots(claim, loop, effects, guardedPushes)
+    for (const record of appendedArrays.values()) claim.factRoots.add(record.path.root)
   } finally {
+    frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
@@ -821,20 +865,20 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
 
 function evaluateForgettableForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
   if (!isForgettableForStatement(statement)) {
-    return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops')}
+    return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops', statement)}
   }
   const roots = forgettableMutationRoots(statement.statement, frame.env)
-  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported for loop body: ${statement.statement.getText(frame.program.sourceFile)}`)}
+  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported for loop body: ${statement.statement.getText(frame.program.sourceFile)}`, statement.statement)}
   forgetRoots(frame.env, roots)
   return {kind: 'fallthrough'}
 }
 
 function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, frame: InterpreterFrame): InterpreterFlow {
   if (!isForgettableReadExpression(statement.expression)) {
-    return {kind: 'return', value: noteUnsupported(frame, `Unsupported while condition: ${statement.expression.getText(frame.program.sourceFile)}`)}
+    return {kind: 'return', value: noteUnsupported(frame, `Unsupported while condition: ${statement.expression.getText(frame.program.sourceFile)}`, statement.expression)}
   }
   const roots = forgettableMutationRoots(statement.statement, frame.env)
-  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported while loop body: ${statement.statement.getText(frame.program.sourceFile)}`)}
+  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported while loop body: ${statement.statement.getText(frame.program.sourceFile)}`, statement.statement)}
   forgetRoots(frame.env, roots)
   return {kind: 'fallthrough'}
 }
@@ -957,12 +1001,12 @@ function evaluateLoopBodyEffects(
       continue
     }
     if (ts.isVariableStatement(child)) {
-      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
+      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
       for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(child, declaration, frame)
       continue
     }
     if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
+      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
       const error = handlers.handlePush(child.expression, order)
       if (error != null) return error
       continue
@@ -972,8 +1016,13 @@ function evaluateLoopBodyEffects(
       if (error != null) return error
       continue
     }
-    if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child))
-    return noteUnsupported(frame, handlers.unsupportedBodyMessage(child))
+    const forgottenRoots = forgettableMutationRoots(child, frame.env)
+    if (forgottenRoots != null) {
+      forgetRoots(frame.env, forgottenRoots)
+      continue
+    }
+    if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
+    return noteUnsupported(frame, handlers.unsupportedBodyMessage(child), child)
   }
   return null
 }
@@ -987,7 +1036,7 @@ function readGuardedPushAfterExtrema(
 ): GuardedLoopPush[] | null {
   if (!hasPendingLoopEffects(effects)) return null
   if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size === 0) return null
-  const pushes = readGuardedLoopPushes(statement, freshLoopSourceContext(frame), loop.source.length, loopExtrema(effects))
+  const pushes = readGuardedLoopPushes(statement, loopSourceContext(frame), loop.source.length, loopExtrema(effects))
   if (pushes == null) return null
   if (pushes.length > 1) {
     noteUnsupported(frame, `${loopLabel} guarded scalar flushes support one pushed array`)
@@ -1000,13 +1049,26 @@ function hasPendingLoopEffects(effects: PendingLoopEffects) {
   return effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size > 0
 }
 
+function addLoopFactRoots(
+  claim: InterpreterLoopClaim,
+  loop: LoopFrame,
+  effects: PendingLoopEffects,
+  guardedPushes: GuardedLoopPush[],
+) {
+  for (const append of loop.appends) claim.factRoots.add(append.arrayName)
+  for (const push of guardedPushes) claim.factRoots.add(push.arrayName)
+  for (const targetName of effects.scalarAdds.keys()) claim.factRoots.add(targetName)
+  for (const targetName of effects.conditionalScalarAdds.keys()) claim.factRoots.add(targetName)
+  for (const targetName of effects.extrema.keys()) claim.factRoots.add(targetName)
+}
+
 function loopExtrema(effects: PendingLoopEffects): Map<string, LoopExtremum> {
   const extrema = new Map<string, LoopExtremum>()
   for (const [targetName, extremum] of effects.extrema) extrema.set(targetName, extremum)
   return extrema
 }
 
-function freshLoopSourceContext(frame: InterpreterFrame): LoopSourceContext {
+function loopSourceContext(frame: InterpreterFrame): LoopSourceContext {
   return {
     env: frame.env,
     sourceFile: frame.program.sourceFile,
@@ -1019,6 +1081,17 @@ function freshLoopSourceContext(frame: InterpreterFrame): LoopSourceContext {
   }
 }
 
+function finalizeLoopEffectsAndGuardedPushes(
+  loop: LoopFrame,
+  effects: PendingLoopEffects,
+  guardedPushes: GuardedLoopPush[],
+  loopLabel: string,
+  frame: InterpreterFrame,
+): Value | null {
+  if (guardedPushes.length > 0) return finalizeGuardedLoopPushes(loop, guardedPushes, effects, loopLabel, frame)
+  return finalizeLoopEffects(loop, effects, loopLabel, frame)
+}
+
 function finalizeGuardedLoopPushes(
   loop: LoopFrame,
   pushes: GuardedLoopPush[],
@@ -1027,7 +1100,10 @@ function finalizeGuardedLoopPushes(
   frame: InterpreterFrame,
 ): Value | null {
   if (pushes.length === 0) return null
-  if (loop.appends.length > 0) return noteUnsupported(frame, `${loopLabel} guarded scalar flushes cannot mix with unguarded pushes`)
+  const guardedArrays = new Set(pushes.map(push => push.arrayName))
+  if (loop.appends.some(append => guardedArrays.has(append.arrayName))) {
+    return noteUnsupported(frame, `${loopLabel} guarded scalar flushes cannot mix with unguarded pushes to the same array`)
+  }
   if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0) {
     return noteUnsupported(frame, `${loopLabel} guarded scalar flushes support scalar extrema only`)
   }
@@ -1152,9 +1228,9 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   }
 
   const numeric = numericLiteralValue(expression)
-  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), expression.getText(frame.program.sourceFile), linearConstant(numeric))
-  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expression.getText(frame.program.sourceFile))
-  if (ts.isTemplateExpression(expression)) return unknown(`Template string ${expression.getText(frame.program.sourceFile)}`)
+  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), nodeText(expression, frame), linearConstant(numeric))
+  if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], nodeText(expression, frame))
+  if (ts.isTemplateExpression(expression)) return unknown(`Template string ${nodeText(expression, frame)}`)
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
@@ -1206,7 +1282,10 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
     return nullableValue(present, expression.getText(frame.program.sourceFile), 'undefined')
   }
   if (target.kind === 'null' && optional) return nullValue('undefined')
-  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`)
+  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`, expression.expression)
+  if (!canReadProperty(target, expression.name.text)) {
+    return noteUnsupported(frame, `Property access expected an object path${expression.name.text === 'length' ? ' or array length' : ''}: ${expression.getText(frame.program.sourceFile)}`, expression.expression)
+  }
   return readPropertyValue(target, expression.name.text, expression.getText(frame.program.sourceFile))
 }
 
@@ -1218,12 +1297,25 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: In
     return nullableValue(present, expression.getText(frame.program.sourceFile), 'undefined')
   }
   if (target.kind === 'null' && optional) return nullValue('undefined')
-  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`)
+  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`, expression.expression)
   return evaluatePresentElementAccess(target, expression, frame)
 }
 
 function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
-  if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported')
+  if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported', expression)
+  if (target.kind !== 'array' && target.kind !== 'nullable') {
+    return noteUnsupported(frame, `Element access expected an array path: ${expression.expression.getText(frame.program.sourceFile)}`, expression.expression)
+  }
+  const targetPath = pathFromExpression(expression.expression, frame)
+  if (
+    currentLoop(frame) != null
+    && target.kind === 'array'
+    && target.elements != null
+    && targetPath != null
+    && expressionMentionsArrayLength(expression.argumentExpression, targetPath.root)
+  ) {
+    return noteUnsupported(frame, 'Array length-derived index on finite local arrays inside loops is not supported', expression.argumentExpression)
+  }
   const index = evaluateExpression(expression.argumentExpression, frame)
   const finiteCase = finiteArrayElementAccess(target, index, expression, frame)
   if (finiteCase != null) return finiteCase
@@ -1232,14 +1324,34 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
   return readArrayIndexValue(target, exactIndex, expression.getText(frame.program.sourceFile))
 }
 
+function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {
+  if (expression == null) return false
+  if (
+    ts.isPropertyAccessExpression(expression)
+    && expression.name.text === 'length'
+    && pathFromSourceExpression(expression.expression, () => unknown('index'))?.root === root
+  ) return true
+  for (const child of expression.getChildren()) {
+    if (ts.isExpression(child) && expressionMentionsArrayLength(child, root)) return true
+  }
+  return false
+}
+
+function canReadProperty(target: Value, name: string) {
+  if (target.kind === 'object') return true
+  if (target.kind === 'array' && name === 'length') return true
+  if (target.kind === 'nullable') return canReadProperty(target.present, name)
+  return false
+}
+
 function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (target.kind === 'nullable') return symbolicArrayElementAccess(target.present, index, expression, frame)
-  if (target.kind !== 'array') return unknownNumber(expression.getText(frame.program.sourceFile))
-  if (index.kind !== 'number') return noteUnsupported(frame, `Array index ${expression.argumentExpression?.getText(frame.program.sourceFile) ?? '<missing>'} expected a number`)
+  if (target.kind !== 'array') return noteUnsupported(frame, `Element access expected an array path: ${expression.expression.getText(frame.program.sourceFile)}`, expression.expression)
+  if (index.kind !== 'number') return noteUnsupported(frame, `Array index ${expression.argumentExpression?.getText(frame.program.sourceFile) ?? '<missing>'} expected a number`, expression.argumentExpression ?? expression)
   const lower = proveComparisonPlain(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), frame.assumptions)
   const upper = proveComparisonPlain(index, '<', target.length, frame.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') {
-    return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}`)
+    return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}; prove 0 <= index < length or use a finite literal index`, expression.argumentExpression ?? expression)
   }
   if (expression.argumentExpression == null) return unknownNumber(expression.getText(frame.program.sourceFile))
   const sourceName = target.expr ?? expression.expression.getText(frame.program.sourceFile)
@@ -1285,7 +1397,7 @@ function finiteArrayElementAccess(target: Value, index: Value, expression: ts.El
     const choice = exactInteger(branch.value)
     if (choice == null) return null
     const value = target.elements[choice]
-    if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`)
+    if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`, expression.argumentExpression ?? expression)
     const branchValue = valueWithAssumptions(value, branch.assumptions)
     result = result == null ? branchValue : joinValues(result, branchValue)
   }
@@ -1572,6 +1684,8 @@ function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExp
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
+  if (ts.isIdentifier(target) && target.text === 'lastEnd') return evaluateLastEndCall(expression, frame)
+  if (ts.isIdentifier(target) && target.text === 'extentEnd') return evaluateExtentEndCall(expression, frame)
   const fallback = valueFromCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
     return valueWithStructuralFallback(evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile)), fallback)
@@ -1604,6 +1718,54 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback, frame)
   if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
   return noteUnsupported(frame, resolved.reason)
+}
+
+function evaluateLastEndCall(expression: ts.CallExpression, frame: InterpreterFrame): Value {
+  const targetExpression = expression.arguments[0]
+  if (targetExpression == null || expression.arguments.length !== 1) return noteUnsupported(frame, 'lastEnd expects one array')
+  const target = evaluateExpression(targetExpression, frame)
+  if (target.kind !== 'array') return noteUnsupported(frame, 'lastEnd expected an array')
+  return target.summary?.lastEnd ?? unknown(lastEndFailureReason(nodeText(targetExpression, frame), target))
+}
+
+function evaluateExtentEndCall(expression: ts.CallExpression, frame: InterpreterFrame): Value {
+  const targetExpression = expression.arguments[0]
+  const emptyExpression = expression.arguments[1]
+  if (targetExpression == null || emptyExpression == null || expression.arguments.length !== 2) {
+    return noteUnsupported(frame, 'extentEnd expects extentEnd(rows, emptyValue)')
+  }
+  const target = evaluateExpression(targetExpression, frame)
+  if (target.kind !== 'array') return noteUnsupported(frame, 'extentEnd expected an array')
+  const empty = evaluateExpression(emptyExpression, frame)
+  if (empty.kind !== 'number' || empty.expr == null) return noteUnsupported(frame, 'extentEnd expected a known empty value')
+
+  if (target.length.max === 0) return empty
+  if (target.length.min >= 1 && target.summary?.lastEnd != null) return target.summary.lastEnd
+  return extentEndSummaryValue(target, empty.expr) ?? unknown(extentEndFailureReason(nodeText(targetExpression, frame), empty.expr, target))
+}
+
+function lastEndFailureReason(targetText: string, target: ArrayValue) {
+  const missing = target.length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
+  const publicTargetText = publicFitText(targetText)
+  const lines = [
+    `lastEnd(${publicTargetText}) was not inferred`,
+    'need: a non-empty append-only row loop that pushes height',
+    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+  ]
+  lines.push(`missing: ${missing}`)
+  return lines.join('\n')
+}
+
+function extentEndFailureReason(targetText: string, emptyExpr: string, target: ArrayValue) {
+  const publicTargetText = publicFitText(targetText)
+  const publicEmptyExpr = publicFitText(emptyExpr)
+  const lines = [
+    `extentEnd(${publicTargetText}, ${publicEmptyExpr}) was not inferred`,
+    'need: an append-only row loop plus the empty fallback used by the source',
+    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+  ]
+  lines.push('missing: empty-safe row end')
+  return lines.join('\n')
 }
 
 function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value | null {
@@ -1937,4 +2099,10 @@ function classNameForPropertyAccess(access: ts.PropertyAccessExpression, frame: 
 
 function isInlineFunction(expression: ts.Expression): expression is ArrayCallbackFunction {
   return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)
+}
+
+function nodeText(node: ts.Node, frame: InterpreterFrame) {
+  return node.getSourceFile() === frame.program.sourceFile
+    ? node.getText(frame.program.sourceFile)
+    : node.getText()
 }

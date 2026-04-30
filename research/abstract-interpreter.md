@@ -1,12 +1,12 @@
 # Abstract Interpreter Spine
 
-Freerange is already an abstract interpreter. The rewrite should make that explicit, but the old evaluator is now a reference implementation, not a cage.
+Freerange is an abstract interpreter. The cutover made that explicit and retired the old evaluator instead of keeping two engines alive.
 
 ## Goal
 
 Keep the public checker small: ordinary TypeScript source in, earned `@fit` facts out. The interpreter owns source evaluation; contract checking, reports, `infer`, and `doctor` query the same abstract state instead of each growing their own recognizer.
 
-First milestone: a fresh interpreter core running beside `check.ts` on focused kernels. Old snapshots catch surprises; they do not decide the design.
+Current milestone: one interpreter owns source evaluation. The checker layer owns contracts, reports, `infer`, and `doctor`; the next cleanup is carving `src/check-core.ts` into clearer pieces.
 
 ## Abstract Values
 
@@ -22,17 +22,19 @@ TypeScript shape is a fallback adapter, not proof. It can say a path exists as `
 
 ## State
 
-The interpreter state is:
+The interpreter frame is:
 
 - `program`: current module
 - `env`: root name to abstract value
 - `assumptions`: branch, given, and source-earned linear facts
-- `inputRoots`: roots allowed in `given`
 - `stack`: call/report path
-- `checks`: obligations discovered while evaluating
-- optional mode fields: call-obligation recording, object path, loop/infer collection
+- `issues`: unsupported source-shape diagnostics
+- `loopStack`, `conditionalDepth`, and claim hooks for loop/report boundaries
+- optional mode fields: object path and call-obligation recording
 
-This state should become a named module boundary before semantics change. Closures and IIFEs clone state; only deliberate mutation propagation can change an outer env.
+The checker context around that frame owns input roots, parsed checks, and the
+current call-obligation mode. Closures and IIFEs clone state; only deliberate
+mutation propagation can change an outer env.
 
 ## Calls
 
@@ -72,13 +74,13 @@ Every unsupported stop should be one of:
 - real proof gap
 - mutation invalidation
 
-Diagnostics should point at the check location and the construction boundary when possible. `infer` and snapshots are the adoption and rewrite guardrails.
+Diagnostics should point at the check location and the construction boundary when possible. `infer` and snapshots are the adoption and interpreter-evolution guardrails.
 
 ## Rewrite Style
 
-Do not swap the engine in one move. Build the new core in parallel, then compare. Useful old helpers are fine when they describe shared concepts, but do not copy old evaluator control flow just to preserve its shape.
+The parallel phase is over. Keep useful shared concepts, but do not preserve old evaluator control flow just because it existed last week.
 
-Current parallel core:
+Current core:
 
 - `src/interpreter/context.ts`: frames, issues, assumptions, claim hooks, and flow
 - `src/interpreter/source-syntax.ts`: small TypeScript syntax readers for loop shapes, guard safety, push calls, and cursor/index paths
@@ -90,51 +92,20 @@ Current parallel core:
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
 - `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
-- `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
-- `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
-- `verify-differential-snapshots.ts`: compact legacy/fresh comparison counts for deciding what to migrate next
+- `src/interpreter/format.ts`: value-tree, origin-fact, and unsupported-shape snapshots
+- `verify-interpreter-snapshots.ts`: focused kernels for interpreter evolution
 
-The fresh core is now allowed to answer `infer` for eligible bodies without loop reports. That includes unannotated finite `for..of` loops. Annotated loops still stay on the old evaluator because those reports are not just return values; they include loop-local checked/assumed/not-inferred bookkeeping.
+## Cutover Notes
 
-The next migration checkpoint moved ordinary body claims onto the fresh path for eligible functions. Local inline checks, return checks, object-field checks, type-boundary field checks, and checked helper-call obligations now run through fresh evaluation hooks. If the fresh path hits an unsupported issue while answering a checked claim, it rolls back its diagnostics and lets the old path produce the public report; this keeps adoption safe while the old evaluator is still present.
+The interpreter now answers function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, supported loop reports, and helper-call obligations. `src/check.ts` is the public checker front door; `src/check-core.ts` holds the current checker shell around interpreter state.
 
-Naming rule learned during the first adoption pass: a fresh local array literal should get a local path such as `items[]`, but a fresh local object literal should keep scalar field expressions such as `imageSizeX`. The object itself can be named for aliasing and property access, but renaming every scalar leaf erases useful source equalities.
+The useful comparison was behavioral, not architectural. The old evaluator helped reveal missing surfaces, then got deleted with the differential harness once demos, negative reports, inferred facts, focused interpreter kernels, the corpus sweep, and type/lint all had enough coverage.
 
-Fresh finite `for..of` loop pushes now record only origin lineage: unconditional pushes follow the source by index, and pushes under `if` become order-preserving subsets. Sequence facts such as `spaced`, `lastEnd`, cursor recurrence, and loop-local report sections still belong to the old loop-summary path until the fresh state has explicit loop bookkeeping.
+Lessons worth keeping:
 
-When the source array is not finite but has an element domain, the fresh core can run a deliberately tiny abstract `for..of` pass for append loops. The body may bind local values, call `rows.push(...)`, or guard that push with an `if`. Unguarded pushes mean one push per source element, so the target length follows the source length. Guarded pushes keep only element facts and subsequence origin.
+- Preserve environment identity at checker boundaries. Hooks and contract summaries may hold the original `EvalContext.env` map, so interpreter expression evaluation copies the result entries back into that map instead of replacing it. That kept helper-summary facts from disappearing.
+- Synthetic branch frames are interpreter details. Inline return/object/type claims from `if`, conditional, and indexed-guard branches should report at the owning body stack, not leak names like `<conditional-true>`.
+- Loop effects compose by owned targets. Guarded scalar flushes can live with unrelated side appends, but mixing guarded flushes with unguarded pushes to the same array stays rejected because the resulting element stream is not one coherent proof shape.
+- Source evaluation belongs in `src/interpreter/*`; checker code should parse comments, apply givens, ask proofs, and format reports. Unsupported-shape diagnostics should carry the source line when the interpreter knows the node. When a new source family appears, prefer extending the interpreter domain over adding a report-only recognizer.
 
-That abstract pass now also handles trailing scalar cursor updates such as `y += step`, `y = y + step`, and `y = step + y`. The update must come after any push that reads the cursor, and the increment cannot depend on an earlier cursor update. The interpreter records cursor paths from the pushed syntax, then applies the running-sum result after the body, so `let y = top; rows.push(y); y += step` keeps both `rows[]` ranges and the final `y == runningSum(...)`.
-
-Guarded scalar totals are a separate small loop-effect shape: `if (item.visible) count += 1` or `if (item.visible) total += item.height` produces the conditional running-sum range and the extra comparison facts such as `count <= items.length` when the source proves them. Scalar extrema are another pure loop effect: `maxWidth = Math.max(maxWidth, item.width)` and `minWidth = Math.min(minWidth, item.width)` keep the target range bounded by the start value and the item domain. Fresh `for..of` and indexed loops both use this effect path now. For now, these scalar-effect loops cannot also push rows, mix in cursor updates, or use an `else` branch. Those combinations stay on the legacy path until the fresh loop state can model them directly.
-
-The first exception to "scalar effects are terminal" is explicit: a scalar extremum may be followed by a guarded push that flushes the accumulated value and safely resets that same extremum. If the guarded block also advances a separate row cursor from the pushed bottom plus a gap, the fresh path emits the same segmented-stack facts as the old evaluator: bounded row heights, `bottom == top + height`, nondecreasing tops, `spaced`, and adjacent row-bottom relations. Unsafe resets and scalar-add-before-push still stop with a source-shape diagnostic.
-
-The first consolidation pass after the indexed-loop sprint made scalar effects explicit and added a shared loop body walker. Fresh `for..of` and indexed loops now share one pending effect object, one effect recognizer, one effect finalizer, and the same "scalar effects must be terminal" body ordering rule. The next vocabulary pass renamed symbolic loop frames and append records directly in the code, so `for..of` and indexed loops no longer hide behind the older reducer/push names internally. Push/origin handling is still split because the two loop sources earn those facts differently.
-
-The fresh core also has the first indexed `for` loop shapes: `for (let i = 0; i < limit; i++) values.push(i)` and `for (let i = 0; i < items.length; i++) rows.push(...)`. The limit must already be a non-negative integer. Array-source loops bind `items[i]` through the normal array element domain, carry one-push-per-item origin for separate target arrays, and give pushed index fields the same element-path range and comparison assumptions as the old indexed loop path. Guarded indexed pushes keep element facts and become order-preserving subsets, and indexed append loops can apply trailing scalar cursor updates such as `y += step` after guarded or unguarded pushes. Sequence/spacing summaries for guarded indexed cursor loops and loop-local `@fit` reports are still legacy-only.
-
-Unsupported loop syntax can still preserve unrelated facts when the loop is forgettable. A noncanonical `for`, `while`, or `do while` is skipped only if its header/condition is read-only and every body statement mutates clear roots. The fresh path invalidates those roots and keeps the rest of the environment. This is intentionally an invalidation rule, not a hidden loop interpreter.
-
-Control-flow joins are now explicit enough for the migration pass: an unknown `if` can join a completed branch with the remaining statements, so `if (...) return ...; return ...` and `else if` ladders keep all return cases. `throw` is a completed non-returning branch, which lets guard clauses narrow the surviving path. Unsupported statements now stop with one unknown result at the source boundary instead of falling through and adding a second fake "did not return" issue.
-
-Finite-literal `switch` is the same family, not a special report recognizer. The discriminant must already be a finite string/boolean literal value. Case labels must be single finite literals. Empty case labels may group into the next body, `default` covers the still-unmatched values, and non-exhaustive switches can join with the real following statements. Case bodies refine the discriminant path, and literal `==` / `!=` comparisons now evaluate over finite literal sets instead of always returning maybe. Clause fallthrough and broad string discriminants stay unsupported with direct messages.
-
-The expression surface also has the small everyday reads that showed up in the differential list: constant negative `array.at(-k)` when length is proven, template strings as string-ish unknown values, string-ish `+=` that forgets only the changed scalar, `typeof x !== 'undefined'` / `x != null` presence refinement, optional property/element access, and numeric `??` fallbacks. These are intentionally value semantics, not new public atoms.
-
-The fresh call resolver now follows the same boring helper boundary as the checker: direct same-file helpers, local const aliases, copied const aliases, local source imports, namespace imports, and `Math` aliases are resolved; mutable helper aliases are reported instead of followed. TypeScript call-return shape is only a structural fallback. If a call returns an object/array shape and no source contract exists, the fresh path may keep that shape, but it does not invent numeric proof. Instance class members get `this` from the receiver at call sites, and direct class-method evaluation seeds `this` from declared fields and constructor parameter properties so class bodies can be compared without a fake unknown-number `this`.
-
-There is now a narrow call hook between the fresh interpreter and the old checker. It is intentionally a migration bridge, not a second call engine: inference keeps using fresh source evaluation because it can inline local/imported source bodies more precisely, while future check/report slices can route call obligations through the hook until those obligations live in the fresh state directly. Once call obligations, loop reports, and diagnostic locations are owned by the fresh state, this bridge should disappear with the old evaluator.
-
-The differential harness deliberately compares rendered abstract facts, not internal data structures. That keeps it useful while the fresh interpreter is allowed to be more precise than legacy. The next migration work should use the non-match list as a map: first unsupported source families, then missing check/report side effects, then real precision differences.
-
-Old extraction order, still useful as a map of remaining semantic families:
-
-1. interpreter state helpers
-2. top-level literal/module value reading
-3. call/default/IIFE semantics
-4. statement/control-flow evaluation
-5. expression evaluation
-6. array built-ins and mutation invalidation
-
-After each slice, run `bun run check`. Behavior changes only after the extraction snapshots are stable.
+Next cleanup target: keep extracting clear pieces from `src/check-core.ts` now that evaluator control flow is gone. The public language does not need to grow for that; it should mostly make the code easier to reason about.

@@ -20,7 +20,8 @@ export function formatInterpreterFacts(value: Value, root = 'return'): string[] 
 export function formatInterpreterIssues(issues: InterpreterIssue[]): string[] {
   return issues.map(issue => {
     const stack = issue.stack.length === 0 ? '<top-level>' : issue.stack.join(' > ')
-    return `unsupported ${stack}: ${issue.message}`
+    const location = issue.line == null ? '' : ` line ${issue.line}`
+    return `unsupported ${stack}${location}: ${issue.message}`
   })
 }
 

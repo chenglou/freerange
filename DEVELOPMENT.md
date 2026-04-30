@@ -15,15 +15,14 @@ bun install
 - `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
-- `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including load/verify time and a load-phase split; pass files to time a custom set
+- `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
-- `bun run verify:eval` — curated abstract-evaluation snapshots for facts, shapes, and unsupported stops we do not want to lose during evaluator work
-- `bun run verify:interpreter` — run the fresh parallel interpreter on focused kernels and snapshot the abstract return values it builds
-- `bun run verify:differential` — compact public-output snapshot plus fresh/legacy interpreter comparison counts for the rewrite
-- `bun run verify:corpus` — reproducible external corpus probes when `/Users/chenglou/github/freerange-corpus` is present
-- `bun run verify:bench` — loose performance guard for demo-contract load and verification time
+- `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
+- `bun run verify:interpreter` — run the interpreter on focused kernels and snapshot the abstract return values it builds
+- `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
+- `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
-- `bun run check` — pattern tests, demo contracts, typecheck, and lint
+- `bun run check` — full local gate: pattern tests, demo contracts, eval/interpreter/corpus/bench snapshots, typecheck, and lint
 
 ## Current Sources Of Truth
 
@@ -33,21 +32,22 @@ bun install
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [new-interpreter-snapshots.expected.txt](./new-interpreter-snapshots.expected.txt), [differential-snapshots.expected.txt](./differential-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, abstract evaluation, the fresh interpreter core, future evaluator differentials, and external corpus probes
+- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, interpreter-adjacent facts, focused interpreter kernels, and the external corpus sweep
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
 ## Important Files
 
-- [src/check.ts](./src/check.ts) — source evaluator and contract orchestration
+- [src/check.ts](./src/check.ts) — small public checker API front door
+- [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and `doctor` orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
-- [src/interpreter/](./src/interpreter) — fresh parallel abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting
+- [src/interpreter/](./src/interpreter) — abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting
 - [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
-- [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by evaluator inputs and local bindings
+- [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
-- [src/interpreter-state.ts](./src/interpreter-state.ts) — abstract interpreter context, branch env, and flow-join helpers
+- [src/interpreter-state.ts](./src/interpreter-state.ts) — checker/interpreter bridge types for evaluated state and helper-call recording
 - [src/module-values.ts](./src/module-values.ts) — top-level `const` literal reader used during module loading
-- [src/program-env.ts](./src/program-env.ts) — global/import environment bootstrapping for abstract evaluation
+- [src/program-env.ts](./src/program-env.ts) — global/import environment bootstrapping for interpreter source evaluation
 - [src/source-expressions.ts](./src/source-expressions.ts) — source expression root/path helpers shared by givens, mutation, and call invalidation
 - [src/value-localize.ts](./src/value-localize.ts) — abstract value relabeling for parameters, imports, and wildcard element paths
 - [src/source-boundary.ts](./src/source-boundary.ts) — source line and check-boundary helpers
@@ -77,10 +77,10 @@ bun install
 - [bench.ts](./bench.ts) — dev-only coarse timing helper
 - [bench-core.ts](./bench-core.ts) — shared benchmark runner used by `bench` and the budget guard
 - [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
-- [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — abstract-evaluation golden snapshot runner
-- [verify-differential-snapshots.ts](./verify-differential-snapshots.ts) — compact public behavior snapshot runner and fresh/legacy interpreter comparison map for evaluator rewrites
-- [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus probe runner and manifest
-- [verify-bench-budget.ts](./verify-bench-budget.ts) — loose performance budget guard for the demo verifier
+- [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — interpreter-adjacent golden snapshot runner
+- [verify-interpreter-snapshots.ts](./verify-interpreter-snapshots.ts) — focused interpreter value/fact/unsupported snapshot runner
+- [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus sweep runner and discovery rules
+- [verify-bench-budget.ts](./verify-bench-budget.ts) — loose warmed performance budget guard for the demo verifier
 - [snapshot.ts](./snapshot.ts) — tiny snapshot compare/update helper for dev-only harnesses
 - [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
 - [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list
@@ -107,7 +107,7 @@ It also separates explicit function and loop comment lines into:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
-Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for abstract-evaluator facts that are too specific for the public `infer` catalog but important during evaluator refactors: nested literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
+Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: nested literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 
 Treat `infer`, `audit:demos`, and normal reports as one adoption loop: inspect
 what source proves, keep the human-important `@fit` comments, then classify any
@@ -122,7 +122,7 @@ Keep external repo experiments outside this checkout. The current scratch space
 is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
 bring only general Freerange fixes back into this repo.
 
-[corpus-probes.ts](./corpus-probes.ts) is the small reproducible subset. Keep it boring: a path list plus the command kind. If a probe becomes useful enough to guard, add it there and update [corpus-probes.expected.txt](./corpus-probes.expected.txt). If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
+[corpus-probes.ts](./corpus-probes.ts) discovers every source file with an `@fit` comment under the corpus root, excluding dependency and build-output trees. It groups files by top-level project and nearest `tsconfig.json`, then [corpus-probes.expected.txt](./corpus-probes.expected.txt) snapshots the exact file list plus check/doctor summaries. If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
 
 A good corpus iteration is one of two small loops:
 

@@ -680,6 +680,39 @@ export function segmentedStackRowsInlineBottom(items: {height: number}[], top: n
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * return.measurements.length == items.length
+ * return.rows.length <= items.length
+ * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ * nondecreasing(return.rows.top)
+ * spaced(return.rows, gap)
+ */
+export function segmentedStackRowsWithSideAppend(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  const measurements = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    const layoutHeight = item.height
+    measurements.push({layoutHeight})
+    rowHeight = Math.max(rowHeight, layoutHeight)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows, measurements}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * return: 0..2000
  * return >= 0
  */

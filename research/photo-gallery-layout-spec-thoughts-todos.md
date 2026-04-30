@@ -186,7 +186,7 @@ newAnchor: int 0..<newLayout.items.length
 ## Possible Checker Work
 
 - Inline `// @fit 0..foo` now covers param domains, simple one-value red-line
-  locals, and simple object fields. The larger rewrite question is whether
+  locals, and simple object fields. The remaining design question is whether
   richer statement annotations should become first-class later.
 - Call preconditions are reported when the call is inside a claimed proof path.
   A top-level probe like `clamp(4, 2, 3)` is intentionally not audited by

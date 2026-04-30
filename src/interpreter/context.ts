@@ -15,6 +15,7 @@ export type InterpreterIssue = {
   kind: 'unsupported'
   message: string
   stack: string[]
+  line?: number
 }
 
 export type InterpreterFrame = {
@@ -33,6 +34,7 @@ export type InterpreterHooks = {
   evaluateCall?: (call: InterpreterCall, frame: InterpreterFrame) => Value | null
   evaluateClaim?: (claim: InterpreterClaim, frame: InterpreterFrame, evaluate: () => Value) => Value
   afterClaim?: (claim: InterpreterClaim, value: Value, frame: InterpreterFrame) => void
+  evaluateLoop?: (claim: InterpreterLoopClaim, frame: InterpreterFrame, evaluate: () => InterpreterFlow) => InterpreterFlow
 }
 
 export type InterpreterClaim =
@@ -53,6 +55,12 @@ export type InterpreterCall = {
     binding: Extract<import('../check-types.ts').ImportedBinding, {kind: 'resolved'}>
   }
   thisValue?: Value
+}
+
+export type InterpreterLoopClaim = {
+  kind: 'for-of' | 'for'
+  statement: ts.ForOfStatement | ts.ForStatement
+  factRoots: Set<string>
 }
 
 export type LoopFrame = {
@@ -119,9 +127,18 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
   }
 }
 
-export function noteUnsupported(frame: InterpreterFrame, message: string): Value {
-  frame.issues.push({kind: 'unsupported', message, stack: frame.stack})
+export function noteUnsupported(frame: InterpreterFrame, message: string, node?: ts.Node): Value {
+  frame.issues.push({
+    kind: 'unsupported',
+    message,
+    stack: frame.stack,
+    ...(node == null ? {} : {line: lineNumberForNode(frame.program.sourceFile, node)}),
+  })
   return unknown(message)
+}
+
+function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
+  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
 }
 
 export function joinFrameEnvs(left: Map<string, Value>, right: Map<string, Value>): Map<string, Value> {

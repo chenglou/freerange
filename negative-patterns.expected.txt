@@ -227,6 +227,8 @@ UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(r
     loop proved: row advance (rows[].height + otherGap) = previous height rows[].height + otherGap
     sequence facts: nondecreasing(.top), spaced(otherGap)
   missing: given otherGap == gap
+UNKNOWN negative-patterns.ts:negativeGuardedFlushCannotMixSameArrayAppend: spaced(return.rows, gap)
+  spaced expected an array
 UNKNOWN negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(return.rows) == return.bottom
   lastEnd(return.rows) was not inferred
   need: a non-empty append-only row loop that pushes height
@@ -280,10 +282,20 @@ UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >=
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
   missing: items[].height >= 0
-UNKNOWN negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
-  Unsupported for-of body statement: total += total
+FAIL negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
+  range was any number as total, expected inside 0..10
+  known:
+    total: any number
+    assumed from input: given items.length: int 1..10
+  missing: total >= 0
+  missing: total <= 10
 UNKNOWN negative-patterns.ts:negativeLoopResetAssignmentIsNotAccumulator: return >= 10
-  Unsupported for-of body statement: total = Math.max(item.height, minHeight)
+  known:
+    total: any number
+    assumed from input: given items.length: int 1..10
+    assumed from input: given items[].height: 0..5
+    assumed from input: given minHeight: 0..5
+  missing fact: total >= 10
 UNKNOWN negative-patterns.ts:negativeScalarPushLoopNeedsNonNegativeStep: return[] >= 0
   applies to: every item in return
   known:
@@ -523,11 +535,11 @@ FAIL negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return
 UNKNOWN negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
   Nullable value (focused - 1) was not proven present
 UNKNOWN negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
-  Nullable value state.previous! was not proven present
+  Nullable value {targetIndex: focused - 1} was not proven present
 UNKNOWN negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
-  Math.max expected numbers
+  Math.max expected number arguments
 UNKNOWN negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
-  Math.max expected numbers
+  Math.max expected number arguments
 FAIL negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was any number as scratch, expected inside 0..0
   known:
@@ -761,7 +773,7 @@ UNKNOWN negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
-  Array.at(-2) expected length >= 2; length was int 1..50 as items.length
+  Array.at(-2) expected length >= 2
 FAIL negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
   value was int 10..30, expected one of 20 | 40
   branches produced 10, 30
@@ -769,7 +781,7 @@ FAIL negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot:
 UNKNOWN negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
   Array length-derived index on finite local arrays inside loops is not supported
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
-  Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length
+  Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index
 UNKNOWN negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: return.current == return.previous
   known:
     items[focused].top: 0..1000
@@ -800,7 +812,7 @@ UNKNOWN negative-patterns.ts:negativeForwardSymbolicSlotsAreNotSamePath: return.
     inferred from code: rows[focused+1].top >= 0
     inferred from code: rows[focused+1].top <= 2000
   missing fact: rows[focused+1].top == rows[focused].top
-UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch > <if-true>: return >= 0
+UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return >= 0
   known:
     (focused - 1): int -1..999
     assumed from input: given focused: int 0..1000
@@ -871,9 +883,7 @@ FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): req
   missing at call site: 3 >= 4
 FAIL negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
   result: is false
-  known:
-    k: int -1..-1
-  missing fact: k > 0
+  missing fact: -1 > 0
 FAIL negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   range was any number as unannotatedImportedClamp(width), expected inside 0..320
   known:
@@ -882,13 +892,9 @@ FAIL negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   missing: unannotatedImportedClamp(width) >= 0
   missing: unannotatedImportedClamp(width) <= 320
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperUnresolved: return: 0..320
-  imported helper contract was not available
-  helper: missingImportedClamp from @fit-fixtures/missing-import-helper
-  reason: Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
+  Could not resolve @fit-fixtures/missing-import-helper from negative-import-patterns.ts with TypeScript module resolution
 UNKNOWN negative-import-patterns.ts:negativeImportedHelperDeclarationMapMissing: return: 0..320
-  imported helper contract was not available
-  helper: unmappedDeclaredClampWidth from @fit-fixtures/import-pattern-declared-package-no-map
-  reason: Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map
+  Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map
 FAIL negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: return: 0..320
   range was any number as barrelUnannotatedClamp(width), expected inside 0..320
   known:

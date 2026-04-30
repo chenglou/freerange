@@ -129,7 +129,7 @@ High-value inference:
 
 Corpus loop notes:
 
-- Keep cloned external probes isolated under `/Users/chenglou/github/freerange-corpus`. Current pressure set: `tldraw`, `dagre`, `xyflow`, `d3-scale`, and `masonry`. Do not pretend those branches are product integrations; they are red-line specimens for finding general source shapes.
+- Keep cloned external probes isolated under `/Users/chenglou/github/freerange-corpus`. The repo now has a full correctness sweep over every discovered `@fit` source file there, grouped by project and nearest `tsconfig.json`; current snapshot: 38 files, 123 check passes, 0 fail, 0 unknown, plus doctor with 2 advisory `requires`, 0 fail, 0 unknown. Do not pretend those branches are product integrations; they are red-line specimens for finding general source shapes.
 - The April corpus report sweep across `xyflow`, `tldraw`, `fabric.js`, `interact.js`, `2d-geometry`, `dagre`, `d3-scale`, `gridstack.js`, `angular-grid-layout`, and `moveable` mostly found adoption polish, not proof-language pressure. Tuple-heavy files needed readable fixed array lengths like `return.length == 5`, not recurrence noise. Unknown identifiers should propagate through element and binary expressions so the report names the real blocker instead of saying "expected an array" or "expected numbers."
 - The first `xyflow` probe was worth it immediately. `packages/system/src/utils/general.ts` wanted contracts on `clamp`, rect/box conversion, box union, and overlap area. The fixes were general: named `const` arrow/function-expression boundaries, typed object destructuring params, helper summaries that can narrow a stored local when preconditions prove, and `0..Infinity * 0..Infinity` staying `0..Infinity` instead of becoming `NaN..NaN`.
 - The next `xyflow` edge-geometry pass added tuple-shaped pressure: `getEdgeCenter` and `getBezierEdgeCenter` naturally return `[centerX, centerY, offsetX, offsetY]`, and callers destructure skipped slots. Supporting array binding patterns was a better answer than asking code to name throwaway locals or wrap tuple returns in objects.
@@ -216,7 +216,7 @@ SQL is the taste reference for source/id matching: name the relation. If two col
 
 A layered IR seems better than one giant SMT encoding. This is mostly internal, but it should be visible through `infer`, audits, and report provenance:
 
-The current rewrite note is [research/abstract-interpreter.md](./research/abstract-interpreter.md): make the existing abstract interpreter explicit, preserve behavior first, then move semantics behind clearer module boundaries.
+The interpreter cutover note is [research/abstract-interpreter.md](./research/abstract-interpreter.md): one engine now owns source evaluation; the remaining work is clearer module boundaries around that engine and the checker shell.
 
 - scalar refinements: intervals, small finite sets, small linear facts, symbolic equality, modulo/congruence facts
 - object/path facts: `Field(row, "top")`, `Path(rows, i, "height")`
@@ -271,7 +271,7 @@ The resolver follows named imports through TypeScript module resolution when the
 
 TypeScript shape comparison is not a helper contract. It is okay for TS to say "this return value has `.rows.length`" or "this generic `Box<T>` has `.value`." It is not okay for TS type shape to prove `rows[].height: 0..40`, `spaced(rows, gap)`, or an imported helper's numeric postcondition. This distinction is why structural fallback is useful without becoming a summary system. Namespace-qualified helper calls may now use a local checked `@fit` contract, but the contract still comes from checking source, not from TypeScript shape.
 
-We tried automatic inferred return exports in branch `codex/implicit-return-summaries-experiment` (`ff3626e`). The shape was conceptually nice: prove a helper once, infer small returned-return facts, then export those facts at call sites. In practice it grew a real subsystem: summary caching, public-expression filtering, return-expression rebasing, provenance, and boundary assumptions. The demo audit did not show enough line-count win. The lines it might delete were mostly the useful public contracts we still want humans and agents to read, such as `clamp: return >= min`, `gridImageSizeX: return <= naturalSizeX`, and prompt visible-sizing caps. We only pruned the obvious `>= 0` lines already covered by concrete ranges; checked demo contracts dropped from 125 to 113. Keep `infer` as an adoption tool for now, not a caller-visible summary API. Revisit only if multiple real demos show repeated helper contracts that are clearly noise rather than red-line documentation.
+We tried automatic inferred return exports in branch `codex/implicit-return-summaries-experiment` (`ff3626e`). The shape was conceptually nice: prove a helper once, infer small returned-return facts, then export those facts at call sites. In practice it grew a real subsystem: summary caching, public-expression filtering, return-expression rebasing, provenance, and boundary assumptions. The demo audit did not show enough line-count win. The lines it might delete were mostly the useful public contracts we still want humans and agents to read, such as `clamp: return >= min`, `gridImageSizeX: return <= naturalSizeX`, and prompt visible-sizing caps. At the time, pruning only the obvious `>= 0` lines dropped checked demo contracts from 125 to 113; the current sibling-demo gate is leaner for other reasons. Keep `infer` as an adoption tool for now, not a caller-visible summary API. Revisit only if multiple real demos show repeated helper contracts that are clearly noise rather than red-line documentation.
 
 Structural equality should stay small too. Proving `return.rows == input.rows` because both sides are the same source expression is useful. Recursive object/array equality is a different feature and should wait for a real need.
 
@@ -306,6 +306,10 @@ Reports should separate:
 - checked imported contract
 - assumed summary, if that ever exists
 - unsupported
+
+Unsupported source reports should include the source line when the interpreter
+knows the node. That line is where proof stopped, not necessarily where the
+human-written `@fit` claim lives.
 
 For shared-factor arithmetic, missing facts should name the small human obligation. If the code has:
 

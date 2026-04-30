@@ -127,8 +127,8 @@ case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMat
   return[].value: int -1..-1
   fact return follows source by index
 case negative cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixCursorUpdateBeforePush
-  return: unknown (Abstract for..of scalar cursor updates must be the final body statements: rows.push(y))
-  unsupported negativeMatrixCursorUpdateBeforePush: Abstract for..of scalar cursor updates must be the final body statements: rows.push(y)
+  return: unknown (Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
+  unsupported negativeMatrixCursorUpdateBeforePush line 33: Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
 case negative conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
   return: unknown (Abstract for..of conditional running sums do not support else branches)
   unsupported negativeMatrixConditionalElseCount: Abstract for..of conditional running sums do not support else branches
@@ -139,7 +139,7 @@ case negative indexed loop starts at one surface: interpreter-matrix-negative.ts
   return: unknown (Unsupported for loop body: {
     values.push(i)
   })
-  unsupported negativeMatrixIndexedLoopStartsAtOne: Unsupported for loop body: {
+  unsupported negativeMatrixIndexedLoopStartsAtOne line 59: Unsupported for loop body: {
     values.push(i)
   }
 case negative indexed array guarded else surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
@@ -149,8 +149,8 @@ case negative indexed array pushes into source surface: interpreter-matrix-negat
   return: unknown (Indexed for loop cannot push into its source array)
   unsupported negativeMatrixIndexedArrayPushesIntoSource: Indexed for loop cannot push into its source array
 case negative indexed cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
-  return: unknown (Indexed for loop scalar cursor updates must be the final body statements: rows.push(y))
-  unsupported negativeMatrixIndexedCursorUpdateBeforePush: Indexed for loop scalar cursor updates must be the final body statements: rows.push(y)
+  return: unknown (Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
+  unsupported negativeMatrixIndexedCursorUpdateBeforePush line 87: Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
 case negative indexed conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
   return: unknown (Indexed for loop conditional running sums do not support else branches)
   unsupported negativeMatrixIndexedConditionalElseCount: Indexed for loop conditional running sums do not support else branches
@@ -158,11 +158,11 @@ case negative indexed mixed extremum/cursor surface: interpreter-matrix-negative
   return: unknown (Indexed for loop scalar extrema support extrema updates only)
   unsupported negativeMatrixIndexedMixedExtremumAndCursor: Indexed for loop scalar extrema support extrema updates only
 case negative guarded unsafe reset surface: interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
-  return: unknown (Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
+  return: unknown (Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
       rows.push({height: rowHeight})
       rowHeight = -1
     })
-  unsupported negativeMatrixGuardedExtremumUnsafeReset: Abstract for..of scalar cursor updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
+  unsupported negativeMatrixGuardedExtremumUnsafeReset line 118: Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
       rows.push({height: rowHeight})
       rowHeight = -1
     }
@@ -170,7 +170,7 @@ case negative forgettable impure read surface: interpreter-matrix-negative.ts:ne
   return: unknown (Unsupported for loop body: {
     scratch += negativeMatrixImpureLoopApi.touch()
   })
-  unsupported negativeMatrixForgettableLoopImpureRead: Unsupported for loop body: {
+  unsupported negativeMatrixForgettableLoopImpureRead line 133: Unsupported for loop body: {
     scratch += negativeMatrixImpureLoopApi.touch()
   }
 case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
@@ -179,7 +179,7 @@ case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTr
   } catch {
     return 2
   })
-  unsupported negativeMatrixTryCatchUnsupported: Unsupported statement in negativeMatrixTryCatchUnsupported: try {
+  unsupported negativeMatrixTryCatchUnsupported line 140: Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1
   } catch {
     return 2

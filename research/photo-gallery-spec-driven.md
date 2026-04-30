@@ -220,8 +220,8 @@ At the end, report:
 
 Current `demos/photo-gallery` contracts prove the important statically known helper seams cleanly:
 
-- `layout.ts` and `prompt-layout.ts`: 66 pass, 0 fail, 0 unknown
-- all checked sibling demo contracts: 125 pass, 0 fail, 0 unknown
+- `layout.ts` and `prompt-layout.ts`: 65 pass, 0 fail, 0 unknown
+- all checked sibling demo contracts: 94 pass, 0 fail, 0 unknown
 
 The useful ground-truth facts now include:
 

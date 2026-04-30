@@ -21,6 +21,8 @@ It then **statically** checks those numbers, just like TypeScript, to ensure you
 - your layout code can now guarantee e.g. min/max sizes, no overlap, proper occlusion (virtualization) without visual glitches. No more weird squashed mobile layouts!
 - refactors get clear red lines: if someone changes the math, Freerange tells you which contract stopped being true
 
+Under the hood, Freerange abstract-interprets a small, boring TypeScript subset. Source, checked helper/type contracts, and explicit `given` facts can earn proofs; unsupported source becomes `unknown`, not a guessed pass.
+
 ## Run A File
 
 The command-line binary is `fr`:

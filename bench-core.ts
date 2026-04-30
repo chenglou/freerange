@@ -19,6 +19,15 @@ export type BenchRun = {
   checks: FitCheck[]
 }
 
+export type BenchStats = {
+  cold: BenchRun
+  warmRuns: BenchRun[]
+  warmMedianTotalMs: number
+  warmMedianLoadMs: number
+  warmMedianVerifyMs: number
+  warmSlowestTotalMs: number
+}
+
 export function runBench(paths: string[]): BenchRun {
   const totalStart = performance.now()
   const loadStart = performance.now()
@@ -39,6 +48,21 @@ export function runBench(paths: string[]): BenchRun {
     loadTiming,
     modules: project.modules.size,
     checks,
+  }
+}
+
+export function benchStats(runs: BenchRun[]): BenchStats {
+  const cold = runs[0]
+  if (cold == null) throw new Error('bench stats need at least one run')
+  const warmRuns = runs.slice(1)
+  const measuredRuns = warmRuns.length === 0 ? [cold] : warmRuns
+  return {
+    cold,
+    warmRuns,
+    warmMedianTotalMs: median(measuredRuns.map(run => run.totalMs)),
+    warmMedianLoadMs: median(measuredRuns.map(run => run.loadMs)),
+    warmMedianVerifyMs: median(measuredRuns.map(run => run.verifyMs)),
+    warmSlowestTotalMs: Math.max(...measuredRuns.map(run => run.totalMs)),
   }
 }
 

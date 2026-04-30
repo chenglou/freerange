@@ -1,4 +1,88 @@
-check react-grid-layout core check: 6 pass, 0 fail, 0 unknown
-doctor react-grid-layout core doctor: 6 pass, 0 fail, 0 requires, 0 unknown
-check xyflow general/resizer check: 27 pass, 0 fail, 0 unknown
-doctor xyflow general/resizer doctor: 15 pass, 0 fail, 0 requires, 0 unknown
+summary: 16 groups, 38 files; check: 123 pass, 0 fail, 0 unknown; doctor: 24 pass, 0 fail, 2 requires, 0 unknown
+
+2d-geometry: 9 files
+  2d-geometry/src/algorithms/distance.ts
+  2d-geometry/src/classes/Arc.ts
+  2d-geometry/src/classes/Bezier.ts
+  2d-geometry/src/classes/Box.ts
+  2d-geometry/src/classes/Line.ts
+  2d-geometry/src/classes/Matrix.ts
+  2d-geometry/src/classes/Point.ts
+  2d-geometry/src/classes/Quadratic.ts
+  2d-geometry/src/classes/Segment.ts
+  check: 16 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+angular-grid-layout: 1 files
+  angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 2 requires, 0 unknown
+Chart.js: 2 files
+  Chart.js/src/helpers/helpers.curve.ts
+  Chart.js/src/helpers/helpers.math.ts
+  check: 4 pass, 0 fail, 0 unknown
+  doctor: 1 pass, 0 fail, 0 requires, 0 unknown
+d3-scale: 1 files
+  d3-scale/src/radial.js
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+dagre: 1 files
+  dagre/lib/greedy-fas.ts
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 2 pass, 0 fail, 0 requires, 0 unknown
+dnd-kit:packages/geometry: 1 files
+  dnd-kit/packages/geometry/src/shapes/Rectangle.ts
+  check: 1 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+fabric.js: 1 files
+  fabric.js/src/util/misc/capValue.ts
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+floating-ui:packages/utils: 1 files
+  floating-ui/packages/utils/src/index.ts
+  check: 12 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+gridstack.js: 1 files
+  gridstack.js/src/utils.ts
+  check: 1 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+interact.js: 1 files
+  interact.js/packages/@interactjs/utils/center.ts
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+litegraph.js: 6 files
+  litegraph.js/src/infrastructure/ConstrainedSize.ts
+  litegraph.js/src/infrastructure/Rectangle.ts
+  litegraph.js/src/measure.ts
+  litegraph.js/src/node/NodeInputSlot.ts
+  litegraph.js/src/node/NodeOutputSlot.ts
+  litegraph.js/src/Reroute.ts
+  check: 8 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+moveable:packages/react-moveable: 1 files
+  moveable/packages/react-moveable/src/utils.tsx
+  check: 2 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+react-grid-layout: 3 files
+  react-grid-layout/src/core/calculate.ts
+  react-grid-layout/src/core/constraints.ts
+  react-grid-layout/src/core/position.ts
+  check: 6 pass, 0 fail, 0 unknown
+  doctor: 6 pass, 0 fail, 0 requires, 0 unknown
+tldraw:packages/editor: 1 files
+  tldraw/packages/editor/src/lib/primitives/utils.ts
+  check: 3 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+tldraw:packages/tldraw: 1 files
+  tldraw/packages/tldraw/src/lib/shapes/arrow/elbow/range.tsx
+  check: 8 pass, 0 fail, 0 unknown
+  doctor: 0 pass, 0 fail, 0 requires, 0 unknown
+xyflow:packages/system: 7 files
+  xyflow/packages/system/src/utils/edges/bezier-edge.ts
+  xyflow/packages/system/src/utils/edges/general.ts
+  xyflow/packages/system/src/utils/edges/smoothstep-edge.ts
+  xyflow/packages/system/src/utils/edges/straight-edge.ts
+  xyflow/packages/system/src/utils/general.ts
+  xyflow/packages/system/src/xyresizer/utils.ts
+  xyflow/packages/system/src/xyresizer/XYResizer.ts
+  check: 52 pass, 0 fail, 0 unknown
+  doctor: 15 pass, 0 fail, 0 requires, 0 unknown

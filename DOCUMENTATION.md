@@ -4,6 +4,8 @@ Freerange is a static checker for strict `@fit` comments over ordinary TypeScrip
 
 The first big use-case is UI layout, because layout bugs are easy for agents to write and hard to verify from screenshots alone. The same approach should grow beyond layout: data-to-view cardinality, hit targets, scroll anchoring, text ranges, animation bounds, and other small invariants that matter in UI code.
 
+Freerange is not a runtime runner. It abstract-interprets a small TypeScript subset, earns facts from source, checked helper/type contracts, and explicit `given` lines, then proves the `@fit` claims you wrote. When source leaves that subset, the answer is `unknown`, not a guessed pass.
+
 ## Glossary
 
 ```ts
@@ -120,17 +122,18 @@ helper behind a narrower contract.
 Failure reports point at the spec line when they can:
 
 ```txt
-layout.ts:17
-  UNKNOWN could not prove return.rows[$i + 1].top >= return.rows[$i].bottom + gap
-  scope: placeRows
+UNKNOWN layout.ts:17:placeRows: return.rows[$i + 1].top >= return.rows[$i].bottom + gap
   known:
     assumed from input: given gap: 0..20
-  missing: a sequence relation for adjacent row positions
+    inferred from code: rows[].bottom == rows[].top + rows[].height
+  missing fact: adjacent row spacing
 ```
 
 For agents, the useful loop is `fr infer`, edit the smallest source/spec seam,
 then `fr check`. Treat `missing:` as the next thing to prove or the next input
-fact to say out loud.
+fact to say out loud. Unsupported source diagnostics may also name the source
+line where the interpreter had to stop; that is a source-shape clue, not a
+separate proof failure.
 
 ## A First Check
 
@@ -290,7 +293,7 @@ type Spring = {
   pos: number
   dest: number
   k: number // @fit > 0
-  b: number // @fit >= 0
+  b: number // @fit > 0
   // @fit k > b
 }
 
@@ -304,7 +307,7 @@ type RowStack = {
 }
 ```
 
-These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b >= 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
+These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
 
 Inside an object type, a full line like `// @fit bottom >= top` is relative to that object scope. In `RowStack`, it becomes `rows[].bottom >= rows[].top` at the boundary, and nested object/array fields get their own local sibling scope. Shorthand comments attached to one field still talk about that field: `height: number // @fit 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Type-field contracts recurse through required object fields and array element types; optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
 

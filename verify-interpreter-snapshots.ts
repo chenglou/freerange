@@ -8,7 +8,7 @@ import {readTopLevelGlobal} from './src/check.ts'
 import {loadFitProject} from './src/modules.ts'
 import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 
-const expectedPath = 'new-interpreter-snapshots.expected.txt'
+const expectedPath = 'interpreter-snapshots.expected.txt'
 const lines: string[] = []
 
 addCase('matrix nested iife/map/defaults', ['interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
@@ -62,7 +62,7 @@ addCase('negative array at dynamic surface', ['interpreter-matrix-negative.ts'],
 addCase('negative nullish fallback string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixNullishFallbackString')
 addCase('negative mutable alias surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMutableAliasUnsupported')
 
-if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
+if (!await verifySnapshot(expectedPath, lines.join('\n'), 'interpreter snapshots')) process.exitCode = 1
 
 function addCase(label: string, paths: string[], functionName: string) {
   const project = loadFitProject(paths, readTopLevelGlobal)

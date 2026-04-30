@@ -430,6 +430,32 @@ export function negativeSegmentedStackRowsNeedMatchingGap(items: {height: number
 }
 
 /** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * spaced(return.rows, gap)
+ */
+export function negativeGuardedFlushCannotMixSameArrayAppend(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let nextRowTop = top
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rows.push({top: nextRowTop, height: item.height, bottom: nextRowTop + item.height})
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+/** @fit
  * given items.length: int 1..50
  * given top: 0..1000
  * given step: 0..40

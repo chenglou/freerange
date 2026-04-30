@@ -102,7 +102,7 @@ locals:
   extentEnd(rows, top): -10..3500
   y == runningSum(top, items.length, (items[].height + gap))
   y: 0..3500
-loop 935: for (const item of items)
+loop 968: for (const item of items)
   inferred:
     rows.length == items.length
     rows.length: int 1..50
@@ -132,9 +132,9 @@ return:
   return.items.length == layoutSources.length
   return.items[].imageBox.sizeX: 0..1952
   return.items[].layoutBox.sizeX: 0..1952
-  return.items[].prompt.box.sizeX == measurement.promptLayout.width
-  return.items[].prompt.box.sizeY == measurement.promptLayout.visibleHeight
-  return.items[].prompt.lines.length == measurement.promptLayout.lines.length
+  return.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
+  return.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
+  return.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
   return.items[].prompt.lines.length: int 0..Infinity
   return.rows.length == rows.length
   return.rows[].bottom == (rows[].top + rows[].height)
@@ -184,28 +184,16 @@ loop 185: for (let i = 0; i < layoutSources.length; i++)
 return:
   return.items.length == layoutSources.length
   return.items.length: int 0..Infinity
-  return.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX
-  return.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY
-  return.items[].prompt.box.sizeX == measurement.promptLayout.width
-  return.items[].prompt.box.sizeY == measurement.promptLayout.visibleHeight
-  return.items[].prompt.lines.length == measurement.promptLayout.lines.length
+  return.items[].prompt.box.sizeX == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.width
+  return.items[].prompt.box.sizeY == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.visibleHeight
+  return.items[].prompt.lines.length == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.lines.length
   return.items[].prompt.lines.length: int 0..Infinity
-  return.items[].prompt.lines[].width == measurement.promptLayout.lines[].width
+  return.items[].prompt.lines[].width == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.lines[].width
 locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
-  measurements[].imageSizeX == get1DItemSizeResult.imageSizeX
-  measurements[].imageSizeY == get1DItemSizeResult.imageSizeY
-  measurements[].layoutHeight == get1DItemSizeResult.layoutHeight
-  measurements[].promptLayout.lineCount == get1DItemSizeResult.promptLayout.lineCount
-  measurements[].promptLayout.lines.length == get1DItemSizeResult.promptLayout.lines.length
   measurements[].promptLayout.lines.length: int 0..Infinity
-  measurements[].promptLayout.visibleHeight == get1DItemSizeResult.promptLayout.visibleHeight
-  measurements[].promptLayout.width == get1DItemSizeResult.promptLayout.width
   items.length == layoutSources.length
   items.length: int 0..Infinity
-unsupported:
-  Forgot unsupported for loop side effects: for (let i = focused - 1; i >= 0; i--) currentLeft -= measurements[i]!.imageSizeX + boxes1DGapX
-  Forgot unsupported indexed loop side effect: currentLeft = i === focused ? windowSizeX - hitArea1DSizeX : currentLeft + measurement.imageSizeX + boxes1DGapX
