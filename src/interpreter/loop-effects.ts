@@ -243,11 +243,11 @@ function applyLoopCursorFacts(
           return noteUnsupported(frame, `${loopLabel} scalar cursor ${cursorPath.targetName} must be pushed before it is updated`)
         }
       }
-      element = mergeElementValue(element, loopAppendElementWithCursorUpdates(append, updates))
+      element = mergeElementValue(element, loopAppendElementWithCursorUpdates(append, updates, frame.assumptions))
       if (!append.conditional) {
         const update = loopPush.topName == null ? undefined : updates.get(loopPush.topName)
         summary = mergeArraySummary(summary, sequenceSummaryFromLoopPush(loopPush, update, {
-          assumptions: [],
+          assumptions: frame.assumptions,
           resolveNumber: expr => resolveNumberFromEnv(expr, frame),
         }))
       }

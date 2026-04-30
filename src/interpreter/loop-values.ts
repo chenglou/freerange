@@ -13,7 +13,7 @@ import {
   type LoopPush as LoopSummaryPush,
   type LoopScalarUpdate,
 } from '../loop-summary.ts'
-import {comparisonConstraint} from '../proof.ts'
+import {comparisonConstraint, proveComparison} from '../proof.ts'
 import type {LoopAppend} from './context.ts'
 
 export function indexedLoopValue(value: Value, indexName: string, arrayExpr: string, path: string[], length: NumberValue): Value {
@@ -54,13 +54,13 @@ export function loopAppendShapeWithCursorUpdates(append: LoopAppend, updates: Ma
   }
 }
 
-export function loopAppendElementWithCursorUpdates(append: LoopAppend, updates: Map<string, LoopScalarUpdate>): Value | null {
+export function loopAppendElementWithCursorUpdates(append: LoopAppend, updates: Map<string, LoopScalarUpdate>, assumptions: LinearConstraint[]): Value | null {
   let element = append.element
   for (const cursorPath of append.cursorPaths) {
     const update = updates.get(cursorPath.targetName)
     if (update == null || element == null) continue
     const expr = loopElementPathExpression(append.arrayName, cursorPath.path)
-    element = setLoopElementPathValue(element, cursorPath.path, loopCursorElementValue(update, expr))
+    element = setLoopElementPathValue(element, cursorPath.path, loopCursorElementValue(update, expr, assumptions))
   }
   return element
 }
@@ -102,10 +102,13 @@ function valueAtObjectPath(value: Value | null, path: string[]): Value | null {
   return valueAtObjectPath(value.props.get(head) ?? null, tail)
 }
 
-function loopCursorElementValue(update: LoopScalarUpdate, expr: string): NumberValue {
+function loopCursorElementValue(update: LoopScalarUpdate, expr: string, assumptions: LinearConstraint[]): NumberValue {
   if (update.increment.min < 0) return unknownNumber(expr)
+  const startMin = proveComparison(update.start, '>=', numberValue(0, 0, true, '0', linearConstant(0)), assumptions).status === 'pass'
+    ? Math.max(0, update.start.min)
+    : update.start.min
   return numberValue(
-    update.start.min,
+    startMin,
     update.end.max,
     update.start.isInteger && update.increment.isInteger,
     expr,

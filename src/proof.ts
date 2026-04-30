@@ -202,6 +202,7 @@ function provesRunningSumMinusTrailingGapAtLeastStart(leftExpr: string, rightExp
 }
 
 function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
+  if (hasComparisonFact(expression, strict ? '>' : '>=', '0', assumptions)) return true
   const linear = linearFromExpressionText(expression)
   return linear != null && provesNonNegative(linear, strict, assumptions)
 }

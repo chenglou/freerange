@@ -80,7 +80,7 @@ Do not swap the engine in one move. Build the new core in parallel, then compare
 
 Current parallel core:
 
-- `src/interpreter/context.ts`: frames, issues, assumptions, and flow
+- `src/interpreter/context.ts`: frames, issues, assumptions, claim hooks, and flow
 - `src/interpreter/source-syntax.ts`: small TypeScript syntax readers for loop shapes, guard safety, push calls, and cursor/index paths
 - `src/interpreter/forgettable-loop.ts`: read-only loop-header/body checks for conservative root invalidation when the loop itself is outside the modeled iteration surface
 - `src/interpreter/loop-effects.ts`: scalar loop-effect collection/finalization for running sums, conditional sums, extrema, and cursor checks
@@ -89,12 +89,14 @@ Current parallel core:
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree and origin-fact snapshots for the new harness
 - `verify-new-interpreter-snapshots.ts`: focused kernels for parallel evolution
 - `verify-differential-snapshots.ts`: compact legacy/fresh comparison counts for deciding what to migrate next
 
 The fresh core is now allowed to answer `infer` for eligible bodies without loop reports. That includes unannotated finite `for..of` loops. Annotated loops still stay on the old evaluator because those reports are not just return values; they include loop-local checked/assumed/not-inferred bookkeeping.
+
+The next migration checkpoint moved ordinary body claims onto the fresh path for eligible functions. Local inline checks, return checks, object-field checks, type-boundary field checks, and checked helper-call obligations now run through fresh evaluation hooks. If the fresh path hits an unsupported issue while answering a checked claim, it rolls back its diagnostics and lets the old path produce the public report; this keeps adoption safe while the old evaluator is still present.
 
 Naming rule learned during the first adoption pass: a fresh local array literal should get a local path such as `items[]`, but a fresh local object literal should keep scalar field expressions such as `imageSizeX`. The object itself can be named for aliasing and property access, but renaming every scalar leaf erases useful source equalities.
 

@@ -1,5 +1,5 @@
-check positive patterns: 447 pass, 0 fail, 0 unknown
-check negative patterns: 53 pass, 72 fail, 96 unknown
+check positive patterns: 474 pass, 0 fail, 0 unknown
+check negative patterns: 53 pass, 78 fail, 90 unknown
   FAIL negative-patterns.ts:negativeOutputRange: return: int 0..4
   FAIL negative-patterns.ts:negativeComparison: return.high < return.low
   FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0

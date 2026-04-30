@@ -267,6 +267,7 @@ import {
 } from './interpreter/forgettable-loop.ts'
 import type {
   InterpreterCall,
+  InterpreterClaim,
   InterpreterFrame,
   InterpreterHooks,
 } from './interpreter/context.ts'
@@ -1567,19 +1568,29 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 
 function evaluateFunctionBodyStateFresh(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} | null {
   if (!freshInterpreterEligible(fn, context)) return null
-  const hooks = context.callObligations == null ? undefined : freshInterpreterHooks(context)
+  const hooks = freshInterpreterHooks(context)
+  const checksStart = context.checks.length
+  const previousAssumptions = context.assumptions
   const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions, hooks)
-  if (result.issues.length > 0) return null
+  if (result.issues.length > 0) {
+    context.checks.length = checksStart
+    context.assumptions = previousAssumptions
+    return null
+  }
+  context.assumptions = result.assumptions
   return {result: result.value, env: result.env, assumptions: result.assumptions}
 }
 
 function freshInterpreterHooks(context: EvalContext): InterpreterHooks {
   return {
     evaluateCall: (call, frame) => evaluateFreshInterpreterCall(call, frame, context),
+    evaluateClaim: (claim, frame, evaluate) => evaluateFreshInterpreterClaim(claim, frame, context, evaluate),
+    afterClaim: (claim, value, frame) => afterFreshInterpreterClaim(claim, value, frame, context),
   }
 }
 
 function evaluateFreshInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
+  if (rootContext.callObligations == null) return null
   const callContext: EvalContext = {
     ...rootContext,
     program: frame.program,
@@ -1590,12 +1601,14 @@ function evaluateFreshInterpreterCall(call: InterpreterCall, frame: InterpreterF
     checks: shouldRecordCallObligations(rootContext) ? rootContext.checks : [],
     ...(rootContext.callObligations == null ? {} : {callObligations: rootContext.callObligations}),
   }
-  const callArguments = evaluateFunctionCallArguments(call.fn, call.expression.arguments, callContext, call.program, call.thisValue)
+  const callArgumentExpressions = ts.isCallExpression(call.expression) ? call.expression.arguments : ts.factory.createNodeArray<ts.Expression>([])
+  const callArguments = evaluateFunctionCallArguments(call.fn, callArgumentExpressions, callContext, call.program, call.thisValue)
   if (callArguments.kind === 'invalid') return call.fallback ?? unknown(callArguments.reason)
 
   const callText = call.expression.getText(frame.program.sourceFile)
   const callLine = lineNumberForNode(frame.program.sourceFile, call.expression)
-  const callSiteBindings = callSiteBindingsFor(call.fn, call.expression.arguments, frame.program.sourceFile, undefined, callArguments.values, callArguments.texts)
+  const receiverText = ts.isPropertyAccessExpression(call.expression) ? call.expression.expression.getText(frame.program.sourceFile) : undefined
+  const callSiteBindings = callSiteBindingsFor(call.fn, callArgumentExpressions, frame.program.sourceFile, receiverText, callArguments.values, callArguments.texts)
   if (call.program === frame.program) {
     return evaluateLocalFunctionCall(call.functionName, call.fn, callArguments.values, callContext, {
       callText,
@@ -1612,6 +1625,85 @@ function evaluateFreshInterpreterCall(call: InterpreterCall, frame: InterpreterF
     functionName: call.functionName,
     imported: call.imported,
   }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings)
+}
+
+function evaluateFreshInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext, evaluate: () => Value): Value {
+  if (!shouldRecordFreshInterpreterClaim(frame, rootContext)) return evaluate()
+  return withCallObligationRecordingWhen(rootContext, freshInterpreterClaimRecordsCalls(claim, frame, rootContext), evaluate)
+}
+
+function afterFreshInterpreterClaim(claim: InterpreterClaim, value: Value, frame: InterpreterFrame, rootContext: EvalContext) {
+  if (!shouldRecordFreshInterpreterClaim(frame, rootContext)) return
+  const context = freshEvalContext(frame, rootContext)
+
+  if (claim.kind === 'variable') {
+    const localSpecs = ts.isVariableStatement(claim.statement) ? parseLocalFitSpecs(frame.program.sourceText, claim.statement) : []
+    verifyLocalFitSpecs(localSpecs, context)
+    if (!ts.isIdentifier(claim.declaration.name)) return
+    const typeContract = mergeTypeContracts([
+      typeCheckContractForTypeNode(frame.program, claim.declaration.type, claim.declaration.name.text),
+      claim.declaration.initializer == null
+        ? emptyTypeContract<FitCheckSpec>()
+        : typeCheckContractForExpressionBoundary(frame.program, claim.declaration.initializer, claim.declaration.name.text),
+    ])
+    const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.declaration)
+    pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
+    verifyCheckSpecsWithResult(typeContract.specs, unknown('Inline @fit checks do not use return'), context, boundary)
+    return
+  }
+
+  if (claim.kind === 'return') {
+    const specs = parseInlineFitSpecsForExpression(frame.program.sourceText, claim.node, fitReturnPublicRoot)
+    const typeContract = typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot)
+    verifyInlineSpecsForValue(specs, value, context)
+    const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
+    pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
+    verifyCheckSpecsWithResult(typeContract.specs, value, context, boundary)
+    return
+  }
+
+  const specs = parseInlineFitSpecsForExpression(frame.program.sourceText, claim.property, objectPathText(claim.path))
+  verifyInlineSpecsForValue(specs, value, context)
+}
+
+function freshInterpreterClaimRecordsCalls(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext) {
+  if (rootContext.callObligations === 'record') return true
+  if (claim.kind === 'variable') {
+    if (parseLocalFitSpecs(frame.program.sourceText, claim.statement).length > 0) return true
+    if (!ts.isIdentifier(claim.declaration.name)) return false
+    return hasTypeContractWork(mergeTypeContracts([
+      typeCheckContractForTypeNode(frame.program, claim.declaration.type, claim.declaration.name.text),
+      claim.declaration.initializer == null
+        ? emptyTypeContract<FitCheckSpec>()
+        : typeCheckContractForExpressionBoundary(frame.program, claim.declaration.initializer, claim.declaration.name.text),
+    ]))
+  }
+  if (claim.kind === 'return') {
+    return parseInlineFitSpecsForExpression(frame.program.sourceText, claim.node, fitReturnPublicRoot).length > 0
+      || hasTypeContractWork(typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot))
+  }
+  return parseInlineFitSpecsForExpression(frame.program.sourceText, claim.property, objectPathText(claim.path)).length > 0
+}
+
+function shouldRecordFreshInterpreterClaim(frame: InterpreterFrame, rootContext: EvalContext) {
+  return sameStack(frame.stack, rootContext.stack) || shouldRecordCallObligations(rootContext)
+}
+
+function sameStack(left: string[], right: string[]) {
+  return left.length === right.length && left.every((part, index) => part === right[index])
+}
+
+function freshEvalContext(frame: InterpreterFrame, rootContext: EvalContext): EvalContext {
+  return {
+    ...rootContext,
+    program: frame.program,
+    file: frame.program.file,
+    env: frame.env,
+    stack: frame.stack,
+    checks: rootContext.checks,
+    assumptions: frame.assumptions,
+    ...(frame.objectPath == null ? {} : {objectPath: frame.objectPath}),
+  }
 }
 
 function inspectInterpreterDifferential(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInterpreterDifferential {
@@ -1679,19 +1771,17 @@ function sameLines(left: string[], right: string[]) {
 }
 
 function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolean {
-  if (context.callObligations != null || context.objectPath != null || context.insideLoop === true) return false
+  if (context.objectPath != null || context.insideLoop === true) return false
   if (fn.node.body == null) return false
   let eligible = true
-  const visit = (node: ts.Node) => {
+  const visit = (node: ts.Node, insideLoop = false) => {
     if (!eligible) return
     if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-    if (
-      ts.isSwitchStatement(node)
-      || ts.isWhileStatement(node)
-      || ts.isDoStatement(node)
-      || ts.isThrowStatement(node)
-      || ts.isTryStatement(node)
-    ) {
+    if (insideLoop && hasInlineFitComment(context.program.sourceText, node)) {
+      eligible = false
+      return
+    }
+    if (ts.isTryStatement(node)) {
       eligible = false
       return
     }
@@ -1703,7 +1793,8 @@ function freshInterpreterEligible(fn: FitFunction, context: EvalContext): boolea
       eligible = false
       return
     }
-    ts.forEachChild(node, visit)
+    const childInsideLoop = insideLoop || ts.isForStatement(node) || ts.isForOfStatement(node)
+    ts.forEachChild(node, child => visit(child, childInsideLoop))
   }
   visit(fn.node.body)
   return eligible

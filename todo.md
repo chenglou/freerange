@@ -35,6 +35,7 @@ sections[].rows[].height <= maxHeight
 - Tuple element facts also survive helper/import summaries: a checked `return[2] >= 0` can feed a caller's destructured `offsetX`.
 - `items.at(-k)` works for constant negative integer `k` when the array is long enough. Dynamic `.at(index)` and same-loop "append then read previous last" recurrences are intentionally out. The bracket spelling `items[items.length - 1]` is also kept out of that same-loop recurrence shape so we do not accidentally prove the initial array snapshot.
 - Strict integer branch facts can move by one step, so `focused > 0` proves `focused - 1 >= 0` for previous-index checks. Symbolic element reads now keep concrete paths like `items[focused].top`, and local adjacent sequence facts can specialize live previous/current and current/next neighborhoods.
+- Symbolic element reads must prove the index is an integer and in bounds before using an element fact. When they pass, the checker rebases wildcard facts like `items[].height` onto the concrete source path such as `items[i].height`; when they do not, the path stays unknown instead of borrowing a fact from every slot.
 - Branch-local inline checks use ordinary TypeScript control flow. `if`/`else`, ternaries, and small finite-literal `switch` branches carry their condition into return and object-field checks; joined branches can keep small finite numeric cases like `0 | 100`, and real TS literal unions like `'ordered' | 'inverted'` or `boolean` narrow through discriminants such as `spec.kind`. Exact-operand ternaries like `a < b ? a : b` also behave like small min/max facts. Simple fall-through branches join local assignments afterward, `throw` guards keep the surviving branch facts, and later branch conditions refine those cases enough for ordinary assignment-style clamps. Helper contracts are still unconditional after branches join.
 - Assignment handling is conservative but no longer aborts unrelated proofs: local `x = expr` keeps `expr`, while property/index assignment and unsupported scalar `+=` forget the changed root. Unsupported `while` / `do while` loops can also be skipped this way when their conditions and bodies only have clear forgettable mutations.
 - Non-number `==` is intentionally tiny: it only proves the exact same object or array source expression, like `return.rows == input.rows`.
@@ -58,6 +59,9 @@ sections[].rows[].height <= maxHeight
 ## Do Next
 
 Active tracks now:
+
+0. **Finish the abstract-interpreter migration.**
+   The fresh interpreter now owns eligible function-body claims: local inline checks, return checks, object-field checks, type-boundary checks, and helper-call obligations. Keep moving remaining report surfaces into that state, compare behavior against the old evaluator, then delete the legacy evaluator instead of keeping two engines alive.
 
 1. **Make infer/audit/report the adoption loop.**
    `infer` should be the factual inventory agents use before writing comments. `check` proves the written claims; `check --calls` adds the helper-call scan; `doctor` is that call scan by itself for adoption. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.

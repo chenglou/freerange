@@ -95,26 +95,26 @@ infer matrix indexed limit range
 infer matrix indexed array param rows
   return return.rows.length == items.length
   return return.rows.length: int 0..20
-  return return.rows[].height == items[].height
+  return return.rows[].height == items[i].height
   return return.rows[].height: 0..80
   return return.rows[].sourceIndex == rows[].sourceIndex
   return return.rows[].sourceIndex: int 0..19
   return return.rows follows items by index
   local rows.length == items.length
   local rows.length: int 0..20
-  local rows[].height == items[].height
+  local rows[].height == items[i].height
   local rows[].height: 0..80
   local rows[].sourceIndex: int 0..19
   local rows follows items by index
 infer matrix indexed array guarded rows
   return return.rows.length: int 0..20
-  return return.rows[].height == items[].height
+  return return.rows[].height == items[i].height
   return return.rows[].height: 0..80
   return return.rows[].sourceIndex == rows[].sourceIndex
   return return.rows[].sourceIndex: int 0..19
   return return.rows is an order-preserving subset of items
   local rows.length: int 0..20
-  local rows[].height == items[].height
+  local rows[].height == items[i].height
   local rows[].height: 0..80
   local rows[].sourceIndex: int 0..19
   local rows is an order-preserving subset of items

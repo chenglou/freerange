@@ -26,14 +26,22 @@ export type InterpreterFrame = {
   conditionalDepth: number
   assumptions: LinearConstraint[]
   hooks?: InterpreterHooks
+  objectPath?: string[]
 }
 
 export type InterpreterHooks = {
   evaluateCall?: (call: InterpreterCall, frame: InterpreterFrame) => Value | null
+  evaluateClaim?: (claim: InterpreterClaim, frame: InterpreterFrame, evaluate: () => Value) => Value
+  afterClaim?: (claim: InterpreterClaim, value: Value, frame: InterpreterFrame) => void
 }
 
+export type InterpreterClaim =
+  | {kind: 'variable'; statement: ts.VariableStatement; declaration: ts.VariableDeclaration}
+  | {kind: 'return'; node: ts.Node; expression: ts.Expression}
+  | {kind: 'object-property'; property: ts.PropertyAssignment | ts.ShorthandPropertyAssignment; path: string[]}
+
 export type InterpreterCall = {
-  expression: ts.CallExpression
+  expression: ts.CallExpression | ts.PropertyAccessExpression
   callName: string
   program: Program
   functionName: string
@@ -93,6 +101,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
+    ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
   }
 }
 
@@ -106,6 +115,7 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
+    ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
   }
 }
 

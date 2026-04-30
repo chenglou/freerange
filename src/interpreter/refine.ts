@@ -1,12 +1,17 @@
 import * as ts from 'typescript'
 import {
   literalValue,
+  mergeAssumptions,
+  numberBranches,
   numberValue,
+  withNumberCases,
   type NullishKind,
+  type NumberCase,
   type NumberValue,
   type Value,
 } from '../domain.ts'
 import type {ComparisonOperator} from '../parser.ts'
+import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
 import {childFrame, type InterpreterFrame} from './context.ts'
 import {unwrapExpression} from './source-syntax.ts'
 import {
@@ -85,8 +90,11 @@ function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExp
   if (refinePresenceGuard(frame, expression, truth, evaluateExpression)) return
   const comparison = comparisonForSyntax(expression.operatorToken.kind, truth)
   if (comparison != null) {
+    addNumberComparisonAssumption(frame, expression.left, comparison, expression.right, evaluateExpression)
     if (refineNumberPath(frame, expression.left, comparison, expression.right, evaluateExpression)) return
+    if (refineNumberPathCases(frame, expression.left, comparison, expression.right, evaluateExpression)) return
     refineNumberPath(frame, expression.right, flipComparison(comparison), expression.left, evaluateExpression)
+    refineNumberPathCases(frame, expression.right, flipComparison(comparison), expression.left, evaluateExpression)
   }
   const equalityTruth = equalityTruthForSyntax(expression.operatorToken.kind, truth)
   if (equalityTruth != null) {
@@ -167,6 +175,21 @@ function isNullishComparisonSyntax(kind: ts.SyntaxKind): boolean {
     || kind === ts.SyntaxKind.ExclamationEqualsToken
 }
 
+function addNumberComparisonAssumption(
+  frame: InterpreterFrame,
+  leftExpression: ts.Expression,
+  op: ComparisonOperator,
+  rightExpression: ts.Expression,
+  evaluateExpression: EvaluateRefinementExpression,
+) {
+  const left = evaluateExpression(leftExpression, frame)
+  const right = evaluateExpression(rightExpression, frame)
+  if (left.kind !== 'number' || right.kind !== 'number') return
+  const fact = comparisonConstraint(left, op, right, undefined, 'branch')
+  if (fact == null) return
+  frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
+}
+
 function refineNumberPath(
   frame: InterpreterFrame,
   targetExpression: ts.Expression,
@@ -183,6 +206,38 @@ function refineNumberPath(
   const next = narrowNumber(current, op, other.min)
   if (next === current) return false
   writePath(path, next, frame)
+  return true
+}
+
+function refineNumberPathCases(
+  frame: InterpreterFrame,
+  targetExpression: ts.Expression,
+  op: ComparisonOperator,
+  otherExpression: ts.Expression,
+  evaluateExpression: EvaluateRefinementExpression,
+): boolean {
+  const path = pathFromExpression(targetExpression, frame, evaluateExpression)
+  if (path == null) return false
+  const current = readPath(path, frame)
+  if (current.kind !== 'number' || current.cases == null) return false
+  const other = evaluateExpression(otherExpression, frame)
+  if (other.kind !== 'number') return false
+
+  const cases: NumberCase[] = []
+  for (const currentCase of numberBranches(current)) {
+    for (const otherCase of numberBranches(other)) {
+      const assumptions = mergeAssumptions(frame.assumptions, currentCase.assumptions, otherCase.assumptions)
+      const proof = proveComparisonPlain(currentCase.value, op, otherCase.value, assumptions)
+      if (proof.status === 'fail') continue
+      const fact = proof.status === 'pass' ? null : comparisonConstraint(currentCase.value, op, otherCase.value, undefined, 'branch')
+      cases.push({
+        value: currentCase.value,
+        assumptions: mergeAssumptions(currentCase.assumptions, otherCase.assumptions, fact == null ? [] : [fact]),
+      })
+    }
+  }
+  if (cases.length === 0) return false
+  writePath(path, withNumberCases(current, cases), frame)
   return true
 }
 
