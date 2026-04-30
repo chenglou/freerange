@@ -62,7 +62,7 @@ sections[].rows[].height <= maxHeight
 Active tracks now:
 
 0. **Keep the interpreter as the one source evaluator.**
-   Function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, loop reports, and helper-call obligations now run through the interpreter. The old evaluator and differential harness are gone. Keep extracting clear pieces from `src/check-core.ts` and keep moving report wording toward the same fact inventory. `shape-diff` comparison now lives in `src/shape-inspect.ts` and asks typed range/equality facts instead of reparsing printed fact text.
+   Function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, loop reports, and helper-call obligations now run through the interpreter. The old evaluator and differential harness are gone. The first cleanup pass split contract collection, input binding, `given` assumption seeding, helper-call summaries, domain-path value access, and shape inspection out of `src/check-core.ts`. Keep moving report wording toward the same fact inventory and keep collapsing recognizers into typed fact/value queries when the boundary is obvious.
 
 1. **Make infer/audit/report the adoption loop.**
    `infer` should be the factual inventory agents use before writing comments. `check` proves the written claims; `check --calls` adds the helper-call scan; `doctor` is that call scan by itself for adoption. `audit` should point at redundant demo noise without auto-deleting public contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.

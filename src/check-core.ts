@@ -6,23 +6,15 @@ import {
 import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
-  parseDomainPathText,
-  parseExpression,
   parseFitExpression,
   parseFitSpecLine,
   parseFitSpecs,
   parseInlineFitSpecsForExpression,
   parseLocalFitSpecs,
   hasFitComment,
-  hasInlineFitComment,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
-  publicFitText,
-  type ComparisonOperator,
-  type FitDomainPath,
-  type FitDomainPathSegment,
   type FitCheckSpec,
-  type FitGivenSpec,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -34,7 +26,6 @@ import {
   type CheckSpecHooks,
 } from './check-specs.ts'
 import {
-  type AssumedGivenSpec,
   type EvalContext,
   type EvalFlow,
   type FitCheck,
@@ -48,69 +39,22 @@ import {
   type FitShapeOptions,
   type FitShapeReport,
   type FunctionContractProof,
-  type FunctionContractSource,
-  type ImportedBinding,
-  type LocalizeOptions,
   type Program,
   type ResolvedCallTarget,
 } from './check-types.ts'
+import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
-  bindingElementPropertyName,
-  forEachArrayBindingElement,
-} from './binding-patterns.ts'
-import {
-  finiteNumberValue,
-  linearNameForExpression,
   mergeAssumptions,
-  mergeProvenance,
-  numberBranches,
-  numberValue,
-  tupleElements,
   unknown,
-  unknownArray,
   unknownNumber,
-  unknownObject,
   valueWithDefaultedUndefined,
-  withNumberCases,
-  type FactSource,
   type LinearConstraint,
-  type NumberValue,
   type Value,
 } from './domain.ts'
-import {
-  cleanLinear,
-  linearAdd,
-  linearConstant,
-  linearEpsilon,
-  linearScaleExact,
-  linearVariable,
-  mergeScale,
-  numericLiteralValue,
-  sameExpressionText,
-  isFixedElementPathExpression,
-  unwrapExpression,
-  type LinearExpr,
-} from './linear.ts'
-import {
-  comparisonConstraint,
-  flipComparison,
-  nonNegativeFacts,
-  proveNonNegativeFromFacts,
-  proveComparison,
-  rangeFactsFromBounds,
-  type NonNegativeFact,
-} from './proof.ts'
-import {
-  comparisonNeed,
-  formatExpectedRange,
-  formatRangeSpec,
-  formatRange,
-  rangeSpecMissingBounds,
-} from './reporting.ts'
+import {proveComparison} from './proof.ts'
 import {
   structuralShape,
   valueFromFunctionReturnShape,
-  valueFromNodeShape,
   valueFromSyntaxTypeShape,
   valueWithStructuralFallback,
 } from './shapes.ts'
@@ -137,15 +81,17 @@ import {
 } from './scout.ts'
 import {
   callSiteBindingsFor,
-  callSiteText,
   valueWithCallSiteText,
   type CallSiteBindings,
 } from './call-site-text.ts'
 import {
+  importedContractFailureReason,
+  importedContractUnavailableReason,
+  valueWithFunctionContractSummary,
+  verifyCallGivenSpecs,
+} from './function-call-contracts.ts'
+import {
   typeCheckContractForTypeNode,
-  typeInputGivenContractForFunction,
-  typeReturnCheckContractForFunction,
-  type TypeContractResult,
   type TypeContractUnsupported,
 } from './type-contracts.ts'
 import {
@@ -153,21 +99,39 @@ import {
   lineNumberForNode,
   type CheckBoundary,
 } from './source-boundary.ts'
-import {
-  arrayLengthRoot,
-  expressionMentionsArrayParam,
-  expressionMentionsObjectParam,
-  expressionRootName,
-  expressionRootNameDeep,
-  expressionRootNamesFromText,
-} from './source-expressions.ts'
-import {localizeValue} from './value-localize.ts'
 import {programGlobalEnv} from './program-env.ts'
+import {functionInputRoots} from './function-shape.ts'
 import {
-  functionHasInstanceThisInput,
-  functionInputRoots,
-  isFunctionLikeWithBody,
-} from './function-shape.ts'
+  emptyTypeContract,
+  functionContractSpecs,
+  functionHasBodyFitComment,
+  functionHasBodyTypeBoundary,
+  functionHasTypeContracts,
+  functionInputSpecs,
+  functionTypeUnsupported,
+  hasTypeContractWork,
+  mergeTypeContracts,
+  typeCheckContractForExpressionBoundary,
+} from './function-contracts.ts'
+import {
+  arrayPatternElementValue,
+  bindFunctionCallInputs,
+  bindFunctionInputParameters,
+  bindFunctionThisInput,
+  bindPatternFromValue,
+  parameterArgumentValue,
+  unknownResultValue,
+  valueWithBindingShapeFallback,
+} from './function-inputs.ts'
+import {
+  applyGivenRangeSpec,
+  collectGivenAssumptions,
+  validateGivenSpecs,
+} from './givens.ts'
+import {
+  evaluateDomainPathValue,
+  parsePrintedNumber,
+} from './domain-paths.ts'
 import {
   inspectFunctionShapeInsights,
   type ShapeInspectState,
@@ -324,7 +288,7 @@ function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: M
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
   const context: EvalContext = {
     program,
     file: program.file,
@@ -393,124 +357,6 @@ function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, 
   return context.checks
 }
 
-function functionHasBodyFitComment(program: Program, fn: FitFunction) {
-  if (fn.node.body == null) return false
-  let found = false
-  const visit = (node: ts.Node) => {
-    if (found) return
-    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-    if (hasInlineFitComment(program.sourceText, node) || hasFitComment(program.sourceText, node)) {
-      found = true
-      return
-    }
-    ts.forEachChild(node, visit)
-  }
-  if (hasInlineFitComment(program.sourceText, fn.node)) return true
-  visit(fn.node.body)
-  return found
-}
-
-function functionHasTypeContracts(program: Program, fn: FitFunction) {
-  return hasTypeContractWork(functionTypeGivenContract(program, fn))
-    || hasTypeContractWork(functionTypeReturnContract(program, fn))
-    || functionHasBodyTypeBoundary(program, fn)
-}
-
-function functionContractSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
-  return [
-    ...functionTypeGivenSpecs(program, fn),
-    ...explicitSpecs,
-    ...functionTypeReturnSpecs(program, fn),
-  ]
-}
-
-function functionInputSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
-  return [
-    ...functionTypeGivenSpecs(program, fn),
-    ...explicitSpecs,
-  ]
-}
-
-function functionTypeGivenSpecs(program: Program, fn: FitFunction): FitGivenSpec[] {
-  return functionTypeGivenContract(program, fn).specs
-}
-
-function functionTypeReturnSpecs(program: Program, fn: FitFunction): FitCheckSpec[] {
-  return functionTypeReturnContract(program, fn).specs
-}
-
-function functionTypeGivenContract(program: Program, fn: FitFunction): TypeContractResult<FitGivenSpec> {
-  return typeInputGivenContractForFunction(program, fn)
-}
-
-function functionTypeReturnContract(program: Program, fn: FitFunction): TypeContractResult<FitCheckSpec> {
-  return typeReturnCheckContractForFunction(program, fn)
-}
-
-function functionTypeUnsupported(program: Program, fn: FitFunction) {
-  return [
-    ...functionTypeGivenContract(program, fn).unsupported,
-    ...functionTypeReturnContract(program, fn).unsupported,
-  ]
-}
-
-function hasTypeContractWork<T extends FitCheckSpec | FitGivenSpec>(contract: TypeContractResult<T>) {
-  return contract.specs.length > 0 || contract.unsupported.length > 0
-}
-
-function functionHasBodyTypeBoundary(program: Program, fn: FitFunction) {
-  if (fn.node.body == null) return false
-  let found = false
-  const visit = (node: ts.Node) => {
-    if (found) return
-    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      if (hasTypeContractWork(typeCheckContractForTypeNode(program, node.type, node.name.text))) {
-        found = true
-        return
-      }
-      if (node.initializer != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.initializer, node.name.text))) {
-        found = true
-        return
-      }
-    }
-    if (ts.isReturnStatement(node) && node.expression != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.expression, fitReturnPublicRoot))) {
-      found = true
-      return
-    }
-    if (node === fn.node.body && ts.isExpression(node) && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node, fitReturnPublicRoot))) {
-      found = true
-      return
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(fn.node.body)
-  return found
-}
-
-function typeCheckContractForExpressionBoundary(program: Program, expression: ts.Expression, root: string): TypeContractResult<FitCheckSpec> {
-  const type = expressionBoundaryType(expression)
-  return type == null ? emptyTypeContract() : typeCheckContractForTypeNode(program, type, root)
-}
-
-function emptyTypeContract<T extends FitCheckSpec | FitGivenSpec>(): TypeContractResult<T> {
-  return {specs: [], unsupported: []}
-}
-
-function mergeTypeContracts<T extends FitCheckSpec | FitGivenSpec>(contracts: TypeContractResult<T>[]): TypeContractResult<T> {
-  return {
-    specs: contracts.flatMap(contract => contract.specs),
-    unsupported: contracts.flatMap(contract => contract.unsupported),
-  }
-}
-
-function expressionBoundaryType(expression: ts.Expression): ts.TypeNode | null {
-  if (ts.isParenthesizedExpression(expression)) return expressionBoundaryType(expression.expression)
-  if (ts.isNonNullExpression(expression)) return expressionBoundaryType(expression.expression)
-  if (ts.isSatisfiesExpression(expression) || ts.isAsExpression(expression) || ts.isTypeAssertionExpression(expression)) return expression.type
-  return null
-}
-
 function verifyFunctionSpecs(
   file: string,
   program: Program,
@@ -534,7 +380,7 @@ function verifyFunctionSpecs(
     applyGivenRangeSpec(env, given.spec)
   }
 
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache)
+  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
   checks.push(...impossibleChecks)
   const hasBodyClaims = functionHasBodyClaims(contractSpecs) || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
   const context: EvalContext = {
@@ -578,7 +424,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
+  const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
   const typeContractChecks = typeUnsupportedChecks(program.file, functionName, functionTypeUnsupported(program, fn))
   const inferUnsupported: string[] = []
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
@@ -669,261 +515,11 @@ function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractC
   for (const given of assumedGivens) {
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache)
+  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
   const baseEnv = new Map(env)
   const state = evaluateFunctionBodyState(fn, context)
   return {baseEnv, env: state.env, result: state.result}
-}
-
-function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program: Program, env: Map<string, Value>) {
-  if (functionHasInstanceThisInput(fn)) {
-    env.set('this', unknownParamValue('this', specs, undefined, program))
-  }
-  for (const param of fn.node.parameters) {
-    if (ts.isIdentifier(param.name)) {
-      env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
-      continue
-    }
-    bindPatternFromValue(param.name, unknownParamPatternValue(param, program), env)
-  }
-}
-
-function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, options: LocalizeOptions = {}) {
-  for (let i = 0; i < fn.node.parameters.length; i++) {
-    const param = fn.node.parameters[i]!
-    const value = argumentValues[i] ?? unknown(`Missing argument ${i} for ${fn.name}`)
-    bindPatternFromValue(param.name, parameterArgumentValue(param, value, program), env, options)
-  }
-}
-
-function parameterArgumentValue(param: ts.ParameterDeclaration, value: Value, program: Program): Value {
-  const expr = ts.isIdentifier(param.name) ? param.name.text : 'param'
-  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, param.type, program, new Set()))
-}
-
-function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, thisValue?: Value) {
-  if (functionHasInstanceThisInput(fn)) {
-    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
-  }
-  bindFunctionArgumentParameters(fn, argumentValues, env, program, {preserveLinear: true})
-}
-
-function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
-  return valueFromNodeShape('param', param.name, program)
-    ?? valueFromSyntaxTypeShape('param', param.type, program, new Set())
-    ?? unknownObject('param')
-}
-
-function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<string, Value>, options: LocalizeOptions = {}) {
-  if (ts.isIdentifier(name)) {
-    env.set(name.text, localizeValue(value, name.text, options))
-    return
-  }
-  if (ts.isObjectBindingPattern(name)) {
-    for (const element of name.elements) {
-      if (element.dotDotDotToken != null) continue
-      const propertyName = bindingElementPropertyName(element)
-      if (propertyName == null) {
-        bindUnknownPattern(element.name, env)
-        continue
-      }
-      const prop = value.kind === 'object'
-        ? value.props.get(propertyName) ?? unknownNumber(`${value.expr ?? 'param'}.${propertyName}`)
-        : unknown(`Destructuring property ${propertyName} expected an object`)
-      bindPatternFromValue(element.name, prop, env, options)
-    }
-    return
-  }
-  if (ts.isArrayBindingPattern(name)) {
-    bindArrayPatternFromValue(name, value, env, options)
-    return
-  }
-  bindUnknownPattern(name, env)
-}
-
-function bindArrayPatternFromValue(name: ts.ArrayBindingPattern, value: Value, env: Map<string, Value>, options: LocalizeOptions = {}) {
-  forEachArrayBindingElement(name, (elementName, index, isRest) => {
-    if (isRest) {
-      bindUnknownPattern(elementName, env)
-      return
-    }
-    const item = arrayPatternElementValue(value, index)
-    bindPatternFromValue(elementName, item, env, options)
-  })
-}
-
-function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
-  if (ts.isIdentifier(name)) {
-    env.set(name.text, unknownNumber(name.text))
-    return
-  }
-  if (ts.isObjectBindingPattern(name)) {
-    for (const element of name.elements) bindUnknownPattern(element.name, env)
-    return
-  }
-  if (ts.isArrayBindingPattern(name)) {
-    forEachArrayBindingElement(name, elementName => bindUnknownPattern(elementName, env))
-  }
-}
-
-function validateGivenSpecs(
-  file: string,
-  functionName: string,
-  specs: FitSpec[],
-  allowedRoots: string[],
-  source: Extract<FactSource, 'function-given' | 'loop-given'>,
-): {assumedGivens: AssumedGivenSpec[]; checks: FitCheck[]} {
-  const assumedGivens: AssumedGivenSpec[] = []
-  const checks: FitCheck[] = []
-  const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
-
-  for (const spec of specs) {
-    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
-    const badRoot = givenBadRoot(spec, allowedRoots)
-    if (badRoot != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
-      continue
-    }
-    const shapeProblem = givenShapeProblem(spec)
-    if (shapeProblem != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec, shapeProblem))
-      continue
-    }
-
-    if (spec.kind === 'given-range') {
-      const rangeProblem = givenRangeProblem(spec, ranges)
-      if (rangeProblem != null) {
-        checks.push({file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'fail', reason: rangeProblem})
-        continue
-      }
-      ranges.push(spec)
-      assumedGivens.push({kind: 'range', spec, source})
-      continue
-    }
-
-    assumedGivens.push({kind: 'comparison', spec, source})
-  }
-
-  return {assumedGivens, checks}
-}
-
-function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
-  for (const root of givenRootNames(spec)) {
-    if (!allowedRoots.includes(root)) return root
-  }
-  return null
-}
-
-function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string[] {
-  switch (spec.kind) {
-    case 'given-range':
-      return [...new Set([
-        ...expressionRootNamesFromText(spec.expression),
-        ...rangeBoundRootNames(spec.range.lower),
-        ...rangeBoundRootNames(spec.range.upper),
-      ])]
-    case 'given-comparison':
-      return [...new Set([...expressionRootNamesFromText(spec.left), ...expressionRootNamesFromText(spec.right)])]
-  }
-}
-
-function rangeBoundRootNames(text: string) {
-  return parsePrintedNumber(text) == null ? expressionRootNamesFromText(text) : []
-}
-
-function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
-  const closed = closedRangeApprox(spec.range)
-  if (closed != null && closed.min > closed.max) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
-  for (const range of ranges) {
-    if (!sameExpressionText(range.expression, spec.expression)) continue
-    if (spec.range.finiteValues != null && range.range.finiteValues != null) {
-      const overlap = spec.range.finiteValues.some(value => range.range.finiteValues!.includes(value))
-      if (!overlap) return `no input can satisfy both ${range.text} and ${spec.text}`
-    }
-    const earlier = closedRangeApprox(range.range)
-    if (closed == null || earlier == null) continue
-    if (closed.max < earlier.min || closed.min > earlier.max) {
-      return `no input can satisfy both ${range.text} and ${spec.text}`
-    }
-  }
-  return null
-}
-
-function closedRangeApprox(range: FitRange): {min: number; max: number} | null {
-  const lower = range.lowerValue ?? Number.NEGATIVE_INFINITY
-  const upper = range.upperValue ?? Number.POSITIVE_INFINITY
-  const min = range.valueKind === 'int' && range.lowerValue != null && !range.lowerInclusive
-    ? Math.floor(lower) + 1
-    : lower
-  const max = range.valueKind === 'int' && range.upperValue != null && !range.upperInclusive
-    ? Math.ceil(upper) - 1
-    : upper
-  if (!Number.isFinite(min) && !Number.isFinite(max) && min === Number.NEGATIVE_INFINITY && max === Number.POSITIVE_INFINITY) return null
-  return {min, max}
-}
-
-function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
-  const roots = givenRootNames(spec)
-  if (roots.length === 0) return 'given must mention an input'
-
-  if (spec.kind === 'given-range') {
-    if (parseDomainPathText(spec.expression) == null) {
-      const expression = parseExpression(spec.expression)
-      if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
-    }
-    const lower = givenComparisonExpressionProblem(spec.range.lower)
-    if (lower != null) return lower
-    return givenComparisonExpressionProblem(spec.range.upper)
-  }
-
-  const left = givenComparisonExpressionProblem(spec.left)
-  if (left != null) return left
-  return givenComparisonExpressionProblem(spec.right)
-}
-
-function givenComparisonExpressionProblem(text: string): string | null {
-  if (parsePrintedNumber(text) != null) return null
-  return isGivenComparisonExpression(parseExpression(text))
-    ? null
-    : 'given comparisons only support input paths, numbers, and simple arithmetic'
-}
-
-function isGivenRangeExpression(expression: ts.Expression): boolean {
-  if (isFixedElementPathExpression(expression)) return true
-  if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
-  return false
-}
-
-function isGivenComparisonExpression(expression: ts.Expression): boolean {
-  if (ts.isIdentifier(expression)) return true
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
-  if (numericLiteralValue(expression) != null) return true
-  if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
-  if (ts.isElementAccessExpression(expression)) return isFixedElementPathExpression(expression)
-  if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
-  if (ts.isPrefixUnaryExpression(expression)) {
-    return (expression.operator === ts.SyntaxKind.PlusToken || expression.operator === ts.SyntaxKind.MinusToken)
-      && isGivenComparisonExpression(expression.operand)
-  }
-  if (ts.isBinaryExpression(expression) && isGivenArithmeticOperator(expression.operatorToken.kind)) {
-    return isGivenComparisonExpression(expression.left)
-      && isGivenComparisonExpression(expression.right)
-  }
-  return false
-}
-
-function isGivenArithmeticOperator(kind: ts.SyntaxKind) {
-  return kind === ts.SyntaxKind.PlusToken
-    || kind === ts.SyntaxKind.MinusToken
-    || kind === ts.SyntaxKind.AsteriskToken
-    || kind === ts.SyntaxKind.SlashToken
-    || kind === ts.SyntaxKind.PercentToken
-    || kind === ts.SyntaxKind.AsteriskAsteriskToken
-}
-
-function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, reason: string): FitCheck {
-  return {file, functionName, text: spec.text, status: 'unknown', reason, ...(spec.line == null ? {} : {line: spec.line})}
 }
 
 function typeUnsupportedChecks(file: string, functionName: string, unsupported: TypeContractUnsupported[], boundary?: CheckBoundary): FitCheck[] {
@@ -942,302 +538,10 @@ function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContra
   context.checks.push(...typeUnsupportedChecks(context.file, context.stack.join(' > '), unsupported, boundary))
 }
 
-function collectGivenAssumptions(
-  file: string,
-  program: Program,
-  functionName: string,
-  env: Map<string, Value>,
-  inputRoots: string[],
-  givens: AssumedGivenSpec[],
-  contractCache: Map<string, FunctionContractProof>,
-): {assumptions: LinearConstraint[]; checks: FitCheck[]} {
-  const assumptions: LinearConstraint[] = []
-  const checks: FitCheck[] = []
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
-  for (const given of givens) {
-    if (given.kind === 'range') {
-      const spec = given.spec
-      const value = evaluateSpecExpression(spec.expression, context)
-      if (value.kind !== 'number') continue
-      const lower = evaluateRangeBound(spec.range.lower, context)
-      const upper = evaluateRangeBound(spec.range.upper, context)
-      if (lower.kind !== 'number' || upper.kind !== 'number') continue
-      const facts = rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source)
-      const contradiction = givenRangeContradictionReason(facts, assumptions)
-      if (contradiction != null) {
-        checks.push({
-          file,
-          ...(spec.line == null ? {} : {line: spec.line}),
-          functionName,
-          text: spec.text,
-          status: 'fail',
-          reason: contradiction,
-        })
-        continue
-      }
-      assumptions.push(...facts)
-      continue
-    }
-
-    const spec = given.spec
-    const left = evaluateSpecExpression(spec.left, context)
-    const right = evaluateSpecExpression(spec.right, context)
-    if (left.kind === 'number' && right.kind === 'number') {
-      const status = proveComparison(left, spec.op, right, assumptions)
-      if (status.status === 'fail') {
-        checks.push({
-          file,
-          ...(spec.line == null ? {} : {line: spec.line}),
-          functionName,
-          text: spec.text,
-          status: 'fail',
-          reason: `no input can satisfy this with the earlier given lines\n${status.reason ?? ''}`.trimEnd(),
-        })
-        continue
-      }
-    }
-    const fact = comparisonFactFromSpec(spec, context, given.source)
-    if (fact != null) {
-      const contradiction = givenComparisonContradictionReason(fact, assumptions)
-      if (contradiction != null) {
-        checks.push({
-          file,
-          ...(spec.line == null ? {} : {line: spec.line}),
-          functionName,
-          text: spec.text,
-          status: 'fail',
-          reason: contradiction,
-        })
-        continue
-      }
-      assumptions.push(fact)
-    }
-  }
-  return {assumptions, checks}
-}
-
-function givenRangeContradictionReason(facts: LinearConstraint[], assumptions: LinearConstraint[]): string | null {
-  for (const fact of facts) {
-    const contradiction = givenComparisonContradictionReason(fact, assumptions)
-    if (contradiction != null) return contradiction
-  }
-  return null
-}
-
-function comparisonFactFromSpec(spec: Extract<FitSpec, {kind: 'given-comparison'}>, context: EvalContext, source: FactSource): LinearConstraint | null {
-  const left = evaluateSpecExpression(spec.left, context)
-  const right = evaluateSpecExpression(spec.right, context)
-  if (left.kind !== 'number' || right.kind !== 'number') return null
-  return comparisonConstraint(left, spec.op, right, spec.text, source)
-}
-
-function givenComparisonContradictionReason(fact: LinearConstraint, assumptions: LinearConstraint[]): string | null {
-  const facts = nonNegativeFacts(fact)
-  const earlierFacts = assumptions.flatMap(nonNegativeFacts)
-  for (const next of facts) {
-    if (nonNegativeFactIsImpossible(next)) return `no input can satisfy this: ${fact.text ?? 'given comparison'} is impossible`
-    for (const earlier of earlierFacts) {
-      if (!nonNegativeFactsConflict(next, earlier)) continue
-      const earlierText = earlier.text ?? 'an earlier given line'
-      const nextText = fact.text ?? 'this given line'
-      return `no input can satisfy both ${earlierText} and ${nextText}`
-    }
-    if (nonNegativeFactConflictsWithEarlierFacts(next, earlierFacts)) {
-      return `no input can satisfy this with the earlier given lines; they already rule out ${givenFactLabel(fact.text)}`
-    }
-  }
-  return null
-}
-
-function nonNegativeFactIsImpossible(fact: NonNegativeFact) {
-  const clean = cleanLinear(fact.diff)
-  if (clean.terms.size > 0) return false
-  return fact.strict ? clean.constant <= linearEpsilon : clean.constant < -linearEpsilon
-}
-
-function nonNegativeFactsConflict(left: NonNegativeFact, right: NonNegativeFact) {
-  const scale = positiveTermCancelScale(left.diff, right.diff)
-  if (scale == null) return false
-  const combined = linearAdd(left.diff, linearScaleExact(right.diff, scale))
-  if (combined == null || combined.terms.size > 0) return false
-  if (combined.constant < -linearEpsilon) return true
-  return (left.strict || right.strict) && combined.constant <= linearEpsilon
-}
-
-function nonNegativeFactConflictsWithEarlierFacts(fact: NonNegativeFact, earlierFacts: NonNegativeFact[]) {
-  return proveNonNegativeFromFacts(linearScaleExact(fact.diff, -1), !fact.strict, earlierFacts)
-}
-
-function givenFactLabel(text: string | undefined) {
-  return text?.startsWith('given ') === true ? text.slice('given '.length) : text ?? 'this comparison'
-}
-
-function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | null {
-  let scale: number | null = null
-  const names = new Set([...left.terms.keys(), ...right.terms.keys()])
-  for (const name of names) {
-    const leftCoefficient = left.terms.get(name) ?? 0
-    const rightCoefficient = right.terms.get(name) ?? 0
-    if (Math.abs(leftCoefficient) <= linearEpsilon && Math.abs(rightCoefficient) <= linearEpsilon) continue
-    if (Math.abs(rightCoefficient) <= linearEpsilon) return null
-    const nextScale = -leftCoefficient / rightCoefficient
-    if (nextScale <= linearEpsilon) return null
-    scale = scale == null ? nextScale : mergeScale(scale, nextScale)
-    if (scale === Number.NEGATIVE_INFINITY) return null
-  }
-  return scale
-}
-
-function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
-  const closed = closedRangeApprox(spec.range)
-  const value = spec.range.finiteValues == null
-    ? numberValue(
-      closed?.min ?? Number.NEGATIVE_INFINITY,
-      closed?.max ?? Number.POSITIVE_INFINITY,
-      spec.range.valueKind === 'int',
-      spec.expression,
-      linearVariable(linearNameForExpression(spec.expression)),
-    )
-    : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)))
-  if (spec.expression.includes('[]')) {
-    const domainPath = parseDomainPathText(spec.expression)
-    if (domainPath != null && domainPath.segments.length > 0) {
-      env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
-    }
-    return
-  }
-
-  const expression = parseExpression(spec.expression)
-  if (ts.isIdentifier(expression)) {
-    env.set(expression.text, value)
-    return
-  }
-
-  const lengthRoot = arrayLengthRoot(expression)
-  if (lengthRoot != null) {
-    const target = env.get(lengthRoot)
-    env.set(lengthRoot, target?.kind === 'array' ? {...target, length: value} : unknownArray(lengthRoot, value))
-    return
-  }
-
-  const domainPath = parseDomainPathText(spec.expression)
-  if (domainPath == null || domainPath.segments.length === 0) return
-  env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
-}
-
-function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | undefined, program: Program, node?: ts.Node): Value {
-  const typed = (node == null ? null : valueFromNodeShape(name, node, program)) ?? valueFromSyntaxTypeShape(name, type, program, new Set())
-  if (typed != null) return typed
-
-  const shape = specParamShape(name, specs)
-  if (shape === 'array') return unknownArray(name)
-  if (shape === 'object') return unknownObject(name)
-  return unknownNumber(name)
-}
-
-function unknownResultValue(specs: FitSpec[], program: Program): Value {
-  return unknownParamValue(fitReturnInternalRoot, specs, undefined, program)
-}
-
-function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'number' {
-  let shape: 'object' | 'number' = 'number'
-  for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'check-range') {
-      const next = specExpressionParamShape(spec.expression, name)
-      if (next === 'array') return 'array'
-      if (next === 'object') shape = 'object'
-      continue
-    }
-    if (spec.kind === 'check-atom') {
-      for (const arg of spec.args) {
-        const next = specExpressionParamShape(arg, name)
-        if (next === 'array') return 'array'
-        if (next === 'object') shape = 'object'
-      }
-      continue
-    }
-    for (const expression of [spec.left, spec.right]) {
-      const next = specExpressionParamShape(expression, name)
-      if (next === 'array') return 'array'
-      if (next === 'object') shape = 'object'
-    }
-  }
-  return shape
-}
-
-function specExpressionParamShape(text: string, name: string): 'array' | 'object' | 'number' {
-  const parsed = parseFitExpression(text)
-  for (const domainPath of parsed.domainPaths.values()) {
-    if (domainPath.root !== name) continue
-    return domainPath.segments[0]?.kind === 'item' ? 'array' : 'object'
-  }
-  if (expressionMentionsArrayParam(parsed.expression, name)) return 'array'
-  if (expressionMentionsObjectParam(parsed.expression, name)) return 'object'
-  return 'number'
-}
-
-function setDomainPathValue(current: Value | undefined, expr: string, segments: FitDomainPathSegment[], value: Value): Value {
-  const segment = segments[0]
-  if (segment == null) return value
-
-  if (segment.kind === 'prop') {
-    if (current?.kind === 'array' && segment.name === 'length') {
-      const length = setDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
-      return length.kind === 'number' ? {...current, length} : current
-    }
-    const base = current?.kind === 'object' ? current : unknownObject(expr)
-    const props = new Map(base.props)
-    const propExpr = `${expr}.${segment.name}`
-    props.set(segment.name, setDomainPathValue(props.get(segment.name), propExpr, segments.slice(1), value))
-    return {...base, props}
-  }
-
-  const objectLength = current?.kind === 'object' ? current.props.get('length') : null
-  const base = current?.kind === 'array'
-    ? current
-    : unknownArray(expr, objectLength?.kind === 'number' ? objectLength : undefined)
-  return {
-    ...base,
-    element: setDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value),
-  }
-}
-
-function evaluateDomainPath(domainPath: FitDomainPath, context: EvalContext): Value {
-  const root = context.env.get(domainPath.root) ?? unknown(unknownIdentifierReason(domainPath.root))
-  return evaluateDomainPathSegments(root, domainPath.root, domainPath.segments)
-}
-
-function evaluateDomainPathSegments(current: Value, expr: string, segments: FitDomainPathSegment[]): Value {
-  const segment = segments[0]
-  if (segment == null) return current
-
-  if (segment.kind === 'item') {
-    if (current.kind !== 'array') return unknown(`${expr} expected an array`)
-    const item = current.element ?? (segments[1]?.kind === 'prop' ? unknownObject(`${expr}[]`) : unknownNumber(`${expr}[]`))
-    return evaluateDomainPathSegments(item, `${expr}[]`, segments.slice(1))
-  }
-
-  if (current.kind === 'array' && segment.name === 'length') {
-    return evaluateDomainPathSegments(current.length, `${expr}.length`, segments.slice(1))
-  }
-  if (current.kind === 'object') {
-    const prop = current.props.get(segment.name) ?? (current.expr == null ? unknown(`Unknown property ${segment.name}`) : unknownNumber(`${current.expr}.${segment.name}`))
-    return evaluateDomainPathSegments(prop, `${expr}.${segment.name}`, segments.slice(1))
-  }
-  return unknown(`${publicFitText(`${expr}.${segment.name}`)} expected an object`)
-}
-
 const checkSpecHooks: CheckSpecHooks = {
   evaluateExpression: (expression, context) => evaluateCheckedExpression(expression, context),
-  evaluateDomainPath: (domainPath, context) => evaluateDomainPath(domainPath, context),
+  evaluateDomainPath: (domainPath, context) => evaluateDomainPathValue(domainPath, context.env),
   parsePrintedNumber,
-}
-
-function parsePrintedNumber(text: string): number | null {
-  if (text === 'Infinity') return Number.POSITIVE_INFINITY
-  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
-  const value = Number(text)
-  return Number.isFinite(value) ? value : null
 }
 
 function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {
@@ -1299,6 +603,16 @@ function evaluateRangeBound(text: string, context: EvalContext): Value {
 
 function evaluateSpecExpression(text: string, context: EvalContext): Value {
   return evaluateParsedSpecExpression(text, context, checkSpecHooks)
+}
+
+const givenEvaluators = {
+  evaluateRangeBound,
+  evaluateSpecExpression,
+}
+
+const callContractEvaluators = {
+  evaluateSpecExpression,
+  proveRangeSpec,
 }
 
 function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
@@ -1492,7 +806,7 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     ? evaluateInterpreterExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
     : evaluateCheckedExpression(declaration.initializer!, context)
   const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
-  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context), context)
+  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context.program), context)
   const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
   pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
   verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary)
@@ -1526,11 +840,6 @@ function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, contex
       boundary,
     ))
   }
-}
-
-function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, context: EvalContext): Value {
-  if (!ts.isIdentifier(name)) return value
-  return valueWithStructuralFallback(value, valueFromNodeShape(name.text, name, context.program))
 }
 
 function bindUninitializedName(name: ts.BindingName, context: EvalContext) {
@@ -1575,13 +884,6 @@ function bindArrayPattern(pattern: ts.ArrayBindingPattern, value: Value, context
     }
     bindName(elementName, arrayPatternElementValue(value, index), context)
   })
-}
-
-function arrayPatternElementValue(value: Value, index: number): Value {
-  if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
-  return tupleElements(value)?.[index]
-    ?? value.element
-    ?? unknownNumber(`${value.expr ?? 'array'}[${index}]`)
 }
 
 function recordInferLoop(
@@ -1708,6 +1010,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
     context.inputRoots,
     assumedGivens,
     context.contractCache,
+    givenEvaluators,
   )
   context.checks.push(...impossibleChecks)
   context.assumptions = mergeAssumptions(context.assumptions, assumptions)
@@ -1753,7 +1056,7 @@ function evaluateLocalFunctionCall(
     callLine: options.callLine,
     thisValue: options.thisValue,
     callSiteBindings: options.callSiteBindings,
-  })
+  }, callContractEvaluators)
 
   const env = programGlobalEnv(context.program)
   bindFunctionCallInputs(fn, argumentValues, env, context.program, options.thisValue)
@@ -1788,7 +1091,7 @@ function evaluateLocalFunctionCall(
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
-  }, fallbackResult, options.thisValue, options.callSiteBindings)
+  }, fallbackResult, options.thisValue, options.callSiteBindings, callContractEvaluators)
 }
 
 type FunctionCallArguments =
@@ -1806,9 +1109,7 @@ function evaluateFunctionCallArguments(
   if (args.length > fn.node.parameters.length) return {kind: 'invalid', reason: `Call arity mismatch for ${fn.name}`}
 
   const env = new Map(baseEnv ?? programGlobalEnv(calleeProgram))
-  if (functionHasInstanceThisInput(fn)) {
-    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
-  }
+  bindFunctionThisInput(fn, env, thisValue)
 
   const values: Value[] = []
   const texts: string[] = []
@@ -1890,6 +1191,7 @@ function evaluateImportedFunctionCall(
     argumentValues,
     context,
     {record: true, callLine, callSiteBindings},
+    callContractEvaluators,
   )
   if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
 
@@ -1897,7 +1199,7 @@ function evaluateImportedFunctionCall(
     kind: 'imported',
     sourceFile: target.module.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), undefined, callSiteBindings)
+  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), undefined, callSiteBindings, callContractEvaluators)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
@@ -1968,372 +1270,6 @@ function verifyFunctionContract(program: Program, functionName: string, contract
   return proof
 }
 
-function importedContractUnavailableReason(localName: string, binding: ImportedBinding, detail: string) {
-  return [
-    'imported helper contract was not available',
-    `helper: ${importedHelperLabel(localName, binding)}`,
-    `reason: ${detail}`,
-  ].join('\n')
-}
-
-function importedContractFailureReason(localName: string, binding: Extract<ImportedBinding, {kind: 'resolved'}>, proof: FunctionContractProof) {
-  if (proof.status === 'verifying') return importedContractUnavailableReason(localName, binding, 'contract is already being verified')
-  const failed = proof.checks.find(check => check.status !== 'pass')
-  const head = proof.status === 'fail' ? 'imported helper contract failed in source before this call could use it' : 'imported helper contract was not proven in source before this call could use it'
-  if (failed == null) {
-    return [
-      head,
-      `helper: ${importedHelperLabel(localName, binding)}`,
-    ].join('\n')
-  }
-  const reason = failed.reason == null ? '' : `\n${failed.reason}`
-  return [
-    head,
-    `helper: ${importedHelperLabel(localName, binding)}`,
-    `failed check: ${failed.file}:${failed.functionName}: ${failed.text}${reason}`,
-  ].join('\n')
-}
-
-function importedHelperLabel(localName: string, binding: ImportedBinding) {
-  const importedName = binding.exportedName === '*'
-    ? `${localName} (namespace)`
-    : binding.exportedName === localName || localName.endsWith(`.${binding.exportedName}`) ? localName : `${localName} (${binding.exportedName})`
-  return `${importedName} from ${binding.specifier}`
-}
-
-function valueWithFunctionContractSummary(
-  functionName: string,
-  program: Program,
-  fn: FitFunction,
-  specs: FitSpec[],
-  argumentValues: Value[],
-  contractCache: Map<string, FunctionContractProof>,
-  source: FunctionContractSource,
-  result: Value,
-  thisValue?: Value,
-  callSiteBindings?: CallSiteBindings,
-): Value {
-  const env = programGlobalEnv(program)
-  bindFunctionCallInputs(fn, argumentValues, env, program, thisValue)
-  env.set(fitReturnInternalRoot, result)
-
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env,
-    inputRoots: [...functionInputRoots(program, fn), fitReturnInternalRoot],
-    stack: [functionName],
-    checks: [],
-    assumptions: [],
-    contractCache,
-  }
-
-  for (const spec of specs) {
-    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, context, source)
-  }
-  for (const spec of specs) {
-    if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source)
-  }
-
-  const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
-  return valueWithCallSiteText(summary, callSiteBindings)
-}
-
-function applySummaryRangeSpec(
-  env: Map<string, Value>,
-  spec: Extract<FitSpec, {kind: 'check-range'}>,
-  context: EvalContext,
-  source: FunctionContractSource,
-) {
-  if (simpleResultPathText(spec.expression) == null) return
-  const closed = closedRangeApprox(spec.range)
-  if (closed == null) return
-  const current = evaluateSpecExpression(spec.expression, context)
-  setSummaryPathValue(
-    env,
-    spec.expression,
-    summaryRangeValue(current, spec, closed, source),
-  )
-}
-
-function summaryRangeValue(
-  current: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'}>,
-  closed: {min: number; max: number},
-  source: FunctionContractSource,
-): NumberValue {
-  const provenance = [checkedContractFact(source, spec.text)]
-  if (current.kind !== 'number') {
-    return spec.range.finiteValues == null
-      ? numberValue(
-        closed.min,
-        closed.max,
-        spec.range.valueKind === 'int',
-        spec.expression,
-        linearVariable(linearNameForExpression(spec.expression)),
-        null,
-        provenance,
-      )
-      : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)), provenance)
-  }
-
-  const expr = current.expr ?? spec.expression
-  const linear = current.linear ?? linearVariable(linearNameForExpression(expr))
-  if (spec.range.finiteValues != null) return finiteNumberValue(spec.range.finiteValues, expr, linear, mergeProvenance(current, provenance))
-  return numberValue(
-    Math.max(current.min, closed.min),
-    Math.min(current.max, closed.max),
-    current.isInteger || spec.range.valueKind === 'int',
-    expr,
-    linear,
-    null,
-    mergeProvenance(current, provenance),
-  )
-}
-
-function applySummaryComparisonSpec(
-  env: Map<string, Value>,
-  spec: Extract<FitSpec, {kind: 'check-comparison'}>,
-  context: EvalContext,
-  source: FunctionContractSource,
-) {
-  const leftPath = simpleResultPathText(spec.left)
-  const rightPath = simpleResultPathText(spec.right)
-  const fact = checkedContractFact(source, spec.text)
-  if (leftPath != null && rightPath == null) {
-    const right = evaluateSpecExpression(spec.right, context)
-    if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact)
-    return
-  }
-  if (rightPath != null && leftPath == null) {
-    const left = evaluateSpecExpression(spec.left, context)
-    if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left, fact)
-  }
-}
-
-function applySummaryComparisonToPath(
-  env: Map<string, Value>,
-  context: EvalContext,
-  path: string,
-  op: ComparisonOperator,
-  other: NumberValue,
-  fact: string,
-) {
-  const current = evaluateSpecExpression(path, context)
-  if (current.kind !== 'number') return
-  const provenance = mergeProvenance(current, other, [fact])
-  const withSummaryFact = (value: NumberValue): NumberValue => {
-    const summaryFact = comparisonConstraint(value, op, other, fact, 'contract')
-    if (summaryFact == null) return value
-    return withNumberCases(value, numberBranches(value).map(branch => ({
-      value: branch.value,
-      assumptions: mergeAssumptions(branch.assumptions, [summaryFact]),
-    })))
-  }
-
-  switch (op) {
-    case '==':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, null, provenance)))
-      return
-    case '>=':
-    case '>':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, provenance)))
-      return
-    case '<=':
-    case '<':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance)))
-      return
-  }
-}
-
-function checkedContractFact(source: FunctionContractSource, text: string) {
-  const kind = source.kind === 'local' ? 'checked helper contract' : 'checked imported contract'
-  return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
-}
-
-function simpleResultPathText(text: string): string | null {
-  const parsed = parseFitExpression(text)
-  const domainPaths = [...parsed.domainPaths.values()]
-  if (domainPaths.length === 1 && domainPaths[0]!.root === fitReturnInternalRoot && ts.isIdentifier(parsed.expression)) return text
-  if (domainPaths.length > 0) return null
-
-  const expression = unwrapExpression(parsed.expression)
-  if (ts.isIdentifier(expression) && expression.text === fitReturnInternalRoot) return text
-  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === fitReturnInternalRoot) return text
-  const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement?.root === fitReturnInternalRoot) return text
-  return null
-}
-
-function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value) {
-  const domainPath = parseDomainPathText(path)
-  if (domainPath != null && domainPath.segments.length > 0) {
-    env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
-    return
-  }
-
-  const expression = parseExpression(path)
-  if (ts.isIdentifier(expression)) {
-    env.set(expression.text, value)
-    return
-  }
-
-  const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement != null) {
-    env.set(finiteElement.root, setFiniteArrayElementValue(env.get(finiteElement.root), finiteElement.root, finiteElement.index, value))
-  }
-}
-
-function finiteElementAccessRoot(expression: ts.Expression): {root: string; index: number} | null {
-  const current = unwrapExpression(expression)
-  if (!ts.isElementAccessExpression(current)) return null
-  const index = numericLiteralValue(current.argumentExpression)
-  if (index == null || !Number.isInteger(index) || index < 0) return null
-  const root = expressionRootName(current.expression)
-  return root == null ? null : {root, index}
-}
-
-function setFiniteArrayElementValue(current: Value | undefined, expr: string, index: number, value: Value): Value {
-  const base = current?.kind === 'array' ? current : unknownArray(expr)
-  const elements = base.elements == null ? [] : [...base.elements]
-  while (elements.length <= index) {
-    elements.push(base.element ?? unknownNumber(`${expr}[${elements.length}]`))
-  }
-  elements[index] = value
-  return {...base, layout: 'tuple', elements}
-}
-
-function verifyCallGivenSpecs(
-  calleeProgram: Program,
-  fn: FitFunction,
-  callText: string,
-  argumentValues: Value[],
-  context: EvalContext,
-  options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
-) {
-  const specs = functionContractSpecs(calleeProgram, fn)
-  const env = programGlobalEnv(calleeProgram)
-  let statusSummary: FitCheckStatus = 'pass'
-  bindFunctionCallInputs(fn, argumentValues, env, calleeProgram, options.thisValue)
-  const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
-
-  for (const spec of specs) {
-    let status: {status: FitCheckStatus; reason?: string} | null = null
-    if (spec.kind === 'given-range') {
-      const value = evaluateSpecExpression(spec.expression, calleeContext)
-      status = proveRangeSpec(value, spec.range, calleeContext)
-      if (status.status !== 'pass') status = withCallRangeReason(status, value, spec, options.callSiteBindings)
-    }
-    if (spec.kind === 'given-comparison') {
-      const left = evaluateSpecExpression(spec.left, calleeContext)
-      const right = evaluateSpecExpression(spec.right, calleeContext)
-      status = proveComparison(left, spec.op, right, calleeContext.assumptions)
-      if (status.status !== 'pass') status = withCallComparisonReason(status, left, right, spec, options.callSiteBindings)
-    }
-    if (status == null) continue
-    if (options.record) {
-      context.checks.push({
-        file: context.file,
-        ...(options.callLine == null ? {} : {line: options.callLine}),
-        functionName: context.stack.join(' > '),
-        text: `call ${callText}: ${callRequirementText(spec)}`,
-        status: status.status,
-        ...(status.reason == null ? {} : {reason: status.reason}),
-      })
-    }
-    if (status.status === 'fail') statusSummary = 'fail'
-    else if (status.status === 'unknown' && statusSummary === 'pass') statusSummary = 'unknown'
-  }
-  return statusSummary
-}
-
-function callRequirementText(spec: FitSpec) {
-  return spec.text.startsWith('given ') ? `requires ${spec.text.slice('given '.length)}` : spec.text
-}
-
-function withCallRangeReason(
-  status: {status: FitCheckStatus; reason?: string},
-  value: Value,
-  spec: Extract<FitSpec, {kind: 'given-range'}>,
-  callSiteBindings: CallSiteBindings | undefined,
-): {status: FitCheckStatus; reason?: string} {
-  if (value.kind !== 'number') return status
-  return {
-    ...status,
-    reason: [
-      `called function requires ${spec.expression}: ${formatRangeSpec(spec.range)}`,
-      `this call passes ${formatCallBinding(spec.expression, value)}`,
-      ...missingBoundsForRange(value, spec.range, callSiteBindings),
-    ].join('\n'),
-  }
-}
-
-function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBindings: CallSiteBindings | undefined) {
-  if (range.finiteValues != null) {
-    return [callSiteMissingLine(`${value.expr ?? formatRange(value)} in {${range.finiteValues.join(', ')}}`, callSiteBindings)]
-  }
-  const lower = range.lowerValue == null ? null : numberValue(range.lowerValue, range.lowerValue, Number.isInteger(range.lowerValue), range.lower, Number.isFinite(range.lowerValue) ? linearConstant(range.lowerValue) : null)
-  const upper = range.upperValue == null ? null : numberValue(range.upperValue, range.upperValue, Number.isInteger(range.upperValue), range.upper, Number.isFinite(range.upperValue) ? linearConstant(range.upperValue) : null)
-  return rangeSpecMissingBounds(
-    value,
-    range,
-    lower ?? numberValue(Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, false, range.lower, null),
-    upper ?? numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, range.upper, null),
-    {
-      lower: range.lowerValue != null && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue),
-      upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
-      integer: false,
-    },
-  ).map(line => callSiteMissingLineFromReportLine(line, callSiteBindings))
-}
-
-function withCallComparisonReason(
-  status: {status: FitCheckStatus; reason?: string},
-  left: Value,
-  right: Value,
-  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
-  callSiteBindings: CallSiteBindings | undefined,
-): {status: FitCheckStatus; reason?: string} {
-  if (left.kind !== 'number' || right.kind !== 'number') return status
-  const missing = comparisonNeed(left, spec.op, right)
-  const callSiteMissing = callSiteText(missing, callSiteBindings)
-  const lines = [
-    `called function requires ${spec.left} ${spec.op} ${spec.right}`,
-    `this call passes ${formatCallComparisonBinding(spec, left, right)}`,
-  ]
-  if (status.status === 'unknown') lines.push(`could not prove ${callSiteMissing}`)
-  lines.push(callSiteMissingLine(missing, callSiteBindings))
-  return {
-    ...status,
-    reason: lines.join('\n'),
-  }
-}
-
-function callSiteMissingLineFromReportLine(line: string, callSiteBindings: CallSiteBindings | undefined) {
-  const prefix = 'missing: '
-  if (!line.startsWith(prefix)) return line
-  return callSiteMissingLine(line.slice(prefix.length), callSiteBindings)
-}
-
-function callSiteMissingLine(missing: string, callSiteBindings: CallSiteBindings | undefined) {
-  const callSite = callSiteText(missing, callSiteBindings)
-  return callSite === missing ? `missing: ${missing}` : `missing at call site: ${callSite}`
-}
-
-function formatCallBinding(name: string, value: NumberValue) {
-  if (value.min === value.max) return `${name} = ${value.min}`
-  const range = formatExpectedRange(value.min, value.max, value.isInteger)
-  return value.expr == null || value.expr === name ? `${name} is ${range}` : `${name} is ${range} from ${value.expr}`
-}
-
-function formatCallComparisonBinding(spec: Extract<FitSpec, {kind: 'given-comparison'}>, left: NumberValue, right: NumberValue) {
-  const leftText = formatCallBinding(spec.left, left)
-  const rightText = formatCallBinding(spec.right, right)
-  if (parsePrintedNumber(spec.left) != null) return rightText
-  if (parsePrintedNumber(spec.right) != null) return leftText
-  return `${leftText} and ${rightText}`
-}
-
 function objectPathText(path: string[] | undefined) {
   return path == null || path.length === 0 ? '<property>' : path.join('.')
 }
@@ -2358,8 +1294,4 @@ function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'}
 function proveInlineComparisonSpec(value: Value, spec: Extract<FitSpec, {kind: 'check-comparison'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   const right = evaluateSpecExpression(spec.right, context)
   return proveComparison(value, spec.op, right, context.assumptions)
-}
-
-function unknownIdentifierReason(name: string) {
-  return `Unknown identifier ${name}`
 }
