@@ -249,7 +249,6 @@ import {
   expressionMentionsObjectParam,
   expressionRootName,
   expressionRootNameDeep,
-  expressionRootNames,
   expressionRootNamesFromText,
 } from './source-expressions.ts'
 import {localizeValue} from './value-localize.ts'
@@ -260,6 +259,12 @@ import {
   isFunctionLikeWithBody,
 } from './function-shape.ts'
 import {evaluateInterpreterFunctionBody} from './interpreter/evaluate.ts'
+import {
+  forgetRoot,
+  forgettableMutationRoots,
+  isForgettableForStatement,
+  isForgettableReadExpression,
+} from './interpreter/forgettable-loop.ts'
 import {
   formatInterpreterFacts,
   formatInterpreterIssues,
@@ -2542,7 +2547,7 @@ function evaluateForStatementCore(
       continue
     }
 
-    const forgotten = forgettableMutationRoots(child, loopContext)
+    const forgotten = forgettableMutationRoots(child, loopContext.env)
     if (forgotten != null) {
       for (const root of forgotten) forgottenRoots.add(root)
       addInferUnsupported(context, `Forgot unsupported indexed loop side effect: ${child.getText(context.program.sourceFile)}`)
@@ -2629,7 +2634,7 @@ function indexedLoopSourceValue(shape: IndexedLoopShape, context: EvalContext): 
 
 function evaluateForgettableForStatement(statement: ts.ForStatement, context: EvalContext): Value | null {
   if (!isForgettableForStatement(statement)) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
-  const forgotten = forgettableMutationRoots(statement.statement, context)
+  const forgotten = forgettableMutationRoots(statement.statement, context.env)
   if (forgotten == null) return unknown(`Unsupported for loop: ${statement.getText(context.program.sourceFile)}`)
   for (const root of forgotten) forgetRoot(context.env, root)
   addInferUnsupported(context, `Forgot unsupported for loop side effects: ${loopHeaderText(statement, context.program.sourceFile)}`)
@@ -2637,99 +2642,13 @@ function evaluateForgettableForStatement(statement: ts.ForStatement, context: Ev
 }
 
 function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, context: EvalContext): Value | null {
-  if (!isSideEffectFreeExpression(statement.expression)) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
-  const forgotten = forgettableMutationRoots(statement.statement, context)
+  if (!isForgettableReadExpression(statement.expression)) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
+  const forgotten = forgettableMutationRoots(statement.statement, context.env)
   if (forgotten == null) return unknown(`Unsupported while loop: ${statement.getText(context.program.sourceFile)}`)
   for (const root of forgotten) forgetRoot(context.env, root)
   const kind = ts.isWhileStatement(statement) ? 'while' : 'do while'
   addInferUnsupported(context, `Forgot unsupported ${kind} loop side effects: ${loopHeaderText(statement, context.program.sourceFile)}`)
   return null
-}
-
-function isForgettableForStatement(statement: ts.ForStatement) {
-  const indexName = forgettableForIndexName(statement.initializer)
-  return indexName != null
-    && statement.condition != null
-    && statement.incrementor != null
-    && isSideEffectFreeExpression(statement.condition)
-    && incrementorOnlyTouchesIndex(statement.incrementor, indexName)
-}
-
-function forgettableForIndexName(initializer: ts.ForInitializer | undefined): string | null {
-  if (initializer == null || !ts.isVariableDeclarationList(initializer) || initializer.declarations.length !== 1) return null
-  const declaration = initializer.declarations[0]!
-  if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
-  return isSideEffectFreeExpression(declaration.initializer) ? declaration.name.text : null
-}
-
-function incrementorOnlyTouchesIndex(expression: ts.Expression, indexName: string): boolean {
-  if (ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression)) {
-    return (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken)
-      && ts.isIdentifier(expression.operand)
-      && expression.operand.text === indexName
-  }
-  if (!ts.isBinaryExpression(expression) || !ts.isIdentifier(expression.left) || expression.left.text !== indexName) return false
-  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) return isSideEffectFreeExpression(expression.right)
-  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return false
-  return isSideEffectFreeExpression(expression.right)
-}
-
-function forgettableMutationRoots(statement: ts.Statement, context?: EvalContext): string[] | null {
-  if (ts.isBlock(statement)) {
-    const roots: string[] = []
-    for (const child of statement.statements) {
-      const childRoots = forgettableMutationRoots(child, context)
-      if (childRoots == null) return null
-      roots.push(...childRoots)
-    }
-    return [...new Set(roots)]
-  }
-  if (ts.isIfStatement(statement) && statement.elseStatement == null && isSideEffectFreeExpression(statement.expression)) return forgettableMutationRoots(statement.thenStatement, context)
-  if (!ts.isExpressionStatement(statement)) return null
-
-  const expression = statement.expression
-  if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
-    && (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken)
-    && ts.isIdentifier(expression.operand)) return knownMutationRoots([expression.operand.text], context)
-  if (ts.isCallExpression(expression) && isPushCall(expression) && expression.arguments.every(isSideEffectFreeExpression)) {
-    return knownMutationRoots([expression.expression.expression.text], context)
-  }
-  if (ts.isCallExpression(expression)) {
-    const roots = forgettableCallMutationRoots(expression, context)
-    return roots == null ? null : knownMutationRoots(roots, context)
-  }
-  if (ts.isBinaryExpression(expression)) {
-    const root = assignmentRootName(expression.left)
-    if (root == null) return null
-    if (!isSideEffectFreeExpression(expression.right)) return null
-    if (expression.operatorToken.kind === ts.SyntaxKind.EqualsToken || expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken || expression.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken) {
-      const roots = context == null ? [root] : mutationTargetRoots(expression.left, context)
-      return knownMutationRoots(roots, context)
-    }
-  }
-  return null
-}
-
-function forgettableCallMutationRoots(expression: ts.CallExpression, context?: EvalContext): string[] | null {
-  if (!expression.arguments.every(isSideEffectFreeExpression)) return null
-  if (!ts.isPropertyAccessExpression(expression.expression)) return null
-  const receiver = expression.expression.expression
-  const receiverRoots = context == null
-    ? nonNullStrings(expressionRootName(receiver) ?? mutationTargetRoot(receiver))
-    : mutationTargetRoots(receiver, context)
-  if (receiverRoots.length === 0) return null
-  const roots = [...receiverRoots]
-  for (const argument of expression.arguments) roots.push(...expressionRootNames(argument, []))
-  return [...new Set(roots)]
-}
-
-function nonNullStrings(value: string | null): string[] {
-  return value == null ? [] : [value]
-}
-
-function knownMutationRoots(roots: string[], context?: EvalContext): string[] | null {
-  if (context == null) return roots
-  return roots.every(root => context.env.has(root)) ? roots : null
 }
 
 function isSideEffectFreeExpression(expression: ts.Expression): boolean {
@@ -2767,28 +2686,6 @@ function isKnownPureReadCall(expression: ts.CallExpression): boolean {
   if (!ts.isPropertyAccessExpression(target)) return false
   if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') return true
   return target.name.text === 'at' && isSideEffectFreeExpression(target.expression)
-}
-
-function assignmentRootName(expression: ts.Expression): string | null {
-  if (ts.isIdentifier(expression)) return expression.text
-  return mutationTargetRoot(expression)
-}
-
-function forgetRoot(env: Map<string, Value>, root: string) {
-  const current = env.get(root)
-  if (current?.kind === 'array') {
-    env.set(root, arrayWithUnknownContents(root, current))
-    return
-  }
-  if (current?.kind === 'number') {
-    env.set(root, unknownNumber(root))
-    return
-  }
-  if (current?.kind === 'object') {
-    env.set(root, unknownObject(root))
-    return
-  }
-  env.set(root, unknown(`Unsupported mutation changed ${root}`))
 }
 
 function addInferUnsupported(context: EvalContext, message: string) {
@@ -3698,7 +3595,7 @@ function evaluateArrayMapCallbackStatements(statements: ts.NodeArray<ts.Statemen
       continue
     }
     if (ts.isExpressionStatement(statement)) {
-      const forgotten = forgettableMutationRoots(statement, context)
+      const forgotten = forgettableMutationRoots(statement, context.env)
       if (forgotten == null) return {kind: 'return', value: unsupportedArrayMapCallbackBlock()}
       for (const root of forgotten) markRootMutated(context, root)
       continue

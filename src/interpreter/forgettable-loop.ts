@@ -146,7 +146,7 @@ function referenceRootName(value: Value | undefined): string | null {
   return /^(?:this|[A-Za-z_$][\w$]*)/.exec(value.expr)?.[0] ?? null
 }
 
-function forgetRoot(env: Map<string, Value>, root: string) {
+export function forgetRoot(env: Map<string, Value>, root: string) {
   const current = env.get(root)
   if (current?.kind === 'array') {
     env.set(root, {...current, length: unknownArrayLength(current.expr ?? root), elements: null, element: null, summary: null})
