@@ -16,6 +16,7 @@ import {
   addNumbers,
   divideNumbers,
   joinValues,
+  literalKey,
   mergeAssumptions,
   literalValue,
   mergeArraySummary,
@@ -32,6 +33,7 @@ import {
   unknownObject,
   type ArrayValue,
   type LinearConstraint,
+  type LiteralPrimitive,
   type NumberValue,
   type Value,
 } from '../domain.ts'
@@ -288,6 +290,11 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, frame: Inter
       if (flow.kind !== 'fallthrough') return flow
       continue
     }
+    if (ts.isSwitchStatement(statement)) {
+      const flow = evaluateSwitchStatement(statement, frame, statements, index + 1)
+      if (flow.kind !== 'fallthrough') return flow
+      continue
+    }
     const flow = evaluateStatement(statement, frame)
     if (flow.kind !== 'fallthrough') return flow
   }
@@ -310,6 +317,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   if (ts.isForStatement(statement)) return evaluateForStatement(statement, frame)
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
+  if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
   if (ts.isThrowStatement(statement)) return {kind: 'exit'}
   return {kind: 'return', value: noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`)}
 }
@@ -405,6 +413,120 @@ function evaluateConditionalBranch(statement: ts.Statement, frame: InterpreterFr
   } finally {
     frame.conditionalDepth--
   }
+}
+
+function evaluateSwitchStatement(
+  statement: ts.SwitchStatement,
+  frame: InterpreterFrame,
+  continuation?: ts.NodeArray<ts.Statement>,
+  nextIndex = 0,
+): InterpreterFlow {
+  const discriminant = evaluateExpression(statement.expression, frame)
+  if (discriminant.kind !== 'literal') {
+    return {kind: 'return', value: noteUnsupported(frame, `Switch expected a finite literal discriminant: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  }
+  const caseValues = switchCaseLiteralValues(statement, frame)
+  if ('error' in caseValues) return {kind: 'return', value: noteUnsupported(frame, caseValues.error)}
+
+  const allCaseKeys = new Set([...caseValues.values()].map(literalKey))
+  const remaining = new Map(discriminant.values.map(value => [literalKey(value), value]))
+  let pendingValues: LiteralPrimitive[] = []
+  let joined: InterpreterFlow | null = null
+
+  for (const clause of statement.caseBlock.clauses) {
+    if (ts.isCaseClause(clause)) {
+      pendingValues.push(caseValues.get(clause)!)
+      if (clause.statements.length === 0) continue
+    }
+
+    const branchValues = ts.isDefaultClause(clause)
+      ? switchDefaultValues(remaining, pendingValues, allCaseKeys)
+      : switchMatchingValues(remaining, pendingValues)
+    pendingValues = []
+    if (branchValues.length === 0) continue
+
+    const branch = switchLiteralFrame(frame, statement.expression, branchValues)
+    const flow = evaluateSwitchClauseStatements(clause.statements, branch)
+    if (flow.kind === 'fallthrough') {
+      return {kind: 'return', value: noteUnsupported(frame, `Switch fallthrough is not supported: ${statement.expression.getText(frame.program.sourceFile)}`)}
+    }
+    joined = joined == null ? flow : joinCompletedFlows(joined, flow, frame)
+    for (const value of branchValues) remaining.delete(literalKey(value))
+  }
+
+  if (pendingValues.length > 0) {
+    return {kind: 'return', value: noteUnsupported(frame, `Switch fallthrough is not supported: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  }
+  if (joined == null) return {kind: 'fallthrough'}
+  if (remaining.size === 0) return joined
+  if (continuation == null || nextIndex >= continuation.length) {
+    return {kind: 'return', value: noteUnsupported(frame, `Switch did not cover every finite literal case: ${statement.expression.getText(frame.program.sourceFile)}`)}
+  }
+  return joinCompletedFlows(joined, evaluateStatements(continuation, switchLiteralFrame(frame, statement.expression, [...remaining.values()]), nextIndex), frame)
+}
+
+function switchCaseLiteralValues(statement: ts.SwitchStatement, frame: InterpreterFrame): Map<ts.CaseClause, LiteralPrimitive> | {error: string} {
+  const values = new Map<ts.CaseClause, LiteralPrimitive>()
+  for (const clause of statement.caseBlock.clauses) {
+    if (!ts.isCaseClause(clause)) continue
+    const value = evaluateExpression(clause.expression, frame)
+    if (value.kind !== 'literal' || value.values.length !== 1) {
+      return {error: `Switch case expected a finite literal: ${clause.expression.getText(frame.program.sourceFile)}`}
+    }
+    values.set(clause, value.values[0]!)
+  }
+  return values
+}
+
+function switchDefaultValues(
+  remaining: Map<string, LiteralPrimitive>,
+  pendingValues: LiteralPrimitive[],
+  allCaseKeys: Set<string>,
+): LiteralPrimitive[] {
+  return uniqueLiteralValues([
+    ...switchMatchingValues(remaining, pendingValues),
+    ...[...remaining.entries()]
+      .filter(([key]) => !allCaseKeys.has(key))
+      .map(([, value]) => value),
+  ])
+}
+
+function switchMatchingValues(remaining: Map<string, LiteralPrimitive>, caseValues: LiteralPrimitive[]): LiteralPrimitive[] {
+  const values: LiteralPrimitive[] = []
+  for (const value of caseValues) {
+    const remainingValue = remaining.get(literalKey(value))
+    if (remainingValue != null) values.push(remainingValue)
+  }
+  return uniqueLiteralValues(values)
+}
+
+function uniqueLiteralValues(values: LiteralPrimitive[]): LiteralPrimitive[] {
+  const seen = new Set<string>()
+  const result: LiteralPrimitive[] = []
+  for (const value of values) {
+    const key = literalKey(value)
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(value)
+  }
+  return result
+}
+
+function switchLiteralFrame(frame: InterpreterFrame, expression: ts.Expression, values: LiteralPrimitive[]): InterpreterFrame {
+  const branch = childFrame(frame, new Map(frame.env), '<switch>')
+  const path = pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, branch))
+  if (path == null) return branch
+  const current = readPath(path, branch)
+  if (current.kind !== 'literal') return branch
+  const keys = new Set(values.map(literalKey))
+  const next = literalValue(current.values.filter(value => keys.has(literalKey(value))), current.expr, current.provenance)
+  if (next.kind === 'literal') writePath(path, next, branch)
+  return branch
+}
+
+function evaluateSwitchClauseStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame): InterpreterFlow {
+  if (statements.length === 1 && ts.isBlock(statements[0]!)) return evaluateStatements(statements[0]!.statements, frame)
+  return evaluateStatements(statements, frame)
 }
 
 function evaluateForOfStatement(statement: ts.ForOfStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -912,7 +1034,28 @@ function evaluateComparisonExpression(expression: ts.BinaryExpression, frame: In
   if (left.kind === 'number' && right.kind === 'number' && left.min === left.max && right.min === right.max) {
     return literalValue([compareNumbers(left.min, expression.operatorToken.kind, right.min)], expression.getText(frame.program.sourceFile))
   }
+  if (left.kind === 'literal' && right.kind === 'literal' && isEqualityComparison(expression.operatorToken.kind)) {
+    return literalValue(compareLiteralSets(left.values, right.values, expression.operatorToken.kind), expression.getText(frame.program.sourceFile))
+  }
   return literalValue([true, false], expression.getText(frame.program.sourceFile))
+}
+
+function isEqualityComparison(kind: ts.SyntaxKind): boolean {
+  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    || kind === ts.SyntaxKind.EqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsToken
+}
+
+function compareLiteralSets(left: LiteralPrimitive[], right: LiteralPrimitive[], kind: ts.SyntaxKind): boolean[] {
+  const values: boolean[] = []
+  const negated = kind === ts.SyntaxKind.ExclamationEqualsEqualsToken || kind === ts.SyntaxKind.ExclamationEqualsToken
+  for (const leftValue of left) {
+    for (const rightValue of right) {
+      values.push((literalKey(leftValue) === literalKey(rightValue)) !== negated)
+    }
+  }
+  return values
 }
 
 function evaluateConditionalExpression(expression: ts.ConditionalExpression, frame: InterpreterFrame): Value {

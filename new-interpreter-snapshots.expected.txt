@@ -91,6 +91,14 @@ case matrix else-if continuation: interpreter-matrix-patterns.ts:matrixElseIfCon
   return: int -1..1
 case matrix throw guard narrows positive: interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
   return: 0..Infinity
+case matrix switch finite literal: interpreter-matrix-patterns.ts:matrixSwitchFiniteLiteral
+  return: int 0..4
+case matrix switch continuation: interpreter-matrix-patterns.ts:matrixSwitchContinuation
+  return: int 0..1
+case matrix switch grouped cases: interpreter-matrix-patterns.ts:matrixSwitchGroupedCases
+  return: "hidden" | "visible"
+case matrix switch narrows discriminant path: interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
+  return: int 0..4
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
@@ -136,3 +144,9 @@ case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTr
   } catch {
     return 2
   }
+case negative switch broad string surface: interpreter-matrix-negative.ts:negativeMatrixSwitchBroadStringUnsupported
+  return: unknown (Switch expected a finite literal discriminant: kind)
+  unsupported negativeMatrixSwitchBroadStringUnsupported: Switch expected a finite literal discriminant: kind
+case negative switch fallthrough surface: interpreter-matrix-negative.ts:negativeMatrixSwitchFallthroughUnsupported
+  return: unknown (Switch fallthrough is not supported: kind)
+  unsupported negativeMatrixSwitchFallthroughUnsupported: Switch fallthrough is not supported: kind

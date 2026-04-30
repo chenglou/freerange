@@ -9,6 +9,12 @@ type MatrixSpringBox = {
   index: number // @fit >= 0
 }
 
+type MatrixSwitchKind = 'compact' | 'wide' | 'hidden'
+
+type MatrixSwitchSpec = {
+  kind: MatrixSwitchKind
+}
+
 const matrixInput = {
   groups: [
     {items: [{pos: 4}, {pos: 8}]},
@@ -247,4 +253,51 @@ export function matrixElseIfContinuation(value: number): number {
 export function matrixThrowGuardNarrowsPositive(value: number): number {
   if (value < 0) throw new Error('negative')
   return value
+}
+
+export function matrixSwitchFiniteLiteral(kind: MatrixSwitchKind): number {
+  switch (kind) {
+    case 'compact':
+      return 1
+    case 'wide':
+      return 4
+    default:
+      return 0
+  }
+}
+
+export function matrixSwitchContinuation(kind: MatrixSwitchKind): number {
+  switch (kind) {
+    case 'compact':
+      return 1
+  }
+  return 0
+}
+
+export function matrixSwitchGroupedCases(kind: MatrixSwitchKind): string {
+  switch (kind) {
+    case 'compact':
+    case 'wide':
+      return 'visible'
+    case 'hidden':
+      return 'hidden'
+  }
+}
+
+function matrixSwitchKindIs(left: MatrixSwitchKind, right: MatrixSwitchKind): boolean {
+  return left === right
+}
+
+export function matrixSwitchNarrowsDiscriminantPath(spec: MatrixSwitchSpec): number {
+  switch (spec.kind) {
+    case 'compact':
+      if (matrixSwitchKindIs(spec.kind, 'wide')) return 99
+      return 1
+    case 'wide':
+      if (matrixSwitchKindIs(spec.kind, 'hidden')) return 99
+      return 4
+    default:
+      if (matrixSwitchKindIs(spec.kind, 'compact')) return 99
+      return 0
+  }
 }

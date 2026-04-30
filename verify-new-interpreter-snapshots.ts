@@ -30,6 +30,10 @@ addCase('matrix indexed array cursor values', ['interpreter-matrix-patterns.ts']
 addCase('matrix Math clamp columns', ['interpreter-matrix-patterns.ts'], 'matrixMathClampColumns')
 addCase('matrix else-if continuation', ['interpreter-matrix-patterns.ts'], 'matrixElseIfContinuation')
 addCase('matrix throw guard narrows positive', ['interpreter-matrix-patterns.ts'], 'matrixThrowGuardNarrowsPositive')
+addCase('matrix switch finite literal', ['interpreter-matrix-patterns.ts'], 'matrixSwitchFiniteLiteral')
+addCase('matrix switch continuation', ['interpreter-matrix-patterns.ts'], 'matrixSwitchContinuation')
+addCase('matrix switch grouped cases', ['interpreter-matrix-patterns.ts'], 'matrixSwitchGroupedCases')
+addCase('matrix switch narrows discriminant path', ['interpreter-matrix-patterns.ts'], 'matrixSwitchNarrowsDiscriminantPath')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 addCase('negative cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
@@ -42,6 +46,8 @@ addCase('negative indexed cursor update before push surface', ['interpreter-matr
 addCase('negative indexed conditional else count surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedConditionalElseCount')
 addCase('negative indexed mixed extremum/cursor surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixIndexedMixedExtremumAndCursor')
 addCase('negative try/catch surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixTryCatchUnsupported')
+addCase('negative switch broad string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchBroadStringUnsupported')
+addCase('negative switch fallthrough surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchFallthroughUnsupported')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 

@@ -117,3 +117,21 @@ export function negativeMatrixTryCatchUnsupported(): number {
     return 2
   }
 }
+
+export function negativeMatrixSwitchBroadStringUnsupported(kind: string): number {
+  switch (kind) {
+    case 'compact':
+      return 1
+    default:
+      return 0
+  }
+}
+
+export function negativeMatrixSwitchFallthroughUnsupported(kind: 'compact' | 'wide'): number {
+  switch (kind) {
+    case 'compact':
+      return 1
+    case 'wide':
+  }
+  return 0
+}
