@@ -301,3 +301,28 @@ export function matrixSwitchNarrowsDiscriminantPath(spec: MatrixSwitchSpec): num
       return 0
   }
 }
+
+export function matrixArrayAtLast(): number {
+  return [10, 20, 30].at(-1)!
+}
+
+export function matrixStringishMutationPreservesTuple(): [string, number] {
+  const items = [1, 2]
+  let path = ''
+  const value = 5
+  path += `M ${items.length}`
+  return [path, value]
+}
+
+export function matrixTypeofUndefinedGuard(max?: number): number {
+  if (typeof max !== 'undefined') return Math.max(max, 0)
+  return 0
+}
+
+export function matrixOptionalPropertyNullishFallback(dimensions: {width?: number}): number {
+  return Math.max(dimensions?.width ?? 0, 0)
+}
+
+export function matrixNullableObjectOptionalFallback(dimensions: {width: number} | null): number {
+  return Math.max(dimensions?.width ?? 0, 0)
+}

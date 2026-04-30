@@ -38,7 +38,7 @@ infer interpreter matrix: interpreter-matrix-patterns.ts:matrixNestedIifeMapDefa
   return[] follows matrixInput.groups[].items by index
   return follows matrixInput.groups by index
 shape property access call shape: patterns.ts:propertyAccessCallShape
-interpreter fresh interpreter matrix: 11 match, 16 different, 0 fresh-unsupported
+interpreter fresh interpreter matrix: 15 match, 17 different, 0 fresh-unsupported
   DIFFERENT interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
     legacy return.length: int 2..2
     legacy return[].length: int 1..2

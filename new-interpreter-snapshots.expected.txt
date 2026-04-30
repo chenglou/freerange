@@ -99,6 +99,19 @@ case matrix switch grouped cases: interpreter-matrix-patterns.ts:matrixSwitchGro
   return: "hidden" | "visible"
 case matrix switch narrows discriminant path: interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
   return: int 0..4
+case matrix array at last: interpreter-matrix-patterns.ts:matrixArrayAtLast
+  return: int 30..30
+case matrix stringish mutation preserves tuple: interpreter-matrix-patterns.ts:matrixStringishMutationPreservesTuple
+  return.length: int 2..2
+  return[0]: unknown (Stringish assignment changed path += `M ${items.length}`)
+  return[1]: int 5..5
+  return[]: unknown (Stringish assignment changed path += `M ${items.length}`)
+case matrix typeof undefined guard: interpreter-matrix-patterns.ts:matrixTypeofUndefinedGuard
+  return: 0..Infinity
+case matrix optional property nullish fallback: interpreter-matrix-patterns.ts:matrixOptionalPropertyNullishFallback
+  return: 0..Infinity
+case matrix nullable object optional fallback: interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
+  return: 0..Infinity
 case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
@@ -150,3 +163,9 @@ case negative switch broad string surface: interpreter-matrix-negative.ts:negati
 case negative switch fallthrough surface: interpreter-matrix-negative.ts:negativeMatrixSwitchFallthroughUnsupported
   return: unknown (Switch fallthrough is not supported: kind)
   unsupported negativeMatrixSwitchFallthroughUnsupported: Switch fallthrough is not supported: kind
+case negative array at dynamic surface: interpreter-matrix-negative.ts:negativeMatrixArrayAtDynamicUnsupported
+  return: unknown (Array.at only supports constant negative indexes)
+  unsupported negativeMatrixArrayAtDynamicUnsupported: Array.at only supports constant negative indexes
+case negative nullish fallback string surface: interpreter-matrix-negative.ts:negativeMatrixNullishFallbackString
+  return: unknown (Math.max expected number arguments)
+  unsupported negativeMatrixNullishFallbackString: Math.max expected number arguments

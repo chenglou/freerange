@@ -34,6 +34,11 @@ addCase('matrix switch finite literal', ['interpreter-matrix-patterns.ts'], 'mat
 addCase('matrix switch continuation', ['interpreter-matrix-patterns.ts'], 'matrixSwitchContinuation')
 addCase('matrix switch grouped cases', ['interpreter-matrix-patterns.ts'], 'matrixSwitchGroupedCases')
 addCase('matrix switch narrows discriminant path', ['interpreter-matrix-patterns.ts'], 'matrixSwitchNarrowsDiscriminantPath')
+addCase('matrix array at last', ['interpreter-matrix-patterns.ts'], 'matrixArrayAtLast')
+addCase('matrix stringish mutation preserves tuple', ['interpreter-matrix-patterns.ts'], 'matrixStringishMutationPreservesTuple')
+addCase('matrix typeof undefined guard', ['interpreter-matrix-patterns.ts'], 'matrixTypeofUndefinedGuard')
+addCase('matrix optional property nullish fallback', ['interpreter-matrix-patterns.ts'], 'matrixOptionalPropertyNullishFallback')
+addCase('matrix nullable object optional fallback', ['interpreter-matrix-patterns.ts'], 'matrixNullableObjectOptionalFallback')
 addCase('negative default value surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
 addCase('negative alias mutation surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
 addCase('negative cursor update before push surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
@@ -48,6 +53,8 @@ addCase('negative indexed mixed extremum/cursor surface', ['interpreter-matrix-n
 addCase('negative try/catch surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixTryCatchUnsupported')
 addCase('negative switch broad string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchBroadStringUnsupported')
 addCase('negative switch fallthrough surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixSwitchFallthroughUnsupported')
+addCase('negative array at dynamic surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixArrayAtDynamicUnsupported')
+addCase('negative nullish fallback string surface', ['interpreter-matrix-negative.ts'], 'negativeMatrixNullishFallbackString')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'new interpreter snapshots')) process.exitCode = 1
 

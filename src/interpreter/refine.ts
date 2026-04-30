@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   literalValue,
   numberValue,
+  type NullishKind,
   type NumberValue,
   type Value,
 } from '../domain.ts'
@@ -16,6 +17,12 @@ import {
 } from './value-path.ts'
 
 export type EvaluateRefinementExpression = (expression: ts.Expression, frame: InterpreterFrame) => Value
+
+type PresenceGuard = {
+  target: ts.Expression
+  nullish: NullishKind
+  presentWhenTrue: boolean
+}
 
 export function branchFrame(
   frame: InterpreterFrame,
@@ -75,6 +82,7 @@ function refineCondition(frame: InterpreterFrame, condition: ts.Expression, trut
 }
 
 function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression) {
+  if (refinePresenceGuard(frame, expression, truth, evaluateExpression)) return
   const comparison = comparisonForSyntax(expression.operatorToken.kind, truth)
   if (comparison != null) {
     if (refineNumberPath(frame, expression.left, comparison, expression.right, evaluateExpression)) return
@@ -85,6 +93,78 @@ function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExp
     if (refineLiteralEquality(frame, expression.left, expression.right, equalityTruth, evaluateExpression)) return
     refineLiteralEquality(frame, expression.right, expression.left, equalityTruth, evaluateExpression)
   }
+}
+
+function refinePresenceGuard(
+  frame: InterpreterFrame,
+  expression: ts.BinaryExpression,
+  truth: boolean,
+  evaluateExpression: EvaluateRefinementExpression,
+): boolean {
+  const guard = presenceGuardForCondition(expression)
+  if (guard == null || truth !== guard.presentWhenTrue) return false
+  const path = pathFromExpression(guard.target, frame, evaluateExpression)
+  if (path == null) return false
+  const current = readPath(path, frame)
+  if (current.kind !== 'nullable' || !presenceGuardExcludesAbsent(current.absent, guard.nullish)) return false
+  writePath(path, current.present, frame)
+  return true
+}
+
+function presenceGuardForCondition(expression: ts.BinaryExpression): PresenceGuard | null {
+  if (!isNullishComparisonSyntax(expression.operatorToken.kind)) return null
+  return typeofUndefinedPresenceGuard(expression) ?? nullishPresenceGuard(expression)
+}
+
+function typeofUndefinedPresenceGuard(expression: ts.BinaryExpression): PresenceGuard | null {
+  const target = typeofUndefinedSide(expression.left, expression.right) ?? typeofUndefinedSide(expression.right, expression.left)
+  if (target == null) return null
+  return {
+    target,
+    nullish: 'undefined',
+    presentWhenTrue: expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+      || expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken,
+  }
+}
+
+function typeofUndefinedSide(typeofExpression: ts.Expression, literalExpression: ts.Expression): ts.Expression | null {
+  const literal = unwrapExpression(literalExpression)
+  if (!ts.isStringLiteral(literal) || literal.text !== 'undefined') return null
+  const current = unwrapExpression(typeofExpression)
+  return ts.isTypeOfExpression(current) ? current.expression : null
+}
+
+function nullishPresenceGuard(expression: ts.BinaryExpression): PresenceGuard | null {
+  const left = nullishLiteralKind(expression.left)
+  const right = nullishLiteralKind(expression.right)
+  const target = left != null ? expression.right : right != null ? expression.left : null
+  const literal = left ?? right
+  if (target == null || literal == null) return null
+  const loose = expression.operatorToken.kind === ts.SyntaxKind.EqualsEqualsToken
+    || expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken
+  return {
+    target,
+    nullish: loose ? 'nullish' : literal,
+    presentWhenTrue: expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+      || expression.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsToken,
+  }
+}
+
+function nullishLiteralKind(expression: ts.Expression): NullishKind | null {
+  const current = unwrapExpression(expression)
+  if (current.kind === ts.SyntaxKind.NullKeyword) return 'null'
+  return ts.isIdentifier(current) && current.text === 'undefined' ? 'undefined' : null
+}
+
+function presenceGuardExcludesAbsent(absent: NullishKind, guard: NullishKind): boolean {
+  return guard === 'nullish' || absent === guard
+}
+
+function isNullishComparisonSyntax(kind: ts.SyntaxKind): boolean {
+  return kind === ts.SyntaxKind.EqualsEqualsEqualsToken
+    || kind === ts.SyntaxKind.EqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsEqualsToken
+    || kind === ts.SyntaxKind.ExclamationEqualsToken
 }
 
 function refineNumberPath(

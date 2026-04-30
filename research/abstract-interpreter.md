@@ -113,6 +113,8 @@ Control-flow joins are now explicit enough for the migration pass: an unknown `i
 
 Finite-literal `switch` is the same family, not a special report recognizer. The discriminant must already be a finite string/boolean literal value. Case labels must be single finite literals. Empty case labels may group into the next body, `default` covers the still-unmatched values, and non-exhaustive switches can join with the real following statements. Case bodies refine the discriminant path, and literal `==` / `!=` comparisons now evaluate over finite literal sets instead of always returning maybe. Clause fallthrough and broad string discriminants stay unsupported with direct messages.
 
+The expression surface also has the small everyday reads that showed up in the differential list: constant negative `array.at(-k)` when length is proven, template strings as string-ish unknown values, string-ish `+=` that forgets only the changed scalar, `typeof x !== 'undefined'` / `x != null` presence refinement, optional property/element access, and numeric `??` fallbacks. These are intentionally value semantics, not new public atoms.
+
 The differential harness deliberately compares rendered abstract facts, not internal data structures. That keeps it useful while the fresh interpreter is allowed to be more precise than legacy. The next migration work should use the non-match list as a map: first unsupported source families, then missing check/report side effects, then real precision differences.
 
 Old extraction order, still useful as a map of remaining semantic families:

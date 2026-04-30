@@ -24,6 +24,7 @@ import {
   moduloNumbers,
   multiplyNumbers,
   nullValue,
+  nullableValue,
   numberValue,
   powerNumbers,
   subtractNumbers,
@@ -867,6 +868,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   const numeric = numericLiteralValue(expression)
   if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), expression.getText(frame.program.sourceFile), linearConstant(numeric))
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expression.getText(frame.program.sourceFile))
+  if (ts.isTemplateExpression(expression)) return unknown(`Template string ${expression.getText(frame.program.sourceFile)}`)
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
@@ -876,6 +878,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isObjectLiteralExpression(expression)) return evaluateObjectLiteral(expression, frame)
   if (ts.isArrayLiteralExpression(expression)) return evaluateArrayLiteral(expression, frame)
   if (ts.isPrefixUnaryExpression(expression)) return evaluatePrefixUnary(expression, frame)
+  if (ts.isTypeOfExpression(expression)) return evaluateTypeOfExpression(expression, frame)
   if (ts.isBinaryExpression(expression)) return evaluateBinaryExpression(expression, frame)
   if (ts.isConditionalExpression(expression)) return evaluateConditionalExpression(expression, frame)
   if (ts.isCallExpression(expression)) return evaluateCallExpression(expression, frame)
@@ -890,16 +893,38 @@ function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Val
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
   const target = evaluateExpression(expression.expression, frame)
+  const optional = hasQuestionDotToken(expression)
+  if (target.kind === 'nullable' && optional) {
+    const present = readPropertyValue(target.present, expression.name.text, expression.getText(frame.program.sourceFile))
+    return nullableValue(present, expression.getText(frame.program.sourceFile), 'undefined')
+  }
+  if (target.kind === 'null' && optional) return nullValue('undefined')
+  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`)
   return readPropertyValue(target, expression.name.text, expression.getText(frame.program.sourceFile))
 }
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   const target = evaluateExpression(expression.expression, frame)
+  const optional = hasQuestionDotToken(expression)
+  if (target.kind === 'nullable' && optional) {
+    const present = evaluatePresentElementAccess(target.present, expression, frame)
+    return nullableValue(present, expression.getText(frame.program.sourceFile), 'undefined')
+  }
+  if (target.kind === 'null' && optional) return nullValue('undefined')
+  if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`)
+  return evaluatePresentElementAccess(target, expression, frame)
+}
+
+function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported')
   const index = evaluateExpression(expression.argumentExpression, frame)
   const exactIndex = exactInteger(index)
   if (exactIndex == null) return target.kind === 'array' && target.element != null ? target.element : unknownNumber(expression.getText(frame.program.sourceFile))
   return readArrayIndexValue(target, exactIndex, expression.getText(frame.program.sourceFile))
+}
+
+function hasQuestionDotToken(expression: ts.PropertyAccessExpression | ts.ElementAccessExpression) {
+  return (expression as {questionDotToken?: ts.QuestionDotToken}).questionDotToken != null
 }
 
 function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, frame: InterpreterFrame): Value {
@@ -955,7 +980,7 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
   }
   return {
     kind: 'array',
-    length: numberValue(elements.length, elements.length, true, `${expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length)),
+    length: numberValue(elements.length, elements.length, true, String(elements.length), linearConstant(elements.length)),
     elements,
     element,
     expr: expression.getText(frame.program.sourceFile),
@@ -973,15 +998,42 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
   return noteUnsupported(frame, `Unsupported unary expression ${expression.getText(frame.program.sourceFile)}`)
 }
 
+function evaluateTypeOfExpression(expression: ts.TypeOfExpression, frame: InterpreterFrame): Value {
+  return literalValue(typeOfValues(evaluateExpression(expression.expression, frame)), expression.getText(frame.program.sourceFile))
+}
+
+function typeOfValues(value: Value): string[] {
+  if (value.kind === 'number') return ['number']
+  if (value.kind === 'literal') return value.values.map(item => typeof item)
+  if (value.kind === 'null') return [value.expr === 'undefined' ? 'undefined' : 'object']
+  if (value.kind === 'nullable') return [...typeOfValues(value.present), ...absentTypeOfValues(value.absent)]
+  if (value.kind === 'unknown') return ['number', 'string', 'boolean', 'object', 'undefined']
+  return ['object']
+}
+
+function absentTypeOfValues(absent: 'null' | 'undefined' | 'nullish'): string[] {
+  if (absent === 'null') return ['object']
+  if (absent === 'undefined') return ['undefined']
+  return ['object', 'undefined']
+}
+
 function evaluateBinaryExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
   if (isAssignmentOperator(expression.operatorToken.kind)) return evaluateAssignmentExpression(expression, frame)
   if (isComparisonOperator(expression.operatorToken.kind)) return evaluateComparisonExpression(expression, frame)
+  if (expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return evaluateNullishCoalescing(expression, frame)
   const left = evaluateExpression(expression.left, frame)
   const right = evaluateExpression(expression.right, frame)
   if (left.kind !== 'number' || right.kind !== 'number') {
     return noteUnsupported(frame, `Binary expression ${expression.getText(frame.program.sourceFile)} expected numbers`)
   }
   return evaluateNumberBinary(expression.operatorToken.kind, left, right, frame, expression)
+}
+
+function evaluateNullishCoalescing(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
+  const left = evaluateExpression(expression.left, frame)
+  if (left.kind === 'nullable') return joinValues(left.present, evaluateExpression(expression.right, frame))
+  if (left.kind === 'null') return evaluateExpression(expression.right, frame)
+  return left
 }
 
 function evaluateNumberBinary(
@@ -1022,10 +1074,16 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
 
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
   const left = readPath(path, frame)
-  if (left.kind !== 'number' || right.kind !== 'number') {
-    return noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`)
-  }
+  if (left.kind !== 'number' || right.kind !== 'number') return stringishCompoundPlus(left, right, expression) ?? noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`)
   return addNumbers(left, right)
+}
+
+function stringishCompoundPlus(left: Value, right: Value, expression: ts.Expression): Value | null {
+  return valueCanBeString(left) || valueCanBeString(right) ? unknown(`Stringish assignment changed ${expression.getText()}`) : null
+}
+
+function valueCanBeString(value: Value): boolean {
+  return value.kind === 'literal' && value.values.some(item => typeof item === 'string')
 }
 
 function evaluateComparisonExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
@@ -1073,6 +1131,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression.getText(frame.program.sourceFile))
   }
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
+  if (ts.isPropertyAccessExpression(target) && target.name.text === 'at') return evaluateArrayAtCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
   if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
@@ -1083,6 +1142,21 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     if (imported != null) return invokeFitFunction(imported.fn, evaluatedArguments(expression.arguments, frame), frame, imported.program, rootFrame(imported.program).env)
   }
   return noteUnsupported(frame, `Unsupported call ${expression.getText(frame.program.sourceFile)}`)
+}
+
+function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
+  const receiver = evaluateExpression(target.expression, frame)
+  if (receiver.kind !== 'array') return noteUnsupported(frame, 'Array.at expected an array')
+  const offset = expression.arguments.length === 1 ? numericLiteralValue(expression.arguments[0]!) : null
+  if (offset == null || !Number.isInteger(offset) || offset >= 0) return noteUnsupported(frame, 'Array.at only supports constant negative indexes')
+
+  const requiredLength = -offset
+  if (receiver.length.min < requiredLength) return noteUnsupported(frame, `Array.at(${offset}) expected length >= ${requiredLength}`)
+  if (receiver.elements != null) {
+    const value = receiver.elements[receiver.elements.length + offset]
+    return value ?? noteUnsupported(frame, `Array.at(${offset}) has no matching element`)
+  }
+  return receiver.element ?? noteUnsupported(frame, `Array.at(${offset}) element values are not tracked`)
 }
 
 function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
