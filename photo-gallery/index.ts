@@ -14,7 +14,7 @@ function scheduleRender(): void {
 // === generic spring physics
 // 4ms/step for the spring animation's step. Typically 4 steps for 60fps (16.6ms/frame) and 2 for 120fps (8.3ms/frame). Frame time delta varies, so not always true
 // could use 8ms instead, but 120fps' 8.3ms/frame means the computation might not fit in the remaining 0.3ms, which means sometime the simulation step wouldn't even run once, giving the illusion of jank
-const msPerAnimationStep = 4
+const msPerAnimationStep = 4 // @fit > 0
 type Spring = {
   pos: number
   dest: number
@@ -34,7 +34,8 @@ function spring(
 function springStep(config: Spring): void {
   // https://blog.maximeheckel.com/posts/the-physics-behind-spring-animations/
   // this seems inspired by https://github.com/chenglou/react-motion/blob/9e3ce95bacaa9a1b259f969870a21c727232cc68/src/stepper.js
-  const t = msPerAnimationStep / 1000 // convert to seconds for the physics equation
+  // convert to seconds for the physics equation
+  const t = msPerAnimationStep / 1000 // @fit > 0
   const {pos, dest, v, k, b} = config
   // for animations, dest is actually spring at rest. Current position is the spring's stretched/compressed state
   const Fspring = -k * (pos - dest) // Spring stiffness, in kg / s^2
@@ -51,7 +52,16 @@ function springGoToEnd(config: Spring): void {
 }
 
 // === generic helpers
-function clamp(min: number, v: number, max: number): number {
+/** @fit
+ * given max >= min
+ * return >= min
+ * return <= max
+ */
+function clamp(
+  min: number,
+  v: number,
+  max: number,
+): number {
   return v > max ? max : v < min ? min : v
 }
 
@@ -69,7 +79,10 @@ function colsBoxMaxSizeXF(containerSizeX: number): {cols: number; boxMaxSizeX: n
   const boxMinSizeX = 220 // Make sure that on mobile, this min width is big enough not to show 2 images per row. Also, this won't be respected if view's tiny
   const cols = clamp(1, Math.floor((containerSizeX - boxesGapX) / (boxMinSizeX + boxesGapX)), 7) // half of boxesGapX for container's left and right gap
   const boxMaxSizeX = (containerSizeX - boxesGapX - cols * boxesGapX) / cols
-  return {cols, boxMaxSizeX}
+  return {
+    cols, // @fit 1..7
+    boxMaxSizeX,
+  }
 }
 
 const isSafari = navigator.userAgent.includes('Safari') && !navigator.userAgent.includes('Chrome') // Chrome also includes Safari in user-agent string
