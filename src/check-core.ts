@@ -65,10 +65,12 @@ import {
   mergeProvenance,
   numberBranches,
   numberValue,
+  tupleElements,
   unknown,
   unknownArray,
   unknownNumber,
   unknownObject,
+  valueWithDefaultedUndefined,
   withNumberCases,
   type FactSource,
   type LinearConstraint,
@@ -869,19 +871,24 @@ function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program:
   }
 }
 
-function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, options: LocalizeOptions = {}) {
+function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, options: LocalizeOptions = {}) {
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const param = fn.node.parameters[i]!
     const value = argumentValues[i] ?? unknown(`Missing argument ${i} for ${fn.name}`)
-    bindPatternFromValue(param.name, value, env, options)
+    bindPatternFromValue(param.name, parameterArgumentValue(param, value, program), env, options)
   }
 }
 
-function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, thisValue?: Value) {
+function parameterArgumentValue(param: ts.ParameterDeclaration, value: Value, program: Program): Value {
+  const expr = ts.isIdentifier(param.name) ? param.name.text : 'param'
+  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, param.type, program, new Set()))
+}
+
+function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, thisValue?: Value) {
   if (functionHasInstanceThisInput(fn)) {
     env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
   }
-  bindFunctionArgumentParameters(fn, argumentValues, env, {preserveLinear: true})
+  bindFunctionArgumentParameters(fn, argumentValues, env, program, {preserveLinear: true})
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
@@ -1747,7 +1754,7 @@ function bindArrayPattern(pattern: ts.ArrayBindingPattern, value: Value, context
 
 function arrayPatternElementValue(value: Value, index: number): Value {
   if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
-  return value.elements?.[index]
+  return tupleElements(value)?.[index]
     ?? value.element
     ?? unknownNumber(`${value.expr ?? 'array'}[${index}]`)
 }
@@ -1924,7 +1931,7 @@ function evaluateLocalFunctionCall(
   })
 
   const env = programGlobalEnv(context.program)
-  bindFunctionCallInputs(fn, argumentValues, env, options.thisValue)
+  bindFunctionCallInputs(fn, argumentValues, env, context.program, options.thisValue)
 
   const result = evaluateFunctionBody(fn, {
     program: context.program,
@@ -1987,9 +1994,12 @@ function evaluateFunctionCallArguments(
     const value = argument == null
       ? evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram)
       : evaluateCallArgumentExpression(argument, callerContext)
-    values.push(value)
+    const defaultedValue = argument == null || param.initializer == null
+      ? value
+      : valueWithDefaultedUndefined(value, evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram))
+    values.push(defaultedValue)
     texts.push(argument == null ? param.initializer!.getText(calleeProgram.sourceFile) : argument.getText(callerContext.program.sourceFile))
-    bindPatternFromValue(param.name, value, env, {preserveLinear: true})
+    bindPatternFromValue(param.name, parameterArgumentValue(param, defaultedValue, calleeProgram), env, {preserveLinear: true})
   }
 
   return {kind: 'valid', values, texts, env}
@@ -2179,7 +2189,7 @@ function valueWithFunctionContractSummary(
   callSiteBindings?: CallSiteBindings,
 ): Value {
   const env = programGlobalEnv(program)
-  bindFunctionCallInputs(fn, argumentValues, env, thisValue)
+  bindFunctionCallInputs(fn, argumentValues, env, program, thisValue)
   env.set(fitReturnInternalRoot, result)
 
   const context: EvalContext = {
@@ -2365,7 +2375,7 @@ function setFiniteArrayElementValue(current: Value | undefined, expr: string, in
     elements.push(base.element ?? unknownNumber(`${expr}[${elements.length}]`))
   }
   elements[index] = value
-  return {...base, elements}
+  return {...base, layout: 'tuple', elements}
 }
 
 function verifyCallGivenSpecs(
@@ -2379,7 +2389,7 @@ function verifyCallGivenSpecs(
   const specs = functionContractSpecs(calleeProgram, fn)
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
-  bindFunctionCallInputs(fn, argumentValues, env, options.thisValue)
+  bindFunctionCallInputs(fn, argumentValues, env, calleeProgram, options.thisValue)
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
   for (const spec of specs) {

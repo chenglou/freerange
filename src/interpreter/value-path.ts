@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   mergeElementValue,
   numberValue,
+  tupleElements,
   unknown,
   unknownArray,
   unknownNumber,
@@ -77,7 +78,7 @@ export function readPropertyValue(target: Value, name: string, expr: string): Va
 }
 
 export function readArrayIndexValue(target: Value, index: number, expr: string): Value {
-  if (target.kind === 'array') return target.elements?.[index] ?? target.element ?? unknownNumber(expr)
+  if (target.kind === 'array') return tupleElements(target)?.[index] ?? target.element ?? unknownNumber(expr)
   if (target.kind === 'nullable') return readArrayIndexValue(target.present, index, expr)
   return unknown(`${expr} expected an array`)
 }
@@ -125,6 +126,7 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value):
   for (const item of elements) element = mergeElementValue(element, item)
   return {
     ...base,
+    layout: 'tuple',
     elements,
     element,
     length: numberValue(elements.length, elements.length, true, `${base.expr ?? 'array'}.length`, linearConstant(elements.length)),

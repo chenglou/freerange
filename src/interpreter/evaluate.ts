@@ -30,11 +30,13 @@ import {
   numberValue,
   powerNumbers,
   subtractNumbers,
+  tupleElements,
   unknown,
   unknownArray,
   unknownNumber,
   unknownObject,
   valueWithAssumptions,
+  valueWithDefaultedUndefined,
   withNumberCases,
   type ArrayValue,
   type LinearConstraint,
@@ -362,9 +364,20 @@ function bindParameters(parameters: ts.NodeArray<ts.ParameterDeclaration>, argum
   for (let index = 0; index < parameters.length; index++) {
     const param = parameters[index]!
     const argument = argumentValues[index]
-    const value = argument ?? (param.initializer == null ? unknownParamPatternValue(param, frame) : evaluateExpression(param.initializer, frame))
-    bindPattern(param.name, value, frame)
+    const value = parameterDefaultValue(argument ?? null, param, frame)
+    bindPattern(param.name, parameterValue(param, value, frame), frame)
   }
+}
+
+function parameterDefaultValue(argument: Value | null, param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
+  if (argument == null) return param.initializer == null ? unknownParamPatternValue(param, frame) : evaluateExpression(param.initializer, frame)
+  if (param.initializer == null) return argument
+  return valueWithDefaultedUndefined(argument, evaluateExpression(param.initializer, frame))
+}
+
+function parameterValue(param: ts.ParameterDeclaration, value: Value, frame: InterpreterFrame): Value {
+  const expr = ts.isIdentifier(param.name) ? param.name.text : param.name.getText(frame.program.sourceFile)
+  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, param.type, frame.program, new Set()))
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
@@ -457,14 +470,16 @@ function evaluateVariableDeclaration(statement: ts.VariableStatement, declaratio
   const value = declaration.initializer == null
     ? unknown(`Uninitialized local ${declaration.name.getText(frame.program.sourceFile)}`)
     : evaluateClaim(claim, frame, () => evaluateWithObjectPath(frame, variableObjectPath(declaration), () => evaluateExpression(declaration.initializer!, frame)))
-  const boundValue = declarationValue(declaration.name, value, declaration.initializer)
+  const boundValue = declarationValue(declaration, value, frame)
   bindPattern(declaration.name, boundValue, frame)
   afterClaim(claim, boundValue, frame)
 }
 
-function declarationValue(name: ts.BindingName, value: Value, initializer: ts.Expression | undefined): Value {
-  if (!ts.isIdentifier(name) || initializer == null) return value
-  return isContainerLiteralInitializer(initializer) ? localizeContainerLiteralValue(value, name.text, {preserveLinear: true}) : value
+function declarationValue(declaration: ts.VariableDeclaration, value: Value, frame: InterpreterFrame): Value {
+  const expr = ts.isIdentifier(declaration.name) ? declaration.name.text : declaration.name.getText(frame.program.sourceFile)
+  const shaped = valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, declaration.type, frame.program, new Set()))
+  if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return shaped
+  return isContainerLiteralInitializer(declaration.initializer) ? localizeContainerLiteralValue(shaped, declaration.name.text, {preserveLinear: true}) : shaped
 }
 
 function isContainerLiteralInitializer(expression: ts.Expression): boolean {
@@ -479,8 +494,23 @@ function variableObjectPath(declaration: ts.VariableDeclaration): string[] | und
 function evaluateReturnExpression(expression: ts.Expression, node: ts.Node, frame: InterpreterFrame): Value {
   const claim: InterpreterClaim = {kind: 'return', node, expression}
   const value = evaluateClaim(claim, frame, () => evaluateWithObjectPath(frame, ['return'], () => evaluateExpression(expression, frame)))
-  afterClaim(claim, value, frame)
-  return value
+  const shaped = valueWithStructuralFallback(value, returnTypeShape(node, frame))
+  afterClaim(claim, shaped, frame)
+  return shaped
+}
+
+function returnTypeShape(node: ts.Node, frame: InterpreterFrame): Value | null {
+  const fn = ts.isFunctionLike(node) ? node : nearestFunctionLike(node)
+  return fn == null ? null : valueFromFunctionReturnShape('return', fn, frame.program)
+}
+
+function nearestFunctionLike(node: ts.Node): ts.SignatureDeclaration | null {
+  let current: ts.Node | undefined = node.parent
+  while (current != null) {
+    if (ts.isFunctionLike(current)) return current
+    current = current.parent
+  }
+  return null
 }
 
 function evaluateClaim(claim: InterpreterClaim, frame: InterpreterFrame, evaluate: () => Value): Value {
@@ -722,14 +752,15 @@ function evaluateForOfStatementCore(statement: ts.ForOfStatement, frame: Interpr
   if (statement.awaitModifier != null) return {kind: 'return', value: noteUnsupported(frame, 'for await is unsupported', statement)}
   const source = evaluateExpression(statement.expression, frame)
   if (source.kind !== 'array') return {kind: 'return', value: noteUnsupported(frame, `for..of expected an array source, but ${statement.expression.getText(frame.program.sourceFile)} is not proven array-valued`, statement.expression)}
-  if (source.elements == null) return evaluateSymbolicForOfStatement(statement, source, frame, claim)
+  const elements = tupleElements(source)
+  if (elements == null) return evaluateSymbolicForOfStatement(statement, source, frame, claim)
   const itemName = forOfItemName(statement.initializer)
   const scopedNames = [...forOfScopedNames(statement.initializer), ...forOfBodyScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
   if (itemName != null) frame.loopStack.push({source, sourceExpr, mode: 'finite', statementIndex: 0, appends: []})
   try {
-    for (const element of source.elements) {
+    for (const element of elements) {
       bindForOfInitializer(statement.initializer, element, frame)
       const flow = evaluateBranch(statement.statement, frame)
       if (flow.kind !== 'fallthrough') return flow
@@ -1251,6 +1282,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
   if (expression.text === 'undefined') return unknown('undefined value is outside the current interpreter surface')
+  if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, 'Infinity')
   return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`)
 }
 
@@ -1314,7 +1346,7 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
     && targetPath != null
     && expressionMentionsArrayLength(expression.argumentExpression, targetPath.root)
   ) {
-    return noteUnsupported(frame, 'Array length-derived index on finite local arrays inside loops is not supported', expression.argumentExpression)
+    return noteUnsupported(frame, 'Array length-derived index on local arrays inside loops is not supported', expression.argumentExpression)
   }
   const index = evaluateExpression(expression.argumentExpression, frame)
   const finiteCase = finiteArrayElementAccess(target, index, expression, frame)
@@ -1391,12 +1423,13 @@ function addValueRangeAssumptions(value: Value, frame: InterpreterFrame) {
 
 function finiteArrayElementAccess(target: Value, index: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value | null {
   if (target.kind === 'nullable') return finiteArrayElementAccess(target.present, index, expression, frame)
-  if (target.kind !== 'array' || target.elements == null || index.kind !== 'number' || index.cases == null) return null
+  const elements = target.kind === 'array' ? tupleElements(target) : null
+  if (elements == null || index.kind !== 'number' || index.cases == null) return null
   let result: Value | null = null
   for (const branch of numberBranches(index)) {
     const choice = exactInteger(branch.value)
     if (choice == null) return null
-    const value = target.elements[choice]
+    const value = elements[choice]
     if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`, expression.argumentExpression ?? expression)
     const branchValue = valueWithAssumptions(value, branch.assumptions)
     result = result == null ? branchValue : joinValues(result, branchValue)
@@ -1476,6 +1509,7 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
   }
   return {
     kind: 'array',
+    layout: 'collection',
     length,
     elements,
     element,
@@ -1820,8 +1854,9 @@ function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyA
 
   const requiredLength = -offset
   if (receiver.length.min < requiredLength) return noteUnsupported(frame, `Array.at(${offset}) expected length >= ${requiredLength}`)
-  if (receiver.elements != null) {
-    const value = receiver.elements[receiver.elements.length + offset]
+  const elements = tupleElements(receiver)
+  if (elements != null) {
+    const value = elements[elements.length + offset]
     return value ?? noteUnsupported(frame, `Array.at(${offset}) has no matching element`)
   }
   return receiver.element ?? noteUnsupported(frame, `Array.at(${offset}) element values are not tracked`)
@@ -1890,31 +1925,13 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'map callback must be an inline function')
   const sourceExpr = sourceExpression(source, target.expression, frame)
-  const mapped: Value[] = []
-  let finiteElement: Value | null = null
-  if (source.elements != null) {
-    for (let index = 0; index < source.elements.length; index++) {
-      const item = source.elements[index]!
-      const result = invokeInlineFunction(
-        '<map>',
-        callbackFn,
-        [
-          item,
-          numberValue(index, index, true, `${index}`, linearConstant(index)),
-          source,
-        ],
-        frame,
-      )
-      mapped.push(result)
-      finiteElement = mergeElementValue(finiteElement, result)
-    }
-  }
   const abstractElement = evaluateMapElement(source, sourceExpr, callbackFn, frame)
   return {
     kind: 'array',
+    layout: 'collection',
     length: source.length,
-    elements: source.elements == null ? null : mapped,
-    element: abstractElement ?? finiteElement,
+    elements: null,
+    element: abstractElement,
     expr: expression.getText(frame.program.sourceFile),
     summary: emptyArraySummary(mapOrigin(source, sourceExpr)),
   }
@@ -1944,51 +1961,14 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function')
   const sourceExpr = sourceExpression(source, target.expression, frame)
   const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
-  if (source.elements == null) {
-    const length = numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`)
-    addLengthAtMostSourceFact(length, source.length, frame)
-    return {
-      kind: 'array',
-      length,
-      elements: null,
-      element: source.element,
-      expr: expression.getText(frame.program.sourceFile),
-      summary,
-    }
-  }
-
-  const elements: Value[] = []
-  let element: Value | null = null
-  let sawUnknownPredicate = false
-  for (let index = 0; index < source.elements.length; index++) {
-    const item = source.elements[index]!
-    const keep = invokeInlineFunction(
-      '<filter>',
-      callbackFn,
-      [
-        item,
-        numberValue(index, index, true, `${index}`, linearConstant(index)),
-        source,
-      ],
-      frame,
-    )
-    const truth = literalBoolean(keep)
-    if (truth === false) continue
-    if (truth == null) {
-      sawUnknownPredicate = true
-      element = mergeElementValue(element, item)
-      continue
-    }
-    elements.push(item)
-    element = mergeElementValue(element, item)
-  }
-  const length = numberValue(elements.length, sawUnknownPredicate ? source.elements.length : elements.length, true, `${expression.getText(frame.program.sourceFile)}.length`, sawUnknownPredicate ? null : linearConstant(elements.length))
-  if (sawUnknownPredicate) addLengthAtMostSourceFact(length, source.length, frame)
+  const length = numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`)
+  addLengthAtMostSourceFact(length, source.length, frame)
   return {
     kind: 'array',
+    layout: 'collection',
     length,
-    elements: sawUnknownPredicate ? null : elements,
-    element,
+    elements: null,
+    element: source.element,
     expr: expression.getText(frame.program.sourceFile),
     summary,
   }

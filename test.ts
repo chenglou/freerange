@@ -17,6 +17,17 @@ if (positiveReport.phase !== 'ready') {
   console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 unknown`)
 }
 
+const photoGalleryReport = await verifyFitFiles(['photo-gallery/index.ts'])
+if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 26 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.unknown !== 0) {
+  console.error('expected photo-gallery literal data to stay summarized')
+  console.error(photoGalleryReport.phase === 'ready'
+    ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.unknown} unknown`
+    : JSON.stringify(photoGalleryReport, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('photo-gallery: summarized array data')
+}
+
 const unboundedNonnegativeProduct = multiplyNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
   numberValue(0, Number.POSITIVE_INFINITY, false, 'right'),

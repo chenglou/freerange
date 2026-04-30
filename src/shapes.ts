@@ -6,7 +6,9 @@ import {
   mergeNullishKind,
   nullableValue,
   finiteNumberValue,
+  isDefinitelyEmptyArray,
   numberValue,
+  tupleArray,
   unknown,
   unknownArray,
   unknownArrayLength,
@@ -76,14 +78,37 @@ function objectWithStructuralFallback(value: Extract<Value, {kind: 'object'}>, f
 
 function arrayWithStructuralFallback(value: Extract<Value, {kind: 'array'}>, fallback: Extract<Value, {kind: 'array'}>): Value {
   const fallbackElement = fallback.element
+  const layout = value.layout === 'tuple' || fallback.layout === 'tuple' ? 'tuple' : 'collection'
+  const fallbackElements = fallback.elements
+  const elements = layout === 'tuple'
+    ? arrayElementsWithStructuralFallback(value.elements, fallbackElements, fallbackElement)
+    : null
+  const element = arrayElementWithStructuralFallback(value, fallbackElement)
   return {
     ...value,
-    elements: value.elements == null
-      ? null
-      : value.elements.map((element, index) => valueWithStructuralFallback(element, fallback.elements?.[index] ?? fallbackElement)),
-    element: value.element == null ? fallbackElement : valueWithStructuralFallback(value.element, fallbackElement),
+    layout,
+    elements,
+    element,
     expr: value.expr ?? fallback.expr,
   }
+}
+
+function arrayElementWithStructuralFallback(value: Extract<Value, {kind: 'array'}>, fallbackElement: Value | null): Value | null {
+  if (value.element != null) return valueWithStructuralFallback(value.element, fallbackElement)
+  return isDefinitelyEmptyArray(value) ? null : fallbackElement
+}
+
+function arrayElementsWithStructuralFallback(elements: Value[] | null, fallbackElements: Value[] | null, fallbackElement: Value | null): Value[] | null {
+  const count = Math.max(elements?.length ?? 0, fallbackElements?.length ?? 0)
+  if (count === 0) return null
+  const slots: Value[] = []
+  for (let index = 0; index < count; index++) {
+    const fallback = fallbackElements?.[index] ?? fallbackElement
+    const value = elements?.[index] ?? fallback
+    if (value == null) return null
+    slots.push(valueWithStructuralFallback(value, fallback))
+  }
+  return slots
 }
 
 function isBroadUnknownNumber(value: Value) {
@@ -221,7 +246,7 @@ function tupleArrayTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker,
     elements.push(memberValue)
     element = element == null ? memberValue : joinValues(element, memberValue)
   }
-  return {kind: 'array', length: tupleLengthRangeValue(expr, type), elements, element, expr, summary: null}
+  return tupleArray(expr, tupleLengthRangeValue(expr, type), elements, element)
 }
 
 function isRequiredFixedTuple(type: ts.Type) {
@@ -298,7 +323,7 @@ function valueFromTupleSyntaxType(expr: string, type: ts.TupleTypeNode, program:
     elements.push(value)
     element = element == null ? value : joinValues(element, value)
   }
-  return {kind: 'array', length: tupleLengthValue(expr, elements.length, elements.length), elements, element, expr, summary: null}
+  return tupleArray(expr, tupleLengthValue(expr, elements.length, elements.length), elements, element)
 }
 
 function tupleElementType(element: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {

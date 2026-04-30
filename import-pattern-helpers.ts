@@ -64,7 +64,7 @@ export function importedBox<T>(value: T): ImportedBox<T> {
  * return[2] >= 0
  * return[3] >= 0
  */
-export function importedTupleCenter(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+export function importedTupleCenter(sourceX: number, sourceY: number, targetX: number, targetY: number): [number, number, number, number] {
   const xOffset = Math.abs(targetX - sourceX)
   const yOffset = Math.abs(targetY - sourceY)
   return [sourceX + xOffset, sourceY + yOffset, xOffset, yOffset]

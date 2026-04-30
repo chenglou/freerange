@@ -48,7 +48,7 @@ export const destructuredArrowParamClaims = ({x, y, width, height}: PatternRect)
   y2: y + height, // @fit == y + height
 })
 
-function tupleCenterOffsets(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+function tupleCenterOffsets(sourceX: number, sourceY: number, targetX: number, targetY: number): [number, number, number, number] {
   const xOffset = Math.abs(targetX - sourceX) / 2
   const yOffset = Math.abs(targetY - sourceY) / 2
   return [sourceX + xOffset, sourceY + yOffset, xOffset, yOffset]
@@ -1608,7 +1608,7 @@ export function forgettableWhileLoopPreservesUnrelated(
 export function scalarStringishMutationPreservesTupleFacts(
   items: number[],
   value: number, // @fit 0..10
-) {
+): [string, number] {
   let path = ''
   path += `M ${items.length}`
   return [path, value]
@@ -1714,21 +1714,24 @@ export function arrayLiteralIndex(index: number) {
  * return: 10 | 30
  */
 export function arrayLiteralFiniteIndexCases(index: number) {
-  return [10, 20, 30][index]
+  const values: [10, 20, 30] = [10, 20, 30]
+  return values[index]
 }
 
 /** @fit
  * return: int 30..30
  */
 export function arrayLiteralAtLast() {
-  return [10, 20, 30].at(-1)!
+  const values: [10, 20, 30] = [10, 20, 30]
+  return values.at(-1)!
 }
 
 /** @fit
  * return: int 20..20
  */
 export function arrayLiteralAtSecondLast() {
-  return [10, 20, 30].at(-2)!
+  const values: [10, 20, 30] = [10, 20, 30]
+  return values.at(-2)!
 }
 
 /** @fit

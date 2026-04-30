@@ -65,7 +65,7 @@ function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: 
     elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
   }
   const length = numberValue(expression.elements.length, expression.elements.length, true, `${expr}.length`, linearConstant(expression.elements.length))
-  return {kind: 'array', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
+  return {kind: 'array', layout: 'collection', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
 }
 
 function valueWithoutNumberCases(value: Value): Value {

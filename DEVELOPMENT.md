@@ -107,7 +107,7 @@ It also separates explicit function and loop comment lines into:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it.
 
-Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: nested literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
+Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 
 Treat `infer`, `audit:demos`, and normal reports as one adoption loop: inspect
 what source proves, keep the human-important `@fit` comments, then classify any

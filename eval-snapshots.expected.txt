@@ -29,14 +29,15 @@ infer matrix default param order
   local base == 10
   local base: int 10..10
 infer matrix for-of push visible rows
-  return return.length == rows.length
-  return return.length: int 2..2
-  return return[].height: 2 | 6
+  return return.length: 0 | 3
+  return return[].height == items[].height
+  return return[].height: 2 | 4 | 6
   return return is an order-preserving subset of items
   local items.length: int 3..3
   local items[].height: 2 | 4 | 6
-  local rows.length: int 2..2
-  local rows[].height: 2 | 6
+  local rows.length: 0 | 3
+  local rows[].height == items[].height
+  local rows[].height: 2 | 4 | 6
   local rows is an order-preserving subset of items
 infer matrix abstract for-of param rows
   return return.rows.length == items.length

@@ -15,7 +15,7 @@ Current milestone: one interpreter owns source evaluation. The checker layer own
 - numbers: intervals, integer bit, finite cases, linear expression, provenance
 - literals: finite booleans / strings
 - objects: required known props
-- arrays: length, finite slots, element summary, sequence summary
+- arrays: length, collection element summary, tuple/product slots, sequence summary
 - nullable / null / unknown
 
 TypeScript shape is a fallback adapter, not proof. It can say a path exists as `number`; it cannot prove the numeric domain unless source or a checked contract earned it.
@@ -45,7 +45,7 @@ Call evaluation has four paths:
 - class method/getter calls with `this`
 - selected built-ins such as `Math`, array reads, `map`, and `filter`
 
-Default parameter initializers run in parameter order in the callee env. Explicit `undefined`, rest params, and destructured defaults stay outside the surface until real pressure earns them.
+Default parameter initializers run in parameter order in the callee env. Omitted args and explicit `undefined` / optional args fall through to those defaults; rest params and destructured defaults stay outside the surface until real pressure earns them.
 
 ## Mutation
 
@@ -91,7 +91,7 @@ Current core:
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, `map`, finite `filter`, finite `for..of`, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree, origin-fact, and unsupported-shape snapshots
 - `verify-interpreter-snapshots.ts`: focused kernels for interpreter evolution
 

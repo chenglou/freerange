@@ -949,16 +949,16 @@ Supported today:
 - `items.length`
 - `items[]: 0..400`
 - `items[].height: 0..40`
-- array literal length and item values
-- finite array/tuple element access like `return[2] >= 0`
+- array literal length and summarized item values
+- exact fixed-slot access only for tuple/product-shaped values like `return[2] >= 0`
 - TypeScript-known required fixed tuple slots, including fixed length and per-slot shape
 - optional/rest tuple shapes keep safe length ranges, but do not expose exact per-slot facts
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
-- bounded literal indexing; exact finite index cases like `0 | 2` only read those slots
+- bounded literal indexing; exact finite index cases like `0 | 2` only read those slots on tuple/product-shaped values
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize previous/current and current/next neighborhoods once bounds prove them live
-- `items.at(-k)` for constant negative integer `k` when `items.length >= k`; dynamic `.at(index)` is not in the static subset yet
+- `items.at(-k)` for tuple/product-shaped values and constant negative integer `k` when the length is known; dynamic `.at(index)` is not in the static subset yet
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, clear mutation statements whose changed roots can be forgotten, side-effect-free return branches, and a final `return`
@@ -973,6 +973,12 @@ Strict branch checks know integer steps. If `focused` is proven integer, `focuse
 ```ts
 if (focused > 0) return items[focused - 1]!
 ```
+
+Normal arrays are collections, so Freerange uses their element summary instead
+of unrolling every literal slot through `map`, `filter`, or `for...of`.
+Fixed slots are a tuple/product feature: annotate the value as a tuple, return
+a tuple-typed helper, or use an explicit fixed index path when the proof really
+depends on one position.
 
 `map` support is deliberately tiny:
 
@@ -1264,7 +1270,7 @@ The checker understands a small pure subset:
 - class methods and getters, with `this` as an input root for instance members
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
-- omitted trailing arguments that use simple default parameter initializers
+- omitted trailing arguments that use simple default parameter initializers, plus explicit `undefined`/optional arguments falling through to those defaults
 - local type/interface `// @fit` contracts on required fields and sibling relations, including nested object fields and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
@@ -1283,7 +1289,7 @@ The checker understands a small pure subset:
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
-- array literals, spread, `.length`, bounded indexing
+- array literals, spread, `.length`, summarized element values, bounded indexing, and exact tuple/product-slot indexing
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
@@ -1310,7 +1316,7 @@ Not supported yet:
 - browser runs, screenshots, runtime traces, sampled sweeps
 - published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
-- rest params, destructured default params, and treating explicit `undefined` as an omitted default
+- rest params and destructured default params
 - type-field contracts on optional fields, imported type declarations, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
 - general TS control-flow narrowing, overload semantics, and generic value reasoning
 - higher-order call contracts, general closures, or callback reasoning

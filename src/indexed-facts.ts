@@ -3,6 +3,7 @@ import {
   joinValues,
   numberBranches,
   numberValue,
+  tupleElements,
   unknown,
   unknownNumber,
   valueWithAssumptions,
@@ -20,12 +21,13 @@ import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.t
 import {comparisonConstraint, proveComparison} from './proof.ts'
 
 export function elementValueForIndexCases(target: ArrayValue, index: NumberValue): Value | null {
-  if (target.elements == null || index.cases == null) return null
+  const elements = tupleElements(target)
+  if (elements == null || index.cases == null) return null
   let value: Value | null = null
   for (const indexCase of numberBranches(index)) {
-    const slot = exactFiniteArrayIndex(indexCase.value, target.elements.length)
+    const slot = exactFiniteArrayIndex(indexCase.value, elements.length)
     if (slot == null) return null
-    const element = target.elements[slot] ?? target.element ?? unknown('Array element values are not tracked')
+    const element = elements[slot] ?? target.element ?? unknown('Array element values are not tracked')
     const elementCase = valueWithAssumptions(element, indexCase.assumptions)
     value = value == null ? elementCase : joinValues(value, elementCase)
   }

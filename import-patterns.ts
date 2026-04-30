@@ -200,7 +200,7 @@ export function namespaceImportedStructuralShape(items: {height: number}[]) {
  * return[3] >= 0
  * return[4] >= 0
  */
-export function importedTupleSummaryFeedsDestructure(sourceX: number, sourceY: number, targetX: number, targetY: number) {
+export function importedTupleSummaryFeedsDestructure(sourceX: number, sourceY: number, targetX: number, targetY: number): [string, number, number, number, number] {
   const [, , offsetX, offsetY] = importedTupleCenter(sourceX, sourceY, targetX, targetY)
   return ['path', 0, 0, offsetX, offsetY]
 }

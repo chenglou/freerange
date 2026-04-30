@@ -776,10 +776,10 @@ UNKNOWN negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: retu
   Array.at(-2) expected length >= 2
 FAIL negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
   value was int 10..30, expected one of 20 | 40
-  branches produced 10, 30
+  branches produced 10, 20, 30
   missing: int 10..30 in {20, 40}
 UNKNOWN negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
-  Array length-derived index on finite local arrays inside loops is not supported
+  Array length-derived index on local arrays inside loops is not supported
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
   Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index
 UNKNOWN negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: return.current == return.previous
@@ -941,9 +941,7 @@ UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: ret
 UNKNOWN negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
   Nullable value input.rows was not proven present
 UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
-  known:
-    importedTupleWithOneOffset(value)[]: any number
-  missing fact: importedTupleWithOneOffset(value)[] >= 0
+  Branches returned incompatible value shapes
 FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: call matrixNegativeDefault(): requires value >= 0
   called function requires value >= 0
   this call passes value = -1

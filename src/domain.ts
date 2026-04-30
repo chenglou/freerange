@@ -61,8 +61,11 @@ export type ObjectValue = {
   expr: string | null
 }
 
+export type ArrayLayout = 'collection' | 'tuple'
+
 export type ArrayValue = {
   kind: 'array'
+  layout: ArrayLayout
   length: NumberValue
   elements: Value[] | null
   element: Value | null
@@ -242,12 +245,35 @@ export function unknownArrayLength(name: string): NumberValue {
 export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): ArrayValue {
   return {
     kind: 'array',
+    layout: 'collection',
     length,
     elements: null,
     element,
     expr: name,
     summary: null,
   }
+}
+
+export function tupleArray(
+  expr: string | null,
+  length: NumberValue,
+  elements: Value[] | null,
+  element: Value | null,
+  summary: ArraySummary | null = null,
+): ArrayValue {
+  return {
+    kind: 'array',
+    layout: 'tuple',
+    length,
+    elements,
+    element,
+    expr,
+    summary,
+  }
+}
+
+export function tupleElements(value: ArrayValue): Value[] | null {
+  return value.layout === 'tuple' ? value.elements : null
 }
 
 export function nullValue(expr: string | null = 'null'): NullValue {
@@ -259,6 +285,13 @@ export function nullableValue(present: Value, expr: string | null = null, absent
   if (present.kind === 'null') return unknown('Nullable value had no present branch')
   if (present.kind === 'nullable') return {...present, absent: mergeNullishKind(present.absent, absent), expr: expr ?? present.expr}
   return {kind: 'nullable', present, absent, expr}
+}
+
+export function valueWithDefaultedUndefined(value: Value, fallback: Value): Value {
+  if (value.kind === 'nullable' && value.absent === 'undefined') return joinValues(value.present, fallback)
+  if (value.kind === 'nullable' && value.absent === 'nullish') return nullableValue(joinValues(value.present, fallback), value.expr, 'null')
+  if (value.kind === 'null' && value.expr === 'undefined') return fallback
+  return value
 }
 
 export function mergeNullishKind(left: NullishKind, right: NullishKind): NullishKind {
@@ -610,12 +643,18 @@ export function joinValues(left: Value, right: Value): Value {
   if (left.kind === 'array' && right.kind === 'array') {
     const length = joinValues(left.length, right.length)
     if (length.kind !== 'number') return unknown('Array branches had incompatible lengths')
+    const elements = left.layout === 'tuple'
+      && right.layout === 'tuple'
+      && left.elements != null
+      && right.elements != null
+      && left.elements.length === right.elements.length
+      ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements![index]!))
+      : null
     return {
       kind: 'array',
+      layout: elements == null ? 'collection' : 'tuple',
       length,
-      elements: left.elements != null && right.elements != null && left.elements.length === right.elements.length
-        ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements![index]!))
-        : null,
+      elements,
       element: mergeElementValue(left.element, right.element),
       expr: left.expr != null && left.expr === right.expr ? left.expr : null,
       summary: joinArraySummary(left, right),
@@ -660,7 +699,7 @@ function originSummaryFromEmptyBranch(emptyCandidate: ArrayValue, other: ArrayVa
   }
 }
 
-function isDefinitelyEmptyArray(value: ArrayValue) {
+export function isDefinitelyEmptyArray(value: ArrayValue) {
   return value.length.max === 0
     && value.element == null
     && (value.elements == null || value.elements.length === 0)
