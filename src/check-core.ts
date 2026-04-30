@@ -109,7 +109,6 @@ import {
 } from './reporting.ts'
 import {
   structuralShape,
-  valueFromCallReturnShape,
   valueFromFunctionReturnShape,
   valueFromNodeShape,
   valueFromSyntaxTypeShape,
@@ -119,7 +118,6 @@ import {
   factsFromEnvRoots,
   factsFromValue,
   localFactsFromEnv,
-  numberFacts,
   uniqueFacts,
 } from './facts.ts'
 import {
@@ -170,6 +168,10 @@ import {
   functionInputRoots,
   isFunctionLikeWithBody,
 } from './function-shape.ts'
+import {
+  inspectFunctionShapeInsights,
+  type ShapeInspectState,
+} from './shape-inspect.ts'
 import {
   evaluateInterpreterExpression,
   evaluateInterpreterFunctionBody,
@@ -256,7 +258,10 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
       if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
-      insights.push(...inspectFunctionShapes(program, fn, contractCache, options))
+      const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn) || functionHasTypeContracts(program, fn)
+        ? evaluateFunctionShapeState(program, fn, contractCache)
+        : null
+      insights.push(...inspectFunctionShapeInsights(program, fn, state, options))
     }
   }
   return {files: paths, insights}
@@ -651,39 +656,7 @@ function scoutFunctionCandidates(program: Program, fn: FitFunction): FitScoutCan
   return uniqueScoutCandidates(candidates)
 }
 
-type FunctionShapeState = {
-  baseEnv: Map<string, Value>
-  env: Map<string, Value>
-  result: Value
-}
-
-function inspectFunctionShapes(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>, options: FitShapeOptions): FitShapeInsight[] {
-  const functionName = fn.name
-  const insights: FitShapeInsight[] = []
-  const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn) || functionHasTypeContracts(program, fn)
-    ? evaluateFunctionShapeState(program, fn, contractCache)
-    : null
-
-  for (const param of fn.node.parameters) {
-    if (!ts.isIdentifier(param.name)) continue
-    const subject = `param ${param.name.text}`
-    const freerange = state?.baseEnv.get(param.name.text) ?? valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
-    const typescript = valueFromNodeShape(param.name.text, param.name, program)
-    addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
-  }
-
-  const syntaxReturn = valueFromSyntaxTypeShape(fitReturnPublicRoot, fn.node.type, program, new Set())
-  const tsReturn = valueFromFunctionReturnShape(fitReturnPublicRoot, fn.node, program)
-  addShapeInsight(insights, program, functionName, 'return type', fitReturnPublicRoot, state?.result ?? syntaxReturn, tsReturn)
-
-  if (fn.node.body != null && (state != null || options.calls === true)) {
-    collectShapeInsightsFromNode(fn.node.body, program, functionName, state, options, insights)
-  }
-
-  return insights
-}
-
-function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FunctionShapeState {
+function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): ShapeInspectState {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
   const inputSpecs = functionInputSpecs(program, fn, specs)
@@ -701,161 +674,6 @@ function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractC
   const baseEnv = new Map(env)
   const state = evaluateFunctionBodyState(fn, context)
   return {baseEnv, env: state.env, result: state.result}
-}
-
-function collectShapeInsightsFromNode(node: ts.Node, program: Program, functionName: string, state: FunctionShapeState | null, options: FitShapeOptions, insights: FitShapeInsight[]) {
-  if (node !== program.sourceFile && isNestedFunctionLike(node)) return
-
-  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-    const freerange = state?.env.get(node.name.text) ?? valueFromSyntaxTypeShape(node.name.text, node.type, program, new Set())
-    const typescript = valueFromNodeShape(node.name.text, node.name, program)
-    addShapeInsight(insights, program, functionName, `local ${node.name.text}`, node.name.text, freerange, typescript)
-  }
-
-  if (options.calls === true && ts.isCallExpression(node)) {
-    const typescript = structuralShape(valueFromCallReturnShape('shape', node, program))
-    addShapeInsight(insights, program, functionName, `call ${compactNodeText(node, program.sourceFile)}`, 'shape', null, typescript)
-  }
-
-  ts.forEachChild(node, child => collectShapeInsightsFromNode(child, program, functionName, state, options, insights))
-}
-
-function isNestedFunctionLike(node: ts.Node) {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
-    || ts.isConstructorDeclaration(node)
-}
-
-function addShapeInsight(
-  insights: FitShapeInsight[],
-  program: Program,
-  functionName: string,
-  subject: string,
-  root: string,
-  freerangeValue: Value | null,
-  typescriptValue: Value | null,
-) {
-  const typescript = shapeFactTexts(root, typescriptValue)
-  if (typescript.length === 0) return
-  const freerange = shapeFactTexts(root, freerangeValue)
-  const extra = typescript.filter(fact => !freerangeFactsImply(freerange, fact))
-  if (extra.length === 0) return
-  insights.push({file: program.file, functionName, subject, freerange, typescript: extra})
-}
-
-function freerangeFactsImply(facts: string[], fact: string) {
-  if (facts.includes(fact)) return true
-  const shape = shapeFactParts(fact)
-  if (shape == null) return false
-  return facts.some(candidate => factAtPathImpliesShapeFact(candidate, shape.path, shape.description))
-}
-
-function factAtPathImpliesShapeFact(fact: string, path: string, description: string) {
-  if (description === 'number') {
-    return fact.startsWith(`${path}: `) || fact.startsWith(`${path} == `)
-  }
-  if (description === 'int 0..Infinity') {
-    const range = rangeFactAtPath(fact, path)
-    if (range != null) return range.isInteger && range.min >= 0
-    const equal = equalityFactRightAtPath(fact, path)
-    return equal != null && expressionIsClearlyNonnegativeInteger(equal)
-  }
-  return false
-}
-
-function rangeFactAtPath(fact: string, path: string): {isInteger: boolean; min: number; max: number} | null {
-  return rangeFactForExpression(fact, path)
-}
-
-function rangeFactForExpression(fact: string, expression: string): {isInteger: boolean; min: number; max: number} | null {
-  if (!fact.startsWith(`${expression}: `)) return null
-  const text = fact.slice(expression.length + 2)
-  const match = /^(int )?(-?(?:\d+(?:\.\d+)?|Infinity))\.\.(-?(?:\d+(?:\.\d+)?|Infinity))$/.exec(text)
-  if (match == null) return finiteNumberUnionRange(text)
-  const min = parsePrintedNumber(match[2]!)
-  const max = parsePrintedNumber(match[3]!)
-  return min == null || max == null ? null : {isInteger: match[1] != null, min, max}
-}
-
-function finiteNumberUnionRange(text: string): {isInteger: boolean; min: number; max: number} | null {
-  const values = text.split('|').map(part => parsePrintedNumber(part.trim()))
-  if (values.length <= 1 || values.some(value => value == null)) return null
-  const numbers = values as number[]
-  return {
-    isInteger: numbers.every(Number.isInteger),
-    min: Math.min(...numbers),
-    max: Math.max(...numbers),
-  }
-}
-
-function parsePrintedNumber(text: string): number | null {
-  if (text === 'Infinity') return Number.POSITIVE_INFINITY
-  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
-  const value = Number(text)
-  return Number.isFinite(value) ? value : null
-}
-
-function equalityFactRightAtPath(fact: string, path: string): string | null {
-  const prefix = `${path} == `
-  return fact.startsWith(prefix) ? fact.slice(prefix.length).trim() : null
-}
-
-function expressionIsClearlyNonnegativeInteger(expression: string) {
-  if (/^\d+$/.test(expression)) return true
-  return /^[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*|\[\])*\.(?:length)$/.test(expression)
-}
-
-function shapeFactParts(fact: string): {path: string; description: string} | null {
-  const index = fact.indexOf(': ')
-  if (index < 0) return null
-  return {
-    path: fact.slice(0, index),
-    description: fact.slice(index + 2),
-  }
-}
-
-function shapeFactTexts(root: string, value: Value | null): string[] {
-  if (value == null) return []
-  return [...new Set(shapeFactsFromValue(root, value))]
-}
-
-function shapeFactsFromValue(path: string, value: Value): string[] {
-  if (value.kind === 'unknown') return []
-  if (value.kind === 'null' || value.kind === 'nullable') return []
-  if (value.kind === 'literal') return []
-  if (value.kind === 'number') {
-    if (!isStructuralShapePath(path)) return []
-    const facts = numberFacts(path, value).map(fact => fact.text)
-    return facts.length === 0 ? [`${path}: number`] : facts
-  }
-  if (value.kind === 'object') {
-    const facts: string[] = []
-    for (const [name, prop] of [...value.props.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      facts.push(...shapeFactsFromValue(`${path}.${name}`, prop))
-    }
-    return facts
-  }
-
-  const facts = numberFacts(`${path}.length`, value.length).map(fact => fact.text)
-  if (value.element != null) facts.push(...shapeFactsFromValue(`${path}[]`, value.element))
-  return facts
-}
-
-function compactNodeText(node: ts.Node, sourceFile: ts.SourceFile) {
-  return node.getText(sourceFile)
-    .replace(/\s+/g, ' ')
-    .replace(/\( /g, '(')
-    .replace(/ ,/g, ',')
-    .replace(/, \)/g, ')')
-    .replace(/ \)/g, ')')
-    .trim()
-}
-
-function isStructuralShapePath(path: string) {
-  return path.includes('.') || path.includes('[]')
 }
 
 function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], program: Program, env: Map<string, Value>) {
@@ -1413,6 +1231,13 @@ const checkSpecHooks: CheckSpecHooks = {
   evaluateExpression: (expression, context) => evaluateCheckedExpression(expression, context),
   evaluateDomainPath: (domainPath, context) => evaluateDomainPath(domainPath, context),
   parsePrintedNumber,
+}
+
+function parsePrintedNumber(text: string): number | null {
+  if (text === 'Infinity') return Number.POSITIVE_INFINITY
+  if (text === '-Infinity') return Number.NEGATIVE_INFINITY
+  const value = Number(text)
+  return Number.isFinite(value) ? value : null
 }
 
 function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {

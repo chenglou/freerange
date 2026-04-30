@@ -40,6 +40,7 @@ bun install
 
 - [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and `doctor` orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/shape-inspect.ts](./src/shape-inspect.ts) — dev-only shape comparison built from interpreter values and typed facts, not reparsed report strings
 - [src/interpreter/](./src/interpreter) — abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting
 - [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
