@@ -4,8 +4,8 @@ import {
   formatInterpreterIssues,
   formatInterpreterValue,
 } from './src/interpreter/format.ts'
-import {readTopLevelGlobal} from './src/check.ts'
 import {loadFitProject} from './src/modules.ts'
+import {readTopLevelGlobal} from './src/module-values.ts'
 import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 
 const expectedPath = 'interpreter-snapshots.expected.txt'

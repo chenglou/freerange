@@ -1,4 +1,4 @@
-import {inspectFitShapes} from './src/check.ts'
+import {inspectFitShapes} from './src/check-core.ts'
 
 const args = Bun.argv.slice(2)
 let functionName: string | undefined

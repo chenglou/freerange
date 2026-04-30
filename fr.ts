@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import {inferFitFiles, scoutFitFiles, type FitScoutReport} from './src/check.ts'
+import {inferFitFiles, scoutFitFiles, type FitScoutReport} from './src/check-core.ts'
 import {printInferReport} from './src/infer-output.ts'
 import {doctorFitFiles, type FitCheck, type FitDoctorCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'

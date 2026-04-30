@@ -1,17 +1,19 @@
 import {
   createFunctionContractCache,
   doctorFitProgram,
-  readTopLevelGlobal,
   verifyFitProgram,
-  type FitCheck,
-  type FitDoctorCheck,
-} from './check.ts'
+} from './check-core.ts'
+import type {
+  FitCheck,
+  FitDoctorCheck,
+} from './check-types.ts'
 import {
   buildFitSourceModule,
   loadFitProject,
 } from './modules.ts'
+import {readTopLevelGlobal} from './module-values.ts'
 
-export type {FitCheck, FitDoctorCheck} from './check.ts'
+export type {FitCheck, FitDoctorCheck} from './check-types.ts'
 
 export type FitCheckReport = {
   phase: 'ready' | 'error'

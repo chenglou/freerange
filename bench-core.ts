@@ -1,9 +1,9 @@
 import {
   createFunctionContractCache,
-  readTopLevelGlobal,
   verifyFitProgram,
-  type FitCheck,
-} from './src/check.ts'
+} from './src/check-core.ts'
+import type {FitCheck} from './src/check-types.ts'
+import {readTopLevelGlobal} from './src/module-values.ts'
 import {
   createFitProjectLoadTiming,
   loadFitProject,

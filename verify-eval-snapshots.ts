@@ -1,4 +1,4 @@
-import {inferFitFiles, inspectFitShapes} from './src/check.ts'
+import {inferFitFiles, inspectFitShapes} from './src/check-core.ts'
 import {verifyFitFiles} from './src/reports.ts'
 import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 

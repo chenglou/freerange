@@ -1,5 +1,6 @@
 import {demoContractPaths} from './demo-contract-paths.ts'
-import {inferFitFiles, type FitInferFunctionReport} from './src/check.ts'
+import {inferFitFiles} from './src/check-core.ts'
+import type {FitInferFunctionReport} from './src/check-types.ts'
 
 type Counts = {
   functions: number

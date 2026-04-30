@@ -38,7 +38,6 @@ bun install
 
 ## Important Files
 
-- [src/check.ts](./src/check.ts) — small public checker API front door
 - [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and `doctor` orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
 - [src/interpreter/](./src/interpreter) — abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting

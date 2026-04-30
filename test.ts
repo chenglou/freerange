@@ -1,4 +1,4 @@
-import {inferFitFiles} from './src/check.ts'
+import {inferFitFiles} from './src/check-core.ts'
 import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 

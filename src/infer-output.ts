@@ -1,4 +1,4 @@
-import type {FitInferReport} from './check.ts'
+import type {FitInferReport} from './check-types.ts'
 
 export function printInferReport(report: FitInferReport) {
   for (const fn of report.functions) {
