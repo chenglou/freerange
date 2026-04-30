@@ -1,0 +1,180 @@
+photo-gallery/index.ts --all
+
+function scheduleRender
+unsupported:
+  unsupported scheduleRender: Unknown identifier scheduledRender
+  unsupported scheduleRender > <if-true>: Unknown assignment root scheduledRender
+  unsupported scheduleRender > <if-false>: Unknown assignment root scheduledRender
+  unsupported scheduleRender > <if-false>: Unknown function requestAnimationFrame
+  Empty return
+
+function spring
+return:
+  return.b == b
+  return.dest == pos
+  return.k == k
+  return.pos == pos
+  return.v == v
+checked:
+  return.k > 0
+  return.b > 0
+assumptions:
+  given k > 0
+  given b > 0
+
+function springStep
+locals:
+  t == (msPerAnimationStep / 1000)
+  t: 0.004..0.004
+  pos == config.pos
+  dest == config.dest
+  v == config.v
+  k == config.k
+  b == config.b
+  Fspring == (-config.k * (config.pos - config.dest))
+  Fdamper == (-config.b * config.v)
+  a == ((-config.k * (config.pos - config.dest)) + (-config.b * config.v))
+  newV == (config.v + (((-config.k * (config.pos - config.dest)) + (-config.b * config.v)) * (msPerAnimationStep / 1000)))
+  newPos == (config.pos + ((config.v + (((-config.k * (config.pos - config.dest)) + (-config.b * config.v)) * (msPerAnimationStep / 1000))) * (msPerAnimationStep / 1000)))
+assumptions:
+  given config.k > 0
+  given config.b > 0
+unsupported:
+  unsupported springStep: Function springStep did not return
+  Function springStep did not return
+
+function springGoToEnd
+assumptions:
+  given config.k > 0
+  given config.b > 0
+unsupported:
+  unsupported springGoToEnd: Function springGoToEnd did not return
+  Function springGoToEnd did not return
+
+function clamp
+checked:
+  return >= min
+  return <= max
+assumptions:
+  given max >= min
+
+function colsBoxMaxSizeXF
+return:
+  return.cols: int 1..7
+locals:
+  boxMinSizeX == 220
+  boxMinSizeX: int 220..220
+  cols: int 1..7
+
+function isDebug
+unsupported:
+  unsupported isDebug: Unknown identifier debug
+  Unknown identifier debug
+
+function springForEach
+unsupported:
+  unsupported springForEach: Unknown identifier data
+  unsupported springForEach line 163: for..of expected an array source, but data is not proven array-valued
+  for..of expected an array source, but data is not proven array-valued
+
+function stepSprings
+unsupported:
+  unsupported stepSprings: Unknown identifier data
+  unsupported stepSprings line 169: for..of expected an array source, but data is not proven array-valued
+  for..of expected an array source, but data is not proven array-valued
+
+function stepSpring
+assumptions:
+  given s.k > 0
+  given s.b > 0
+unsupported:
+  unsupported stepSpring line 180: Indexed for loops support block bodies only
+  Indexed for loops support block bodies only
+
+function hitTest2DMode
+assumptions:
+  given data[].sizeX.k > 0
+  given data[].sizeX.b > 0
+  given data[].sizeY.k > 0
+  given data[].sizeY.b > 0
+  given data[].x.k > 0
+  given data[].x.b > 0
+  given data[].y.k > 0
+  given data[].y.b > 0
+  given data[].scale.k > 0
+  given data[].scale.b > 0
+  given data[].fxFactor.k > 0
+  given data[].fxFactor.b > 0
+unsupported:
+  unsupported hitTest2DMode > <indexed-if-true>: Indexed for loop guarded bodies only support local bindings and direct push calls: return i
+  Indexed for loop guarded bodies only support local bindings and direct push calls: return i
+
+function hitTest1DMode
+assumptions:
+  given data[].sizeX.k > 0
+  given data[].sizeX.b > 0
+  given data[].sizeY.k > 0
+  given data[].sizeY.b > 0
+  given data[].x.k > 0
+  given data[].x.b > 0
+  given data[].y.k > 0
+  given data[].y.b > 0
+  given data[].scale.k > 0
+  given data[].scale.b > 0
+  given data[].fxFactor.k > 0
+  given data[].fxFactor.b > 0
+unsupported:
+  unsupported hitTest1DMode: Binary expression focused > 0 && 0 <= pointerX expected numbers
+  unsupported hitTest1DMode: Binary expression focused > 0 && 0 <= pointerX /* might be -Infinity */ && pointerX <= hitArea1DSizeX expected numbers
+  unsupported hitTest1DMode > <conditional-false>: Binary expression focused < data.length - 1 && pointerX >= windowSizeX - hitArea1DSizeX expected numbers
+
+function render
+unsupported:
+  unsupported render: Unknown identifier events
+  unsupported render line 225: Property access expected an object path: events.keydown
+  unsupported render > <conditional-true>: Unknown identifier events
+  unsupported render > <conditional-true> line 225: Property access expected an object path: events.keydown
+  unsupported render > <conditional-true>: Unknown assignment root events
+  unsupported render > <conditional-false>: Unknown assignment root events
+  unsupported render > <conditional-false>: Unknown identifier events
+  unsupported render > <conditional-false> line 225: Property access expected an object path: events.keydown
+  unsupported render > <conditional-false> line 225: Property access expected an object path: events.keydown.code
+  unsupported render line 229: Property access expected an object path: events.click
+  unsupported render > <if-true>: Unknown assignment root events
+  unsupported render > <if-false>: Unknown assignment root events
+  unsupported render > <if-true>: Unknown identifier events
+  unsupported render > <if-true> line 231: Property access expected an object path: events.click
+  unsupported render > <if-true> line 231: Property access expected an object path: events.click.target
+  unsupported render > <if-true> line 232: Property access expected an object path: events.click
+  unsupported render > <if-true> line 232: Property access expected an object path: events.click.clientX
+  unsupported render > <if-true> line 232: Property access expected an object path: events.click.clientY
+  unsupported render line 235: Property access expected an object path: events.mousemove
+  unsupported render > <if-true> line 237: Property access expected an object path: events.mousemove
+  unsupported render > <if-true> line 237: Property access expected an object path: events.mousemove.clientX
+  unsupported render > <if-true> line 237: Property access expected an object path: events.mousemove.clientY
+  unsupported render: Unknown identifier debug
+  unsupported render > <if-true>: Unknown assignment root debug
+  unsupported render > <if-false>: Unknown assignment root debug
+  unsupported render > <if-true> > <if-true>: Unknown assignment root debugTimestamp
+  unsupported render > <if-true> > <if-true>: Compound assignment debugTimestamp += 1000 / 60 expected numbers
+  unsupported render: Unknown identifier document
+  unsupported render line 247: Property access expected an object path: document.documentElement
+  unsupported render line 247: Property access expected an object path: document.documentElement.clientWidth
+  unsupported render line 248: Property access expected an object path: document.documentElement
+  unsupported render line 248: Property access expected an object path: document.documentElement.clientHeight
+  unsupported render: Unknown identifier reducedMotion
+  unsupported render line 250: Property access expected an object path: reducedMotion.matches
+  unsupported render: Unknown identifier isSafari
+  unsupported render > <conditional-true>: Unknown assignment root isSafari
+  unsupported render > <conditional-false>: Unknown assignment root isSafari
+  unsupported render > <conditional-true>: Unknown identifier document
+  unsupported render > <conditional-true> line 251: Property access expected an object path: document.body
+  unsupported render > <conditional-true> line 251: Property access expected an object path: document.body.scrollTop
+  unsupported render > <conditional-false>: Unknown identifier window
+  unsupported render > <conditional-false> line 251: Property access expected an object path: window.scrollY
+  unsupported render > <conditional-true> line 252: Property access expected an object path: document.body
+  unsupported render > <conditional-true> line 252: Property access expected an object path: document.body.scrollLeft
+  unsupported render > <conditional-false> line 252: Property access expected an object path: window.scrollX
+  unsupported render: Unsupported call window.location.hash.slice
+  unsupported render line 255: Indexed for loops support block bodies only
+  Indexed for loops support block bodies only

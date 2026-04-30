@@ -14,7 +14,7 @@ function scheduleRender(): void {
 // === generic spring physics
 // 4ms/step for the spring animation's step. Typically 4 steps for 60fps (16.6ms/frame) and 2 for 120fps (8.3ms/frame). Frame time delta varies, so not always true
 // could use 8ms instead, but 120fps' 8.3ms/frame means the computation might not fit in the remaining 0.3ms, which means sometime the simulation step wouldn't even run once, giving the illusion of jank
-const msPerAnimationStep = 4 // @fit > 0
+const msPerAnimationStep = 4
 type Spring = {
   pos: number
   dest: number
@@ -35,7 +35,7 @@ function springStep(config: Spring): void {
   // https://blog.maximeheckel.com/posts/the-physics-behind-spring-animations/
   // this seems inspired by https://github.com/chenglou/react-motion/blob/9e3ce95bacaa9a1b259f969870a21c727232cc68/src/stepper.js
   // convert to seconds for the physics equation
-  const t = msPerAnimationStep / 1000 // @fit > 0
+  const t = msPerAnimationStep / 1000
   const {pos, dest, v, k, b} = config
   // for animations, dest is actually spring at rest. Current position is the spring's stretched/compressed state
   const Fspring = -k * (pos - dest) // Spring stiffness, in kg / s^2
