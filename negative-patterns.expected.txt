@@ -861,6 +861,41 @@ FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: call negativeDef
 FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: return.k > 0
   result: is false
   missing fact: -1 > 0
+FAIL negative-patterns.ts:negativeStrictSpringDefault: call negativeStrictSpringBadDefault(): requires b > 0
+  called function requires b > 0
+  this call passes b = 0
+  missing at call site: 0 > 0
+FAIL negative-patterns.ts:negativeStrictSpringDefault: return.b > 0
+  result: is false
+  missing: strict comparison cannot hold when both sides are 0
+FAIL negative-patterns.ts:negativeStrictSpringCallArg: call negativeStrictSpring(-1): requires k > 0
+  called function requires k > 0
+  this call passes k = -1
+  missing at call site: -1 > 0
+FAIL negative-patterns.ts:negativeStrictSpringCallArg: return.k > 0
+  result: is false
+  missing fact: -1 > 0
+FAIL negative-patterns.ts:negativeStrictSpringObjectArg: call negativeStrictSpring(params.k, params.b): requires b > 0
+  called function requires b > 0
+  this call passes b = 0
+  missing at call site: 0 > 0
+FAIL negative-patterns.ts:negativeStrictSpringObjectArg: return.b > 0
+  result: is false
+  missing: strict comparison cannot hold when both sides are 0
+FAIL negative-patterns.ts:negativeStrictSpringManualObject: return.k > 0
+  result: is false
+  missing fact: -1 > 0
+FAIL negative-patterns.ts:negativeStrictSpringMutation: return.k > 0
+  result: is false
+  missing fact: -1 > 0
+UNKNOWN negative-patterns.ts:negativeStrictSpringObjectAssign: return.k > 0
+  known:
+    Object.assign(negativeStrictSpring(), {k: -1}).k: any number
+  missing fact: Object.assign(negativeStrictSpring(), {k: -1}).k > 0
+UNKNOWN negative-patterns.ts:negativeStrictSpringObjectAssign: return.b > 0
+  known:
+    Object.assign(negativeStrictSpring(), {k: -1}).b: any number
+  missing fact: Object.assign(negativeStrictSpring(), {k: -1}).b > 0
 FAIL negative-patterns.ts:negativeMapCallbackMutationForgetsReturnedFact: return[].value > 0
   applies to: every item in return
   result: is false

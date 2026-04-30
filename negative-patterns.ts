@@ -1650,6 +1650,51 @@ export function negativeDefaultArgumentViolatesGiven(): NegativeDefaultSpring {
 
 export const negativeIifeDefaultArgumentViolatesType: NegativeDefaultSpring = ((k: number = -1) => ({k}))()
 
+type NegativeStrictSpring = {
+  k: number // @fit > 0
+  b: number // @fit > 0
+}
+
+function negativeStrictSpring(
+  k: number = 1, // @fit > 0
+  b: number = 1, // @fit > 0
+): NegativeStrictSpring {
+  return {k, b}
+}
+
+function negativeStrictSpringBadDefault(
+  b: number = 0, // @fit > 0
+): NegativeStrictSpring {
+  return {k: 1, b}
+}
+
+export function negativeStrictSpringDefault(): NegativeStrictSpring {
+  return negativeStrictSpringBadDefault()
+}
+
+export function negativeStrictSpringCallArg(): NegativeStrictSpring {
+  return negativeStrictSpring(-1)
+}
+
+export function negativeStrictSpringObjectArg(): NegativeStrictSpring {
+  const params = {k: 1, b: 0}
+  return negativeStrictSpring(params.k, params.b)
+}
+
+export function negativeStrictSpringManualObject(): NegativeStrictSpring {
+  return {k: -1, b: 1}
+}
+
+export function negativeStrictSpringMutation(): NegativeStrictSpring {
+  const spring = negativeStrictSpring()
+  spring.k = -1
+  return spring
+}
+
+export function negativeStrictSpringObjectAssign(): NegativeStrictSpring {
+  return Object.assign(negativeStrictSpring(), {k: -1})
+}
+
 type NegativeMutatedMapItem = {
   value: number // @fit > 0
 }
