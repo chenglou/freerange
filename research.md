@@ -39,6 +39,8 @@ use reports to classify the gap
 
 This keeps comments immediately adoptable in chunks. A separate spec compiler or agent can sit on top later, but the core checker should stay boring.
 
+The intrinsic/extrinsic verification note is [research/intrinsic-extrinsic-verification.md](./research/intrinsic-extrinsic-verification.md): stable value guarantees belong in representation, phase-local or algorithm-shaped guarantees belong in checked producers. This is the philosophical frame behind giving agents final contracts without forcing every intermediate construction through a narrow API.
+
 ## Spec-Driven Demos
 
 The photo-gallery scratch trial is the best signal so far for agent-driven, spec-driven UI work. Two fresh agents got only Vibescript docs plus a private packet with Freerange-style source facts. Both produced runnable grid/line galleries, pure helper tests, browser-owned semantic reports, and the same 18 passing `@fit` checks on the same five seams.
