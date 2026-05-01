@@ -12,7 +12,8 @@ import type {
 } from './modules.ts'
 import type {FitSpec} from './parser.ts'
 
-export type FitCheckStatus = 'pass' | 'fail' | 'unknown'
+export type FitCheckStatus = 'pass' | 'fail' | 'requires' | 'unknown'
+export type FitProofStatus = Exclude<FitCheckStatus, 'requires'>
 
 export type FitCheck = {
   file: string
@@ -21,17 +22,6 @@ export type FitCheck = {
   functionName: string
   text: string
   status: FitCheckStatus
-  reason?: string
-}
-
-export type FitDoctorStatus = 'pass' | 'fail' | 'requires' | 'unknown'
-
-export type FitDoctorCheck = {
-  file: string
-  line?: number
-  functionName: string
-  text: string
-  status: FitDoctorStatus
   reason?: string
 }
 
@@ -121,7 +111,7 @@ export type ResolvedCallTarget =
 
 export type FunctionContractProof =
   | {status: 'verifying'}
-  | {status: FitCheckStatus; checks: FitCheck[]}
+  | {status: FitProofStatus; checks: FitCheck[]}
 
 export type EvalContext = {
   program: Program

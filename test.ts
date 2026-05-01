@@ -14,14 +14,14 @@ if (positiveReport.phase !== 'ready') {
   console.error(JSON.stringify(positiveReport, null, 2))
   process.exitCode = 1
 } else {
-  console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 unknown`)
+  console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 requires, 0 unknown`)
 }
 
 const photoGalleryReport = await verifyFitFiles(['photo-gallery/index.ts'])
-if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 31 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.unknown !== 0) {
+if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 32 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
   console.error('expected photo-gallery literal data to stay summarized')
   console.error(photoGalleryReport.phase === 'ready'
-    ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.unknown} unknown`
+    ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.requires} requires, ${photoGalleryReport.summary.unknown} unknown`
     : JSON.stringify(photoGalleryReport, null, 2))
   process.exitCode = 1
 } else {
@@ -419,7 +419,7 @@ async function runCliRegressionTests() {
   const explicitCheck = runFr(['check', 'patterns.ts', 'import-patterns.ts'])
   expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
   expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
-  expectCli(explicitCheck.output.includes('0 fail, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
+  expectCli(explicitCheck.output.includes('0 fail, 0 requires, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
 
   await withCliFixture({
     'tsconfig.json': JSON.stringify({
@@ -442,7 +442,7 @@ function ok() {
   }, dir => {
     const check = runFr(['check'], dir)
     expectCli(check.exitCode === 0, 'expected no-arg fr check to pass from tsconfig project', check.output)
-    expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 unknown'), 'expected no-arg fr check summary from tsconfig project', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected no-arg fr check summary from tsconfig project', check.output)
   })
 
   await withCliFixture({
@@ -456,15 +456,14 @@ function bad() {
   }, dir => {
     const check = runFr(['check', 'bad.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a failed claim', check.output)
-    expectCli(check.output.includes('bad.ts:2'), 'expected fr check failure output to include the spec line', check.output)
-    expectCli(check.output.includes('scope: bad'), 'expected fr check failure output to include the function scope', check.output)
+    expectCli(check.output.includes('bad.ts:2:bad'), 'expected fr check failure output to include the spec line and function scope', check.output)
     expectCli(check.output.includes('FAIL return: 0..1'), 'expected fr check failure output', check.output)
     expectCli(check.output.includes('next: run fr infer --function bad bad.ts'), 'expected fr check to point at infer next', check.output)
-    expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 unknown'), 'expected fr check failure summary', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 requires, 0 unknown'), 'expected fr check failure summary', check.output)
   })
 
   await withCliFixture({
-    'doctor.ts': `function h(
+    'calls.ts': `function h(
   value: number, // @fit 0..10
 ) {
   return value
@@ -475,23 +474,17 @@ function f() {
 }
 `,
   }, dir => {
-    const check = runFr(['doctor', 'doctor.ts'], dir)
-    expectCli(check.exitCode === 1, 'expected fr doctor to exit 1 on a definite bad literal call', check.output)
-    expectCli(check.output.includes('doctor.ts:8:f'), 'expected fr doctor failure output to include the call line', check.output)
-    expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr doctor literal-call failure output', check.output)
-    expectCli(check.output.includes('missing at call site: 20 <= 10'), 'expected fr doctor to print the caller-side missing obligation', check.output)
-    expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor summary', check.output)
-    expectCli(check.output.includes('1 fail'), 'expected fr doctor summary to include one fail', check.output)
-
-    const combined = runFr(['check', '--calls', 'doctor.ts'], dir)
-    expectCli(combined.exitCode === 1, 'expected fr check --calls to fail on definite bad calls', combined.output)
-    expectCli(combined.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr check --calls literal-call failure output', combined.output)
-    expectCli(combined.output.includes('missing at call site: 20 <= 10'), 'expected fr check --calls to print the caller-side missing obligation', combined.output)
-    expectCli(combined.output.includes('fr check --calls: 1 files,'), 'expected fr check --calls failure summary', combined.output)
+    const check = runFr(['check', 'calls.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a definite bad literal call', check.output)
+    expectCli(check.output.includes('calls.ts:8:f'), 'expected fr check failure output to include the call line', check.output)
+    expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr check literal-call failure output', check.output)
+    expectCli(check.output.includes('missing at call site: 20 <= 10'), 'expected fr check to print the caller-side missing obligation', check.output)
+    expectCli(check.output.includes('fr check: 1 files,'), 'expected fr check summary', check.output)
+    expectCli(check.output.includes('1 fail'), 'expected fr check summary to include one fail', check.output)
   })
 
   await withCliFixture({
-    'doctor.ts': `function h(
+    'calls.ts': `function h(
   value: number, // @fit 0..10
 ) {
   return value
@@ -502,18 +495,17 @@ function f(value: number) {
 }
 `,
   }, dir => {
-    const check = runFr(['doctor', 'doctor.ts'], dir)
-    expectCli(check.exitCode === 0, 'expected fr doctor to exit 0 on inferred caller requirements', check.output)
-    expectCli(check.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr doctor caller-requirement output', check.output)
-    expectCli(check.output.includes('next: add a caller given, validate before this call, or run fr infer --function f doctor.ts to see caller facts'), 'expected fr doctor to point at caller infer next', check.output)
-    expectCli(check.output.includes('fr doctor: 1 files,'), 'expected fr doctor requirement summary', check.output)
-    expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr doctor summary to classify requires separately from fail', check.output)
+    const check = runFr(['check', 'calls.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected fr check to exit 1 on caller requirements', check.output)
+    expectCli(check.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr check caller-requirement output', check.output)
+    expectCli(check.output.includes('next: add a caller given, validate before this call, or run fr infer --function f calls.ts to see caller facts'), 'expected fr check to point at caller infer next', check.output)
+    expectCli(check.output.includes('fr check: 1 files,'), 'expected fr check requirement summary', check.output)
+    expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr check summary to classify requires separately from fail', check.output)
 
-    const combined = runFr(['check', '--calls', 'doctor.ts'], dir)
-    expectCli(combined.exitCode === 0, 'expected fr check --calls to keep caller requirements non-fatal', combined.output)
-    expectCli(combined.output.includes('fr check: 1 files,'), 'expected fr check --calls to print the claim summary', combined.output)
-    expectCli(combined.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr check --calls to print callsite requirements', combined.output)
-    expectCli(combined.output.includes('fr check --calls: 1 files,'), 'expected fr check --calls to print the call summary', combined.output)
+    const annotationsOnly = runFr(['check', '--annotations-only', 'calls.ts'], dir)
+    expectCli(annotationsOnly.exitCode === 0, 'expected fr check --annotations-only to skip broad callsite requirements', annotationsOnly.output)
+    expectCli(!annotationsOnly.output.includes('REQUIRES call h(value)'), 'expected fr check --annotations-only to suppress broad callsite requirements', annotationsOnly.output)
+    expectCli(annotationsOnly.output.includes('fr check --annotations-only: 1 files,'), 'expected fr check --annotations-only summary', annotationsOnly.output)
   })
 
   await withCliFixture({
@@ -546,7 +538,7 @@ function f(value: number) {
     expectCli(check.exitCode === 0, 'expected fr scout to stay read-only', check.output)
     expectCli(check.output.includes('candidate return >= value'), 'expected fr scout candidate output', check.output)
     expectCli(check.output.includes('would require:'), 'expected fr scout requirement output', check.output)
-    expectCli(check.output.includes('UNKNOWN call cap(value, 10): requires max >= value'), 'expected fr scout call obligation output', check.output)
+    expectCli(check.output.includes('UNKNOWN could not prove call cap(value, 10): requires max >= value'), 'expected fr scout call obligation output', check.output)
     expectCli(check.output.includes('fr scout: 1 files, 2 candidates'), 'expected fr scout summary', check.output)
   })
 
@@ -565,7 +557,7 @@ const opacity = clamp(1.2, 0, 1) // @fit 0..1
   }, dir => {
     const check = runFr(['check', 'helper.ts'], dir)
     expectCli(check.exitCode === 0, 'expected standalone helper call check to pass', check.output)
-    expectCli(check.output.includes('fr check: 1 files, 6 pass, 0 fail, 0 unknown'), 'expected standalone helper call check summary', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 6 pass, 0 fail, 0 requires, 0 unknown'), 'expected standalone helper call check summary', check.output)
   })
 
   await withCliFixture({
@@ -585,7 +577,7 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     const check = runFr(['check', 'helper.ts.tmp'], dir)
     expectCli(check.exitCode === 1, 'expected de-inlined clamp example to fail without crashing', check.output)
     expectCli(check.output.includes('FAIL opacity: 0..1'), 'expected de-inlined clamp example failure output', check.output)
-    expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 requires, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
 
   console.log('cli: 13 expected behaviors')

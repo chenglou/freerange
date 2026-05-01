@@ -2,7 +2,7 @@
 
 import {inferFitFiles, scoutFitFiles, type FitScoutReport} from './src/check-core.ts'
 import {printInferReport} from './src/infer-output.ts'
-import {doctorFitFiles, type FitCheck, type FitDoctorCheck, verifyFitFiles} from './src/reports.ts'
+import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
 
 const [command, ...args] = Bun.argv.slice(2)
@@ -10,9 +10,6 @@ const [command, ...args] = Bun.argv.slice(2)
 switch (command) {
   case 'check':
     await runCheck(args)
-    break
-  case 'doctor':
-    await runDoctor(args)
     break
   case 'infer':
     await runInfer(args)
@@ -52,30 +49,15 @@ function parseScoutArgs(args: string[]) {
 }
 
 async function runCheck(args: string[]) {
-  const {paths, calls} = parseCheckArgs(args)
+  const parsed = parseCheckArgs(args)
+  if (parsed == null) return
+  const {paths, annotationsOnly} = parsed
   const input = resolveInputPaths(paths)
   if (input == null) return
-  const report = await verifyFitFiles(input.paths)
+  const report = await verifyFitFiles(input.paths, {annotationsOnly})
   const failed = report.checks.filter(check => check.status !== 'pass')
   for (const check of failed) printCheck(check)
-  printCheckSummary('fr check', input.paths.length, report.summary)
-
-  let phase = report.phase
-  if (calls) {
-    const printedCallKeys = new Set(failed.filter(isCallReport).map(reportKey))
-    const callReport = await doctorFitFiles(input.paths)
-    printDoctorReport('fr check --calls', input.paths.length, callReport, printedCallKeys)
-    if (callReport.phase !== 'ready') phase = 'error'
-  }
-
-  if (phase !== 'ready') process.exitCode = 1
-}
-
-async function runDoctor(args: string[]) {
-  const input = resolveInputPaths(args)
-  if (input == null) return
-  const report = await doctorFitFiles(input.paths)
-  printDoctorReport('fr doctor', input.paths.length, report)
+  printCheckSummary(annotationsOnly ? 'fr check --annotations-only' : 'fr check', input.paths.length, report.summary)
   if (report.phase !== 'ready') process.exitCode = 1
 }
 
@@ -119,16 +101,21 @@ function parseInferArgs(args: string[]) {
 }
 
 function parseCheckArgs(args: string[]) {
-  let calls = false
+  let annotationsOnly = false
   const paths: string[] = []
   for (const arg of args) {
-    if (arg === '--calls') {
-      calls = true
+    if (arg === '--annotations-only') {
+      annotationsOnly = true
       continue
+    }
+    if (arg.startsWith('-')) {
+      console.error(`fr check: unknown option ${arg}`)
+      process.exitCode = 2
+      return null
     }
     paths.push(arg)
   }
-  return {paths, calls}
+  return {paths, annotationsOnly}
 }
 
 function resolveInputPaths(args: string[]): {paths: string[]; configFile: string | null} | null {
@@ -149,30 +136,16 @@ function printScoutReport(label: string, files: number, report: FitScoutReport) 
     for (const requirement of candidate.requirements) console.log(`    ${requirement}`)
   }
   const notable = report.checks.filter(check => check.status !== 'pass')
-  for (const check of notable) printDoctorCheck(check)
+  for (const check of notable) printCheck(check)
   console.log(`${label}: ${files} files, ${report.summary.candidates} candidates, ${report.summary.pass} pass, ${report.summary.fail} fail, ${report.summary.requires} requires, ${report.summary.unknown} unknown`)
 }
 
 function printCheck(check: FitCheck) {
-  console.log(formatCheckSourceLocation(check))
+  console.log(formatCheckLocation(check))
   console.log(`  ${formatCheckStatusLine(check)}`)
-  console.log(`  scope: ${check.functionName}`)
   if (check.boundaryLine != null && check.boundaryLine !== check.line) console.log(`  checked at: line ${check.boundaryLine}`)
   printReason(check.reason)
-  printFollowUp('check', check)
-}
-
-function printDoctorCheck(check: FitDoctorCheck) {
-  console.log(formatCheckLocation(check))
-  console.log(`  ${check.status.toUpperCase()} ${check.text}`)
-  printReason(check.reason)
-  printFollowUp('doctor', check)
-}
-
-function printDoctorReport(label: string, files: number, report: {checks: FitDoctorCheck[]; summary: {pass: number; fail: number; requires: number; unknown: number}}, skipKeys = new Set<string>()) {
-  const notable = report.checks.filter(check => check.status !== 'pass' && !skipKeys.has(reportKey(check)))
-  for (const check of notable) printDoctorCheck(check)
-  printDoctorSummary(label, files, report.summary)
+  printFollowUp(check)
 }
 
 function printReason(reason: string | undefined) {
@@ -184,24 +157,20 @@ function printLines(text: string, indent: string) {
   for (const line of text.split('\n')) console.log(`${indent}${line}`)
 }
 
-function isCallReport(check: FitCheck | FitDoctorCheck) {
+function isCallReport(check: FitCheck) {
   return check.text.startsWith('call ')
 }
 
-function reportKey(check: FitCheck | FitDoctorCheck) {
-  return `${check.file}\0${check.line ?? ''}\0${check.functionName}\0${check.text}`
-}
-
-function printFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoctorCheck) {
+function printFollowUp(check: FitCheck) {
   if (check.status === 'pass') return
-  const followUp = adoptionFollowUp(command, check)
+  const followUp = adoptionFollowUp(check)
   if (followUp == null) return
   console.log(`  next: ${followUp}`)
 }
 
-function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoctorCheck) {
+function adoptionFollowUp(check: FitCheck) {
   const inferCommand = inferCommandForCheck(check)
-  if (command === 'doctor') {
+  if (isCallReport(check)) {
     if (check.status === 'requires') {
       return inferCommand == null
         ? 'add a caller given, validate before this call, or wrap the helper behind a narrower contract'
@@ -223,7 +192,7 @@ function adoptionFollowUp(command: 'check' | 'doctor', check: FitCheck | FitDoct
     : 'move the fact into a small named helper if you want inferred facts'
 }
 
-function hasCheckBoundary(check: FitCheck | FitDoctorCheck) {
+function hasCheckBoundary(check: FitCheck) {
   return 'boundaryLine' in check && check.boundaryLine != null
 }
 
@@ -243,28 +212,21 @@ function formatCheckLocation(check: {file: string; line?: number; functionName: 
     : `${check.file}:${check.line}:${check.functionName}`
 }
 
-function formatCheckSourceLocation(check: {file: string; line?: number}) {
-  return check.line == null ? check.file : `${check.file}:${check.line}`
-}
-
 function formatCheckStatusLine(check: FitCheck) {
   return check.status === 'unknown'
     ? `UNKNOWN could not prove ${check.text}`
+    : check.status === 'requires'
+      ? `REQUIRES ${check.text}`
     : `${check.status.toUpperCase()} ${check.text}`
 }
 
-function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; unknown: number}) {
-  console.log(`${label}: ${files} files, ${summary.pass} pass, ${summary.fail} fail, ${summary.unknown} unknown`)
-}
-
-function printDoctorSummary(label: string, files: number, summary: {pass: number; fail: number; requires: number; unknown: number}) {
+function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; requires: number; unknown: number}) {
   console.log(`${label}: ${files} files, ${summary.pass} pass, ${summary.fail} fail, ${summary.requires} requires, ${summary.unknown} unknown`)
 }
 
 function printUsage() {
   console.error('Usage:')
-  console.error('  fr check [--calls] [file.ts ...]')
-  console.error('  fr doctor [file.ts ...]')
+  console.error('  fr check [--annotations-only] [file.ts ...]')
   console.error('  fr infer [--function name] [--all] [file.ts ...]')
   console.error('  fr scout [--function name] [file.ts ...]')
 }

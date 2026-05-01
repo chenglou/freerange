@@ -37,10 +37,10 @@ addShapeCase('imported literal nested map/defaults shape', ['import-patterns.ts'
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'eval snapshots')) process.exitCode = 1
 
 async function addCheckCase(label: string, paths: string[], keep: (text: string) => boolean) {
-  const report = await verifyFitFiles(paths)
+  const report = await verifyFitFiles(paths, {annotationsOnly: true})
   const checks = report.checks.filter(check => keep(check.text))
   lines.push(`check ${label}`)
-  lines.push(`  summary: ${checks.filter(check => check.status === 'pass').length} pass, ${checks.filter(check => check.status === 'fail').length} fail, ${checks.filter(check => check.status === 'unknown').length} unknown`)
+  lines.push(`  summary: ${checks.filter(check => check.status === 'pass').length} pass, ${checks.filter(check => check.status === 'fail').length} fail, ${checks.filter(check => check.status === 'requires').length} requires, ${checks.filter(check => check.status === 'unknown').length} unknown`)
   for (const check of checks) {
     const line = check.line == null ? '' : `:${check.line}`
     lines.push(`  ${check.status.toUpperCase()} ${displayWorkspaceFile(check.file)}${line}:${check.functionName}: ${check.text}`)

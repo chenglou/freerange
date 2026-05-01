@@ -220,8 +220,8 @@ At the end, report:
 
 Current `demos/photo-gallery` contracts prove the important statically known helper seams cleanly:
 
-- `layout.ts` and `prompt-layout.ts`: 65 pass, 0 fail, 0 unknown
-- all checked sibling demo contracts: 94 pass, 0 fail, 0 unknown
+- `layout.ts` and `prompt-layout.ts`: 65 pass, 0 fail, 0 requires, 0 unknown
+- all checked sibling demo contracts: 94 pass, 0 fail, 0 requires, 0 unknown
 
 The useful ground-truth facts now include:
 
@@ -258,12 +258,12 @@ Main-thread reruns:
 ```txt
 round A:
   bun test                                  -> 5 pass
-  bun run fr check geometry.ts             -> 18 pass, 0 fail, 0 unknown
+  bun run fr check geometry.ts             -> 18 pass, 0 fail, 0 requires, 0 unknown
   bun run browser-checks.ts                -> 4 scenario reports ready
 
 round B:
   bun test index.test.ts                   -> 5 pass
-  bun run fr check photo-gallery-helpers.ts -> 18 pass, 0 fail, 0 unknown
+  bun run fr check photo-gallery-helpers.ts -> 18 pass, 0 fail, 0 requires, 0 unknown
   tsc over helpers + index                 -> pass
   bun browser-check.ts                     -> 4 scenario reports ready
 ```

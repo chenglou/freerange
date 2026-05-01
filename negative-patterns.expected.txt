@@ -997,3 +997,7 @@ FAIL interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias: retur
     inferred from code: mapIndex(source) >= 0
     inferred from code: mapIndex(source) - 1 < 0
   missing fact: -1 > 0
+FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: call negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
+  called function requires max >= min
+  this call passes max = 2 and min = 10
+  missing at call site: 2 >= 10

@@ -4,9 +4,9 @@ Freerange is an abstract interpreter. The cutover made that explicit and retired
 
 ## Goal
 
-Keep the public checker small: ordinary TypeScript source in, earned `@fit` facts out. The interpreter owns source evaluation; contract checking, reports, `infer`, and `doctor` query the same abstract state instead of each growing their own recognizer.
+Keep the public checker small: ordinary TypeScript source in, earned `@fit` facts out. The interpreter owns source evaluation; contract checking, reports, `infer`, and callsite checks query the same abstract state instead of each growing their own recognizer.
 
-Current milestone: one interpreter owns source evaluation. The checker layer owns contracts, reports, `infer`, and `doctor`; the next cleanup is carving `src/check-core.ts` into clearer pieces.
+Current milestone: one interpreter owns source evaluation. The checker layer owns contracts, reports, `infer`, and callsite checks; the next cleanup is carving `src/check-core.ts` into clearer pieces.
 
 ## Abstract Values
 

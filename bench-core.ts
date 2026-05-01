@@ -79,8 +79,9 @@ export async function sourceLineCount(paths: string[]) {
 export function formatSummary(checks: FitCheck[]) {
   const pass = checks.filter(check => check.status === 'pass').length
   const fail = checks.filter(check => check.status === 'fail').length
+  const requires = checks.filter(check => check.status === 'requires').length
   const unknown = checks.filter(check => check.status === 'unknown').length
-  return `${checks.length} checks (${pass} pass, ${fail} fail, ${unknown} unknown)`
+  return `${checks.length} checks (${pass} pass, ${fail} fail, ${requires} requires, ${unknown} unknown)`
 }
 
 export function formatMs(ms: number) {

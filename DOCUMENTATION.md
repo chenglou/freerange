@@ -77,29 +77,25 @@ The goal is not to annotate everything. The goal is to make important UI code ha
 
 ## Commands
 
-`fr check` is the normal proof command: it proves the claims you wrote. With
-file args, it checks those files. With no args, it reads the nearest
-`tsconfig.json` and checks that source set. On success it prints only the
-summary:
+`fr check` is the normal proof command: it proves the annotations you wrote and
+checks calls to annotated helpers. With file args, it checks those files. With
+no args, it reads the nearest `tsconfig.json` and checks that source set. On
+success it prints only the summary:
 
 ```txt
-fr check: 42 files, 115 pass, 0 fail, 0 unknown
+fr check: 42 files, 139 pass, 0 fail, 0 requires, 0 unknown
 ```
 
-Add `--calls` when you also want the callsite scan:
+Use `--annotations-only` when you want the quieter local pass:
 
 ```sh
-fr check --calls path/to/file.ts
+fr check --annotations-only path/to/file.ts
 ```
 
-This checks the claims you wrote first, then scans annotated helper calls more
-broadly. `REQUIRES` is not a failed spec; it is a clue about where a caller may
-need a `given`, a wrapper contract, or earlier validation. Definite bad calls
-still fail.
-
-`fr doctor` is the focused version of that second half. It skips checking written
-claims and only prints the callsite scan, which is useful while adopting
-Freerange in a file that does not have many claims yet.
+That proves annotations where they are written and skips the broad callsite
+scan. It is useful while adopting Freerange in a file with many existing helper
+calls. Normal `fr check` still reports call preconditions needed for a written
+annotation, even in annotations-only mode.
 
 `fr infer --function name path/to/file.ts` prints facts Freerange inferred about
 the return, surviving locals, and supported loops. It also shows which explicit
@@ -110,14 +106,14 @@ facts, and which unsupported source spots blocked proof.
 for the "what if inferred helper facts mattered?" question. It tries simple
 candidate facts like `return <= max`, prints the input facts those candidates
 would need, then scans calls against those provisional requirements. This is
-not a contract generator. It is intentionally noisier than `doctor`; use it to
-study a helper, not to decide whether a file is correct.
+not a contract generator. It is intentionally noisy; use it to study a helper,
+not to decide whether a file is correct.
 
-When `check` or `doctor` prints a non-pass line, it also prints the next useful
-adoption command when there is one. Usually that is the caller or failing
-function's `fr infer --function ...` command; for `doctor REQUIRES` it is a
-reminder to either add a caller fact, validate before the call, or wrap the
-helper behind a narrower contract.
+When `check` prints a non-pass line, it also prints the next useful adoption
+command when there is one. Usually that is the caller or failing function's
+`fr infer --function ...` command. For `REQUIRES`, it is a reminder to either
+add a caller fact, validate before the call, or wrap the helper behind a
+narrower contract.
 
 Failure reports point at the spec line when they can:
 
@@ -219,15 +215,23 @@ Same-file calls like `rect.bottom` and `rect.area()` use the checked class-membe
 
 ## What Gets Checked
 
-Freerange starts from claims, not from the whole file.
+Freerange's proof engine starts from annotations, not from the whole file.
+Normal `fr check` then adds a callsite scan for annotated helpers, so a helper
+contract is checked both where it is written and where it is used. Use
+`--annotations-only` to skip that broad scan.
 
-- `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites and become assumptions inside the function, but they do not trigger body proof on their own.
+- `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites during normal `fr check` and become assumptions inside the function, but they do not trigger body proof on their own.
 - `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved. If the call cannot satisfy a `given`, the report prints the caller-side obligation, such as `missing at call site: 0 <= cols - w`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary; they do not leak a private report line.
+- Helper preconditions are reported when the helper call is inside the value being proved, and normal `fr check` also scans supported callsites to annotated helpers. If the call cannot satisfy a `given`, the report prints the caller-side obligation, such as `missing at call site: 0 <= cols - w`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
 
-Freerange does not audit arbitrary top-level calls or unclaimed statements. A call like `clamp(4, 3, 2)` only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
+Freerange does not prove arbitrary unannotated behavior. A call like
+`unannotatedHelper(4, 3, 2)` has no contract to check. A call to an annotated
+helper, such as `clamp(4, 3, 2)`, is checked by normal `fr check`; in
+`--annotations-only` mode it only produces a report when it is inside a function
+or inline value that Freerange is proving. This is enough to check a quick
+helper probe:
 
 ```ts
 const probe = clamp(4, 2, 3) // @fit 2

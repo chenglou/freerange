@@ -1,19 +1,21 @@
 import {
+  checkCallsitesInProgram,
   createFunctionContractCache,
-  doctorFitProgram,
   verifyFitProgram,
 } from './check-core.ts'
-import type {
-  FitCheck,
-  FitDoctorCheck,
-} from './check-types.ts'
+import type {FitCheck} from './check-types.ts'
 import {
   buildFitSourceModule,
   loadFitProject,
 } from './modules.ts'
 import {readTopLevelGlobal} from './module-values.ts'
 
-export type {FitCheck, FitDoctorCheck} from './check-types.ts'
+export type {FitCheck} from './check-types.ts'
+
+export type FitCheckOptions = {
+  annotationsOnly?: boolean
+  failOnRequires?: boolean
+}
 
 export type FitCheckReport = {
   phase: 'ready' | 'error'
@@ -22,46 +24,21 @@ export type FitCheckReport = {
   summary: {
     pass: number
     fail: number
-    unknown: number
-  }
-}
-
-export type FitDoctorReport = {
-  phase: 'ready' | 'error'
-  files: string[]
-  checks: FitDoctorCheck[]
-  summary: {
-    pass: number
-    fail: number
     requires: number
     unknown: number
   }
 }
 
-export async function verifyFitFiles(paths: string[]): Promise<FitCheckReport> {
-  const checks: FitCheck[] = []
+export async function verifyFitFiles(paths: string[], options: FitCheckOptions = {}): Promise<FitCheckReport> {
+  const annotationChecks: FitCheck[] = []
+  const callsiteChecks: FitCheck[] = []
   const contractCache = createFunctionContractCache()
   const project = loadFitProject(paths, readTopLevelGlobal)
-  for (const program of project.entries) checks.push(...verifyFitProgram(program, contractCache))
-
-  const summary = {
-    pass: checks.filter(check => check.status === 'pass').length,
-    fail: checks.filter(check => check.status === 'fail').length,
-    unknown: checks.filter(check => check.status === 'unknown').length,
+  for (const program of project.entries) annotationChecks.push(...verifyFitProgram(program, contractCache))
+  if (options.annotationsOnly !== true) {
+    for (const program of project.entries) callsiteChecks.push(...checkCallsitesInProgram(program, contractCache))
   }
-  return {
-    phase: summary.fail === 0 && summary.unknown === 0 ? 'ready' : 'error',
-    files: paths,
-    checks,
-    summary,
-  }
-}
-
-export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> {
-  const checks: FitDoctorCheck[] = []
-  const contractCache = createFunctionContractCache()
-  const project = loadFitProject(paths, readTopLevelGlobal)
-  for (const program of project.entries) checks.push(...doctorFitProgram(program, contractCache))
+  const checks = mergeCheckReports(annotationChecks, callsiteChecks)
 
   const summary = {
     pass: checks.filter(check => check.status === 'pass').length,
@@ -69,8 +46,9 @@ export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> 
     requires: checks.filter(check => check.status === 'requires').length,
     unknown: checks.filter(check => check.status === 'unknown').length,
   }
+  const failOnRequires = options.failOnRequires ?? true
   return {
-    phase: summary.fail === 0 ? 'ready' : 'error',
+    phase: summary.fail === 0 && summary.unknown === 0 && (!failOnRequires || summary.requires === 0) ? 'ready' : 'error',
     files: paths,
     checks,
     summary,
@@ -80,4 +58,20 @@ export async function doctorFitFiles(paths: string[]): Promise<FitDoctorReport> 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
   const program = buildFitSourceModule(file, sourceText, readTopLevelGlobal)
   return verifyFitProgram(program, createFunctionContractCache())
+}
+
+function mergeCheckReports(primary: FitCheck[], secondary: FitCheck[]) {
+  const seen = new Set(primary.map(checkKey))
+  const checks = [...primary]
+  for (const check of secondary) {
+    const key = checkKey(check)
+    if (seen.has(key)) continue
+    seen.add(key)
+    checks.push(check)
+  }
+  return checks
+}
+
+function checkKey(check: FitCheck) {
+  return `${check.file}\0${check.line ?? ''}\0${check.functionName}\0${check.text}`
 }

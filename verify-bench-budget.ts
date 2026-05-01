@@ -11,6 +11,7 @@ const stats = benchStats(benchRuns)
 const checks = benchRuns.at(-1)?.checks ?? []
 const pass = checks.filter(check => check.status === 'pass').length
 const fail = checks.filter(check => check.status === 'fail').length
+const requires = checks.filter(check => check.status === 'requires').length
 const unknown = checks.filter(check => check.status === 'unknown').length
 
 console.log([
@@ -18,10 +19,10 @@ console.log([
   `cold ${formatMs(stats.cold.totalMs)} total (${formatMs(stats.cold.loadMs)} load, ${formatMs(stats.cold.verifyMs)} verify)`,
   `warm median ${formatMs(stats.warmMedianTotalMs)} total (${formatMs(stats.warmMedianLoadMs)} load, ${formatMs(stats.warmMedianVerifyMs)} verify)`,
   `warm slowest ${formatMs(stats.warmSlowestTotalMs)}`,
-  `${pass} pass, ${fail} fail, ${unknown} unknown`,
+  `${pass} pass, ${fail} fail, ${requires} requires, ${unknown} unknown`,
 ].join(', '))
 
-if (fail > 0 || unknown > 0) {
+if (fail > 0 || requires > 0 || unknown > 0) {
   console.error('bench budget expected demo contracts to stay clean')
   process.exitCode = 1
 }

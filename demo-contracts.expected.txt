@@ -1,4 +1,4 @@
-summary: 14 files, 94 pass, 0 fail, 0 unknown
+summary: 14 files, 94 pass, 0 fail, 0 requires, 0 unknown
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:8:center: return == (container - containee) / 2
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:25:stackLayout: return.length == rowSizes.length
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:10:getCorners: return.length == 4

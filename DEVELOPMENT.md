@@ -9,9 +9,9 @@ bun install
 ## Day-To-Day
 
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
-- `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/unknown summary
+- `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
-- `bun run fr doctor path/to/file.ts` — broad call-precondition scan for adoption; reports definite failures and inferred caller requirements
+- `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
 - `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
@@ -39,7 +39,7 @@ bun install
 
 ## Important Files
 
-- [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and `doctor` orchestration around the interpreter
+- [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and callsite-check orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
@@ -64,7 +64,7 @@ bun install
 - [src/sequence-facts.ts](./src/sequence-facts.ts) — adjacent sequence relation queries and rendering
 - [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
-- [src/reports.ts](./src/reports.ts) — check/doctor report runners and file/source entrypoints
+- [src/reports.ts](./src/reports.ts) — check report runners and file/source entrypoints
 - [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
 - [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
 - [src/scout.ts](./src/scout.ts) — scout candidate and provisional-requirement bookkeeping
@@ -129,11 +129,11 @@ Keep external repo experiments outside this checkout. The current scratch space
 is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
 bring only general Freerange fixes back into this repo.
 
-[corpus-probes.ts](./corpus-probes.ts) discovers every source file with an `@fit` comment under the corpus root, excluding dependency and build-output trees. It groups files by top-level project and nearest `tsconfig.json`, then [corpus-probes.expected.txt](./corpus-probes.expected.txt) snapshots the exact file list plus check/doctor summaries. If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
+[corpus-probes.ts](./corpus-probes.ts) discovers every source file with an `@fit` comment under the corpus root, excluding dependency and build-output trees. It groups files by top-level project and nearest `tsconfig.json`, then [corpus-probes.expected.txt](./corpus-probes.expected.txt) snapshots the exact file list plus strict check summaries, including callsite `requires`. If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
 
 A good corpus iteration is one of two small loops:
 
-- read-only: run `bun run fr infer file --all` or `bun run fr doctor file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
+- read-only: run `bun run fr infer file --all` or `bun run fr check file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
 - annotation: add one or two `@fit` comments to a small numeric/layout-heavy helper, run `bun run fr check file`, classify the first blocker, then add a local pattern test before changing checker behavior.
 
 Do not leave comments in corpus branches just to make a repo look covered. If a

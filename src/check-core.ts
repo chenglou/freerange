@@ -30,7 +30,6 @@ import {
   type EvalFlow,
   type FitCheck,
   type FitCheckStatus,
-  type FitDoctorCheck,
   type FitInferFunctionReport,
   type FitInferLoopReport,
   type FitInferLoopSpec,
@@ -155,8 +154,6 @@ export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './in
 export type {
   FitCheck,
   FitCheckStatus,
-  FitDoctorCheck,
-  FitDoctorStatus,
   FitInferFunctionReport,
   FitInferLoopReport,
   FitInferLoopSpec,
@@ -192,11 +189,11 @@ export function scoutFitFiles(paths: string[], options: {functionName?: string} 
     .flatMap(fn => scoutFunctionCandidates(program, fn)))
   const scoutSpecs = scoutRequirementSpecsByFunction(programs, candidates)
   const savedSpecs = replaceFunctionSpecs(programs, scoutSpecs)
-  const checks: FitDoctorCheck[] = []
+  const checks: FitCheck[] = []
 
   try {
     const contractCache = new Map<string, FunctionContractProof>()
-    for (const program of project.entries) checks.push(...doctorFitProgram(program, contractCache))
+    for (const program of project.entries) checks.push(...checkCallsitesInProgram(program, contractCache))
   } finally {
     restoreFunctionSpecs(savedSpecs)
   }
@@ -248,14 +245,14 @@ export function verifyFitProgram(program: Program, contractCache: Map<string, Fu
   return checks
 }
 
-export function doctorFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitDoctorCheck[] {
+export function checkCallsitesInProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
-  checks.push(...doctorTopLevelCalls(program, contractCache))
-  for (const fn of program.functions.values()) checks.push(...doctorFunctionCalls(program, fn, contractCache))
-  return dedupeDoctorChecks(checks.map(toDoctorCheck))
+  checks.push(...checkTopLevelCallsites(program, contractCache))
+  for (const fn of program.functions.values()) checks.push(...checkFunctionCallsites(program, fn, contractCache))
+  return dedupeCallsiteChecks(checks.map(toCallsiteCheck))
 }
 
-function doctorTopLevelCalls(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+function checkTopLevelCallsites(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const context: EvalContext = {
     program,
     file: program.file,
@@ -276,7 +273,7 @@ function doctorTopLevelCalls(program: Program, contractCache: Map<string, Functi
   return context.checks.filter(isCallCheck)
 }
 
-function doctorFunctionCalls(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
   const inputSpecs = functionInputSpecs(program, fn, specs)
@@ -309,7 +306,7 @@ function isCallCheck(check: FitCheck) {
   return check.text.startsWith('call ')
 }
 
-function toDoctorCheck(check: FitCheck): FitDoctorCheck {
+function toCallsiteCheck(check: FitCheck): FitCheck {
   const status = check.status === 'pass' ? 'pass'
     : check.status === 'unknown' ? 'unknown'
       : isDefiniteCallFailure(check) ? 'fail' : 'requires'
@@ -327,9 +324,9 @@ function isDefiniteCallFailure(check: FitCheck) {
   return check.reason?.split('\n').some(line => line.startsWith('this call passes ') && line.includes(' = ') && !line.includes(' is ')) === true
 }
 
-function dedupeDoctorChecks(checks: FitDoctorCheck[]) {
+function dedupeCallsiteChecks(checks: FitCheck[]) {
   const seen = new Set<string>()
-  const result: FitDoctorCheck[] = []
+  const result: FitCheck[] = []
   for (const check of checks) {
     const key = `${check.file}\0${check.functionName}\0${check.text}\0${check.status}\0${check.reason ?? ''}`
     if (seen.has(key)) continue
@@ -1264,7 +1261,7 @@ function verifyFunctionContract(program: Program, functionName: string, contract
   contractCache.set(key, {status: 'verifying'})
   const checks = verifyFunctionSpecs(program.file, program, fn, specs, contractCache)
   const status = checks.some(check => check.status === 'fail') ? 'fail'
-    : checks.some(check => check.status === 'unknown') ? 'unknown'
+    : checks.some(check => check.status === 'unknown' || check.status === 'requires') ? 'unknown'
       : 'pass'
   const proof: FunctionContractProof = {status, checks}
   contractCache.set(key, proof)

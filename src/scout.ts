@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {type FitDoctorCheck} from './check-types.ts'
+import {type FitCheck} from './check-types.ts'
 import {type FitFunction, type FitModule} from './modules.ts'
 import {
   fitReturnPublicRoot,
@@ -18,7 +18,7 @@ export type FitScoutCandidate = {
 export type FitScoutReport = {
   files: string[]
   candidates: FitScoutCandidate[]
-  checks: FitDoctorCheck[]
+  checks: FitCheck[]
   summary: {
     candidates: number
     pass: number
