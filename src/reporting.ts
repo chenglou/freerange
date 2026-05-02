@@ -231,6 +231,6 @@ function formatLinearTerm(coefficient: number, name: string, first: boolean) {
   return first ? (sign === '-' ? `-${body}` : body) : `${sign} ${body}`
 }
 
-function formatNumber(value: number) {
+export function formatNumber(value: number) {
   return Number.isInteger(value) ? `${value}` : `${value}`
 }

@@ -163,7 +163,7 @@ function printLines(text: string, indent: string) {
 }
 
 function isCallReport(check: FitCheck) {
-  return check.text.startsWith('call ')
+  return check.detail?.kind === 'call-precondition'
 }
 
 function printFollowUp(check: FitCheck) {
@@ -218,6 +218,7 @@ function formatCheckLocation(check: {file: string; line?: number; functionName: 
 }
 
 function formatCheckStatusLine(check: FitCheck) {
+  if (check.detail?.kind === 'call-precondition') return `${check.status.toUpperCase()}: ${check.detail.callText}: ${check.detail.requirement}`
   return check.status === 'unknown'
     ? `UNKNOWN could not prove ${check.text}`
     : check.status === 'requires'

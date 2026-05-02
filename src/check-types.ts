@@ -23,7 +23,18 @@ export type FitCheck = {
   text: string
   status: FitCheckStatus
   reason?: string
+  detail?: FitCheckDetail
 }
+
+export type FitCheckDetail =
+  | {
+      kind: 'call-precondition'
+      callText: string
+      requirement: string
+      callerPassed: string
+      missing: string[]
+      definiteFailure: boolean
+    }
 
 export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
 

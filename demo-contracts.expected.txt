@@ -30,25 +30,25 @@ PASS ../vibescript/demos/photo-gallery/layout.ts:122:gridImageMaxSizeY: return: 
 PASS ../vibescript/demos/photo-gallery/layout.ts:129:gridImageSizeX: return: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:130:gridImageSizeX: return <= naturalSizeX
 PASS ../vibescript/demos/photo-gallery/layout.ts:131:gridImageSizeX: return <= boxMaxSizeX
-PASS ../vibescript/demos/photo-gallery/layout.ts:151:measureGridImage: call gridImageMaxSizeY(ar, boxMaxSizeX): requires ar: 0.1..10
-PASS ../vibescript/demos/photo-gallery/layout.ts:151:measureGridImage: call gridImageMaxSizeY(ar, boxMaxSizeX): requires boxMaxSizeX: 0..2000
+PASS ../vibescript/demos/photo-gallery/layout.ts:151:measureGridImage: gridImageMaxSizeY(ar, boxMaxSizeX): requires ar: 0.1..10
+PASS ../vibescript/demos/photo-gallery/layout.ts:151:measureGridImage: gridImageMaxSizeY(ar, boxMaxSizeX): requires boxMaxSizeX: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:122:measureGridImage > gridImageMaxSizeY: return: 0..2100
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires naturalSizeX: 0..10000
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires boxMaxSizeX: 0..2000
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires aspectSizeX: 0..21000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires naturalSizeX: 0..10000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires boxMaxSizeX: 0..2000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires aspectSizeX: 0..21000
 PASS ../vibescript/demos/photo-gallery/layout.ts:155:measureGridImage: return.imageSizeX: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:156:measureGridImage: return.imageSizeY: 0..20000
 PASS ../vibescript/demos/photo-gallery/layout.ts:143:measureGridImage: return.imageSizeX <= naturalSizeX
 PASS ../vibescript/demos/photo-gallery/layout.ts:144:measureGridImage: return.imageSizeX <= boxMaxSizeX
-PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: call measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires ar: 0.1..10
-PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: call measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires naturalSizeX: 0..10000
-PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: call measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires boxMaxSizeX: 0..2000
-PASS ../vibescript/demos/photo-gallery/layout.ts:151:getGridLayout > measureGridImage: call gridImageMaxSizeY(ar, boxMaxSizeX): requires ar: 0.1..10
-PASS ../vibescript/demos/photo-gallery/layout.ts:151:getGridLayout > measureGridImage: call gridImageMaxSizeY(ar, boxMaxSizeX): requires boxMaxSizeX: 0..2000
+PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires ar: 0.1..10
+PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires naturalSizeX: 0..10000
+PASS ../vibescript/demos/photo-gallery/layout.ts:188:getGridLayout: measureGridImage(ar, source.naturalSizeX, boxMaxSizeX): requires boxMaxSizeX: 0..2000
+PASS ../vibescript/demos/photo-gallery/layout.ts:151:getGridLayout > measureGridImage: gridImageMaxSizeY(ar, boxMaxSizeX): requires ar: 0.1..10
+PASS ../vibescript/demos/photo-gallery/layout.ts:151:getGridLayout > measureGridImage: gridImageMaxSizeY(ar, boxMaxSizeX): requires boxMaxSizeX: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:122:getGridLayout > measureGridImage > gridImageMaxSizeY: return: 0..2100
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires naturalSizeX: 0..10000
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires boxMaxSizeX: 0..2000
-PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: call gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires aspectSizeX: 0..21000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires naturalSizeX: 0..10000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires boxMaxSizeX: 0..2000
+PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGridImage: gridImageSizeX(naturalSizeX, boxMaxSizeX, imgMaxSizeY * ar): requires aspectSizeX: 0..21000
 PASS ../vibescript/demos/photo-gallery/layout.ts:155:getGridLayout > measureGridImage: return.imageSizeX: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:156:getGridLayout > measureGridImage: return.imageSizeY: 0..20000
 PASS ../vibescript/demos/photo-gallery/layout.ts:181:getGridLayout > loop: rows.length <= layoutSources.length
@@ -83,8 +83,8 @@ PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:46:visiblePromptLineCoun
 PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:56:promptVisibleHeightForLineCount: return >= promptPaddingTop
 PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:68:promptInnerMaxWidth: return >= 1
 PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:122:finishPromptLayout: return.width == outerMaxWidth
-PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:124:finishPromptLayout: call promptVisibleHeightForLineCount(visibleLineCount, lineHeight): requires visibleLineCount: int 0..10
-PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:124:finishPromptLayout: call promptVisibleHeightForLineCount(visibleLineCount, lineHeight): requires lineHeight: 0..100
+PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:124:finishPromptLayout: promptVisibleHeightForLineCount(visibleLineCount, lineHeight): requires visibleLineCount: int 0..10
+PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:124:finishPromptLayout: promptVisibleHeightForLineCount(visibleLineCount, lineHeight): requires lineHeight: 0..100
 PASS ../vibescript/demos/photo-gallery/prompt-layout.ts:124:finishPromptLayout: return.visibleHeight: 8..1008
 PASS ../vibescript/demos/scroll-anchor/anchor-layout.ts:42:anchorHeaderY: return >= y
 PASS ../vibescript/demos/scroll-anchor/anchor-layout.ts:43:anchorHeaderY: return == y + gapTop

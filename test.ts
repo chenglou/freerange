@@ -477,8 +477,8 @@ function f() {
     const check = runFr(['check', 'calls.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on a definite bad literal call', check.output)
     expectCli(check.output.includes('calls.ts:8:f'), 'expected fr check failure output to include the call line', check.output)
-    expectCli(check.output.includes('FAIL call h(20): requires value: 0..10'), 'expected fr check literal-call failure output', check.output)
-    expectCli(check.output.includes('missing at call site: 20 <= 10'), 'expected fr check to print the caller-side missing obligation', check.output)
+    expectCli(check.output.includes('FAIL: h(20): requires value: 0..10'), 'expected fr check literal-call failure output', check.output)
+    expectCli(check.output.includes('missing: 20 <= 10'), 'expected fr check to print the caller-side missing obligation', check.output)
     expectCli(check.output.includes('fr check: 1 files,'), 'expected fr check summary', check.output)
     expectCli(check.output.includes('1 fail'), 'expected fr check summary to include one fail', check.output)
   })
@@ -497,14 +497,14 @@ function f(value: number) {
   }, dir => {
     const check = runFr(['check', 'calls.ts'], dir)
     expectCli(check.exitCode === 1, 'expected fr check to exit 1 on caller requirements', check.output)
-    expectCli(check.output.includes('REQUIRES call h(value): requires value: 0..10'), 'expected fr check caller-requirement output', check.output)
+    expectCli(check.output.includes('REQUIRES: h(value): requires value: 0..10'), 'expected fr check caller-requirement output', check.output)
     expectCli(check.output.includes('next: add a caller given, validate before this call, or run fr infer --function f calls.ts to see caller facts'), 'expected fr check to point at caller infer next', check.output)
     expectCli(check.output.includes('fr check: 1 files,'), 'expected fr check requirement summary', check.output)
     expectCli(check.output.includes('0 fail, 1 requires, 0 unknown'), 'expected fr check summary to classify requires separately from fail', check.output)
 
     const annotationsOnly = runFr(['check', '--annotations-only', 'calls.ts'], dir)
     expectCli(annotationsOnly.exitCode === 0, 'expected fr check --annotations-only to skip broad callsite requirements', annotationsOnly.output)
-    expectCli(!annotationsOnly.output.includes('REQUIRES call h(value)'), 'expected fr check --annotations-only to suppress broad callsite requirements', annotationsOnly.output)
+    expectCli(!annotationsOnly.output.includes('REQUIRES: h(value)'), 'expected fr check --annotations-only to suppress broad callsite requirements', annotationsOnly.output)
     expectCli(annotationsOnly.output.includes('fr check --annotations-only: 1 files,'), 'expected fr check --annotations-only summary', annotationsOnly.output)
   })
 
@@ -538,7 +538,7 @@ function f(value: number) {
     expectCli(check.exitCode === 0, 'expected fr scout to stay read-only', check.output)
     expectCli(check.output.includes('candidate return >= value'), 'expected fr scout candidate output', check.output)
     expectCli(check.output.includes('would require:'), 'expected fr scout requirement output', check.output)
-    expectCli(check.output.includes('UNKNOWN could not prove call cap(value, 10): requires max >= value'), 'expected fr scout call obligation output', check.output)
+    expectCli(check.output.includes('UNKNOWN: cap(value, 10): requires max >= value'), 'expected fr scout call obligation output', check.output)
     expectCli(check.output.includes('fr scout: 1 files, 2 candidates'), 'expected fr scout summary', check.output)
   })
 

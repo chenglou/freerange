@@ -303,7 +303,7 @@ function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache
 }
 
 function isCallCheck(check: FitCheck) {
-  return check.text.startsWith('call ')
+  return check.detail?.kind === 'call-precondition'
 }
 
 function toCallsiteCheck(check: FitCheck): FitCheck {
@@ -317,18 +317,19 @@ function toCallsiteCheck(check: FitCheck): FitCheck {
     text: check.text,
     status,
     ...(check.reason == null ? {} : {reason: check.reason}),
+    ...(check.detail == null ? {} : {detail: check.detail}),
   }
 }
 
 function isDefiniteCallFailure(check: FitCheck) {
-  return check.reason?.split('\n').some(line => line.startsWith('this call passes ') && line.includes(' = ') && !line.includes(' is ')) === true
+  return check.detail?.kind === 'call-precondition' && check.detail.definiteFailure
 }
 
 function dedupeCallsiteChecks(checks: FitCheck[]) {
   const seen = new Set<string>()
   const result: FitCheck[] = []
   for (const check of checks) {
-    const key = `${check.file}\0${check.functionName}\0${check.text}\0${check.status}\0${check.reason ?? ''}`
+    const key = `${check.file}\0${check.functionName}\0${check.text}\0${check.status}\0${check.reason ?? ''}\0${JSON.stringify(check.detail ?? null)}`
     if (seen.has(key)) continue
     seen.add(key)
     result.push(check)

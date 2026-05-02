@@ -61,9 +61,8 @@ UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.l
     assumed from input: given index: int 0..10
     inferred from branch: items.length < 0
   missing fact: index < items.length
-FAIL negative-patterns.ts:negativeArrayLengthCallGiven: call negativeNeedsShortArray(items): requires items.length: int 0..10
-  called function requires items.length: int 0..10
-  this call passes items.length is int 0..20
+FAIL negative-patterns.ts:negativeArrayLengthCallGiven: negativeNeedsShortArray(items): requires items.length: int 0..10
+  caller passed: items.length: int 0..20
   missing: items.length <= 10
 FAIL negative-patterns.ts:negativeHalfOpenUpperExcludesLength: return: int 0..<items.length
   range was int 1..50 as items.length, expected inside int 0..<items.length
@@ -187,11 +186,9 @@ UNKNOWN negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: return >=
     assumed from input: given this.top: 0..1000
     assumed from input: given this.height: -100..1000
   missing fact: (this.top + this.height) >= this.top
-FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: call box.bottom: requires this.height: -100..1000
-  called function requires this.height: -100..1000
-  this call passes this.height is any number
-  missing at call site: box.height >= -100
-  missing at call site: box.height <= 1000
+FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: box.bottom: requires this.height: -100..1000
+  caller passed: this.height: any number
+  missing: box.height: -100..1000
 FAIL negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
   range was any number as (box.top + box.height), expected inside 0..2000
   known:
@@ -370,13 +367,11 @@ UNKNOWN negative-patterns.ts:negativeAdjacentBoundIndexNeedsNondecreasingRows: r
     row advance for .top: -40..40 as items[].height
     sequence facts: spaced(0), lastEnd = any number as runningSum(0, items.length, items[].height)
   missing: given items[].height >= 0
-FAIL negative-patterns.ts:negativeCallGiven: call negativeNeedsSmallValue(value): requires value: 0..10
-  called function requires value: 0..10
-  this call passes value is 0..20
+FAIL negative-patterns.ts:negativeCallGiven: negativeNeedsSmallValue(value): requires value: 0..10
+  caller passed: value: 0..20
   missing: value <= 10
-FAIL negative-patterns.ts:negativeInlineParamCallGiven: call negativeInlineParamNeedsSmall(value): requires value: 0..10
-  called function requires value: 0..10
-  this call passes value is 0..20
+FAIL negative-patterns.ts:negativeInlineParamCallGiven: negativeInlineParamNeedsSmall(value): requires value: 0..10
+  caller passed: value: 0..20
   missing: value <= 10
 FAIL negative-patterns.ts:negativeElseIfBranchCanReturnUpper: return: -1..<1
   range was int -1..1, expected inside -1..<1
@@ -387,9 +382,8 @@ FAIL negative-patterns.ts:negativeElseIfBranchCanReturnUpper: return: -1..<1
     assumed from input: given max: 1..100
     assumed from input: given min <= max
   missing: int -1..1 < 1
-FAIL negative-patterns.ts:negativeRelationalCallGiven: call negativeNeedsContainerFit(containee, container): requires container >= containee
-  called function requires container >= containee
-  this call passes container is 0..50 and containee is 100..200
+FAIL negative-patterns.ts:negativeRelationalCallGiven: negativeNeedsContainerFit(containee, container): requires container >= containee
+  caller passed: container: 0..50, containee: 100..200
   missing: container >= containee
 UNKNOWN negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: return.offset >= 0
   known:
@@ -439,9 +433,8 @@ FAIL negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].
 FAIL negative-patterns.ts:negativeTypeFieldReturnCheck: return.k > 0
   result: is false
   missing fact: -1 > 0
-FAIL negative-patterns.ts:negativeTypeFieldCallBoundary: call negativeNeedsTypeFieldSpring(spring): requires spring.k > 0
-  called function requires spring.k > 0
-  this call passes spring.k = -1
+FAIL negative-patterns.ts:negativeTypeFieldCallBoundary: negativeNeedsTypeFieldSpring(spring): requires spring.k > 0
+  caller passed: spring.k: -1
   missing: spring.k > 0
 FAIL negative-patterns.ts:negativeTypeFieldLocalBoundary: spring.k > 0
   result: is false
@@ -458,9 +451,8 @@ FAIL negative-patterns.ts:negativeTypeFieldArrayElement: return.rows[].height: 0
 FAIL negative-patterns.ts:negativeTypeRelationReturnCheck: return.k > return.b
   result: is false
   missing fact: 1 > 2
-FAIL negative-patterns.ts:negativeTypeRelationCallBoundary: call negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b
-  called function requires spring.k > spring.b
-  this call passes spring.k = 1 and spring.b = 2
+FAIL negative-patterns.ts:negativeTypeRelationCallBoundary: negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b
+  caller passed: spring.k: 1, spring.b: 2
   missing: spring.k > spring.b
 FAIL negative-patterns.ts:negativeTypeRelationNestedReturnCheck: return.rows[].bottom >= return.rows[].top
   applies to: every item in return.rows
@@ -492,11 +484,9 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols
     checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
     assumed from input: given containerWidth: 320..2000
   missing: int 1..7 <= 6
-UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: call negativeConditionalClampLayoutValue(low, value, high): requires max >= min
-  called function requires max >= min
-  this call passes max is -1000..1000 and min is -1000..1000
-  could not prove bounds.max >= bounds.min
-  missing at call site: bounds.max >= bounds.min
+UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(low, value, high): requires max >= min
+  caller passed: max: -1000..1000, min: -1000..1000
+  missing: bounds.max >= bounds.min
 UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: return >= bounds.min
   known:
     bounds.max: -1000..1000
@@ -506,11 +496,9 @@ UNKNOWN negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: ret
     assumed from input: given value: -1000..1000
     inferred from branch: -bounds.max + value > 0
   missing fact: bounds.max >= bounds.min
-UNKNOWN negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: call negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min
-  called function requires max >= min
-  this call passes max is any number and min is any number
-  could not prove (extent[1][0] - width) >= extent[0][0]
-  missing at call site: (extent[1][0] - width) >= extent[0][0]
+UNKNOWN negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min
+  caller passed: max: any number, min: any number
+  missing: (extent[1][0] - width) >= extent[0][0]
 UNKNOWN negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: return >= extent[0][0]
   known:
     (extent[1][0] - width): any number
@@ -553,10 +541,9 @@ FAIL negative-patterns.ts:negativeObjectMutationForgetsInputPath: return >= 0
   known:
     assumed from input: given box.width: 0..10
   missing fact: -1 >= 0
-FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: call negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
-  called function requires max >= min
-  this call passes max = 5 and min = 10
-  missing at call site: 5 >= 10
+FAIL negative-patterns.ts:negativeLocalHelperPreconditionViolation: negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
+  caller passed: max: 5, min: 10
+  missing: 5 >= 10
 FAIL negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: return.rows[].index: int 1..49
   range was int 0..49 as rows[].index, expected inside int 1..49
   known:
@@ -630,10 +617,9 @@ UNKNOWN negative-patterns.ts:negativeUnboundedPromptHeight: return.visibleHeight
     assumed from input: given prompt.height: 0..Infinity
     assumed from input: given availableHeight: 0..200
   missing fact: prompt.height <= availableHeight
-FAIL negative-patterns.ts:negativeInvertedClampBounds: call negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
-  called function requires max >= min
-  this call passes max = 0 and min = 1
-  missing at call site: 0 >= 1
+FAIL negative-patterns.ts:negativeInvertedClampBounds: negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
+  caller passed: max: 0, min: 1
+  missing: 0 >= 1
 FAIL negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
   range was any number as total, expected inside 0..0
   known:
@@ -850,35 +836,30 @@ FAIL negative-patterns.ts:negativeUnionBranchInsideBoundsOutsideSet: return: 0 |
   value was int 0..50, expected one of 0 | 100
   branches produced 0, 50
   missing: int 0..50 in {0, 100}
-FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: call negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
-  called function requires navSizeX: 82 | 214
-  this call passes navSizeX = 150
-  missing at call site: 150 in {82, 214}
-FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: call negativeDefaultSpring(): requires k > 0
-  called function requires k > 0
-  this call passes k = -1
-  missing at call site: -1 > 0
+FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
+  caller passed: navSizeX: 150
+  missing: 150 in {82, 214}
+FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: negativeDefaultSpring(): requires k > 0
+  caller passed: k: -1
+  missing: -1 > 0
 FAIL negative-patterns.ts:negativeDefaultArgumentViolatesGiven: return.k > 0
   result: is false
   missing fact: -1 > 0
-FAIL negative-patterns.ts:negativeStrictSpringDefault: call negativeStrictSpringBadDefault(): requires b > 0
-  called function requires b > 0
-  this call passes b = 0
-  missing at call site: 0 > 0
+FAIL negative-patterns.ts:negativeStrictSpringDefault: negativeStrictSpringBadDefault(): requires b > 0
+  caller passed: b: 0
+  missing: 0 > 0
 FAIL negative-patterns.ts:negativeStrictSpringDefault: return.b > 0
   result: is false
   missing: strict comparison cannot hold when both sides are 0
-FAIL negative-patterns.ts:negativeStrictSpringCallArg: call negativeStrictSpring(-1): requires k > 0
-  called function requires k > 0
-  this call passes k = -1
-  missing at call site: -1 > 0
+FAIL negative-patterns.ts:negativeStrictSpringCallArg: negativeStrictSpring(-1): requires k > 0
+  caller passed: k: -1
+  missing: -1 > 0
 FAIL negative-patterns.ts:negativeStrictSpringCallArg: return.k > 0
   result: is false
   missing fact: -1 > 0
-FAIL negative-patterns.ts:negativeStrictSpringObjectArg: call negativeStrictSpring(params.k, params.b): requires b > 0
-  called function requires b > 0
-  this call passes b = 0
-  missing at call site: 0 > 0
+FAIL negative-patterns.ts:negativeStrictSpringObjectArg: negativeStrictSpring(params.k, params.b): requires b > 0
+  caller passed: b: 0
+  missing: 0 > 0
 FAIL negative-patterns.ts:negativeStrictSpringObjectArg: return.b > 0
   result: is false
   missing: strict comparison cannot hold when both sides are 0
@@ -918,10 +899,9 @@ FAIL negative-patterns.ts:default: return.x: 50..100
     assumed from input: given rect.top: 0..100
     assumed from input: given rect.bottom: 0..100
   missing: (rect.left + ((rect.right - rect.left) / 2)) >= 50
-FAIL negative-patterns.ts:<top-level>: call negativeNeedsContainerFit(4, 3): requires container >= containee
-  called function requires container >= containee
-  this call passes container = 3 and containee = 4
-  missing at call site: 3 >= 4
+FAIL negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
+  caller passed: container: 3, containee: 4
+  missing: 3 >= 4
 FAIL negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
   result: is false
   missing fact: -1 > 0
@@ -989,10 +969,9 @@ FAIL negative-import-patterns.ts:negativeImportedTypeFieldArrayElement: return.r
   missing: 100 <= 40
 UNKNOWN negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
   Branches returned incompatible value shapes
-FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: call matrixNegativeDefault(): requires value >= 0
-  called function requires value >= 0
-  this call passes value = -1
-  missing at call site: -1 >= 0
+FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: matrixNegativeDefault(): requires value >= 0
+  caller passed: value: -1
+  missing: -1 >= 0
 FAIL interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: return.value >= 0
   result: is false
   missing fact: -1 >= 0
@@ -1003,12 +982,9 @@ FAIL interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias: retur
     inferred from code: mapIndex(source) >= 0
     inferred from code: mapIndex(source) - 1 < 0
   missing fact: -1 > 0
-REQUIRES negative-patterns.ts:<top-level>: call negativeNeedsWideViewport(document.documentElement.clientWidth): requires width: 320..2000
-  called function requires width: 320..2000
-  this call passes width is int 0..Infinity
-  missing at call site: document.documentElement.clientWidth >= 320
-  missing at call site: document.documentElement.clientWidth <= 2000
-FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: call negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
-  called function requires max >= min
-  this call passes max = 2 and min = 10
-  missing at call site: 2 >= 10
+REQUIRES negative-patterns.ts:<top-level>: negativeNeedsWideViewport(document.documentElement.clientWidth): requires width: 320..2000
+  caller passed: width: int 0..Infinity
+  missing: document.documentElement.clientWidth: 320..2000
+FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
+  caller passed: max: 2, min: 10
+  missing: 2 >= 10
