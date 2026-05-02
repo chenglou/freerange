@@ -10,6 +10,7 @@ Freerange is not a runtime runner. It abstract-interprets a small TypeScript sub
 
 ```ts
 @fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
+/** @fit ... */ // block form for function, loop, and type contract blocks.
 given width: 0..1000 // input assumption. Think precondition, not proof.
 given this.width: 0..1000 // input assumption for an instance method/getter.
 return.width: 0..320 // check fact. Freerange must prove this from source.
@@ -288,7 +289,7 @@ return {
 }
 ```
 
-There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Inline comments can be written as a leading line/block comment or a trailing `//` side comment. Trailing block comments are not supported; use `// @fit ...` when the fact sits beside code. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
+There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Attached inline facts use line comments: either a leading `// @fit ...` line or a trailing `// @fit ...` side comment. Block comments are only for function, loop, and type contract blocks; use `// @fit ...` when the fact sits beside a value, param, field, or return. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
 
 Required fields in source-backed `type` and `interface` declarations can carry
 the same small inline comments:
@@ -1303,7 +1304,7 @@ The checker understands a small pure subset:
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - omitted trailing arguments that use simple default parameter initializers, plus explicit `undefined`/optional arguments falling through to those defaults
-- source-backed type/interface `// @fit` contracts on required fields and sibling relations, including imported local-source types, nested object fields, and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
+- source-backed type/interface line-comment field contracts and block-comment type-scope contracts on required fields and sibling relations, including imported local-source types, nested object fields, and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
 - top-level `const` literals: numbers, strings, booleans, `null`, and plain object/array literals made from those pieces

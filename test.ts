@@ -580,7 +580,20 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 requires, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
 
-  console.log('cli: 13 expected behaviors')
+  await withCliFixture({
+    'block-inline.ts': `function invalid(
+  value: number /* @fit 0..10 */,
+) {
+  return value
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'block-inline.ts'], dir)
+    expectCli(check.exitCode === 2, 'expected inline block @fit to be rejected', check.output)
+    expectCli(check.output.includes('Block @fit comments are only supported for function, loop, and type contract blocks; use // @fit for attached facts'), 'expected inline block @fit guidance', check.output)
+  })
+
+  console.log('cli: 14 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

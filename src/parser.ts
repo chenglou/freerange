@@ -155,6 +155,7 @@ export function parseFunctionFitSpecs(
 }
 
 export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclaration): FitGivenSpec[] {
+  rejectInlineBlockFitComments(sourceText, param)
   const lines = inlineFitCommentLines(sourceText, param)
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
@@ -167,10 +168,12 @@ export function hasFitComment(sourceText: string, node: ts.Node): boolean {
 }
 
 export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean {
+  rejectInlineBlockFitComments(sourceText, node)
   return inlineFitCommentLines(sourceText, node).length > 0
 }
 
 export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitCheckSpec[] {
+  rejectInlineBlockFitComments(sourceText, statement)
   const lines = inlineFitCommentLines(sourceText, statement)
   if (lines.length === 0) return []
   const declarations = statement.declarationList.declarations
@@ -182,10 +185,12 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
 }
 
 export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitCheckSpec[] {
+  rejectInlineBlockFitComments(sourceText, node)
   return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
 }
 
 export function parseInlineGivenFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitGivenSpec[] {
+  rejectInlineBlockFitComments(sourceText, node)
   return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, 'given-range', line.line))
 }
 
@@ -202,10 +207,31 @@ function inlineFitCommentLines(sourceText: string, node: ts.Node): FitCommentLin
   const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
   return uniqueLines([
     ...commentRanges
+      .filter(range => range.kind === ts.SyntaxKind.SingleLineCommentTrivia)
       .flatMap(range => commentRangeLines(sourceText, range))
       .filter(line => line.text.startsWith('@fit ')),
     ...trailingLineFitCommentLines(sourceText, node),
   ])
+}
+
+function inlineBlockFitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
+  const commentRanges = ts.getLeadingCommentRanges(sourceText, node.pos) ?? []
+  return uniqueLines([
+    ...commentRanges
+      .filter(range => range.kind === ts.SyntaxKind.MultiLineCommentTrivia)
+      .flatMap(range => {
+        const lines = commentRangeLines(sourceText, range)
+        return lines.some(line => line.text === '@fit') ? [] : lines
+      })
+      .filter(line => line.text.startsWith('@fit')),
+    ...trailingBlockFitCommentLines(sourceText, node),
+  ])
+}
+
+function rejectInlineBlockFitComments(sourceText: string, node: ts.Node) {
+  const line = inlineBlockFitCommentLines(sourceText, node)[0]
+  if (line == null) return
+  throw new Error(`Block @fit comments are only supported for function, loop, and type contract blocks; use // @fit for attached facts near line ${line.line}`)
 }
 
 function trailingLineFitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
@@ -217,6 +243,25 @@ function trailingLineFitCommentLines(sourceText: string, node: ts.Node): FitComm
   return line.startsWith('@fit ')
     ? [{text: line, line: lineNumberAtPosition(sourceText, node.end + commentStart), pos: node.end + commentStart}]
     : []
+}
+
+function trailingBlockFitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
+  const lineEnd = sourceText.indexOf('\n', node.end)
+  const restOfLine = sourceText.slice(node.end, lineEnd < 0 ? sourceText.length : lineEnd)
+  const commentPattern = /\/\*[\s\S]*?\*\//g
+  const lines: FitCommentLine[] = []
+  for (;;) {
+    const match = commentPattern.exec(restOfLine)
+    if (match == null) break
+    const pos = node.end + match.index
+    lines.push(...commentRangeLines(sourceText, {
+      pos,
+      end: pos + match[0].length,
+      kind: ts.SyntaxKind.MultiLineCommentTrivia,
+      hasTrailingNewLine: false,
+    }).filter(line => line.text.startsWith('@fit')))
+  }
+  return lines
 }
 
 function uniqueLines(lines: FitCommentLine[]) {

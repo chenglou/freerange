@@ -2015,20 +2015,14 @@ export function transitiveGivenTracking(value: number) {
 }
 
 export function inlineCommentFormatVariants(
-  /** @fit 0..10 */
-  blockParam: number,
   // @fit 0..10
   lineParam: number,
   trailingParam: number, // @fit 0..10
 ) {
-  /** @fit int 0..10 */
-  const blockLocal = Math.floor(blockParam)
   // @fit int 0..10
   const lineLocal = Math.floor(lineParam)
   const trailingLocal = Math.floor(trailingParam) // @fit int 0..10
   return {
-    /** @fit int 0..10 */
-    blockField: blockLocal,
     // @fit int 0..10
     lineField: lineLocal,
     trailingField: trailingLocal, // @fit int 0..10

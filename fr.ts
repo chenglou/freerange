@@ -7,19 +7,24 @@ import {resolveFitProjectPaths} from './src/modules.ts'
 
 const [command, ...args] = Bun.argv.slice(2)
 
-switch (command) {
-  case 'check':
-    await runCheck(args)
-    break
-  case 'infer':
-    await runInfer(args)
-    break
-  case 'scout':
-    await runScout(args)
-    break
-  default:
-    printUsage()
-    process.exitCode = 2
+try {
+  switch (command) {
+    case 'check':
+      await runCheck(args)
+      break
+    case 'infer':
+      await runInfer(args)
+      break
+    case 'scout':
+      await runScout(args)
+      break
+    default:
+      printUsage()
+      process.exitCode = 2
+  }
+} catch (error) {
+  console.error(`fr: ${error instanceof Error ? error.message : String(error)}`)
+  process.exitCode = 2
 }
 
 async function runScout(args: string[]) {
