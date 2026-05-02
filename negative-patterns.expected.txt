@@ -903,6 +903,12 @@ FAIL negative-patterns.ts:negativeMapCallbackMutationForgetsReturnedFact: return
     inferred from code: mapIndex([item]) >= 0
     inferred from code: mapIndex([item]) - 1 < 0
   missing fact: -1 > 0
+FAIL negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..Infinity
+  range was any number as box.clientWidth, expected inside 0..Infinity
+  known:
+    box.clientWidth: any number
+    Infinity: Infinity..Infinity
+  missing: box.clientWidth >= 0
 FAIL negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.left + ((rect.right - rect.left) / 2)), expected inside 50..100
   known:
@@ -997,6 +1003,11 @@ FAIL interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias: retur
     inferred from code: mapIndex(source) >= 0
     inferred from code: mapIndex(source) - 1 < 0
   missing fact: -1 > 0
+REQUIRES negative-patterns.ts:<top-level>: call negativeNeedsWideViewport(document.documentElement.clientWidth): requires width: 320..2000
+  called function requires width: 320..2000
+  this call passes width is int 0..Infinity
+  missing at call site: document.documentElement.clientWidth >= 320
+  missing at call site: document.documentElement.clientWidth <= 2000
 FAIL negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: call negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
   called function requires max >= min
   this call passes max = 2 and min = 10

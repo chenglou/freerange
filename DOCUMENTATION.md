@@ -769,6 +769,33 @@ function overflow(width: number) {
 
 That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. For assignment-style code, it keeps small case splits across later `if` branches, which is enough for ordinary two-branch clamps. It does not treat arbitrary conditionals as min/max.
 
+## Browser Dimensions
+
+Freerange does not run browser code, but it knows a small set of browser-owned
+layout dimensions from TypeScript's DOM declarations. These values are
+non-negative because the platform owns the measurement:
+
+```ts
+/** @fit
+ * return: int 0..Infinity
+ */
+function viewportWidth() {
+  return document.documentElement.clientWidth
+}
+```
+
+The current set covers common viewport, element, screen, canvas, image, video,
+visual viewport, and `ResizeObserverSize` dimensions: `clientWidth`,
+`clientHeight`, `scrollWidth`, `scrollHeight`, `offsetWidth`, `offsetHeight`,
+`innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `width`, `height`,
+`naturalWidth`, `naturalHeight`, `videoWidth`, `videoHeight`, `inlineSize`, and
+`blockSize` on the DOM interfaces that own those properties.
+
+This is deliberately type-backed. A plain app object with a field named
+`clientWidth` does not inherit a DOM fact. Scroll positions are also not treated
+as non-negative; RTL scrolling, overscroll, and rubber-banding can make them
+negative or beyond the usual bounds.
+
 ## Helpers
 
 When a checked helper is called, its input facts become things the caller must prove:

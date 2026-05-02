@@ -41,6 +41,7 @@ bun install
 
 - [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and callsite-check orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
 - [src/function-inputs.ts](./src/function-inputs.ts) — function parameter binding, argument binding, and typed input fallback shapes

@@ -1708,6 +1708,23 @@ export function negativeMapCallbackMutationForgetsReturnedFact(): NegativeMutate
 }
 
 /** @fit
+ * return: 0..Infinity
+ */
+export function negativePlainClientWidthIsNotAmbient(box: {clientWidth: number}) {
+  return box.clientWidth
+}
+
+/** @fit
+ * given width: 320..2000
+ * return: 320..2000
+ */
+function negativeNeedsWideViewport(width: number) {
+  return width
+}
+
+export const negativeAmbientClientWidthTooBroad = negativeNeedsWideViewport(document.documentElement.clientWidth)
+
+/** @fit
  * given rect.left: 0..100
  * given rect.right: 0..100
  * given rect.top: 0..100

@@ -2103,6 +2103,34 @@ export function classMethodSummary(box: ClassMethodThisClaims) {
 }
 
 /** @fit
+ * return: int 0..Infinity
+ */
+export function ambientDocumentElementClientWidth() {
+  return document.documentElement.clientWidth
+}
+
+/** @fit
+ * return: int 0..Infinity
+ */
+export function ambientBareInnerWidth() {
+  return innerWidth
+}
+
+/** @fit
+ * return: int 0..Infinity
+ */
+export function ambientCanvasWidth(canvas: HTMLCanvasElement) {
+  return canvas.width
+}
+
+/** @fit
+ * return: 0..Infinity
+ */
+export function ambientResizeObserverInlineSize(size: ResizeObserverSize) {
+  return size.inlineSize
+}
+
+/** @fit
  * given rect.left: -1000..1000
  * given rect.right: -1000..1000
  * given rect.top: -1000..1000

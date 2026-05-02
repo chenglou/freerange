@@ -122,6 +122,11 @@ unsupported:
   unsupported hitTest1DMode > <conditional-false>: Binary expression focused < data.length - 1 && pointerX >= windowSizeX - hitArea1DSizeX expected numbers
 
 function render
+locals:
+  newWindowSizeX == document.documentElement.clientWidth
+  newWindowSizeX: int 0..Infinity
+  windowSizeY == document.documentElement.clientHeight
+  windowSizeY: int 0..Infinity
 unsupported:
   unsupported render: Unknown identifier events
   unsupported render line 225: Property access expected an object path: events.keydown
@@ -150,11 +155,6 @@ unsupported:
   unsupported render > <if-false>: Unknown assignment root debug
   unsupported render > <if-true> > <if-true>: Unknown assignment root debugTimestamp
   unsupported render > <if-true> > <if-true>: Compound assignment debugTimestamp += 1000 / 60 expected numbers
-  unsupported render: Unknown identifier document
-  unsupported render line 247: Property access expected an object path: document.documentElement
-  unsupported render line 247: Property access expected an object path: document.documentElement.clientWidth
-  unsupported render line 248: Property access expected an object path: document.documentElement
-  unsupported render line 248: Property access expected an object path: document.documentElement.clientHeight
   unsupported render: Unknown identifier reducedMotion
   unsupported render line 250: Property access expected an object path: reducedMotion.matches
   unsupported render: Unknown identifier isSafari
