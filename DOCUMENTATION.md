@@ -10,7 +10,11 @@ Freerange is not a runtime runner. It abstract-interprets a small TypeScript sub
 
 ```ts
 @fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
-/** @fit ... */ // block form for function, loop, and type contract blocks.
+// block form for function, loop, and type contract blocks:
+/**
+ * @fit
+ * ...
+ */
 given width: 0..1000 // input assumption. Think precondition, not proof.
 given this.width: 0..1000 // input assumption for an instance method/getter.
 return.width: 0..320 // check fact. Freerange must prove this from source.
