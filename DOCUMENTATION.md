@@ -426,13 +426,14 @@ Assignments are conservative. Plain local assignment keeps the assigned value. P
 
 ## Reading Results
 
-Each requested fact ends in one of three states:
+`fr check` reports four statuses:
 
-- `pass`: proven
-- `fail`: proven outside the requested range, or proven false
-- `unknown`: not proven
+- `pass`: proven.
+- `fail`: proven false.
+- `unknown`: not proven, but also not proven false.
+- `requires`: a helper call needs a callee precondition that the caller has not proven.
 
-`unknown` is not a soft pass. It usually means either the source shape is not supported yet, or the function needs another input fact.
+`unknown` is not a soft pass. It usually means the known facts still include both good and bad cases, the source shape is not supported yet, or the function needs another input fact.
 
 A useful report says where facts came from:
 
