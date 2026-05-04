@@ -75,12 +75,17 @@ const windowPaddingTop = 40
 const gapTopPeek = 40 // used when programmatically scrolling and wanting to show some gap at the top of a row
 const hitArea1DSizeX = 100 // left and right click region in 1D mode
 
+/** @fit
+ * given containerSizeX: int 0..Infinity
+ * return.cols: int 1..7
+ * return.boxMaxSizeX > 0
+ */
 function colsBoxMaxSizeXF(containerSizeX: number): {cols: number; boxMaxSizeX: number} {
   const boxMinSizeX = 220 // Make sure that on mobile, this min width is big enough not to show 2 images per row. Also, this won't be respected if view's tiny
   const cols = clamp(1, Math.floor((containerSizeX - boxesGapX) / (boxMinSizeX + boxesGapX)), 7) // half of boxesGapX for container's left and right gap
-  const boxMaxSizeX = (containerSizeX - boxesGapX - cols * boxesGapX) / cols
+  const boxMaxSizeX = Math.max(1, (containerSizeX - boxesGapX - cols * boxesGapX) / cols)
   return {
-    cols, // @fit 1..7
+    cols,
     boxMaxSizeX,
   }
 }
