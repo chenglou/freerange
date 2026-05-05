@@ -7,6 +7,7 @@ import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/impor
 import {declaredClampWidth} from '@fit-fixtures/import-pattern-declared-package'
 import importedDefaultMaxAlias, {namedMaxAlias as importedNamedMaxAlias} from './import-pattern-alias-helpers'
 import {barrelClampWidth, barrelTsxClampWidth} from './import-pattern-barrel'
+import * as importedBarrel from './import-pattern-barrel'
 import {importedTsxClampWidth} from './import-pattern-tsx-helpers'
 
 const localAliasMax = Math.max
@@ -155,6 +156,14 @@ export function importedHelperTsxContract(width: number) {
  */
 export function importedHelperBarrelContract(width: number) {
   return barrelClampWidth(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..320
+ */
+export function namespaceImportedHelperBarrelContract(width: number) {
+  return importedBarrel.barrelClampWidth(width)
 }
 
 /** @fit

@@ -280,9 +280,10 @@ export function importedContractFailureReason(localName: string, binding: Extrac
 }
 
 function importedHelperLabel(localName: string, binding: ImportedBinding) {
-  const importedName = binding.exportedName === '*'
+  const bindingName = binding.kind === 'unresolved' ? binding.exportedName : binding.importedName
+  const importedName = bindingName === '*'
     ? `${localName} (namespace)`
-    : binding.exportedName === localName || localName.endsWith(`.${binding.exportedName}`) ? localName : `${localName} (${binding.exportedName})`
+    : bindingName === localName || localName.endsWith(`.${bindingName}`) ? localName : `${localName} (${bindingName})`
   return `${importedName} from ${binding.specifier}`
 }
 

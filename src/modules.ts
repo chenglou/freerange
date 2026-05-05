@@ -26,8 +26,6 @@ export type FitModule<TGlobal> = {
   unsupportedCallAliases: Map<string, string>
   fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
-  exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
-  exportStars: FitExportStarBinding<FitModule<TGlobal>>[]
   imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
 }
 
@@ -49,9 +47,17 @@ export type FitProjectLoadTiming = {
 export type FitImportBinding<TModule> =
   | {
       kind: 'resolved'
-      exportedName: string
+      importedName: string
+      sourceName: string
       specifier: string
       module: TModule
+    }
+  | {
+      kind: 'namespace'
+      importedName: '*'
+      specifier: string
+      module: TModule
+      members: Map<string, FitImportSource<TModule>>
     }
   | {
       kind: 'unresolved'
@@ -60,47 +66,10 @@ export type FitImportBinding<TModule> =
       reason: string
     }
 
-export type FitExportBinding<TModule> =
-  | {
-      kind: 'local'
-      localName: string
-    }
-  | {
-      kind: 'reexport'
-      exportedName: string
-      specifier: string
-      module: TModule
-    }
-  | {
-      kind: 'unresolved'
-      exportedName: string
-      specifier: string
-      reason: string
-    }
-
-export type FitExportStarBinding<TModule> =
-  | {
-      kind: 'resolved'
-      specifier: string
-      module: TModule
-    }
-  | {
-      kind: 'unresolved'
-      specifier: string
-      reason: string
-    }
-
-export type FitResolvedExport<TModule> =
-  | {
-      kind: 'local'
-      localName: string
-      module: TModule
-    }
-  | {
-      kind: 'unresolved'
-      exportedName: string
-      reason: string
-    }
+export type FitImportSource<TModule> = {
+  sourceName: string
+  module: TModule
+}
 
 export type FitCallAlias =
   | {
@@ -200,13 +169,6 @@ function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diag
   return (sourceFile as ts.SourceFile & {parseDiagnostics?: readonly ts.Diagnostic[]}).parseDiagnostics ?? []
 }
 
-export function resolveFitExport<TGlobal>(
-  module: FitModule<TGlobal>,
-  exportedName: string,
-): FitResolvedExport<FitModule<TGlobal>> {
-  return resolveFitExportInner(module, exportedName, new Set())
-}
-
 function loadModule<TGlobal>(
   file: string,
   modules: Map<string, FitModule<TGlobal>>,
@@ -231,7 +193,6 @@ function loadModule<TGlobal>(
   addTiming(timing, 'moduleParseMs', parseStart)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal, timing)
-  loadReExports(module, modules, resolution, readGlobal, timing)
   return module
 }
 
@@ -252,8 +213,6 @@ function parseFitModule<TGlobal>(
   const unsupportedCallAliases = new Map<string, string>()
   const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
-  const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
-  const exportStars: FitExportStarBinding<FitModule<TGlobal>>[] = []
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
@@ -262,37 +221,25 @@ function parseFitModule<TGlobal>(
       const functionName = statement.name?.text ?? (isDefaultExport ? 'default' : null)
       if (functionName == null) continue
       collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction)
-      if (statement.name != null && hasModifier(statement, ts.SyntaxKind.ExportKeyword) && !isDefaultExport) {
-        exports.set(functionName, {kind: 'local', localName: functionName})
-      }
-      if (isDefaultExport) exports.set('default', {kind: 'local', localName: functionName})
       continue
     }
     if (ts.isClassDeclaration(statement) && statement.name != null) {
       collectClassMemberFunctions(sourceText, statement, functions, fitFunctions, specsByFunction)
       continue
     }
-    if (ts.isExportDeclaration(statement)) {
-      collectLocalExportDeclaration(statement, exports)
-      continue
-    }
+    if (ts.isExportDeclaration(statement)) continue
     if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
       const functionInitializer = supportedFunctionInitializer(statement.expression)
       if (functionInitializer == null) {
         const alias = callAliasFromExpression(statement.expression)
-        if (alias != null) {
-          callAliases.set('default', alias)
-          exports.set('default', {kind: 'local', localName: 'default'})
-        }
+        if (alias != null) callAliases.set('default', alias)
         continue
       }
       collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction)
-      exports.set('default', {kind: 'local', localName: 'default'})
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
     const isConst = isConstVariableStatement(statement)
-    const isExported = hasModifier(statement, ts.SyntaxKind.ExportKeyword)
     for (const declaration of statement.declarationList.declarations) {
       if (ts.isIdentifier(declaration.name)) {
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
@@ -303,13 +250,9 @@ function parseFitModule<TGlobal>(
           ? callAliasFromExpression(declaration.initializer)
           : null
         if (alias != null) collectCallAlias(declaration.name.text, alias, isConst, callAliases, unsupportedCallAliases)
-        if (isExported) {
-          exports.set(declaration.name.text, {kind: 'local', localName: declaration.name.text})
-        }
       } else if (ts.isObjectBindingPattern(declaration.name) && declaration.initializer != null && isIdentifierText(declaration.initializer, 'Math')) {
         for (const alias of mathDestructuringAliases(declaration.name)) {
           collectCallAlias(alias.localName, {kind: 'math', name: alias.exportedName}, isConst, callAliases, unsupportedCallAliases)
-          if (isExported) exports.set(alias.localName, {kind: 'local', localName: alias.localName})
         }
       }
       const global = readGlobal(declaration)
@@ -318,7 +261,7 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, exports, exportStars, imports}
+  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, imports}
 }
 
 function collectClassMemberFunctions(
@@ -436,7 +379,7 @@ function loadImports<TGlobal>(
     if (importClause?.name != null) {
       module.imports.set(importClause.name.text, importIsTypeOnly
         ? unresolvedImport('default', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
-        : sourceImportBinding(module, modules, resolution, readGlobal, timing, 'default', specifier))
+        : sourceImportBinding(module, modules, resolution, readGlobal, timing, importClause.name, 'default', specifier))
     }
 
     const namedBindings = importClause?.namedBindings
@@ -444,7 +387,7 @@ function loadImports<TGlobal>(
     if (ts.isNamespaceImport(namedBindings)) {
       module.imports.set(namedBindings.name.text, importIsTypeOnly
         ? unresolvedImport('*', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
-        : sourceImportBinding(module, modules, resolution, readGlobal, timing, '*', specifier))
+        : sourceNamespaceImportBinding(module, modules, resolution, readGlobal, timing, namedBindings.name, specifier))
       continue
     }
     if (!ts.isNamedImports(namedBindings)) continue
@@ -457,7 +400,7 @@ function loadImports<TGlobal>(
         continue
       }
 
-      module.imports.set(localName, sourceImportBinding(module, modules, resolution, readGlobal, timing, exportedName, specifier))
+      module.imports.set(localName, sourceImportBinding(module, modules, resolution, readGlobal, timing, element.name, exportedName, specifier))
     }
   }
 }
@@ -472,91 +415,98 @@ function sourceImportBinding<TGlobal>(
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
-  exportedName: string,
+  localIdentifier: ts.Identifier,
+  importedName: string,
+  specifier: string,
+): FitImportBinding<FitModule<TGlobal>> {
+  const target = sourceImportSourceFromSymbol(resolution.typeChecker.getSymbolAtLocation(localIdentifier), modules, resolution, readGlobal, timing)
+  if (target != null) return {kind: 'resolved', importedName, specifier, ...target}
+
+  const resolved = resolveImport(module, specifier, resolution, timing)
+  if (resolved.kind === 'unresolved') return unresolvedImport(importedName, specifier, resolved.reason)
+  const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
+  return {kind: 'resolved', importedName, sourceName: importedName, specifier, module: importedModule}
+}
+
+function sourceNamespaceImportBinding<TGlobal>(
+  module: FitModule<TGlobal>,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
+  namespaceIdentifier: ts.Identifier,
   specifier: string,
 ): FitImportBinding<FitModule<TGlobal>> {
   const resolved = resolveImport(module, specifier, resolution, timing)
-  if (resolved.kind === 'unresolved') return unresolvedImport(exportedName, specifier, resolved.reason)
+  if (resolved.kind === 'unresolved') return unresolvedImport('*', specifier, resolved.reason)
   const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
-  return {kind: 'resolved', exportedName, specifier, module: importedModule}
-}
-
-function loadReExports<TGlobal>(
-  module: FitModule<TGlobal>,
-  modules: Map<string, FitModule<TGlobal>>,
-  resolution: ResolutionContext,
-  readGlobal: TopLevelGlobalReader<TGlobal>,
-  timing: FitProjectLoadTiming | undefined,
-) {
-  for (const statement of module.sourceFile.statements) {
-    if (!ts.isExportDeclaration(statement)) continue
-    const moduleSpecifier = statement.moduleSpecifier
-    if (moduleSpecifier == null || !ts.isStringLiteral(moduleSpecifier)) continue
-    const specifier = moduleSpecifier.text
-    if (statement.exportClause == null) {
-      module.exportStars.push(sourceExportStarBinding(module, modules, resolution, readGlobal, timing, specifier, statement.isTypeOnly))
-      continue
-    }
-    if (!ts.isNamedExports(statement.exportClause)) continue
-
-    for (const element of statement.exportClause.elements) {
-      const exportName = element.name.text
-      const exportedName = element.propertyName?.text ?? exportName
-      if (statement.isTypeOnly || element.isTypeOnly) {
-        module.exports.set(exportName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: `Type-only re-exports cannot provide @fit helpers: ${specifier}`,
-        })
-        continue
-      }
-
-      const resolved = resolveImport(module, specifier, resolution, timing)
-      if (resolved.kind === 'unresolved') {
-        module.exports.set(exportName, {
-          kind: 'unresolved',
-          exportedName,
-          specifier,
-          reason: resolved.reason,
-        })
-        continue
-      }
-
-      const exportedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
-      module.exports.set(exportName, {
-        kind: 'reexport',
-        exportedName,
-        specifier,
-        module: exportedModule,
-      })
-    }
-  }
-}
-
-function sourceExportStarBinding<TGlobal>(
-  module: FitModule<TGlobal>,
-  modules: Map<string, FitModule<TGlobal>>,
-  resolution: ResolutionContext,
-  readGlobal: TopLevelGlobalReader<TGlobal>,
-  timing: FitProjectLoadTiming | undefined,
-  specifier: string,
-  isTypeOnly: boolean,
-): FitExportStarBinding<FitModule<TGlobal>> {
-  if (isTypeOnly) {
-    return {
-      kind: 'unresolved',
-      specifier,
-      reason: `Type-only star re-exports cannot provide @fit helpers: ${specifier}`,
-    }
-  }
-  const resolved = resolveImport(module, specifier, resolution, timing)
-  if (resolved.kind === 'unresolved') return {kind: 'unresolved', specifier, reason: resolved.reason}
   return {
-    kind: 'resolved',
+    kind: 'namespace',
+    importedName: '*',
     specifier,
-    module: loadModule(resolved.sourceId, modules, resolution, readGlobal, timing),
+    module: importedModule,
+    members: sourceNamespaceMembers(modules, resolution, readGlobal, timing, namespaceIdentifier),
   }
+}
+
+function sourceNamespaceMembers<TGlobal>(
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
+  namespaceIdentifier: ts.Identifier,
+): Map<string, FitImportSource<FitModule<TGlobal>>> {
+  const members = new Map<string, FitImportSource<FitModule<TGlobal>>>()
+  const symbol = resolution.typeChecker.getSymbolAtLocation(namespaceIdentifier)
+  const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+    ? resolution.typeChecker.getAliasedSymbol(symbol)
+    : symbol
+  const exports = target == null ? [] : resolution.typeChecker.getExportsOfModule(target)
+  for (const exported of exports) {
+    const source = sourceImportSourceFromSymbol(exported, modules, resolution, readGlobal, timing)
+    if (source != null) members.set(exported.name, source)
+  }
+  return members
+}
+
+function sourceImportSourceFromSymbol<TGlobal>(
+  symbol: ts.Symbol | undefined,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
+): FitImportSource<FitModule<TGlobal>> | null {
+  const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+    ? resolution.typeChecker.getAliasedSymbol(symbol)
+    : symbol
+  const declaration = target?.valueDeclaration ?? target?.declarations?.find(isSourceImportDeclaration)
+  if (declaration == null || !isSourceImportDeclaration(declaration)) return null
+  const sourceName = sourceNameForDeclaration(declaration)
+  if (sourceName == null) return null
+  const sourceId = sourceIdForDeclaration(declaration)
+  if (sourceId == null) return null
+  return {
+    sourceName,
+    module: loadModule(sourceId, modules, resolution, readGlobal, timing),
+  }
+}
+
+function isSourceImportDeclaration(node: ts.Declaration): node is ts.FunctionDeclaration | ts.VariableDeclaration | ts.ExportAssignment {
+  return ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node) || ts.isExportAssignment(node)
+}
+
+function sourceNameForDeclaration(declaration: ts.FunctionDeclaration | ts.VariableDeclaration | ts.ExportAssignment): string | null {
+  if (ts.isFunctionDeclaration(declaration)) return declaration.name?.text ?? (hasModifier(declaration, ts.SyntaxKind.DefaultKeyword) ? 'default' : null)
+  if (ts.isVariableDeclaration(declaration)) return ts.isIdentifier(declaration.name) ? declaration.name.text : null
+  return 'default'
+}
+
+function sourceIdForDeclaration(declaration: ts.Declaration): string | null {
+  const sourceFile = declaration.getSourceFile()
+  const sourceId = sourceFile.isDeclarationFile ? sourceFromDeclarationMap(sourceFile.fileName) : normalizePath(sourceFile.fileName)
+  return sourceId != null && isSupportedSourcePath(sourceId) && fileExists(sourceId) && !isNodeModulesPath(sourceId)
+    ? sourceId
+    : null
 }
 
 function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext, timing: FitProjectLoadTiming | undefined): ResolvedImport {
@@ -597,94 +547,6 @@ function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, r
     }
   }
   return {kind: 'source', sourceId: normalizePath(resolved.resolvedFileName)}
-}
-
-function resolveFitExportInner<TGlobal>(
-  module: FitModule<TGlobal>,
-  exportedName: string,
-  seen: Set<string>,
-): FitResolvedExport<FitModule<TGlobal>> {
-  const key = `${module.sourceId}#${exportedName}`
-  if (seen.has(key)) {
-    return {
-      kind: 'unresolved',
-      exportedName,
-      reason: `Cyclic re-export at ${module.file}#${exportedName}`,
-    }
-  }
-  seen.add(key)
-
-  const binding = module.exports.get(exportedName)
-  if (binding == null) {
-    return resolveFitStarExport(module, exportedName, seen)
-  }
-  if (binding.kind === 'local') {
-    return {kind: 'local', localName: binding.localName, module}
-  }
-  if (binding.kind === 'unresolved') {
-    return {kind: 'unresolved', exportedName, reason: binding.reason}
-  }
-  return resolveFitExportInner(binding.module, binding.exportedName, seen)
-}
-
-function resolveFitStarExport<TGlobal>(
-  module: FitModule<TGlobal>,
-  exportedName: string,
-  seen: Set<string>,
-): FitResolvedExport<FitModule<TGlobal>> {
-  if (exportedName === 'default') return notExported(module, exportedName)
-
-  let match: Extract<FitResolvedExport<FitModule<TGlobal>>, {kind: 'local'}> | null = null
-  let unresolvedReason: string | null = null
-  for (const star of module.exportStars) {
-    if (star.kind === 'unresolved') {
-      unresolvedReason ??= star.reason
-      continue
-    }
-    const candidate = resolveFitExportInner(star.module, exportedName, new Set(seen))
-    if (candidate.kind === 'unresolved') {
-      if (candidate.reason !== notExportedReason(star.module, exportedName)) unresolvedReason ??= candidate.reason
-      continue
-    }
-    if (match == null) {
-      match = candidate
-      continue
-    }
-    if (match.module !== candidate.module || match.localName !== candidate.localName) {
-      return {
-        kind: 'unresolved',
-        exportedName,
-        reason: `Ambiguous star export ${exportedName} in ${module.file}`,
-      }
-    }
-  }
-  if (match != null) return match
-  if (unresolvedReason != null) return {kind: 'unresolved', exportedName, reason: unresolvedReason}
-  return notExported(module, exportedName)
-}
-
-function notExported<TGlobal>(module: FitModule<TGlobal>, exportedName: string): FitResolvedExport<FitModule<TGlobal>> {
-  return {
-    kind: 'unresolved',
-    exportedName,
-    reason: notExportedReason(module, exportedName),
-  }
-}
-
-function notExportedReason<TGlobal>(module: FitModule<TGlobal>, exportedName: string) {
-  return `Imported symbol ${exportedName} is not exported by ${module.file}`
-}
-
-function collectLocalExportDeclaration<TGlobal>(
-  statement: ts.ExportDeclaration,
-  exports: Map<string, FitExportBinding<FitModule<TGlobal>>>,
-) {
-  if (statement.moduleSpecifier != null) return
-  if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) return
-  for (const element of statement.exportClause.elements) {
-    const localName = element.propertyName?.text ?? element.name.text
-    exports.set(element.name.text, {kind: 'local', localName})
-  }
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {

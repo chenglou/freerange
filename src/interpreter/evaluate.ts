@@ -71,7 +71,7 @@ import {
   sameExpressionText,
 } from '../linear.ts'
 import {functionHasInstanceThisInput} from '../function-shape.ts'
-import {resolveFitExport, type FitFunction, type FitFunctionNode} from '../modules.ts'
+import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
   valueFromCallReturnShape,
   valueFromFunctionReturnShape,
@@ -2064,26 +2064,32 @@ function resolveIdentifierCallTarget(name: string, program: Program, seen = new 
   const binding = program.imports.get(name)
   if (binding == null) return {kind: 'unresolved', reason: `Unknown function ${name}`}
   if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
-  return resolveExportedCallTarget(name, binding, binding.exportedName, seen)
+  if (binding.kind === 'namespace') return {kind: 'unresolved', reason: `Unsupported namespace call ${name}`}
+  return resolveImportedCallTarget(name, binding, seen)
 }
 
 function resolveNamespaceMemberCallTarget(namespace: string, exportedName: string, program: Program, seen: Set<string>): InterpreterCallTarget {
   const binding = program.imports.get(namespace)
-  if (binding == null || binding.exportedName !== '*') return {kind: 'unresolved', reason: `Unsupported call ${namespace}.${exportedName}`}
+  if (binding == null || binding.kind === 'resolved') return {kind: 'unresolved', reason: `Unsupported call ${namespace}.${exportedName}`}
   if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
-  return resolveExportedCallTarget(`${namespace}.${exportedName}`, binding, exportedName, seen)
+  const member = binding.members.get(exportedName) ?? {module: binding.module, sourceName: exportedName}
+  return resolveImportedCallTarget(`${namespace}.${exportedName}`, {
+    kind: 'resolved',
+    importedName: exportedName,
+    sourceName: member.sourceName,
+    specifier: binding.specifier,
+    module: member.module,
+  }, seen)
 }
 
-function resolveExportedCallTarget(
+function resolveImportedCallTarget(
   localName: string,
   binding: Extract<ImportedBinding, {kind: 'resolved'}>,
-  exportedName: string,
   seen: Set<string>,
 ): InterpreterCallTarget {
-  const resolved = resolveFitExport(binding.module, exportedName)
-  if (resolved.kind === 'unresolved') return {kind: 'unresolved', reason: resolved.reason}
-  const target = resolveIdentifierCallTarget(resolved.localName, resolved.module, seen)
-  if (target.kind === 'unresolved') return {kind: 'unresolved', reason: `${localName} resolved to ${exportedName}: ${target.reason}`}
+  const sourceName = binding.sourceName
+  const target = resolveIdentifierCallTarget(sourceName, binding.module, seen)
+  if (target.kind === 'unresolved') return {kind: 'unresolved', reason: `${localName} resolved to ${sourceName}: ${target.reason}`}
   if (target.kind === 'math') return target
   return {
     ...target,

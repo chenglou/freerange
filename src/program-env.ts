@@ -1,6 +1,5 @@
 import type {ImportedBinding, Program} from './check-types.ts'
 import {type Value} from './domain.ts'
-import {resolveFitExport} from './modules.ts'
 import {localizeValue} from './value-localize.ts'
 
 export function programGlobalEnv(program: Program): Map<string, Value> {
@@ -14,10 +13,8 @@ export function programGlobalEnv(program: Program): Map<string, Value> {
 }
 
 function importedGlobalValue(localName: string, binding: ImportedBinding): Value | null {
-  if (binding.kind === 'unresolved') return null
-  const exported = resolveFitExport(binding.module, binding.exportedName)
-  if (exported.kind === 'unresolved') return null
-  const value = exported.module.globals.get(exported.localName)
+  if (binding.kind !== 'resolved') return null
+  const value = binding.module.globals.get(binding.sourceName)
   if (value == null) return null
   return localizeValue(value, localName, {preserveLinear: true})
 }

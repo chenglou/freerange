@@ -3,6 +3,7 @@
 
 import unannotatedDefaultImportedClamp, {importedClampWithBadContract, importedTupleWithOneOffset, unannotatedImportedClamp} from './negative-import-helpers'
 import {barrelClampWidth} from './import-pattern-barrel'
+import * as importPatternBarrel from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
 import {barrelUnannotatedClamp} from './negative-import-barrel'
 import {unmappedDeclaredClampWidth} from '@fit-fixtures/import-pattern-declared-package-no-map'
@@ -72,6 +73,14 @@ export function negativeImportedHelperContractTooWide(width: number) {
  */
 export function negativeImportedHelperReExportContractTooWide(width: number) {
   return barrelClampWidth(width)
+}
+
+/** @fit
+ * given width: 0..1000
+ * return: 0..100
+ */
+export function negativeNamespaceImportedHelperReExportContractTooWide(width: number) {
+  return importPatternBarrel.barrelClampWidth(width)
 }
 
 /** @fit

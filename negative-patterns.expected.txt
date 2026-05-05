@@ -953,6 +953,13 @@ FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: 
     checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     assumed from input: given width: 0..1000
   missing: barrelClampWidth(width) <= 100
+FAIL negative-import-patterns.ts:negativeNamespaceImportedHelperReExportContractTooWide: return: 0..100
+  range was 0..320 as importPatternBarrel.barrelClampWidth(width), expected inside 0..100
+  known:
+    importPatternBarrel.barrelClampWidth(width): 0..320
+    checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
+    assumed from input: given width: 0..1000
+  missing: importPatternBarrel.barrelClampWidth(width) <= 100
 UNKNOWN negative-import-patterns.ts:negativeImportedNumericConstantMismatch: return == width + importedChromeX + 1
   known:
     (width + importedChromeX): 16..1016
