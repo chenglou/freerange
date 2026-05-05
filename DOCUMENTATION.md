@@ -84,7 +84,8 @@ The goal is not to annotate everything. The goal is to make important UI code ha
 
 `fr check` is the normal proof command: it proves the annotations you wrote and
 checks calls to annotated helpers. With file args, it checks those files. With
-no args, it reads the nearest `tsconfig.json` and checks that source set. On
+file args, it still uses the nearest `tsconfig.json` for TypeScript's module and
+type lookup. With no args, it reads that config and checks the source set. On
 success it prints only the summary:
 
 ```txt
@@ -225,7 +226,7 @@ Normal `fr check` then adds a callsite scan for annotated helpers, so a helper
 contract is checked both where it is written and where it is used. Use
 `--annotations-only` to skip that broad scan.
 
-- TypeScript syntax errors stop checking before proof starts. Freerange does not trust parse recovery.
+- TypeScript syntax errors stop checking before proof starts. Freerange prints the TypeScript diagnostic code and does not trust parse recovery.
 - `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites during normal `fr check` and become assumptions inside the function, but they do not trigger body proof on their own.
 - `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
@@ -854,7 +855,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports, default imports, and namespace-qualified helper calls that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
+Freerange follows named imports, default imports, namespace-qualified helper calls, and `export *` source barrels that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
 
 Ordinary top-level `const` bindings of known helpers work too:
 
@@ -958,14 +959,15 @@ helper: clampWidth from ./layout-math
 failed check: layout-math.ts:clampWidth: return: 0..320
 ```
 
-Explicit named re-export barrels work too:
+Explicit named re-export barrels and local source star barrels work too:
 
 ```ts
 export {clampWidth} from './layout-math'
 export {clampWidth as cardClampWidth} from './layout-math'
+export * from './layout-math'
 ```
 
-This is intentionally small: package imports only work when TypeScript lands on local source or a declaration map points back to one local source file. Declaration-only imports without that source map, wildcard `export *` barrels, and unchecked summary files stay opaque.
+This is intentionally small: package imports only work when TypeScript lands on local source or a declaration map points back to one local source file. Declaration-only imports without that source map and unchecked summary files stay opaque.
 
 ## Arrays
 
@@ -1324,7 +1326,7 @@ The checker understands a small pure subset:
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported top-level `const` literals, plus named/default/namespace-qualified exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
+- named imports of exported top-level `const` literals, plus named/default/namespace-qualified/star-barrel exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
 - TypeScript-known imported object/array shape, without treating it as a checked helper contract; source-backed imported type-field comments are checked as type contracts
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
@@ -1354,7 +1356,7 @@ Anything outside this surface should become `unknown`, not a fake proof.
 Not supported yet:
 
 - browser runs, screenshots, runtime traces, sampled sweeps
-- published package imports, declaration-only imports without a local source map, wildcard `export *` barrels, or unchecked summary files as checked `@fit` helper contracts.
+- published package imports, declaration-only imports without a local source map, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and destructured default params
 - type-field contracts on optional fields, declaration-only imported types, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names

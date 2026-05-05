@@ -27,6 +27,7 @@ export type FitModule<TGlobal> = {
   fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
   exports: Map<string, FitExportBinding<FitModule<TGlobal>>>
+  exportStars: FitExportStarBinding<FitModule<TGlobal>>[]
   imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
 }
 
@@ -73,6 +74,18 @@ export type FitExportBinding<TModule> =
   | {
       kind: 'unresolved'
       exportedName: string
+      specifier: string
+      reason: string
+    }
+
+export type FitExportStarBinding<TModule> =
+  | {
+      kind: 'resolved'
+      specifier: string
+      module: TModule
+    }
+  | {
+      kind: 'unresolved'
       specifier: string
       reason: string
     }
@@ -161,16 +174,26 @@ export function buildFitSourceModule<TGlobal>(
   readGlobal: TopLevelGlobalReader<TGlobal>,
 ): FitModule<TGlobal> {
   const sourceId = toSourceId(file)
-  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
+  const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
+  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile)
 }
 
-function throwOnParseDiagnostics(file: string, sourceFile: ts.SourceFile) {
-  const diagnostic = sourceFileParseDiagnostics(sourceFile)[0]
-  if (diagnostic == null) return
+function throwOnSyntaxDiagnostics(
+  file: string,
+  sourceFile: ts.SourceFile,
+  diagnostics: readonly ts.Diagnostic[] = sourceFileParseDiagnostics(sourceFile),
+) {
+  if (diagnostics.length === 0) return
+  const lines = diagnostics.map(diagnostic => formatSyntaxDiagnostic(file, sourceFile, diagnostic))
+  throw new Error(lines.length === 1 ? lines[0]! : [`Syntax errors in ${file}:`, ...lines.map(line => `  ${line}`)].join('\n'))
+}
+
+function formatSyntaxDiagnostic(file: string, sourceFile: ts.SourceFile, diagnostic: ts.Diagnostic) {
   const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
-  if (diagnostic.start == null) throw new Error(`Syntax error in ${file}: ${message}`)
+  const code = `TS${diagnostic.code}`
+  if (diagnostic.start == null) return `Syntax error in ${file} ${code}: ${message}`
   const {line, character} = sourceFile.getLineAndCharacterOfPosition(diagnostic.start)
-  throw new Error(`Syntax error in ${file}:${line + 1}:${character + 1}: ${message}`)
+  return `Syntax error in ${file}:${line + 1}:${character + 1} ${code}: ${message}`
 }
 
 function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnostic[] {
@@ -202,8 +225,9 @@ function loadModule<TGlobal>(
   if (sourceText == null) throw new Error(`Could not read ${displayPath(sourceId)}`)
 
   const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
+  const syntaxDiagnostics = sourceFile == null ? null : resolution.typeProgram.getSyntacticDiagnostics(sourceFile)
   const parseStart = performance.now()
-  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile)
+  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile, syntaxDiagnostics ?? undefined)
   addTiming(timing, 'moduleParseMs', parseStart)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal, timing)
@@ -218,8 +242,9 @@ function parseFitModule<TGlobal>(
   readGlobal: TopLevelGlobalReader<TGlobal>,
   typeChecker: ts.TypeChecker | null = null,
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
+  syntaxDiagnostics?: readonly ts.Diagnostic[],
 ): FitModule<TGlobal> {
-  throwOnParseDiagnostics(file, sourceFile)
+  throwOnSyntaxDiagnostics(file, sourceFile, syntaxDiagnostics)
 
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, FitFunction>()
@@ -228,6 +253,7 @@ function parseFitModule<TGlobal>(
   const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
   const exports = new Map<string, FitExportBinding<FitModule<TGlobal>>>()
+  const exportStars: FitExportStarBinding<FitModule<TGlobal>>[] = []
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
@@ -292,7 +318,7 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, exports, imports}
+  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, exports, exportStars, imports}
 }
 
 function collectClassMemberFunctions(
@@ -466,8 +492,12 @@ function loadReExports<TGlobal>(
     if (!ts.isExportDeclaration(statement)) continue
     const moduleSpecifier = statement.moduleSpecifier
     if (moduleSpecifier == null || !ts.isStringLiteral(moduleSpecifier)) continue
-    if (statement.exportClause == null || !ts.isNamedExports(statement.exportClause)) continue
     const specifier = moduleSpecifier.text
+    if (statement.exportClause == null) {
+      module.exportStars.push(sourceExportStarBinding(module, modules, resolution, readGlobal, timing, specifier, statement.isTypeOnly))
+      continue
+    }
+    if (!ts.isNamedExports(statement.exportClause)) continue
 
     for (const element of statement.exportClause.elements) {
       const exportName = element.name.text
@@ -501,6 +531,31 @@ function loadReExports<TGlobal>(
         module: exportedModule,
       })
     }
+  }
+}
+
+function sourceExportStarBinding<TGlobal>(
+  module: FitModule<TGlobal>,
+  modules: Map<string, FitModule<TGlobal>>,
+  resolution: ResolutionContext,
+  readGlobal: TopLevelGlobalReader<TGlobal>,
+  timing: FitProjectLoadTiming | undefined,
+  specifier: string,
+  isTypeOnly: boolean,
+): FitExportStarBinding<FitModule<TGlobal>> {
+  if (isTypeOnly) {
+    return {
+      kind: 'unresolved',
+      specifier,
+      reason: `Type-only star re-exports cannot provide @fit helpers: ${specifier}`,
+    }
+  }
+  const resolved = resolveImport(module, specifier, resolution, timing)
+  if (resolved.kind === 'unresolved') return {kind: 'unresolved', specifier, reason: resolved.reason}
+  return {
+    kind: 'resolved',
+    specifier,
+    module: loadModule(resolved.sourceId, modules, resolution, readGlobal, timing),
   }
 }
 
@@ -561,11 +616,7 @@ function resolveFitExportInner<TGlobal>(
 
   const binding = module.exports.get(exportedName)
   if (binding == null) {
-    return {
-      kind: 'unresolved',
-      exportedName,
-      reason: `Imported symbol ${exportedName} is not exported by ${module.file}`,
-    }
+    return resolveFitStarExport(module, exportedName, seen)
   }
   if (binding.kind === 'local') {
     return {kind: 'local', localName: binding.localName, module}
@@ -574,6 +625,54 @@ function resolveFitExportInner<TGlobal>(
     return {kind: 'unresolved', exportedName, reason: binding.reason}
   }
   return resolveFitExportInner(binding.module, binding.exportedName, seen)
+}
+
+function resolveFitStarExport<TGlobal>(
+  module: FitModule<TGlobal>,
+  exportedName: string,
+  seen: Set<string>,
+): FitResolvedExport<FitModule<TGlobal>> {
+  if (exportedName === 'default') return notExported(module, exportedName)
+
+  let match: Extract<FitResolvedExport<FitModule<TGlobal>>, {kind: 'local'}> | null = null
+  let unresolvedReason: string | null = null
+  for (const star of module.exportStars) {
+    if (star.kind === 'unresolved') {
+      unresolvedReason ??= star.reason
+      continue
+    }
+    const candidate = resolveFitExportInner(star.module, exportedName, new Set(seen))
+    if (candidate.kind === 'unresolved') {
+      if (candidate.reason !== notExportedReason(star.module, exportedName)) unresolvedReason ??= candidate.reason
+      continue
+    }
+    if (match == null) {
+      match = candidate
+      continue
+    }
+    if (match.module !== candidate.module || match.localName !== candidate.localName) {
+      return {
+        kind: 'unresolved',
+        exportedName,
+        reason: `Ambiguous star export ${exportedName} in ${module.file}`,
+      }
+    }
+  }
+  if (match != null) return match
+  if (unresolvedReason != null) return {kind: 'unresolved', exportedName, reason: unresolvedReason}
+  return notExported(module, exportedName)
+}
+
+function notExported<TGlobal>(module: FitModule<TGlobal>, exportedName: string): FitResolvedExport<FitModule<TGlobal>> {
+  return {
+    kind: 'unresolved',
+    exportedName,
+    reason: notExportedReason(module, exportedName),
+  }
+}
+
+function notExportedReason<TGlobal>(module: FitModule<TGlobal>, exportedName: string) {
+  return `Imported symbol ${exportedName} is not exported by ${module.file}`
 }
 
 function collectLocalExportDeclaration<TGlobal>(
@@ -595,11 +694,12 @@ function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
 function createResolutionContext(paths: string[], timing: FitProjectLoadTiming | undefined): ResolutionContext {
   const configStart = performance.now()
   const configFile = findConfigFile(paths)
-  const compilerOptions = configFile == null ? defaultCompilerOptions() : readCompilerOptions(configFile)
+  const parsedConfig = configFile == null ? null : readParsedConfig(configFile)
+  const compilerOptions = parsedConfig?.options ?? defaultCompilerOptions()
   addTiming(timing, 'configMs', configStart)
 
   const typeProgramStart = performance.now()
-  const typeProgram = ts.createProgram(paths.map(toSourceId), {...compilerOptions, noEmit: true})
+  const typeProgram = ts.createProgram(typeProgramRootNames(paths, parsedConfig), {...compilerOptions, noEmit: true})
   addTiming(timing, 'typeProgramMs', typeProgramStart)
 
   const typeCheckerStart = performance.now()
@@ -615,6 +715,12 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
   }
 }
 
+function typeProgramRootNames(paths: string[], parsedConfig: ts.ParsedCommandLine | null) {
+  const requested = paths.map(toSourceId)
+  if (parsedConfig == null) return requested
+  return [...new Set([...parsedConfig.fileNames.map(normalizePath), ...requested])]
+}
+
 function addTiming(timing: FitProjectLoadTiming | undefined, key: keyof FitProjectLoadTiming, start: number) {
   if (timing == null) return
   timing[key] += performance.now() - start
@@ -628,10 +734,6 @@ function findConfigFile(paths: string[]): string | null {
   }
   const configFile = ts.findConfigFile(cwd(), fileExists, 'tsconfig.json')
   return configFile == null ? null : normalizePath(configFile)
-}
-
-function readCompilerOptions(configFile: string): ts.CompilerOptions {
-  return readParsedConfig(configFile).options
 }
 
 function readParsedConfig(configFile: string): ts.ParsedCommandLine {

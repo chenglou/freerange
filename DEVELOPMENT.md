@@ -74,7 +74,7 @@ bun install
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
 - [src/proof-rules.ts](./src/proof-rules.ts) — small named comparison proof rules with shared prove/report obligations
-- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, export/import indexing, and static helper-binding indexing
+- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, export/star-export/import indexing, and static helper-binding indexing
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser
 - [src/bound-index.ts](./src/bound-index.ts) — same-index labels and adjacent-label spec checks backed by sequence facts

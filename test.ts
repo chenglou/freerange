@@ -481,6 +481,112 @@ function ok() {
   })
 
   await withCliFixture({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: {
+        target: 'ESNext',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['*.ts'],
+    }, null, 2),
+    'project-types.ts': `type ProjectBox = {
+  value: number // @fit 0..10
+}
+`,
+    'project-consumer.ts': `export function makeBox(): ProjectBox {
+  return {value: 5}
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'project-consumer.ts'], dir)
+    expectCli(check.exitCode === 0, 'expected explicit file check to use tsconfig type roots', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected project type contract to pass', check.output)
+  })
+
+  await withCliFixture({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: {
+        target: 'ESNext',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['*.ts'],
+    }, null, 2),
+    'project-types.ts': `type ProjectBox = {
+  value: number // @fit 0..10
+}
+`,
+    'project-consumer.ts': `export function makeBox(): ProjectBox {
+  return {value: 20}
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'project-consumer.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected project type roots to enforce imported type-field facts', check.output)
+    expectCli(check.output.includes('FAIL return.value: 0..10'), 'expected project type root failure output', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 requires, 0 unknown'), 'expected project type root failure summary', check.output)
+  })
+
+  await withCliFixture({
+    'helper.ts': `/** @fit
+ * given value: 0..10
+ * return: 0..10
+ */
+export function cap(value: number) {
+  return value
+}
+`,
+    'barrel.ts': `export * from './helper'
+`,
+    'layout.ts': `import {cap} from './barrel'
+
+/** @fit
+ * given value: 0..10
+ * return: 0..10
+ */
+function use(value: number) {
+  return cap(value)
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'layout.ts'], dir)
+    expectCli(check.exitCode === 0, 'expected star-barrel helper import to pass', check.output)
+    expectCli(check.output.includes('0 fail, 0 requires, 0 unknown'), 'expected star-barrel helper import summary', check.output)
+  })
+
+  await withCliFixture({
+    'helper.ts': `/** @fit
+ * given value: 0..100
+ * return: 0..100
+ */
+export function wide(value: number) {
+  return value
+}
+`,
+    'barrel.ts': `export * from './helper'
+`,
+    'layout.ts': `import {wide} from './barrel'
+
+/** @fit
+ * given value: 0..100
+ * return: 0..10
+ */
+function use(value: number) {
+  return wide(value)
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'layout.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected star-barrel helper import to preserve callee range', check.output)
+    expectCli(check.output.includes('FAIL return: 0..10'), 'expected star-barrel helper failure output', check.output)
+    expectCli(!check.output.includes('Unsupported call wide'), 'expected star-barrel helper call to resolve', check.output)
+  })
+
+  await withCliFixture({
     'bad.ts': `/** @fit
  * return: 0..1
  */
@@ -667,14 +773,17 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     'syntax.ts': `function invalid(value: number.) {
   return value
 }
+const =
 `,
   }, dir => {
     const check = runFr(['check', 'syntax.ts'], dir)
     expectCli(check.exitCode === 2, 'expected syntax errors to stop fr check', check.output)
-    expectCli(check.output.includes('fr: Syntax error in syntax.ts:1:32: Identifier expected.'), 'expected syntax error guidance', check.output)
+    expectCli(check.output.includes('fr: Syntax errors in syntax.ts:'), 'expected syntax error header', check.output)
+    expectCli(check.output.includes('Syntax error in syntax.ts:1:32 TS1003: Identifier expected.'), 'expected first TypeScript syntax diagnostic', check.output)
+    expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 16 expected behaviors')
+  console.log('cli: 20 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {
