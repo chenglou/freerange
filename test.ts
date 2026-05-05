@@ -1,6 +1,6 @@
 import {inferFitFiles} from './src/check-core.ts'
 import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
-import {type FitCheck, verifyFitFiles} from './src/reports.ts'
+import {type FitCheck, verifyFitFiles, verifyFitSource} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts', 'interpreter-matrix-patterns.ts']
 const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts', 'interpreter-matrix-negative.ts']
@@ -84,6 +84,41 @@ if (actualNegative !== expectedNegative) {
   process.exitCode = 1
 } else {
   console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
+}
+
+const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+
+/** @fit
+ * given containerSizX >= 2 * boxesGapX
+ */
+function layout(containerSizeX: number) {
+  return containerSizeX
+}
+`).find(check => check.text === 'given containerSizX >= 2 * boxesGapX')?.reason
+if (suggestedGivenRootReason !== 'containerSizX not found in this contract scope\ndid you mean containerSizeX?') {
+  console.error('expected given typo suggestion')
+  console.error(suggestedGivenRootReason ?? '<missing>')
+  process.exitCode = 1
+} else {
+  console.log('given typo: suggested contract root')
+}
+
+const ambiguousGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+const boxesGapY = 24
+
+/** @fit
+ * given containerSizeX >= 2 * boxesGap
+ */
+function layout(containerSizeX: number) {
+  return containerSizeX
+}
+`).find(check => check.text === 'given containerSizeX >= 2 * boxesGap')?.reason
+if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
+  console.error('expected ambiguous given typo to avoid guessing')
+  console.error(ambiguousGivenRootReason ?? '<missing>')
+  process.exitCode = 1
+} else {
+  console.log('given typo: ambiguous root stays plain')
 }
 
 const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})

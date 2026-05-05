@@ -72,7 +72,7 @@ export function validateGivenSpecs(
     if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec, `${publicFitText(badRoot)} not found in this contract scope`))
+      checks.push(invalidGivenCheck(file, functionName, spec, invalidGivenRootReason(badRoot, allowedRoots)))
       continue
     }
     const shapeProblem = givenShapeProblem(spec)
@@ -96,6 +96,53 @@ export function validateGivenSpecs(
   }
 
   return {assumedGivens, checks}
+}
+
+function invalidGivenRootReason(root: string, allowedRoots: string[]) {
+  const publicRoot = publicFitText(root)
+  const suggestion = suggestedRootName(publicRoot, allowedRoots.map(publicFitText))
+  return suggestion == null
+    ? `${publicRoot} not found in this contract scope`
+    : `${publicRoot} not found in this contract scope\ndid you mean ${suggestion}?`
+}
+
+function suggestedRootName(root: string, candidates: string[]): string | null {
+  let best: {candidate: string; distance: number} | null = null
+  let tied = false
+  for (const candidate of new Set(candidates)) {
+    if (candidate === root) continue
+    const distance = editDistance(root.toLowerCase(), candidate.toLowerCase())
+    if (distance > rootSuggestionDistanceLimit(root)) continue
+    if (best == null || distance < best.distance) {
+      best = {candidate, distance}
+      tied = false
+      continue
+    }
+    if (distance === best.distance) tied = true
+  }
+  return best != null && !tied ? best.candidate : null
+}
+
+function rootSuggestionDistanceLimit(root: string) {
+  if (root.length <= 4) return 1
+  if (root.length <= 12) return 2
+  return 3
+}
+
+function editDistance(left: string, right: string) {
+  let previous = Array.from({length: right.length + 1}, (_, index) => index)
+  for (let leftIndex = 0; leftIndex < left.length; leftIndex++) {
+    const current = [leftIndex + 1]
+    for (let rightIndex = 0; rightIndex < right.length; rightIndex++) {
+      current.push(Math.min(
+        current[rightIndex]! + 1,
+        previous[rightIndex + 1]! + 1,
+        previous[rightIndex]! + (left[leftIndex] === right[rightIndex] ? 0 : 1),
+      ))
+    }
+    previous = current
+  }
+  return previous[right.length]!
 }
 
 function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {

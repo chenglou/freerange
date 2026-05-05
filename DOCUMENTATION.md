@@ -435,6 +435,7 @@ Assignments are conservative. Plain local assignment keeps the assigned value. P
 - `requires`: a helper call needs a callee precondition that the caller has not proven.
 
 `unknown` is not a soft pass. It usually means the known facts still include both good and bad cases, the source shape is not supported yet, or the function needs another input fact.
+If a `given` names something outside its contract scope, Freerange reports that root as not found and may suggest a nearby input or supported top-level constant.
 
 A useful report says where facts came from:
 
