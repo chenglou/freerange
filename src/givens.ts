@@ -72,7 +72,7 @@ export function validateGivenSpecs(
     if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
-      checks.push(invalidGivenCheck(file, functionName, spec, `given can only describe inputs; ${publicFitText(badRoot)} is not an input here`))
+      checks.push(invalidGivenCheck(file, functionName, spec, `${publicFitText(badRoot)} not found in this contract scope`))
       continue
     }
     const shapeProblem = givenShapeProblem(spec)

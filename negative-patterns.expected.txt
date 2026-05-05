@@ -696,7 +696,7 @@ FAIL negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[]
   missing: height >= 0
   missing: height <= 40
 UNKNOWN negative-patterns.ts:negativeFunctionGivenCannotNameReturn: given return: 0..10
-  given can only describe inputs; return is not an input here
+  return not found in this contract scope
 FAIL negative-patterns.ts:negativeGivenRangeCannotBeEmpty: given width: 500..400
   no input can satisfy this: empty range 500..400
 FAIL negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
@@ -813,7 +813,7 @@ FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: re
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
-  given can only describe inputs; rows is not an input here
+  rows not found in this contract scope
 FAIL negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
   range was any number as input[1].height, expected inside 0..40
   known:
