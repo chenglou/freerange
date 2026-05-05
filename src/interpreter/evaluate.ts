@@ -240,19 +240,22 @@ export function evaluateInterpreterFunctionBody(
   assumptions: LinearConstraint[] = [],
   hooks?: InterpreterHooks,
 ): InterpreterBodyResult {
-  const frame: InterpreterFrame = {
-    program,
-    env: new Map(env),
-    issues: [],
-    stack,
-    loopStack: [],
-    conditionalDepth: 0,
-    assumptions: [...assumptions],
-    ...(hooks == null ? {} : {hooks}),
-  }
+  const frame = interpreterFrame(program, env, stack, assumptions, hooks)
   bindInstanceThis(fn, program, frame.env)
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
   return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+}
+
+export function evaluateInterpreterTopLevel(
+  program: Program,
+  env: Map<string, Value>,
+  stack: string[] = ['<top-level>'],
+  assumptions: LinearConstraint[] = [],
+  hooks?: InterpreterHooks,
+): InterpreterBodyResult {
+  const frame = interpreterFrame(program, env, stack, assumptions, hooks)
+  evaluateStatements(topLevelExecutableStatements(program.sourceFile.statements), frame)
+  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
 }
 
 export function evaluateInterpreterExpression(
@@ -264,7 +267,20 @@ export function evaluateInterpreterExpression(
   hooks?: InterpreterHooks,
   objectPath?: string[],
 ): InterpreterBodyResult {
-  const frame: InterpreterFrame = {
+  const frame = interpreterFrame(program, env, stack, assumptions, hooks, objectPath)
+  const value = evaluateExpression(expression, frame)
+  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+}
+
+function interpreterFrame(
+  program: Program,
+  env: Map<string, Value>,
+  stack: string[],
+  assumptions: LinearConstraint[],
+  hooks?: InterpreterHooks,
+  objectPath?: string[],
+): InterpreterFrame {
+  return {
     program,
     env: new Map(env),
     issues: [],
@@ -275,8 +291,30 @@ export function evaluateInterpreterExpression(
     ...(hooks == null ? {} : {hooks}),
     ...(objectPath == null ? {} : {objectPath}),
   }
-  const value = evaluateExpression(expression, frame)
-  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+}
+
+function topLevelExecutableStatements(statements: ts.NodeArray<ts.Statement>): ts.NodeArray<ts.Statement> {
+  const executable: ts.Statement[] = []
+  for (const statement of statements) {
+    if (topLevelDeclarationOnly(statement)) continue
+    if (ts.isExportAssignment(statement)) {
+      executable.push(ts.factory.createExpressionStatement(statement.expression))
+      continue
+    }
+    executable.push(statement)
+  }
+  return ts.factory.createNodeArray(executable)
+}
+
+function topLevelDeclarationOnly(statement: ts.Statement) {
+  return ts.isImportDeclaration(statement)
+    || ts.isExportDeclaration(statement)
+    || ts.isFunctionDeclaration(statement)
+    || ts.isClassDeclaration(statement)
+    || ts.isInterfaceDeclaration(statement)
+    || ts.isTypeAliasDeclaration(statement)
+    || ts.isModuleDeclaration(statement)
+    || ts.isEnumDeclaration(statement)
 }
 
 function invokeFitFunction(

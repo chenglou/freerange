@@ -509,6 +509,41 @@ function f(value: number) {
   })
 
   await withCliFixture({
+    'calls.ts': `/** @fit
+ * given max >= min
+ * return > 0
+ */
+function h(min: number, value: number, max: number) {
+  return 1
+}
+
+h(10, 0, 1)
+
+function f() {
+  h(20, 0, 2)
+}
+
+if (true) {
+  h(30, 0, 3)
+}
+
+export default h(40, 0, 4)
+`,
+  }, dir => {
+    const check = runFr(['check', 'calls.ts'], dir)
+    expectCli(check.exitCode === 1, 'expected fr check to visit broad bare callsites', check.output)
+    expectCli(check.output.includes('calls.ts:9:<top-level>'), 'expected top-level bare call line', check.output)
+    expectCli(check.output.includes('FAIL: h(10, 0, 1): requires max >= min'), 'expected top-level bare call failure', check.output)
+    expectCli(check.output.includes('calls.ts:12:f'), 'expected function bare call line', check.output)
+    expectCli(check.output.includes('FAIL: h(20, 0, 2): requires max >= min'), 'expected function bare call failure', check.output)
+    expectCli(check.output.includes('calls.ts:16:<top-level>'), 'expected top-level branch call line', check.output)
+    expectCli(check.output.includes('FAIL: h(30, 0, 3): requires max >= min'), 'expected top-level branch call failure', check.output)
+    expectCli(check.output.includes('calls.ts:19:<top-level>'), 'expected export assignment call line', check.output)
+    expectCli(check.output.includes('FAIL: h(40, 0, 4): requires max >= min'), 'expected export assignment call failure', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 1 pass, 4 fail, 0 requires, 0 unknown'), 'expected broad bare callsite summary', check.output)
+  })
+
+  await withCliFixture({
     'layout.ts': `/** @fit
  * return: 2
  */
@@ -593,7 +628,18 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('Block @fit comments are only supported for function, loop, and type contract blocks; use // @fit for attached facts'), 'expected inline block @fit guidance', check.output)
   })
 
-  console.log('cli: 14 expected behaviors')
+  await withCliFixture({
+    'syntax.ts': `function invalid(value: number.) {
+  return value
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'syntax.ts'], dir)
+    expectCli(check.exitCode === 2, 'expected syntax errors to stop fr check', check.output)
+    expectCli(check.output.includes('fr: Syntax error in syntax.ts:1:32: Identifier expected.'), 'expected syntax error guidance', check.output)
+  })
+
+  console.log('cli: 16 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

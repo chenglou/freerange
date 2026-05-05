@@ -139,6 +139,7 @@ import {
 import {
   evaluateInterpreterExpression,
   evaluateInterpreterFunctionBody,
+  evaluateInterpreterTopLevel,
 } from './interpreter/evaluate.ts'
 import type {
   InterpreterCall,
@@ -264,12 +265,7 @@ function checkTopLevelCallsites(program: Program, contractCache: Map<string, Fun
     contractCache,
     callObligations: 'record',
   }
-  for (const statement of program.sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue
-    for (const declaration of statement.declarationList.declarations) {
-      bindVariableDeclaration(declaration, context, {claim: true})
-    }
-  }
+  evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
   return context.checks.filter(isCallCheck)
 }
 

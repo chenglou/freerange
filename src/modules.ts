@@ -164,6 +164,19 @@ export function buildFitSourceModule<TGlobal>(
   return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal)
 }
 
+function throwOnParseDiagnostics(file: string, sourceFile: ts.SourceFile) {
+  const diagnostic = sourceFileParseDiagnostics(sourceFile)[0]
+  if (diagnostic == null) return
+  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
+  if (diagnostic.start == null) throw new Error(`Syntax error in ${file}: ${message}`)
+  const {line, character} = sourceFile.getLineAndCharacterOfPosition(diagnostic.start)
+  throw new Error(`Syntax error in ${file}:${line + 1}:${character + 1}: ${message}`)
+}
+
+function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnostic[] {
+  return (sourceFile as ts.SourceFile & {parseDiagnostics?: readonly ts.Diagnostic[]}).parseDiagnostics ?? []
+}
+
 export function resolveFitExport<TGlobal>(
   module: FitModule<TGlobal>,
   exportedName: string,
@@ -206,6 +219,8 @@ function parseFitModule<TGlobal>(
   typeChecker: ts.TypeChecker | null = null,
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
 ): FitModule<TGlobal> {
+  throwOnParseDiagnostics(file, sourceFile)
+
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, FitFunction>()
   const callAliases = new Map<string, FitCallAlias>()
