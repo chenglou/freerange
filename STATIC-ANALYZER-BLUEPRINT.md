@@ -2,45 +2,104 @@ We expect many more userland static analyzers in the future in the style of Free
 
 # STATIC ANALYZER BLUEPRINT
 
-Freerange is one example, not the final checker. The useful lesson is how much we got by riding on TypeScript instead of replacing it.
+This is the blueprint Freerange earned the slow way.
 
-## COPY THE TYPECHECKER'S HOMEWORK
+It is not "build a theorem prover." It is not "fork TypeScript and put every idea in the compiler." It is a smaller pattern:
 
-Freerange writes comments in normal TypeScript files:
+1. stay inside normal TypeScript code
+2. add a tiny fact language where normal types run out
+3. let the compiler own names, files, packages, and locations
+4. let the analyzer own the extra meaning
+5. keep a recording of every behavior you care about
+
+## START CONSERVATIVE
+
+Freerange started with boring numeric facts:
 
 ```ts
-function clamp(
-  value: number, // @fit 0..100
-  max: number, // @fit >= value
-) {
-  return Math.min(value, max) // @fit <= max
-}
+given width: 0..1000
+return <= max
+rows[].height: 0..40
 ```
 
-That choice matters. We did not invent files, imports, package lookup, path aliases, parse errors, or editor positions. TypeScript already has those.
+That was the right constraint. The first goal was not to understand all UI code. It was to catch small, real mistakes in layout math without asking people to rewrite their app into checker-shaped helpers.
 
-The first move for a Freerange-style analyzer should be:
+The rule that survived is:
 
-1. Read the user's `tsconfig.json` the same way `tsc` does.
-2. Let TypeScript parse the files and report syntax errors with TypeScript error codes.
-3. Ask TypeScript what an import means, including default imports, renamed imports, namespace imports, `export *` barrels, path aliases, and declaration maps.
-4. Ask TypeScript for symbol identity, so `import {clamp} from "./barrel"` and `import {clamp} from "./helper"` can point at the same source function.
-5. Ask TypeScript for source locations, so reports point at the line the user actually wrote.
-6. Ask TypeScript for plain shape when it helps: this value has `.rows`, this field is an array, this imported type reference points at that source declaration.
+> If source is clear, earn the fact. If source is not clear, say `unknown`.
 
-That is the compiler doing compiler work.
+`unknown` is important. It lets the checker be useful before it is complete. It also keeps bad proofs from hiding behind confident output.
 
-## DO NOT ASK TYPESCRIPT TO KNOW YOUR APP RULES
+## USE TYPESCRIPT FOR WHAT TYPESCRIPT ALREADY KNOWS
 
-TypeScript can tell Freerange that `clamp` is the function imported through a barrel. It cannot tell Freerange that `return <= max` is true.
+Freerange piggybacks on TypeScript anywhere the answer is already compiler-owned:
 
-Freerange still has to own:
+1. read `tsconfig.json`
+2. parse source and stop on TypeScript syntax errors
+3. resolve path aliases and packages
+4. follow default imports, renamed imports, namespace imports, and `export *` barrels
+5. use symbol identity so a helper imported through a barrel is still the same helper
+6. recover local source from declaration maps when a built package points back to source
+7. use TypeScript shape when it only says shape: this is an array, this object has `.rows`, this tuple has fixed slots
 
-1. What `0..100`, `> 0`, `rows[].height`, and `spaced(rows, gap)` mean.
-2. How `Math.min`, `Math.max`, `+`, `-`, `*`, `/`, branches, defaults, object literals, arrays, loops, and helper calls affect those facts.
-3. When source code is clear enough to trust.
-4. When source code is too dynamic and should become `unknown`.
-5. How to explain a failure in human terms:
+This took a few tries. Early Freerange had its own small import/export graph. That worked for the first examples, then got awkward around barrels and namespace imports. The better version asks TypeScript for the final source declaration and lets Freerange attach contracts to that.
+
+The lesson is not "trust TypeScript for proof." The lesson is "do not cosplay as TypeScript."
+
+## DO NOT ASK TYPESCRIPT TO KNOW YOUR EXTRA MEANING
+
+TypeScript can tell us that `clamp` is the function imported here:
+
+```ts
+import {clamp} from "./layout-math"
+```
+
+It cannot tell us that `clamp(width, 0, max)` returns `0..max`, or that row tops are spaced by a gap, or that a hit target index stays in bounds.
+
+Freerange owns those meanings:
+
+1. ranges
+2. comparisons
+3. helper contracts
+4. type-field contracts
+5. array item facts
+6. loop-produced row facts
+7. report wording
+
+TypeScript gives us the road map. Freerange decides what the road signs mean.
+
+## WE TRIED FORKING TYPESCRIPT
+
+The TypeScript-native experiments were useful, but not because they replaced Freerange. They were better as a compiler base layer and worse as the whole checker. They showed that compiler-owned pieces really do belong near the compiler:
+
+1. syntax diagnostics
+2. project file context
+3. module identity
+4. aliases and re-exports
+5. source locations
+6. comment attachment
+
+But they did not make the Freerange part disappear. Numeric ranges, helper preconditions, array summaries, loop facts, where imported facts came from, and human reports stayed Freerange-owned.
+
+The practical outcome was a smaller one:
+
+> Move compiler-adjacent work toward TypeScript APIs. Keep the checker's meaning in Freerange.
+
+A real fork only starts looking worthwhile when public APIs cannot expose something essential: first-class comment attachment, `.d.ts` contract emit, or editor-service integration. Until then, a fork mostly moves complexity into a harder place to maintain.
+
+## LET REAL REPORTS SHAPE THE TOOL
+
+Freerange's CLI changed shape because reports were too noisy.
+
+At one point, `check` and `doctor` were separate ideas. That split did not hold up. Users mostly want the checker to tell them what matters, and an escape hatch for quieter annotation-only passes. So the model became:
+
+```sh
+fr check file.ts
+fr check --annotations-only file.ts
+fr infer file.ts --function layout
+```
+
+The report shape that kept winning was caller-first:
 
 ```txt
 FAIL: clamp(value, max): requires max >= value
@@ -48,101 +107,133 @@ FAIL: clamp(value, max): requires max >= value
   missing: max >= value
 ```
 
-This split is the important part. TypeScript tells you where the code is and what names mean. The userland analyzer tells you what your extra checks mean.
+This is a product rule, not a formatting preference. A static analyzer is only as useful as the next action its failure message suggests.
 
-## KEEP THE USER LANGUAGE SMALL
+## BUILD ONE SOURCE EVALUATOR ON PURPOSE
 
-Freerange tries hard to use comments, not a new language:
+Freerange did not begin with a grand interpreter design. It began with small support for functions, `Math.min`, object fields, arrays, loops, helper calls, branches, defaults, and so on.
+
+Eventually that pile of recognizers was already an interpreter. The rewrite made it explicit and deleted the old evaluator once snapshots, demo checks, negative messages, corpus probes, and benchmarks gave enough confidence.
+
+That is the general lesson:
+
+> If many features need to know what source code means, build one engine for source meaning.
+
+Keep the layers boring:
+
+1. parse comments
+2. bind inputs
+3. evaluate supported source into facts
+4. check claims against those facts
+5. print reports
+
+Do not let every new check grow its own private source reader.
+
+## SUMMARIZE COLLECTIONS
+
+One early footgun was unrolling too much. It feels precise to evaluate every array element. It quickly explodes and teaches the checker the wrong habit.
+
+The durable split is:
+
+1. ordinary arrays are summaries
+2. tuples and fixed product shapes can keep slots
+3. `map` preserves length and item facts when the callback is simple
+4. `filter` gives a subset, not equal length
+5. loops emit summaries like row spacing, nondecreasing tops, or running totals
+
+This is one of the places where TypeScript helps but does not finish the job. TypeScript can tell us a value is a tuple or an array. Freerange decides whether to keep slots or summarize items.
+
+## KEEP COMMENTS SMALL
+
+Freerange comments work best when they say the missing fact, not the whole proof:
 
 ```ts
 width: number // @fit 320..2000
+count: number // @fit > 0
 // @fit bottom >= top
-return width / cols // @fit > 0
 ```
 
-The comment should say the fact the source cannot say cleanly. Everything else should come from ordinary TypeScript code.
+We added inline comments for parameters, locals, object fields, and returns because real code wanted the red line near the value. We also restricted inline facts to line comments after block comments became ambiguous in too many positions.
 
-Good comments are boring:
+That is another general rule:
 
-1. input ranges, like `width: 320..2000`
-2. positivity, like `count > 0`
-3. sibling relations, like `bottom >= top`
-4. array item facts, like `rows[].height: 0..40`
-5. helper promises, like `return <= max`
+> Small syntax is allowed to be convenient, but it should be boring to place and boring to reject.
 
-Bad comments try to become a program. If users need loops, lambdas, custom search, sampled cases, or prose inside the checker, the analyzer has probably stopped being small.
+Do not add lambdas, folds, public aliases, prose, browser runs, screenshots, or sampled cases just because one example would pass.
 
-## EVALUATE SOURCE ON PURPOSE
+## USE INFER TO ADOPT, NOT TO HIDE CONTRACTS
 
-Freerange started with small recognizers. That does not last. A checker that understands branches, helper calls, object fields, arrays, defaults, and loops is already evaluating source code in a limited way.
+Freerange added `infer` so humans and agents can ask, "What does the checker already know?"
 
-So make that explicit:
+That made annotation work much better. It also exposed a tempting idea: automatically export inferred helper summaries and delete lots of comments.
 
-1. Track numbers as ranges.
-2. Track objects and arrays by fields and item facts.
-3. Track helper calls by checked contracts, not by hope.
-4. Track ordinary branches when they narrow the facts.
-5. Treat normal arrays as summaries, not as hundreds of separate items.
-6. Treat tuples as fixed slots when TypeScript promises fixed slots.
-7. Return `unknown` when code is outside the supported shape.
+We tried that direction. It was conceptually neat and practically heavy: summary caching, return-expression filtering, rebasing, tracking where facts came from, and assumptions. Worse, many "removable" comments were the public contracts people should still read.
 
-`unknown` is not failure. It means "this analyzer refused to guess."
+So the better rule is:
 
-## MAKE REPORTS FOR CALLERS
+> `infer` is an adoption tool. Checked contracts are still the public red lines.
 
-The report should start where the user can act.
+Generated or inferred contracts may be useful later, but they have to prove they delete noise rather than deleting documentation.
 
-For a bad helper call, say:
+## USE REAL CODE AS PRESSURE, THEN GENERALIZE
 
-1. which call failed
-2. what the callee required
-3. what the caller passed
-4. what fact is missing
+The useful features came from real files:
 
-For a bad return or local claim, say:
+1. photo-gallery made grid sizing, row spacing, line hit boxes, and prompt sizing concrete
+2. xyflow pushed tuple geometry returns, destructuring, and helper summaries
+3. react-grid-layout pushed clamp preconditions and grid math
+4. d3-scale earned `Math.sign`
+5. tldraw and fabric-like geometry kept class methods and getters honest
+6. DOM layout facts came from the need to know `clientWidth >= 0` without pretending every app field named `clientWidth` is special
 
-1. what was claimed
-2. what range or relation source code proved
-3. which input facts or helper contracts were used
-4. which bound or relation is still missing
+The rule is not "add whatever a corpus wants." The rule is:
 
-Reports are not decoration. They are the product.
+1. annotate a small real helper
+2. run `fr infer` or `fr check`
+3. classify the first blocker
+4. fix the root only if it is general
+5. add a positive and negative kernel
 
-## RECORD THE CHECKER'S BEHAVIOR
+That loop beats designing a large language up front.
 
-A userland analyzer needs recordings, because it is easy to accidentally make it more optimistic, more pessimistic, or noisier.
+## RECORD EVERYTHING YOU MIGHT REGRET
 
-Freerange keeps:
+The interpreter rewrite only worked because Freerange had recordings:
 
-1. positive examples that should pass
-2. negative examples with stable messages
+1. positive patterns
+2. negative messages
 3. inferred-fact snapshots
-4. corpus sweeps over real code
-5. a loose performance guard
+4. photo-gallery snapshots
+5. demo contract snapshots
+6. external corpus probes
+7. interpreter snapshots
+8. a loose performance budget
 
-If a feature has no bad example, it is not finished.
+The recordings are not ceremony. They are how you can be bold without guessing whether you broke the checker.
 
 ## DESIGN FOR AGENTS
 
-AI works better when the task has a fast, concrete checker. That suggests a new workflow:
+Agents are better when the target has a fast check. Freerange's bet is that this changes the economics of verification.
 
-1. A change introduces a new guarantee.
-2. An agent writes the smallest checker support for that guarantee.
-3. CI runs it.
-4. If the idea repeats, it becomes a reusable analyzer feature.
-5. If it was only useful once, it can stay local or be deleted.
+Instead of forcing all code through a narrow human-designed API, an agent can write natural code and then add the red lines it needs checked. If the checker fails, the agent gets a concrete missing fact. If the same missing fact repeats across projects, it can become a general checker feature.
 
-This is what "just-in-time proof writing per commit" can mean in practice.
+That is the "just-in-time proof writing per commit" shape:
 
-## THE COMPILER API WISHLIST
+1. a change needs a guarantee
+2. an agent writes the smallest check or checker support for that guarantee
+3. CI runs it
+4. repeated patterns graduate into reusable analyzer features
+5. one-off checks stay local or disappear
 
-Future compilers should make this easier. A Freerange-style analyzer wants APIs for:
+## WHAT FUTURE COMPILERS SHOULD EXPOSE
 
-1. comments attached to the exact source node a user meant
-2. stable symbol identity across imports, re-exports, aliases, generated declaration files, and source maps
-3. project loading that matches the user's normal build
-4. exact source ranges for reports
-5. safe access to simple control-flow and narrowing facts
-6. a way for editor tools to show analyzer facts next to type facts
+Freerange had to build too much glue around TypeScript. Future compilers should make userland analyzers easier by exposing:
 
-The goal is not one universal checker. The goal is a compiler that makes many small, honest checkers easy to build for many different kinds of code.
+1. exact comment-to-node attachment
+2. stable symbol identity across imports, re-exports, generated files, and source maps
+3. project loading identical to the user's normal build
+4. source ranges that are good enough for product reports
+5. simple shape and control-flow facts without asking analyzers to reimplement the typechecker
+6. editor hooks that show analyzer facts next to type facts
+
+The goal is not one universal checker. The goal is many small checkers that can share the compiler's understanding of the program while owning their own meanings.
