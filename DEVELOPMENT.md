@@ -114,7 +114,7 @@ It also separates explicit function and loop comment lines into:
 
 `redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 
-The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible.
+The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
 Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 

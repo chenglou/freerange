@@ -313,7 +313,10 @@ Reports should separate:
 
 Unsupported source reports should include the source line when the interpreter
 knows the node. That line is where proof stopped, not necessarily where the
-human-written `@fit` claim lives.
+human-written `@fit` claim lives. If a missing root makes later property,
+element, or assignment reads fall apart, report the missing root once and keep
+the next distinct blocker. A short unsupported list is easier to act on than a
+trace of every failed child expression.
 
 For shared-factor arithmetic, missing facts should name the small human obligation. If the code has:
 

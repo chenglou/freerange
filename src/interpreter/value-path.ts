@@ -46,9 +46,9 @@ export function valuePathExpression(path: ValuePath): string {
   return expr
 }
 
-export function readPath(path: ValuePath, frame: InterpreterFrame): Value {
+export function readPath(path: ValuePath, frame: InterpreterFrame, node?: ts.Node): Value {
   const root = frame.env.get(path.root)
-  if (root == null) return noteUnsupported(frame, `Unknown assignment root ${path.root}`)
+  if (root == null) return noteUnsupported(frame, `Unknown assignment root ${path.root}`, node)
   return readPathSegments(root, path.segments)
 }
 

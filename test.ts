@@ -123,18 +123,19 @@ if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
 }
 
 const collapsedUnsupported = uniqueUnsupported([
-  'unsupported f line 1: Unknown identifier events',
-  'unsupported f line 1: Property access expected an object path: events.click',
-  'unsupported f > <if-true>: Unknown assignment root events',
-  'unsupported f > <if-true>: Unknown identifier events',
-  'unsupported f line 2: Unknown assignment root count',
-  'unsupported f line 3: Recursive helper inlining is unsupported at walk',
-  'unsupported g line 8: Recursive helper inlining is unsupported at walk',
+  'unsupported render line 1: Unknown identifier events',
+  'unsupported render line 1: Property access expected an object path: events.click',
+  'unsupported render > <if-true>: Unknown assignment root events',
+  'unsupported render > <if-true>: Unknown identifier events',
+  'unsupported render line 2: Unknown assignment root debugTimestamp',
+  'unsupported render line 2: Compound assignment debugTimestamp += 1000 / 60 expected numbers',
+  'unsupported render line 3: Recursive helper inlining is unsupported at walk',
+  'unsupported other line 8: Recursive helper inlining is unsupported at walk',
 ])
 const expectedCollapsedUnsupported = [
-  'unsupported f line 1: Unknown identifier events',
-  'unsupported f line 2: Unknown assignment root count',
-  'unsupported f line 3: Recursive helper inlining is unsupported at walk',
+  'unsupported render line 1: Unknown identifier events',
+  'unsupported render line 2: Unknown assignment root debugTimestamp',
+  'unsupported render line 3: Recursive helper inlining is unsupported at walk',
 ]
 if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n')) {
   console.error('expected unsupported root fallout to collapse')

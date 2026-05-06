@@ -135,7 +135,9 @@ For agents, the useful loop is `fr infer`, edit the smallest source/spec seam,
 then `fr check`. Treat `missing:` as the next thing to prove or the next input
 fact to say out loud. Unsupported source diagnostics may also name the source
 line where the interpreter had to stop; that is a source-shape clue, not a
-separate proof failure.
+separate proof failure. When one unknown root causes many later property or
+assignment complaints, `infer` reports the root first instead of printing every
+derived miss.
 
 ## A First Check
 

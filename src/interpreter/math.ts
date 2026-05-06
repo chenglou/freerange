@@ -1,3 +1,4 @@
+import type * as ts from 'typescript'
 import {
   callExpr,
   maxNumberCases,
@@ -20,8 +21,8 @@ import {
 } from '../proof.ts'
 import {noteUnsupported, type InterpreterFrame} from './context.ts'
 
-export function evaluateMathCall(name: string, values: Value[], frame: InterpreterFrame, expressionText: string): Value {
-  if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`)
+export function evaluateMathCall(name: string, values: Value[], frame: InterpreterFrame, expression: ts.CallExpression): Value {
+  if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`, expression)
   const numbers = values as NumberValue[]
   switch (name) {
     case 'min':
@@ -42,7 +43,7 @@ export function evaluateMathCall(name: string, values: Value[], frame: Interpret
     case 'sign':
       return evaluateUnaryMath(name, numbers, signNumber)
     default:
-      return noteUnsupported(frame, `Unsupported Math.${name} call ${expressionText}`)
+      return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`, expression)
   }
 }
 
