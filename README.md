@@ -39,4 +39,6 @@ what Freerange found, which explicit checks they cover, and where proof stopped.
 
 See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 
+See [STATIC-ANALYZER-BLUEPRINT.md](./STATIC-ANALYZER-BLUEPRINT.md) for the broader thesis behind Freerange-style analyzers.
+
 See [DEVELOPMENT.md](./DEVELOPMENT.md) for setup, tests, demo checks, and repo notes.
