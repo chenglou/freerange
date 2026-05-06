@@ -2,19 +2,19 @@ We expect many more userland static analyzers in the future in the style of Free
 
 # STATIC ANALYZER BLUEPRINT
 
-This is the blueprint Freerange earned the slow way.
+This document records the architecture lessons from building Freerange.
 
-It is not "build a theorem prover." It is not "fork TypeScript and put every idea in the compiler." It is a smaller pattern:
+It is not a guide to building a theorem prover, and it is not an argument for putting every analyzer inside TypeScript. The pattern is smaller:
 
 1. stay inside normal TypeScript code
 2. add a tiny fact language where normal types run out
 3. let the compiler own names, files, packages, and locations
 4. let the analyzer own the extra meaning
-5. keep a recording of every behavior you care about
+5. keep tests and snapshots for behavior that should not change
 
 ## START CONSERVATIVE
 
-Freerange started with boring numeric facts:
+Freerange started with small numeric facts:
 
 ```ts
 given width: 0..1000
@@ -22,13 +22,13 @@ return <= max
 rows[].height: 0..40
 ```
 
-That was the right constraint. The first goal was not to understand all UI code. It was to catch small, real mistakes in layout math without asking people to rewrite their app into checker-shaped helpers.
+That was the right constraint. The first goal was not to understand all UI code. It was to catch small, real mistakes in layout math without asking people to rewrite their app around the checker.
 
 The rule that survived is:
 
-> If source is clear, earn the fact. If source is not clear, say `unknown`.
+> Prove facts only from supported source, checked contracts, and explicit assumptions. Report unsupported source as `unknown`.
 
-`unknown` is important. It lets the checker be useful before it is complete. It also keeps bad proofs from hiding behind confident output.
+`unknown` is important. It lets the checker be useful before it is complete. It also prevents unsupported code from being treated as proven.
 
 ## USE TYPESCRIPT FOR WHAT TYPESCRIPT ALREADY KNOWS
 
@@ -44,7 +44,7 @@ Freerange piggybacks on TypeScript anywhere the answer is already compiler-owned
 
 This took a few tries. Early Freerange had its own small import/export graph. That worked for the first examples, then got awkward around barrels and namespace imports. The better version asks TypeScript for the final source declaration and lets Freerange attach contracts to that.
 
-The lesson is not "trust TypeScript for proof." The lesson is "do not cosplay as TypeScript."
+The lesson is not to trust TypeScript for Freerange facts. The lesson is to use TypeScript for compiler facts instead of rebuilding them.
 
 ## DO NOT ASK TYPESCRIPT TO KNOW YOUR EXTRA MEANING
 
@@ -66,7 +66,7 @@ Freerange owns those meanings:
 6. loop-produced row facts
 7. report wording
 
-TypeScript gives us the road map. Freerange decides what the road signs mean.
+TypeScript identifies the source entities. Freerange defines and checks the extra facts.
 
 ## WE TRIED FORKING TYPESCRIPT
 
@@ -99,7 +99,7 @@ fr check --annotations-only file.ts
 fr infer file.ts --function layout
 ```
 
-The report shape that kept winning was caller-first:
+The report shape that stayed useful was caller-first:
 
 ```txt
 FAIL: clamp(value, max): requires max >= value
@@ -107,19 +107,19 @@ FAIL: clamp(value, max): requires max >= value
   missing: max >= value
 ```
 
-This is a product rule, not a formatting preference. A static analyzer is only as useful as the next action its failure message suggests.
+This is a product rule, not a formatting preference. A static analyzer should make the next action clear.
 
 ## BUILD ONE SOURCE EVALUATOR ON PURPOSE
 
 Freerange did not begin with a grand interpreter design. It began with small support for functions, `Math.min`, object fields, arrays, loops, helper calls, branches, defaults, and so on.
 
-Eventually that pile of recognizers was already an interpreter. The rewrite made it explicit and deleted the old evaluator once snapshots, demo checks, negative messages, corpus probes, and benchmarks gave enough confidence.
+Eventually those recognizers had become an interpreter. The rewrite made it explicit and deleted the old evaluator once snapshots, demo checks, negative messages, corpus probes, and benchmarks gave enough confidence.
 
 That is the general lesson:
 
 > If many features need to know what source code means, build one engine for source meaning.
 
-Keep the layers boring:
+Keep the layers simple:
 
 1. parse comments
 2. bind inputs
@@ -131,7 +131,7 @@ Do not let every new check grow its own private source reader.
 
 ## SUMMARIZE COLLECTIONS
 
-One early footgun was unrolling too much. It feels precise to evaluate every array element. It quickly explodes and teaches the checker the wrong habit.
+One early mistake was unrolling too much. It feels precise to evaluate every array element. It quickly explodes and gives the checker the wrong default behavior.
 
 The durable split is:
 
@@ -157,9 +157,9 @@ We added inline comments for parameters, locals, object fields, and returns beca
 
 That is another general rule:
 
-> Small syntax is allowed to be convenient, but it should be boring to place and boring to reject.
+> Small syntax is acceptable only when placement and error handling stay simple.
 
-Do not add lambdas, folds, public aliases, prose, browser runs, screenshots, or sampled cases just because one example would pass.
+Do not add lambdas, folds, public aliases, prose, browser runs, screenshots, or sampled cases just to make one example pass.
 
 ## USE INFER TO ADOPT, NOT TO HIDE CONTRACTS
 
@@ -171,7 +171,7 @@ We tried that direction. It was conceptually neat and practically heavy: summary
 
 So the better rule is:
 
-> `infer` is an adoption tool. Checked contracts are still the public red lines.
+> `infer` is an adoption tool. Checked contracts are still the public guarantees.
 
 Generated or inferred contracts may be useful later, but they have to prove they delete noise rather than deleting documentation.
 
@@ -182,7 +182,7 @@ The useful features came from real files:
 1. photo-gallery made grid sizing, row spacing, line hit boxes, and prompt sizing concrete
 2. xyflow pushed tuple geometry returns, destructuring, and helper summaries
 3. react-grid-layout pushed clamp preconditions and grid math
-4. d3-scale earned `Math.sign`
+4. d3-scale justified `Math.sign`
 5. tldraw and fabric-like geometry kept class methods and getters honest
 6. DOM layout facts came from the need to know `clientWidth >= 0` without pretending every app field named `clientWidth` is special
 
@@ -209,13 +209,13 @@ The interpreter rewrite only worked because Freerange had recordings:
 7. interpreter snapshots
 8. a loose performance budget
 
-The recordings are not ceremony. They are how you can be bold without guessing whether you broke the checker.
+These recordings make large changes reviewable. They show whether behavior changed intentionally.
 
 ## DESIGN FOR AGENTS
 
 Agents are better when the target has a fast check. Freerange's bet is that this changes the economics of verification.
 
-Instead of forcing all code through a narrow human-designed API, an agent can write natural code and then add the red lines it needs checked. If the checker fails, the agent gets a concrete missing fact. If the same missing fact repeats across projects, it can become a general checker feature.
+Instead of forcing all code through a narrow human-designed API, an agent can write natural code and then add the guarantees it needs checked. If the checker fails, the agent gets a concrete missing fact. If the same missing fact repeats across projects, it can become a general checker feature.
 
 That is the "just-in-time proof writing per commit" shape:
 
