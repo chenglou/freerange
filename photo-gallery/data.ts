@@ -1,7 +1,7 @@
 export type PhotoData = {
   id: string
-  w: number
-  h: number
+  w: number // @fit > 0
+  h: number // @fit > 0
   prompt: string
 }
 
