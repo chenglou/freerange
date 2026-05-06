@@ -27,33 +27,45 @@ export type ShapeProgram = {
 }
 
 const maxTsShapeDepth = 8
+const maxTsShapeNodes = 220
 const maxTsShapeUnionMembers = 8
 const maxTsShapeProperties = 80
+
+type TsShapeState = {
+  seen: Set<unknown>
+  remaining: number
+}
 
 export function valueFromNodeShape(expr: string, node: ts.Node, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
   if (checker == null) return null
-  return valueFromTsType(expr, checker.getTypeAtLocation(node), checker, node, new Set(), 0)
+  return safeTsShape(() => valueFromTsType(expr, checker.getTypeAtLocation(node), checker, node, tsShapeState(), 0))
 }
 
 export function valueFromTypeNodeShape(expr: string, node: ts.TypeNode | undefined, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
   if (checker == null || node == null) return null
-  return valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node, new Set(), 0)
+  return safeTsShape(() => valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node, tsShapeState(), 0))
 }
 
 export function valueFromFunctionReturnShape(expr: string, fn: ts.SignatureDeclaration, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
-  const signature = checker?.getSignatureFromDeclaration(fn)
-  if (checker == null || signature == null) return null
-  return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, fn, new Set(), 0)
+  if (checker == null) return null
+  return safeTsShape(() => {
+    const signature = checker.getSignatureFromDeclaration(fn)
+    if (signature == null) return null
+    return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, fn, tsShapeState(), 0)
+  })
 }
 
 export function valueFromCallReturnShape(expr: string, call: ts.CallExpression, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
-  const signature = checker?.getResolvedSignature(call)
-  if (checker == null || signature == null) return null
-  return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call, new Set(), 0)
+  if (checker == null) return null
+  return safeTsShape(() => {
+    const signature = checker.getResolvedSignature(call)
+    if (signature == null) return null
+    return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call, tsShapeState(), 0)
+  })
 }
 
 export function structuralShape(value: Value | null): Value | null {
@@ -120,22 +132,56 @@ function isBroadUnknownNumber(value: Value) {
     && value.provenance.length === 0
 }
 
-function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
+function safeTsShape(evaluate: () => Value | null): Value | null {
+  try {
+    return evaluate()
+  } catch (error) {
+    if (error instanceof RangeError) return null
+    throw error
+  }
+}
+
+function tsShapeState(): TsShapeState {
+  return {seen: new Set(), remaining: maxTsShapeNodes}
+}
+
+function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, state: TsShapeState, depth: number): Value | null {
   if (depth > maxTsShapeDepth) return null
-  if (seen.has(type)) return unknownObject(expr)
+  if (state.remaining-- <= 0) return null
+  const typeKey = tsShapeTypeKey(type)
+  if (state.seen.has(typeKey)) return unknownObject(expr)
   if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
   const literal = literalValueFromTsType(expr, type)
   if (literal != null) return literal
+  state.seen.add(typeKey)
+  try {
+    return valueFromTsTypeUnchecked(expr, type, checker, location, state, depth)
+  } finally {
+    state.seen.delete(typeKey)
+  }
+}
+
+function tsShapeTypeKey(type: ts.Type): unknown {
+  return (type as {id?: number}).id ?? type
+}
+
+function valueFromTsTypeUnchecked(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, state: TsShapeState, depth: number): Value | null {
   if (type.isUnion()) {
     if (type.types.length > maxTsShapeUnionMembers) return null
     const nullish = unionNullishKind(type.types)
     const members = type.types.filter(member => tsNullishKind(member) == null)
     if (nullish != null) {
       if (members.length === 0) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
-      const present = joinedTsUnionValue(expr, members, checker, location, seen, depth)
+      if (members.length === 1) {
+        const present = valueFromTsType(expr, members[0]!, checker, location, state, depth + 1)
+        return present == null ? null : nullableValue(present, expr, nullish)
+      }
+      if (!members.every(isJoinableTsUnionMember)) return null
+      const present = joinedTsUnionValue(expr, members, checker, location, state, depth)
       return present == null ? null : nullableValue(present, expr, nullish)
     }
-    return joinedTsUnionValue(expr, members, checker, location, seen, depth)
+    if (!members.every(isJoinableTsUnionMember)) return null
+    return joinedTsUnionValue(expr, members, checker, location, state, depth)
   }
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return literalValue([false, true], expr)
@@ -143,11 +189,11 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
 
   if (checker.isTupleType(type)) {
-    return tupleArrayTsValue(expr, type, checker, location, seen, depth + 1)
+    return tupleArrayTsValue(expr, type, checker, location, state, depth + 1)
   }
 
   if (checker.isArrayLikeType(type)) {
-    const element = arrayElementTsValue(`${expr}[]`, type, checker, location, seen, depth + 1)
+    const element = arrayElementTsValue(`${expr}[]`, type, checker, location, state, depth + 1)
     return unknownArray(expr, unknownArrayLength(expr), element)
   }
 
@@ -155,24 +201,34 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if (properties.length === 0) return null
   if (properties.length > maxTsShapeProperties) return null
 
-  seen.add(type)
   const props = new Map<string, Value>()
   for (const property of properties) {
     const name = property.getName()
     if (name === 'prototype' || name.startsWith('__@')) continue
     const propExpr = `${expr}.${name}`
     const propType = checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration ?? location)
-    const value = valueFromTsType(propExpr, propType, checker, property.valueDeclaration ?? location, seen, depth + 1)
+    const value = valueFromTsType(propExpr, propType, checker, property.valueDeclaration ?? location, state, depth + 1)
       ?? unknown(`Unsupported TypeScript property shape: ${propExpr}`)
     props.set(name, (property.flags & ts.SymbolFlags.Optional) !== 0 && value.kind !== 'nullable'
       ? nullableValue(value, propExpr, 'undefined')
       : value)
   }
-  seen.delete(type)
   return {kind: 'object', props, expr}
 }
 
-function literalValueFromTsType(expr: string, type: ts.Type): Value | null {
+function isJoinableTsUnionMember(type: ts.Type) {
+  return literalValueFromTsType(null, type) != null
+    || (type.flags & (
+      ts.TypeFlags.NumberLike
+      | ts.TypeFlags.BooleanLike
+      | ts.TypeFlags.StringLike
+      | ts.TypeFlags.Any
+      | ts.TypeFlags.Unknown
+      | ts.TypeFlags.Never
+    )) !== 0
+}
+
+function literalValueFromTsType(expr: string | null, type: ts.Type): Value | null {
   if (type.isNumberLiteral()) return finiteNumberValue([type.value], expr)
   if (type.isStringLiteral()) return literalValue([type.value], expr)
   const booleanLiteral = booleanLiteralFromTsType(type)
@@ -192,12 +248,12 @@ function joinedTsUnionValue(
   members: readonly ts.Type[],
   checker: ts.TypeChecker,
   location: ts.Node,
-  seen: Set<ts.Type>,
+  state: TsShapeState,
   depth: number,
 ): Value | null {
   let value: Value | null = null
   for (const member of members) {
-    const next = valueFromTsType(expr, member, checker, location, seen, depth + 1)
+    const next = valueFromTsType(expr, member, checker, location, state, depth + 1)
     if (next == null) return null
     value = value == null ? next : joinValues(value, next)
   }
@@ -220,28 +276,28 @@ function tsNullishKind(type: ts.Type): NullishKind | null {
   return null
 }
 
-function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
+function arrayElementTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, state: TsShapeState, depth: number): Value | null {
   if (checker.isArrayType(type)) {
     const elementType = checker.getTypeArguments(type as ts.TypeReference)[0]
-    return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen, depth)
+    return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, state, depth)
   }
   if (checker.isTupleType(type)) {
-    return joinedTupleElementTsValue(expr, checker.getTypeArguments(type as ts.TypeReference), checker, location, seen, depth)
+    return joinedTupleElementTsValue(expr, checker.getTypeArguments(type as ts.TypeReference), checker, location, state, depth)
   }
   const elementType = type.getNumberIndexType()
-  return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, seen, depth)
+  return elementType == null ? null : valueFromTsType(expr, elementType, checker, location, state, depth)
 }
 
-function tupleArrayTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): ArrayValue | null {
+function tupleArrayTsValue(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node, state: TsShapeState, depth: number): ArrayValue | null {
   const members = checker.getTypeArguments(type as ts.TypeReference)
   if (!isRequiredFixedTuple(type)) {
-    return unknownArray(expr, tupleLengthRangeValue(expr, type), joinedTupleElementTsValue(`${expr}[]`, members, checker, location, seen, depth))
+    return unknownArray(expr, tupleLengthRangeValue(expr, type), joinedTupleElementTsValue(`${expr}[]`, members, checker, location, state, depth))
   }
 
   const elements: Value[] = []
   let element: Value | null = null
   for (const [index, member] of members.entries()) {
-    const memberValue = valueFromTsType(`${expr}[${index}]`, member, checker, location, seen, depth)
+    const memberValue = valueFromTsType(`${expr}[${index}]`, member, checker, location, state, depth)
     if (memberValue == null) return null
     elements.push(memberValue)
     element = element == null ? memberValue : joinValues(element, memberValue)
@@ -256,10 +312,10 @@ function isRequiredFixedTuple(type: ts.Type) {
     && target.elementFlags.every(flag => flag === ts.ElementFlags.Required)
 }
 
-function joinedTupleElementTsValue(expr: string, members: readonly ts.Type[], checker: ts.TypeChecker, location: ts.Node, seen: Set<ts.Type>, depth: number): Value | null {
+function joinedTupleElementTsValue(expr: string, members: readonly ts.Type[], checker: ts.TypeChecker, location: ts.Node, state: TsShapeState, depth: number): Value | null {
   let element: Value | null = null
   for (const member of members) {
-    const memberValue = valueFromTsType(expr, member, checker, location, seen, depth)
+    const memberValue = valueFromTsType(expr, member, checker, location, state, depth)
     if (memberValue == null) return null
     element = element == null ? memberValue : joinValues(element, memberValue)
   }

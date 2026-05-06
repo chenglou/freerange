@@ -81,6 +81,7 @@ import {
 import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
 import {
   childFrame,
+  frameWithActiveCall,
   frameWithProgram,
   joinFrameEnvs,
   noteUnsupported,
@@ -285,6 +286,7 @@ function interpreterFrame(
     env: new Map(env),
     issues: [],
     stack,
+    activeCalls: new Set(),
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [...assumptions],
@@ -396,10 +398,10 @@ function evaluateFunctionNodeBody(
   frame: InterpreterFrame,
 ): Value {
   if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) return evaluateReturnExpression(fn.body, fn, frame)
-  if (fn.body == null) return noteUnsupported(frame, `Function ${name} has no body`)
-  if (!ts.isBlock(fn.body)) return noteUnsupported(frame, `Function ${name} body is unsupported`)
+  if (fn.body == null) return noteUnsupported(frame, `Function ${name} has no body`, fn)
+  if (!ts.isBlock(fn.body)) return noteUnsupported(frame, `Function ${name} body is unsupported`, fn.body)
   const flow = evaluateStatements(fn.body.statements, frame)
-  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, `Function ${name} did not return`)
+  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, `Function ${name} did not return`, fn.body)
 }
 
 function bindParameters(parameters: ts.NodeArray<ts.ParameterDeclaration>, argumentValues: (Value | undefined)[], frame: InterpreterFrame) {
@@ -487,7 +489,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
     return {kind: 'fallthrough'}
   }
   if (ts.isReturnStatement(statement)) {
-    return {kind: 'return', value: statement.expression == null ? unknown('Empty return') : evaluateReturnExpression(statement.expression, statement, frame)}
+    return {kind: 'return', value: statement.expression == null ? noteUnsupported(frame, 'Empty return', statement) : evaluateReturnExpression(statement.expression, statement, frame)}
   }
   if (ts.isExpressionStatement(statement)) {
     evaluateExpression(statement.expression, frame)
@@ -982,7 +984,7 @@ function evaluateIndexedForIf(
     guardedPushes.push(...guarded)
     return null
   }
-  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Indexed for loop scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`)
+  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Indexed for loop scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`, statement)
   return evaluateIndexedForGuardedStatement(statement, context, frame)
 }
 
@@ -991,8 +993,8 @@ function evaluateIndexedForGuardedStatement(
   context: IndexedForBodyContext,
   frame: InterpreterFrame,
 ): Value | null {
-  if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches')
-  if (!isSideEffectFreeExpression(statement.expression)) return noteUnsupported(frame, 'Indexed for loop guards must be side-effect-free')
+  if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches', statement.elseStatement)
+  if (!isSideEffectFreeExpression(statement.expression)) return noteUnsupported(frame, 'Indexed for loop guards must be side-effect-free', statement.expression)
   const thenFrame = branchFrame(frame, statement.expression, true, '<indexed-if-true>', evaluateExpression)
   const elseFrame = branchFrame(frame, statement.expression, false, '<indexed-if-false>', evaluateExpression)
   thenFrame.conditionalDepth++
@@ -1027,7 +1029,7 @@ function evaluateIndexedForGuardedBody(
       if (error != null) return error
       continue
     }
-    return noteUnsupported(frame, `Indexed for loop guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`)
+    return noteUnsupported(frame, `Indexed for loop guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`, child)
   }
   return null
 }
@@ -1307,7 +1309,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return frame.env.get('this') ?? noteUnsupported(frame, 'Unknown identifier this')
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return frame.env.get('this') ?? noteUnsupported(frame, 'Unknown identifier this', expression)
   if (ts.isIdentifier(expression)) return readIdentifier(expression, frame)
   if (ts.isPropertyAccessExpression(expression)) return evaluatePropertyAccess(expression, frame)
   if (ts.isElementAccessExpression(expression)) return evaluateElementAccess(expression, frame)
@@ -1318,8 +1320,8 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isBinaryExpression(expression)) return evaluateBinaryExpression(expression, frame)
   if (ts.isConditionalExpression(expression)) return evaluateConditionalExpression(expression, frame)
   if (ts.isCallExpression(expression)) return evaluateCallExpression(expression, frame)
-  if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet')
-  return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`)
+  if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet', expression)
+  return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
@@ -1327,7 +1329,7 @@ function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Val
   if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, 'Infinity')
   const ambient = ambientIdentifierFact(expression, frame.program)
   if (ambient != null) return ambient
-  return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`)
+  return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
 }
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
@@ -1799,14 +1801,14 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   }
   if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback, frame)
   if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
-  return noteUnsupported(frame, resolved.reason)
+  return noteUnsupported(frame, resolved.reason, expression)
 }
 
 function evaluateLastEndCall(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const targetExpression = expression.arguments[0]
-  if (targetExpression == null || expression.arguments.length !== 1) return noteUnsupported(frame, 'lastEnd expects one array')
+  if (targetExpression == null || expression.arguments.length !== 1) return noteUnsupported(frame, 'lastEnd expects one array', expression)
   const target = evaluateExpression(targetExpression, frame)
-  if (target.kind !== 'array') return noteUnsupported(frame, 'lastEnd expected an array')
+  if (target.kind !== 'array') return noteUnsupported(frame, 'lastEnd expected an array', targetExpression)
   return target.summary?.lastEnd ?? unknown(lastEndFailureReason(nodeText(targetExpression, frame), target))
 }
 
@@ -1814,12 +1816,12 @@ function evaluateExtentEndCall(expression: ts.CallExpression, frame: Interpreter
   const targetExpression = expression.arguments[0]
   const emptyExpression = expression.arguments[1]
   if (targetExpression == null || emptyExpression == null || expression.arguments.length !== 2) {
-    return noteUnsupported(frame, 'extentEnd expects extentEnd(rows, emptyValue)')
+    return noteUnsupported(frame, 'extentEnd expects extentEnd(rows, emptyValue)', expression)
   }
   const target = evaluateExpression(targetExpression, frame)
-  if (target.kind !== 'array') return noteUnsupported(frame, 'extentEnd expected an array')
+  if (target.kind !== 'array') return noteUnsupported(frame, 'extentEnd expected an array', targetExpression)
   const empty = evaluateExpression(emptyExpression, frame)
-  if (empty.kind !== 'number' || empty.expr == null) return noteUnsupported(frame, 'extentEnd expected a known empty value')
+  if (empty.kind !== 'number' || empty.expr == null) return noteUnsupported(frame, 'extentEnd expected a known empty value', emptyExpression)
 
   if (target.length.max === 0) return empty
   if (target.length.min >= 1 && target.summary?.lastEnd != null) return target.summary.lastEnd
@@ -1887,7 +1889,15 @@ function evaluateResolvedFunctionCall(
     ...(thisValue == null ? {} : {thisValue}),
   }, frame)
   if (hooked != null) return hooked
-  return valueWithStructuralFallback(invokeFitFunction(target.fn, argumentValues, frame, target.program, rootFrame(target.program, frame.hooks).env, thisValue), fallback)
+  const callKey = `${target.program.sourceId}#${target.functionName}`
+  if (frame.activeCalls.has(callKey)) {
+    const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.functionName}`, expression)
+    return fallback ?? unsupported
+  }
+  return valueWithStructuralFallback(
+    invokeFitFunction(target.fn, argumentValues, frameWithActiveCall(frame, callKey), target.program, rootFrame(target.program, frame.hooks).env, thisValue),
+    fallback,
+  )
 }
 
 function evaluateHookedCall(call: InterpreterCall, frame: InterpreterFrame): Value | null {

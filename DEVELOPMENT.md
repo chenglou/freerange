@@ -118,6 +118,8 @@ The best inference examples are snapshotted in [infer-snapshots.expected.txt](./
 
 Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 
+`infer` must stay total. Recursive helper cycles should report an unsupported recursion stop and fall back to TypeScript shape when available; TypeScript shape reading is also depth/width/node bounded.
+
 Treat `infer`, `audit:demos`, and normal reports as one adoption loop: inspect
 what source proves, keep the human-important `@fit` comments, then classify any
 remaining failure as missing input fact, unsupported source shape, helper

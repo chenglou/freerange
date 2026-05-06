@@ -23,6 +23,7 @@ export type InterpreterFrame = {
   env: Map<string, Value>
   issues: InterpreterIssue[]
   stack: string[]
+  activeCalls: Set<string>
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
@@ -92,6 +93,7 @@ export function rootFrame(program: Program, hooks?: InterpreterHooks): Interpret
     env: programGlobalEnv(program),
     issues: [],
     stack: [],
+    activeCalls: new Set(),
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [],
@@ -105,6 +107,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     env,
     issues: parent.issues,
     stack: [...parent.stack, name],
+    activeCalls: new Set(parent.activeCalls),
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
@@ -119,11 +122,21 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     env,
     issues: parent.issues,
     stack: [...parent.stack, name],
+    activeCalls: new Set(parent.activeCalls),
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
+  }
+}
+
+export function frameWithActiveCall(parent: InterpreterFrame, key: string): InterpreterFrame {
+  const activeCalls = new Set(parent.activeCalls)
+  activeCalls.add(key)
+  return {
+    ...parent,
+    activeCalls,
   }
 }
 

@@ -181,7 +181,10 @@ function stepSprings(steps: number): boolean {
   }
   return stillAnimating
 }
-function stepSpring(s: Spring, steps: number): boolean {
+function stepSpring(
+  s: Spring,
+  steps: number, // @fit int 0..Infinity
+): boolean {
   for (let i = 0; i < steps; i++) springStep(s)
   if (Math.abs(s.v) < 0.01 && Math.abs(s.dest - s.pos) < 0.01) {
     springGoToEnd(s) // close enough, done

@@ -2,11 +2,9 @@ photo-gallery/index.ts --all
 
 function scheduleRender
 unsupported:
-  unsupported scheduleRender: Unknown identifier scheduledRender
-  unsupported scheduleRender > <if-true>: Unknown assignment root scheduledRender
-  unsupported scheduleRender > <if-false>: Unknown assignment root scheduledRender
-  unsupported scheduleRender > <if-false>: Unknown function requestAnimationFrame
-  Empty return
+  unsupported scheduleRender line 6: Unknown identifier scheduledRender
+  unsupported scheduleRender > <if-true> line 6: Empty return
+  unsupported scheduleRender > <if-false> line 8: Unknown function requestAnimationFrame
 
 function spring
 return:
@@ -40,14 +38,14 @@ assumptions:
   given config.k > 0
   given config.b > 0
 unsupported:
-  unsupported springStep: Function springStep did not return
+  unsupported springStep line 34: Function springStep did not return
 
 function springGoToEnd
 assumptions:
   given config.k > 0
   given config.b > 0
 unsupported:
-  unsupported springGoToEnd: Function springGoToEnd did not return
+  unsupported springGoToEnd line 49: Function springGoToEnd did not return
 
 function clamp
 checked:
@@ -76,24 +74,25 @@ redundant:
 
 function isDebug
 unsupported:
-  unsupported isDebug: Unknown identifier debug
+  unsupported isDebug line 107: Unknown identifier debug
 
 function springForEach
 unsupported:
-  unsupported springForEach: Unknown identifier data
+  unsupported springForEach line 168: Unknown identifier data
   unsupported springForEach line 168: for..of expected an array source, but data is not proven array-valued
 
 function stepSprings
 unsupported:
-  unsupported stepSprings: Unknown identifier data
+  unsupported stepSprings line 174: Unknown identifier data
   unsupported stepSprings line 174: for..of expected an array source, but data is not proven array-valued
 
 function stepSpring
 assumptions:
   given s.k > 0
   given s.b > 0
+  given steps: int 0..Infinity
 unsupported:
-  unsupported stepSpring line 185: Indexed for loops support block bodies only
+  unsupported stepSpring line 188: Indexed for loops support block bodies only
 
 function hitTest2DMode
 assumptions:
@@ -112,7 +111,7 @@ assumptions:
   given data[].fxFactor.k > 0
   given data[].fxFactor.b > 0
 unsupported:
-  unsupported hitTest2DMode > <indexed-if-true>: Indexed for loop guarded bodies only support local bindings and direct push calls: return i
+  unsupported hitTest2DMode > <indexed-if-true> line 219: Indexed for loop guarded bodies only support local bindings and direct push calls: return i
 
 function hitTest1DMode
 assumptions:
@@ -142,45 +141,13 @@ locals:
   windowSizeY == document.documentElement.clientHeight
   windowSizeY: int 0..Infinity
 unsupported:
-  unsupported render: Unknown identifier events
-  unsupported render line 230: Property access expected an object path: events.keydown
-  unsupported render > <conditional-true>: Unknown identifier events
-  unsupported render > <conditional-true> line 230: Property access expected an object path: events.keydown
-  unsupported render > <conditional-true>: Unknown assignment root events
-  unsupported render > <conditional-false>: Unknown assignment root events
-  unsupported render > <conditional-false>: Unknown identifier events
-  unsupported render > <conditional-false> line 230: Property access expected an object path: events.keydown
-  unsupported render > <conditional-false> line 230: Property access expected an object path: events.keydown.code
-  unsupported render line 234: Property access expected an object path: events.click
-  unsupported render > <if-true>: Unknown assignment root events
-  unsupported render > <if-false>: Unknown assignment root events
-  unsupported render > <if-true>: Unknown identifier events
-  unsupported render > <if-true> line 236: Property access expected an object path: events.click
-  unsupported render > <if-true> line 236: Property access expected an object path: events.click.target
-  unsupported render > <if-true> line 237: Property access expected an object path: events.click
-  unsupported render > <if-true> line 237: Property access expected an object path: events.click.clientX
-  unsupported render > <if-true> line 237: Property access expected an object path: events.click.clientY
-  unsupported render line 240: Property access expected an object path: events.mousemove
-  unsupported render > <if-true> line 242: Property access expected an object path: events.mousemove
-  unsupported render > <if-true> line 242: Property access expected an object path: events.mousemove.clientX
-  unsupported render > <if-true> line 242: Property access expected an object path: events.mousemove.clientY
-  unsupported render: Unknown identifier debug
-  unsupported render > <if-true>: Unknown assignment root debug
-  unsupported render > <if-false>: Unknown assignment root debug
+  unsupported render line 233: Unknown identifier events
+  unsupported render line 249: Unknown identifier debug
   unsupported render > <if-true> > <if-true>: Unknown assignment root debugTimestamp
   unsupported render > <if-true> > <if-true>: Compound assignment debugTimestamp += 1000 / 60 expected numbers
-  unsupported render: Unknown identifier reducedMotion
-  unsupported render line 255: Property access expected an object path: reducedMotion.matches
-  unsupported render: Unknown identifier isSafari
-  unsupported render > <conditional-true>: Unknown assignment root isSafari
-  unsupported render > <conditional-false>: Unknown assignment root isSafari
-  unsupported render > <conditional-true>: Unknown identifier document
-  unsupported render > <conditional-true> line 256: Property access expected an object path: document.body
-  unsupported render > <conditional-true> line 256: Property access expected an object path: document.body.scrollTop
-  unsupported render > <conditional-false>: Unknown identifier window
-  unsupported render > <conditional-false> line 256: Property access expected an object path: window.scrollY
-  unsupported render > <conditional-true> line 257: Property access expected an object path: document.body
-  unsupported render > <conditional-true> line 257: Property access expected an object path: document.body.scrollLeft
-  unsupported render > <conditional-false> line 257: Property access expected an object path: window.scrollX
-  unsupported render: Unsupported call window.location.hash.slice
-  unsupported render line 260: Indexed for loops support block bodies only
+  unsupported render line 258: Unknown identifier reducedMotion
+  unsupported render line 259: Unknown identifier isSafari
+  unsupported render > <conditional-true> line 259: Unknown identifier document
+  unsupported render > <conditional-false> line 259: Unknown identifier window
+  unsupported render line 261: Unsupported call window.location.hash.slice
+  unsupported render line 263: Indexed for loops support block bodies only

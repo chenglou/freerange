@@ -1,5 +1,6 @@
 import {inferFitFiles} from './src/check-core.ts'
 import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
+import {uniqueUnsupported} from './src/infer-report.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts', 'interpreter-matrix-patterns.ts']
@@ -119,6 +120,28 @@ if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
   process.exitCode = 1
 } else {
   console.log('given typo: ambiguous root stays plain')
+}
+
+const collapsedUnsupported = uniqueUnsupported([
+  'unsupported f line 1: Unknown identifier events',
+  'unsupported f line 1: Property access expected an object path: events.click',
+  'unsupported f > <if-true>: Unknown assignment root events',
+  'unsupported f > <if-true>: Unknown identifier events',
+  'unsupported f line 2: Unknown assignment root count',
+  'unsupported f line 3: Recursive helper inlining is unsupported at walk',
+  'unsupported g line 8: Recursive helper inlining is unsupported at walk',
+])
+const expectedCollapsedUnsupported = [
+  'unsupported f line 1: Unknown identifier events',
+  'unsupported f line 2: Unknown assignment root count',
+  'unsupported f line 3: Recursive helper inlining is unsupported at walk',
+]
+if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n')) {
+  console.error('expected unsupported root fallout to collapse')
+  console.error(collapsedUnsupported.join('\n'))
+  process.exitCode = 1
+} else {
+  console.log('diagnostics: collapsed unsupported root fallout')
 }
 
 const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
@@ -757,6 +780,24 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
   })
 
   await withCliFixture({
+    'recursive-infer.ts': `function walk(value: number): number {
+  const next = value > 0 ? walk(value - 1) : 0
+  return next
+}
+`,
+  }, dir => {
+    const infer = runFr(['infer', 'recursive-infer.ts', '--function', 'walk'], dir)
+    expectCli(infer.exitCode === 0, 'expected recursive infer to stop at the helper cycle instead of overflowing', infer.output)
+    expectCli(infer.output.includes('Recursive helper inlining is unsupported at walk'), 'expected recursive infer to report the helper cycle', infer.output)
+  })
+
+  {
+    const infer = runFr(['infer', 'src/bound-index.ts', '--function', 'proveBoundIndexComparisonSpec'])
+    expectCli(infer.exitCode === 0, 'expected self-hosted bound-index infer to stay bounded', infer.output)
+    expectCli(infer.output.includes('src/bound-index.ts:proveBoundIndexComparisonSpec'), 'expected bound-index infer header', infer.output)
+  }
+
+  await withCliFixture({
     'block-inline.ts': `function invalid(
   value: number /* @fit 0..10 */,
 ) {
@@ -783,7 +824,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 20 expected behaviors')
+  console.log('cli: 22 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

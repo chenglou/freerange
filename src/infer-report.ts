@@ -53,15 +53,33 @@ export function topUnknownReason(value: Value): string[] {
 }
 
 export function uniqueUnsupported(lines: string[]) {
+  const unknownRoots = new Set<string>()
   const contextualReasons = new Set<string>()
   for (const line of lines) {
     const reason = contextualUnsupportedReason(line)
     if (reason != null) contextualReasons.add(reason)
+    const unknownRoot = unknownIdentifierRoot(reason ?? line)
+    if (unknownRoot != null) unknownRoots.add(unknownRoot)
   }
   const seen = new Set<string>()
+  const seenUnknownRoots = new Set<string>()
+  const seenRecursiveHelpers = new Set<string>()
   const result: string[] = []
   for (const line of lines) {
-    if (contextualReasons.has(line) && !line.startsWith('unsupported ')) continue
+    const reason = contextualUnsupportedReason(line)
+    const comparableReason = reason ?? line
+    const recursiveHelper = recursiveHelperName(comparableReason)
+    if (recursiveHelper != null) {
+      if (seenRecursiveHelpers.has(recursiveHelper)) continue
+      seenRecursiveHelpers.add(recursiveHelper)
+    }
+    const unknownRoot = unknownIdentifierRoot(comparableReason)
+    if (unknownRoot != null) {
+      if (seenUnknownRoots.has(unknownRoot)) continue
+      seenUnknownRoots.add(unknownRoot)
+    }
+    if (contextualReasons.has(line) && reason == null) continue
+    if (unsupportedLineIsDerivativeOfUnknownRoot(comparableReason, unknownRoots)) continue
     if (seen.has(line)) continue
     seen.add(line)
     result.push(line)
@@ -73,6 +91,36 @@ function contextualUnsupportedReason(line: string): string | null {
   if (!line.startsWith('unsupported ')) return null
   const separator = line.indexOf(': ')
   return separator === -1 ? null : line.slice(separator + 2)
+}
+
+function unknownIdentifierRoot(reason: string): string | null {
+  return /^Unknown identifier ([A-Za-z_$][\w$]*)$/.exec(reason)?.[1] ?? null
+}
+
+function recursiveHelperName(reason: string): string | null {
+  return /^Recursive helper inlining is unsupported at ([A-Za-z_$][\w$]*)$/.exec(reason)?.[1] ?? null
+}
+
+function unsupportedLineIsDerivativeOfUnknownRoot(reason: string, unknownRoots: Set<string>) {
+  const root = derivativeUnknownRoot(reason)
+  return root != null && unknownRoots.has(root)
+}
+
+function derivativeUnknownRoot(reason: string): string | null {
+  const assignment = /^Unknown assignment root ([A-Za-z_$][\w$]*)$/.exec(reason)
+  if (assignment != null) return assignment[1]!
+
+  const propertyAccess = /^Property access expected an object path(?: or array length)?: (.+)$/.exec(reason)
+  if (propertyAccess != null) return expressionRoot(propertyAccess[1]!)
+
+  const elementAccess = /^Element access expected an array path: (.+)$/.exec(reason)
+  if (elementAccess != null) return expressionRoot(elementAccess[1]!)
+
+  return null
+}
+
+function expressionRoot(text: string) {
+  return /^[A-Za-z_$][\w$]*/.exec(text)?.[0] ?? null
 }
 
 function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) {

@@ -121,7 +121,7 @@ case negative indexed loop starts at one surface: interpreter-matrix-negative.ts
   }
 case negative indexed array guarded else surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
   return: unknown (Indexed for loop guarded pushes do not support else branches)
-  unsupported negativeMatrixIndexedArrayGuardedElse: Indexed for loop guarded pushes do not support else branches
+  unsupported negativeMatrixIndexedArrayGuardedElse line 70: Indexed for loop guarded pushes do not support else branches
 case negative indexed array pushes into source surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
   return: unknown (Indexed for loop cannot push into its source array)
   unsupported negativeMatrixIndexedArrayPushesIntoSource: Indexed for loop cannot push into its source array
@@ -175,4 +175,4 @@ case negative nullish fallback string surface: interpreter-matrix-negative.ts:ne
   unsupported negativeMatrixNullishFallbackString: Math.max expected number arguments
 case negative mutable alias surface: interpreter-matrix-negative.ts:negativeMatrixMutableAliasUnsupported
   return: unknown (negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases)
-  unsupported negativeMatrixMutableAliasUnsupported: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases
+  unsupported negativeMatrixMutableAliasUnsupported line 177: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases
