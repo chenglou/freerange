@@ -118,8 +118,8 @@ type BoxData = {
   id: string
   naturalSizeX: number // @fit int 1..Infinity
   ar: number // @fit > 0
-  sizeX: Spring
-  sizeY: Spring
+  sizeX: Spring // @fit sizeX.dest > 0
+  sizeY: Spring // @fit sizeY.dest > 0
   x: Spring
   y: Spring
   scale: Spring
@@ -356,8 +356,8 @@ function render(now: number): boolean {
       }
     }
   } else { // 1D mode
-    const img1DSizeY = windowSizeY - windowPaddingTop - prompt1DSizeY - boxes1DGapY
-    const box1DMaxSizeX = newWindowSizeX - boxes1DGapX * 2 - hitArea1DSizeX * 2
+    const img1DSizeY = Math.max(1, windowSizeY - windowPaddingTop - prompt1DSizeY - boxes1DGapY)
+    const box1DMaxSizeX = Math.max(1, newWindowSizeX - boxes1DGapX * 2 - hitArea1DSizeX * 2)
 
     let currentLeft = hitArea1DSizeX + boxes1DGapX // start from the right edge of the left box and...
     for (let i = newFocused - 1; i >= 0; i--) { // ...iterate til we get the left edge of the very first box

@@ -98,8 +98,10 @@ function hitTest2DMode
 assumptions:
   given data[].naturalSizeX: int 1..Infinity
   given data[].ar > 0
+  given data[].sizeX.dest > 0
   given data[].sizeX.k > 0
   given data[].sizeX.b > 0
+  given data[].sizeY.dest > 0
   given data[].sizeY.k > 0
   given data[].sizeY.b > 0
   given data[].x.k > 0
@@ -117,8 +119,10 @@ function hitTest1DMode
 assumptions:
   given data[].naturalSizeX: int 1..Infinity
   given data[].ar > 0
+  given data[].sizeX.dest > 0
   given data[].sizeX.k > 0
   given data[].sizeX.b > 0
+  given data[].sizeY.dest > 0
   given data[].sizeY.k > 0
   given data[].sizeY.b > 0
   given data[].x.k > 0
