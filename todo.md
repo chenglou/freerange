@@ -17,6 +17,7 @@ The current product pivot is adoption, not a bigger DSL: make `infer`, `audit`, 
 
 2. **Make `infer`, `audit`, and reports the adoption loop.**
    `infer` should be the factual inventory agents use before writing comments. Normal `check` proves written annotations and scans supported callsites to annotated helpers; `check --annotations-only` keeps the quieter local pass. `audit` should point at redundant demo noise without auto-deleting public-looking contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
+   Project-wide `fr infer --all` is a stress test today, not a humane report: it can print a million-line self-hosting dump over interpreter internals. Keep file-scoped `--all` useful, but turn project-wide inventory into a summary view before treating it as public API: function counts, noisiest files/functions, top unsupported roots/reasons, and a pointer to rerun a focused function.
 
 3. **Move checker knowledge toward a typed fact layer.**
    Keep public comments small. Internally, source readers should emit reusable range/equality/sequence facts, and contracts should query those facts. `spaced`, same-index checks, adjacent row checks, and future view-ish concepts should not become one recognizer per demo.
