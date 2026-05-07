@@ -116,7 +116,7 @@ let pointer: {x: number; y: number} = {x: -Infinity, y: -Infinity} // btw, on pa
 let events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null} = {keydown: null, click: null, mousemove: null}
 type BoxData = {
   id: string
-  naturalSizeX: number // @fit > 0
+  naturalSizeX: number // @fit int 1..Infinity
   ar: number // @fit > 0
   sizeX: Spring
   sizeY: Spring

@@ -96,7 +96,7 @@ unsupported:
 
 function hitTest2DMode
 assumptions:
-  given data[].naturalSizeX > 0
+  given data[].naturalSizeX: int 1..Infinity
   given data[].ar > 0
   given data[].sizeX.k > 0
   given data[].sizeX.b > 0
@@ -115,7 +115,7 @@ unsupported:
 
 function hitTest1DMode
 assumptions:
-  given data[].naturalSizeX > 0
+  given data[].naturalSizeX: int 1..Infinity
   given data[].ar > 0
   given data[].sizeX.k > 0
   given data[].sizeX.b > 0
