@@ -41,7 +41,7 @@ fail // proven outside the requested range, or proven false.
 helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution or a local declaration map.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // `fr infer path --function name`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
+infer // `fr infer path`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
 shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
 ```
 
@@ -71,7 +71,7 @@ The working loop is: run `infer`, write the few comments that are product red
 lines, run `check`, and use the report to see which fact the source did not
 earn yet.
 
-1. Run `fr infer path/to/file.ts --function name` before writing comments. Let the checker show what it already knows. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
+1. Run `fr infer path/to/file.ts` before writing comments. Let the checker show what it already knows. Add `--function name` when you want one function. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
 2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains and one-sided scalar relations on params with `// @fit`; keep object paths, array paths, and grouped relations in the function block.
 3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
 4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
@@ -103,10 +103,13 @@ scan. It is useful while adopting Freerange in a file with many existing helper
 calls. Normal `fr check` still reports call preconditions needed for a written
 annotation, even in annotations-only mode.
 
-`fr infer --function name path/to/file.ts` prints facts Freerange inferred about
-the return, surviving locals, and supported loops. It also shows which explicit
+`fr infer path/to/file.ts` prints facts Freerange inferred about each function's
+return, surviving locals, and supported loops. It also shows which explicit
 comments are checked or assumed, which comments are redundant with inferred
-facts, and which unsupported source spots blocked proof.
+facts, and which unsupported source spots blocked proof. Add `--function name`
+to inspect one function, or `--annotations-only` to keep the old annotated-function
+filter. `fr infer` without a file path asks you to pass a file; project-wide
+`--all` is a debug inventory, not the normal adoption loop.
 
 `fr scout --function helper path/to/file.ts` is an experimental read-only probe
 for the "what if inferred helper facts mattered?" question. It tries simple

@@ -9,6 +9,11 @@ const [command, ...args] = Bun.argv.slice(2)
 
 try {
   switch (command) {
+    case '--help':
+    case '-h':
+    case 'help':
+      printUsage()
+      break
     case 'check':
       await runCheck(args)
       break
@@ -67,12 +72,20 @@ async function runCheck(args: string[]) {
 }
 
 async function runInfer(args: string[]) {
-  const {paths, functionName, all} = parseInferArgs(args)
+  const parsed = parseInferArgs(args)
+  if (parsed == null) return
+  const {paths, functionName, all, annotationsOnly} = parsed
+  if (paths.length === 0 && all !== true) {
+    console.error('fr infer: pass a file path, or use --all for project-wide debug inventory.')
+    printUsage()
+    process.exitCode = 2
+    return
+  }
   const input = resolveInputPaths(paths)
   if (input == null) return
   const report = inferFitFiles(input.paths, {
     ...(functionName == null ? {} : {functionName}),
-    all,
+    all: all || annotationsOnly !== true,
   })
   if (functionName != null && report.functions.length === 0) {
     console.error(`fr infer: no function named ${functionName}`)
@@ -85,6 +98,7 @@ async function runInfer(args: string[]) {
 function parseInferArgs(args: string[]) {
   let functionName: string | undefined
   let all = false
+  let annotationsOnly = false
   const paths: string[] = []
   for (let index = 0; index < args.length; index++) {
     const arg = args[index]!
@@ -100,9 +114,23 @@ function parseInferArgs(args: string[]) {
       all = true
       continue
     }
+    if (arg === '--annotations-only') {
+      annotationsOnly = true
+      continue
+    }
+    if (arg.startsWith('-')) {
+      console.error(`fr infer: unknown option ${arg}`)
+      process.exitCode = 2
+      return null
+    }
     paths.push(arg)
   }
-  return {paths, functionName, all}
+  if (all && annotationsOnly) {
+    console.error('fr infer: --all and --annotations-only cannot be combined')
+    process.exitCode = 2
+    return null
+  }
+  return {paths, functionName, all, annotationsOnly}
 }
 
 function parseCheckArgs(args: string[]) {
@@ -233,6 +261,6 @@ function printCheckSummary(label: string, files: number, summary: {pass: number;
 function printUsage() {
   console.error('Usage:')
   console.error('  fr check [--annotations-only] [file.ts ...]')
-  console.error('  fr infer [--function name] [--all] [file.ts ...]')
+  console.error('  fr infer [--function name] [--annotations-only] [--all] file.ts ...')
   console.error('  fr scout [--function name] [file.ts ...]')
 }

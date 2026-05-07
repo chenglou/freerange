@@ -34,8 +34,10 @@ fr check path/to/file.ts
 Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
 Use `fr check --annotations-only` when you want the quieter local pass that only
 proves the annotations where they are written.
-Use `fr infer --function name path/to/file.ts` when you want the inferred facts:
-what Freerange found, which explicit checks they cover, and where proof stopped.
+Use `fr infer path/to/file.ts` when you want inferred facts for every function in
+that file: what Freerange found, which explicit checks they cover, and where
+proof stopped. Add `--annotations-only` for the quieter annotated-function view,
+or `--function name` for one function.
 
 See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 

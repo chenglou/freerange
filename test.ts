@@ -725,6 +725,37 @@ function ok() {
   })
 
   await withCliFixture({
+    'infer-filter.ts': `/** @fit
+ * return: 2
+ */
+function annotated() {
+  return 2
+}
+
+function plain() {
+  return 1
+}
+`,
+  }, dir => {
+    const infer = runFr(['infer', 'infer-filter.ts'], dir)
+    expectCli(infer.exitCode === 0, 'expected file-scoped infer to include every function', infer.output)
+    expectCli(infer.output.includes('infer-filter.ts:annotated'), 'expected infer to include annotated function', infer.output)
+    expectCli(infer.output.includes('infer-filter.ts:plain'), 'expected infer to include plain function', infer.output)
+
+    const filtered = runFr(['infer', '--annotations-only', 'infer-filter.ts'], dir)
+    expectCli(filtered.exitCode === 0, 'expected infer --annotations-only to keep the old filter', filtered.output)
+    expectCli(filtered.output.includes('infer-filter.ts:annotated'), 'expected annotations-only infer to include annotated function', filtered.output)
+    expectCli(!filtered.output.includes('infer-filter.ts:plain'), 'expected annotations-only infer to skip plain function', filtered.output)
+  })
+
+  {
+    const infer = runFr(['infer'])
+    expectCli(infer.exitCode === 2, 'expected no-arg infer to require a file path', infer.output)
+    expectCli(infer.output.includes('fr infer: pass a file path'), 'expected no-arg infer guidance', infer.output)
+    expectCli(infer.output.includes('fr infer [--function name] [--annotations-only] [--all] file.ts ...'), 'expected no-arg infer to print help', infer.output)
+  }
+
+  await withCliFixture({
     'scout.ts': `function cap(value: number, max: number) {
   return Math.min(value, max)
 }
@@ -825,7 +856,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 22 expected behaviors')
+  console.log('cli: 24 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

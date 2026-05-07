@@ -12,7 +12,7 @@ bun install
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
-- `bun run fr infer path/to/file.ts --function name` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
+- `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
 - `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
@@ -99,7 +99,7 @@ bun install
 
 ## Infer Tool
 
-`bun run fr infer path/to/file.ts --function name` is for us and for adoption-minded agents, not public annotation generation. It prints curated facts the checker already knows:
+`bun run fr infer path/to/file.ts` is for us and for adoption-minded agents, not public annotation generation. It prints facts the checker already knows for every function in that file. Add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view:
 
 - `return` facts from the returned value
 - `locals` from locals that survive to the return
@@ -114,7 +114,7 @@ It also separates explicit function and loop comment lines into:
 
 `redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
 
-The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
+The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root. No-arg `fr infer` asks for a file path; no-arg `fr infer --all` remains a project-wide debug inventory until we replace it with a summary view.
 
 Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 
@@ -137,7 +137,7 @@ bring only general Freerange fixes back into this repo.
 
 A good corpus iteration is one of two small loops:
 
-- read-only: run `bun run fr infer file --all` or `bun run fr check file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
+- read-only: run `bun run fr infer file` or `bun run fr check file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
 - annotation: add one or two `@fit` comments to a small numeric/layout-heavy helper, run `bun run fr check file`, classify the first blocker, then add a local pattern test before changing checker behavior.
 
 Do not leave comments in corpus branches just to make a repo look covered. If a
