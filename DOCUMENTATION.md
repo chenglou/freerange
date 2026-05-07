@@ -82,6 +82,8 @@ The goal is not to annotate everything. The goal is to make important UI code ha
 
 ## Commands
 
+Run `fr --help` when you only want the command shapes.
+
 `fr check` is the normal proof command: it proves the annotations you wrote and
 checks calls to annotated helpers. With file args, it checks those files. With
 file args, it still uses the nearest `tsconfig.json` for TypeScript's module and

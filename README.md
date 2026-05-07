@@ -31,6 +31,7 @@ The command-line binary is `fr`:
 fr check path/to/file.ts
 ```
 
+Run `fr --help` for the command shapes.
 Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
 Use `fr check --annotations-only` when you want the quieter local pass that only
 proves the annotations where they are written.
