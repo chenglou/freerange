@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import {inferFitFiles, scoutFitFiles, type FitScoutReport} from './src/check-core.ts'
+import {inferFitFiles} from './src/check-core.ts'
 import {printInferReport} from './src/infer-output.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
@@ -20,9 +20,6 @@ try {
     case 'infer':
       await runInfer(args)
       break
-    case 'scout':
-      await runScout(args)
-      break
     default:
       printUsage()
       process.exitCode = 2
@@ -30,32 +27,6 @@ try {
 } catch (error) {
   console.error(`fr: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 2
-}
-
-async function runScout(args: string[]) {
-  const {paths, functionName} = parseScoutArgs(args)
-  const input = resolveInputPaths(paths)
-  if (input == null) return
-  const report = scoutFitFiles(input.paths, functionName == null ? {} : {functionName})
-  printScoutReport('fr scout', input.paths.length, report)
-}
-
-function parseScoutArgs(args: string[]) {
-  let functionName: string | undefined
-  const paths: string[] = []
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index]!
-    if (arg === '--function') {
-      functionName = args[++index]
-      continue
-    }
-    if (arg.startsWith('--function=')) {
-      functionName = arg.slice('--function='.length)
-      continue
-    }
-    paths.push(arg)
-  }
-  return {paths, functionName}
 }
 
 async function runCheck(args: string[]) {
@@ -161,18 +132,6 @@ function resolveInputPaths(args: string[]): {paths: string[]; configFile: string
   return input
 }
 
-function printScoutReport(label: string, files: number, report: FitScoutReport) {
-  for (const candidate of report.candidates) {
-    console.log(`${candidate.file}:${candidate.functionName}`)
-    console.log(`  candidate ${candidate.fact}`)
-    console.log('  would require:')
-    for (const requirement of candidate.requirements) console.log(`    ${requirement}`)
-  }
-  const notable = report.checks.filter(check => check.status !== 'pass')
-  for (const check of notable) printCheck(check)
-  console.log(`${label}: ${files} files, ${report.summary.candidates} candidates, ${report.summary.pass} pass, ${report.summary.fail} fail, ${report.summary.requires} requires, ${report.summary.unknown} unknown`)
-}
-
 function printCheck(check: FitCheck) {
   console.log(formatCheckLocation(check))
   console.log(`  ${formatCheckStatusLine(check)}`)
@@ -262,5 +221,4 @@ function printUsage() {
   console.error('Usage:')
   console.error('  fr check [--annotations-only] [file.ts ...]')
   console.error('  fr infer [--function name] [--annotations-only] [--all] file.ts ...')
-  console.error('  fr scout [--function name] [file.ts ...]')
 }

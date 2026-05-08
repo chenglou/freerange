@@ -7,7 +7,6 @@ import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
   parseFitExpression,
-  parseFitSpecLine,
   parseFitSpecs,
   parseInlineFitSpecsForExpression,
   parseLocalFitSpecs,
@@ -69,16 +68,6 @@ import {
   topUnknownReason,
   uniqueUnsupported,
 } from './infer-report.ts'
-import {
-  replaceFunctionSpecs,
-  restoreFunctionSpecs,
-  scoutNumericParameterNames,
-  scoutRequirementSpecsByFunction,
-  scoutRequirementsFromReason,
-  uniqueScoutCandidates,
-  type FitScoutCandidate,
-  type FitScoutReport,
-} from './scout.ts'
 import {
   callSiteBindingsFor,
   valueWithCallSiteText,
@@ -150,7 +139,6 @@ import type {
 } from './interpreter/context.ts'
 import {formatInterpreterIssues} from './interpreter/format.ts'
 
-export type {FitScoutCandidate, FitScoutReport} from './scout.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
 export type {
   FitCheck,
@@ -180,37 +168,6 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
     }
   }
   return {files: paths, functions}
-}
-
-export function scoutFitFiles(paths: string[], options: {functionName?: string} = {}): FitScoutReport {
-  const project = loadFitProject(paths, readTopLevelGlobal)
-  const programs = [...project.modules.values()]
-  const candidates = programs.flatMap(program => [...program.functions.values()]
-    .filter(fn => options.functionName == null || fn.name === options.functionName)
-    .flatMap(fn => scoutFunctionCandidates(program, fn)))
-  const scoutSpecs = scoutRequirementSpecsByFunction(programs, candidates)
-  const savedSpecs = replaceFunctionSpecs(programs, scoutSpecs)
-  const checks: FitCheck[] = []
-
-  try {
-    const contractCache = new Map<string, FunctionContractProof>()
-    for (const program of project.entries) checks.push(...checkCallsitesInProgram(program, contractCache))
-  } finally {
-    restoreFunctionSpecs(savedSpecs)
-  }
-
-  return {
-    files: paths,
-    candidates,
-    checks,
-    summary: {
-      candidates: candidates.length,
-      pass: checks.filter(check => check.status === 'pass').length,
-      fail: checks.filter(check => check.status === 'fail').length,
-      requires: checks.filter(check => check.status === 'requires').length,
-      unknown: checks.filter(check => check.status === 'unknown').length,
-    },
-  }
 }
 
 export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {
@@ -461,40 +418,6 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     loops,
     unsupported: uniqueUnsupported(unsupported),
   }
-}
-
-function scoutFunctionCandidates(program: Program, fn: FitFunction): FitScoutCandidate[] {
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
-  bindFunctionInputParameters(fn, [], program, env)
-
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env,
-    inputRoots,
-    stack: [fn.name],
-    checks: [],
-    assumptions: [],
-    contractCache: new Map(),
-    callObligations: 'silent',
-  }
-  const state = evaluateFunctionBodyState(fn, context)
-  if (state.result.kind !== 'number') return []
-
-  const candidates: FitScoutCandidate[] = []
-  for (const paramName of scoutNumericParameterNames(fn, env)) {
-    for (const op of ['>=', '<='] as const) {
-      const fact = `return ${op} ${paramName}`
-      const spec = parseFitSpecLine(fact)
-      if (spec.kind !== 'check-comparison') continue
-      const check = verifyCheckSpec(program.file, program, fn.name, env, state.result, spec, [], state.assumptions, new Map())
-      const requirements = scoutRequirementsFromReason(check.reason)
-      if (requirements.length === 0) continue
-      candidates.push({file: program.file, functionName: fn.name, fact, requirements})
-    }
-  }
-  return uniqueScoutCandidates(candidates)
 }
 
 function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): ShapeInspectState {

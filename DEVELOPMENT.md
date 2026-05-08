@@ -14,7 +14,6 @@ bun install
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
 - `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots
-- `bun run fr scout path/to/file.ts --function name` — experimental read-only inferred-contract probe; noisy by design, useful for seeing which call obligations a candidate helper fact would create
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
@@ -70,7 +69,6 @@ bun install
 - [src/reports.ts](./src/reports.ts) — check report runners and file/source entrypoints
 - [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
 - [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
-- [src/scout.ts](./src/scout.ts) — scout candidate and provisional-requirement bookkeeping
 - [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers

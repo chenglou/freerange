@@ -113,13 +113,6 @@ to inspect one function, or `--annotations-only` to keep the old annotated-funct
 filter. `fr infer` without a file path asks you to pass a file; project-wide
 `--all` is a debug inventory, not the normal adoption loop.
 
-`fr scout --function helper path/to/file.ts` is an experimental read-only probe
-for the "what if inferred helper facts mattered?" question. It tries simple
-candidate facts like `return <= max`, prints the input facts those candidates
-would need, then scans calls against those provisional requirements. This is
-not a contract generator. It is intentionally noisy; use it to study a helper,
-not to decide whether a file is correct.
-
 When `check` prints a non-pass line, it also prints the next useful adoption
 command when there is one. Usually that is the caller or failing function's
 `fr infer --function ...` command. For `REQUIRES`, it is a reminder to either
