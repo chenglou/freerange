@@ -12,7 +12,9 @@ import {
   type Value,
 } from './domain.ts'
 
-export type CallSiteBindings = Map<string, string>
+type MutableCallSiteBindings = Map<string, string>
+
+export type CallSiteBindings = ReadonlyMap<string, string>
 
 type CompiledCallSiteBindings = {
   pattern: RegExp
@@ -55,7 +57,7 @@ export function callSiteBindingsFor(
   argumentValues?: readonly Value[],
   argumentTexts?: readonly string[],
 ): CallSiteBindings {
-  const bindings: CallSiteBindings = new Map()
+  const bindings: MutableCallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const argument = args[i]
@@ -135,7 +137,7 @@ function callSiteArgumentText(sourceText: string, value: Value | undefined) {
   return value?.kind === 'number' && value.expr != null ? value.expr : sourceText
 }
 
-function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: CallSiteBindings) {
+function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: MutableCallSiteBindings) {
   if (ts.isIdentifier(name)) {
     bindings.set(name.text, callSiteValueText(sourceText))
     return
