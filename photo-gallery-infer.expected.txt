@@ -108,6 +108,7 @@ assumptions:
   given data[].x.b > 0
   given data[].y.k > 0
   given data[].y.b > 0
+  given data[].scale.dest: 1..1.02
   given data[].scale.k > 0
   given data[].scale.b > 0
   given data[].fxFactor.k > 0
@@ -129,6 +130,7 @@ assumptions:
   given data[].x.b > 0
   given data[].y.k > 0
   given data[].y.b > 0
+  given data[].scale.dest: 1..1.02
   given data[].scale.k > 0
   given data[].scale.b > 0
   given data[].fxFactor.k > 0

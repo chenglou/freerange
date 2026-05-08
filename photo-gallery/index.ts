@@ -122,7 +122,7 @@ type BoxData = {
   sizeY: Spring // @fit sizeY.dest > 0
   x: Spring
   y: Spring
-  scale: Spring
+  scale: Spring // @fit scale.dest: 1..1.02
   fxFactor: Spring
   node: HTMLDivElement
   img: HTMLImageElement
