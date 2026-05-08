@@ -27,6 +27,7 @@ import {
 import {
   type EvalContext,
   type EvalFlow,
+  type FitAudit,
   type FitCheck,
   type FitCheckStatus,
   type FitInferFunctionReport,
@@ -131,6 +132,7 @@ import {
   evaluateInterpreterTopLevel,
 } from './interpreter/evaluate.ts'
 import type {
+  InterpreterAudit,
   InterpreterCall,
   InterpreterClaim,
   InterpreterFrame,
@@ -142,6 +144,7 @@ import {formatInterpreterIssues} from './interpreter/format.ts'
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
 export type {
   FitCheck,
+  FitAudit,
   FitCheckStatus,
   FitInferFunctionReport,
   FitInferLoopReport,
@@ -208,6 +211,92 @@ export function checkCallsitesInProgram(program: Program, contractCache: Map<str
   checks.push(...checkTopLevelCallsites(program, contractCache))
   for (const fn of program.functions.values()) checks.push(...checkFunctionCallsites(program, fn, contractCache))
   return dedupeCallsiteChecks(checks.map(toCallsiteCheck))
+}
+
+export function auditSelectorsInProgram(
+  program: Program,
+  contractCache: Map<string, FunctionContractProof>,
+  options: {annotationsOnly?: boolean} = {},
+): FitAudit[] {
+  const audits: FitAudit[] = []
+  if (options.annotationsOnly !== true) audits.push(...auditTopLevelSelectors(program, contractCache))
+  for (const fn of program.functions.values()) {
+    if (options.annotationsOnly === true && !functionHasAuditAnnotationSurface(program, fn)) continue
+    audits.push(...auditFunctionSelectors(program, fn, contractCache))
+  }
+  return dedupeAudits(audits)
+}
+
+function functionHasAuditAnnotationSurface(program: Program, fn: FitFunction) {
+  return program.fitFunctions.has(fn.name)
+    || functionHasBodyFitComment(program, fn)
+    || functionHasTypeContracts(program, fn)
+}
+
+function auditTopLevelSelectors(program: Program, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env: programGlobalEnv(program),
+    inputRoots: [],
+    stack: ['<top-level>'],
+    checks: [],
+    assumptions: [],
+    contractCache,
+    callObligations: 'silent',
+  }
+  const result = evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
+  return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
+}
+
+function auditFunctionSelectors(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
+  const specs = program.specsByFunction.get(fn.name) ?? []
+  const inputSpecs = functionInputSpecs(program, fn, specs)
+  const env = programGlobalEnv(program)
+  const inputRoots = functionInputRoots(program, fn)
+
+  bindFunctionInputParameters(fn, inputSpecs, program, env)
+
+  const {assumedGivens} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
+  for (const given of assumedGivens) {
+    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
+  }
+  const {assumptions} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
+  const context: EvalContext = {
+    program,
+    file: program.file,
+    env,
+    inputRoots,
+    stack: [fn.name],
+    checks: [],
+    assumptions,
+    contractCache,
+    callObligations: 'silent',
+  }
+  const result = evaluateInterpreterFunctionBody(program, fn, context.env, context.stack, context.assumptions, interpreterHooks(context))
+  return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
+}
+
+function interpreterAuditToFitAudit(file: string, audit: InterpreterAudit): FitAudit {
+  return {
+    file,
+    ...(audit.line == null ? {} : {line: audit.line}),
+    functionName: audit.stack.length === 0 ? '<top-level>' : audit.stack.join(' > '),
+    text: audit.text,
+    reason: audit.reason,
+  }
+}
+
+function dedupeAudits(audits: FitAudit[]) {
+  const seen = new Set<string>()
+  const result: FitAudit[] = []
+  for (const audit of audits) {
+    const key = `${audit.file}\0${audit.line ?? ''}\0${audit.functionName}\0${audit.text}\0${audit.reason}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(audit)
+  }
+  return result
 }
 
 function checkTopLevelCallsites(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {

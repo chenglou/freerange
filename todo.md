@@ -8,15 +8,15 @@ Freerange is a static checker for ordinary TypeScript layout code plus strict `@
 
 Prefer source inference, intervals, small scalar loop effects, array/object domains, and helper contracts before adding atoms. Every new proof shape gets one positive pattern and at least one negative expected message.
 
-The current product pivot is adoption, not a bigger DSL: make `infer`, `audit`, and reports the normal loop. A human or agent should ask what source already proves, keep only the important comments, and get a clear reason when proof stops.
+The current product pivot is adoption, not a bigger DSL: make `infer`, `check --audit`, `audit:demos`, and reports the normal loop. A human or agent should ask what source already proves, keep only the important comments, and get a clear reason when proof stops.
 
 ## Active Work
 
 1. **Keep the interpreter as the one source evaluator.**
    Function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, loop reports, and helper-call obligations now run through the interpreter. Keep moving report wording toward the same fact inventory, and keep collapsing recognizers into typed fact/value queries when the boundary is obvious.
 
-2. **Make `infer`, `audit`, and reports the adoption loop.**
-   `infer` should be the factual inventory agents use before writing comments. Normal `check` proves written annotations and scans supported callsites to annotated helpers; `check --annotations-only` keeps the quieter local pass. `audit` should point at redundant demo noise without auto-deleting public-looking contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
+2. **Make `infer`, `check --audit`, `audit:demos`, and reports the adoption loop.**
+   `infer` should be the factual inventory agents use before writing comments. Normal `check` proves written annotations and scans supported callsites to annotated helpers; `check --annotations-only` keeps the quieter local pass. `check --audit` should stay advisory and selector-shaped: pure choices where current facts prove one value or branch cannot change the result. `audit:demos` should point at redundant demo noise without auto-deleting public-looking contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
    Project-wide `fr infer --all` is a stress test today, not a humane report: it can print a million-line self-hosting dump over interpreter internals. Keep file-scoped `fr infer file.ts` useful, but turn project-wide inventory into a summary view before treating it as public API: function counts, noisiest files/functions, top unsupported roots/reasons, and a pointer to rerun a focused function.
 
 3. **Move checker knowledge toward a typed fact layer.**

@@ -674,6 +674,62 @@ function f(value: number) {
   })
 
   await withCliFixture({
+    'audit.ts': `/** @fit
+ * given width: 1..99
+ * return: 1..100
+ */
+function size(width: number) {
+  const lower = Math.max(1, width)
+  const upper = Math.min(width, 100)
+  return width < 100 ? width : 100
+}
+`,
+  }, dir => {
+    const normal = runFr(['check', 'audit.ts'], dir)
+    expectCli(normal.exitCode === 0, 'expected normal check to ignore selector audit findings', normal.output)
+    expectCli(!normal.output.includes('AUDIT'), 'expected normal check not to print audits', normal.output)
+
+    const audit = runFr(['check', '--audit', 'audit.ts'], dir)
+    expectCli(audit.exitCode === 0, 'expected selector audit to stay advisory', audit.output)
+    expectCli(audit.output.includes('AUDIT Math.max(1, width): 1 does not affect the result'), 'expected redundant Math.max guard audit', audit.output)
+    expectCli(audit.output.includes('AUDIT Math.min(width, 100): 100 does not affect the result'), 'expected redundant Math.min guard audit', audit.output)
+    expectCli(audit.output.includes('AUDIT width < 100 ? width : 100: 100 does not affect the result'), 'expected redundant selector ternary branch audit', audit.output)
+    expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 3 audit'), 'expected audit summary count', audit.output)
+  })
+
+  await withCliFixture({
+    'audit.ts': `/** @fit
+ * given width: 0..99
+ * return: 1..99
+ */
+function size(width: number) {
+  return Math.max(1, width)
+}
+`,
+  }, dir => {
+    const audit = runFr(['check', '--audit', 'audit.ts'], dir)
+    expectCli(audit.exitCode === 0, 'expected uncertain selector audit fixture to pass', audit.output)
+    expectCli(!audit.output.includes('does not affect the result'), 'expected uncertain Math.max guard to stay quiet', audit.output)
+    expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 0 audit'), 'expected zero audit summary count', audit.output)
+  })
+
+  await withCliFixture({
+    'audit.ts': `function plain() {
+  return Math.max(1, 2)
+}
+`,
+  }, dir => {
+    const audit = runFr(['check', '--audit', 'audit.ts'], dir)
+    expectCli(audit.exitCode === 0, 'expected broad audit to visit plain functions', audit.output)
+    expectCli(audit.output.includes('AUDIT Math.max(1, 2): 1 does not affect the result'), 'expected broad audit finding', audit.output)
+
+    const annotationsOnly = runFr(['check', '--annotations-only', '--audit', 'audit.ts'], dir)
+    expectCli(annotationsOnly.exitCode === 0, 'expected annotations-only audit to pass', annotationsOnly.output)
+    expectCli(!annotationsOnly.output.includes('AUDIT Math.max(1, 2)'), 'expected annotations-only audit to skip plain functions', annotationsOnly.output)
+    expectCli(annotationsOnly.output.includes('fr check --annotations-only --audit: 1 files, 0 pass, 0 fail, 0 requires, 0 unknown, 0 audit'), 'expected annotations-only audit summary', annotationsOnly.output)
+  })
+
+  await withCliFixture({
     'calls.ts': `/** @fit
  * given max >= min
  * return > 0
@@ -752,6 +808,7 @@ function plain() {
     const infer = runFr(['infer'])
     expectCli(infer.exitCode === 2, 'expected no-arg infer to require a file path', infer.output)
     expectCli(infer.output.includes('fr infer: pass a file path'), 'expected no-arg infer guidance', infer.output)
+    expectCli(infer.output.includes('fr check [--annotations-only] [--audit] [file.ts ...]'), 'expected usage to include audit flag', infer.output)
     expectCli(infer.output.includes('fr infer [--function name] [--annotations-only] [--all] file.ts ...'), 'expected no-arg infer to print help', infer.output)
   }
 
@@ -838,7 +895,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 23 expected behaviors')
+  console.log('cli: 26 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

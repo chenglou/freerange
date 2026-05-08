@@ -20,6 +20,7 @@ import {
   proveComparisonPlain,
 } from '../proof.ts'
 import {noteUnsupported, type InterpreterFrame} from './context.ts'
+import {auditMathSelector} from './audit.ts'
 
 export function evaluateMathCall(name: string, values: Value[], frame: InterpreterFrame, expression: ts.CallExpression): Value {
   if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`, expression)
@@ -27,6 +28,7 @@ export function evaluateMathCall(name: string, values: Value[], frame: Interpret
   switch (name) {
     case 'min':
     case 'max':
+      auditMathSelector(name, numbers, frame, expression)
       return evaluateMathMinMax(name, numbers, frame)
     case 'floor':
       return evaluateUnaryMath(name, numbers, floorNumber)

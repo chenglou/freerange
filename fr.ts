@@ -2,7 +2,7 @@
 
 import {inferFitFiles} from './src/check-core.ts'
 import {printInferReport} from './src/infer-output.ts'
-import {type FitCheck, verifyFitFiles} from './src/reports.ts'
+import {type FitAudit, type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
 
 const [command, ...args] = Bun.argv.slice(2)
@@ -32,13 +32,16 @@ try {
 async function runCheck(args: string[]) {
   const parsed = parseCheckArgs(args)
   if (parsed == null) return
-  const {paths, annotationsOnly} = parsed
+  const {paths, annotationsOnly, audit} = parsed
   const input = resolveInputPaths(paths)
   if (input == null) return
-  const report = await verifyFitFiles(input.paths, {annotationsOnly})
+  const report = await verifyFitFiles(input.paths, {annotationsOnly, audit})
   const failed = report.checks.filter(check => check.status !== 'pass')
   for (const check of failed) printCheck(check)
-  printCheckSummary(annotationsOnly ? 'fr check --annotations-only' : 'fr check', input.paths.length, report.summary)
+  if (audit) {
+    for (const item of report.audits) printAudit(item)
+  }
+  printCheckSummary(checkLabel({annotationsOnly, audit}), input.paths.length, report.summary, audit)
   if (report.phase !== 'ready') process.exitCode = 1
 }
 
@@ -106,10 +109,15 @@ function parseInferArgs(args: string[]) {
 
 function parseCheckArgs(args: string[]) {
   let annotationsOnly = false
+  let audit = false
   const paths: string[] = []
   for (const arg of args) {
     if (arg === '--annotations-only') {
       annotationsOnly = true
+      continue
+    }
+    if (arg === '--audit') {
+      audit = true
       continue
     }
     if (arg.startsWith('-')) {
@@ -119,7 +127,7 @@ function parseCheckArgs(args: string[]) {
     }
     paths.push(arg)
   }
-  return {paths, annotationsOnly}
+  return {paths, annotationsOnly, audit}
 }
 
 function resolveInputPaths(args: string[]): {paths: string[]; configFile: string | null} | null {
@@ -138,6 +146,12 @@ function printCheck(check: FitCheck) {
   if (check.boundaryLine != null && check.boundaryLine !== check.line) console.log(`  checked at: line ${check.boundaryLine}`)
   printReason(check.reason)
   printFollowUp(check)
+}
+
+function printAudit(audit: FitAudit) {
+  console.log(formatCheckLocation(audit))
+  console.log(`  AUDIT ${audit.text}`)
+  printLines(audit.reason, '  ')
 }
 
 function printReason(reason: string | undefined) {
@@ -213,12 +227,20 @@ function formatCheckStatusLine(check: FitCheck) {
     : `${check.status.toUpperCase()} ${check.text}`
 }
 
-function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; requires: number; unknown: number}) {
-  console.log(`${label}: ${files} files, ${summary.pass} pass, ${summary.fail} fail, ${summary.requires} requires, ${summary.unknown} unknown`)
+function printCheckSummary(label: string, files: number, summary: {pass: number; fail: number; requires: number; unknown: number; audit?: number}, includeAudit = false) {
+  console.log(`${label}: ${files} files, ${summary.pass} pass, ${summary.fail} fail, ${summary.requires} requires, ${summary.unknown} unknown${includeAudit ? `, ${summary.audit ?? 0} audit` : ''}`)
+}
+
+function checkLabel(options: {annotationsOnly: boolean; audit: boolean}) {
+  const flags = [
+    options.annotationsOnly ? '--annotations-only' : null,
+    options.audit ? '--audit' : null,
+  ].filter(flag => flag != null)
+  return flags.length === 0 ? 'fr check' : `fr check ${flags.join(' ')}`
 }
 
 function printUsage() {
   console.error('Usage:')
-  console.error('  fr check [--annotations-only] [file.ts ...]')
+  console.error('  fr check [--annotations-only] [--audit] [file.ts ...]')
   console.error('  fr infer [--function name] [--annotations-only] [--all] file.ts ...')
 }

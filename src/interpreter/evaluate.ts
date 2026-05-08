@@ -87,6 +87,7 @@ import {
   noteUnsupported,
   rootFrame,
   type InterpreterCall,
+  type InterpreterAudit,
   type InterpreterClaim,
   type InterpreterFlow,
   type InterpreterFrame,
@@ -150,6 +151,7 @@ import {
   isForgettableReadExpression,
 } from './forgettable-loop.ts'
 import {evaluateMathCall} from './math.ts'
+import {auditConditionalSelector} from './audit.ts'
 import {
   blockScopedNames,
   forOfBodyScopedNames,
@@ -162,6 +164,7 @@ import {
 export type InterpreterFunctionResult = {
   value: Value
   issues: InterpreterIssue[]
+  audits: InterpreterAudit[]
 }
 
 export type InterpreterBodyResult = InterpreterFunctionResult & {
@@ -227,10 +230,11 @@ export function evaluateInterpreterFunction(program: Program, functionName: stri
     return {
       value: noteUnsupported(frame, `Unknown function ${functionName}`),
       issues: frame.issues,
+      audits: frame.audits,
     }
   }
   const value = invokeFitFunction(fn, [], frame, program, frame.env)
-  return {value, issues: frame.issues}
+  return {value, issues: frame.issues, audits: frame.audits}
 }
 
 export function evaluateInterpreterFunctionBody(
@@ -244,7 +248,7 @@ export function evaluateInterpreterFunctionBody(
   const frame = interpreterFrame(program, env, stack, assumptions, hooks)
   bindInstanceThis(fn, program, frame.env)
   const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
-  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+  return {value, env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
 }
 
 export function evaluateInterpreterTopLevel(
@@ -256,7 +260,7 @@ export function evaluateInterpreterTopLevel(
 ): InterpreterBodyResult {
   const frame = interpreterFrame(program, env, stack, assumptions, hooks)
   evaluateStatements(topLevelExecutableStatements(program.sourceFile.statements), frame)
-  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
 }
 
 export function evaluateInterpreterExpression(
@@ -270,7 +274,7 @@ export function evaluateInterpreterExpression(
 ): InterpreterBodyResult {
   const frame = interpreterFrame(program, env, stack, assumptions, hooks, objectPath)
   const value = evaluateExpression(expression, frame)
-  return {value, env: frame.env, issues: frame.issues, assumptions: frame.assumptions}
+  return {value, env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
 }
 
 function interpreterFrame(
@@ -285,6 +289,7 @@ function interpreterFrame(
     program,
     env: new Map(env),
     issues: [],
+    audits: [],
     stack,
     activeCalls: new Set(),
     loopStack: [],
@@ -1712,6 +1717,7 @@ function compareLiteralSets(left: LiteralPrimitive[], right: LiteralPrimitive[],
 function evaluateConditionalExpression(expression: ts.ConditionalExpression, frame: InterpreterFrame): Value {
   const extentEnd = evaluateExtentEndConditional(expression, frame)
   if (extentEnd != null) return extentEnd
+  auditConditionalSelector(expression, auditReadFrame(frame), evaluateExpression)
   const truth = literalBoolean(evaluateExpression(expression.condition, frame))
   if (truth === true) return evaluateExpression(expression.whenTrue, frame)
   if (truth === false) return evaluateExpression(expression.whenFalse, frame)
@@ -1721,6 +1727,22 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
     valueWithAssumptions(evaluateExpression(expression.whenTrue, trueFrame), trueFrame.assumptions),
     valueWithAssumptions(evaluateExpression(expression.whenFalse, falseFrame), falseFrame.assumptions),
   )
+}
+
+function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
+  return {
+    program: frame.program,
+    env: new Map(frame.env),
+    issues: [],
+    audits: frame.audits,
+    stack: frame.stack,
+    activeCalls: new Set(frame.activeCalls),
+    loopStack: [...frame.loopStack],
+    conditionalDepth: frame.conditionalDepth,
+    assumptions: [...frame.assumptions],
+    ...(frame.hooks == null ? {} : {hooks: frame.hooks}),
+    ...(frame.objectPath == null ? {} : {objectPath: [...frame.objectPath]}),
+  }
 }
 
 function evaluateExtentEndConditional(expression: ts.ConditionalExpression, frame: InterpreterFrame): NumberValue | null {

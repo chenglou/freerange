@@ -26,6 +26,14 @@ export type FitCheck = {
   detail?: FitCheckDetail
 }
 
+export type FitAudit = {
+  file: string
+  line?: number
+  functionName: string
+  text: string
+  reason: string
+}
+
 export type FitCheckDetail =
   | {
       kind: 'call-precondition'

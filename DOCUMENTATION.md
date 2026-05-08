@@ -42,6 +42,7 @@ helper contract // a helper function's own `@fit` block, proven once and used as
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution or a local declaration map.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
 infer // `fr infer path`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
+audit // `fr check --audit path`. It prints advisory selector cleanup when Freerange can prove a `Math.min`, `Math.max`, or exact min/max ternary choice does not affect the result.
 shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
 ```
 
@@ -104,6 +105,19 @@ That proves annotations where they are written and skips the broad callsite
 scan. It is useful while adopting Freerange in a file with many existing helper
 calls. Normal `fr check` still reports call preconditions needed for a written
 annotation, even in annotations-only mode.
+
+Use `--audit` when you want advisory cleanup:
+
+```sh
+fr check --audit path/to/file.ts
+```
+
+Today this audits pure selector shapes: `Math.min`, `Math.max`, and exact
+min/max-shaped ternaries like `width < max ? width : max`. If a guard value or
+branch cannot change the result under the current facts, Freerange prints an
+`AUDIT` line and still exits successfully. `--annotations-only --audit` keeps
+the quieter annotated-function surface. Freerange does not yet audit userland
+clamp helpers, assignment-style clamps, or arbitrary dead code.
 
 `fr infer path/to/file.ts` prints facts Freerange inferred about each function's
 return, surviving locals, and supported loops. It also shows which explicit

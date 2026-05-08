@@ -18,10 +18,19 @@ export type InterpreterIssue = {
   line?: number
 }
 
+export type InterpreterAudit = {
+  kind: 'selector'
+  stack: string[]
+  line?: number
+  text: string
+  reason: string
+}
+
 export type InterpreterFrame = {
   program: Program
   env: Map<string, Value>
   issues: InterpreterIssue[]
+  audits: InterpreterAudit[]
   stack: string[]
   activeCalls: Set<string>
   loopStack: LoopFrame[]
@@ -92,6 +101,7 @@ export function rootFrame(program: Program, hooks?: InterpreterHooks): Interpret
     program,
     env: programGlobalEnv(program),
     issues: [],
+    audits: [],
     stack: [],
     activeCalls: new Set(),
     loopStack: [],
@@ -106,6 +116,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     program: parent.program,
     env,
     issues: parent.issues,
+    audits: parent.audits,
     stack: [...parent.stack, name],
     activeCalls: new Set(parent.activeCalls),
     loopStack: [...parent.loopStack],
@@ -121,6 +132,7 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     program,
     env,
     issues: parent.issues,
+    audits: parent.audits,
     stack: [...parent.stack, name],
     activeCalls: new Set(parent.activeCalls),
     loopStack: [...parent.loopStack],
@@ -138,6 +150,16 @@ export function frameWithActiveCall(parent: InterpreterFrame, key: string): Inte
     ...parent,
     activeCalls,
   }
+}
+
+export function noteAudit(frame: InterpreterFrame, text: string, reason: string, node?: ts.Node) {
+  frame.audits.push({
+    kind: 'selector',
+    stack: frame.stack,
+    text,
+    reason,
+    ...(node == null ? {} : {line: lineNumberForNode(frame.program.sourceFile, node)}),
+  })
 }
 
 export function noteUnsupported(frame: InterpreterFrame, message: string, node?: ts.Node): Value {
