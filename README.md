@@ -35,6 +35,8 @@ Run `fr --help` for the command shapes.
 Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
 Use `fr check --annotations-only` when you want the quieter local pass that only
 proves the annotations where they are written.
+Use `fr check --audit` when you want advisory cleanup for redundant selector
+guards like `Math.min`, `Math.max`, and exact min/max ternaries.
 Use `fr infer path/to/file.ts` when you want inferred facts for every function in
 that file: what Freerange found, which explicit checks they cover, and where
 proof stopped. Add `--annotations-only` for the quieter annotated-function view,
