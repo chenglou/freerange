@@ -1,7 +1,7 @@
 import {
-  checkCallsitesInProgram,
   createFunctionContractCache,
   verifyFitProgram,
+  verifyFitProgramWithCallsites,
 } from './check-core.ts'
 import type {FitCheck} from './check-types.ts'
 import {
@@ -34,9 +34,14 @@ export async function verifyFitFiles(paths: string[], options: FitCheckOptions =
   const callsiteChecks: FitCheck[] = []
   const contractCache = createFunctionContractCache()
   const project = loadFitProject(paths, readTopLevelGlobal)
-  for (const program of project.entries) annotationChecks.push(...verifyFitProgram(program, contractCache))
-  if (options.annotationsOnly !== true) {
-    for (const program of project.entries) callsiteChecks.push(...checkCallsitesInProgram(program, contractCache))
+  if (options.annotationsOnly === true) {
+    for (const program of project.entries) annotationChecks.push(...verifyFitProgram(program, contractCache))
+  } else {
+    for (const program of project.entries) {
+      const result = verifyFitProgramWithCallsites(program, contractCache)
+      annotationChecks.push(...result.annotationChecks)
+      callsiteChecks.push(...result.callsiteChecks)
+    }
   }
   const checks = mergeCheckReports(annotationChecks, callsiteChecks)
 

@@ -247,6 +247,38 @@ export function verifyFitProgram(program: Program, contractCache: Map<string, Fu
   return checks
 }
 
+export function verifyFitProgramWithCallsites(
+  program: Program,
+  contractCache: Map<string, FunctionContractProof>,
+): {annotationChecks: FitCheck[]; callsiteChecks: FitCheck[]} {
+  const annotationChecks: FitCheck[] = []
+  const rawCallsiteChecks: FitCheck[] = []
+  const functionsWithRecordedCallsites = new Set<string>()
+
+  for (const fn of program.functions.values()) {
+    const specs = program.specsByFunction.get(fn.name) ?? []
+    if (specs.length === 0 && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
+    const result = verifyFunctionSpecsDetailed(program.file, program, fn, specs, contractCache)
+    annotationChecks.push(...result.checks)
+    if (result.recordedCallsites) {
+      functionsWithRecordedCallsites.add(fn.name)
+      rawCallsiteChecks.push(...result.callsiteChecks)
+    }
+  }
+  annotationChecks.push(...verifyTopLevelInlineSpecs(program, contractCache))
+
+  rawCallsiteChecks.push(...checkTopLevelCallsites(program, contractCache))
+  for (const fn of program.functions.values()) {
+    if (functionsWithRecordedCallsites.has(fn.name)) continue
+    rawCallsiteChecks.push(...checkFunctionCallsites(program, fn, contractCache))
+  }
+
+  return {
+    annotationChecks,
+    callsiteChecks: dedupeCallsiteChecks(rawCallsiteChecks.map(toCallsiteCheck)),
+  }
+}
+
 export function checkCallsitesInProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
   checks.push(...checkTopLevelCallsites(program, contractCache))
@@ -360,6 +392,16 @@ function verifyFunctionSpecs(
   specs: FitSpec[],
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
+  return verifyFunctionSpecsDetailed(file, program, fn, specs, contractCache).checks
+}
+
+function verifyFunctionSpecsDetailed(
+  file: string,
+  program: Program,
+  fn: FitFunction,
+  specs: FitSpec[],
+  contractCache: Map<string, FunctionContractProof>,
+): {checks: FitCheck[]; callsiteChecks: FitCheck[]; recordedCallsites: boolean} {
   const functionName = fn.name
   const inputSpecs = functionInputSpecs(program, fn, specs)
   const contractSpecs = functionContractSpecs(program, fn, specs)
@@ -378,7 +420,8 @@ function verifyFunctionSpecs(
 
   const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
   checks.push(...impossibleChecks)
-  const hasBodyClaims = functionHasBodyClaims(contractSpecs) || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
+  const recordsCallsites = functionHasBodyClaims(contractSpecs)
+  const hasBodyClaims = recordsCallsites || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
   const context: EvalContext = {
     program,
     file,
@@ -388,7 +431,7 @@ function verifyFunctionSpecs(
     checks: [],
     assumptions,
     contractCache,
-    callObligations: functionHasBodyClaims(contractSpecs) ? 'record' : 'silent',
+    callObligations: recordsCallsites ? 'record' : 'silent',
   }
   const result = hasBodyClaims ? evaluateFunctionBody(fn, context) : unknown('No body claim requested')
   if (hasBodyClaims) checks.push(...context.checks)
@@ -398,7 +441,11 @@ function verifyFunctionSpecs(
     checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions, contractCache))
   }
 
-  return checks
+  return {
+    checks,
+    callsiteChecks: recordsCallsites ? context.checks.filter(isCallCheck) : [],
+    recordedCallsites: hasBodyClaims && recordsCallsites,
+  }
 }
 
 function functionHasBodyClaims(specs: FitSpec[]) {
