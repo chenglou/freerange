@@ -5,7 +5,9 @@ import {
 } from './check-types.ts'
 import {type FitInferFact} from './facts.ts'
 import {
+  fitExpressionText,
   parseFitSpecLine,
+  type FitExpressionLike,
   type FitSpec,
 } from './parser.ts'
 import {type Value} from './domain.ts'
@@ -259,14 +261,14 @@ function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparis
   return null
 }
 
-function inferredRangeFactForExpression(facts: FitInferFact[], expression: string) {
+function inferredRangeFactForExpression(facts: FitInferFact[], expression: FitExpressionLike) {
   for (const fact of facts) {
     if (fact.kind === 'range' && sameExpressionText(fact.path, expression)) return fact
   }
   return null
 }
 
-function numberText(text: string): number | null {
-  const value = Number(text)
+function numberText(text: FitExpressionLike): number | null {
+  const value = Number(fitExpressionText(text))
   return Number.isFinite(value) ? value : null
 }

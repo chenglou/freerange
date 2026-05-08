@@ -14,10 +14,17 @@ export type ParsedFitExpression = {
   domainPaths: Map<string, FitDomainPath>
 }
 
+export type FitExpression = {
+  text: string
+  parsed: ParsedFitExpression
+}
+
+export type FitExpressionLike = string | FitExpression
+
 export type FitRange = {
   valueKind: 'int' | 'number'
-  lower: string
-  upper: string
+  lower: FitExpression
+  upper: FitExpression
   lowerValue: number | null
   upperValue: number | null
   lowerInclusive: boolean
@@ -29,38 +36,38 @@ export type FitRange = {
 export type FitSpec =
   | {
       kind: 'given-range'
-      expression: string
+      expression: FitExpression
       range: FitRange
       text: string
       line?: number
     }
   | {
       kind: 'given-comparison'
-      left: string
+      left: FitExpression
       op: ComparisonOperator
-      right: string
+      right: FitExpression
       text: string
       line?: number
     }
   | {
       kind: 'check-range'
-      expression: string
+      expression: FitExpression
       range: FitRange
       text: string
       line?: number
     }
   | {
       kind: 'check-comparison'
-      left: string
+      left: FitExpression
       op: ComparisonOperator
-      right: string
+      right: FitExpression
       text: string
       line?: number
     }
   | {
       kind: 'check-atom'
       name: string
-      args: string[]
+      args: FitExpression[]
       text: string
       line?: number
     }
@@ -76,6 +83,8 @@ export const fitReturnPublicRoot = 'return'
 export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
 const internalReturnRootPattern = /(?<![\w$.])__fit_return(?![\w$])/g
+const parsedExpressionCache = new Map<string, ParsedFitExpression>()
+const parsedExpressionFailures = new Map<string, string>()
 
 export type FitCommentLine = {
   text: string
@@ -84,10 +93,12 @@ export type FitCommentLine = {
 }
 
 export function normalizeFitText(text: string) {
+  if (!text.includes(fitReturnPublicRoot)) return text
   return text.replace(publicReturnRootPattern, fitReturnInternalRoot)
 }
 
 export function publicFitText(text: string) {
+  if (!text.includes(fitReturnInternalRoot)) return text
   return text.replace(internalReturnRootPattern, fitReturnPublicRoot)
 }
 
@@ -97,6 +108,26 @@ export function publicParsedExpressionText(parsed: ParsedFitExpression, expressi
     text = text.replace(new RegExp(`(?<![\\w$])${escapeRegExp(synthetic)}(?![\\w$])`, 'g'), domainPathText(domainPath))
   }
   return publicFitText(text)
+}
+
+export function parseFitExpressionText(text: string): FitExpression {
+  const normalizedText = normalizeFitText(text)
+  return {text: normalizedText, parsed: cachedParsedFitExpression(normalizedText)}
+}
+
+export function fitExpressionText(expression: FitExpressionLike) {
+  return typeof expression === 'string' ? expression : expression.text
+}
+
+export function fitExpressionParsed(expression: FitExpressionLike) {
+  return typeof expression === 'string' ? parseFitExpression(expression) : expression.parsed
+}
+
+function fitExpressionFromParsedExpression(parsed: ParsedFitExpression, expression: ts.Expression): FitExpression {
+  return {
+    text: normalizeFitText(publicParsedExpressionText(parsed, expression)),
+    parsed: {expression, domainPaths: parsed.domainPaths},
+  }
 }
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
@@ -317,10 +348,9 @@ const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
   if (givenRange != null) {
-    const expression = normalizeFitText(givenRange[1]!.trim())
+    const expression = parseFitExpressionText(givenRange[1]!.trim())
     const range = parseRangeText(givenRange[2]!.trim())
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
-    parseExpression(expression)
     return {
       kind: 'given-range',
       expression,
@@ -332,10 +362,8 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
 
   const givenComparison = /^given\s+(.+?)\s*(==|>=|<=|>|<)\s*(.+)$/.exec(line)
   if (givenComparison != null) {
-    const left = normalizeFitText(givenComparison[1]!.trim())
-    const right = normalizeFitText(givenComparison[3]!.trim())
-    parseExpression(left)
-    parseExpression(right)
+    const left = parseFitExpressionText(givenComparison[1]!.trim())
+    const right = parseFitExpressionText(givenComparison[3]!.trim())
     return {
       kind: 'given-comparison',
       left,
@@ -348,10 +376,9 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
 
   const checkRange = /^(.+)\s*:\s*(.+)$/.exec(line)
   if (checkRange != null) {
-    const expression = normalizeFitText(checkRange[1]!.trim())
+    const expression = parseFitExpressionText(checkRange[1]!.trim())
     const range = parseRangeText(checkRange[2]!.trim())
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
-    parseExpression(expression)
     return {
       kind: 'check-range',
       expression,
@@ -363,10 +390,8 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
 
   const checkComparison = /^(.+?)\s*(==|>=|<=|>|<)\s*(.+)$/.exec(line)
   if (checkComparison != null) {
-    const left = normalizeFitText(checkComparison[1]!.trim())
-    const right = normalizeFitText(checkComparison[3]!.trim())
-    parseExpression(left)
-    parseExpression(right)
+    const left = parseFitExpressionText(checkComparison[1]!.trim())
+    const right = parseFitExpressionText(checkComparison[3]!.trim())
     return {
       kind: 'check-comparison',
       left,
@@ -394,8 +419,8 @@ function parseRangeText(text: string): FitRange | null {
     const upper = Math.max(...finiteValues)
     return {
       valueKind,
-      lower: String(lower),
-      upper: String(upper),
+      lower: parseFitExpressionText(String(lower)),
+      upper: parseFitExpressionText(String(upper)),
       lowerValue: lower,
       upperValue: upper,
       lowerInclusive: true,
@@ -412,8 +437,8 @@ function parseRangeText(text: string): FitRange | null {
     if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
     return {
       valueKind,
-      lower,
-      upper,
+      lower: parseFitExpressionText(lower),
+      upper: parseFitExpressionText(upper),
       lowerValue: parseRangeBoundNumber(lower),
       upperValue: parseRangeBoundNumber(upper),
       lowerInclusive: true,
@@ -423,10 +448,11 @@ function parseRangeText(text: string): FitRange | null {
   }
   if (isRangeBoundText(body)) {
     const normalizedBody = normalizeFitText(body)
+    const expression = parseFitExpressionText(normalizedBody)
     return {
       valueKind,
-      lower: normalizedBody,
-      upper: normalizedBody,
+      lower: expression,
+      upper: expression,
       lowerValue: parseRangeBoundNumber(normalizedBody),
       upperValue: parseRangeBoundNumber(normalizedBody),
       lowerInclusive: true,
@@ -496,39 +522,36 @@ function parseInlineFitSpecLine(
   lineNumber?: number,
 ): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}> | Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}> {
   const body = line.slice('@fit'.length).trim()
-  const normalizedExpression = normalizeFitText(expression)
+  const parsedExpression = parseFitExpressionText(expression)
   const publicExpression = publicFitText(expression)
   const comparison = /^(==|>=|<=|>|<)\s*(.+)$/.exec(body)
   if (comparison != null) {
-    const right = normalizeFitText(comparison[2]!.trim())
-    parseExpression(normalizedExpression)
-    parseExpression(right)
+    const right = parseFitExpressionText(comparison[2]!.trim())
     if (kind === 'given-range') {
       return {
         kind: 'given-comparison',
-        left: normalizedExpression,
+        left: parsedExpression,
         op: comparison[1]! as ComparisonOperator,
         right,
-        text: `given ${publicExpression} ${comparison[1]} ${publicFitText(right)}`,
+        text: `given ${publicExpression} ${comparison[1]} ${publicFitText(right.text)}`,
         ...(lineNumber == null ? {} : {line: lineNumber}),
       }
     }
     return {
       kind: 'check-comparison',
-      left: normalizedExpression,
+      left: parsedExpression,
       op: comparison[1]! as ComparisonOperator,
       right,
-      text: `${publicExpression} ${comparison[1]} ${publicFitText(right)}`,
+      text: `${publicExpression} ${comparison[1]} ${publicFitText(right.text)}`,
       ...(lineNumber == null ? {} : {line: lineNumber}),
     }
   }
   const range = parseRangeText(body)
   if (range == null) throw new Error(`Unsupported inline @fit range: ${line}`)
-  parseExpression(normalizedExpression)
   if (kind === 'given-range') {
     return {
       kind,
-      expression: normalizedExpression,
+      expression: parsedExpression,
       range,
       text: `given ${publicExpression}: ${publicFitText(body)}`,
       ...(lineNumber == null ? {} : {line: lineNumber}),
@@ -536,7 +559,7 @@ function parseInlineFitSpecLine(
   }
   return {
     kind,
-    expression: normalizedExpression,
+    expression: parsedExpression,
     range,
     text: `${publicExpression}: ${publicFitText(body)}`,
     ...(lineNumber == null ? {} : {line: lineNumber}),
@@ -561,12 +584,13 @@ function parseRangeBoundNumber(text: string): number | null {
 }
 
 function parseCheckAtom(line: string, lineNumber?: number): Extract<FitSpec, {kind: 'check-atom'}> | null {
-  const expression = parseExpression(line)
+  const parsed = parseFitExpressionText(line)
+  const expression = parsed.parsed.expression
   if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return null
   return {
     kind: 'check-atom',
     name: expression.expression.text,
-    args: expression.arguments.map(argument => argument.getText()),
+    args: expression.arguments.map(argument => fitExpressionFromParsedExpression(parsed.parsed, argument)),
     text: line,
     ...(lineNumber == null ? {} : {line: lineNumber}),
   }
@@ -577,8 +601,27 @@ export function parseExpression(text: string): ts.Expression {
 }
 
 export function parseFitExpression(text: string): ParsedFitExpression {
+  return cachedParsedFitExpression(normalizeFitText(text))
+}
+
+function cachedParsedFitExpression(normalizedText: string): ParsedFitExpression {
+  const cached = parsedExpressionCache.get(normalizedText)
+  if (cached != null) return cached
+  const failure = parsedExpressionFailures.get(normalizedText)
+  if (failure != null) throw new Error(failure)
+  try {
+    const parsed = parseNormalizedFitExpression(normalizedText)
+    parsedExpressionCache.set(normalizedText, parsed)
+    return parsed
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    parsedExpressionFailures.set(normalizedText, message)
+    throw error
+  }
+}
+
+function parseNormalizedFitExpression(normalizedText: string): ParsedFitExpression {
   const domainPaths = new Map<string, FitDomainPath>()
-  const normalizedText = normalizeFitText(text)
   const sourceText = normalizedText.replace(domainPathPattern, match => {
     const domainPath = parseDomainPathText(match)
     if (domainPath == null || !domainPath.segments.some(segment => segment.kind === 'item')) return match
@@ -588,11 +631,11 @@ export function parseFitExpression(text: string): ParsedFitExpression {
   })
   const sourceFile = ts.createSourceFile('fit-spec-expression.ts', `const value = ${sourceText}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const parseDiagnostics = (sourceFile as ts.SourceFile & {parseDiagnostics: readonly ts.Diagnostic[]}).parseDiagnostics
-  if (parseDiagnostics.length > 0 || sourceFile.statements.length !== 1) throw new Error(`Could not parse @fit expression: ${text}`)
+  if (parseDiagnostics.length > 0 || sourceFile.statements.length !== 1) throw new Error(`Could not parse @fit expression: ${normalizedText}`)
   const statement = sourceFile.statements[0]
-  if (statement == null || !ts.isVariableStatement(statement)) throw new Error(`Could not parse @fit expression: ${text}`)
+  if (statement == null || !ts.isVariableStatement(statement)) throw new Error(`Could not parse @fit expression: ${normalizedText}`)
   const declaration = statement.declarationList.declarations[0]
-  if (declaration == null || declaration.initializer == null) throw new Error(`Could not parse @fit expression: ${text}`)
+  if (declaration == null || declaration.initializer == null) throw new Error(`Could not parse @fit expression: ${normalizedText}`)
   return {expression: declaration.initializer, domainPaths}
 }
 

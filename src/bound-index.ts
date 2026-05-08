@@ -1,8 +1,9 @@
 import * as ts from 'typescript'
 import {
-  parseFitExpression,
+  fitExpressionParsed,
   publicFitText,
   type FitDomainPath,
+  type FitExpressionLike,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -32,7 +33,7 @@ type BoundPathExpression = BoundIndexUse & {
 export type BoundIndexContext = {
   assumptions: LinearConstraint[]
   evaluateDomainPath: (domainPath: FitDomainPath) => Value
-  evaluateSpecExpression: (text: string) => Value
+  evaluateSpecExpression: (text: FitExpressionLike) => Value
   nondecreasingFailureReason: (text: string, target: {array: ArrayValue; prop: string}) => string
   proveAdjacentComparison: (collectionPath: FitDomainPath, comparison: AdjacentComparison) => {status: BoundIndexStatus; reason?: string}
 }
@@ -155,8 +156,8 @@ function adjacentComparisonFromSpec(spec: Extract<FitSpec, {kind: 'check-compari
   return null
 }
 
-function sequenceSideFromText(text: string): {expression: SequenceExpression; boundTerms: BoundSequenceTerm[]} | null {
-  const parsed = parseFitExpression(text)
+function sequenceSideFromText(text: FitExpressionLike): {expression: SequenceExpression; boundTerms: BoundSequenceTerm[]} | null {
+  const parsed = fitExpressionParsed(text)
   const result = sequenceExpressionFromExpression(parsed.expression, parsed.domainPaths)
   if (result == null) return null
   return result.boundTerms.length === 0 ? null : result
@@ -290,8 +291,8 @@ function uniqueBoundCollections(uses: BoundIndexUse[]) {
   return [...byKey.values()]
 }
 
-function boundIndexUses(text: string): BoundIndexUse[] {
-  return [...parseFitExpression(text).domainPaths.values()].flatMap(domainPath => boundIndexUsesInDomainPath(domainPath))
+function boundIndexUses(text: FitExpressionLike): BoundIndexUse[] {
+  return [...fitExpressionParsed(text).domainPaths.values()].flatMap(domainPath => boundIndexUsesInDomainPath(domainPath))
 }
 
 function boundIndexUsesInDomainPath(domainPath: FitDomainPath): BoundIndexUse[] {
@@ -312,8 +313,8 @@ function boundIndexUsesInDomainPath(domainPath: FitDomainPath): BoundIndexUse[] 
   return uses
 }
 
-function singleBoundPathExpression(text: string): BoundPathExpression | null {
-  const parsed = parseFitExpression(text)
+function singleBoundPathExpression(text: FitExpressionLike): BoundPathExpression | null {
+  const parsed = fitExpressionParsed(text)
   if (!ts.isIdentifier(parsed.expression)) return null
   const domainPath = parsed.domainPaths.get(parsed.expression.text)
   if (domainPath == null) return null

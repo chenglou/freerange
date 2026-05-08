@@ -12,7 +12,16 @@ import {
   type Value,
 } from './domain.ts'
 
-export type CallSiteBindings = Map<string, string>
+type MutableCallSiteBindings = Map<string, string>
+
+export type CallSiteBindings = ReadonlyMap<string, string>
+
+type CompiledCallSiteBindings = {
+  pattern: RegExp
+  replacements: Map<string, string>
+}
+
+const compiledBindingsCache = new WeakMap<CallSiteBindings, CompiledCallSiteBindings>()
 
 export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
   if (bindings == null || bindings.size === 0) return value
@@ -48,7 +57,7 @@ export function callSiteBindingsFor(
   argumentValues?: readonly Value[],
   argumentTexts?: readonly string[],
 ): CallSiteBindings {
-  const bindings: CallSiteBindings = new Map()
+  const bindings: MutableCallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
     const argument = args[i]
@@ -61,11 +70,20 @@ export function callSiteBindingsFor(
 
 export function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
   if (bindings == null || bindings.size === 0) return text
-  let result = text
-  for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
-    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$]|\\s*\\()`, 'g'), () => replacement)
+  const compiled = compiledCallSiteBindings(bindings)
+  return text.replace(compiled.pattern, name => compiled.replacements.get(name) ?? name)
+}
+
+function compiledCallSiteBindings(bindings: CallSiteBindings): CompiledCallSiteBindings {
+  const cached = compiledBindingsCache.get(bindings)
+  if (cached != null) return cached
+  const names = [...bindings.keys()].sort((left, right) => right.length - left.length)
+  const compiled = {
+    pattern: new RegExp(`(?<![\\w$.])(?:${names.map(escapeRegExp).join('|')})(?![\\w$]|\\s*\\()`, 'g'),
+    replacements: new Map(bindings),
   }
-  return result
+  compiledBindingsCache.set(bindings, compiled)
+  return compiled
 }
 
 function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings): NumberValue {
@@ -119,7 +137,7 @@ function callSiteArgumentText(sourceText: string, value: Value | undefined) {
   return value?.kind === 'number' && value.expr != null ? value.expr : sourceText
 }
 
-function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: CallSiteBindings) {
+function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: MutableCallSiteBindings) {
   if (ts.isIdentifier(name)) {
     bindings.set(name.text, callSiteValueText(sourceText))
     return

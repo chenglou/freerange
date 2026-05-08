@@ -1,8 +1,8 @@
 import * as ts from 'typescript'
-import {parseFitExpression} from './parser.ts'
+import {fitExpressionParsed, type FitExpressionLike} from './parser.ts'
 
-export function expressionRootNamesFromText(text: string): string[] {
-  const parsed = parseFitExpression(text)
+export function expressionRootNamesFromText(text: FitExpressionLike): string[] {
+  const parsed = fitExpressionParsed(text)
   const ignored = [...parsed.domainPaths.keys()]
   const roots = [...parsed.domainPaths.values()].map(domainPath => domainPath.root)
   roots.push(...expressionRootNames(parsed.expression, ignored))
