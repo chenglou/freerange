@@ -6,7 +6,7 @@ import {
 import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
-  parseFitExpression,
+  fitExpressionParsed,
   parseFitSpecLine,
   parseFitSpecs,
   parseInlineFitSpecsForExpression,
@@ -15,6 +15,7 @@ import {
   fitReturnInternalRoot,
   fitReturnPublicRoot,
   type FitCheckSpec,
+  type FitExpressionLike,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -592,11 +593,11 @@ function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {s
   return proveParsedRangeSpec(value, range, context, checkSpecHooks)
 }
 
-function evaluateRangeBound(text: string, context: EvalContext): Value {
+function evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Value {
   return evaluateParsedRangeBound(text, context, checkSpecHooks)
 }
 
-function evaluateSpecExpression(text: string, context: EvalContext): Value {
+function evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value {
   return evaluateParsedSpecExpression(text, context, checkSpecHooks)
 }
 
@@ -961,7 +962,7 @@ function specMentionsRoot(spec: FitSpec, root: string) {
   return specExpressionTexts(spec).some(text => expressionTextMentionsRoot(text, root))
 }
 
-function specExpressionTexts(spec: FitSpec): string[] {
+function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
   switch (spec.kind) {
     case 'given-range':
     case 'check-range':
@@ -974,8 +975,8 @@ function specExpressionTexts(spec: FitSpec): string[] {
   }
 }
 
-function expressionTextMentionsRoot(text: string, root: string) {
-  const parsed = parseFitExpression(text)
+function expressionTextMentionsRoot(text: FitExpressionLike, root: string) {
+  const parsed = fitExpressionParsed(text)
   if ([...parsed.domainPaths.values()].some(domainPath => domainPath.root === root)) return true
   return expressionMentionsIdentifier(parsed.expression, root)
 }

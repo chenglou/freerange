@@ -13,11 +13,12 @@ import {
 } from './domain.ts'
 import {linearConstant, unwrapExpression} from './linear.ts'
 import {
+  fitExpressionParsed,
+  fitExpressionText,
   fitReturnInternalRoot,
-  parseExpression,
-  parseFitExpression,
   publicFitText,
   type FitDomainPath,
+  type FitExpressionLike,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -141,9 +142,9 @@ export function proveRangeSpec(value: Value, range: FitRange, context: EvalConte
   if (range.finiteValues != null) return proveFiniteRangeSpec(value, range)
   if (staticRangeInside(value, range)) return {status: 'pass'}
   const lower = evaluateRangeBound(range.lower, context, hooks)
-  if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower}`}
+  if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower.text}`}
   const upper = evaluateRangeBound(range.upper, context, hooks)
-  if (upper.kind !== 'number') return {status: 'unknown', reason: `Range upper bound is not a number: ${range.upper}`}
+  if (upper.kind !== 'number') return {status: 'unknown', reason: `Range upper bound is not a number: ${range.upper.text}`}
 
   const lowerStatus = proveComparison(value, range.lowerInclusive ? '>=' : '>', lower, context.assumptions)
   const upperStatus = proveComparison(value, range.upperInclusive ? '<=' : '<', upper, context.assumptions)
@@ -225,13 +226,14 @@ function staticRangeInside(value: NumberValue, range: FitRange) {
   return lowerOk && upperOk
 }
 
-export function evaluateRangeBound(text: string, context: EvalContext, hooks: CheckSpecHooks): Value {
-  const printed = hooks.parsePrintedNumber(text)
-  if (printed != null) return numberValue(printed, printed, Number.isInteger(printed), text, Number.isFinite(printed) ? linearConstant(printed) : null)
+export function evaluateRangeBound(text: FitExpressionLike, context: EvalContext, hooks: CheckSpecHooks): Value {
+  const sourceText = fitExpressionText(text)
+  const printed = hooks.parsePrintedNumber(sourceText)
+  if (printed != null) return numberValue(printed, printed, Number.isInteger(printed), sourceText, Number.isFinite(printed) ? linearConstant(printed) : null)
   return evaluateSpecExpression(text, context, hooks)
 }
 
-function checkWildcardComparisonShape(left: string, right: string): WildcardUse {
+function checkWildcardComparisonShape(left: FitExpressionLike, right: FitExpressionLike): WildcardUse {
   const leftUse = wildcardUse(left)
   if (leftUse.kind === 'unsupported') return leftUse
   const rightUse = wildcardUse(right)
@@ -244,15 +246,15 @@ function checkWildcardComparisonShape(left: string, right: string): WildcardUse 
   return leftUse.kind === 'one' ? leftUse : rightUse
 }
 
-function wildcardUse(text: string): WildcardUse {
+function wildcardUse(text: FitExpressionLike): WildcardUse {
   const collections = new Set<string>()
-  for (const domainPath of parseFitExpression(text).domainPaths.values()) {
+  for (const domainPath of fitExpressionParsed(text).domainPaths.values()) {
     const itemCount = domainPath.segments.filter(segment => segment.kind === 'item').length
     if (itemCount === 0) continue
     collections.add(domainPathCollectionText(domainPath))
   }
   if (collections.size === 0) return {kind: 'none'}
-  if (collections.size > 1) return {kind: 'unsupported', reason: `Wildcard comparisons support one collection at a time: ${text}`}
+  if (collections.size > 1) return {kind: 'unsupported', reason: `Wildcard comparisons support one collection at a time: ${fitExpressionText(text)}`}
   return {kind: 'one', collection: [...collections][0]!}
 }
 
@@ -282,8 +284,8 @@ function domainPathText(domainPath: FitDomainPath) {
   return publicFitText(text)
 }
 
-export function evaluateSpecExpression(text: string, context: EvalContext, hooks: CheckSpecHooks): Value {
-  const parsed = parseFitExpression(text)
+export function evaluateSpecExpression(text: FitExpressionLike, context: EvalContext, hooks: CheckSpecHooks): Value {
+  const parsed = fitExpressionParsed(text)
   if (parsed.domainPaths.size === 0) return hooks.evaluateExpression(parsed.expression, context)
 
   const env = new Map(context.env)
@@ -387,9 +389,9 @@ function adjacentComparisonFailureReason(text: string, collectionText: string, r
   ].join('\n')
 }
 
-function sequencePropArgument(args: string[], context: EvalContext, hooks: CheckSpecHooks): {array: ArrayValue; prop: string} | null {
+function sequencePropArgument(args: FitExpressionLike[], context: EvalContext, hooks: CheckSpecHooks): {array: ArrayValue; prop: string} | null {
   if (args.length !== 1) return null
-  let expression = unwrapExpression(parseExpression(args[0]!))
+  let expression = unwrapExpression(fitExpressionParsed(args[0]!).expression)
   const path: string[] = []
   while (ts.isPropertyAccessExpression(expression)) {
     path.unshift(expression.name.text)

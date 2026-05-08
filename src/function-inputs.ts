@@ -13,8 +13,9 @@ import {
 } from './domain.ts'
 import {functionHasInstanceThisInput} from './function-shape.ts'
 import {
+  fitExpressionParsed,
   fitReturnInternalRoot,
-  parseFitExpression,
+  type FitExpressionLike,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -165,8 +166,8 @@ function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'n
   return shape
 }
 
-function specExpressionParamShape(text: string, name: string): 'array' | 'object' | 'number' {
-  const parsed = parseFitExpression(text)
+function specExpressionParamShape(text: FitExpressionLike, name: string): 'array' | 'object' | 'number' {
+  const parsed = fitExpressionParsed(text)
   for (const domainPath of parsed.domainPaths.values()) {
     if (domainPath.root !== name) continue
     return domainPath.segments[0]?.kind === 'item' ? 'array' : 'object'

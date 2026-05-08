@@ -33,9 +33,11 @@ import {
   type LinearExpr,
 } from './linear.ts'
 import {
+  fitExpressionParsed,
+  fitExpressionText,
   parseDomainPathText,
-  parseExpression,
   publicFitText,
+  type FitExpressionLike,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -53,8 +55,8 @@ import {
 import {formatRangeSpec} from './reporting.ts'
 
 export type GivenEvaluators = {
-  evaluateRangeBound(text: string, context: EvalContext): Value
-  evaluateSpecExpression(text: string, context: EvalContext): Value
+  evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Value
+  evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value
 }
 
 export function validateGivenSpecs(
@@ -165,8 +167,8 @@ function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'g
   }
 }
 
-function rangeBoundRootNames(text: string) {
-  return parsePrintedNumber(text) == null ? expressionRootNamesFromText(text) : []
+function rangeBoundRootNames(text: FitExpressionLike) {
+  return parsePrintedNumber(fitExpressionText(text)) == null ? expressionRootNamesFromText(text) : []
 }
 
 function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
@@ -192,8 +194,8 @@ function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind:
   if (roots.length === 0) return 'given must mention an input'
 
   if (spec.kind === 'given-range') {
-    if (parseDomainPathText(spec.expression) == null) {
-      const expression = parseExpression(spec.expression)
+    if (parseDomainPathText(spec.expression.text) == null) {
+      const expression = fitExpressionParsed(spec.expression).expression
       if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
     }
     const lower = givenComparisonExpressionProblem(spec.range.lower)
@@ -206,9 +208,9 @@ function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind:
   return givenComparisonExpressionProblem(spec.right)
 }
 
-function givenComparisonExpressionProblem(text: string): string | null {
-  if (parsePrintedNumber(text) != null) return null
-  return isGivenComparisonExpression(parseExpression(text))
+function givenComparisonExpressionProblem(text: FitExpressionLike): string | null {
+  if (parsePrintedNumber(fitExpressionText(text)) != null) return null
+  return isGivenComparisonExpression(fitExpressionParsed(text).expression)
     ? null
     : 'given comparisons only support input paths, numbers, and simple arithmetic'
 }
@@ -404,24 +406,25 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
   const closed = closedRangeApprox(spec.range)
+  const expressionText = spec.expression.text
   const value = spec.range.finiteValues == null
     ? numberValue(
       closed?.min ?? Number.NEGATIVE_INFINITY,
       closed?.max ?? Number.POSITIVE_INFINITY,
       spec.range.valueKind === 'int',
-      spec.expression,
-      linearVariable(linearNameForExpression(spec.expression)),
+      expressionText,
+      linearVariable(linearNameForExpression(expressionText)),
     )
-    : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)))
-  if (spec.expression.includes('[]')) {
-    const domainPath = parseDomainPathText(spec.expression)
+    : finiteNumberValue(spec.range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)))
+  if (expressionText.includes('[]')) {
+    const domainPath = parseDomainPathText(expressionText)
     if (domainPath != null && domainPath.segments.length > 0) {
       env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
     }
     return
   }
 
-  const expression = parseExpression(spec.expression)
+  const expression = spec.expression.parsed.expression
   if (ts.isIdentifier(expression)) {
     env.set(expression.text, value)
     return
@@ -434,7 +437,7 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSp
     return
   }
 
-  const domainPath = parseDomainPathText(spec.expression)
+  const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
   env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }

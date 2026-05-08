@@ -1,5 +1,11 @@
 import * as ts from 'typescript'
-import {parseExpression, parseFitExpression, publicParsedExpressionText, type ParsedFitExpression} from './parser.ts'
+import {
+  fitExpressionParsed,
+  fitExpressionText,
+  publicParsedExpressionText,
+  type FitExpressionLike,
+  type ParsedFitExpression,
+} from './parser.ts'
 
 export const linearEpsilon = 1e-9
 
@@ -24,9 +30,9 @@ export function linearVariable(name: string): LinearExpr {
   return {constant: 0, terms: new Map([[name, 1]])}
 }
 
-export function linearFromExpressionText(text: string): LinearExpr | null {
+export function linearFromExpressionText(text: FitExpressionLike): LinearExpr | null {
   try {
-    return linearFromExpression(parseExpression(text))
+    return linearFromExpression(fitExpressionParsed(text).expression)
   } catch {
     return null
   }
@@ -178,15 +184,15 @@ export function mergeScale(current: number | null, next: number): number {
   return Math.abs(current - next) <= linearEpsilon ? current : Number.NEGATIVE_INFINITY
 }
 
-export function sameExpressionText(left: string, right: string) {
+export function sameExpressionText(left: FitExpressionLike, right: FitExpressionLike) {
   return expressionKeyFromText(left) === expressionKeyFromText(right)
 }
 
-export function expressionKeyFromText(text: string): string {
+export function expressionKeyFromText(text: FitExpressionLike): string {
   try {
-    return expressionKey(parseExpression(text))
+    return expressionKey(fitExpressionParsed(text).expression)
   } catch {
-    return `text:${text}`
+    return `text:${fitExpressionText(text)}`
   }
 }
 
@@ -239,7 +245,7 @@ export function callName(expression: ts.Expression): string {
   return expression.getText()
 }
 
-export function callArgs(text: string, name: string): string[] | null {
+export function callArgs(text: FitExpressionLike, name: string): string[] | null {
   const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
   const expression = unwrapExpression(parsed.expression)
@@ -247,12 +253,12 @@ export function callArgs(text: string, name: string): string[] | null {
   return expression.arguments.map(argument => publicParsedExpressionText(parsed, argument))
 }
 
-export function callArg(text: string, name: string): string | null {
+export function callArg(text: FitExpressionLike, name: string): string | null {
   const args = callArgs(text, name)
   return args != null && args.length === 1 ? args[0]! : null
 }
 
-export function ceilDivisionProduct(text: string): {total: string; count: string} | null {
+export function ceilDivisionProduct(text: FitExpressionLike): {total: string; count: string} | null {
   const product = binaryExpression(text, '*')
   if (product == null) return null
   for (const [maybeCeil, maybeCount] of [[product.left, product.right], [product.right, product.left]] as const) {
@@ -264,16 +270,16 @@ export function ceilDivisionProduct(text: string): {total: string; count: string
   return null
 }
 
-export function floorDivision(text: string): {left: string; right: string} | null {
+export function floorDivision(text: FitExpressionLike): {left: string; right: string} | null {
   const floorArg = callArg(text, 'floor')
   return floorArg == null ? null : binaryExpression(floorArg, '/')
 }
 
-export function moduloExpression(text: string): {left: string; right: string} | null {
+export function moduloExpression(text: FitExpressionLike): {left: string; right: string} | null {
   return binaryExpression(text, '%')
 }
 
-export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
+export function binaryExpression(text: FitExpressionLike, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
   const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
   const expression = unwrapExpression(parsed.expression)
@@ -291,7 +297,7 @@ export function binaryExpression(text: string, op: '*' | '/' | '%' | '+' | '-'):
   return {left: publicParsedExpressionText(parsed, expression.left), right: publicParsedExpressionText(parsed, expression.right)}
 }
 
-export function productFactors(text: string): string[] | null {
+export function productFactors(text: FitExpressionLike): string[] | null {
   const parsed = parseExpressionOrNull(text)
   if (parsed == null) return null
   const expression = unwrapExpression(parsed)
@@ -299,17 +305,17 @@ export function productFactors(text: string): string[] | null {
   return factors.length <= 1 ? null : factors
 }
 
-function parseExpressionOrNull(text: string): ts.Expression | null {
+function parseExpressionOrNull(text: FitExpressionLike): ts.Expression | null {
   try {
-    return parseExpression(text)
+    return fitExpressionParsed(text).expression
   } catch {
     return null
   }
 }
 
-function parseFitExpressionOrNull(text: string): ParsedFitExpression | null {
+function parseFitExpressionOrNull(text: FitExpressionLike): ParsedFitExpression | null {
   try {
-    return parseFitExpression(text)
+    return fitExpressionParsed(text)
   } catch {
     return null
   }

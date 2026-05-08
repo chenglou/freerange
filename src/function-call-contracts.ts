@@ -43,11 +43,13 @@ import {
 } from './linear.ts'
 import type {FitFunction} from './modules.ts'
 import {
+  fitExpressionParsed,
+  fitExpressionText,
   fitReturnInternalRoot,
   parseDomainPathText,
   parseExpression,
-  parseFitExpression,
   type ComparisonOperator,
+  type FitExpressionLike,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -67,7 +69,7 @@ import {
 import {expressionRootNameDeep} from './source-expressions.ts'
 
 export type CallContractEvaluators = {
-  evaluateSpecExpression(text: string, context: EvalContext): Value
+  evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value
   proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string}
 }
 
@@ -134,15 +136,15 @@ function withCallRangeDetail(
   spec: Extract<FitSpec, {kind: 'given-range'}>,
   callSiteBindings: CallSiteBindings | undefined,
 ): CallPreconditionStatus {
-  if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallBinding(spec.expression, value), [
-    `${callSiteText(spec.expression, callSiteBindings)}: ${callSiteText(formatRangeSpec(spec.range), callSiteBindings)}`,
+  if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallBinding(spec.expression.text, value), [
+    `${callSiteText(spec.expression.text, callSiteBindings)}: ${callSiteText(formatRangeSpec(spec.range), callSiteBindings)}`,
   ])
   const missing = status.status === 'pass' ? [] : missingBoundsForRange(value, spec.range, callSiteBindings)
   return withCallDetail(status, {
     kind: 'call-precondition',
     callText,
     requirement: callRequirementText(spec),
-    callerPassed: formatCallBinding(spec.expression, value),
+    callerPassed: formatCallBinding(spec.expression.text, value),
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(value) != null,
   })
@@ -164,8 +166,8 @@ function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBind
   }
 
   const lines: string[] = []
-  if (missing.lower) lines.push(`${valueText} ${range.lowerInclusive ? '>=' : '>'} ${callSiteText(range.lower, callSiteBindings)}`)
-  if (missing.upper) lines.push(`${valueText} ${range.upperInclusive ? '<=' : '<'} ${callSiteText(range.upper, callSiteBindings)}`)
+  if (missing.lower) lines.push(`${valueText} ${range.lowerInclusive ? '>=' : '>'} ${callSiteText(range.lower.text, callSiteBindings)}`)
+  if (missing.upper) lines.push(`${valueText} ${range.upperInclusive ? '<=' : '<'} ${callSiteText(range.upper.text, callSiteBindings)}`)
   if (missing.integer) lines.push(`${valueText} is an integer`)
   return lines
 }
@@ -180,7 +182,7 @@ function withCallComparisonDetail(
 ): CallPreconditionStatus {
   if (left.kind !== 'number' || right.kind !== 'number') {
     return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallComparisonBinding(spec, left, right), [
-      callSiteText(`${spec.left} ${spec.op} ${spec.right}`, callSiteBindings),
+      callSiteText(`${spec.left.text} ${spec.op} ${spec.right.text}`, callSiteBindings),
     ])
   }
   const missing = status.status === 'pass' ? [] : [callSiteText(comparisonNeed(left, spec.op, right), callSiteBindings)]
@@ -242,10 +244,10 @@ function formatCallValue(value: Value) {
 }
 
 function formatCallComparisonBinding(spec: Extract<FitSpec, {kind: 'given-comparison'}>, left: Value, right: Value) {
-  const leftText = formatCallBinding(spec.left, left)
-  const rightText = formatCallBinding(spec.right, right)
-  if (parsePrintedNumber(spec.left) != null) return rightText
-  if (parsePrintedNumber(spec.right) != null) return leftText
+  const leftText = formatCallBinding(spec.left.text, left)
+  const rightText = formatCallBinding(spec.right.text, right)
+  if (parsePrintedNumber(spec.left.text) != null) return rightText
+  if (parsePrintedNumber(spec.right.text) != null) return leftText
   return `${leftText}, ${rightText}`
 }
 
@@ -339,7 +341,7 @@ function applySummaryRangeSpec(
   const current = evaluators.evaluateSpecExpression(spec.expression, context)
   setSummaryPathValue(
     env,
-    spec.expression,
+    spec.expression.text,
     summaryRangeValue(current, spec, closed, source),
   )
 }
@@ -351,21 +353,22 @@ function summaryRangeValue(
   source: FunctionContractSource,
 ): NumberValue {
   const provenance = [checkedContractFact(source, spec.text)]
+  const expressionText = spec.expression.text
   if (current.kind !== 'number') {
     return spec.range.finiteValues == null
       ? numberValue(
         closed.min,
         closed.max,
         spec.range.valueKind === 'int',
-        spec.expression,
-        linearVariable(linearNameForExpression(spec.expression)),
+        expressionText,
+        linearVariable(linearNameForExpression(expressionText)),
         null,
         provenance,
       )
-      : finiteNumberValue(spec.range.finiteValues, spec.expression, linearVariable(linearNameForExpression(spec.expression)), provenance)
+      : finiteNumberValue(spec.range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)), provenance)
   }
 
-  const expr = current.expr ?? spec.expression
+  const expr = current.expr ?? expressionText
   const linear = current.linear ?? linearVariable(linearNameForExpression(expr))
   if (spec.range.finiteValues != null) return finiteNumberValue(spec.range.finiteValues, expr, linear, mergeProvenance(current, provenance))
   return numberValue(
@@ -441,17 +444,18 @@ function checkedContractFact(source: FunctionContractSource, text: string) {
   return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }
 
-function simpleResultPathText(text: string): string | null {
-  const parsed = parseFitExpression(text)
+function simpleResultPathText(text: FitExpressionLike): string | null {
+  const sourceText = fitExpressionText(text)
+  const parsed = fitExpressionParsed(text)
   const domainPaths = [...parsed.domainPaths.values()]
-  if (domainPaths.length === 1 && domainPaths[0]!.root === fitReturnInternalRoot && ts.isIdentifier(parsed.expression)) return text
+  if (domainPaths.length === 1 && domainPaths[0]!.root === fitReturnInternalRoot && ts.isIdentifier(parsed.expression)) return sourceText
   if (domainPaths.length > 0) return null
 
   const expression = unwrapExpression(parsed.expression)
-  if (ts.isIdentifier(expression) && expression.text === fitReturnInternalRoot) return text
-  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === fitReturnInternalRoot) return text
+  if (ts.isIdentifier(expression) && expression.text === fitReturnInternalRoot) return sourceText
+  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === fitReturnInternalRoot) return sourceText
   const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement?.root === fitReturnInternalRoot) return text
+  if (finiteElement?.root === fitReturnInternalRoot) return sourceText
   return null
 }
 
