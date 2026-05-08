@@ -185,6 +185,7 @@ export function mergeScale(current: number | null, next: number): number {
 }
 
 export function sameExpressionText(left: FitExpressionLike, right: FitExpressionLike) {
+  if (fitExpressionText(left) === fitExpressionText(right)) return true
   return expressionKeyFromText(left) === expressionKeyFromText(right)
 }
 
@@ -213,7 +214,7 @@ function structuralExpressionKey(current: ts.Expression): string {
   if (ts.isPrefixUnaryExpression(current)) return `prefix:${current.operator}:${expressionKey(current.operand)}`
   if (ts.isBinaryExpression(current)) {
     const op = current.operatorToken.kind
-    if (op === ts.SyntaxKind.AsteriskToken) return `product:${productFactorsFromExpression(current).map(text => expressionKeyFromText(text)).sort().join('*')}`
+    if (op === ts.SyntaxKind.AsteriskToken) return `product:${productFactorExpressions(current).map(expressionKey).sort().join('*')}`
     return `binary:${ts.SyntaxKind[op]}:${expressionKey(current.left)}:${expressionKey(current.right)}`
   }
   return `text:${current.getText()}`
@@ -298,19 +299,11 @@ export function binaryExpression(text: FitExpressionLike, op: '*' | '/' | '%' | 
 }
 
 export function productFactors(text: FitExpressionLike): string[] | null {
-  const parsed = parseExpressionOrNull(text)
+  const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
-  const expression = unwrapExpression(parsed)
-  const factors = productFactorsFromExpression(expression)
+  const expression = unwrapExpression(parsed.expression)
+  const factors = productFactorExpressions(expression).map(factor => publicParsedExpressionText(parsed, factor))
   return factors.length <= 1 ? null : factors
-}
-
-function parseExpressionOrNull(text: FitExpressionLike): ts.Expression | null {
-  try {
-    return fitExpressionParsed(text).expression
-  } catch {
-    return null
-  }
 }
 
 function parseFitExpressionOrNull(text: FitExpressionLike): ParsedFitExpression | null {
@@ -321,10 +314,10 @@ function parseFitExpressionOrNull(text: FitExpressionLike): ParsedFitExpression 
   }
 }
 
-function productFactorsFromExpression(expression: ts.Expression): string[] {
+function productFactorExpressions(expression: ts.Expression): ts.Expression[] {
   const current = unwrapExpression(expression)
-  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.AsteriskToken) return [current.getText()]
-  return [...productFactorsFromExpression(current.left), ...productFactorsFromExpression(current.right)]
+  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.AsteriskToken) return [current]
+  return [...productFactorExpressions(current.left), ...productFactorExpressions(current.right)]
 }
 
 export function productText(factors: string[]) {
