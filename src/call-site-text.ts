@@ -14,6 +14,13 @@ import {
 
 export type CallSiteBindings = Map<string, string>
 
+type CompiledCallSiteBindings = {
+  pattern: RegExp
+  replacements: Map<string, string>
+}
+
+const compiledBindingsCache = new WeakMap<CallSiteBindings, CompiledCallSiteBindings>()
+
 export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
   if (bindings == null || bindings.size === 0) return value
   if (value.kind === 'number') return numberWithCallSiteText(value, bindings)
@@ -61,11 +68,20 @@ export function callSiteBindingsFor(
 
 export function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
   if (bindings == null || bindings.size === 0) return text
-  let result = text
-  for (const [name, replacement] of [...bindings].sort((left, right) => right[0].length - left[0].length)) {
-    result = result.replace(new RegExp(`(?<![\\w$.])${escapeRegExp(name)}(?![\\w$]|\\s*\\()`, 'g'), () => replacement)
+  const compiled = compiledCallSiteBindings(bindings)
+  return text.replace(compiled.pattern, name => compiled.replacements.get(name) ?? name)
+}
+
+function compiledCallSiteBindings(bindings: CallSiteBindings): CompiledCallSiteBindings {
+  const cached = compiledBindingsCache.get(bindings)
+  if (cached != null) return cached
+  const names = [...bindings.keys()].sort((left, right) => right.length - left.length)
+  const compiled = {
+    pattern: new RegExp(`(?<![\\w$.])(?:${names.map(escapeRegExp).join('|')})(?![\\w$]|\\s*\\()`, 'g'),
+    replacements: new Map(bindings),
   }
-  return result
+  compiledBindingsCache.set(bindings, compiled)
+  return compiled
 }
 
 function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings): NumberValue {

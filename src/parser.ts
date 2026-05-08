@@ -83,6 +83,8 @@ export const fitReturnPublicRoot = 'return'
 export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
 const internalReturnRootPattern = /(?<![\w$.])__fit_return(?![\w$])/g
+const parsedExpressionCache = new Map<string, ParsedFitExpression>()
+const parsedExpressionFailures = new Map<string, string>()
 
 export type FitCommentLine = {
   text: string
@@ -91,10 +93,12 @@ export type FitCommentLine = {
 }
 
 export function normalizeFitText(text: string) {
+  if (!text.includes(fitReturnPublicRoot)) return text
   return text.replace(publicReturnRootPattern, fitReturnInternalRoot)
 }
 
 export function publicFitText(text: string) {
+  if (!text.includes(fitReturnInternalRoot)) return text
   return text.replace(internalReturnRootPattern, fitReturnPublicRoot)
 }
 
@@ -108,7 +112,7 @@ export function publicParsedExpressionText(parsed: ParsedFitExpression, expressi
 
 export function parseFitExpressionText(text: string): FitExpression {
   const normalizedText = normalizeFitText(text)
-  return {text: normalizedText, parsed: parseNormalizedFitExpression(normalizedText)}
+  return {text: normalizedText, parsed: cachedParsedFitExpression(normalizedText)}
 }
 
 export function fitExpressionText(expression: FitExpressionLike) {
@@ -597,7 +601,23 @@ export function parseExpression(text: string): ts.Expression {
 }
 
 export function parseFitExpression(text: string): ParsedFitExpression {
-  return parseNormalizedFitExpression(normalizeFitText(text))
+  return cachedParsedFitExpression(normalizeFitText(text))
+}
+
+function cachedParsedFitExpression(normalizedText: string): ParsedFitExpression {
+  const cached = parsedExpressionCache.get(normalizedText)
+  if (cached != null) return cached
+  const failure = parsedExpressionFailures.get(normalizedText)
+  if (failure != null) throw new Error(failure)
+  try {
+    const parsed = parseNormalizedFitExpression(normalizedText)
+    parsedExpressionCache.set(normalizedText, parsed)
+    return parsed
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    parsedExpressionFailures.set(normalizedText, message)
+    throw error
+  }
 }
 
 function parseNormalizedFitExpression(normalizedText: string): ParsedFitExpression {
