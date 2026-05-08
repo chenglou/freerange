@@ -89,9 +89,7 @@ A real fork only starts looking worthwhile when public APIs cannot expose someth
 
 ## LET REAL REPORTS SHAPE THE TOOL
 
-Freerange's CLI changed shape because reports were too noisy.
-
-At one point, `check` and `doctor` were separate ideas. That split did not hold up. Users mostly want the checker to tell them what matters, and an escape hatch for quieter annotation-only passes. So the model became:
+Freerange's CLI changed shape because reports were too noisy. Users mostly want the checker to tell them what matters, and an escape hatch for quieter annotation-only passes. So the model became:
 
 ```sh
 fr check file.ts
