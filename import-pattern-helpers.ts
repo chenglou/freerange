@@ -45,6 +45,29 @@ export function importedRows(items: {height: number}[]) {
   return {rows}
 }
 
+export class ImportedClassBox {
+  constructor(public top: number, public height: number, public width: number) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: 0..1000
+   * return == this.top + this.height
+   * return >= this.top
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+
+  /** @fit
+   * given this.width: 0..1000
+   * given this.height: 0..1000
+   * return >= 0
+   */
+  area() {
+    return this.width * this.height
+  }
+}
+
 export type ImportedShapeRows = {
   rows: {height: number}[]
 }

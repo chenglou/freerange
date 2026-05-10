@@ -129,8 +129,32 @@ UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled 
     assumed from input: given scale: -2..2
     assumed from input: given content <= available
   missing: scale >= 0
+UNKNOWN negative-patterns.ts:negativeScaleCancellationNeedsPositiveFactor: return <= available
+  known:
+    content: any number
+    available: any number
+    assumed from input: given content * scale <= available * scale
+  missing: scale > 0
+UNKNOWN negative-patterns.ts:negativeScaleFlipNeedsNegativeFactor: return <= content * scale
+  known:
+    (available * scale): any number
+    (content * scale): any number
+    assumed from input: given content <= available
+  missing: scale < 0
+UNKNOWN negative-patterns.ts:negativeScaleCancellationNeedsNegativeFactor: return <= available
+  known:
+    content: any number
+    available: any number
+    assumed from input: given available * scale <= content * scale
+  missing: scale < 0
 UNKNOWN negative-patterns.ts:negativeModuloNeedsPositiveCount: return < count
   Modulo is only supported for non-negative values and positive divisors
+UNKNOWN negative-patterns.ts:negativeRoundingDoesNotKeepStrictOrder: return.floorLeft < return.floorRight
+  known:
+    floor(left): any integer
+    floor(right): any integer
+    assumed from input: given left < right
+  missing fact: floor(left) < floor(right)
 UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minWidth
   known:
     width: 0..1000
@@ -139,6 +163,12 @@ UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minW
     assumed from input: given minWidth: 0..1000
     inferred from branch: -minWidth + width <= 0
   missing fact: width >= minWidth
+UNKNOWN negative-patterns.ts:negativeLogicalOrTrueOnlyCarriesOneSide: return >= 0
+  known:
+    (x + y): -20..20
+    assumed from input: given x: -10..10
+    assumed from input: given y: -10..10
+  missing fact: (x + y) >= 0
 FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
   range was 0..200, expected inside 0..100
   known:
@@ -646,10 +676,11 @@ FAIL negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
   missing: total <= 0
 UNKNOWN negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows.length == items.length
   known:
-    rows.length: int 0..0
+    rows.length: int 0..50
     items.length: int 0..50
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: 0..40
+    inferred from code: -items.length + rows.length <= 0
   missing fact: rows.length == items.length
 UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: return.bottom >= top
   known:
@@ -658,10 +689,11 @@ UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: 
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
     assumed from input: given top: 0..1000
+    inferred from code: -items.length + rows.length <= 0
   missing: items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: return.rows.length == items.length
   known:
-    rows.length: int 0..0
+    rows.length: int 0..50
     items.length: int 0..50
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: 0..40
@@ -669,6 +701,7 @@ UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: retu
     inferred from code: i - items.length < 0
     inferred from code: items[i].height >= 0
     inferred from code: items[i].height <= 40
+    inferred from code: -items.length + rows.length <= 0
   missing fact: rows.length == items.length
 UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.rows.length == items.length
   known:
@@ -678,6 +711,15 @@ UNKNOWN negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.
     assumed from input: given items[].height: 0..40
     inferred from code: items.filter(item => item.visible).length <= items.length
   missing fact: items.filter(item => item.visible).length == items.length
+UNKNOWN negative-patterns.ts:negativeFilteredPredicateIsNotStrongerThanSource: return.rows[].height > 0
+  applies to: every item in return.rows
+  known:
+    items[].height: 0..40
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: -40..40
+    inferred from code: items.filter(item => item.height >= 0).length <= items.length
+    inferred from branch: __fit_domain_items___item_height >= 0
+  missing fact: items[].height > 0
 UNKNOWN negative-patterns.ts:negativeFilteredMappedRowsAreNotAlwaysSameLength: return.rows.length == items.length
   known:
     items
@@ -962,6 +1004,21 @@ FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 
     checked imported contract: import-pattern-helpers.ts#importedClampWidth: return: 0..320
     assumed from input: given width: 0..1000
   missing: importedClampWidth(width) <= 100
+UNKNOWN negative-import-patterns.ts:negativeImportedClassGetterNeedsThisGiven: return >= box.top
+  imported helper contract was not proven in source before this call could use it
+  helper: box.bottom (NegativeImportedClassBox) from ./negative-import-helpers
+  failed check: negative-import-helpers.ts:NegativeImportedClassBox.bottom: return >= this.top
+  known:
+    (this.top + this.height): -100..2000
+    this.top: 0..1000
+    assumed from input: given this.top: 0..1000
+    assumed from input: given this.height: -100..1000
+  missing fact: (this.top + this.height) >= this.top
+FAIL negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: box.bottom: requires this.height: 0..1000
+  caller passed: this.height: any number
+  missing: box.height: 0..1000
+UNKNOWN negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: return >= box.top
+  Imported call NegativeImportedClassBoxNeedsHeight.bottom precondition was not proven
 FAIL negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: return: 0..100
   range was 0..320 as barrelClampWidth(width), expected inside 0..100
   known:

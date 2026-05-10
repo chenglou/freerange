@@ -246,12 +246,52 @@ export function negativeScaleNeedsNonNegativeFactor(content: number, available: 
 }
 
 /** @fit
+ * given content * scale <= available * scale
+ * return <= available
+ */
+export function negativeScaleCancellationNeedsPositiveFactor(content: number, available: number, scale: number) {
+  void available
+  void scale
+  return content
+}
+
+/** @fit
+ * given content <= available
+ * return <= content * scale
+ */
+export function negativeScaleFlipNeedsNegativeFactor(content: number, available: number, scale: number) {
+  void content
+  return available * scale
+}
+
+/** @fit
+ * given available * scale <= content * scale
+ * return <= available
+ */
+export function negativeScaleCancellationNeedsNegativeFactor(content: number, available: number, scale: number) {
+  void available
+  void scale
+  return content
+}
+
+/** @fit
  * given index: int 0..10000
  * given count: int 0..1000
  * return < count
  */
 export function negativeModuloNeedsPositiveCount(index: number, count: number) {
   return index % count
+}
+
+/** @fit
+ * given left < right
+ * return.floorLeft < return.floorRight
+ */
+export function negativeRoundingDoesNotKeepStrictOrder(left: number, right: number) {
+  return {
+    floorLeft: Math.floor(left),
+    floorRight: Math.floor(right),
+  }
 }
 
 /** @fit
@@ -262,6 +302,16 @@ export function negativeModuloNeedsPositiveCount(index: number, count: number) {
 export function negativeGuardNeedsReturnOnSmallSide(width: number, minWidth: number) {
   if (width > minWidth) return width
   return width
+}
+
+/** @fit
+ * given x: -10..10
+ * given y: -10..10
+ * return >= 0
+ */
+export function negativeLogicalOrTrueOnlyCarriesOneSide(x: number, y: number) {
+  if (x >= 0 || y >= 0) return x + y
+  return 0
 }
 
 /** @fit
@@ -1322,6 +1372,16 @@ export function negativeIndexedConditionalPushIsNotSameLength(items: {height: nu
  */
 export function negativeFilteredRowsAreNotAlwaysSameLength(items: {height: number; visible: boolean}[]) {
   const rows = items.filter(item => item.visible)
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * return.rows[].height > 0
+ */
+export function negativeFilteredPredicateIsNotStrongerThanSource(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => item.height >= 0)
   return {rows}
 }
 

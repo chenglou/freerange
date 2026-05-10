@@ -491,13 +491,14 @@ function sourceImportSourceFromSymbol<TGlobal>(
   }
 }
 
-function isSourceImportDeclaration(node: ts.Declaration): node is ts.FunctionDeclaration | ts.VariableDeclaration | ts.ExportAssignment {
-  return ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node) || ts.isExportAssignment(node)
+function isSourceImportDeclaration(node: ts.Declaration): node is ts.FunctionDeclaration | ts.VariableDeclaration | ts.ClassDeclaration | ts.ExportAssignment {
+  return ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node) || ts.isClassDeclaration(node) || ts.isExportAssignment(node)
 }
 
-function sourceNameForDeclaration(declaration: ts.FunctionDeclaration | ts.VariableDeclaration | ts.ExportAssignment): string | null {
+function sourceNameForDeclaration(declaration: ts.FunctionDeclaration | ts.VariableDeclaration | ts.ClassDeclaration | ts.ExportAssignment): string | null {
   if (ts.isFunctionDeclaration(declaration)) return declaration.name?.text ?? (hasModifier(declaration, ts.SyntaxKind.DefaultKeyword) ? 'default' : null)
   if (ts.isVariableDeclaration(declaration)) return ts.isIdentifier(declaration.name) ? declaration.name.text : null
+  if (ts.isClassDeclaration(declaration)) return declaration.name?.text ?? (hasModifier(declaration, ts.SyntaxKind.DefaultKeyword) ? 'default' : null)
   return 'default'
 }
 

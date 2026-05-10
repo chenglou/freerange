@@ -76,6 +76,53 @@ export function auditConditionalSelector(
   )
 }
 
+export function auditBranchCondition(
+  expression: ts.Expression,
+  frame: InterpreterFrame,
+  evaluateExpression: (expression: ts.Expression, frame: InterpreterFrame) => Value,
+) {
+  const condition = unwrapExpression(expression)
+  if (!ts.isBinaryExpression(condition)) return
+  const op = comparisonOperator(condition.operatorToken.kind)
+  if (op == null) return
+  if (!isSideEffectFreeExpression(condition.left) || !isSideEffectFreeExpression(condition.right)) return
+
+  const left = evaluateExpression(condition.left, frame)
+  const right = evaluateExpression(condition.right, frame)
+  if (left.kind !== 'number' || right.kind !== 'number') return
+
+  const trueStatus = proveComparison(left, op, right, frame.assumptions)
+  if (trueStatus.status === 'pass') {
+    noteAudit(
+      frame,
+      `if (${expression.getText(frame.program.sourceFile)}): condition is always true`,
+      `${comparisonText(condition.left.getText(frame.program.sourceFile), op, condition.right.getText(frame.program.sourceFile))} is already known`,
+      expression,
+    )
+    return
+  }
+
+  const falseOp = negateComparison(op)
+  const falseStatus = proveComparison(left, falseOp, right, frame.assumptions)
+  if (falseStatus.status !== 'pass') return
+  noteAudit(
+    frame,
+    `if (${expression.getText(frame.program.sourceFile)}): condition is always false`,
+    `${comparisonText(condition.left.getText(frame.program.sourceFile), falseOp, condition.right.getText(frame.program.sourceFile))} is already known`,
+    expression,
+  )
+}
+
+export function auditNullishFallback(expression: ts.BinaryExpression, left: Value, frame: InterpreterFrame) {
+  if (left.kind === 'nullable' || left.kind === 'null' || left.kind === 'unknown') return
+  noteAudit(
+    frame,
+    `${expression.getText(frame.program.sourceFile)}: fallback does not affect the result`,
+    `${expression.left.getText(frame.program.sourceFile)} is proven present`,
+    expression,
+  )
+}
+
 function auditCoveredOperands(
   label: string,
   coveringOp: '>=' | '<=',

@@ -728,7 +728,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
     module: call.program,
     functionName: call.functionName,
     imported: call.imported,
-  }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings)
+  }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings, call.thisValue)
 }
 
 function evaluateInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext, evaluate: () => Value): Value {
@@ -1221,6 +1221,7 @@ function evaluateImportedFunctionCall(
   context: EvalContext,
   structuralFallback: Value | null,
   callSiteBindings: CallSiteBindings,
+  thisValue?: Value,
 ): Value {
   const specs = target.module.specsByFunction.get(target.functionName) ?? []
   const contractSpecs = functionContractSpecs(target.module, fn, specs)
@@ -1245,7 +1246,7 @@ function evaluateImportedFunctionCall(
     callText,
     argumentValues,
     context,
-    {record: true, callLine, callSiteBindings},
+    {record: true, callLine, thisValue, callSiteBindings},
     callContractEvaluators,
   )
   if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
@@ -1254,7 +1255,7 @@ function evaluateImportedFunctionCall(
     kind: 'imported',
     sourceFile: target.module.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), undefined, callSiteBindings, callContractEvaluators)
+  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), thisValue, callSiteBindings, callContractEvaluators)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {

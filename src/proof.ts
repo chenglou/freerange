@@ -138,6 +138,7 @@ function provesExprNonNegative(expression: string, strict: boolean, assumptions:
 
 function proofBackendContext(assumptions: LinearConstraint[]): ProofBackendContext {
   return {
+    assumptions,
     hasComparisonFact: (leftExpr, op, rightExpr) => hasComparisonFact(leftExpr, op, rightExpr, assumptions),
     provesExprNonNegative: (expression, strict) => provesExprNonNegative(expression, strict, assumptions),
   }

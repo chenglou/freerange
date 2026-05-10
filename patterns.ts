@@ -383,6 +383,38 @@ export function positiveScaleKeepsOrder(content: number, available: number, scal
 }
 
 /** @fit
+ * given scale > 0
+ * given content * scale <= available * scale
+ * return <= available
+ */
+export function positiveScaleCancellationKeepsOrder(content: number, available: number, scale: number) {
+  void available
+  void scale
+  return content
+}
+
+/** @fit
+ * given scale < 0
+ * given content <= available
+ * return <= content * scale
+ */
+export function negativeScaleFlipsOrder(content: number, available: number, scale: number) {
+  void content
+  return available * scale
+}
+
+/** @fit
+ * given scale < 0
+ * given available * scale <= content * scale
+ * return <= available
+ */
+export function negativeScaleCancellationKeepsOrder(content: number, available: number, scale: number) {
+  void available
+  void scale
+  return content
+}
+
+/** @fit
  * given width >= 100
  * given width <= 200
  * return >= 100
@@ -390,6 +422,36 @@ export function positiveScaleKeepsOrder(content: number, available: number, scal
  */
 export function comparisonOnlyGivenBounds(width: number) {
   return width
+}
+
+/** @fit
+ * given x: -10..10
+ * given y: -10..10
+ * return >= 0
+ */
+export function logicalAndGuardCarriesBothFacts(x: number, y: number) {
+  if (x >= 0 && y >= 0) return x + y
+  return 0
+}
+
+/** @fit
+ * given x: -10..10
+ * given y: -10..10
+ * return >= 0
+ */
+export function logicalOrExitCarriesBothFacts(x: number, y: number) {
+  if (x < 0 || y < 0) return 0
+  return x + y
+}
+
+/** @fit
+ * given x: -10..10
+ * given y: -10..10
+ * return >= 0
+ */
+export function logicalNotGuardCarriesFact(x: number, y: number) {
+  if (!(x < 0) && !(y < 0)) return x + y
+  return 0
 }
 
 /** @fit
@@ -403,6 +465,20 @@ export function positiveDivisionKeepsOrder(content: number, available: number, c
   return {
     cell: content / columns,
     maxCell: available / columns,
+  }
+}
+
+/** @fit
+ * given left <= right
+ * return.floorLeft <= return.floorRight
+ * return.ceilLeft <= return.ceilRight
+ */
+export function roundingKeepsNonStrictOrder(left: number, right: number) {
+  return {
+    floorLeft: Math.floor(left),
+    floorRight: Math.floor(right),
+    ceilLeft: Math.ceil(left),
+    ceilRight: Math.ceil(right),
   }
 }
 
@@ -1361,6 +1437,30 @@ export function indexedConditionalPushRows(items: {height: number; visible: bool
  */
 export function filteredRowsKeepElementDomain(items: {height: number; visible: boolean}[]) {
   const rows = items.filter(item => item.visible)
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * return.rows.length <= items.length
+ * return.rows[].height > 0
+ */
+export function filteredRowsCarryPredicate(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => item.height > 0)
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: -40..40
+ * return.rows.length <= items.length
+ * return.rows[].height >= 0
+ */
+export function filteredRowsCarryBlockPredicate(items: {height: number; visible: boolean}[]) {
+  const rows = items.filter(item => {
+    return item.height >= 0
+  })
   return {rows}
 }
 

@@ -1,7 +1,7 @@
 // Imported helper negative patterns. `bun run test` compares their
 // stable messages against negative-patterns.expected.txt.
 
-import unannotatedDefaultImportedClamp, {importedClampWithBadContract, importedTupleWithOneOffset, unannotatedImportedClamp} from './negative-import-helpers'
+import unannotatedDefaultImportedClamp, {NegativeImportedClassBox, NegativeImportedClassBoxNeedsHeight, importedClampWithBadContract, importedTupleWithOneOffset, unannotatedImportedClamp} from './negative-import-helpers'
 import {barrelClampWidth} from './import-pattern-barrel'
 import * as importPatternBarrel from './import-pattern-barrel'
 import {importedChromeX, importedClampWidth} from './import-pattern-helpers'
@@ -65,6 +65,22 @@ export function negativeImportedHelperSourceContractFails(width: number) {
  */
 export function negativeImportedHelperContractTooWide(width: number) {
   return importedClampWidth(width)
+}
+
+/** @fit
+ * given box.top: 0..1000
+ * return >= box.top
+ */
+export function negativeImportedClassGetterNeedsThisGiven(box: NegativeImportedClassBox) {
+  return box.bottom
+}
+
+/** @fit
+ * given box.top: 0..1000
+ * return >= box.top
+ */
+export function negativeImportedClassGetterNeedsCallerHeight(box: NegativeImportedClassBoxNeedsHeight) {
+  return box.bottom
 }
 
 /** @fit

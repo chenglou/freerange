@@ -13,7 +13,7 @@ bun install
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
-- `bun run fr check --audit path/to/file.ts` — advisory selector cleanup for redundant `Math.min`, `Math.max`, and exact min/max ternary choices; composes with `--annotations-only`
+- `bun run fr check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
 - `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
 - `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
@@ -51,7 +51,7 @@ bun install
 - [src/domain-paths.ts](./src/domain-paths.ts) — reusable reads/writes for Freerange domain paths inside abstract values
 - [src/shape-inspect.ts](./src/shape-inspect.ts) — dev-only shape comparison built from interpreter values and typed facts, not reparsed report strings
 - [src/interpreter/](./src/interpreter) — abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, `Math` primitives, value-path writes, and value-tree snapshot formatting
-- [src/interpreter/audit.ts](./src/interpreter/audit.ts) — advisory pure-selector audit for redundant min/max-style choices
+- [src/interpreter/audit.ts](./src/interpreter/audit.ts) — advisory audit for redundant min/max-style choices, always-known branch conditions, and redundant nullish fallbacks
 - [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
@@ -130,7 +130,7 @@ Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier.
 
 ## Selector Audit
 
-`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`: today it reports `Math.min`, `Math.max`, and exact min/max-shaped ternaries where a guard value or branch cannot affect the result. `--annotations-only --audit` keeps the annotated-function surface. This is separate from `audit:demos`, which summarizes redundant demo annotations.
+`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`: today it reports `Math.min`, `Math.max`, exact min/max-shaped ternaries, already-known `if` conditions, and `??` fallbacks where a guard value, branch, or fallback cannot affect the result. `--annotations-only --audit` keeps the annotated-function surface. This is separate from `audit:demos`, which summarizes redundant demo annotations.
 
 ## External Corpus Probes
 

@@ -36,13 +36,14 @@ infer matrix explicit undefined defaults
   return return.pos == 0
   return return.pos: int 0..0
 infer matrix for-of push visible rows
-  return return.length: 0 | 3
+  return return.length == rows.length
+  return return.length: int 0..3
   return return[].height == items[].height
   return return[].height: 2 | 4 | 6
   return return is an order-preserving subset of items
   local items.length: int 3..3
   local items[].height: 2 | 4 | 6
-  local rows.length: 0 | 3
+  local rows.length: int 0..3
   local rows[].height == items[].height
   local rows[].height: 2 | 4 | 6
   local rows is an order-preserving subset of items
@@ -56,6 +57,7 @@ infer matrix abstract for-of param rows
   local rows[].height == items[].height
   local rows follows items by index
 infer matrix abstract guarded for-of rows
+  return return.rows.length == rows.length
   return return.rows.length: int 0..Infinity
   return return.rows[].height == items[].height
   return return.rows is an order-preserving subset of items
@@ -115,6 +117,7 @@ infer matrix indexed array param rows
   local rows[].sourceIndex: int 0..19
   local rows follows items by index
 infer matrix indexed array guarded rows
+  return return.rows.length == rows.length
   return return.rows.length: int 0..20
   return return.rows[].height == items[i].height
   return return.rows[].height: 0..80
@@ -129,6 +132,7 @@ infer matrix indexed array guarded rows
 infer matrix indexed array guarded cursor values
   return return.bottom == runningSum(top, items.length, step)
   return return.bottom: 0..3000
+  return return.rows.length == rows.length
   return return.rows.length: int 0..50
   return return.rows[] == rows[]
   return return.rows[]: 0..3000

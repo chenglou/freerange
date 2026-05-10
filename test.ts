@@ -699,6 +699,27 @@ function size(width: number) {
 
   await withCliFixture({
     'audit.ts': `/** @fit
+ * given width: 10..99
+ * given fallback: 0..100
+ * return >= 0
+ */
+function size(width: number, fallback: number) {
+  let value = width
+  if (value < 1) value = 1
+  const resolved = value ?? fallback
+  return resolved
+}
+`,
+  }, dir => {
+    const audit = runFr(['check', '--audit', 'audit.ts'], dir)
+    expectCli(audit.exitCode === 0, 'expected branch/nullish audit fixture to pass', audit.output)
+    expectCli(audit.output.includes('AUDIT if (value < 1): condition is always false'), 'expected impossible branch audit', audit.output)
+    expectCli(audit.output.includes('AUDIT value ?? fallback: fallback does not affect the result'), 'expected redundant nullish fallback audit', audit.output)
+    expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 2 audit'), 'expected branch/nullish audit summary count', audit.output)
+  })
+
+  await withCliFixture({
+    'audit.ts': `/** @fit
  * given min <= mid
  * given mid <= width
  * return >= width

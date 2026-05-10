@@ -16,7 +16,7 @@ The current product pivot is adoption, not a bigger DSL: make `infer`, `check --
    Function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, loop reports, and helper-call obligations now run through the interpreter. Keep moving report wording toward the same fact inventory, and keep collapsing recognizers into typed fact/value queries when the boundary is obvious.
 
 2. **Make `infer`, `check --audit`, `audit:demos`, and reports the adoption loop.**
-   `infer` should be the factual inventory agents use before writing comments. Normal `check` proves written annotations and scans supported callsites to annotated helpers; `check --annotations-only` keeps the quieter local pass. `check --audit` should stay advisory and selector-shaped: pure choices where current facts prove one value or branch cannot change the result. `audit:demos` should point at redundant demo noise without auto-deleting public-looking contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
+   `infer` should be the factual inventory agents use before writing comments. Normal `check` proves written annotations and scans supported callsites to annotated helpers; `check --annotations-only` keeps the quieter local pass. `check --audit` should stay advisory and source-shaped: pure choices, always-known conditions, and present-side fallbacks where current facts prove one value or branch cannot change the result. `audit:demos` should point at redundant demo noise without auto-deleting public-looking contracts. Reports should bucket failures into missing input fact, unsupported source shape, helper boundary, or real proof gap.
    Project-wide `fr infer --all` is a stress test today, not a humane report: it can print a million-line self-hosting dump over interpreter internals. Keep file-scoped `fr infer file.ts` useful, but turn project-wide inventory into a summary view before treating it as public API: function counts, noisiest files/functions, top unsupported roots/reasons, and a pointer to rerun a focused function.
 
 3. **Move checker knowledge toward a typed fact layer.**
@@ -80,7 +80,7 @@ max(lines.width)
 count(visibleRows)
 ```
 
-No aggregate callbacks, inline arithmetic, or folds. Source-level `.filter(...)` is separate: it is only a subsequence summary, not a public aggregate language.
+No aggregate callbacks, inline arithmetic, or folds. Source-level `.filter(...)` is separate: it is a subsequence summary with direct true-side predicate facts, not a public aggregate language.
 
 Callback contracts stay out until real demo pressure says otherwise. Users can annotate concrete wrapper functions or claimed callback results; Freerange should not grow a public function-type spec language just because higher-order calls exist in TypeScript.
 
@@ -89,7 +89,7 @@ Callback contracts stay out until real demo pressure says otherwise. Users can a
 - Open-ended range spelling such as `int 1..` or `0..`. Keep `Infinity` until inline annotations are common enough that the visual noise matters.
 - Public views. They are likely right long-term, but only after field-name pressure appears across several domains.
 - Conditional helper contracts. Useful, but not just nicer comment placement.
-- Numeric and geometry atoms. Existing interval math, finite numeric sets, linear reduction, ceil/floor/modulo facts, positive scale/divide facts, `Math.min` / `Math.max`, and helper contracts cover a lot.
+- Numeric and geometry atoms. Existing interval math, finite numeric sets, linear reduction, ceil/floor/modulo facts, signed scale/divide facts, `Math.min` / `Math.max`, and helper contracts cover a lot.
 - Clamp atoms. Userland clamp works through helper contracts plus `Math.min` / `Math.max`.
 - `sameLength` as a primitive. Append and running-sum inference often prove length directly.
 - Exhaustive integer sweeps. Keep them out unless a finite-domain static proof clearly justifies the cost.
@@ -97,7 +97,7 @@ Callback contracts stay out until real demo pressure says otherwise. Users can a
 ## Known Big Gaps
 
 - No public views, public aggregate syntax, public callback contracts, or conditional postconditions.
-- No general loops, nonlinear solver, overload semantics, broad string operations, async, closures, imported class-member summaries, general generic value reasoning, branded-value reasoning, or precise mutation inference.
+- No general loops, nonlinear solver, overload semantics, broad string operations, async, closures, declaration-only class-member contracts, general generic value reasoning, branded-value reasoning, or precise mutation inference.
 - Import support stays local-source-first. Published packages, declaration-only imports without local source maps, summary files, and stale-summary policy are still out.
 - Wildcards stay conservative: one anonymous collection, same-index labels only with matching lengths, adjacent labels only over one collection with inferred sequence facts. All-pairs and source/id matching are unsupported.
 - TypeScript shape reading stays structural. Optional/rest tuple slots, unguarded optional/nullable values, broad strings, and huge types remain conservative unknowns.

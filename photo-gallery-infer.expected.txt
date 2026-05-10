@@ -135,10 +135,6 @@ assumptions:
   given data[].scale.b > 0
   given data[].fxFactor.k > 0
   given data[].fxFactor.b > 0
-unsupported:
-  unsupported hitTest1DMode line 225: Binary expression focused > 0 && 0 <= pointerX expected numbers
-  unsupported hitTest1DMode line 225: Binary expression focused > 0 && 0 <= pointerX /* might be -Infinity */ && pointerX <= hitArea1DSizeX expected numbers
-  unsupported hitTest1DMode > <conditional-false> line 226: Binary expression focused < data.length - 1 && pointerX >= windowSizeX - hitArea1DSizeX expected numbers
 
 function render
 locals:

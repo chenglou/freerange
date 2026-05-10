@@ -79,11 +79,32 @@ export function literalBoolean(value: Value): boolean | null {
 
 function refineCondition(frame: InterpreterFrame, condition: ts.Expression, truth: boolean, evaluateExpression: EvaluateRefinementExpression) {
   const current = unwrapExpression(condition)
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    refineCondition(frame, current.operand, !truth, evaluateExpression)
+    return
+  }
   if (ts.isBinaryExpression(current)) {
+    if (refineLogicalCondition(frame, current, truth, evaluateExpression)) return
     refineBinaryCondition(frame, current, truth, evaluateExpression)
     return
   }
   refineLiteralTruthiness(frame, current, truth, evaluateExpression)
+}
+
+function refineLogicalCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression): boolean {
+  if (expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
+    if (!truth) return false
+    refineCondition(frame, expression.left, true, evaluateExpression)
+    refineCondition(frame, expression.right, true, evaluateExpression)
+    return true
+  }
+  if (expression.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
+    if (truth) return false
+    refineCondition(frame, expression.left, false, evaluateExpression)
+    refineCondition(frame, expression.right, false, evaluateExpression)
+    return true
+  }
+  return false
 }
 
 function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression) {

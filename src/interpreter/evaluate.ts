@@ -151,7 +151,7 @@ import {
   isForgettableReadExpression,
 } from './forgettable-loop.ts'
 import {evaluateMathCall} from './math.ts'
-import {auditConditionalSelector} from './audit.ts'
+import {auditBranchCondition, auditConditionalSelector, auditNullishFallback} from './audit.ts'
 import {
   blockScopedNames,
   forOfBodyScopedNames,
@@ -588,6 +588,7 @@ function evaluateIfStatement(
   continuation?: ts.NodeArray<ts.Statement>,
   nextIndex = 0,
 ): InterpreterFlow {
+  auditBranchCondition(statement.expression, auditReadFrame(frame), evaluateExpression)
   const truth = literalBoolean(evaluateExpression(statement.expression, frame))
   if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
@@ -851,6 +852,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
     if (bodyError != null) return {kind: 'return', value: bodyError}
     const error = finalizeLoopEffectsAndGuardedPushes(loop, effects, guardedPushes, 'Abstract for..of', frame)
     if (error != null) return {kind: 'return', value: error}
+    finalizeSymbolicLoopAppendedArrays(loop, frame)
     addLoopFactRoots(claim, loop, effects, guardedPushes)
   } finally {
     frame.loopStack.pop()
@@ -882,6 +884,24 @@ function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: Interprete
   const flow = evaluateIfStatement(statement, frame)
   if (flow.kind === 'fallthrough') return null
   return flow.kind === 'return' ? flow.value : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported', statement)
+}
+
+function finalizeSymbolicLoopAppendedArrays(loop: LoopFrame, frame: InterpreterFrame) {
+  const seen = new Set<string>()
+  for (const append of loop.appends) {
+    if (seen.has(append.arrayName)) continue
+    seen.add(append.arrayName)
+    if (!append.conditional) continue
+    const value = frame.env.get(append.arrayName)
+    if (value?.kind !== 'array') continue
+    const length = conditionalPushLength(append.arrayName, loop.source.length, append.base.length)
+    addLengthAtMostSourceFact(length, loop.source.length, frame)
+    frame.env.set(append.arrayName, {
+      ...value,
+      length,
+      elements: null,
+    })
+  }
 }
 
 function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -1275,10 +1295,14 @@ function finalizeIndexedAppendedArrays(records: Map<string, IndexedAppendRecord>
   for (const record of records.values()) {
     const value = readPath(record.path, frame)
     if (value.kind !== 'array') continue
+    const length = record.conditional && record.initialEmpty && origin != null
+      ? conditionalPushLength(valuePathExpression(record.path), origin.source.length)
+      : value.length
+    if (length !== value.length && origin != null) addLengthAtMostSourceFact(length, origin.source.length, frame)
     const summary = origin != null && record.count === 1 && record.initialEmpty
       ? mergeArraySummary(value.summary, emptyArraySummary(record.conditional ? filterOrigin(origin.source, origin.sourceExpr) : mapOrigin(origin.source, origin.sourceExpr)))
       : value.summary
-    writePath(record.path, {...value, elements: null, summary}, frame)
+    writePath(record.path, {...value, length, elements: null, summary}, frame)
   }
 }
 
@@ -1320,6 +1344,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isElementAccessExpression(expression)) return evaluateElementAccess(expression, frame)
   if (ts.isObjectLiteralExpression(expression)) return evaluateObjectLiteral(expression, frame)
   if (ts.isArrayLiteralExpression(expression)) return evaluateArrayLiteral(expression, frame)
+  if (ts.isVoidExpression(expression)) return evaluateVoidExpression(expression, frame)
   if (ts.isPrefixUnaryExpression(expression)) return evaluatePrefixUnary(expression, frame)
   if (ts.isTypeOfExpression(expression)) return evaluateTypeOfExpression(expression, frame)
   if (ts.isBinaryExpression(expression)) return evaluateBinaryExpression(expression, frame)
@@ -1327,6 +1352,11 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isCallExpression(expression)) return evaluateCallExpression(expression, frame)
   if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet', expression)
   return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`, expression)
+}
+
+function evaluateVoidExpression(expression: ts.VoidExpression, frame: InterpreterFrame): Value {
+  evaluateExpression(expression.expression, frame)
+  return nullValue('undefined')
 }
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
@@ -1345,20 +1375,21 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   const getter = classMemberFunctionForPropertyAccess(expression, frame)
   if (getter != null && ts.isGetAccessorDeclaration(getter.fn.node)) {
     const receiver = evaluateExpression(expression.expression, frame)
-    const fallback = valueFromFunctionReturnShape(expression.getText(frame.program.sourceFile), getter.fn.node, frame.program)
+    const fallback = valueFromFunctionReturnShape(expression.getText(frame.program.sourceFile), getter.fn.node, getter.program)
     const hooked = evaluateHookedCall({
       expression,
       callName: expression.getText(frame.program.sourceFile),
-      program: frame.program,
+      program: getter.program,
       functionName: getter.functionName,
       fn: getter.fn,
       argumentValues: [],
       fallback,
+      ...(getter.imported == null ? {} : {imported: getter.imported}),
       thisValue: receiver,
     }, frame)
     if (hooked != null) return hooked
     return valueWithStructuralFallback(
-      invokeFitFunction(getter.fn, [], frame, frame.program, rootFrame(frame.program).env, receiver),
+      invokeFitFunction(getter.fn, [], frame, getter.program, rootFrame(getter.program).env, receiver),
       fallback,
     )
   }
@@ -1574,6 +1605,7 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
 }
 
 function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: InterpreterFrame): Value {
+  if (expression.operator === ts.SyntaxKind.ExclamationToken) return evaluateLogicalNot(expression, frame)
   const value = evaluateExpression(expression.operand, frame)
   if (value.kind !== 'number') return noteUnsupported(frame, `Unary ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (expression.operator === ts.SyntaxKind.PlusToken) return value
@@ -1605,6 +1637,7 @@ function absentTypeOfValues(absent: 'null' | 'undefined' | 'nullish'): string[] 
 function evaluateBinaryExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
   if (isAssignmentOperator(expression.operatorToken.kind)) return evaluateAssignmentExpression(expression, frame)
   if (isComparisonOperator(expression.operatorToken.kind)) return evaluateComparisonExpression(expression, frame)
+  if (isLogicalOperator(expression.operatorToken.kind)) return evaluateLogicalExpression(expression, frame)
   if (expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return evaluateNullishCoalescing(expression, frame)
   const left = evaluateExpression(expression.left, frame)
   const right = evaluateExpression(expression.right, frame)
@@ -1614,10 +1647,50 @@ function evaluateBinaryExpression(expression: ts.BinaryExpression, frame: Interp
   return evaluateNumberBinary(expression.operatorToken.kind, left, right, frame, expression)
 }
 
+function evaluateLogicalNot(expression: ts.PrefixUnaryExpression, frame: InterpreterFrame): Value {
+  const values = truthinessValues(evaluateExpression(expression.operand, frame))
+  if (values == null) return noteUnsupported(frame, `Logical expression ${expression.getText(frame.program.sourceFile)} expected a boolean-like value`, expression)
+  return literalValue(uniqueBooleanValues(values.map(value => !value)), expression.getText(frame.program.sourceFile))
+}
+
+function evaluateLogicalExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
+  const leftValues = truthinessValues(evaluateExpression(expression.left, frame))
+  if (leftValues == null) return noteUnsupported(frame, `Logical expression ${expression.getText(frame.program.sourceFile)} expected boolean-like values`, expression)
+  const rightValues = truthinessValues(evaluateExpression(expression.right, frame))
+  if (rightValues == null) return noteUnsupported(frame, `Logical expression ${expression.getText(frame.program.sourceFile)} expected boolean-like values`, expression)
+  const values: boolean[] = []
+  for (const left of leftValues) {
+    for (const right of rightValues) {
+      values.push(expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ? left && right : left || right)
+    }
+  }
+  return literalValue(uniqueBooleanValues(values), expression.getText(frame.program.sourceFile))
+}
+
+function isLogicalOperator(kind: ts.SyntaxKind) {
+  return kind === ts.SyntaxKind.AmpersandAmpersandToken || kind === ts.SyntaxKind.BarBarToken
+}
+
+function truthinessValues(value: Value): boolean[] | null {
+  if (value.kind === 'literal') return uniqueBooleanValues(value.values.map(Boolean))
+  if (value.kind === 'null') return [false]
+  if (value.kind === 'number') {
+    if (value.min > 0 || value.max < 0) return [true]
+    if (value.min === 0 && value.max === 0) return [false]
+    return [true, false]
+  }
+  return null
+}
+
+function uniqueBooleanValues(values: boolean[]) {
+  return [...new Set(values)]
+}
+
 function evaluateNullishCoalescing(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
   const left = evaluateExpression(expression.left, frame)
   if (left.kind === 'nullable') return joinValues(left.present, evaluateExpression(expression.right, frame))
   if (left.kind === 'null') return evaluateExpression(expression.right, frame)
+  auditNullishFallback(expression, left, frame)
   return left
 }
 
@@ -1811,9 +1884,10 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       const receiver = evaluateExpression(target.expression, frame)
       return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), {
         kind: 'function',
-        program: frame.program,
+        program: member.program,
         functionName: member.functionName,
         fn: member.fn,
+        ...(member.imported == null ? {} : {imported: member.imported}),
       }, fallback, frame, receiver)
     }
   }
@@ -2042,16 +2116,42 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   const sourceExpr = sourceExpression(source, target.expression, frame)
   const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
   const length = numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`)
+  const element = filteredElement(source, sourceExpr, callbackFn, frame)
   addLengthAtMostSourceFact(length, source.length, frame)
   return {
     kind: 'array',
     layout: 'collection',
     length,
     elements: null,
-    element: source.element,
+    element,
     expr: expression.getText(frame.program.sourceFile),
     summary,
   }
+}
+
+function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
+  const element = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const predicate = callbackPredicateExpression(callbackFn)
+  if (predicate == null) return source.element
+  const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
+  bindParameters(callbackFn.parameters, [element, undefined, source], callbackFrame)
+  const itemName = firstIdentifierParameterName(callbackFn)
+  if (itemName == null) return source.element
+  const trueFrame = branchFrame(callbackFrame, predicate, true, '<filter-true>', evaluateExpression)
+  const refined = trueFrame.env.get(itemName)
+  return refined == null ? source.element : valueWithAssumptions(refined, trueFrame.assumptions)
+}
+
+function callbackPredicateExpression(callbackFn: ArrayCallbackFunction): ts.Expression | null {
+  if (ts.isArrowFunction(callbackFn) && ts.isExpression(callbackFn.body)) return callbackFn.body
+  if (callbackFn.body == null || !ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
+  const statement = callbackFn.body.statements[0]!
+  return ts.isReturnStatement(statement) ? statement.expression ?? null : null
+}
+
+function firstIdentifierParameterName(callbackFn: ArrayCallbackFunction): string | null {
+  const first = callbackFn.parameters[0]
+  return first != null && ts.isIdentifier(first.name) ? first.name.text : null
 }
 
 function addLengthAtMostSourceFact(length: NumberValue, sourceLength: NumberValue, frame: InterpreterFrame) {
@@ -2133,15 +2233,28 @@ function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame):
   return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
 }
 
-function classMemberFunctionForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {functionName: string; fn: FitFunction} | null {
-  const className = classNameForPropertyAccess(access, frame)
-  if (className == null) return null
+function classMemberFunctionForPropertyAccess(
+  access: ts.PropertyAccessExpression,
+  frame: InterpreterFrame,
+): {program: Program; functionName: string; fn: FitFunction; imported?: {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>}} | null {
+  const member = classMemberForPropertyAccess(access, frame)
+  if (member == null) return null
+  const program = programForClassMember(member.declaration, frame)
+  if (program == null) return null
+  const className = member.className
   const functionName = `${className}.${access.name.text}`
-  const fn = frame.program.functions.get(functionName)
-  return fn == null ? null : {functionName, fn}
+  const fn = program.functions.get(functionName)
+  if (fn == null) return null
+  const imported = program === frame.program ? null : importedClassBinding(className, program, frame.program)
+  return {
+    program,
+    functionName,
+    fn,
+    ...(imported == null ? {} : {imported}),
+  }
 }
 
-function classNameForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): string | null {
+function classMemberForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {className: string; declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null} | null {
   const checker = frame.program.typeChecker
   const symbol = checker?.getSymbolAtLocation(access.name)
   const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
@@ -2151,15 +2264,45 @@ function classNameForPropertyAccess(access: ts.PropertyAccessExpression, frame: 
     && ts.isClassDeclaration(declaration.parent)
     && declaration.parent.name != null
   ) {
-    return declaration.parent.name.text
+    return {className: declaration.parent.name.text, declaration}
   }
 
   if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
     const current = frame.stack.at(-1)
     const dot = current?.indexOf('.') ?? -1
-    if (current != null && dot > 0) return current.slice(0, dot)
+    if (current != null && dot > 0) return {className: current.slice(0, dot), declaration: null}
   }
 
+  return null
+}
+
+function programForClassMember(declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null, frame: InterpreterFrame): Program | null {
+  if (declaration == null) return frame.program
+  const sourceFile = declaration.getSourceFile()
+  if (sameProgramSourceFile(frame.program, sourceFile)) return frame.program
+  return importedPrograms(frame.program).find(program => sameProgramSourceFile(program, sourceFile)) ?? null
+}
+
+function importedPrograms(program: Program): Program[] {
+  const programs: Program[] = []
+  for (const binding of program.imports.values()) {
+    if (binding.kind === 'resolved' || binding.kind === 'namespace') programs.push(binding.module)
+    if (binding.kind !== 'namespace') continue
+    for (const member of binding.members.values()) programs.push(member.module)
+  }
+  return programs
+}
+
+function sameProgramSourceFile(program: Program, sourceFile: ts.SourceFile) {
+  return program.sourceFile === sourceFile || program.sourceId === sourceFile.fileName
+}
+
+function importedClassBinding(className: string, classProgram: Program, callerProgram: Program): {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>} | null {
+  for (const [localName, binding] of callerProgram.imports) {
+    if (binding.kind !== 'resolved') continue
+    if (binding.module !== classProgram) continue
+    if (binding.sourceName === className || binding.importedName === className) return {localName, binding}
+  }
   return null
 }
 

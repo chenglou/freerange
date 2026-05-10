@@ -14,6 +14,32 @@ export function importedClampWithBadContract(width: number) {
   return Math.min(width, 320)
 }
 
+export class NegativeImportedClassBox {
+  constructor(public top: number, public height: number) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: -100..1000
+   * return >= this.top
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+}
+
+export class NegativeImportedClassBoxNeedsHeight {
+  constructor(public top: number, public height: number) {}
+
+  /** @fit
+   * given this.top: 0..1000
+   * given this.height: 0..1000
+   * return >= this.top
+   */
+  get bottom() {
+    return this.top + this.height
+  }
+}
+
 export type ImportedOptionalRows = {
   rows?: {height: number}[]
 }

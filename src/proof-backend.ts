@@ -26,6 +26,7 @@ export type ComparisonGoal = {
 }
 
 export type ProofBackendContext = {
+  assumptions: LinearConstraint[]
   hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string): boolean
   provesExprNonNegative(expression: string, strict: boolean): boolean
 }
@@ -133,10 +134,13 @@ type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) 
 const comparisonProofRules: ComparisonProofRule[] = [
   evaluateChoiceOperandBound,
   evaluateRoundingBound,
+  evaluateRoundingMonotonicity,
   evaluateModuloBelowDivisor,
   evaluateRunningSumAtLeastStart,
   evaluateRunningSumMinusTrailingGapAtLeastStart,
-  evaluatePositiveScaleMonotonicity,
+  evaluatePositiveScaleCancellation,
+  evaluateNegativeScaleCancellation,
+  evaluateScaleMonotonicity,
   evaluateFlattenedGridIndexBelowCount,
   evaluateFloorDivisionBelowCount,
   evaluateCeilDivisionCoversTotal,
@@ -171,6 +175,22 @@ function evaluateRoundingBound(goal: ComparisonGoal): ProofBackendResult | null 
   const rightFloor = callArg(goal.right.expr, 'floor')
   if (goal.op === '>=' && rightFloor != null && sameExpressionText(goal.left.expr, rightFloor)) return {status: 'pass'}
   return null
+}
+
+function evaluateRoundingMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null || lessGoal.op !== '<=') return null
+  const shape = matchingUnaryCall(lessGoal.leftExpr, lessGoal.rightExpr, 'floor')
+    ?? matchingUnaryCall(lessGoal.leftExpr, lessGoal.rightExpr, 'ceil')
+  if (shape == null) return null
+  if (context.hasComparisonFact(shape.left, '<=', shape.right)) return {status: 'pass'}
+  return {status: 'blocked', missing: `${publicFitText(shape.left)} <= ${publicFitText(shape.right)}`}
+}
+
+function matchingUnaryCall(leftExpr: string, rightExpr: string, name: 'floor' | 'ceil'): {left: string; right: string} | null {
+  const left = callArg(leftExpr, name)
+  const right = callArg(rightExpr, name)
+  return left == null || right == null ? null : {left, right}
 }
 
 function evaluateModuloBelowDivisor(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
@@ -240,13 +260,39 @@ function incrementHasNonNegativeRemainder(increment: string, gap: string, contex
   return base != null && context.provesExprNonNegative(base, false)
 }
 
-function evaluatePositiveScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null) return null
-  const obligations = positiveMonotoneObligations(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context)
+  const obligations = [
+    ...positiveMonotoneObligations(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context),
+    ...negativeProductObligations(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context),
+  ]
   if (obligations.length === 0) return null
-  if (obligations.some(obligation => obligation.factorProven && obligation.baseProven)) return {status: 'pass'}
-  return {status: 'blocked', missing: monotoneMissing(obligations[0]!)}
+  const passing = obligations.find(obligation => obligation.factorProven && obligation.baseProven)
+  if (passing != null) return {status: 'pass'}
+  return {status: 'blocked', missing: monotoneMissing(obligations.find(obligation => obligation.baseProven || obligation.factorProven) ?? obligations[0]!)}
+}
+
+function evaluatePositiveScaleCancellation(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null) return null
+  for (const factor of cancellationFactors(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context, 'positive')) {
+    if (context.hasComparisonFact(factor, '<=', '0')) continue
+    if (context.provesExprNonNegative(factor, true)) return {status: 'pass'}
+    return {status: 'blocked', missing: `${publicFitText(factor)} > 0`}
+  }
+  return null
+}
+
+function evaluateNegativeScaleCancellation(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null) return null
+  for (const factor of cancellationFactors(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context, 'negative')) {
+    if (context.hasComparisonFact(factor, '>=', '0')) continue
+    if (context.hasComparisonFact(factor, '<', '0')) return {status: 'pass'}
+    return {status: 'blocked', missing: `${publicFitText(factor)} < 0`}
+  }
+  return null
 }
 
 function comparisonLessGoal(goal: ComparisonGoal): {leftExpr: string; op: '<=' | '<'; rightExpr: string} | null {
@@ -342,7 +388,7 @@ function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ProofBac
   return {status: 'blocked', missing: `${shape.count} > 0`}
 }
 
-type PositiveMonotoneObligation = {
+type ScaleMonotoneObligation = {
   factorNeed: string
   factorProven: boolean
   baseNeed: string
@@ -356,7 +402,7 @@ function positiveMonotoneObligations(leftExpr: string, op: '<=' | '<', rightExpr
   ]
 }
 
-function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): PositiveMonotoneObligation[] {
+function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
   const leftDivision = binaryExpression(leftExpr, '/')
   const rightDivision = binaryExpression(rightExpr, '/')
   if (leftDivision == null || rightDivision == null || !sameExpressionText(leftDivision.right, rightDivision.right)) return []
@@ -368,11 +414,11 @@ function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr
   }]
 }
 
-function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): PositiveMonotoneObligation[] {
+function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
   const leftProduct = productFactors(leftExpr)
   const rightProduct = productFactors(rightExpr)
   if (leftProduct == null || rightProduct == null) return []
-  const obligations: PositiveMonotoneObligation[] = []
+  const obligations: ScaleMonotoneObligation[] = []
   for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
     for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
       const leftFactor = leftProduct[leftIndex]!
@@ -380,6 +426,7 @@ function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr:
       if (!sameExpressionText(leftFactor, rightFactor)) continue
       const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
       const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
+      if (context.hasComparisonFact(leftFactor, '<', '0')) continue
       obligations.push({
         factorNeed: `${leftFactor} ${op === '<' ? '>' : '>='} 0`,
         factorProven: context.provesExprNonNegative(leftFactor, op === '<'),
@@ -391,7 +438,86 @@ function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr:
   return obligations
 }
 
-function monotoneMissing(obligation: PositiveMonotoneObligation) {
+function negativeProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
+  const leftProduct = productFactors(leftExpr)
+  const rightProduct = productFactors(rightExpr)
+  if (leftProduct == null || rightProduct == null) return []
+  const obligations: ScaleMonotoneObligation[] = []
+  for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
+    for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
+      const leftFactor = leftProduct[leftIndex]!
+      const rightFactor = rightProduct[rightIndex]!
+      if (!sameExpressionText(leftFactor, rightFactor)) continue
+      if (context.hasComparisonFact(leftFactor, '>=', '0')) continue
+      const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
+      const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
+      obligations.push({
+        factorNeed: `${leftFactor} < 0`,
+        factorProven: context.hasComparisonFact(leftFactor, '<', '0'),
+        baseNeed: `${rightBase} ${op} ${leftBase}`,
+        baseProven: context.hasComparisonFact(rightBase, op, leftBase),
+      })
+    }
+  }
+  return obligations
+}
+
+function cancellationFactors(
+  goalLeft: string,
+  goalOp: '<=' | '<',
+  goalRight: string,
+  context: ProofBackendContext,
+  sign: 'positive' | 'negative',
+): string[] {
+  const factors: string[] = []
+  for (const assumption of context.assumptions) {
+    for (const shape of assumptionLessShapes(assumption)) {
+      if (!comparisonFactIsStrongEnough(shape.op, goalOp)) continue
+      const leftProduct = productFactors(shape.left)
+      const rightProduct = productFactors(shape.right)
+      if (leftProduct == null || rightProduct == null) continue
+      for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
+        for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
+          const leftFactor = leftProduct[leftIndex]!
+          const rightFactor = rightProduct[rightIndex]!
+          if (!sameExpressionText(leftFactor, rightFactor)) continue
+          const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
+          const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
+          const matches = sign === 'positive'
+            ? sameExpressionText(leftBase, goalLeft) && sameExpressionText(rightBase, goalRight)
+            : sameExpressionText(leftBase, goalRight) && sameExpressionText(rightBase, goalLeft)
+          if (matches) factors.push(leftFactor)
+        }
+      }
+    }
+  }
+  return factors
+}
+
+function assumptionLessShapes(assumption: LinearConstraint): {left: string; op: '<=' | '<'; right: string}[] {
+  if (assumption.leftExpr == null || assumption.rightExpr == null) return []
+  switch (assumption.op) {
+    case '<=':
+      return [{left: assumption.leftExpr, op: '<=', right: assumption.rightExpr}]
+    case '<':
+      return [{left: assumption.leftExpr, op: '<', right: assumption.rightExpr}]
+    case '>=':
+      return [{left: assumption.rightExpr, op: '<=', right: assumption.leftExpr}]
+    case '>':
+      return [{left: assumption.rightExpr, op: '<', right: assumption.leftExpr}]
+    case '==':
+      return [
+        {left: assumption.leftExpr, op: '<=', right: assumption.rightExpr},
+        {left: assumption.rightExpr, op: '<=', right: assumption.leftExpr},
+      ]
+  }
+}
+
+function comparisonFactIsStrongEnough(actual: '<=' | '<', needed: '<=' | '<') {
+  return actual === needed || (actual === '<' && needed === '<=')
+}
+
+function monotoneMissing(obligation: ScaleMonotoneObligation) {
   if (obligation.baseProven) return obligation.factorNeed
   if (obligation.factorProven) return obligation.baseNeed
   return `${obligation.factorNeed} and ${obligation.baseNeed}`

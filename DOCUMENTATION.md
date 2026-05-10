@@ -42,7 +42,7 @@ helper contract // a helper function's own `@fit` block, proven once and used as
 imported contract // an exported helper contract from local source, reached through TypeScript module resolution or a local declaration map.
 atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
 infer // `fr infer path`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
-audit // `fr check --audit path`. It prints advisory selector cleanup when Freerange can prove a `Math.min`, `Math.max`, or exact min/max ternary choice does not affect the result.
+audit // `fr check --audit path`. It prints advisory cleanup when Freerange can prove a selector, branch condition, or nullish fallback does not affect the result.
 shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
 ```
 
@@ -112,12 +112,14 @@ Use `--audit` when you want advisory cleanup:
 fr check --audit path/to/file.ts
 ```
 
-Today this audits pure selector shapes: `Math.min`, `Math.max`, and exact
-min/max-shaped ternaries like `width < max ? width : max`. If a guard value or
-branch cannot change the result under the current facts, Freerange prints an
-`AUDIT` line and still exits successfully. `--annotations-only --audit` keeps
-the quieter annotated-function surface. Freerange does not yet audit userland
-clamp helpers, assignment-style clamps, or arbitrary dead code.
+Today this audits pure selector shapes: `Math.min`, `Math.max`, exact
+min/max-shaped ternaries like `width < max ? width : max`, `if` conditions
+that are already always true or false, and `??` fallbacks whose left side is
+already proven present. If a guard value, branch, or fallback cannot change the
+result under the current facts, Freerange prints an `AUDIT` line and still exits
+successfully. `--annotations-only --audit` keeps the quieter annotated-function
+surface. Freerange does not yet audit arbitrary dead code or treat a userland
+clamp helper call as a single public audit shape.
 
 `fr infer path/to/file.ts` prints facts Freerange inferred about each function's
 return, surviving locals, and supported loops. It also shows which explicit
@@ -771,6 +773,8 @@ Some layout facts are built in because they show up everywhere:
 ```ts
 Math.floor(x) <= x
 Math.ceil(x) >= x
+Math.floor(a) <= Math.floor(b) // when a <= b
+Math.ceil(a) <= Math.ceil(b) // when a <= b
 Math.ceil(total / count) * count >= total // when count > 0
 Math.floor(pointer / cellSize) < count // when cellSize > 0 and pointer < count * cellSize
 Math.floor(y / cell) * countX + Math.floor(x / cell) < countX * countY // when both coordinates are inside a positive integer grid
@@ -780,6 +784,21 @@ index % count < count
 Comparison facts compose transitively. If source or checked helper contracts give
 `a <= b` and `b <= c`, Freerange can use that to prove `a <= c`; strict checks
 still need a strict edge somewhere in the chain.
+
+Shared factors also use the sign Freerange can prove. A non-negative factor
+preserves non-strict order, a positive factor can be cancelled, and a negative
+factor flips order:
+
+```ts
+content <= available
+// proves content * scale <= available * scale when scale >= 0
+
+content * scale <= available * scale
+// proves content <= available when scale > 0
+
+content <= available
+// proves available * scale <= content * scale when scale < 0
+```
 
 `Math.min`, `Math.max`, and `Math.sign` keep the small branch facts they introduce:
 
@@ -845,7 +864,7 @@ function caller(width: number) {
 }
 ```
 
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Same-file class methods and getters work the same way, with the receiver bound to `this`. Freerange keeps the caller's bottomed-out numeric expressions through local aliases and helper parameters, so a local `const max = cols - w` can satisfy a helper's `given min <= max` from `given w <= params.cols`. Reports and inferred facts use those caller-side expressions too: if the helper cannot prove `max >= min`, the caller sees `cols - w >= 0`, not a private helper name. It may use a proven summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
+Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Class methods and getters work the same way, with the receiver bound to `this`; this works for same-file classes and imported local-source classes. Freerange keeps the caller's bottomed-out numeric expressions through local aliases and helper parameters, so a local `const max = cols - w` can satisfy a helper's `given min <= max` from `given w <= params.cols`. Reports and inferred facts use those caller-side expressions too: if the helper cannot prove `max >= min`, the caller sees `cols - w >= 0`, not a private helper name. It may use a proven summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
 
 Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `return.length == 4`, `return[2] >= 0`, and `return[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
 
@@ -873,7 +892,7 @@ function cardWidth(width: number) {
 }
 ```
 
-Freerange follows named imports, default imports, namespace-qualified helper calls, and `export *` source barrels that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
+Freerange follows named imports, default imports, namespace-qualified helper calls, and `export *` source barrels that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function or class member's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
 
 Ordinary top-level `const` bindings of known helpers work too:
 
@@ -1022,7 +1041,7 @@ Supported today:
 - Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, clear mutation statements whose changed roots can be forgotten, side-effect-free return branches, and a final `return`
-- `items.filter(item => predicate)` for same item fields and `filtered.length <= items.length`
+- `items.filter(item => predicate)` for same item fields, simple predicate-carried item facts, and `filtered.length <= items.length`
 - map/filter chains preserve the base origin fact for `fr infer`, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 - same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
@@ -1076,7 +1095,19 @@ function visibleRows(items: {height: number; visible: boolean}[]) {
 }
 ```
 
-Freerange treats this as a subsequence: same item domain, length between zero and the source length. It does not prove `rows.length == items.length`, and it does not reason about the predicate beyond requiring a simple side-effect-free expression. `fr infer` prints this as an order-preserving subset fact.
+Freerange treats this as a subsequence: same item domain, length between zero and the source length. For expression-bodied predicates and one-line `return` block predicates, it carries the true-side item facts onto the filtered element:
+
+```ts
+/** @fit
+ * given items[].height: -40..40
+ * return.rows[].height > 0
+ */
+function positiveRows(items: {height: number}[]) {
+  return {rows: items.filter(item => item.height > 0)}
+}
+```
+
+It still does not prove `rows.length == items.length`, and it does not expose a public callback contract language. `fr infer` prints this as an order-preserving subset fact.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
@@ -1344,7 +1375,7 @@ The checker understands a small pure subset:
 - direct same-file function calls, class method calls, and class getter reads
 - named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
 - same-file return type shapes when a helper body is outside the source subset
-- named imports of exported top-level `const` literals, plus named/default/namespace-qualified/star-barrel exported `@fit` functions when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
+- named imports of exported top-level `const` literals, plus named/default/namespace-qualified/star-barrel exported `@fit` functions and imported class methods/getters when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
 - TypeScript-known imported object/array shape, without treating it as a checked helper contract; source-backed imported type-field comments are checked as type contracts
 - explicit named re-exports of checked `@fit` functions
 - object literals with normal properties, shorthand properties, and object spread
@@ -1352,7 +1383,7 @@ The checker understands a small pure subset:
 - array literals, spread, `.length`, summarized element values, bounded indexing, and exact tuple/product-slot indexing
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
-- expression-bodied `items.filter(...)` as a subsequence summary with same item domain and length no larger than source length
+- expression-bodied `items.filter(...)` as a subsequence summary with same item domain, simple true-side predicate facts, and length no larger than source length
 - composed map/filter origin facts in `fr infer`
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
@@ -1363,7 +1394,7 @@ The checker understands a small pure subset:
 - guarded conditional pushes inside supported `for...of` and indexed loops, including simple cursor updates in the guarded block
 - guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations
 - same-index labels in comparisons, plus adjacent `$i + 1` comparisons backed by inferred sequence facts
-- shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor is non-negative
+- shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor sign, including positive cancellation and negative order flipping
 - conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
 - conservative skipping for unsupported indexed-style `for`, `while`, and `do while` loops whose conditions and bodies are read-only except for roots Freerange forgets
 
