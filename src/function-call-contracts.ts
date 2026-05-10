@@ -79,6 +79,8 @@ type CallPreconditionStatus = {
   detail?: FitCheckDetail
 }
 
+type SummaryComparisonFact = NonNullable<ReturnType<typeof comparisonConstraint>>
+
 export function verifyCallGivenSpecs(
   calleeProgram: Program,
   fn: FitFunction,
@@ -392,6 +394,16 @@ function applySummaryComparisonSpec(
   const leftPath = simpleResultPathText(spec.left)
   const rightPath = simpleResultPathText(spec.right)
   const fact = checkedContractFact(source, spec.text)
+  if (leftPath != null && rightPath != null) {
+    const left = evaluators.evaluateSpecExpression(spec.left, context)
+    const right = evaluators.evaluateSpecExpression(spec.right, context)
+    if (left.kind !== 'number' || right.kind !== 'number') return
+    const summaryFact = comparisonConstraint(left, spec.op, right, fact, 'contract')
+    if (summaryFact == null) return
+    applySummaryFactToPath(env, context, leftPath, summaryFact, fact, evaluators)
+    applySummaryFactToPath(env, context, rightPath, summaryFact, fact, evaluators)
+    return
+  }
   if (leftPath != null && rightPath == null) {
     const right = evaluators.evaluateSpecExpression(spec.right, context)
     if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact, evaluators)
@@ -401,6 +413,19 @@ function applySummaryComparisonSpec(
     const left = evaluators.evaluateSpecExpression(spec.left, context)
     if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left, fact, evaluators)
   }
+}
+
+function applySummaryFactToPath(
+  env: Map<string, Value>,
+  context: EvalContext,
+  path: string,
+  summaryFact: SummaryComparisonFact,
+  fact: string,
+  evaluators: CallContractEvaluators,
+) {
+  const current = evaluators.evaluateSpecExpression(path, context)
+  if (current.kind !== 'number') return
+  setSummaryPathValue(env, path, numberWithSummaryFact({...current, provenance: mergeProvenance(current, [fact])}, summaryFact))
 }
 
 function applySummaryComparisonToPath(
@@ -418,15 +443,12 @@ function applySummaryComparisonToPath(
   const withSummaryFact = (value: NumberValue): NumberValue => {
     const summaryFact = comparisonConstraint(value, op, other, fact, 'contract')
     if (summaryFact == null) return value
-    return withNumberCases(value, numberBranches(value).map(branch => ({
-      value: branch.value,
-      assumptions: mergeAssumptions(branch.assumptions, [summaryFact]),
-    })))
+    return numberWithSummaryFact(value, summaryFact)
   }
 
   switch (op) {
     case '==':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, null, provenance)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, other.cases, provenance)))
       return
     case '>=':
     case '>':
@@ -437,6 +459,13 @@ function applySummaryComparisonToPath(
       setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance)))
       return
   }
+}
+
+function numberWithSummaryFact(value: NumberValue, summaryFact: SummaryComparisonFact): NumberValue {
+  return withNumberCases(value, numberBranches(value).map(branch => ({
+    value: branch.value,
+    assumptions: mergeAssumptions(branch.assumptions, [summaryFact]),
+  })))
 }
 
 function checkedContractFact(source: FunctionContractSource, text: string) {

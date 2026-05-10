@@ -699,6 +699,23 @@ function size(width: number) {
 
   await withCliFixture({
     'audit.ts': `/** @fit
+ * given min <= mid
+ * given mid <= width
+ * return >= width
+ */
+function size(min: number, mid: number, width: number) {
+  return Math.max(min, width)
+}
+`,
+  }, dir => {
+    const audit = runFr(['check', '--audit', 'audit.ts'], dir)
+    expectCli(audit.exitCode === 0, 'expected selector audit to use composed comparison facts', audit.output)
+    expectCli(audit.output.includes('AUDIT Math.max(min, width): min does not affect the result'), 'expected transitive Math.max guard audit', audit.output)
+    expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 1 audit'), 'expected transitive audit summary count', audit.output)
+  })
+
+  await withCliFixture({
+    'audit.ts': `/** @fit
  * given width: 0..99
  * return: 1..99
  */
@@ -895,7 +912,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 26 expected behaviors')
+  console.log('cli: 27 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

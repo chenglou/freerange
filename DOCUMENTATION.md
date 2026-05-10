@@ -245,7 +245,7 @@ contract is checked both where it is written and where it is used. Use
 - `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved, and normal `fr check` also scans supported callsites to annotated helpers inside supported function bodies and top-level executable statements. If the call cannot satisfy a `given`, the report separates the helper requirement, what the caller passed, and the caller-side missing fact, such as `missing: cols - w >= 0`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
+- Helper preconditions are reported when the helper call is inside the value being proved, and normal `fr check` also scans supported callsites to annotated helpers inside supported function bodies and top-level executable statements. If the call cannot satisfy a `given`, the report separates the helper requirement, what the caller passed, and the caller-side missing fact, such as `missing: cols - w >= 0`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, including returned ranges and returned-field comparisons, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
 
 Freerange does not prove arbitrary unannotated behavior. A call like
 `unannotatedHelper(4, 3, 2)` has no contract to check. A call to an annotated
@@ -776,6 +776,10 @@ Math.floor(pointer / cellSize) < count // when cellSize > 0 and pointer < count 
 Math.floor(y / cell) * countX + Math.floor(x / cell) < countX * countY // when both coordinates are inside a positive integer grid
 index % count < count
 ```
+
+Comparison facts compose transitively. If source or checked helper contracts give
+`a <= b` and `b <= c`, Freerange can use that to prove `a <= c`; strict checks
+still need a strict edge somewhere in the chain.
 
 `Math.min`, `Math.max`, and `Math.sign` keep the small branch facts they introduce:
 

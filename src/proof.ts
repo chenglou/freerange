@@ -1,27 +1,26 @@
-import {publicFitText, type ComparisonOperator} from './parser.ts'
+import {type ComparisonOperator} from './parser.ts'
 import {
   comparisonFailureReason,
   comparisonNeed,
   formatRange,
 } from './reporting.ts'
 import {
-  comparisonProofRules,
-  type ComparisonGoal,
-  type ComparisonRuleContext,
-} from './proof-rules.ts'
+  backendComparisonMissing,
+  evaluateBackendComparison,
+  symbolicComparisonProves,
+  type ProofBackendContext,
+} from './proof-backend.ts'
 import {
   mergeAssumptions,
   numberBranches,
   numberValue,
+  unknownNumber,
   type FactSource,
   type LinearConstraint,
   type NumberValue,
   type Value,
 } from './domain.ts'
 import {
-  binaryExpression,
-  callArg,
-  callArgs,
   cleanLinear,
   isZeroLinear,
   linearConstantStatus,
@@ -31,7 +30,6 @@ import {
   linearKey,
   linearScaleExact,
   linearSubtract,
-  moduloExpression,
   positiveScaleMultiple,
   reductionScales,
   sameExpressionText,
@@ -129,76 +127,7 @@ function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberV
 }
 
 function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
-  if (left.expr == null || right.expr == null) return 'maybe'
-  if (hasComparisonFact(left.expr, op, right.expr, assumptions)) return 'true'
-  if (provesChoiceOperandBound(left.expr, op, right.expr)) return 'true'
-  if (provesRoundingFact(left.expr, op, right.expr)) return 'true'
-  if ((op === '<' || op === '<=') && provesModuloBelowDivisor(left.expr, right.expr, assumptions)) return 'true'
-  if ((op === '>=' || op === '>') && provesRunningSumAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if ((op === '>=' || op === '>') && provesRunningSumMinusTrailingGapAtLeastStart(left.expr, right.expr, assumptions)) return op === '>=' ? 'true' : 'maybe'
-  if (comparisonRuleProves({left, op, right}, assumptions)) return 'true'
-  return 'maybe'
-}
-
-function provesChoiceOperandBound(leftExpr: string, op: ComparisonOperator, rightExpr: string) {
-  if (op === '<=') {
-    if (choiceHasOperand(leftExpr, 'min', rightExpr)) return true
-    if (choiceHasOperand(rightExpr, 'max', leftExpr)) return true
-  }
-  if (op === '>=') {
-    if (choiceHasOperand(leftExpr, 'max', rightExpr)) return true
-    if (choiceHasOperand(rightExpr, 'min', leftExpr)) return true
-  }
-  return false
-}
-
-function choiceHasOperand(choiceExpr: string, choiceName: 'min' | 'max', operandExpr: string) {
-  const args = callArgs(choiceExpr, choiceName)
-  return args != null && args.some(arg => sameExpressionText(arg, operandExpr))
-}
-
-function provesRoundingFact(leftExpr: string, op: ComparisonOperator, rightExpr: string) {
-  const leftCeil = callArg(leftExpr, 'ceil')
-  if ((op === '>=' || op === '>') && leftCeil != null && sameExpressionText(leftCeil, rightExpr)) return op === '>='
-  const leftFloor = callArg(leftExpr, 'floor')
-  if ((op === '<=' || op === '<') && leftFloor != null && sameExpressionText(leftFloor, rightExpr)) return op === '<='
-  const rightCeil = callArg(rightExpr, 'ceil')
-  if ((op === '<=' || op === '<') && rightCeil != null && sameExpressionText(leftExpr, rightCeil)) return op === '<='
-  const rightFloor = callArg(rightExpr, 'floor')
-  if ((op === '>=' || op === '>') && rightFloor != null && sameExpressionText(leftExpr, rightFloor)) return op === '>='
-  return false
-}
-
-function provesModuloBelowDivisor(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const shape = moduloExpression(leftExpr)
-  if (shape == null || !sameExpressionText(shape.right, rightExpr)) return false
-  return provesExprNonNegative(shape.left, false, assumptions) && provesExprNonNegative(shape.right, true, assumptions)
-}
-
-function provesRunningSumAtLeastStart(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const args = callArgs(leftExpr, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, rightExpr)) return false
-  return provesExprNonNegative(args[1]!, false, assumptions) && provesExprNonNegative(args[2]!, false, assumptions)
-}
-
-function provesRunningSumMinusTrailingGapAtLeastStart(leftExpr: string, rightExpr: string, assumptions: LinearConstraint[]) {
-  const trailingGap = binaryExpression(leftExpr, '-')
-  if (trailingGap == null) return false
-  const args = callArgs(trailingGap.left, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, rightExpr)) return false
-  const count = args[1]!
-  const increment = args[2]!
-  const gap = trailingGap.right
-  if (!hasComparisonFact(count, '>=', '1', assumptions)) return false
-  if (!provesExprNonNegative(gap, false, assumptions)) return false
-  if (sameExpressionText(increment, gap)) return true
-  const incrementSum = binaryExpression(increment, '+')
-  if (incrementSum == null) return false
-  const base =
-    sameExpressionText(incrementSum.left, gap) ? incrementSum.right
-      : sameExpressionText(incrementSum.right, gap) ? incrementSum.left
-        : null
-  return base != null && provesExprNonNegative(base, false, assumptions)
+  return evaluateBackendComparison({left, op, right}, proofBackendContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
 }
 
 function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
@@ -207,21 +136,7 @@ function provesExprNonNegative(expression: string, strict: boolean, assumptions:
   return linear != null && provesNonNegative(linear, strict, assumptions)
 }
 
-function comparisonRuleProves(goal: ComparisonGoal, assumptions: LinearConstraint[]) {
-  const context = comparisonRuleContext(assumptions)
-  return comparisonProofRules.some(rule => rule.evaluate(goal, context)?.status === 'pass')
-}
-
-function comparisonRuleMissing(goal: ComparisonGoal, assumptions: LinearConstraint[]) {
-  const context = comparisonRuleContext(assumptions)
-  for (const rule of comparisonProofRules) {
-    const result = rule.evaluate(goal, context)
-    if (result?.status === 'blocked') return result.missing
-  }
-  return null
-}
-
-function comparisonRuleContext(assumptions: LinearConstraint[]): ComparisonRuleContext {
+function proofBackendContext(assumptions: LinearConstraint[]): ProofBackendContext {
   return {
     hasComparisonFact: (leftExpr, op, rightExpr) => hasComparisonFact(leftExpr, op, rightExpr, assumptions),
     provesExprNonNegative: (expression, strict) => provesExprNonNegative(expression, strict, assumptions),
@@ -234,6 +149,7 @@ function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: 
     if (sameExpressionText(assumption.leftExpr, leftExpr) && sameExpressionText(assumption.rightExpr, rightExpr) && comparisonImplies(assumption.op, op)) return true
     if (sameExpressionText(assumption.leftExpr, rightExpr) && sameExpressionText(assumption.rightExpr, leftExpr) && comparisonImplies(flipComparison(assumption.op), op)) return true
   }
+  if (symbolicComparisonProves(leftExpr, op, rightExpr, assumptions)) return true
 
   const leftLinear = linearFromExpressionText(leftExpr)
   const rightLinear = linearFromExpressionText(rightExpr)
@@ -272,28 +188,11 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
   const strictSelf = strictSelfComparisonMissing(left, op, right)
   if (strictSelf != null) return strictSelf
-  const runningSum = runningSumAtLeastStartMissing(left, op, right, assumptions)
-  if (runningSum != null) return runningSum
-  const missingRule = comparisonRuleMissing({left, op, right}, assumptions)
-  if (missingRule != null) return missingRule
+  const backendMissing = backendComparisonMissing({left, op, right}, proofBackendContext(assumptions))
+  if (backendMissing != null) return backendMissing
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
   return `given ${comparisonNeed(left, op, right)}`
-}
-
-function runningSumAtLeastStartMissing(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
-  if (op !== '>=' && op !== '>') return null
-  if (left.expr == null || right.expr == null) return null
-  const args = callArgs(left.expr, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, right.expr)) return null
-  const needs = []
-  if (!runningSumCountIsKnownNonNegative(args[1]!, assumptions)) needs.push(`${publicFitText(args[1]!)} >= 0`)
-  if (!provesExprNonNegative(args[2]!, false, assumptions)) needs.push(`${publicFitText(args[2]!)} >= 0`)
-  return needs.length === 0 ? null : needs.join(' and ')
-}
-
-function runningSumCountIsKnownNonNegative(expression: string, assumptions: LinearConstraint[]) {
-  return expression.endsWith('.length') || provesExprNonNegative(expression, false, assumptions)
 }
 
 function strictSelfComparisonMissing(left: NumberValue, op: ComparisonOperator, right: NumberValue) {
@@ -361,6 +260,28 @@ export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, 
     ...(right.expr == null ? {} : {rightExpr: right.expr}),
     ...(text == null ? {} : {text}),
     ...(integerStrict ? {integerStrict: true as const} : {}),
+  }
+}
+
+export function comparisonFactContradictedByAssumptions(fact: LinearConstraint, assumptions: LinearConstraint[]) {
+  if (fact.leftExpr == null || fact.rightExpr == null) return false
+  const left = unknownNumber(fact.leftExpr)
+  const right = unknownNumber(fact.rightExpr)
+  return contradictoryComparisons(fact.op).some(op => proveComparisonPlain(left, op, right, assumptions).status === 'pass')
+}
+
+function contradictoryComparisons(op: ComparisonOperator): ComparisonOperator[] {
+  switch (op) {
+    case '==':
+      return ['<', '>']
+    case '>=':
+      return ['<']
+    case '<=':
+      return ['>']
+    case '>':
+      return ['<=']
+    case '<':
+      return ['>=']
   }
 }
 

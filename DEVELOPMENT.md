@@ -74,8 +74,8 @@ bun install
 - [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
 - [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
-- [src/proof.ts](./src/proof.ts) — range/comparison proofs, math lemmas, and assumption reduction
-- [src/proof-rules.ts](./src/proof-rules.ts) — small named comparison proof rules with shared prove/report obligations
+- [src/proof.ts](./src/proof.ts) — range/comparison proof orchestration, interval checks, and linear assumption reduction
+- [src/proof-backend.ts](./src/proof-backend.ts) — symbolic comparison composition, math lemmas, and small named comparison proof rules
 - [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, import-to-source declaration binding, and static helper-binding indexing
 - [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
 - [src/parser.ts](./src/parser.ts) — strict `@fit` parser

@@ -1,12 +1,11 @@
 import * as ts from 'typescript'
 import {
-  plainNumber,
   type NumberValue,
   type Value,
 } from '../domain.ts'
 import {sameExpressionText} from '../linear.ts'
 import {type ComparisonOperator} from '../parser.ts'
-import {proveComparisonPlain} from '../proof.ts'
+import {proveComparison} from '../proof.ts'
 import {
   isSideEffectFreeExpression,
   unwrapExpression,
@@ -27,7 +26,7 @@ export function auditMathSelector(kind: 'min' | 'max', values: NumberValue[], fr
   if (values.length < 2) return
   const operands = values.map((value, index) => ({
     text: expression.arguments[index]?.getText(frame.program.sourceFile) ?? `arg${index}`,
-    value: plainNumber(value),
+    value,
   }))
   auditCoveredOperands(`Math.${kind}`, kind === 'max' ? '>=' : '<=', operands, frame, expression)
 }
@@ -53,9 +52,7 @@ export function auditConditionalSelector(
   const right = evaluateExpression(condition.right, frame)
   if (left.kind !== 'number' || right.kind !== 'number') return
 
-  const leftValue = plainNumber(left)
-  const rightValue = plainNumber(right)
-  const trueStatus = proveComparisonPlain(leftValue, op, rightValue, frame.assumptions)
+  const trueStatus = proveComparison(left, op, right, frame.assumptions)
   if (trueStatus.status === 'pass') {
     const skipped = shape.trueBranch === 'left' ? shape.rightText : shape.leftText
     noteAudit(
@@ -68,7 +65,7 @@ export function auditConditionalSelector(
   }
 
   const falseOp = negateComparison(op)
-  const falseStatus = proveComparisonPlain(leftValue, falseOp, rightValue, frame.assumptions)
+  const falseStatus = proveComparison(left, falseOp, right, frame.assumptions)
   if (falseStatus.status !== 'pass') return
   const skipped = shape.trueBranch === 'left' ? shape.leftText : shape.rightText
   noteAudit(
@@ -90,7 +87,7 @@ function auditCoveredOperands(
     const operand = operands[index]!
     const covering = operands.find((candidate, candidateIndex) =>
       candidateIndex !== index
-      && proveComparisonPlain(candidate.value, coveringOp, operand.value, frame.assumptions).status === 'pass')
+      && proveComparison(candidate.value, coveringOp, operand.value, frame.assumptions).status === 'pass')
     if (covering == null) continue
     noteAudit(
       frame,

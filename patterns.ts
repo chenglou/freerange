@@ -2049,6 +2049,34 @@ export function mathMinCanBeComparisonBound(width: number, cap: number, limit: n
   return Math.min(capped, limit)
 }
 
+/** @fit
+ * given low * scale <= _mid * scale
+ * given _mid * scale <= _high * scale
+ * return <= _high * scale
+ */
+export function opaqueInequalityGraphTransitivity(low: number, _mid: number, _high: number, scale: number) {
+  return low * scale
+}
+
+/** @fit
+ * given low <= mid
+ * given mid <= high
+ * return.low <= return.mid
+ * return.mid <= return.high
+ */
+function orderedTriple(low: number, mid: number, high: number) {
+  return {low, mid, high}
+}
+
+/** @fit
+ * given low <= mid
+ * given mid <= high
+ * return.low <= return.high
+ */
+export function helperResultComparisonFactsCompose(low: number, mid: number, high: number) {
+  return orderedTriple(low, mid, high)
+}
+
 export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2
 
 export class ClassMethodThisClaims {

@@ -20,6 +20,41 @@ export function negativeComparison(value: number) {
 }
 
 /** @fit
+ * given low * scale <= _mid * scale
+ * given _mid * scale <= _high * scale
+ * return < _high * scale
+ */
+export function negativeOpaqueInequalityGraphLoosePathIsNotStrict(low: number, _mid: number, _high: number, scale: number) {
+  return low * scale
+}
+
+/** @fit
+ * given low * scale <= _mid * scale
+ * given _mid * scale <= _high * scale
+ * given _high * scale < low * scale
+ * return == low * scale
+ */
+export function negativeGivenGraphContradiction(low: number, _mid: number, _high: number, scale: number) {
+  return low * scale
+}
+
+/** @fit
+ * given low <= mid
+ * return.low <= return.mid
+ */
+function negativePartialOrderedTriple(low: number, mid: number, high: number) {
+  return {low, mid, high}
+}
+
+/** @fit
+ * given low <= mid
+ * return.low <= return.high
+ */
+export function negativeHelperResultComparisonNeedsBridge(low: number, mid: number, high: number) {
+  return negativePartialOrderedTriple(low, mid, high)
+}
+
+/** @fit
  * given width: 0..1000
  * return.overflow < 0
  */

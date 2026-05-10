@@ -42,6 +42,7 @@ import {
 } from './parser.ts'
 import {
   comparisonConstraint,
+  comparisonFactContradictedByAssumptions,
   nonNegativeFacts,
   proveComparison,
   proveNonNegativeFromFacts,
@@ -361,6 +362,9 @@ function givenComparisonContradictionReason(fact: LinearConstraint, assumptions:
     if (nonNegativeFactConflictsWithEarlierFacts(next, earlierFacts)) {
       return `no input can satisfy this with the earlier given lines; they already rule out ${givenFactLabel(fact.text)}`
     }
+  }
+  if (comparisonFactContradictedByAssumptions(fact, assumptions)) {
+    return `no input can satisfy this with the earlier given lines; they already rule out ${givenFactLabel(fact.text)}`
   }
   return null
 }

@@ -11,6 +11,22 @@ FAIL negative-patterns.ts:negativeComparison: return.high < return.low
     value: 0..5
     assumed from input: given value: 0..5
   missing fact: (value + 10) < value
+UNKNOWN negative-patterns.ts:negativeOpaqueInequalityGraphLoosePathIsNotStrict: return < _high * scale
+  known:
+    (low * scale): any number
+    (_high * scale): any number
+    assumed from input: given low * scale <= _mid * scale
+    assumed from input: given _mid * scale <= _high * scale
+  missing: scale > 0 and low < _high
+FAIL negative-patterns.ts:negativeGivenGraphContradiction: given _high * scale < low * scale
+  no input can satisfy this with the earlier given lines; they already rule out _high * scale < low * scale
+UNKNOWN negative-patterns.ts:negativeHelperResultComparisonNeedsBridge: return.low <= return.high
+  known:
+    low: any number
+    checked helper contract: negative-patterns.ts#negativePartialOrderedTriple: return.low <= return.mid
+    high: any number
+    assumed from input: given low <= mid
+  missing fact: low <= high
 FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
   result: is false
   known:
