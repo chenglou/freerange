@@ -41,7 +41,8 @@ conditions, and `??` fallbacks whose left side is already present.
 Use `fr infer path/to/file.ts` when you want inferred facts for every function in
 that file: what Freerange found, which explicit checks they cover, and where
 proof stopped. Add `--annotations-only` for the quieter annotated-function view,
-or `--function name` for one function.
+or `--function name` for one function. Use no-path `fr infer --all` when you
+want a project summary instead of a per-function dump.
 
 See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 

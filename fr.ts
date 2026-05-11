@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 
 import {inferFitFiles} from './src/check-core.ts'
-import {printInferReport} from './src/infer-output.ts'
+import {printInferReport, printInferSummary} from './src/infer-output.ts'
 import {type FitAudit, type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
 
@@ -50,7 +50,7 @@ async function runInfer(args: string[]) {
   if (parsed == null) return
   const {paths, functionName, all, annotationsOnly} = parsed
   if (paths.length === 0 && all !== true) {
-    console.error('fr infer: pass a file path, or use --all for project-wide debug inventory.')
+    console.error('fr infer: pass a file path, or use --all for a project summary.')
     printUsage()
     process.exitCode = 2
     return
@@ -66,7 +66,8 @@ async function runInfer(args: string[]) {
     process.exitCode = 1
     return
   }
-  printInferReport(report)
+  if (paths.length === 0 && all === true && functionName == null) printInferSummary(report)
+  else printInferReport(report)
 }
 
 function parseInferArgs(args: string[]) {
@@ -243,4 +244,5 @@ function printUsage() {
   console.error('Usage:')
   console.error('  fr check [--annotations-only] [--audit] [file.ts ...]')
   console.error('  fr infer [--function name] [--annotations-only] [--all] file.ts ...')
+  console.error('  fr infer --all')
 }

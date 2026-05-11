@@ -126,8 +126,11 @@ return, surviving locals, and supported loops. It also shows which explicit
 comments are checked or assumed, which comments are redundant with inferred
 facts, and which unsupported source spots blocked proof. Add `--function name`
 to inspect one function, or `--annotations-only` to keep the old annotated-function
-filter. `fr infer` without a file path asks you to pass a file; project-wide
-`--all` is a debug inventory, not the normal adoption loop.
+filter. `fr infer` without a file path asks you to pass a file. `fr infer --all`
+with no file path reads the current `tsconfig.json` and prints a project summary:
+function count, fact counts, spec counts, noisiest functions, and top unsupported
+reasons. With file paths, `--all` still means the detailed all-function view for
+those files.
 
 When `check` prints a non-pass line, it also prints the next useful adoption
 command when there is one. Usually that is the caller or failing function's

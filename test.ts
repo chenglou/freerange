@@ -549,6 +549,36 @@ function ok() {
       },
       include: ['*.ts'],
     }, null, 2),
+    'layout.ts': `/** @fit
+ * return: 2
+ */
+function ok() {
+  return 2
+}
+
+function plain() {
+  return 1
+}
+`,
+  }, dir => {
+    const infer = runFr(['infer', '--all'], dir)
+    expectCli(infer.exitCode === 0, 'expected no-arg fr infer --all to summarize a tsconfig project', infer.output)
+    expectCli(infer.output.includes('fr infer --all: 1 files, 2 functions'), 'expected project infer summary count', infer.output)
+    expectCli(infer.output.includes('facts:'), 'expected project infer summary facts', infer.output)
+    expectCli(!infer.output.includes('layout.ts:plain'), 'expected project infer summary to avoid per-function dump', infer.output)
+  })
+
+  await withCliFixture({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: {
+        target: 'ESNext',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['*.ts'],
+    }, null, 2),
     'project-types.ts': `type ProjectBox = {
   value: number // @fit 0..10
 }
@@ -967,7 +997,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 27 expected behaviors')
+  console.log('cli: 28 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {
