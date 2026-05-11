@@ -406,6 +406,7 @@ function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr
   const leftDivision = binaryExpression(leftExpr, '/')
   const rightDivision = binaryExpression(rightExpr, '/')
   if (leftDivision == null || rightDivision == null || !sameExpressionText(leftDivision.right, rightDivision.right)) return []
+  if (context.hasComparisonFact(leftDivision.right, '<', '0')) return []
   return [{
     factorNeed: `${leftDivision.right} > 0`,
     factorProven: context.provesExprNonNegative(leftDivision.right, true),
@@ -424,9 +425,9 @@ function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr:
       const leftFactor = leftProduct[leftIndex]!
       const rightFactor = rightProduct[rightIndex]!
       if (!sameExpressionText(leftFactor, rightFactor)) continue
+      if (context.hasComparisonFact(leftFactor, '<', '0')) continue
       const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
       const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
-      if (context.hasComparisonFact(leftFactor, '<', '0')) continue
       obligations.push({
         factorNeed: `${leftFactor} ${op === '<' ? '>' : '>='} 0`,
         factorProven: context.provesExprNonNegative(leftFactor, op === '<'),

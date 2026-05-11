@@ -92,14 +92,12 @@ function refineCondition(frame: InterpreterFrame, condition: ts.Expression, trut
 }
 
 function refineLogicalCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression): boolean {
-  if (expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
-    if (!truth) return false
+  if (expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken && truth) {
     refineCondition(frame, expression.left, true, evaluateExpression)
     refineCondition(frame, expression.right, true, evaluateExpression)
     return true
   }
-  if (expression.operatorToken.kind === ts.SyntaxKind.BarBarToken) {
-    if (truth) return false
+  if (expression.operatorToken.kind === ts.SyntaxKind.BarBarToken && !truth) {
     refineCondition(frame, expression.left, false, evaluateExpression)
     refineCondition(frame, expression.right, false, evaluateExpression)
     return true

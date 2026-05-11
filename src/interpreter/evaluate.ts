@@ -2114,9 +2114,9 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
   const sourceExpr = sourceExpression(source, target.expression, frame)
+  const element = filteredElement(source, sourceExpr, callbackFn, frame)
   const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
   const length = numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`)
-  const element = filteredElement(source, sourceExpr, callbackFn, frame)
   addLengthAtMostSourceFact(length, source.length, frame)
   return {
     kind: 'array',
@@ -2130,9 +2130,9 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
 }
 
 function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
-  const element = source.element ?? unknownObject(`${sourceExpr}[]`)
   const predicate = callbackPredicateExpression(callbackFn)
-  if (predicate == null) return source.element
+  if (predicate == null || !isSideEffectFreeExpression(predicate)) return source.element
+  const element = source.element ?? unknownObject(`${sourceExpr}[]`)
   const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
   bindParameters(callbackFn.parameters, [element, undefined, source], callbackFrame)
   const itemName = firstIdentifierParameterName(callbackFn)
