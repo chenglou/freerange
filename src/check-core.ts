@@ -175,6 +175,24 @@ export type {
 
 const maxInlineDepth = 12
 
+function topLevelEvalContext(
+  program: Program,
+  contractCache: Map<string, FunctionContractProof>,
+  callObligations: NonNullable<EvalContext['callObligations']> = 'silent',
+): EvalContext {
+  return {
+    program,
+    file: program.file,
+    env: programGlobalEnv(program),
+    inputRoots: [],
+    stack: ['<top-level>'],
+    checks: [],
+    assumptions: [],
+    contractCache,
+    callObligations,
+  }
+}
+
 export function inferFitFiles(paths: string[], options: {functionName?: string; all?: boolean} = {}): FitInferReport {
   const project = loadFitProject(paths, readTopLevelGlobal)
   const contractCache = new Map<string, FunctionContractProof>()
@@ -294,17 +312,7 @@ function functionHasAuditAnnotationSurface(program: Program, fn: FitFunction) {
 }
 
 function auditTopLevelSelectors(program: Program, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env: programGlobalEnv(program),
-    inputRoots: [],
-    stack: ['<top-level>'],
-    checks: [],
-    assumptions: [],
-    contractCache,
-    callObligations: 'silent',
-  }
+  const context = topLevelEvalContext(program, contractCache)
   const result = evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
   return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
 }
@@ -353,19 +361,9 @@ function dedupeAudits(audits: FitAudit[]) {
 }
 
 function checkTopLevelCallsites(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env: programGlobalEnv(program),
-    inputRoots: [],
-    stack: ['<top-level>'],
-    checks: [],
-    assumptions: [],
-    contractCache,
-    callObligations: 'record',
-  }
+  const context = topLevelEvalContext(program, contractCache, 'record')
   evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
-  return context.checks.filter(isCallCheck)
+  return callChecks(context)
 }
 
 function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
@@ -374,11 +372,15 @@ function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache
   const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
   const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'record'})
   evaluateFunctionBody(fn, context)
-  return context.checks.filter(isCallCheck)
+  return callChecks(context)
 }
 
 function isCallCheck(check: FitCheck) {
   return check.detail?.kind === 'call-precondition'
+}
+
+function callChecks(context: EvalContext) {
+  return context.checks.filter(isCallCheck)
 }
 
 function toCallsiteCheck(check: FitCheck): FitCheck {
@@ -413,17 +415,7 @@ function dedupeCallsiteChecks(checks: FitCheck[]) {
 }
 
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env: programGlobalEnv(program),
-    inputRoots: [],
-    stack: ['<top-level>'],
-    checks: [],
-    assumptions: [],
-    contractCache,
-    callObligations: 'silent',
-  }
+  const context = topLevelEvalContext(program, contractCache)
   for (const statement of program.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
     bindVariableStatement(statement, context)
@@ -470,7 +462,7 @@ function verifyFunctionSpecsDetailed(
 
   return {
     checks,
-    callsiteChecks: recordsCallsites ? context.checks.filter(isCallCheck) : [],
+    callsiteChecks: recordsCallsites ? callChecks(context) : [],
     recordedCallsites: hasBodyClaims && recordsCallsites,
   }
 }
@@ -664,16 +656,10 @@ function interpreterHooks(context: EvalContext): InterpreterHooks {
 
 function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
   if (rootContext.callObligations == null) return null
-  const callContext: EvalContext = {
-    ...rootContext,
-    program: frame.program,
-    file: frame.program.file,
-    env: frame.env,
-    stack: frame.stack,
-    assumptions: frame.assumptions,
+  const callContext = contextForInterpreterFrame(frame, rootContext, {
     checks: shouldRecordCallObligations(rootContext) ? rootContext.checks : [],
-    ...(rootContext.callObligations == null ? {} : {callObligations: rootContext.callObligations}),
-  }
+    includeObjectPath: false,
+  })
   const callArgumentExpressions = ts.isCallExpression(call.expression) ? call.expression.arguments : ts.factory.createNodeArray<ts.Expression>([])
   const callArguments = evaluateFunctionCallArguments(call.fn, callArgumentExpressions, callContext, call.program, call.thisValue)
   if (callArguments.kind === 'invalid') return call.fallback ?? unknown(callArguments.reason)
@@ -802,16 +788,27 @@ function isBranchStackPart(part: string) {
 }
 
 function interpreterEvalContext(frame: InterpreterFrame, rootContext: EvalContext): EvalContext {
-  return {
+  return contextForInterpreterFrame(frame, rootContext, {
+    stack: sameClaimBodyStack(frame.stack, rootContext.stack) ? rootContext.stack : frame.stack,
+  })
+}
+
+function contextForInterpreterFrame(
+  frame: InterpreterFrame,
+  rootContext: EvalContext,
+  options: {stack?: string[]; checks?: FitCheck[]; includeObjectPath?: boolean} = {},
+): EvalContext {
+  const context: EvalContext = {
     ...rootContext,
     program: frame.program,
     file: frame.program.file,
     env: frame.env,
-    stack: sameClaimBodyStack(frame.stack, rootContext.stack) ? rootContext.stack : frame.stack,
-    checks: rootContext.checks,
+    stack: options.stack ?? frame.stack,
+    checks: options.checks ?? rootContext.checks,
     assumptions: frame.assumptions,
-    ...(frame.objectPath == null ? {} : {objectPath: frame.objectPath}),
   }
+  if (options.includeObjectPath !== false && frame.objectPath != null) context.objectPath = frame.objectPath
+  return context
 }
 
 function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext, options: {claim?: boolean} = {}) {

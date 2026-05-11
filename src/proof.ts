@@ -51,16 +51,34 @@ export type ComparisonProofStep = {
   message: string
 }
 
+export type ComparisonProof = {
+  status: 'pass' | 'fail' | 'unknown'
+  reason?: string
+  step: ComparisonProofStep
+}
+
 const maxLinearReductionDepth = 4
 
 export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+  return proofStatus(proveComparisonWithStep(left, op, right, assumptions))
+}
+
+export function comparisonProofStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProofStep {
+  return proveComparisonWithStep(left, op, right, assumptions).step
+}
+
+export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProof {
   const structuralEquality = proveStructuralEquality(left, op, right)
-  if (structuralEquality != null) return structuralEquality
-  if (left.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(left)}
-  if (right.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(right)}
+  if (structuralEquality != null) return {...structuralEquality, step: structuralEqualityProofStep(left, op, right)!}
+  if (left.kind !== 'number') {
+    return {status: 'unknown', reason: nonNumberReason(left), step: nonNumberComparisonStep()}
+  }
+  if (right.kind !== 'number') {
+    return {status: 'unknown', reason: nonNumberReason(right), step: nonNumberComparisonStep()}
+  }
   if (left.cases != null || right.cases != null) {
     const joinedStatus = proveComparisonPlain(left, op, right, assumptions)
-    if (joinedStatus.status === 'pass') return joinedStatus
+    if (joinedStatus.status === 'pass') return {...joinedStatus, step: comparisonProofStepPlain(left, op, right, assumptions)}
     let unknownStatus: {status: 'pass' | 'fail' | 'unknown'; reason?: string} | null = null
     for (const leftCase of numberBranches(left)) {
       for (const rightCase of numberBranches(right)) {
@@ -70,28 +88,25 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
           rightCase.value,
           mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions),
         )
-        if (status.status === 'fail') return status
+        if (status.status === 'fail') return {...status, step: branchComparisonStep()}
         if (status.status === 'unknown') unknownStatus = status
       }
     }
-    return unknownStatus ?? {status: 'pass'}
+    return {...(unknownStatus ?? {status: 'pass'}), step: branchComparisonStep()}
   }
-  return proveComparisonPlain(left, op, right, assumptions)
+  return {...proveComparisonPlain(left, op, right, assumptions), step: comparisonProofStepPlain(left, op, right, assumptions)}
 }
 
-export function comparisonProofStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProofStep {
-  const structuralEquality = structuralEqualityProofStep(left, op, right)
-  if (structuralEquality != null) return structuralEquality
-  if (left.kind !== 'number' || right.kind !== 'number') {
-    return {domain: 'kernel', rule: 'non-number-comparison', message: 'checked comparison shape'}
-  }
-  if (left.cases != null || right.cases != null) {
-    if (proveComparisonPlain(left, op, right, assumptions).status === 'pass') {
-      return comparisonProofStepPlain(left, op, right, assumptions)
-    }
-    return {domain: 'numeric', rule: 'branch-comparison', message: 'checked comparison across finite numeric branches'}
-  }
-  return comparisonProofStepPlain(left, op, right, assumptions)
+function proofStatus(proof: ComparisonProof): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+  return proof.reason == null ? {status: proof.status} : {status: proof.status, reason: proof.reason}
+}
+
+function nonNumberComparisonStep(): ComparisonProofStep {
+  return {domain: 'kernel', rule: 'non-number-comparison', message: 'checked comparison shape'}
+}
+
+function branchComparisonStep(): ComparisonProofStep {
+  return {domain: 'numeric', rule: 'branch-comparison', message: 'checked comparison across finite numeric branches'}
 }
 
 function proveStructuralEquality(left: Value, op: ComparisonOperator, right: Value): {status: 'pass' | 'unknown'; reason?: string} | null {

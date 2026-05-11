@@ -930,8 +930,8 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
         source: bound.origin?.source ?? null,
         order,
         loop,
-          appendedArrays,
-        }, frame),
+        appendedArrays,
+      }, frame),
       handleIf: (child, order) => evaluateIndexedForIf(child, {
         indexName: shape.indexName,
         length,

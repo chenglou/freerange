@@ -22,7 +22,7 @@ import {
   type FitRange,
   type FitSpec,
 } from './parser.ts'
-import {comparisonProofStep, proveComparison} from './proof.ts'
+import {proveComparison, proveComparisonWithStep} from './proof.ts'
 import {
   finiteRangeSpecFailureReason,
   formatArraySummary,
@@ -148,19 +148,18 @@ export function verifyCheckSpecWithProof(
 
   const left = evaluateSpecExpression(spec.left, context, hooks)
   const right = evaluateSpecExpression(spec.right, context, hooks)
-  const status = proveComparison(left, spec.op, right, context.assumptions)
-  const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
-    ? `applies to: every item in ${wildcardCollectionLabel(wildcardCheck.collection)}\n${status.reason}`
-    : status.reason
-  const step = comparisonProofStep(left, spec.op, right, context.assumptions)
+  const proof = proveComparisonWithStep(left, spec.op, right, context.assumptions)
+  const reason = wildcardCheck.kind === 'one' && proof.status !== 'pass' && proof.reason != null
+    ? `applies to: every item in ${wildcardCollectionLabel(wildcardCheck.collection)}\n${proof.reason}`
+    : proof.reason
   return checkProofWithStep({
     file,
     ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
-    status: status.status,
+    status: proof.status,
     ...(reason == null ? {} : {reason}),
-  }, step, [left, right], context.assumptions)
+  }, proof.step, [left, right], context.assumptions)
 }
 
 function checkProof(
