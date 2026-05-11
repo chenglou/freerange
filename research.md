@@ -232,7 +232,7 @@ The interpreter cutover note is [research/abstract-interpreter.md](./research/ab
 - loop summaries: cursor recurrences and append summaries
 - optional backend obligations: SMT later, only where earned
 
-The important boundary is source readers emit reusable facts, contract comments become explicit obligations, and checks query the fact inventory. The current code has started this split: `src/fact-inventory.ts` owns published fact identity/indexing, `src/facts.ts` publishes interpreter values into that inventory, `src/obligations.ts` attaches proof-obligation/proof-trace metadata to checks, and `src/proof-facts.ts` publishes the small set of facts a proof saw without changing the public CLI. For example, a cursor loop should first emit facts like:
+The important boundary is source readers emit reusable facts, contract comments become explicit obligations, and checks query the fact inventory. The current code has started this split: `src/fact-inventory.ts` owns published fact identity/indexing, `src/facts.ts` publishes interpreter values into that inventory, `src/obligations.ts` attaches proof-obligation/proof-trace metadata to checks and audits, and `src/proof-facts.ts` publishes the small set of facts a proof saw without changing the public CLI. For example, a cursor loop should first emit facts like:
 
 ```txt
 rows.length == items.length
@@ -244,13 +244,13 @@ spaced(rows, gap)
 
 Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. `src/facts.ts` now owns the typed inferred fact output, and `src/sequence-facts.ts` owns adjacent sequence relation queries. Object-array and parallel-array code should converge here when they prove the same layout relation.
 
-`semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, structured goal, proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
+`semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, structured goal, named proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
 
 Collection/sequence/proof-context/numeric/value ownership should keep leaving the old general domain file. `src/domain-types.ts` owns the shared abstract value types; `src/array-summary.ts` owns summary merging and empty-branch lineage joins; `src/assumptions.ts` owns linear/comparison assumption identity; `src/number-domain.ts` owns numeric construction, finite cases, arithmetic, running sums, and extrema; `src/value-domain.ts` owns value constructors, joins, and assumption propagation; `src/domain.ts` is now only a compatibility facade. Interpreter call resolution is the same kind of boundary: `src/interpreter/call-targets.ts` owns identifier, namespace import, and class-member lookup, while `evaluate.ts` stays focused on evaluating source into values and effects. Function input setup is another shared boundary: `src/function-evaluation.ts` binds params, applies `given` ranges, and collects input assumptions for `check`, `infer`, audit, and shape inspection. That is the model for future splitting: move one coherent ownership boundary, keep behavior flat, then let imports migrate when the payoff is clear.
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 
-Comparison proof rules are now their own small layer. Keep it modest: a rule matches one goal, asks for ordinary obligations, and uses the same obligations for proving and report text. Current examples include signed shared factors/divisors, positive cancellation, non-strict `floor` / `ceil` monotonicity, and floor hit-index bounds:
+Comparison proof rules are now their own small layer. Keep it modest: a rule matches one goal, asks for ordinary obligations, and uses the same obligations for proving and report text. Proof traces should name the winning or blocking rule instead of flattening everything into `numeric.comparison`. Selector values with branch cases first try the joined expression, so ordinary `min(value, max) <= max` reports the selector rule; branch-by-branch proof stays the fallback when the joined expression cannot prove the claim. Current examples include signed shared factors/divisors, positive cancellation, non-strict `floor` / `ceil` monotonicity, and floor hit-index bounds:
 
 ```txt
 goal: content * scale <= available * scale

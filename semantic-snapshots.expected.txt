@@ -19,3 +19,11 @@ PASS caller: return: 1
   step: numeric.range - checked numeric range claim
   facts:
     checked helper contract: semantic-snapshot.ts#helper: return: 1
+PASS capped: return <= max
+  obligation: function-contract comparison return <= max
+  step: numeric.choice-operand-bound - choice result is bounded by a selected operand
+  facts:
+    min(value, max): 0..100
+    max: 0..100
+    assumed from input: given value: 0..100
+    assumed from input: given max: 0..100

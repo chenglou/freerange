@@ -81,6 +81,22 @@ export function callPreconditionObligation(input: {
   })
 }
 
+export function auditObligation(input: {
+  file: string
+  functionName: string
+  line?: number
+  text: string
+}): FitObligation {
+  return createObligation({
+    file: input.file,
+    functionName: input.functionName,
+    text: input.text,
+    boundary: 'audit',
+    goal: {kind: 'audit', text: input.text},
+    ...(input.line == null ? {} : {line: input.line}),
+  })
+}
+
 export function proofTraceForStatus(obligation: FitObligation, status: FitCheckStatus, steps: FitProofStep[], usedFacts: string[] = []): FitProofTrace {
   return {
     obligationId: obligation.id,

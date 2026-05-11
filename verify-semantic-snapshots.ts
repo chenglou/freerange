@@ -16,6 +16,15 @@ function caller() {
   const x = helper(1) // @fit 1
   return x
 }
+
+/** @fit
+ * given value: 0..100
+ * given max: 0..100
+ * return <= max
+ */
+function capped(value: number, max: number) {
+  return Math.min(value, max)
+}
 `)
 
 const lines: string[] = []

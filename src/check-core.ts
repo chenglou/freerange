@@ -141,7 +141,9 @@ import {
   evaluateInterpreterTopLevel,
 } from './interpreter/evaluate.ts'
 import {
+  auditObligation,
   obligationForSpec,
+  proofTraceForStatus,
   type FitObligationBoundary,
 } from './obligations.ts'
 import {proveObligation} from './proof-broker.ts'
@@ -316,12 +318,25 @@ function auditFunctionSelectors(program: Program, fn: FitFunction, contractCache
 }
 
 function interpreterAuditToFitAudit(file: string, audit: InterpreterAudit): FitAudit {
+  const functionName = audit.stack.length === 0 ? '<top-level>' : audit.stack.join(' > ')
+  const obligation = auditObligation({
+    file,
+    functionName,
+    ...(audit.line == null ? {} : {line: audit.line}),
+    text: audit.text,
+  })
   return {
     file,
     ...(audit.line == null ? {} : {line: audit.line}),
-    functionName: audit.stack.length === 0 ? '<top-level>' : audit.stack.join(' > '),
+    functionName,
     text: audit.text,
     reason: audit.reason,
+    obligation,
+    trace: proofTraceForStatus(obligation, 'pass', [{
+      domain: 'audit',
+      rule: 'selector-redundancy',
+      message: 'checked redundant selector claim',
+    }], [audit.reason]),
   }
 }
 

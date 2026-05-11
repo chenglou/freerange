@@ -129,7 +129,7 @@ As the checker grows, make "facts" and "claims" real internal objects. Facts sho
 
 Do not let every new check grow its own private source reader.
 
-The first useful version of a proof trace does not have to be fancy. It can say the obligation, the checker domain/rule, and the source facts the rule saw. That is already better than rebuilding report context from strings later.
+The first useful version of a proof trace does not have to be fancy. It can say the obligation, the checker domain/rule, and the source facts the rule saw. Freerange now does that for ordinary checks, helper-call preconditions, audits, and sequence atoms. That is already better than rebuilding report context from strings later.
 
 ## SUMMARIZE COLLECTIONS
 

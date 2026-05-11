@@ -3,6 +3,7 @@ import {
   type ComparisonOperator,
 } from './parser.ts'
 import {
+  formatArraySummary,
   formatRange,
   formatKnownProofFact,
   knownValueFacts,
@@ -26,6 +27,7 @@ function proofFactsFromValue(value: Value): string[] {
   if (value.kind === 'literal') return proofFactsFromLiteral(value)
   if (value.kind === 'array') {
     return [
+      `sequence facts: ${formatArraySummary(value)}`,
       ...proofFactsFromNumber(value.length),
       ...(value.element == null ? [] : proofFactsFromValue(value.element)),
     ]

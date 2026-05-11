@@ -38,6 +38,8 @@ export type FitAudit = {
   functionName: string
   text: string
   reason: string
+  obligation?: FitObligation
+  trace?: FitProofTrace
 }
 
 export type FitCheckDetail =

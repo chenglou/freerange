@@ -45,6 +45,12 @@ export type NonNegativeFact = {
   text?: string
 }
 
+export type ComparisonProofStep = {
+  domain: string
+  rule: string
+  message: string
+}
+
 const maxLinearReductionDepth = 4
 
 export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
@@ -53,6 +59,8 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
   if (left.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(left)}
   if (right.kind !== 'number') return {status: 'unknown', reason: nonNumberReason(right)}
   if (left.cases != null || right.cases != null) {
+    const joinedStatus = proveComparisonPlain(left, op, right, assumptions)
+    if (joinedStatus.status === 'pass') return joinedStatus
     let unknownStatus: {status: 'pass' | 'fail' | 'unknown'; reason?: string} | null = null
     for (const leftCase of numberBranches(left)) {
       for (const rightCase of numberBranches(right)) {
@@ -71,6 +79,21 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
   return proveComparisonPlain(left, op, right, assumptions)
 }
 
+export function comparisonProofStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProofStep {
+  const structuralEquality = structuralEqualityProofStep(left, op, right)
+  if (structuralEquality != null) return structuralEquality
+  if (left.kind !== 'number' || right.kind !== 'number') {
+    return {domain: 'kernel', rule: 'non-number-comparison', message: 'checked comparison shape'}
+  }
+  if (left.cases != null || right.cases != null) {
+    if (proveComparisonPlain(left, op, right, assumptions).status === 'pass') {
+      return comparisonProofStepPlain(left, op, right, assumptions)
+    }
+    return {domain: 'numeric', rule: 'branch-comparison', message: 'checked comparison across finite numeric branches'}
+  }
+  return comparisonProofStepPlain(left, op, right, assumptions)
+}
+
 function proveStructuralEquality(left: Value, op: ComparisonOperator, right: Value): {status: 'pass' | 'unknown'; reason?: string} | null {
   if (left.kind === 'number' && right.kind === 'number') return null
   if (op !== '==') return null
@@ -81,6 +104,17 @@ function proveStructuralEquality(left: Value, op: ComparisonOperator, right: Val
   if (left.kind === 'unknown') return {status: 'unknown', reason: left.reason}
   if (right.kind === 'unknown') return {status: 'unknown', reason: right.reason}
   return {status: 'unknown', reason: 'Non-number equality is only proven for the same source expression'}
+}
+
+function structuralEqualityProofStep(left: Value, op: ComparisonOperator, right: Value): ComparisonProofStep | null {
+  if (left.kind === 'number' && right.kind === 'number') return null
+  if (op !== '==') return null
+  const leftExpr = structuralExpr(left)
+  const rightExpr = structuralExpr(right)
+  if (leftExpr != null && rightExpr != null && sameExpressionText(leftExpr, rightExpr)) {
+    return {domain: 'shape', rule: 'structural-equality', message: 'matched the same source expression'}
+  }
+  return {domain: 'shape', rule: 'structural-equality', message: 'checked equality by source identity'}
 }
 
 function structuralExpr(value: Value): string | null {
@@ -99,6 +133,24 @@ export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, 
   if (linearTruth === 'true') return {status: 'pass'}
   if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
   return {status: 'unknown', reason: comparisonFailureReason(left, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
+}
+
+function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): ComparisonProofStep {
+  if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) {
+    return {domain: 'source', rule: 'same-expression', message: 'matched the same source expression'}
+  }
+  const backend = evaluateBackendComparison({left, op, right}, proofBackendContext(assumptions))
+  if (backend?.status === 'pass') return {domain: 'numeric', rule: backend.rule, message: backend.message}
+
+  const truth = compareRanges(left, op, right)
+  if (truth !== 'maybe') return {domain: 'numeric', rule: 'range-comparison', message: 'checked comparison from interval bounds'}
+
+  const linearTruth = compareLinear(left, op, right, assumptions)
+  if (linearTruth !== 'maybe') return {domain: 'numeric', rule: 'linear-comparison', message: 'checked comparison from exact linear facts'}
+
+  if (backend != null) return {domain: 'numeric', rule: backend.rule, message: backend.message}
+
+  return {domain: 'numeric', rule: 'comparison', message: 'checked comparison claim'}
 }
 
 function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue): Truth {

@@ -22,7 +22,7 @@ import {
   type FitRange,
   type FitSpec,
 } from './parser.ts'
-import {proveComparison} from './proof.ts'
+import {comparisonProofStep, proveComparison} from './proof.ts'
 import {
   finiteRangeSpecFailureReason,
   formatArraySummary,
@@ -152,14 +152,15 @@ export function verifyCheckSpecWithProof(
   const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
     ? `applies to: every item in ${wildcardCollectionLabel(wildcardCheck.collection)}\n${status.reason}`
     : status.reason
-  return checkProof({
+  const step = comparisonProofStep(left, spec.op, right, context.assumptions)
+  return checkProofWithStep({
     file,
     ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
     status: status.status,
     ...(reason == null ? {} : {reason}),
-  }, 'numeric', 'comparison', 'checked comparison claim', [left, right], context.assumptions)
+  }, step, [left, right], context.assumptions)
 }
 
 function checkProof(
@@ -170,9 +171,18 @@ function checkProof(
   values: Value[],
   assumptions: EvalContext['assumptions'],
 ): CheckSpecProof {
+  return checkProofWithStep(check, {domain, rule, message}, values, assumptions)
+}
+
+function checkProofWithStep(
+  check: FitCheck,
+  step: FitProofStep,
+  values: Value[],
+  assumptions: EvalContext['assumptions'],
+): CheckSpecProof {
   return {
     check,
-    step: {domain, rule, message},
+    step,
     usedFacts: proofFactsFromValues(values, assumptions),
   }
 }
@@ -338,6 +348,12 @@ export function evaluateSpecExpression(text: FitExpressionLike, context: EvalCon
   return hooks.evaluateExpression(parsed.expression, {...context, env})
 }
 
+type AtomProof = {
+  status: FitCheckStatus
+  reason?: string
+  values: Value[]
+}
+
 function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): CheckSpecProof {
   const status = proveAtomSpec(spec, context, hooks)
   return checkProof({
@@ -347,35 +363,36 @@ function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpe
     text: spec.text,
     status: status.status,
     ...(status.reason == null ? {} : {reason: status.reason}),
-  }, 'sequence', `atom-${spec.name}`, 'checked layout atom claim', [], context.assumptions)
+  }, 'sequence', `atom-${spec.name}`, 'checked layout atom claim', status.values, context.assumptions)
 }
 
-function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {
+function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
   switch (spec.name) {
     case 'nondecreasing':
       return proveNondecreasingAtom(spec, context, hooks)
     case 'spaced':
       return proveSpacedAtom(spec, context, hooks)
     default:
-      return {status: 'unknown', reason: `Unknown layout atom ${spec.name}`}
+      return {status: 'unknown', reason: `Unknown layout atom ${spec.name}`, values: []}
   }
 }
 
-function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {
+function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
   const target = sequencePropArgument(spec.args, context, hooks)
-  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects return.rows.top'}
-  if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass'}
-  return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target)}
+  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects return.rows.top', values: []}
+  if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass', values: [target.array]}
+  return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target), values: [target.array]}
 }
 
-function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {
-  if (spec.args.length !== 2) return {status: 'unknown', reason: 'spaced expects spaced(rows, gap)'}
+function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
+  if (spec.args.length !== 2) return {status: 'unknown', reason: 'spaced expects spaced(rows, gap)', values: []}
   const rows = evaluateSpecExpression(spec.args[0]!, context, hooks)
   const gap = evaluateSpecExpression(spec.args[1]!, context, hooks)
-  if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array'}
-  if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression'}
-  if (provedSpacing(rows, gap.expr) != null) return {status: 'pass'}
-  return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr)}
+  const values = [rows, gap]
+  if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array', values}
+  if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression', values}
+  if (provedSpacing(rows, gap.expr) != null) return {status: 'pass', values}
+  return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr), values}
 }
 
 function nondecreasingFailureReason(text: string, target: {array: ArrayValue; prop: string}) {

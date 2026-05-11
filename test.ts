@@ -95,14 +95,16 @@ const x = one() // @fit 1
 const obligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'one')
 const tracedObligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'identity')
 const inlineObligationCheck = obligationChecks.find(check => check.text === 'x: 1')
+const sequenceObligationCheck = positiveReport.checks.find(check => check.functionName === 'runningSumLoop' && check.text === 'spaced(return.rows, gap)')
 if (
   obligationCheck?.obligation?.boundary !== 'function-contract'
   || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
   || tracedObligationCheck?.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
   || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
+  || sequenceObligationCheck?.trace?.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {
   console.error('expected checks to carry proof obligations and used facts')
-  console.error(JSON.stringify(obligationChecks, null, 2))
+  console.error(JSON.stringify({obligationChecks, sequenceObligationCheck}, null, 2))
   process.exitCode = 1
 } else {
   console.log('obligations: attached to checks with facts')
@@ -748,7 +750,7 @@ function size(width: number) {
   return width < 100 ? width : 100
 }
 `,
-  }, dir => {
+  }, async dir => {
     const normal = runFr(['check', 'audit.ts'], dir)
     expectCli(normal.exitCode === 0, 'expected normal check to ignore selector audit findings', normal.output)
     expectCli(!normal.output.includes('AUDIT'), 'expected normal check not to print audits', normal.output)
@@ -759,6 +761,10 @@ function size(width: number) {
     expectCli(audit.output.includes('AUDIT Math.min(width, 100): 100 does not affect the result'), 'expected redundant Math.min guard audit', audit.output)
     expectCli(audit.output.includes('AUDIT width < 100 ? width : 100: 100 does not affect the result'), 'expected redundant selector ternary branch audit', audit.output)
     expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 3 audit'), 'expected audit summary count', audit.output)
+    const report = await verifyFitFiles([pathJoin(dir, 'audit.ts')], {audit: true})
+    const firstAudit = report.audits[0]
+    expectCli(firstAudit?.obligation?.boundary === 'audit', 'expected audit to carry an audit obligation', JSON.stringify(report.audits, null, 2))
+    expectCli(firstAudit?.trace?.steps[0]?.domain === 'audit', 'expected audit to carry a proof trace', JSON.stringify(report.audits, null, 2))
   })
 
   await withCliFixture({
