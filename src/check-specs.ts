@@ -43,6 +43,8 @@ import {
   type FunctionContractProof,
   type Program,
 } from './check-types.ts'
+import type {FitProofStep} from './obligations.ts'
+import {proofFactsFromValues} from './proof-facts.ts'
 
 export type CheckSpecHooks = {
   evaluateExpression: (expression: ts.Expression, context: EvalContext) => Value
@@ -54,6 +56,12 @@ type WildcardUse =
   | {kind: 'none'}
   | {kind: 'one'; collection: string}
   | {kind: 'unsupported'; reason: string}
+
+export type CheckSpecProof = {
+  check: FitCheck
+  step: FitProofStep
+  usedFacts: string[]
+}
 
 export function verifyCheckSpec(
   file: string,
@@ -67,6 +75,21 @@ export function verifyCheckSpec(
   contractCache: Map<string, FunctionContractProof>,
   hooks: CheckSpecHooks,
 ): FitCheck {
+  return verifyCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, hooks).check
+}
+
+export function verifyCheckSpecWithProof(
+  file: string,
+  program: Program,
+  functionName: string,
+  baseEnv: Map<string, Value>,
+  result: Value,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  checks: FitCheck[],
+  assumptions: EvalContext['assumptions'],
+  contractCache: Map<string, FunctionContractProof>,
+  hooks: CheckSpecHooks,
+): CheckSpecProof {
   const env = new Map(baseEnv)
   env.set(fitReturnInternalRoot, result)
   const inputRoots = [...baseEnv.keys(), fitReturnInternalRoot]
@@ -76,44 +99,51 @@ export function verifyCheckSpec(
   if (spec.kind === 'check-range') {
     const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
     if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
-      return {
+      return checkProof({
         file,
         ...(spec.line == null ? {} : {line: spec.line}),
         functionName,
         text: spec.text,
         status: boundIndexCheck.status,
         ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
-      }
+      }, 'collection', 'bound-index-range', 'checked indexed range claim', [], context.assumptions)
     }
     const value = evaluateSpecExpression(spec.expression, context, hooks)
     const status = proveRangeSpec(value, spec.range, context, hooks)
-    return {
+    return checkProof({
       file,
       ...(spec.line == null ? {} : {line: spec.line}),
       functionName,
       text: spec.text,
       status: status.status,
       ...(status.reason == null ? {} : {reason: status.reason}),
-    }
+    }, 'numeric', 'range', 'checked numeric range claim', [value], context.assumptions)
   }
 
   if (spec.kind === 'check-atom') return verifyAtomSpec(file, functionName, spec, context, hooks)
 
   const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
   if (boundIndexCheck != null) {
-    return {
+    return checkProof({
       file,
       ...(spec.line == null ? {} : {line: spec.line}),
       functionName,
       text: spec.text,
       status: boundIndexCheck.status,
       ...(boundIndexCheck.reason == null ? {} : {reason: boundIndexCheck.reason}),
-    }
+    }, 'collection', 'bound-index-comparison', 'checked indexed comparison claim', [], context.assumptions)
   }
 
   const wildcardCheck = checkWildcardComparisonShape(spec.left, spec.right)
   if (wildcardCheck.kind === 'unsupported') {
-    return {file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'unknown', reason: wildcardCheck.reason}
+    return checkProof(
+      {file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'unknown', reason: wildcardCheck.reason},
+      'kernel',
+      'wildcard-shape',
+      'checked wildcard claim shape',
+      [],
+      context.assumptions,
+    )
   }
 
   const left = evaluateSpecExpression(spec.left, context, hooks)
@@ -122,13 +152,28 @@ export function verifyCheckSpec(
   const reason = wildcardCheck.kind === 'one' && status.status !== 'pass' && status.reason != null
     ? `applies to: every item in ${wildcardCollectionLabel(wildcardCheck.collection)}\n${status.reason}`
     : status.reason
-  return {
+  return checkProof({
     file,
     ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
     status: status.status,
     ...(reason == null ? {} : {reason}),
+  }, 'numeric', 'comparison', 'checked comparison claim', [left, right], context.assumptions)
+}
+
+function checkProof(
+  check: FitCheck,
+  domain: string,
+  rule: string,
+  message: string,
+  values: Value[],
+  assumptions: EvalContext['assumptions'],
+): CheckSpecProof {
+  return {
+    check,
+    step: {domain, rule, message},
+    usedFacts: proofFactsFromValues(values, assumptions),
   }
 }
 
@@ -293,16 +338,16 @@ export function evaluateSpecExpression(text: FitExpressionLike, context: EvalCon
   return hooks.evaluateExpression(parsed.expression, {...context, env})
 }
 
-function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): FitCheck {
+function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): CheckSpecProof {
   const status = proveAtomSpec(spec, context, hooks)
-  return {
+  return checkProof({
     file,
     ...(spec.line == null ? {} : {line: spec.line}),
     functionName,
     text: spec.text,
     status: status.status,
     ...(status.reason == null ? {} : {reason: status.reason}),
-  }
+  }, 'sequence', `atom-${spec.name}`, 'checked layout atom claim', [], context.assumptions)
 }
 
 function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {

@@ -63,6 +63,7 @@ import {
   flipComparison,
   proveComparison,
 } from './proof.ts'
+import {proofFactsFromValues} from './proof-facts.ts'
 import {
   comparisonNeed,
   formatExpectedRange,
@@ -102,14 +103,17 @@ export function verifyCallGivenSpecs(
 
   for (const spec of specs) {
     let status: CallPreconditionStatus | null = null
+    let usedFacts: string[] = []
     if (spec.kind === 'given-range') {
       const value = evaluators.evaluateSpecExpression(spec.expression, calleeContext)
+      usedFacts = proofFactsFromValues([value], calleeContext.assumptions)
       status = evaluators.proveRangeSpec(value, spec.range, calleeContext)
       status = withCallRangeDetail(status, callText, value, spec, options.callSiteBindings)
     }
     if (spec.kind === 'given-comparison') {
       const left = evaluators.evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluators.evaluateSpecExpression(spec.right, calleeContext)
+      usedFacts = proofFactsFromValues([left, right], calleeContext.assumptions)
       status = proveComparison(left, spec.op, right, calleeContext.assumptions)
       status = withCallComparisonDetail(status, callText, left, right, spec, options.callSiteBindings)
     }
@@ -130,6 +134,7 @@ export function verifyCallGivenSpecs(
           rule: 'given-precondition',
           message: 'checked callee given at the caller',
         },
+        usedFacts,
         prove: () => ({
           file: context.file,
           ...(options.callLine == null ? {} : {line: options.callLine}),

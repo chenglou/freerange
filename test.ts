@@ -80,23 +80,32 @@ const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
 function one() {
   return 1
 }
+/** @fit
+ * given value: 1..1
+ * return: 1
+ */
+function identity(value: number) {
+  return value
+}
 function bounded(value: number /* intentionally not @fit syntax here */) {
   return value
 }
 const x = one() // @fit 1
 `)
-const obligationCheck = obligationChecks.find(check => check.text === 'return: 1')
+const obligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'one')
+const tracedObligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'identity')
 const inlineObligationCheck = obligationChecks.find(check => check.text === 'x: 1')
 if (
   obligationCheck?.obligation?.boundary !== 'function-contract'
   || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
+  || tracedObligationCheck?.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
   || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
 ) {
-  console.error('expected checks to carry proof obligations')
+  console.error('expected checks to carry proof obligations and used facts')
   console.error(JSON.stringify(obligationChecks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('obligations: attached to checks')
+  console.log('obligations: attached to checks with facts')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)

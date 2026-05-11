@@ -76,12 +76,12 @@ export function callPreconditionObligation(input: {
   })
 }
 
-export function proofTraceForStatus(obligation: FitObligation, status: FitCheckStatus, step: FitProofStep): FitProofTrace {
+export function proofTraceForStatus(obligation: FitObligation, status: FitCheckStatus, steps: FitProofStep[], usedFacts: string[] = []): FitProofTrace {
   return {
     obligationId: obligation.id,
     status,
-    usedFacts: [],
-    steps: [step],
+    usedFacts: [...new Set(usedFacts)],
+    steps,
   }
 }
 

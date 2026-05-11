@@ -8,6 +8,7 @@ import {
 export type ProveObligationOptions = {
   obligation: FitObligation
   step: FitProofStep
+  usedFacts?: string[]
   prove: () => FitCheck
 }
 
@@ -16,6 +17,6 @@ export function proveObligation(options: ProveObligationOptions): FitCheck {
   return {
     ...check,
     obligation: options.obligation,
-    trace: proofTraceForStatus(options.obligation, check.status, options.step),
+    trace: proofTraceForStatus(options.obligation, check.status, [options.step], options.usedFacts),
   }
 }

@@ -232,7 +232,7 @@ The interpreter cutover note is [research/abstract-interpreter.md](./research/ab
 - loop summaries: cursor recurrences and append summaries
 - optional backend obligations: SMT later, only where earned
 
-The important boundary is source readers emit reusable facts, contract comments become explicit obligations, and checks query the fact inventory. The current code has started this split: `src/fact-inventory.ts` owns published fact identity/indexing, `src/facts.ts` publishes interpreter values into that inventory, and `src/obligations.ts` attaches proof-obligation/proof-trace metadata to checks without changing the public CLI. For example, a cursor loop should first emit facts like:
+The important boundary is source readers emit reusable facts, contract comments become explicit obligations, and checks query the fact inventory. The current code has started this split: `src/fact-inventory.ts` owns published fact identity/indexing, `src/facts.ts` publishes interpreter values into that inventory, `src/obligations.ts` attaches proof-obligation/proof-trace metadata to checks, and `src/proof-facts.ts` publishes the small set of facts a proof saw without changing the public CLI. For example, a cursor loop should first emit facts like:
 
 ```txt
 rows.length == items.length
@@ -243,6 +243,8 @@ spaced(rows, gap)
 ```
 
 Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. `src/facts.ts` now owns the typed inferred fact output, and `src/sequence-facts.ts` owns adjacent sequence relation queries. Object-array and parallel-array code should converge here when they prove the same layout relation.
+
+`semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, goal, proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
 
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 

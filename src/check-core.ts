@@ -22,7 +22,7 @@ import {
   evaluateRangeBound as evaluateParsedRangeBound,
   evaluateSpecExpression as evaluateParsedSpecExpression,
   proveRangeSpec as proveParsedRangeSpec,
-  verifyCheckSpec as verifyParsedCheckSpec,
+  verifyCheckSpecWithProof as verifyParsedCheckSpecWithProof,
   type CheckSpecHooks,
 } from './check-specs.ts'
 import {
@@ -651,17 +651,13 @@ function verifyCheckSpec(
   obligationBoundary: FitObligationBoundary = 'function-contract',
 ): FitCheck {
   const obligation = obligationForSpec(file, functionName, spec, obligationBoundary, boundary)
+  const proof = verifyParsedCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
+  const check = boundary == null ? proof.check : {...proof.check, ...boundary}
   return proveObligation({
     obligation,
-    step: {
-      domain: 'kernel',
-      rule: 'check-spec',
-      message: 'checked @fit claim against evaluated source facts',
-    },
-    prove: () => {
-      const check = verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
-      return boundary == null ? check : {...check, ...boundary}
-    },
+    step: proof.step,
+    usedFacts: proof.usedFacts,
+    prove: () => check,
   })
 }
 

@@ -129,6 +129,8 @@ As the checker grows, make "facts" and "claims" real internal objects. Facts sho
 
 Do not let every new check grow its own private source reader.
 
+The first useful version of a proof trace does not have to be fancy. It can say the obligation, the checker domain/rule, and the source facts the rule saw. That is already better than rebuilding report context from strings later.
+
 ## SUMMARIZE COLLECTIONS
 
 One early mistake was unrolling too much. It feels precise to evaluate every array element. It quickly explodes and gives the checker the wrong default behavior.
@@ -207,7 +209,8 @@ The interpreter rewrite only worked because Freerange had recordings:
 5. demo contract snapshots
 6. external corpus probes
 7. interpreter snapshots
-8. a loose performance budget
+8. proof-trace snapshots
+9. a loose performance budget
 
 These recordings make large changes reviewable. They show whether behavior changed intentionally.
 

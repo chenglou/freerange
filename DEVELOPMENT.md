@@ -21,10 +21,11 @@ bun install
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
 - `bun run verify:interpreter` — run the interpreter on focused kernels and snapshot the abstract return values it builds
+- `bun run verify:semantics` — snapshot the internal obligation/proof-trace shape for a tiny checked fixture
 - `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
-- `bun run check` — full local gate: pattern tests, demo contracts, eval/interpreter/corpus/bench snapshots, typecheck, and lint
+- `bun run check` — full local gate: pattern tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, and lint
 
 ## Current Sources Of Truth
 
@@ -35,7 +36,7 @@ bun install
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter kernels, and the external corpus sweep
+- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter kernels, proof-trace shape, and the external corpus sweep
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -45,6 +46,7 @@ bun install
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
 - [src/obligations.ts](./src/obligations.ts) — explicit proof-obligation and proof-trace metadata attached to checks
 - [src/proof-broker.ts](./src/proof-broker.ts) — central wrapper for proving an obligation with an existing checker/proof step
+- [src/proof-facts.ts](./src/proof-facts.ts) — small publisher for the proof context that proof traces and future reports can show
 - [src/fact-inventory.ts](./src/fact-inventory.ts) — typed published facts and the inventory/index shape used by `infer` and future reports
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
@@ -92,6 +94,7 @@ bun install
 - [verify-photo-gallery-infer-snapshots.ts](./verify-photo-gallery-infer-snapshots.ts) — local photo-gallery `infer --all` snapshot runner
 - [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — interpreter-adjacent golden snapshot runner
 - [verify-interpreter-snapshots.ts](./verify-interpreter-snapshots.ts) — focused interpreter value/fact/unsupported snapshot runner
+- [verify-semantic-snapshots.ts](./verify-semantic-snapshots.ts) — tiny proof-obligation/proof-trace snapshot runner
 - [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus sweep runner and discovery rules
 - [verify-bench-budget.ts](./verify-bench-budget.ts) — loose warmed performance budget guard for the demo verifier
 - [snapshot.ts](./snapshot.ts) — tiny snapshot compare/update helper for dev-only harnesses
