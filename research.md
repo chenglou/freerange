@@ -244,7 +244,7 @@ spaced(rows, gap)
 
 Then public checks, atoms, `infer`, and report wording all consume the same fact inventory. `src/facts.ts` now owns the typed inferred fact output, and `src/sequence-facts.ts` owns adjacent sequence relation queries. Object-array and parallel-array code should converge here when they prove the same layout relation.
 
-`semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, goal, proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
+`semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, structured goal, proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
 
 Collection/sequence ownership should keep leaving the scalar value domain. `src/array-summary.ts` now owns summary merging and empty-branch lineage joins; `src/domain.ts` still re-exports those helpers while callers settle. That is the model for future domain splitting: move one coherent ownership boundary, keep behavior flat, then let imports migrate when the payoff is clear.
 

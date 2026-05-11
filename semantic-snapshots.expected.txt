@@ -1,5 +1,5 @@
 PASS helper: return: 1
-  obligation: function-contract range return: 1
+  obligation: function-contract range return in 1
   step: numeric.range - checked numeric range claim
   facts:
     value: 1..1
@@ -10,12 +10,12 @@ PASS caller: helper(1): requires value: 1..1
   facts:
     value: int 1..1
 PASS caller: x: 1
-  obligation: inline-check range x: 1
+  obligation: inline-check range x in 1
   step: numeric.range - checked numeric range claim
   facts:
     checked helper contract: semantic-snapshot.ts#helper: return: 1
 PASS caller: return: 1
-  obligation: function-contract range return: 1
+  obligation: function-contract range return in 1
   step: numeric.range - checked numeric range claim
   facts:
     checked helper contract: semantic-snapshot.ts#helper: return: 1
