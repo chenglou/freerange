@@ -327,6 +327,32 @@ export function negativeBranchAssignmentJoinsBothSides(width: number) {
 }
 
 /** @fit
+ * return.total: 12 | 21
+ */
+export function negativeBranchStateDoesNotInventCrossProduct(flag: boolean) {
+  let x = 0
+  let y = 0
+  if (flag) {
+    x = 1
+    y = 10
+  } else {
+    x = 2
+    y = 20
+  }
+  return {total: x + y}
+}
+
+/** @fit
+ * given n: int 0..10
+ * return.total: 12 | 21
+ */
+export function negativeConditionalExpressionDoesNotInventNumericCrossProduct(n: number) {
+  const x = n > 4 ? 1 : 2
+  const y = n > 4 ? 10 : 20
+  return {total: x + y}
+}
+
+/** @fit
  * given step: -10..10
  * return > 1
  */

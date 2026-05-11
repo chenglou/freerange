@@ -23,9 +23,9 @@ FAIL negative-patterns.ts:negativeGivenGraphContradiction: given _high * scale <
 UNKNOWN negative-patterns.ts:negativeHelperResultComparisonNeedsBridge: return.low <= return.high
   known:
     low: any number
-    checked helper contract: negative-patterns.ts#negativePartialOrderedTriple: return.low <= return.mid
     high: any number
     assumed from input: given low <= mid
+    checked helper contract: negative-patterns.ts#negativePartialOrderedTriple: return.low <= return.mid
   missing fact: low <= high
 FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
   result: is false
@@ -170,11 +170,20 @@ UNKNOWN negative-patterns.ts:negativeLogicalOrTrueOnlyCarriesOneSide: return >= 
     assumed from input: given y: -10..10
   missing fact: (x + y) >= 0
 FAIL negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
-  range was 0..200, expected inside 0..100
+  range was 140..200 as (width + 100), expected inside 0..100
   known:
-    0..200
+    (width + 100): 140..200
     assumed from input: given width: 0..100
-  missing: 0..200 <= 100
+    inferred from branch: width - 40 > 0
+  missing: (width + 100) <= 100
+FAIL negative-patterns.ts:negativeBranchStateDoesNotInventCrossProduct: return.total: 12 | 21
+  value was int 11..11 as (1 + 10), expected one of 12 | 21
+  branches produced 11
+  missing: (1 + 10) in {12, 21}
+FAIL negative-patterns.ts:negativeConditionalExpressionDoesNotInventNumericCrossProduct: return.total: 12 | 21
+  value was int 11..22, expected one of 12 | 21
+  branches produced 11, 22
+  missing: int 11..22 in {12, 21}
 UNKNOWN negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
   known:
     step: 0..10
@@ -420,14 +429,15 @@ FAIL negative-patterns.ts:negativeInlineParamCallGiven: negativeInlineParamNeeds
   caller passed: value: 0..20
   missing: value <= 10
 FAIL negative-patterns.ts:negativeElseIfBranchCanReturnUpper: return: -1..<1
-  range was int -1..1, expected inside -1..<1
+  range was 1, expected inside -1..<1
   known:
-    int -1..1
     assumed from input: given value: -100..100
     assumed from input: given min: 1..100
     assumed from input: given max: 1..100
     assumed from input: given min <= max
-  missing: int -1..1 < 1
+    inferred from branch: value >= -min
+    inferred from branch: -max + value > 0
+  missing: 1 < 1
 FAIL negative-patterns.ts:negativeRelationalCallGiven: negativeNeedsContainerFit(containee, container): requires container >= containee
   caller passed: container: 0..50, containee: 100..200
   missing: container >= containee
@@ -520,7 +530,8 @@ FAIL negative-patterns.ts:negativeIfClampCanReturnMax: return < max
     assumed from input: given value: -1000..1000
     assumed from input: given max: -1000..1000
     assumed from input: given max >= min
-    inferred from branch: -min + value < 0
+    inferred from branch: -min + value >= 0
+    inferred from branch: -max + value > 0
   missing: strict comparison cannot hold when both sides are max
 FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols: int 1..6
   range was int 1..7, expected inside int 1..6
@@ -869,11 +880,11 @@ UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch:
     inferred from branch: focused >= 0
   missing fact: (focused - 1) >= 0
 FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return: int 0..1000
-  range was int -1..999, expected inside int 0..1000
+  range was int -1..999 as (focused - 1), expected inside int 0..1000
   known:
-    int -1..999
+    (focused - 1): int -1..999
     assumed from input: given focused: int 0..1000
-  missing: int -1..999 >= 0
+  missing: (focused - 1) >= 0
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length

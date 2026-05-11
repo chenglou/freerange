@@ -27,7 +27,6 @@ import {
 } from './check-specs.ts'
 import {
   type EvalContext,
-  type EvalFlow,
   type FitAudit,
   type FitCheck,
   type FitCheckStatus,
@@ -152,8 +151,10 @@ import type {
   InterpreterCall,
   InterpreterClaim,
   InterpreterFrame,
+  InterpreterFlow,
   InterpreterHooks,
   InterpreterLoopClaim,
+  InterpreterReturnCase,
 } from './interpreter/context.ts'
 import {formatInterpreterIssues} from './interpreter/format.ts'
 
@@ -452,12 +453,15 @@ function verifyFunctionSpecsDetailed(
   const context = functionEvalContext(program, fn, setup, contractCache, {
     callObligations: recordsCallsites ? 'record' : 'silent',
   })
-  const result = hasBodyClaims ? evaluateFunctionBody(fn, context) : unknown('No body claim requested')
+  const state = hasBodyClaims
+    ? evaluateFunctionBodyState(fn, context)
+    : {result: unknown('No body claim requested'), env: context.env, assumptions: context.assumptions}
+  const result = state.result
   if (hasBodyClaims) checks.push(...context.checks)
 
   for (const spec of contractSpecs) {
     if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
-    checks.push(verifyCheckSpec(file, program, functionName, env, result, spec, checks, context.assumptions, contractCache))
+    checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, contractCache))
   }
 
   return {
@@ -609,6 +613,40 @@ function verifyCheckSpec(
   })
 }
 
+function verifyCheckSpecForResultCases(
+  file: string,
+  program: Program,
+  functionName: string,
+  baseEnv: Map<string, Value>,
+  result: Value,
+  returnCases: InterpreterReturnCase[] | undefined,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  checks: FitCheck[],
+  assumptions: LinearConstraint[],
+  contractCache: Map<string, FunctionContractProof>,
+): FitCheck {
+  if (returnCases == null || returnCases.length <= 1) {
+    return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache)
+  }
+
+  const caseChecks = returnCases.map(returnCase => verifyCheckSpec(
+    file,
+    program,
+    functionName,
+    baseEnv,
+    returnCase.value,
+    spec,
+    checks,
+    mergeAssumptions(assumptions, returnCase.assumptions),
+    contractCache,
+  ))
+  if (caseChecks.every(check => check.status === 'pass')) return {...caseChecks[0]!, status: 'pass'}
+  return caseChecks.find(check => check.status === 'fail')
+    ?? caseChecks.find(check => check.status === 'unknown')
+    ?? caseChecks.find(check => check.status === 'requires')
+    ?? caseChecks[0]!
+}
+
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   return proveParsedRangeSpec(value, range, context, checkSpecHooks)
 }
@@ -635,14 +673,19 @@ function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
   return evaluateFunctionBodyState(fn, context).result
 }
 
-function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]} {
+function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]; returnCases?: InterpreterReturnCase[]} {
   const hooks = interpreterHooks(context)
   const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions, hooks)
   context.assumptions = result.assumptions
   if (context.inferUnsupported != null) {
     context.inferUnsupported.push(...formatInterpreterIssues(result.issues))
   }
-  return {result: result.value, env: result.env, assumptions: result.assumptions}
+  return {
+    result: result.value,
+    env: result.env,
+    assumptions: result.assumptions,
+    ...(result.returnCases == null ? {} : {returnCases: result.returnCases}),
+  }
 }
 
 function interpreterHooks(context: EvalContext): InterpreterHooks {
@@ -729,8 +772,8 @@ function evaluateInterpreterLoop(
   claim: InterpreterLoopClaim,
   frame: InterpreterFrame,
   rootContext: EvalContext,
-  evaluate: () => EvalFlow,
-): EvalFlow {
+  evaluate: () => InterpreterFlow,
+): InterpreterFlow {
   if (!shouldRecordInterpreterClaim(frame, rootContext)) return evaluate()
   const context = interpreterEvalContext(frame, rootContext)
   const checksStart = rootContext.checks.length

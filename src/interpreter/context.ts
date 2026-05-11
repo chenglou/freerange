@@ -29,6 +29,7 @@ export type InterpreterAudit = {
 export type InterpreterFrame = {
   program: Program
   env: Map<string, Value>
+  stateCases?: InterpreterStateCase[]
   issues: InterpreterIssue[]
   audits: InterpreterAudit[]
   stack: string[]
@@ -38,6 +39,16 @@ export type InterpreterFrame = {
   assumptions: LinearConstraint[]
   hooks?: InterpreterHooks
   objectPath?: string[]
+}
+
+export type InterpreterStateCase = {
+  env: Map<string, Value>
+  assumptions: LinearConstraint[]
+  label?: string
+}
+
+export type InterpreterReturnCase = InterpreterStateCase & {
+  value: Value
 }
 
 export type InterpreterHooks = {
@@ -93,6 +104,7 @@ export type LoopAppend = {
 
 export type InterpreterFlow =
   | {kind: 'return'; value: Value}
+  | {kind: 'return-cases'; cases: InterpreterReturnCase[]}
   | {kind: 'fallthrough'}
   | {kind: 'exit'}
 

@@ -53,6 +53,7 @@ bun install
 - [src/value-domain.ts](./src/value-domain.ts) — literal/object/array/null constructors, value joins, and assumption propagation through values
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/assumptions.ts](./src/assumptions.ts) — linear/comparison assumption dedupe used by proof and branch facts
+- [src/constraint-reachability.ts](./src/constraint-reachability.ts) — tiny reachability check for combined branch assumptions
 - [src/number-domain.ts](./src/number-domain.ts) — numeric value construction, finite cases, arithmetic, and running-sum/extremum measures
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
@@ -65,6 +66,7 @@ bun install
 - [src/interpreter/audit.ts](./src/interpreter/audit.ts) — advisory audit for redundant min/max-style choices, always-known branch conditions, and redundant nullish fallbacks
 - [src/interpreter/call-targets.ts](./src/interpreter/call-targets.ts) — identifier/import/namespace/class-member call resolution for interpreter calls
 - [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
+- [src/interpreter/state-cases.ts](./src/interpreter/state-cases.ts) — state partition helpers for branch-local envs, assumptions, and return cases
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — checker/interpreter bridge types for evaluated state and helper-call recording

@@ -1,5 +1,6 @@
 import {type ComparisonOperator} from './parser.ts'
 import {mergeAssumptions} from './assumptions.ts'
+import {assumptionsAreReachable} from './constraint-reachability.ts'
 import {
   maxNumberCases,
   numberBranches,
@@ -125,9 +126,11 @@ export function combineNumberCases(
     for (const rightCase of numberBranches(right)) {
       const value = evaluate(leftCase.value, rightCase.value)
       if (value.kind !== 'number') return null
+      const assumptions = mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
+      if (!assumptionsAreReachable(assumptions)) continue
       cases.push({
         value,
-        assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions),
+        assumptions,
       })
       if (cases.length > maxNumberCases) return null
     }

@@ -145,7 +145,7 @@ locals:
 unsupported:
   unsupported render line 233: Unknown identifier events
   unsupported render line 249: Unknown identifier debug
-  unsupported render > <if-true> > <if-true> line 250: Unknown assignment root debugTimestamp
+  unsupported render > <if-true> line 251: Unknown identifier debugTimestamp
   unsupported render line 258: Unknown identifier reducedMotion
   unsupported render line 259: Unknown identifier isSafari
   unsupported render > <conditional-true> line 259: Unknown identifier document

@@ -93,6 +93,8 @@ import {
   type InterpreterHooks,
   type InterpreterIssue,
   type InterpreterLoopClaim,
+  type InterpreterReturnCase,
+  type InterpreterStateCase,
   type LoopFrame,
   type LoopAppend,
 } from './context.ts'
@@ -164,6 +166,19 @@ import {
   restoreScopedValues,
   saveScopedValues,
 } from './scope.ts'
+import {
+  adoptJoinedState,
+  consumeStateCases,
+  envWithAssumptions,
+  frameForStateCase,
+  hasStateCases,
+  joinStateCaseEnvs,
+  maxStateCases,
+  reachableStateCases,
+  setStateCases,
+  sharedStateCaseAssumptions,
+  stateCasesFromFrame,
+} from './state-cases.ts'
 
 export type InterpreterFunctionResult = {
   value: Value
@@ -174,6 +189,7 @@ export type InterpreterFunctionResult = {
 export type InterpreterBodyResult = InterpreterFunctionResult & {
   env: Map<string, Value>
   assumptions: LinearConstraint[]
+  returnCases?: InterpreterReturnCase[]
 }
 
 type LoopBodyHandlers = {
@@ -240,8 +256,15 @@ export function evaluateInterpreterFunctionBody(
 ): InterpreterBodyResult {
   const frame = interpreterFrame(program, env, stack, assumptions, hooks)
   bindInstanceThis(fn, program, frame.env)
-  const value = evaluateFunctionNodeBody(fn.name, fn.node, frame)
-  return {value, env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
+  const result = evaluateFunctionNodeBodyResult(fn.name, fn.node, frame)
+  return {
+    value: result.value,
+    env: frame.env,
+    issues: frame.issues,
+    audits: frame.audits,
+    assumptions: frame.assumptions,
+    ...(result.returnCases == null ? {} : {returnCases: result.returnCases}),
+  }
 }
 
 export function evaluateInterpreterTopLevel(
@@ -395,11 +418,28 @@ function evaluateFunctionNodeBody(
   fn: FitFunctionNode | ArrayCallbackFunction,
   frame: InterpreterFrame,
 ): Value {
-  if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) return evaluateReturnExpression(fn.body, fn, frame)
-  if (fn.body == null) return noteUnsupported(frame, `Function ${name} has no body`, fn)
-  if (!ts.isBlock(fn.body)) return noteUnsupported(frame, `Function ${name} body is unsupported`, fn.body)
+  return evaluateFunctionNodeBodyResult(name, fn, frame).value
+}
+
+function evaluateFunctionNodeBodyResult(
+  name: string,
+  fn: FitFunctionNode | ArrayCallbackFunction,
+  frame: InterpreterFrame,
+): {value: Value; returnCases?: InterpreterReturnCase[]} {
+  if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) return {value: evaluateReturnExpression(fn.body, fn, frame)}
+  if (fn.body == null) return {value: noteUnsupported(frame, `Function ${name} has no body`, fn)}
+  if (!ts.isBlock(fn.body)) return {value: noteUnsupported(frame, `Function ${name} body is unsupported`, fn.body)}
   const flow = evaluateStatements(fn.body.statements, frame)
-  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, `Function ${name} did not return`, fn.body)
+  if (flow.kind === 'return' || flow.kind === 'return-cases') {
+    const value = completedFlowValue(flow, frame)
+    return value == null
+      ? {value: noteUnsupported(frame, `Function ${name} did not return`, fn.body)}
+      : {
+        value,
+        ...(flow.kind === 'return-cases' ? {returnCases: flow.cases} : {}),
+      }
+  }
+  return {value: noteUnsupported(frame, `Function ${name} did not return`, fn.body)}
 }
 
 function bindParameters(parameters: ts.NodeArray<ts.ParameterDeclaration>, argumentValues: (Value | undefined)[], frame: InterpreterFrame) {
@@ -464,6 +504,7 @@ function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame
 
 function evaluateStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame, startIndex = 0): InterpreterFlow {
   for (let index = startIndex; index < statements.length; index++) {
+    if (hasStateCases(frame)) return evaluatePartitionedStatements(statements, frame, index)
     const statement = statements[index]!
     if (ts.isIfStatement(statement)) {
       const flow = evaluateIfStatement(statement, frame, statements, index + 1)
@@ -481,13 +522,41 @@ function evaluateStatements(statements: ts.NodeArray<ts.Statement>, frame: Inter
   return {kind: 'fallthrough'}
 }
 
+function evaluatePartitionedStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame, startIndex: number): InterpreterFlow {
+  const cases = consumeStateCases(frame)
+  const completedCases: InterpreterReturnCase[] = []
+  const fallthroughCases: InterpreterStateCase[] = []
+
+  for (const stateCase of cases) {
+    const caseFrame = frameForStateCase(frame, stateCase)
+    const flow = evaluateStatements(statements, caseFrame, startIndex)
+    if (flow.kind === 'fallthrough') {
+      fallthroughCases.push(...stateCasesFromFrame(caseFrame))
+      continue
+    }
+    completedCases.push(...returnCasesFromFlow(flow, caseFrame))
+  }
+
+  const completed = returnFlowFromCases(completedCases)
+  if (fallthroughCases.length === 0) {
+    if (completedCases.length > 0) adoptJoinedState(frame, completedCases)
+    return completed ?? {kind: 'exit'}
+  }
+  if (completed == null) {
+    setStateCases(frame, fallthroughCases)
+    return {kind: 'fallthrough'}
+  }
+  setStateCases(frame, fallthroughCases)
+  return joinCompletedFlows(completed, {kind: 'fallthrough'}, frame)
+}
+
 function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
   if (ts.isVariableStatement(statement)) {
     evaluateVariableStatement(statement, frame)
     return {kind: 'fallthrough'}
   }
   if (ts.isReturnStatement(statement)) {
-    return {kind: 'return', value: statement.expression == null ? noteUnsupported(frame, 'Empty return', statement) : evaluateReturnExpression(statement.expression, statement, frame)}
+    return returnFlow(statement.expression == null ? noteUnsupported(frame, 'Empty return', statement) : evaluateReturnExpression(statement.expression, statement, frame), frame)
   }
   if (ts.isExpressionStatement(statement)) {
     evaluateExpression(statement.expression, frame)
@@ -500,7 +569,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
   if (ts.isThrowStatement(statement)) return {kind: 'exit'}
-  return {kind: 'return', value: noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`, statement)}
+  return returnFlow(noteUnsupported(frame, `Unsupported statement in ${frame.stack.at(-1) ?? '<unknown>'}: ${statement.getText(frame.program.sourceFile)}`, statement), frame)
 }
 
 function evaluateVariableStatement(statement: ts.VariableStatement, frame: InterpreterFrame) {
@@ -539,6 +608,17 @@ function evaluateReturnExpression(expression: ts.Expression, node: ts.Node, fram
   const shaped = valueWithStructuralFallback(value, returnTypeShape(node, frame))
   afterClaim(claim, shaped, frame)
   return shaped
+}
+
+function returnFlow(value: Value, frame: InterpreterFrame): InterpreterFlow {
+  return {
+    kind: 'return-cases',
+    cases: [{
+      value,
+      env: new Map(frame.env),
+      assumptions: [...frame.assumptions],
+    }],
+  }
 }
 
 function returnTypeShape(node: ts.Node, frame: InterpreterFrame): Value | null {
@@ -604,14 +684,21 @@ function evaluateIfStatement(
     }
   }
   if (thenFlow.kind !== 'fallthrough') {
-    frame.env = elseFrame.env
+    adoptFrameState(frame, elseFrame)
     return {kind: 'fallthrough'}
   }
   if (elseFlow.kind !== 'fallthrough') {
-    frame.env = thenFrame.env
+    adoptFrameState(frame, thenFrame)
     return {kind: 'fallthrough'}
   }
-  frame.env = joinBranchFrameEnvs(thenFrame, elseFrame)
+  if (frame.loopStack.length > 0) {
+    frame.env = joinBranchFrameEnvs(thenFrame, elseFrame)
+    return {kind: 'fallthrough'}
+  }
+  setStateCases(frame, [
+    ...stateCasesFromFrame(thenFrame).map(stateCase => labeledStateCase(stateCase, '<if-true>')),
+    ...stateCasesFromFrame(elseFrame).map(stateCase => labeledStateCase(stateCase, '<if-false>')),
+  ])
   return {kind: 'fallthrough'}
 }
 
@@ -619,29 +706,93 @@ function joinBranchFrameEnvs(left: InterpreterFrame, right: InterpreterFrame): M
   return joinFrameEnvs(envWithAssumptions(left.env, left.assumptions), envWithAssumptions(right.env, right.assumptions))
 }
 
-function envWithAssumptions(env: Map<string, Value>, assumptions: LinearConstraint[]): Map<string, Value> {
-  const next = new Map<string, Value>()
-  for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions))
-  return next
+function adoptFrameState(target: InterpreterFrame, source: InterpreterFrame) {
+  if (hasStateCases(source)) {
+    setStateCases(target, stateCasesFromFrame(source))
+    return
+  }
+  target.env = source.env
+  target.assumptions = source.assumptions
+  delete target.stateCases
+}
+
+function labeledStateCase(stateCase: InterpreterStateCase, label: string): InterpreterStateCase {
+  return {
+    env: stateCase.env,
+    assumptions: stateCase.assumptions,
+    label: stateCase.label ?? label,
+  }
 }
 
 function flowWithAssumptions(flow: InterpreterFlow, assumptions: LinearConstraint[]): InterpreterFlow {
-  return flow.kind === 'return' ? {kind: 'return', value: valueWithAssumptions(flow.value, assumptions)} : flow
+  if (flow.kind === 'return') return {kind: 'return', value: valueWithAssumptions(flow.value, assumptions)}
+  if (flow.kind === 'return-cases') {
+    return {
+      kind: 'return-cases',
+      cases: flow.cases.map(stateCase => ({
+        ...stateCase,
+        value: valueWithAssumptions(stateCase.value, assumptions),
+        assumptions: mergeAssumptions(stateCase.assumptions, assumptions),
+      })),
+    }
+  }
+  return flow
 }
 
 function joinCompletedFlows(left: InterpreterFlow, right: InterpreterFlow, frame: InterpreterFrame): InterpreterFlow {
-  const leftValue = completedFlowValue(left, frame)
-  const rightValue = completedFlowValue(right, frame)
-  if (leftValue == null && rightValue == null) return {kind: 'exit'}
-  if (leftValue == null) return {kind: 'return', value: rightValue!}
-  if (rightValue == null) return {kind: 'return', value: leftValue}
-  return {kind: 'return', value: joinValues(leftValue, rightValue)}
+  return returnFlowFromCases([
+    ...returnCasesFromFlow(left, frame),
+    ...returnCasesFromFlow(right, frame),
+  ]) ?? {kind: 'exit'}
 }
 
 function completedFlowValue(flow: InterpreterFlow, frame: InterpreterFrame): Value | null {
   if (flow.kind === 'exit') return null
   if (flow.kind === 'return') return flow.value
+  if (flow.kind === 'return-cases') return joinedReturnCaseValue(flow.cases)
   return unknown(`Function ${frame.stack.at(-1) ?? '<unknown>'} did not return`)
+}
+
+function returnCasesFromFlow(flow: InterpreterFlow, frame: InterpreterFrame): InterpreterReturnCase[] {
+  if (flow.kind === 'exit') return []
+  if (flow.kind === 'return') {
+    return [{
+      value: flow.value,
+      env: new Map(frame.env),
+      assumptions: [...frame.assumptions],
+    }]
+  }
+  if (flow.kind === 'return-cases') return flow.cases
+  return [{
+    value: unknown(`Function ${frame.stack.at(-1) ?? '<unknown>'} did not return`),
+    env: new Map(frame.env),
+    assumptions: [...frame.assumptions],
+  }]
+}
+
+function returnFlowFromCases(cases: InterpreterReturnCase[]): InterpreterFlow | null {
+  const bounded = boundReturnCases(cases)
+  if (bounded.length === 0) return null
+  return {kind: 'return-cases', cases: bounded}
+}
+
+function boundReturnCases(cases: InterpreterReturnCase[]): InterpreterReturnCase[] {
+  const next = reachableStateCases(cases)
+  if (next.length <= maxStateCases) return next
+  return [{
+    value: joinedReturnCaseValue(next) ?? unknown('Return cases exceeded precision budget'),
+    env: joinStateCaseEnvs(next),
+    assumptions: sharedStateCaseAssumptions(next),
+    label: '<merged>',
+  }]
+}
+
+function joinedReturnCaseValue(cases: InterpreterReturnCase[]): Value | null {
+  const [first, ...rest] = cases
+  if (first == null) return null
+  let value = valueWithAssumptions(first.value, first.assumptions)
+  for (const stateCase of rest) value = joinValues(value, valueWithAssumptions(stateCase.value, stateCase.assumptions))
+  return value
 }
 
 function evaluateBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
@@ -876,7 +1027,9 @@ function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: Interprete
   }
   const flow = evaluateIfStatement(statement, frame)
   if (flow.kind === 'fallthrough') return null
-  return flow.kind === 'return' ? flow.value : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported', statement)
+  return flow.kind === 'return' || flow.kind === 'return-cases'
+    ? completedFlowValue(flow, frame)!
+    : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported', statement)
 }
 
 function finalizeSymbolicLoopAppendedArrays(loop: LoopFrame, frame: InterpreterFrame) {

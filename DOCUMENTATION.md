@@ -396,7 +396,9 @@ const capped = width < max ? width : max // like Math.min(width, max)
 const raised = height < min ? min : height // like Math.max(height, min)
 ```
 
-Simple side-effecting branches can fall through too. Freerange joins the two local environments after the `if`:
+Simple side-effecting branches can fall through too. Freerange keeps the branch
+states separate while it evaluates later statements, then reports the joined
+facts:
 
 ```ts
 /** @fit
@@ -428,6 +430,13 @@ function clamp(value: number, min: number, max: number) {
   return next
 }
 ```
+
+Keeping whole branch states also preserves correlated locals. If one branch makes
+`x = 1, y = 10` and the other makes `x = 2, y = 20`, a later `x + y` has the two
+real outcomes `11 | 22`, not the invented cross-product `12 | 21`. Repeated
+numeric ternaries with contradictory comparison facts get the same pruning.
+Repeated boolean ternaries are still value-local; use an `if` branch when that
+correlation is the fact you care about.
 
 Guard branches that throw are treated as exits. The code after the `if` keeps the
 facts from the surviving path:
@@ -1373,7 +1382,7 @@ The checker understands a small pure subset:
 - `const` / `let` locals with initializers, including object and array binding patterns
 - `return expression`, with optional inline range/comparison checks
 - ternaries, including exact-operand min/max forms like `a < b ? a : b`
-- return-style `if` guards, `throw` guards, simple fall-through `if` / `else` branches, and small finite-literal `switch` branches
+- return-style `if` guards, `throw` guards, state-partitioned fall-through `if` / `else` branches, and small finite-literal `switch` branches
 - branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, `typeof value !== 'undefined'` for optional values, and numeric `??` fallbacks such as `dimensions?.width ?? 0`
 - plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
 - direct same-file function calls, class method calls, and class getter reads
