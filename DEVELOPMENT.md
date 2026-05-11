@@ -51,6 +51,7 @@ bun install
 - [src/array-summary.ts](./src/array-summary.ts) — collection/sequence summary ownership, including map/filter lineage and summary merges
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/assumptions.ts](./src/assumptions.ts) — linear/comparison assumption dedupe used by proof and branch facts
+- [src/number-domain.ts](./src/number-domain.ts) — numeric value construction, finite cases, arithmetic, and running-sum/extremum measures
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
 - [src/function-inputs.ts](./src/function-inputs.ts) — function parameter binding, argument binding, and typed input fallback shapes
@@ -79,7 +80,7 @@ bun install
 - [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
 - [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
 - [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
-- [src/domain.ts](./src/domain.ts) — abstract values, number/array domains, and value joins
+- [src/domain.ts](./src/domain.ts) — abstract value shapes, constructors, compatibility re-exports, and value joins
 - [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
 - [src/proof.ts](./src/proof.ts) — range/comparison proof orchestration, interval checks, and linear assumption reduction
 - [src/proof-backend.ts](./src/proof-backend.ts) — symbolic comparison composition, math lemmas, and small named comparison proof rules
