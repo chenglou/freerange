@@ -16,7 +16,6 @@ import type {
 import {
   finiteNumberValue,
   linearNameForExpression,
-  mergeAssumptions,
   mergeProvenance,
   numberBranches,
   numberValue,
@@ -25,6 +24,7 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {mergeAssumptions} from './assumptions.ts'
 import {
   closedRangeApprox,
   finiteElementAccessRoot,

@@ -22,7 +22,6 @@ import {
   divideNumbers,
   joinValues,
   literalKey,
-  mergeAssumptions,
   literalValue,
   mergeArraySummary,
   mergeElementValue,
@@ -48,6 +47,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {mergeAssumptions} from '../assumptions.ts'
 import {combineNumberCases} from '../guarded-facts.ts'
 import {
   adjacentElementAccessFacts,

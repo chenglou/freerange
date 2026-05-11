@@ -1,11 +1,11 @@
 import {
   joinValues,
-  mergeAssumptions,
   unknown,
   valueWithAssumptions,
   type LinearConstraint,
   type Value,
 } from './domain.ts'
+import {mergeAssumptions} from './assumptions.ts'
 import type {
   EvalContext,
   EvalFlow,

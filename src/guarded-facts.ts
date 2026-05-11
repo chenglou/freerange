@@ -1,7 +1,7 @@
 import {type ComparisonOperator} from './parser.ts'
+import {mergeAssumptions} from './assumptions.ts'
 import {
   maxNumberCases,
-  mergeAssumptions,
   numberBranches,
   plainNumber,
   withNumberCases,

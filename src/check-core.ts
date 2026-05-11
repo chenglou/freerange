@@ -44,13 +44,13 @@ import {
 } from './check-types.ts'
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
-  mergeAssumptions,
   unknown,
   unknownNumber,
   valueWithDefaultedUndefined,
   type LinearConstraint,
   type Value,
 } from './domain.ts'
+import {mergeAssumptions} from './assumptions.ts'
 import {proveComparison} from './proof.ts'
 import {
   structuralShape,

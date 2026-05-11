@@ -2,13 +2,13 @@ import * as ts from 'typescript'
 import {
   conditionalRunningSumNumber,
   mergeArraySummary,
-  mergeAssumptions,
   mergeElementValue,
   runningExtremumNumber,
   runningSumNumber,
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {mergeAssumptions} from '../assumptions.ts'
 import {
   sequenceSummaryFromLoopPush,
   type LoopExtremum,

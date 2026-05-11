@@ -2,7 +2,6 @@ import type * as ts from 'typescript'
 import {
   callExpr,
   maxNumberCases,
-  mergeAssumptions,
   mergeProvenance,
   numberValue,
   numberBranches,
@@ -13,6 +12,7 @@ import {
   type NumberCase,
   type Value,
 } from '../domain.ts'
+import {mergeAssumptions} from '../assumptions.ts'
 import {linearConstant, linearScale} from '../linear.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {

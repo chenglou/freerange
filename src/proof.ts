@@ -11,7 +11,6 @@ import {
   type ProofBackendContext,
 } from './proof-backend.ts'
 import {
-  mergeAssumptions,
   numberBranches,
   numberValue,
   unknownNumber,
@@ -20,6 +19,7 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {mergeAssumptions} from './assumptions.ts'
 import {
   cleanLinear,
   isZeroLinear,

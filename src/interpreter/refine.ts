@@ -1,7 +1,6 @@
 import * as ts from 'typescript'
 import {
   literalValue,
-  mergeAssumptions,
   numberBranches,
   numberValue,
   withNumberCases,
@@ -10,6 +9,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {mergeAssumptions} from '../assumptions.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
 import {childFrame, type InterpreterFrame} from './context.ts'
