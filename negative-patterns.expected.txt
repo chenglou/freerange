@@ -184,6 +184,8 @@ FAIL negative-patterns.ts:negativeConditionalExpressionDoesNotInventNumericCross
   value was int 11..22, expected one of 12 | 21
   branches produced 11, 22
   missing: int 11..22 in {12, 21}
+UNKNOWN negative-patterns.ts:negativeStatePartitionBudgetDoesNotSilentlyPass: return: int 0..15
+  State partition budget exceeded: 16 branch states exceed limit 8; Freerange refuses to summarize branch states silently
 UNKNOWN negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
   known:
     step: 0..10

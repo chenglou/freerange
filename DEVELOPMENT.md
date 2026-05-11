@@ -66,7 +66,7 @@ bun install
 - [src/interpreter/audit.ts](./src/interpreter/audit.ts) — advisory audit for redundant min/max-style choices, always-known branch conditions, and redundant nullish fallbacks
 - [src/interpreter/call-targets.ts](./src/interpreter/call-targets.ts) — identifier/import/namespace/class-member call resolution for interpreter calls
 - [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
-- [src/interpreter/state-cases.ts](./src/interpreter/state-cases.ts) — state partition helpers for branch-local envs, assumptions, and return cases
+- [src/interpreter/state-cases.ts](./src/interpreter/state-cases.ts) — state partition helpers and budget checks for branch-local envs, assumptions, and return cases
 - [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
 - [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
 - [src/interpreter-state.ts](./src/interpreter-state.ts) — checker/interpreter bridge types for evaluated state and helper-call recording

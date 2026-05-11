@@ -172,12 +172,13 @@ import {
   envWithAssumptions,
   frameForStateCase,
   hasStateCases,
-  joinStateCaseEnvs,
-  maxStateCases,
   reachableStateCases,
   setStateCases,
-  sharedStateCaseAssumptions,
+  stateCaseBudget,
+  stateCaseBudgetMessage,
   stateCasesFromFrame,
+  summarizeOverBudgetReturnCases,
+  type StateCaseSetResult,
 } from './state-cases.ts'
 
 export type InterpreterFunctionResult = {
@@ -537,17 +538,26 @@ function evaluatePartitionedStatements(statements: ts.NodeArray<ts.Statement>, f
     completedCases.push(...returnCasesFromFlow(flow, caseFrame))
   }
 
-  const completed = returnFlowFromCases(completedCases)
+  const completed = returnFlowFromCases(completedCases, frame)
   if (fallthroughCases.length === 0) {
-    if (completedCases.length > 0) adoptJoinedState(frame, completedCases)
+    if (completed != null && completed.kind === 'return-cases') {
+      const adopted = adoptJoinedState(frame, completed.cases)
+      if (adopted.kind === 'overflow') noteStateCaseBudget(frame, adopted)
+    }
     return completed ?? {kind: 'exit'}
   }
   if (completed == null) {
-    setStateCases(frame, fallthroughCases)
+    const applied = setStateCases(frame, fallthroughCases)
+    if (applied.kind === 'overflow') noteStateCaseBudget(frame, applied)
     return {kind: 'fallthrough'}
   }
-  setStateCases(frame, fallthroughCases)
+  const applied = setStateCases(frame, fallthroughCases)
+  if (applied.kind === 'overflow') noteStateCaseBudget(frame, applied)
   return joinCompletedFlows(completed, {kind: 'fallthrough'}, frame)
+}
+
+function noteStateCaseBudget(frame: InterpreterFrame, overflow: Extract<StateCaseSetResult, {kind: 'overflow'}>) {
+  noteUnsupported(frame, stateCaseBudgetMessage(overflow.count, overflow.limit))
 }
 
 function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
@@ -684,21 +694,24 @@ function evaluateIfStatement(
     }
   }
   if (thenFlow.kind !== 'fallthrough') {
-    adoptFrameState(frame, elseFrame)
+    const adopted = adoptFrameState(frame, elseFrame)
+    if (adopted.kind === 'overflow') noteStateCaseBudget(frame, adopted)
     return {kind: 'fallthrough'}
   }
   if (elseFlow.kind !== 'fallthrough') {
-    adoptFrameState(frame, thenFrame)
+    const adopted = adoptFrameState(frame, thenFrame)
+    if (adopted.kind === 'overflow') noteStateCaseBudget(frame, adopted)
     return {kind: 'fallthrough'}
   }
   if (frame.loopStack.length > 0) {
     frame.env = joinBranchFrameEnvs(thenFrame, elseFrame)
     return {kind: 'fallthrough'}
   }
-  setStateCases(frame, [
+  const applied = setStateCases(frame, [
     ...stateCasesFromFrame(thenFrame).map(stateCase => labeledStateCase(stateCase, '<if-true>')),
     ...stateCasesFromFrame(elseFrame).map(stateCase => labeledStateCase(stateCase, '<if-false>')),
   ])
+  if (applied.kind === 'overflow') noteStateCaseBudget(frame, applied)
   return {kind: 'fallthrough'}
 }
 
@@ -706,14 +719,14 @@ function joinBranchFrameEnvs(left: InterpreterFrame, right: InterpreterFrame): M
   return joinFrameEnvs(envWithAssumptions(left.env, left.assumptions), envWithAssumptions(right.env, right.assumptions))
 }
 
-function adoptFrameState(target: InterpreterFrame, source: InterpreterFrame) {
+function adoptFrameState(target: InterpreterFrame, source: InterpreterFrame): StateCaseSetResult {
   if (hasStateCases(source)) {
-    setStateCases(target, stateCasesFromFrame(source))
-    return
+    return setStateCases(target, stateCasesFromFrame(source))
   }
   target.env = source.env
   target.assumptions = source.assumptions
   delete target.stateCases
+  return {kind: 'ok'}
 }
 
 function labeledStateCase(stateCase: InterpreterStateCase, label: string): InterpreterStateCase {
@@ -743,7 +756,7 @@ function joinCompletedFlows(left: InterpreterFlow, right: InterpreterFlow, frame
   return returnFlowFromCases([
     ...returnCasesFromFlow(left, frame),
     ...returnCasesFromFlow(right, frame),
-  ]) ?? {kind: 'exit'}
+  ], frame) ?? {kind: 'exit'}
 }
 
 function completedFlowValue(flow: InterpreterFlow, frame: InterpreterFrame): Value | null {
@@ -770,21 +783,16 @@ function returnCasesFromFlow(flow: InterpreterFlow, frame: InterpreterFrame): In
   }]
 }
 
-function returnFlowFromCases(cases: InterpreterReturnCase[]): InterpreterFlow | null {
-  const bounded = boundReturnCases(cases)
-  if (bounded.length === 0) return null
-  return {kind: 'return-cases', cases: bounded}
-}
-
-function boundReturnCases(cases: InterpreterReturnCase[]): InterpreterReturnCase[] {
-  const next = reachableStateCases(cases)
-  if (next.length <= maxStateCases) return next
-  return [{
-    value: joinedReturnCaseValue(next) ?? unknown('Return cases exceeded precision budget'),
-    env: joinStateCaseEnvs(next),
-    assumptions: sharedStateCaseAssumptions(next),
-    label: '<merged>',
-  }]
+function returnFlowFromCases(cases: InterpreterReturnCase[], frame: InterpreterFrame): InterpreterFlow | null {
+  const reachable = reachableStateCases(cases)
+  if (reachable.length === 0) return null
+  const budget = stateCaseBudget(reachable)
+  if (budget.kind === 'overflow') {
+    const message = stateCaseBudgetMessage(budget.count, budget.limit)
+    noteUnsupported(frame, message)
+    return {kind: 'return-cases', cases: [summarizeOverBudgetReturnCases(reachable, message)]}
+  }
+  return {kind: 'return-cases', cases: reachable}
 }
 
 function joinedReturnCaseValue(cases: InterpreterReturnCase[]): Value | null {

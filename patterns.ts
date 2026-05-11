@@ -541,6 +541,37 @@ export function conditionalExpressionPrunesContradictoryNumericCases(n: number) 
 }
 
 /** @fit
+ * given a: int 0..1
+ * given b: int 0..1
+ * given c: int 0..1
+ * return: int 0..7
+ */
+export function statePartitionBudgetAllowsEightStates(a: number, b: number, c: number) {
+  let total = 0
+  if (a > 0) total += 1
+  if (b > 0) total += 2
+  if (c > 0) total += 4
+  return total
+}
+
+/** @fit
+ * given a: int 0..1
+ * given b: int 0..1
+ * given c: int 0..1
+ * given d: int 0..1
+ * return: 1
+ */
+export function statePartitionBudgetPreservesStableFacts(a: number, b: number, c: number, d: number) {
+  let _total = 0
+  const stable = 1
+  if (a > 0) _total += 1
+  if (b > 0) _total += 2
+  if (c > 0) _total += 4
+  if (d > 0) _total += 8
+  return stable
+}
+
+/** @fit
  * given step: -10..10
  * return > 0
  */

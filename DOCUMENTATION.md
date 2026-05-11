@@ -438,6 +438,12 @@ numeric ternaries with contradictory comparison facts get the same pruning.
 Repeated boolean ternaries are still value-local; use an `if` branch when that
 correlation is the fact you care about.
 
+Freerange keeps up to 8 reachable straight-line branch states. If code needs
+more than that, Freerange keeps facts that are identical in every branch, forgets
+facts that vary by branch, and records a state-partition budget message. Checks
+that need the forgotten facts become `unknown` instead of passing from a widened
+summary.
+
 Guard branches that throw are treated as exits. The code after the `if` keeps the
 facts from the surviving path:
 

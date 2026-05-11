@@ -353,6 +353,22 @@ export function negativeConditionalExpressionDoesNotInventNumericCrossProduct(n:
 }
 
 /** @fit
+ * given a: int 0..1
+ * given b: int 0..1
+ * given c: int 0..1
+ * given d: int 0..1
+ * return: int 0..15
+ */
+export function negativeStatePartitionBudgetDoesNotSilentlyPass(a: number, b: number, c: number, d: number) {
+  let total = 0
+  if (a > 0) total += 1
+  if (b > 0) total += 2
+  if (c > 0) total += 4
+  if (d > 0) total += 8
+  return total
+}
+
+/** @fit
  * given step: -10..10
  * return > 1
  */

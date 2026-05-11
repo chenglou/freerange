@@ -152,3 +152,4 @@ unsupported:
   unsupported render > <conditional-false> line 259: Unknown identifier window
   unsupported render line 261: Unsupported call window.location.hash.slice
   unsupported render line 263: Indexed for loops support block bodies only
+  unsupported render: State partition budget exceeded: 12 branch states exceed limit 8; Freerange refuses to summarize branch states silently
