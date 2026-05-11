@@ -1579,6 +1579,14 @@ export function negativeArrayAtNegativeIndexNeedsEnoughLength(items: number[]) {
 }
 
 /** @fit
+ * given count: int 0..100
+ * return.length == count + 1
+ */
+export function negativeTypedArrayConstructorKeepsExactLength(count: number) {
+  return new Uint8Array(count)
+}
+
+/** @fit
  * given index: 0 | 2
  * return: 20 | 40
  */

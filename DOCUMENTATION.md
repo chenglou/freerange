@@ -1034,6 +1034,7 @@ Supported today:
 - optional/rest tuple shapes keep safe length ranges, but do not expose exact per-slot facts
 - local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
 - `[...items, value]` length
+- length-bearing constructors such as `new Array(count)` and `new Int8Array(count)`, preserving the constructed value's `.length`
 - bounded literal indexing; exact finite index cases like `0 | 2` only read those slots on tuple/product-shaped values
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
 - symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize previous/current and current/next neighborhoods once bounds prove them live
@@ -1381,6 +1382,7 @@ The checker understands a small pure subset:
 - object literals with normal properties, shorthand properties, and object spread
 - `as` / `satisfies` wrappers
 - array literals, spread, `.length`, summarized element values, bounded indexing, and exact tuple/product-slot indexing
+- length-bearing `new Array(...)` and typed-array constructors when called with one length argument
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain, simple true-side predicate facts, and length no larger than source length

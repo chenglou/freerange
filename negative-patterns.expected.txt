@@ -818,6 +818,12 @@ UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given item
   given comparisons only support input paths, numbers, and simple arithmetic
 UNKNOWN negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
   Array.at(-2) expected length >= 2
+UNKNOWN negative-patterns.ts:negativeTypedArrayConstructorKeepsExactLength: return.length == count + 1
+  known:
+    count: int 0..100
+    (count + 1): int 1..101
+    assumed from input: given count: int 0..100
+  missing fact: count == (count + 1)
 FAIL negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
   value was int 10..30, expected one of 20 | 40
   branches produced 10, 20, 30

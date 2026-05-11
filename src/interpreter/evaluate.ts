@@ -1350,8 +1350,47 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isBinaryExpression(expression)) return evaluateBinaryExpression(expression, frame)
   if (ts.isConditionalExpression(expression)) return evaluateConditionalExpression(expression, frame)
   if (ts.isCallExpression(expression)) return evaluateCallExpression(expression, frame)
+  if (ts.isNewExpression(expression)) return evaluateNewExpression(expression, frame)
   if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet', expression)
   return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`, expression)
+}
+
+function evaluateNewExpression(expression: ts.NewExpression, frame: InterpreterFrame): Value {
+  const constructorName = newExpressionConstructorName(expression)
+  if (constructorName != null && lengthBearingConstructorNames.has(constructorName)) {
+    return evaluateLengthBearingNewExpression(expression, constructorName, frame)
+  }
+  return noteUnsupported(frame, `Unsupported new expression ${expression.getText(frame.program.sourceFile)}`, expression)
+}
+
+const lengthBearingConstructorNames = new Set([
+  'Array',
+  'Int8Array',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'Int16Array',
+  'Uint16Array',
+  'Int32Array',
+  'Uint32Array',
+  'Float32Array',
+  'Float64Array',
+  'BigInt64Array',
+  'BigUint64Array',
+])
+
+function newExpressionConstructorName(expression: ts.NewExpression): string | null {
+  if (ts.isIdentifier(expression.expression)) return expression.expression.text
+  return null
+}
+
+function evaluateLengthBearingNewExpression(expression: ts.NewExpression, constructorName: string, frame: InterpreterFrame): Value {
+  if (expression.arguments == null || expression.arguments.length !== 1) {
+    return noteUnsupported(frame, `${constructorName} constructor expected one length argument`, expression)
+  }
+  const length = evaluateExpression(expression.arguments[0]!, frame)
+  if (length.kind !== 'number') return noteUnsupported(frame, `${constructorName} length expected a number`, expression.arguments[0])
+  const expr = expression.getText(frame.program.sourceFile)
+  return unknownArray(expr, length, unknownNumber(`${expr}[]`))
 }
 
 function evaluateVoidExpression(expression: ts.VoidExpression, frame: InterpreterFrame): Value {

@@ -1853,6 +1853,22 @@ export function arrayAtSecondLastKeepsElementDomain(items: number[]) {
 }
 
 /** @fit
+ * given count: int 0..100
+ * return.length == count
+ */
+export function typedArrayConstructorKeepsLength(count: number) {
+  return new Int8Array(count)
+}
+
+/** @fit
+ * given items.length: int 0..100
+ * return.length == items.length
+ */
+export function typedArrayConstructorKeepsSourceLength(items: number[]) {
+  return new Uint16Array(items.length)
+}
+
+/** @fit
  * given items.length: int 1..50
  * given items[]: 0..40
  * given focused: int 0..<items.length
