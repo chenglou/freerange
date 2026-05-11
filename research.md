@@ -246,6 +246,8 @@ Then public checks, atoms, `infer`, and report wording all consume the same fact
 
 `semantic-snapshots.expected.txt` is the tiny guard for this internal layer. It should stay small: obligation boundary, goal, proof step, and facts used. Bigger user-facing output still belongs in normal negative/report snapshots.
 
+Collection/sequence ownership should keep leaving the scalar value domain. `src/array-summary.ts` now owns summary merging and empty-branch lineage joins; `src/domain.ts` still re-exports those helpers while callers settle. That is the model for future domain splitting: move one coherent ownership boundary, keep behavior flat, then let imports migrate when the payoff is clear.
+
 Named facts should have both a human lowering and a proof rule. E.g. `spaced(rows, gap)` means adjacent starts differ by previous size plus `gap`, but the proof rule can come from a recognized cursor loop.
 
 Comparison proof rules are now their own small layer. Keep it modest: a rule matches one goal, asks for ordinary obligations, and uses the same obligations for proving and report text. Current examples include signed shared factors/divisors, positive cancellation, non-strict `floor` / `ceil` monotonicity, and floor hit-index bounds:

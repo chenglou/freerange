@@ -48,6 +48,7 @@ bun install
 - [src/proof-broker.ts](./src/proof-broker.ts) — central wrapper for proving an obligation with an existing checker/proof step
 - [src/proof-facts.ts](./src/proof-facts.ts) — small publisher for the proof context that proof traces and future reports can show
 - [src/fact-inventory.ts](./src/fact-inventory.ts) — typed published facts and the inventory/index shape used by `infer` and future reports
+- [src/array-summary.ts](./src/array-summary.ts) — collection/sequence summary ownership, including map/filter lineage and summary merges
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
