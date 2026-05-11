@@ -82,6 +82,7 @@ bun install
 - [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
 - [src/reports.ts](./src/reports.ts) — check report runners and file/source entrypoints
 - [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
+- [src/infer-summary.ts](./src/infer-summary.ts) — streaming project-summary aggregation for no-path `fr infer --all`
 - [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
 - [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
 - [src/domain.ts](./src/domain.ts) — compatibility facade that re-exports the domain modules

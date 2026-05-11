@@ -35,6 +35,7 @@ import {
   type FitInferLoopReport,
   type FitInferLoopSpec,
   type FitInferReport,
+  type FitInferSummary,
   type FitShapeInsight,
   type FitShapeOptions,
   type FitShapeReport,
@@ -70,6 +71,11 @@ import {
   topUnknownReason,
   uniqueUnsupported,
 } from './infer-report.ts'
+import {
+  addInferFunctionToSummary,
+  createInferSummary,
+  finishInferSummary,
+} from './infer-summary.ts'
 import {
   callSiteBindingsFor,
   valueWithCallSiteText,
@@ -179,6 +185,18 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
     }
   }
   return {files: paths, functions}
+}
+
+export function summarizeFitFiles(paths: string[]): FitInferSummary {
+  const project = loadFitProject(paths, readTopLevelGlobal)
+  const contractCache = new Map<string, FunctionContractProof>()
+  const summary = createInferSummary(paths)
+  for (const program of project.entries) {
+    for (const fn of program.functions.values()) {
+      addInferFunctionToSummary(summary, inferFunctionFacts(program, fn, contractCache))
+    }
+  }
+  return finishInferSummary(summary)
 }
 
 export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {

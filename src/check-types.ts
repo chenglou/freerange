@@ -92,6 +92,38 @@ export type FitInferReport = {
   functions: FitInferFunctionReport[]
 }
 
+export type FitInferSummary = {
+  files: string[]
+  functions: number
+  facts: {
+    return: number
+    locals: number
+    loop: number
+  }
+  specs: {
+    checked: number
+    assumptions: number
+    notInferred: number
+    redundant: number
+  }
+  unsupported: {
+    stops: number
+    noisiest: FitInferSummaryFunction[]
+    topReasons: FitInferSummaryReason[]
+  }
+}
+
+export type FitInferSummaryFunction = {
+  file: string
+  functionName: string
+  count: number
+}
+
+export type FitInferSummaryReason = {
+  reason: string
+  count: number
+}
+
 export type FitShapeInsight = {
   file: string
   functionName: string

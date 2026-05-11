@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 
-import {inferFitFiles} from './src/check-core.ts'
+import {inferFitFiles, summarizeFitFiles} from './src/check-core.ts'
 import {printInferReport, printInferSummary} from './src/infer-output.ts'
 import {type FitAudit, type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {resolveFitProjectPaths} from './src/modules.ts'
@@ -57,6 +57,10 @@ async function runInfer(args: string[]) {
   }
   const input = resolveInputPaths(paths)
   if (input == null) return
+  if (paths.length === 0 && all === true && functionName == null) {
+    printInferSummary(summarizeFitFiles(input.paths))
+    return
+  }
   const report = inferFitFiles(input.paths, {
     ...(functionName == null ? {} : {functionName}),
     all: all || annotationsOnly !== true,
@@ -66,8 +70,7 @@ async function runInfer(args: string[]) {
     process.exitCode = 1
     return
   }
-  if (paths.length === 0 && all === true && functionName == null) printInferSummary(report)
-  else printInferReport(report)
+  printInferReport(report)
 }
 
 function parseInferArgs(args: string[]) {
