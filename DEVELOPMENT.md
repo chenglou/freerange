@@ -111,6 +111,7 @@ bun install
 - [test.ts](./test.ts) — pattern-suite runner
 - [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-alias-helpers.ts](./import-pattern-alias-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [import-pattern-declared-package](./import-pattern-declared-package), [import-pattern-declared-package-no-map](./import-pattern-declared-package-no-map), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
 - [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet
+- [experiments](./experiments) — tracked scratch artifacts from analyzer/product experiments; each experiment should carry its own notes and commands because these are not part of the default full gate unless a verifier says so
 
 ## Infer Tool
 

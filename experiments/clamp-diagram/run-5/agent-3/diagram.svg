@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="824" viewBox="0 0 1200 824" role="img" aria-labelledby="title desc">
+  <title id="title">Clamp identity domain condition diagram</title>
+  <desc id="desc">A two-column diagram showing ordered and inverted clamp bounds for E equals x minus max of y and min of -x minus y and z.</desc>
+  <style>
+    :root { color-scheme: light; }
+    svg { background: #fbfaf6; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .reserved { fill: #fffdf8; stroke: #c9bfae; stroke-width: 1.2; }
+    .title-box { fill: #fff7df; stroke: #b78318; }
+    .subtitle-box { fill: #f5fbff; stroke: #70a9c8; }
+    .panel { fill: #f8f6f0; stroke: #6f7668; stroke-width: 1.5; }
+    .note-box { fill: #ffffff; }
+    .plot-box { fill: #fcfcfb; stroke: #a9b0a5; }
+    .formula-box { fill: #eef7f1; stroke: #76a783; }
+    .key-box { fill: #1f2a24; stroke: #1f2a24; }
+    .axis, .tick { stroke: #343b35; stroke-width: 1.7; }
+    .axis-arrow { fill: #343b35; }
+    .threshold { stroke: #8d948a; stroke-width: 1.2; stroke-dasharray: 5 5; }
+    .graph { fill: none; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+    .ordered-graph { stroke: #246b8f; }
+    .inverted-graph { stroke: #a04452; }
+    .empty-bracket { fill: none; stroke: #a04452; stroke-width: 2; stroke-dasharray: 4 4; }
+    .plot-label-box { fill: #ffffff; stroke: #ccd2c8; }
+    .empty-label-box { fill: #fff1f2; stroke: #ca7b86; }
+    .branch-label-box { fill: #e9f4f8; stroke: #7aa8bd; }
+    .branch-label-box.strong { fill: #fff0f2; stroke: #c76975; }
+    text { fill: #1e261f; letter-spacing: 0; }
+    .main-title { font-size: 26px; font-weight: 760; }
+    .subtitle-text { font-size: 17px; font-weight: 540; }
+    .column-title { font-size: 19px; font-weight: 720; }
+    .note-text { font-size: 14px; font-weight: 520; }
+    .formula-text { font-size: 14px; font-weight: 560; }
+    .axis-label, .tick-label { font-size: 13px; font-weight: 650; }
+    .plot-label { font-size: 12px; font-weight: 680; }
+    .key-text { fill: #fffdf6; font-size: 17px; font-weight: 680; }
+  </style>
+  <rect class="reserved title-box" x="60" y="34" width="1080" height="42" rx="8"/>
+  <rect class="reserved subtitle-box" x="60" y="84" width="1080" height="62" rx="8"/>
+  <text class="main-title" text-anchor="middle"><tspan x="600" y="63">Clamp Form Needs Ordered Bounds</tspan></text>
+  <text class="subtitle-text" text-anchor="middle"><tspan x="600" y="110">E = x + min(-y, y + max(x, -z - y)) = x - max(y, min(-x - y, z))</tspan><tspan x="600" y="134">= x - clamp(y, z, -x - y) only when y &lt;= -x - y</tspan></text>
+  <rect class="panel" x="60" y="170" width="524" height="520" rx="8"/>
+<rect class="reserved title-box" x="80" y="190" width="484" height="32" rx="6"/>
+<rect class="reserved note-box" x="80" y="232" width="484" height="54" rx="6"/>
+<rect class="reserved plot-box" x="80" y="304" width="484" height="266" rx="6"/>
+<rect class="reserved formula-box" x="80" y="588" width="484" height="82" rx="6"/>
+<text class="column-title" text-anchor="middle"><tspan x="322" y="212">Ordered bounds</tspan></text>
+<text class="note-text"><tspan x="96" y="254">Assume y &lt;= u, where u = -x - y.</tspan><tspan x="96" y="274">The middle region is a real interval.</tspan></text>
+<line class="axis" x1="126" y1="528" x2="518" y2="528"/>
+<line class="axis" x1="126" y1="528" x2="126" y2="338"/>
+<path class="axis-arrow" d="M 518 528 l -8 -4 l 0 8 z"/>
+<path class="axis-arrow" d="M 126 338 l -4 8 l 8 0 z"/>
+<text class="axis-label" x="508" y="556">z</text>
+<text class="axis-label" x="92" y="346">C(z)</text>
+<line class="threshold" x1="214" y1="338" x2="214" y2="528"/>
+<line class="threshold" x1="412" y1="338" x2="412" y2="528"/>
+<path class="graph ordered-graph" d="M 126 458 L 214 458 L 412 386 L 518 386"/>
+<line class="tick" x1="214" y1="521" x2="214" y2="535"/>
+<line class="tick" x1="412" y1="521" x2="412" y2="535"/>
+<text class="tick-label" x="214" y="552" text-anchor="middle">y</text>
+<text class="tick-label" x="412" y="552" text-anchor="middle">u</text>
+<rect class="plot-label-box" x="130" y="330" width="112" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="186" y="346">z &lt; y</tspan></text>
+<rect class="plot-label-box" x="240" y="330" width="140" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="310" y="346">y &lt;= z &lt;= u</tspan></text>
+<rect class="plot-label-box" x="402" y="330" width="112" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="458" y="346">z &gt; u</tspan></text>
+<rect class="branch-label-box" x="142" y="426" width="106" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="195" y="442">C(z) = y</tspan></text>
+<rect class="branch-label-box" x="382" y="400" width="106" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="435" y="416">C(z) = u</tspan></text>
+<text class="formula-text"><tspan x="96" y="617">C(z) = max(y, min(z, u)) = clamp(y, z, u)</tspan><tspan x="96" y="638">Therefore E = x - C(z) = x - clamp(y, z, -x - y).</tspan></text>
+  <rect class="panel" x="616" y="170" width="524" height="520" rx="8"/>
+<rect class="reserved title-box" x="636" y="190" width="484" height="32" rx="6"/>
+<rect class="reserved note-box" x="636" y="232" width="484" height="54" rx="6"/>
+<rect class="reserved plot-box" x="636" y="304" width="484" height="266" rx="6"/>
+<rect class="reserved formula-box" x="636" y="588" width="484" height="82" rx="6"/>
+<text class="column-title" text-anchor="middle"><tspan x="878" y="212">Inverted bounds</tspan></text>
+<text class="note-text"><tspan x="652" y="254">Assume y &gt; u, where u = -x - y.</tspan><tspan x="652" y="274">The requested middle interval is empty.</tspan></text>
+<line class="axis" x1="682" y1="528" x2="1074" y2="528"/>
+<line class="axis" x1="682" y1="528" x2="682" y2="338"/>
+<path class="axis-arrow" d="M 1074 528 l -8 -4 l 0 8 z"/>
+<path class="axis-arrow" d="M 682 338 l -4 8 l 8 0 z"/>
+<text class="axis-label" x="1064" y="556">z</text>
+<text class="axis-label" x="648" y="346">C(z)</text>
+<line class="threshold" x1="778" y1="338" x2="778" y2="528"/>
+<line class="threshold" x1="968" y1="338" x2="968" y2="528"/>
+<path class="graph inverted-graph" d="M 682 458 L 1074 458"/>
+<path class="empty-bracket" d="M 794 510 C 842 482, 904 482, 952 510"/>
+<text class="tick-label" x="778" y="552" text-anchor="middle">u</text>
+<text class="tick-label" x="968" y="552" text-anchor="middle">y</text>
+<rect class="plot-label-box" x="686" y="330" width="112" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="742" y="346">z &lt; u</tspan></text>
+<rect class="empty-label-box" x="838" y="330" width="190" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="933" y="341">empty interval</tspan><tspan x="933" y="354">y &lt;= z &lt;= u</tspan></text>
+<rect class="plot-label-box" x="958" y="330" width="112" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="1014" y="346">z &gt; y</tspan></text>
+<rect class="branch-label-box" x="698" y="426" width="106" height="24" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="751" y="442">C(z) = y</tspan></text>
+<rect class="branch-label-box strong" x="830" y="476" width="190" height="26" rx="5"/>
+<text class="plot-label" text-anchor="middle"><tspan x="925" y="487">collapse:</tspan><tspan x="925" y="500">C(z) = y</tspan></text>
+<text class="formula-text"><tspan x="652" y="617">Since min(z, u) &lt;= u &lt; y, max(y, min(z, u)) = y.</tspan><tspan x="652" y="638">The original expression takes the y branch, not a valid ordered clamp.</tspan></text>
+  <rect class="key-box" x="60" y="714" width="1080" height="76" rx="8"/>
+  <text class="key-text"><tspan x="94" y="747">Key point: the final clamp notation is valid under y &lt;= -x - y.</tspan><tspan x="94" y="769">When the bounds invert, the original max/min expression collapses to the y branch instead.</tspan></text>
+</svg>

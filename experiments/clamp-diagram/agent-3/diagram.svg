@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 760" role="img" aria-labelledby="title desc">
+  <title id="title">Geometric min/max/clamp-shaped reduction</title>
+  <desc id="desc">Two panels compare ordered and inverted bounds for the expression E = x - max(y, min(z, -x-y)).</desc>
+  <defs>
+    <pattern id="leftHatch" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#cfe8ff"/>
+      <path d="M 0 10 L 10 0" stroke="#72a9d9" stroke-width="1.2"/>
+    </pattern>
+    <pattern id="middleDots" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#d9f3dc"/>
+      <circle cx="5" cy="5" r="1.4" fill="#68a875"/>
+    </pattern>
+    <pattern id="rightHatch" width="10" height="10" patternUnits="userSpaceOnUse">
+      <rect width="10" height="10" fill="#fde7b6"/>
+      <path d="M 0 0 L 10 10 M 10 0 L 0 10" stroke="#d09b36" stroke-width="1"/>
+    </pattern>
+    <pattern id="degenerateLines" width="9" height="9" patternUnits="userSpaceOnUse">
+      <rect width="9" height="9" fill="#f3d2d0"/>
+      <path d="M 0 4.5 H 9" stroke="#c77772" stroke-width="1.2"/>
+    </pattern>
+    <pattern id="gapHatch" width="8" height="8" patternUnits="userSpaceOnUse">
+      <rect width="8" height="8" fill="#ffffff" opacity="0.35"/>
+      <path d="M -1 9 L 9 -1" stroke="#9a5752" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <style>
+    .page { fill: #fbfaf7; }
+    .formula-bg { fill: #ffffff; stroke: #d9d2c7; stroke-width: 1.5; }
+    .panel { fill: #ffffff; stroke: #2f3844; stroke-width: 1.6; rx: 8; }
+    .ordered-panel { stroke: #31618f; }
+    .inverted-panel { stroke: #93463f; }
+    .title { fill: #18212b; font: 700 23px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .subtitle { fill: #44505f; font: 500 15px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .formula { fill: #18212b; font: 500 21px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .small-formula { fill: #18212b; font: 600 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .note { fill: #2c3440; font: 500 14px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .label { fill: #1f2833; font: 650 15px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .label-small { fill: #1f2833; font: 650 13px ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    .label-bg { fill: rgba(255,255,255,0.88); stroke: rgba(47,56,68,0.22); stroke-width: 1; rx: 6; }
+    .plot-frame { fill: none; stroke: #26313d; stroke-width: 1.4; }
+    .threshold { stroke: #26313d; stroke-width: 2.2; stroke-dasharray: 5 5; }
+    .threshold-hot { stroke: #8f302a; stroke-width: 2.2; stroke-dasharray: 5 5; }
+    .separator { stroke: rgba(38,49,61,0.4); stroke-width: 1.1; }
+    .axis { stroke: #26313d; fill: #26313d; stroke-width: 1.6; }
+    .tick-label { fill: #18212b; font: 700 15px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .brace { fill: none; stroke: #8f302a; stroke-width: 1.8; }
+  </style>
+
+  <rect x="0" y="0" width="1120" height="760" class="page"/>
+  <rect x="48" y="20" width="1024" height="96" class="formula-bg" rx="10"/>
+  <text class="formula"><tspan x="68" y="50">E = x + min(-y, y + max(x, -z - y))</tspan><tspan x="68" dy="28">= x - max(y, min(-x - y, z))</tspan><tspan x="68" dy="28">= x - clamp(z; lower y, upper -x-y) only when y &lt;= -x-y</tspan></text>
+
+  <rect x="36" y="140" width="660" height="580" class="panel ordered-panel"/>
+  <rect x="730" y="140" width="354" height="580" class="panel inverted-panel"/>
+
+  <text class="title"><tspan x="62" y="182">Ordered bounds</tspan><tspan x="62" dy="24">y &lt;= -x-y, equivalently x + 2y &lt;= 0</tspan></text>
+  <text class="title"><tspan x="752" y="182">Inverted bounds</tspan><tspan x="752" dy="24">y &gt; -x-y, equivalently x + 2y &gt; 0</tspan></text>
+
+  <rect x="70" y="280" width="160" height="132" fill="url(#leftHatch)"/>
+  <rect x="230" y="280" width="260" height="132" fill="url(#middleDots)"/>
+  <rect x="490" y="280" width="170" height="132" fill="url(#rightHatch)"/>
+  <rect x="70" y="280" width="590" height="132" class="plot-frame"/>
+  <line class="threshold" x1="230" y1="280" x2="230" y2="412"/>
+  <line class="threshold" x1="490" y1="280" x2="490" y2="412"/>
+  <line class="separator" x1="230" y1="280" x2="230" y2="412"/>
+  <line class="separator" x1="490" y1="280" x2="490" y2="412"/>
+  <rect x="88" y="316" width="122" height="62" class="label-bg"/>
+<text class="label-small"><tspan x="100" y="336">z &lt; y</tspan><tspan x="100" dy="18">inner = y</tspan><tspan x="100" dy="18">E = x - y</tspan></text>
+  <rect x="250" y="314" width="220" height="66" class="label-bg"/>
+<text class="label"><tspan x="262" y="334">y &lt;= z &lt;= -x-y</tspan><tspan x="262" dy="18">inner = z</tspan><tspan x="262" dy="18">E = x - z</tspan></text>
+  <rect x="512" y="316" width="126" height="62" class="label-bg"/>
+<text class="label-small"><tspan x="524" y="336">z &gt; -x-y</tspan><tspan x="524" dy="18">inner = -x-y</tspan><tspan x="524" dy="18">E = 2x + y</tspan></text>
+  <line class="axis" x1="70" y1="440" x2="660" y2="440"/>
+<path class="axis" d="M 660 440 l -9 -5 v 10 Z"/>
+  <text class="tick-label" x="224" y="472">y</text>
+  <text class="tick-label" x="441" y="472">-x-y</text>
+  <text class="subtitle" x="646" y="469">z</text>
+  <rect x="74" y="500" width="584" height="70" class="label-bg"/>
+<text class="note"><tspan x="86" y="520">The middle term is an honest clamp only here:</tspan><tspan x="86" dy="18">max(y, min(z, -x-y)) = clamp(z; y, -x-y).</tspan></text>
+  <rect x="74" y="590" width="584" height="78" class="label-bg"/>
+<text class="note"><tspan x="86" y="610">Therefore E has three visible pieces:</tspan><tspan x="86" dy="18">x - y, then x - z, then 2x + y.</tspan></text>
+
+  <rect x="764" y="280" width="286" height="132" fill="url(#degenerateLines)"/>
+  <rect x="852" y="280" width="110" height="132" fill="url(#gapHatch)"/>
+  <rect x="764" y="280" width="286" height="132" class="plot-frame"/>
+  <line class="threshold-hot" x1="852" y1="280" x2="852" y2="412"/>
+  <line class="threshold-hot" x1="962" y1="280" x2="962" y2="412"/>
+  <path class="brace" d="M 852 264 C 870 250, 944 250, 962 264"/>
+  <text class="note" x="861" y="246">no ordered clamp interval</text>
+  <line class="axis" x1="764" y1="440" x2="1050" y2="440"/>
+<path class="axis" d="M 1050 440 l -9 -5 v 10 Z"/>
+  <text class="tick-label" x="803" y="472">-x-y</text>
+  <text class="tick-label" x="956" y="472">y</text>
+  <text class="subtitle" x="1036" y="469">z</text>
+  <rect x="760" y="500" width="300" height="58" class="label-bg"/>
+<text class="note"><tspan x="772" y="520">Clamp-shaped, but degenerate:</tspan><tspan x="772" dy="18">min(z, -x-y) &lt;= -x-y &lt; y,</tspan><tspan x="772" dy="18">so max(y, min(z, -x-y)) = y.</tspan></text>
+  <rect x="760" y="574" width="300" height="46" class="label-bg"/>
+<text class="note"><tspan x="772" y="594">The would-be upper threshold is</tspan><tspan x="772" dy="18">left of the lower threshold.</tspan></text>
+  <rect x="760" y="640" width="300" height="46" class="label-bg"/>
+<text class="note"><tspan x="772" y="660">For every z region:</tspan><tspan x="772" dy="18">E = x - y.</tspan></text>
+</svg>
