@@ -1,4 +1,4 @@
-import type {LinearConstraint} from './domain.ts'
+import type {LinearConstraint} from './domain-types.ts'
 import {
   expressionKeyFromText,
   linearKey,

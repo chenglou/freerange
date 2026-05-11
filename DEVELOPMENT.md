@@ -49,6 +49,7 @@ bun install
 - [src/proof-facts.ts](./src/proof-facts.ts) — small publisher for the proof context that proof traces and future reports can show
 - [src/fact-inventory.ts](./src/fact-inventory.ts) — typed published facts and the inventory/index shape used by `infer` and future reports
 - [src/array-summary.ts](./src/array-summary.ts) — collection/sequence summary ownership, including map/filter lineage and summary merges
+- [src/domain-types.ts](./src/domain-types.ts) — shared abstract value and fact-state types used by the domain modules
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/assumptions.ts](./src/assumptions.ts) — linear/comparison assumption dedupe used by proof and branch facts
 - [src/number-domain.ts](./src/number-domain.ts) — numeric value construction, finite cases, arithmetic, and running-sum/extremum measures

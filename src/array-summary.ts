@@ -5,7 +5,7 @@ import type {
   SequenceExpression,
   SequenceRelation,
   SequenceTerm,
-} from './domain.ts'
+} from './domain-types.ts'
 import {sameExpressionText} from './linear.ts'
 
 export function mapOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {

@@ -17,7 +17,7 @@ import type {
   NumberValue,
   UnknownValue,
   Value,
-} from './domain.ts'
+} from './domain-types.ts'
 
 export const maxNumberCases = 8
 

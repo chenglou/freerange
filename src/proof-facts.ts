@@ -12,7 +12,7 @@ import type {
   LiteralValue,
   NumberValue,
   Value,
-} from './domain.ts'
+} from './domain-types.ts'
 
 export function proofFactsFromValues(values: Value[], assumptions: LinearConstraint[]) {
   const facts: string[] = []
