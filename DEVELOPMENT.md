@@ -43,6 +43,9 @@ bun install
 
 - [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and callsite-check orchestration around the interpreter
 - [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
+- [src/obligations.ts](./src/obligations.ts) — explicit proof-obligation and proof-trace metadata attached to checks
+- [src/proof-broker.ts](./src/proof-broker.ts) — central wrapper for proving an obligation with an existing checker/proof step
+- [src/fact-inventory.ts](./src/fact-inventory.ts) — typed published facts and the inventory/index shape used by `infer` and future reports
 - [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
@@ -62,7 +65,7 @@ bun install
 - [src/value-localize.ts](./src/value-localize.ts) — abstract value relabeling for parameters, imports, and wildcard element paths
 - [src/source-boundary.ts](./src/source-boundary.ts) — source line and check-boundary helpers
 - [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
-- [src/facts.ts](./src/facts.ts) — typed inferred facts used by `infer`, redundancy checks, and the internal fact layer
+- [src/facts.ts](./src/facts.ts) — value-to-fact publication used by `infer`, redundancy checks, and the internal fact layer
 - [src/guarded-facts.ts](./src/guarded-facts.ts) — branch guard truth, finite case refinement, and number-case transfer helpers
 - [src/indexed-facts.ts](./src/indexed-facts.ts) — finite index specialization, symbolic element-path rebasing, and local adjacent-neighbor facts
 - [src/sequence-facts.ts](./src/sequence-facts.ts) — adjacent sequence relation queries and rendering

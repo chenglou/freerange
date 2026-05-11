@@ -3,6 +3,12 @@ import {
   publicFitText,
 } from './parser.ts'
 import {
+  createFactInventory,
+  uniqueInferFacts,
+  type FactInventory,
+  type FitInferFact,
+} from './fact-inventory.ts'
+import {
   finiteNumberSet,
   type NumberValue,
   type Value,
@@ -11,45 +17,13 @@ import {sameExpressionText} from './linear.ts'
 import {formatExpectedRange} from './reporting.ts'
 import {sequenceRelationText} from './sequence-facts.ts'
 
-export type FitInferFact = FitRangeFact | FitEqualityFact | FitSequenceFact | FitOriginFact
-
-export type FitRangeFact = {
-  kind: 'range'
-  source: 'range'
-  text: string
-  path: string
-  min: number
-  max: number
-  isInteger: boolean
-  values?: number[]
-}
-
-export type FitEqualityFact = {
-  kind: 'equality'
-  source: 'equality'
-  text: string
-  path: string
-  expression: string
-}
-
-export type FitSequenceFact = {
-  kind: 'sequence'
-  source: 'sequence'
-  text: string
-  fact:
-    | {kind: 'nondecreasing'; path: string; prop: string}
-    | {kind: 'spaced'; path: string; gapExpr: string; heightExpr: string; advanceExpr: string}
-    | {kind: 'adjacent-comparison'}
-}
-
-export type FitOriginFact = {
-  kind: 'origin'
-  source: 'origin'
-  text: string
-  fact:
-    | {kind: 'identity'; path: string; sourcePath: string}
-    | {kind: 'subsequence'; path: string; sourcePath: string}
-}
+export type {
+  FitEqualityFact,
+  FitInferFact,
+  FitOriginFact,
+  FitRangeFact,
+  FitSequenceFact,
+} from './fact-inventory.ts'
 
 export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<string, Value>): FitInferFact[] {
   const facts: FitInferFact[] = []
@@ -61,65 +35,76 @@ export function localFactsFromEnv(baseEnv: Map<string, Value>, finalEnv: Map<str
 }
 
 export function factsFromValue(path: string, value: Value): FitInferFact[] {
-  if (value.kind === 'unknown') return []
-  if (value.kind === 'null' || value.kind === 'nullable') return []
-  if (value.kind === 'literal') return []
-  if (value.kind === 'number') return numberFacts(path, value)
+  return factInventoryFromValue(path, value).inferFacts()
+}
+
+export function factInventoryFromValue(path: string, value: Value): FactInventory {
+  const inventory = createFactInventory()
+  addFactsFromValue(inventory, path, value)
+  return inventory
+}
+
+function addFactsFromValue(inventory: FactInventory, path: string, value: Value) {
+  if (value.kind === 'unknown') return
+  if (value.kind === 'null' || value.kind === 'nullable') return
+  if (value.kind === 'literal') return
+  if (value.kind === 'number') {
+    inventory.addMany(numberFacts(path, value), {kind: 'source'}, publicFitText(path))
+    return
+  }
   if (value.kind === 'object') {
-    const facts: FitInferFact[] = []
     for (const [name, prop] of [...value.props.entries()].sort(([left], [right]) => left.localeCompare(right))) {
-      facts.push(...factsFromValue(`${path}.${name}`, prop))
+      addFactsFromValue(inventory, `${path}.${name}`, prop)
     }
-    return facts
+    return
   }
 
-  const facts = numberFacts(`${path}.length`, value.length)
-  if (value.element != null) facts.push(...factsFromValue(`${path}[]`, value.element))
+  inventory.addMany(numberFacts(`${path}.length`, value.length), {kind: 'source'}, publicFitText(`${path}.length`))
+  if (value.element != null) addFactsFromValue(inventory, `${path}[]`, value.element)
   if (value.summary != null) {
     if (value.summary.origin != null) {
       const sourcePath = publicFitText(value.summary.origin.sourceExpr)
-      facts.push({
+      inventory.add({
         kind: 'origin',
         source: 'origin',
         text: value.summary.origin.kind === 'identity'
           ? `${publicFitText(path)} follows ${sourcePath} by index`
           : `${publicFitText(path)} is an order-preserving subset of ${sourcePath}`,
         fact: {kind: value.summary.origin.kind, path: publicFitText(path), sourcePath},
-      })
+      }, {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const prop of value.summary.nondecreasingProps) {
-      facts.push({
+      inventory.add({
         kind: 'sequence',
         source: 'sequence',
         text: publicFitText(`nondecreasing(${path}.${prop})`),
         fact: {kind: 'nondecreasing', path, prop},
-      })
+      }, {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const fact of value.summary.spaced) {
-      facts.push({
+      inventory.add({
         kind: 'sequence',
         source: 'sequence',
         text: publicFitText(`spaced(${path}, ${fact.gapExpr})`),
         fact: {kind: 'spaced', path, gapExpr: fact.gapExpr, heightExpr: fact.heightExpr, advanceExpr: fact.advanceExpr},
-      })
+      }, {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const relation of value.summary.relations) {
       if (relation.op !== '==') continue
-      facts.push({
+      inventory.add({
         kind: 'sequence',
         source: 'sequence',
         text: publicFitText(sequenceRelationText(path, relation)),
         fact: {kind: 'adjacent-comparison'},
-      })
+      }, {kind: 'loop-summary'}, publicFitText(path))
     }
     if (value.summary.lastEnd != null) {
-      facts.push(...numberFacts(`lastEnd(${path})`, value.summary.lastEnd))
+      inventory.addMany(numberFacts(`lastEnd(${path})`, value.summary.lastEnd), {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const fact of value.summary.extentEnds) {
-      facts.push(...numberFacts(`extentEnd(${path}, ${fact.emptyExpr})`, fact.value))
+      inventory.addMany(numberFacts(`extentEnd(${path}, ${fact.emptyExpr})`, fact.value), {kind: 'loop-summary'}, publicFitText(path))
     }
   }
-  return facts
 }
 
 export function factsFromEnvRoots(env: Map<string, Value>, roots: Set<string>): FitInferFact[] {
@@ -172,15 +157,7 @@ function formatNumber(value: number) {
 }
 
 export function uniqueFacts(facts: FitInferFact[]): FitInferFact[] {
-  const seen = new Set<string>()
-  const unique: FitInferFact[] = []
-  for (const fact of facts) {
-    const key = `${fact.source}:${fact.text}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    unique.push(fact)
-  }
-  return unique
+  return uniqueInferFacts(facts)
 }
 
 function isInterestingNumberRange(value: NumberValue) {

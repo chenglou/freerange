@@ -59,8 +59,8 @@ import {
   valueWithStructuralFallback,
 } from './shapes.ts'
 import {
+  factInventoryFromValue,
   factsFromEnvRoots,
-  factsFromValue,
   localFactsFromEnv,
   uniqueFacts,
 } from './facts.ts'
@@ -132,6 +132,11 @@ import {
   evaluateInterpreterFunctionBody,
   evaluateInterpreterTopLevel,
 } from './interpreter/evaluate.ts'
+import {
+  obligationForSpec,
+  type FitObligationBoundary,
+} from './obligations.ts'
+import {proveObligation} from './proof-broker.ts'
 import type {
   InterpreterAudit,
   InterpreterCall,
@@ -518,7 +523,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const inferUnsupported: string[] = []
   const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
   const state = evaluateFunctionBodyState(fn, context)
-  const resultFacts = factsFromValue(fitReturnInternalRoot, state.result)
+  const resultFacts = factInventoryFromValue(fitReturnInternalRoot, state.result).inferFacts()
   const localFacts = localFactsFromEnv(env, state.env)
   const backgroundChecks = [
     ...givenChecks,
@@ -643,9 +648,21 @@ function verifyCheckSpec(
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
   boundary?: CheckBoundary,
+  obligationBoundary: FitObligationBoundary = 'function-contract',
 ): FitCheck {
-  const check = verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
-  return boundary == null ? check : {...check, ...boundary}
+  const obligation = obligationForSpec(file, functionName, spec, obligationBoundary, boundary)
+  return proveObligation({
+    obligation,
+    step: {
+      domain: 'kernel',
+      rule: 'check-spec',
+      message: 'checked @fit claim against evaluated source facts',
+    },
+    prove: () => {
+      const check = verifyParsedCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
+      return boundary == null ? check : {...check, ...boundary}
+    },
+  })
 }
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
@@ -752,7 +769,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
     ])
     const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.declaration)
     pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
-    verifyCheckSpecsWithResult(typeContract.specs, unknown('Inline @fit checks do not use return'), context, boundary)
+    verifyCheckSpecsWithResult(typeContract.specs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
     return
   }
 
@@ -762,7 +779,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
     verifyInlineSpecsForValue(specs, value, context)
     const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
     pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
-    verifyCheckSpecsWithResult(typeContract.specs, value, context, boundary)
+    verifyCheckSpecsWithResult(typeContract.specs, value, context, boundary, 'type-boundary')
     return
   }
 
@@ -864,7 +881,7 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
   bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context.program), context)
   const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
   pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
-  verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary)
+  verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
 }
 
 function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
@@ -879,7 +896,13 @@ function verifyLocalFitSpecs(specs: FitCheckSpec[], context: EvalContext) {
   verifyCheckSpecsWithResult(specs, unknown('Inline @fit checks do not use return'), context)
 }
 
-function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, context: EvalContext, boundary?: CheckBoundary) {
+function verifyCheckSpecsWithResult(
+  specs: FitCheckSpec[],
+  result: Value,
+  context: EvalContext,
+  boundary?: CheckBoundary,
+  obligationBoundary: FitObligationBoundary = 'inline-check',
+) {
   if (specs.length === 0) return
   for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
@@ -893,6 +916,7 @@ function verifyCheckSpecsWithResult(specs: FitCheckSpec[], result: Value, contex
       context.assumptions,
       context.contractCache,
       boundary,
+      obligationBoundary,
     ))
   }
 }
@@ -1087,6 +1111,8 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
       context.checks,
       context.assumptions,
       context.contractCache,
+      undefined,
+      'loop-contract',
     ))
   }
 }

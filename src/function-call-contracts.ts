@@ -53,6 +53,10 @@ import {
   type FitRange,
   type FitSpec,
 } from './parser.ts'
+import {
+  callPreconditionObligation,
+} from './obligations.ts'
+import {proveObligation} from './proof-broker.ts'
 import {programGlobalEnv} from './program-env.ts'
 import {
   comparisonConstraint,
@@ -111,15 +115,31 @@ export function verifyCallGivenSpecs(
     }
     if (status == null) continue
     if (options.record) {
-      context.checks.push({
+      const text = `${callText}: ${callRequirementText(spec)}`
+      const obligation = callPreconditionObligation({
         file: context.file,
-        ...(options.callLine == null ? {} : {line: options.callLine}),
         functionName: context.stack.join(' > '),
-        text: `${callText}: ${callRequirementText(spec)}`,
-        status: status.status,
-        ...(status.reason == null ? {} : {reason: status.reason}),
-        ...(status.detail == null ? {} : {detail: status.detail}),
+        text,
+        requirement: callRequirementText(spec),
+        ...(options.callLine == null ? {} : {callLine: options.callLine}),
       })
+      context.checks.push(proveObligation({
+        obligation,
+        step: {
+          domain: 'helper-contract',
+          rule: 'given-precondition',
+          message: 'checked callee given at the caller',
+        },
+        prove: () => ({
+          file: context.file,
+          ...(options.callLine == null ? {} : {line: options.callLine}),
+          functionName: context.stack.join(' > '),
+          text,
+          status: status.status,
+          ...(status.reason == null ? {} : {reason: status.reason}),
+          ...(status.detail == null ? {} : {detail: status.detail}),
+        }),
+      }))
     }
     if (status.status === 'fail') statusSummary = 'fail'
     else if (status.status === 'unknown' && statusSummary === 'pass') statusSummary = 'unknown'

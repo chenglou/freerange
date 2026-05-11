@@ -10,6 +10,10 @@ import type {
   FitImportBinding,
   FitModule,
 } from './modules.ts'
+import type {
+  FitObligation,
+  FitProofTrace,
+} from './obligations.ts'
 import type {FitSpec} from './parser.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'requires' | 'unknown'
@@ -24,6 +28,8 @@ export type FitCheck = {
   status: FitCheckStatus
   reason?: string
   detail?: FitCheckDetail
+  obligation?: FitObligation
+  trace?: FitProofTrace
 }
 
 export type FitAudit = {

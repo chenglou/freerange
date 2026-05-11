@@ -231,7 +231,7 @@ The interpreter cutover note is [research/abstract-interpreter.md](./research/ab
 - loop summaries: cursor recurrences and append summaries
 - optional backend obligations: SMT later, only where earned
 
-The important boundary is source readers emit reusable facts, and contract checks query those facts. For example, a cursor loop should first emit facts like:
+The important boundary is source readers emit reusable facts, contract comments become explicit obligations, and checks query the fact inventory. The current code has started this split: `src/fact-inventory.ts` owns published fact identity/indexing, `src/facts.ts` publishes interpreter values into that inventory, and `src/obligations.ts` attaches proof-obligation/proof-trace metadata to checks without changing the public CLI. For example, a cursor loop should first emit facts like:
 
 ```txt
 rows.length == items.length

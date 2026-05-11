@@ -74,6 +74,31 @@ if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.
   console.log('domain: unbounded difference')
 }
 
+const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
+ * return: 1
+ */
+function one() {
+  return 1
+}
+function bounded(value: number /* intentionally not @fit syntax here */) {
+  return value
+}
+const x = one() // @fit 1
+`)
+const obligationCheck = obligationChecks.find(check => check.text === 'return: 1')
+const inlineObligationCheck = obligationChecks.find(check => check.text === 'x: 1')
+if (
+  obligationCheck?.obligation?.boundary !== 'function-contract'
+  || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
+  || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
+) {
+  console.error('expected checks to carry proof obligations')
+  console.error(JSON.stringify(obligationChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('obligations: attached to checks')
+}
+
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = normalizeNegative(negativeReport.checks)
 const expectedNegative = normalizeText(await Bun.file(negativeExpectedPath).text())

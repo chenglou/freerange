@@ -125,6 +125,8 @@ Keep the layers simple:
 4. check claims against those facts
 5. print reports
 
+As the checker grows, make "facts" and "claims" real internal objects. Facts should be typed and indexed, not only pretty `infer` lines. Claims should become proof obligations with source location, boundary kind, and proof trace, not just scattered calls to a proof helper. That keeps reports and future domain packs honest without changing the small public comment language.
+
 Do not let every new check grow its own private source reader.
 
 ## SUMMARIZE COLLECTIONS
