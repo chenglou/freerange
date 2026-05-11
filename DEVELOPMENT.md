@@ -56,6 +56,7 @@ bun install
 - [src/number-domain.ts](./src/number-domain.ts) — numeric value construction, finite cases, arithmetic, and running-sum/extremum measures
 - [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
 - [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
+- [src/function-evaluation.ts](./src/function-evaluation.ts) — shared function input setup for checker, infer, audit, and shape inspection
 - [src/function-inputs.ts](./src/function-inputs.ts) — function parameter binding, argument binding, and typed input fallback shapes
 - [src/givens.ts](./src/givens.ts) — `given` validation, contradiction checks, and assumption seeding
 - [src/domain-paths.ts](./src/domain-paths.ts) — reusable reads/writes for Freerange domain paths inside abstract values

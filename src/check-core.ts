@@ -98,7 +98,6 @@ import {
   functionHasBodyFitComment,
   functionHasBodyTypeBoundary,
   functionHasTypeContracts,
-  functionInputSpecs,
   functionTypeUnsupported,
   hasTypeContractWork,
   mergeTypeContracts,
@@ -107,13 +106,16 @@ import {
 import {
   arrayPatternElementValue,
   bindFunctionCallInputs,
-  bindFunctionInputParameters,
   bindFunctionThisInput,
   bindPatternFromValue,
   parameterArgumentValue,
   unknownResultValue,
   valueWithBindingShapeFallback,
 } from './function-inputs.ts'
+import {
+  functionEvalContext,
+  prepareFunctionEvaluation,
+} from './function-evaluation.ts'
 import {
   applyGivenRangeSpec,
   collectGivenAssumptions,
@@ -289,28 +291,8 @@ function auditTopLevelSelectors(program: Program, contractCache: Map<string, Fun
 
 function auditFunctionSelectors(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
   const specs = program.specsByFunction.get(fn.name) ?? []
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
-
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
-
-  const {assumedGivens} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
-  for (const given of assumedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
-  }
-  const {assumptions} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env,
-    inputRoots,
-    stack: [fn.name],
-    checks: [],
-    assumptions,
-    contractCache,
-    callObligations: 'silent',
-  }
+  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'silent'})
   const result = evaluateInterpreterFunctionBody(program, fn, context.env, context.stack, context.assumptions, interpreterHooks(context))
   return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
 }
@@ -356,28 +338,8 @@ function checkTopLevelCallsites(program: Program, contractCache: Map<string, Fun
 function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
-
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
-
-  const {assumedGivens} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
-  for (const given of assumedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
-  }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
-  const context: EvalContext = {
-    program,
-    file: program.file,
-    env,
-    inputRoots,
-    stack: [functionName],
-    checks: [],
-    assumptions,
-    contractCache,
-    callObligations: 'record',
-  }
+  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'record'})
   evaluateFunctionBody(fn, context)
   return context.checks.filter(isCallCheck)
 }
@@ -454,36 +416,17 @@ function verifyFunctionSpecsDetailed(
   contractCache: Map<string, FunctionContractProof>,
 ): {checks: FitCheck[]; callsiteChecks: FitCheck[]; recordedCallsites: boolean} {
   const functionName = fn.name
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const contractSpecs = functionContractSpecs(program, fn, specs)
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
-
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
-
-  const {assumedGivens, checks} = validateGivenSpecs(file, functionName, inputSpecs, inputRoots, 'function-given')
+  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const {contractSpecs, env} = setup
+  const checks = [...setup.givenChecks]
   checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
 
-  for (const given of assumedGivens) {
-    if (given.kind !== 'range') continue
-    applyGivenRangeSpec(env, given.spec)
-  }
-
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
-  checks.push(...impossibleChecks)
+  checks.push(...setup.assumptionChecks)
   const recordsCallsites = functionHasBodyClaims(contractSpecs)
   const hasBodyClaims = recordsCallsites || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
-  const context: EvalContext = {
-    program,
-    file,
-    env,
-    inputRoots,
-    stack: [functionName],
-    checks: [],
-    assumptions,
-    contractCache,
+  const context = functionEvalContext(program, fn, setup, contractCache, {
     callObligations: recordsCallsites ? 'record' : 'silent',
-  }
+  })
   const result = hasBodyClaims ? evaluateFunctionBody(fn, context) : unknown('No body claim requested')
   if (hasBodyClaims) checks.push(...context.checks)
 
@@ -506,29 +449,19 @@ function functionHasBodyClaims(specs: FitSpec[]) {
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
   const functionName = fn.name
   const specs = program.specsByFunction.get(functionName) ?? []
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const contractSpecs = functionContractSpecs(program, fn, specs)
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
   const loops: FitInferLoopReport[] = []
-
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
-
-  const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
-  for (const given of assumedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
-  }
-  const {assumptions, checks} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const {contractSpecs, env} = setup
   const typeContractChecks = typeUnsupportedChecks(program.file, functionName, functionTypeUnsupported(program, fn))
   const inferUnsupported: string[] = []
-  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache, inferLoops: loops, inferUnsupported}
+  const context = functionEvalContext(program, fn, setup, contractCache, {inferLoops: loops, inferUnsupported})
   const state = evaluateFunctionBodyState(fn, context)
   const resultFacts = factInventoryFromValue(fitReturnInternalRoot, state.result).inferFacts()
   const localFacts = localFactsFromEnv(env, state.env)
   const backgroundChecks = [
-    ...givenChecks,
+    ...setup.givenChecks,
     ...typeContractChecks,
-    ...checks,
+    ...setup.assumptionChecks,
     ...context.checks,
   ]
   const specReports = inferFunctionSpecReports(contractSpecs, backgroundChecks, spec => verifyCheckSpec(
@@ -543,9 +476,9 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     contractCache,
   ))
   const unsupported = [
-    ...givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
+    ...setup.givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...typeContractChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
-    ...checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
+    ...setup.assumptionChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...context.checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...inferUnsupported,
     ...topUnknownReason(state.result),
@@ -563,20 +496,10 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
 }
 
 function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): ShapeInspectState {
-  const functionName = fn.name
-  const specs = program.specsByFunction.get(functionName) ?? []
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const env = programGlobalEnv(program)
-  const inputRoots = functionInputRoots(program, fn)
-
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
-
-  const {assumedGivens} = validateGivenSpecs(program.file, functionName, inputSpecs, inputRoots, 'function-given')
-  for (const given of assumedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
-  }
-  const {assumptions} = collectGivenAssumptions(program.file, program, functionName, env, inputRoots, assumedGivens, contractCache, givenEvaluators)
-  const context: EvalContext = {program, file: program.file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
+  const specs = program.specsByFunction.get(fn.name) ?? []
+  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const context = functionEvalContext(program, fn, setup, contractCache)
+  const env = setup.env
   const baseEnv = new Map(env)
   const state = evaluateFunctionBodyState(fn, context)
   return {baseEnv, env: state.env, result: state.result}
