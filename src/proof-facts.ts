@@ -3,9 +3,9 @@ import {
   type ComparisonOperator,
 } from './parser.ts'
 import {
-  formatExpectedRange,
-  formatLinearConstraint,
   formatRange,
+  formatKnownProofFact,
+  knownValueFacts,
 } from './reporting.ts'
 import type {
   LinearConstraint,
@@ -36,10 +36,7 @@ function proofFactsFromValue(value: Value): string[] {
 }
 
 function proofFactsFromNumber(value: NumberValue) {
-  const facts = [...proofFactsFromProvenance(value.provenance)]
-  const fact = knownNumberFact(value)
-  if (fact != null) facts.unshift(fact)
-  return facts
+  return knownValueFacts(value)
 }
 
 function proofFactsFromLiteral(value: LiteralValue) {
@@ -52,27 +49,8 @@ function proofFactsFromProvenance(provenance: string[]) {
   return provenance.map(publicFitText)
 }
 
-function knownNumberFact(value: NumberValue) {
-  const expr = value.expr == null ? null : publicFitText(value.expr)
-  if (expr != null && value.min === value.max && Number.isFinite(value.min) && expr === String(value.min)) return null
-  if (expr == null) return formatRange(value)
-  return `${expr}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`
-}
-
 function formatAssumptionFact(assumption: LinearConstraint): string {
-  const fact = publicFitText(assumption.text ?? formatLinearConstraint(assumption))
-  switch (assumption.source) {
-    case 'function-given':
-      return `assumed from input: ${fact}`
-    case 'loop-given':
-      return `assumed from loop @fit: ${fact}`
-    case 'code':
-      return `inferred from code: ${fact}`
-    case 'branch':
-      return `inferred from branch: ${fact}`
-    case 'contract':
-      return fact
-  }
+  return formatKnownProofFact(assumption)
 }
 
 export function proofFactForComparison(left: NumberValue, op: ComparisonOperator, right: NumberValue) {

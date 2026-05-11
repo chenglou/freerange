@@ -171,15 +171,15 @@ function knownProofContext(left: ReportNumberValue, right: ReportNumberValue, as
   return knownProofContextMany([left, right], assumptions)
 }
 
-function knownProofContextMany(values: ReportNumberValue[], assumptions: ReportLinearConstraint[]) {
+export function knownProofContextMany(values: ReportNumberValue[], assumptions: ReportLinearConstraint[]) {
   const lines = values.flatMap(knownValueFacts)
   for (const assumption of assumptions) {
-    lines.push(formatKnownFact(assumption))
+    lines.push(formatKnownProofFact(assumption))
   }
   return [...new Set(lines)]
 }
 
-function knownValueFacts(value: ReportNumberValue) {
+export function knownValueFacts(value: ReportNumberValue) {
   const fact = knownValueFact(value)
   return [...(fact == null ? [] : [fact]), ...(value.provenance ?? [])]
 }
@@ -197,7 +197,7 @@ function formatMissingComparison(missing: string) {
     : `missing: ${missing}`
 }
 
-function formatKnownFact(assumption: ReportLinearConstraint): string {
+export function formatKnownProofFact(assumption: ReportLinearConstraint): string {
   const fact = publicFitText(assumption.text ?? formatLinearConstraint(assumption))
   switch (assumption.source) {
     case 'function-given':
