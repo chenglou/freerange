@@ -186,23 +186,45 @@ Freerange comes out of the box understanding the relevant DOM and JS apis, e.g. 
 
 #### Branches
 
-Freerange keeps branch alternatives as whole code states while it can. This matters when values move together:
+The Inference of results that contain `|` is more nuanced to handle, due to state explosions. But generally, it works this way:
 
 ```ts
-function position(pinned: boolean) {
-  let x = 0
+function layout(pinned: boolean) {
+  let left = 0
   let width = 100
   if (pinned) {
-    x = 20
+    left = 20
     width = 80
   }
-  return x + width
+  return {left, width}
 }
 ```
 
-The two real outcomes are `100` and `100`; Freerange should not split this into `x: 0 | 20` and `width: 80 | 100`, then invent impossible pairs like `20 + 100`.
+This infers as `{left: 0, width: 100} | {left: 20, width: 80}`
 
-It keeps up to 8 reachable straight-line branch states. If code needs more than that, Freerange keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`, not a guessed pass.
+Today, written contracts can express the flattened numeric pieces:
+
+```ts
+/** @fit
+ * return.left: 0 | 20
+ * return.width: 80 | 100
+ */
+```
+
+That does not express the pairing. A future TS-like contract shape could:
+
+```ts
+/** @fit
+ * return: {left: 0, width: 100} | {left: 20, width: 80}
+ * return: {x: 0..100} | {x: 200..300}
+ */
+```
+
+This would mean every real return value must fit at least one whole case. The range syntax should work anywhere that case shape expects a number.
+
+Freerange currently keeps up to 8 reachable branch states from code. If code needs more than that, it keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`. That 8-case budget is for inferred code branches, which isn't necessarily the same as the number of alternations of output like `1 | 2 | 3`.
+
+(TypeScript avoids this problem by widening to `{left: number; width: number}`, which avoids needing to track branches, but this isn't good enough for Freerange)
 
 ## Glossary
 
