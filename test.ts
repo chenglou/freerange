@@ -110,6 +110,106 @@ if (
   console.log('obligations: attached to checks with facts')
 }
 
+const pureContractHelperChecks = verifyFitSource('contract-purity.ts', `function safeLimit(value: number) {
+  let floor = 9
+  floor += 1
+  return Math.max(value, floor)
+}
+
+/** @fit
+ * given value: 0..10
+ * return <= safeLimit(value)
+ */
+function bounded(value: number) {
+  return value
+}
+`)
+const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
+if (pureContractHelperCheck?.status !== 'pass') {
+  console.error('expected pure unannotated helper calls to work in contracts')
+  console.error(JSON.stringify(pureContractHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: pure helper call')
+}
+
+const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
+
+function bump() {
+  box.limit = box.limit + 1
+  return box.limit
+}
+
+/** @fit
+ * return <= bump()
+ */
+function bad() {
+  return 0
+}
+`)
+const impureContractHelperCheck = impureContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= bump()')
+if (
+  impureContractHelperCheck?.status !== 'unknown'
+  || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
+  || impureContractHelperCheck.reason.includes('effect bad > bump line 4: assignment mutates box.limit') !== true
+) {
+  console.error('expected impure helper calls in contracts to be rejected loudly')
+  console.error(JSON.stringify(impureContractHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: impure helper rejected')
+}
+
+const unsupportedContractExpressionChecks = verifyFitSource('contract-unsupported.ts', `function randomLimit() {
+  return Math.random() * 10
+}
+
+const method = "max"
+
+/** @fit
+ * return <= randomLimit()
+ * return <= Math[method](1, 2)
+ */
+function bad() {
+  return 0
+}
+`)
+const randomContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= randomLimit()')
+const dynamicContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= Math[method](1, 2)')
+if (
+  randomContractCheck?.status !== 'unknown'
+  || randomContractCheck.reason?.includes('Unsupported Math.random call') !== true
+  || dynamicContractCheck?.status !== 'unknown'
+  || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
+) {
+  console.error('expected unsupported contract expressions to explain the unsupported step')
+  console.error(JSON.stringify(unsupportedContractExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: unsupported calls rejected')
+}
+
+const mutableAliasContractChecks = verifyFitSource('contract-mutable-alias.ts', `let max = Math.max
+
+/** @fit
+ * return <= max(1, 2)
+ */
+function bad() {
+  return 0
+}
+`)
+const mutableAliasContractCheck = mutableAliasContractChecks.find(check => check.functionName === 'bad' && check.text === 'return <= max(1, 2)')
+if (
+  mutableAliasContractCheck?.status !== 'unknown'
+  || mutableAliasContractCheck.reason?.includes('max is a mutable helper alias') !== true
+) {
+  console.error('expected mutable helper aliases in contracts to be rejected loudly')
+  console.error(JSON.stringify(mutableAliasContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: mutable alias rejected')
+}
+
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = normalizeNegative(negativeReport.checks)
 const expectedNegative = normalizeText(await Bun.file(negativeExpectedPath).text())
@@ -912,6 +1012,25 @@ function plain() {
     expectCli(!filtered.output.includes('infer-filter.ts:plain'), 'expected annotations-only infer to skip plain function', filtered.output)
   })
 
+  await withCliFixture({
+    'infer-contract.ts': `function randomLimit() {
+  return Math.random() * 10
+}
+
+/** @fit
+ * return <= randomLimit()
+ */
+function bad() {
+  return 0
+}
+`,
+  }, dir => {
+    const infer = runFr(['infer', 'infer-contract.ts', '--function', 'bad'], dir)
+    expectCli(infer.exitCode === 1, 'expected fr infer to fail when a written contract expression is unsupported', infer.output)
+    expectCli(infer.output.includes('Unsupported @fit contract expression: randomLimit()'), 'expected infer output to name the unsupported contract expression', infer.output)
+    expectCli(infer.output.includes('Unsupported Math.random call'), 'expected infer output to include the interpreter blocker', infer.output)
+  })
+
   {
     const infer = runFr(['infer'])
     expectCli(infer.exitCode === 2, 'expected no-arg infer to require a file path', infer.output)
@@ -1003,7 +1122,7 @@ const =
     expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
   })
 
-  console.log('cli: 28 expected behaviors')
+  console.log('cli: 29 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

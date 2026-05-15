@@ -182,6 +182,8 @@ export type EvalContext = {
   assumptions: LinearConstraint[]
   contractCache: Map<string, FunctionContractProof>
   callObligations?: 'record' | 'silent'
+  contractExpression?: true
+  contractExpressionProblems?: string[]
   objectPath?: string[]
   inferLoops?: FitInferLoopReport[]
   inferUnsupported?: string[]

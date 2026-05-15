@@ -6,7 +6,7 @@ import {
 } from '../domain.ts'
 import {factsFromValue, type FitInferFact} from '../facts.ts'
 import {formatExpectedRange} from '../reporting.ts'
-import type {InterpreterIssue} from './context.ts'
+import type {InterpreterEffect, InterpreterIssue} from './context.ts'
 
 export function formatInterpreterValue(value: Value, root = 'return'): string[] {
   return formatValue(value, root)
@@ -23,6 +23,14 @@ export function formatInterpreterIssues(issues: InterpreterIssue[]): string[] {
     const stack = issue.stack.length === 0 ? '<top-level>' : issue.stack.join(' > ')
     const location = issue.line == null ? '' : ` line ${issue.line}`
     return `unsupported ${stack}${location}: ${issue.message}`
+  })
+}
+
+export function formatInterpreterEffects(effects: InterpreterEffect[]): string[] {
+  return effects.map(effect => {
+    const stack = effect.stack.length === 0 ? '<top-level>' : effect.stack.join(' > ')
+    const location = effect.line == null ? '' : ` line ${effect.line}`
+    return `effect ${stack}${location}: ${effect.message}`
   })
 }
 

@@ -196,9 +196,9 @@ export function proveRangeSpec(value: Value, range: FitRange, context: EvalConte
   if (range.finiteValues != null) return proveFiniteRangeSpec(value, range)
   if (staticRangeInside(value, range)) return {status: 'pass'}
   const lower = evaluateRangeBound(range.lower, context, hooks)
-  if (lower.kind !== 'number') return {status: 'unknown', reason: `Range lower bound is not a number: ${range.lower.text}`}
+  if (lower.kind !== 'number') return {status: 'unknown', reason: rangeBoundNumberReason('lower', lower, range.lower.text)}
   const upper = evaluateRangeBound(range.upper, context, hooks)
-  if (upper.kind !== 'number') return {status: 'unknown', reason: `Range upper bound is not a number: ${range.upper.text}`}
+  if (upper.kind !== 'number') return {status: 'unknown', reason: rangeBoundNumberReason('upper', upper, range.upper.text)}
 
   const lowerStatus = proveComparison(value, range.lowerInclusive ? '>=' : '>', lower, context.assumptions)
   const upperStatus = proveComparison(value, range.upperInclusive ? '<=' : '<', upper, context.assumptions)
@@ -239,6 +239,10 @@ function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: Fit
     status: 'fail',
     reason: finiteRangeSpecFailureReason(value, range, produced),
   }
+}
+
+function rangeBoundNumberReason(bound: 'lower' | 'upper', value: Exclude<Value, NumberValue>, text: string) {
+  return value.kind === 'unknown' ? value.reason : `Range ${bound} bound is not a number: ${text}`
 }
 
 function expectedNumberReason(value: Exclude<Value, NumberValue>) {

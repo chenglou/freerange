@@ -78,7 +78,9 @@ type PhotoGrid = {
 `given` lines are input contracts. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
-`items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `$[i - 1]` aren't supported.
+`items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
+For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
+**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. Reassigning a local `let` is fine; mutating an object/array or calling something unsupported gets rejected loudly.
 
 Syntax Glossary's at the end of the docs.
 
@@ -92,8 +94,6 @@ spaced(rows: {top: number; height: number}[], gap: number): void // each next ro
 lastEnd(rows: {top: number; height: number}[]): number // returns the final row's .top + .height; rows must prove non-empty
 extentEnd(rows: {top: number; height: number}[], emptyValue: number): number // returns emptyValue for empty rows, otherwise the final row's .top + .height
 ```
-
-We also support `Math.min/max/floor/ceil/round/trunc/abs/sqrt/sign` in `@fit` comments.
 
 ## Checking Contracts
 
@@ -279,9 +279,6 @@ innerWidth/innerHeight/outerWidth/outerHeight: int 0..Infinity
 resizeObserverSize.inlineSize/blockSize: 0..Infinity
 visualViewport.width/height: 0..Infinity
 ```
-
-`Math.min/max/floor/ceil/round/trunc/abs/sqrt/sign`
-
 
 ```ts
 array.push(value) // appends one value and returns the new length

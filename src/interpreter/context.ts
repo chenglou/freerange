@@ -18,6 +18,13 @@ export type InterpreterIssue = {
   line?: number
 }
 
+export type InterpreterEffect = {
+  kind: 'effect'
+  message: string
+  stack: string[]
+  line?: number
+}
+
 export type InterpreterAudit = {
   kind: 'selector'
   stack: string[]
@@ -31,9 +38,11 @@ export type InterpreterFrame = {
   env: Map<string, Value>
   stateCases?: InterpreterStateCase[]
   issues: InterpreterIssue[]
+  effects: InterpreterEffect[]
   audits: InterpreterAudit[]
   stack: string[]
   activeCalls: Set<string>
+  localBindings: Set<string>
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
@@ -113,9 +122,11 @@ export function rootFrame(program: Program, hooks?: InterpreterHooks): Interpret
     program,
     env: programGlobalEnv(program),
     issues: [],
+    effects: [],
     audits: [],
     stack: [],
     activeCalls: new Set(),
+    localBindings: new Set(),
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [],
@@ -128,9 +139,11 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     program: parent.program,
     env,
     issues: parent.issues,
+    effects: parent.effects,
     audits: parent.audits,
     stack: [...parent.stack, name],
     activeCalls: new Set(parent.activeCalls),
+    localBindings: new Set(parent.localBindings),
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
@@ -144,9 +157,11 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     program,
     env,
     issues: parent.issues,
+    effects: parent.effects,
     audits: parent.audits,
     stack: [...parent.stack, name],
     activeCalls: new Set(parent.activeCalls),
+    localBindings: new Set(),
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
@@ -174,6 +189,15 @@ export function noteAudit(frame: InterpreterFrame, text: string, reason: string,
   })
 }
 
+export function noteEffect(frame: InterpreterFrame, message: string, node?: ts.Node) {
+  frame.effects.push({
+    kind: 'effect',
+    message,
+    stack: frame.stack,
+    ...(node == null ? {} : {line: lineNumberForNode(frame.program.sourceFile, node)}),
+  })
+}
+
 export function noteUnsupported(frame: InterpreterFrame, message: string, node?: ts.Node): Value {
   frame.issues.push({
     kind: 'unsupported',
@@ -185,7 +209,8 @@ export function noteUnsupported(frame: InterpreterFrame, message: string, node?:
 }
 
 function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
-  return sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1
+  const nodeSourceFile = node.getSourceFile() ?? sourceFile
+  return nodeSourceFile.getLineAndCharacterOfPosition(node.getStart(nodeSourceFile)).line + 1
 }
 
 export function joinFrameEnvs(left: Map<string, Value>, right: Map<string, Value>): Map<string, Value> {

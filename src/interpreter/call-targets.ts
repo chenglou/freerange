@@ -19,7 +19,7 @@ export function resolveCallTarget(target: ts.Expression, program: Program): Inte
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
     return resolveNamespaceMemberCallTarget(target.expression.text, target.name.text, program, new Set())
   }
-  return {kind: 'unresolved', reason: `Unsupported call ${target.getText(program.sourceFile)}`}
+  return {kind: 'unresolved', reason: `Unsupported call ${target.getText()}`}
 }
 
 function resolveIdentifierCallTarget(name: string, program: Program, seen = new Set<string>()): InterpreterCallTarget {

@@ -13,6 +13,7 @@ import {
   hasFitComment,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
+  publicFitText,
   type FitCheckSpec,
   type FitExpressionLike,
   type FitRange,
@@ -150,13 +151,15 @@ import type {
   InterpreterAudit,
   InterpreterCall,
   InterpreterClaim,
+  InterpreterEffect,
   InterpreterFrame,
   InterpreterFlow,
   InterpreterHooks,
+  InterpreterIssue,
   InterpreterLoopClaim,
   InterpreterReturnCase,
 } from './interpreter/context.ts'
-import {formatInterpreterIssues} from './interpreter/format.ts'
+import {formatInterpreterEffects, formatInterpreterIssues} from './interpreter/format.ts'
 
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
 export type {
@@ -551,12 +554,13 @@ function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContra
 }
 
 const checkSpecHooks: CheckSpecHooks = {
-  evaluateExpression: (expression, context) => evaluateCheckedExpression(expression, context),
+  evaluateExpression: (expression, context) => evaluateContractExpression(expression, context),
   evaluateDomainPath: (domainPath, context) => evaluateDomainPathValue(domainPath, context.env),
   parsePrintedNumber,
 }
 
 function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {
+  if (context.contractExpression === true) return evaluateContractExpression(expression, context)
   const originalEnv = context.env
   const result = evaluateInterpreterExpression(
     context.program,
@@ -571,6 +575,70 @@ function evaluateCheckedExpression(expression: ts.Expression, context: EvalConte
   context.env = originalEnv
   context.assumptions = result.assumptions
   return result.value
+}
+
+function evaluateContractExpression(expression: ts.Expression, context: EvalContext): Value {
+  const problems = context.contractExpressionProblems ?? []
+  const problemStart = problems.length
+  const previousContractExpression = context.contractExpression
+  const previousContractExpressionProblems = context.contractExpressionProblems
+  const previousCallObligations = context.callObligations
+  context.contractExpression = true
+  context.contractExpressionProblems = problems
+  context.callObligations = 'record'
+
+  const originalEnv = context.env
+  try {
+    const result = evaluateInterpreterExpression(
+      context.program,
+      expression,
+      context.env,
+      context.stack,
+      context.assumptions,
+      interpreterHooks(context),
+      context.objectPath,
+    )
+    replaceEnvEntries(originalEnv, result.env)
+    context.env = originalEnv
+    context.assumptions = result.assumptions
+    problems.push(...formatContractExpressionProblems(result.issues, result.effects))
+
+    const localProblems = problems.slice(problemStart)
+    if (localProblems.length > 0) return unknown(contractExpressionUnsupportedReason(expression, localProblems))
+    return result.value
+  } finally {
+    if (previousContractExpression == null) delete context.contractExpression
+    else context.contractExpression = previousContractExpression
+    if (previousContractExpressionProblems == null) delete context.contractExpressionProblems
+    else context.contractExpressionProblems = previousContractExpressionProblems
+    if (previousCallObligations == null) delete context.callObligations
+    else context.callObligations = previousCallObligations
+  }
+}
+
+function contractExpressionUnsupportedReason(expression: ts.Expression, problems: string[]) {
+  return [
+    `Unsupported @fit contract expression: ${publicFitText(expression.getText())}`,
+    ...uniqueUnsupported(problems).map(line => `  ${line}`),
+  ].join('\n')
+}
+
+function formatContractExpressionProblems(
+  issues: InterpreterIssue[],
+  effects: InterpreterEffect[],
+) {
+  return [
+    ...formatInterpreterIssues(issues.filter(isHardContractExpressionIssue)),
+    ...formatInterpreterEffects(effects),
+  ]
+}
+
+function isHardContractExpressionIssue(issue: InterpreterIssue) {
+  return /\bunsupported\b/i.test(issue.message)
+    || issue.message.startsWith('Unknown function ')
+    || issue.message.startsWith('Unknown identifier ')
+    || issue.message.startsWith('Call arity mismatch')
+    || issue.message.includes('mutable helper alias')
 }
 
 function evaluateInterpreterExpressionWithObjectPath(expression: ts.Expression, context: EvalContext, objectPath: string[]): Value {
@@ -679,6 +747,9 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
   context.assumptions = result.assumptions
   if (context.inferUnsupported != null) {
     context.inferUnsupported.push(...formatInterpreterIssues(result.issues))
+  }
+  if (context.contractExpression === true && context.contractExpressionProblems != null) {
+    context.contractExpressionProblems.push(...formatContractExpressionProblems(result.issues, result.effects))
   }
   return {
     result: result.value,
@@ -1144,6 +1215,8 @@ function evaluateLocalFunctionCall(
     assumptions: context.assumptions,
     contractCache: context.contractCache,
     ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
+    ...(context.contractExpression == null ? {} : {contractExpression: context.contractExpression}),
+    ...(context.contractExpressionProblems == null ? {} : {contractExpressionProblems: context.contractExpressionProblems}),
   })
   const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn.node, context.program)
     ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.node.type, context.program, new Set())
@@ -1221,11 +1294,14 @@ function evaluateDefaultArgument(
     assumptions: callerContext.assumptions,
     contractCache: callerContext.contractCache,
     ...(callerContext.callObligations == null ? {} : {callObligations: callerContext.callObligations}),
+    ...(callerContext.contractExpression == null ? {} : {contractExpression: callerContext.contractExpression}),
+    ...(callerContext.contractExpressionProblems == null ? {} : {contractExpressionProblems: callerContext.contractExpressionProblems}),
   } satisfies EvalContext
   return evaluateCallArgumentExpression(param.initializer!, context)
 }
 
 function evaluateCallArgumentExpression(expression: ts.Expression, context: EvalContext): Value {
+  if (context.contractExpression === true) return evaluateContractExpression(expression, context)
   return evaluateCheckedExpression(expression, context.callObligations == null ? {...context, callObligations: 'silent'} : context)
 }
 

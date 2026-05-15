@@ -71,6 +71,22 @@ async function runInfer(args: string[]) {
     return
   }
   printInferReport(report)
+  if (inferReportHasUnsupportedContractExpression(report)) process.exitCode = 1
+}
+
+function inferReportHasUnsupportedContractExpression(report: ReturnType<typeof inferFitFiles>) {
+  return report.functions.some(fn =>
+    fn.unsupported.some(isUnsupportedContractExpression)
+    || fn.specs.some(spec => spec.reason != null && isUnsupportedContractExpression(spec.reason))
+    || fn.loops.some(loop =>
+      loop.unsupported.some(isUnsupportedContractExpression)
+      || loop.specs.some(spec => spec.reason != null && isUnsupportedContractExpression(spec.reason)),
+    ),
+  )
+}
+
+function isUnsupportedContractExpression(text: string) {
+  return text.includes('Unsupported @fit contract expression')
 }
 
 function parseInferArgs(args: string[]) {

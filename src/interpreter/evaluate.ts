@@ -83,11 +83,13 @@ import {
   frameWithActiveCall,
   frameWithProgram,
   joinFrameEnvs,
+  noteEffect,
   noteUnsupported,
   rootFrame,
   type InterpreterCall,
   type InterpreterAudit,
   type InterpreterClaim,
+  type InterpreterEffect,
   type InterpreterFlow,
   type InterpreterFrame,
   type InterpreterHooks,
@@ -184,6 +186,7 @@ import {
 export type InterpreterFunctionResult = {
   value: Value
   issues: InterpreterIssue[]
+  effects: InterpreterEffect[]
   audits: InterpreterAudit[]
 }
 
@@ -240,11 +243,12 @@ export function evaluateInterpreterFunction(program: Program, functionName: stri
     return {
       value: noteUnsupported(frame, `Unknown function ${functionName}`),
       issues: frame.issues,
+      effects: frame.effects,
       audits: frame.audits,
     }
   }
   const value = invokeFitFunction(fn, [], frame, program, frame.env)
-  return {value, issues: frame.issues, audits: frame.audits}
+  return {value, issues: frame.issues, effects: frame.effects, audits: frame.audits}
 }
 
 export function evaluateInterpreterFunctionBody(
@@ -262,6 +266,7 @@ export function evaluateInterpreterFunctionBody(
     value: result.value,
     env: frame.env,
     issues: frame.issues,
+    effects: frame.effects,
     audits: frame.audits,
     assumptions: frame.assumptions,
     ...(result.returnCases == null ? {} : {returnCases: result.returnCases}),
@@ -277,7 +282,7 @@ export function evaluateInterpreterTopLevel(
 ): InterpreterBodyResult {
   const frame = interpreterFrame(program, env, stack, assumptions, hooks)
   evaluateStatements(topLevelExecutableStatements(program.sourceFile.statements), frame)
-  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
+  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, effects: frame.effects, audits: frame.audits, assumptions: frame.assumptions}
 }
 
 export function evaluateInterpreterExpression(
@@ -291,7 +296,7 @@ export function evaluateInterpreterExpression(
 ): InterpreterBodyResult {
   const frame = interpreterFrame(program, env, stack, assumptions, hooks, objectPath)
   const value = evaluateExpression(expression, frame)
-  return {value, env: frame.env, issues: frame.issues, audits: frame.audits, assumptions: frame.assumptions}
+  return {value, env: frame.env, issues: frame.issues, effects: frame.effects, audits: frame.audits, assumptions: frame.assumptions}
 }
 
 function interpreterFrame(
@@ -306,9 +311,11 @@ function interpreterFrame(
     program,
     env: new Map(env),
     issues: [],
+    effects: [],
     audits: [],
     stack,
     activeCalls: new Set(),
+    localBindings: new Set(),
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [...assumptions],
@@ -476,6 +483,7 @@ function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: Interpr
 
 function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame) {
   if (ts.isIdentifier(name)) {
+    frame.localBindings.add(name.text)
     frame.env.set(name.text, value)
     return
   }
@@ -1932,8 +1940,15 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
   const value = expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
     ? evaluateCompoundPlus(path, right, frame, expression)
     : right
+  if (assignmentHasExternalEffect(path, frame)) {
+    noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
+  }
   writePath(path, value, frame)
   return value
+}
+
+function assignmentHasExternalEffect(path: ValuePath, frame: InterpreterFrame) {
+  return path.segments.length > 0 || !frame.localBindings.has(path.root)
 }
 
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
@@ -2000,9 +2015,11 @@ function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
     program: frame.program,
     env: new Map(frame.env),
     issues: [],
+    effects: [],
     audits: frame.audits,
     stack: frame.stack,
     activeCalls: new Set(frame.activeCalls),
+    localBindings: new Set(frame.localBindings),
     loopStack: [...frame.loopStack],
     conditionalDepth: frame.conditionalDepth,
     assumptions: [...frame.assumptions],
@@ -2148,6 +2165,7 @@ function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.Pro
   if (path == null) return noteUnsupported(frame, `Unsupported array mutation target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const current = readPath(path, frame, target.expression)
   if (current.kind !== 'array') return noteUnsupported(frame, `${target.name.text} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  noteEffect(frame, `${target.name.text} mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {
     forgetRoot(frame.env, path.root)
     return frame.env.get(path.root) ?? unknownArray(valuePathExpression(path))
@@ -2214,6 +2232,7 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   if (path == null) return noteUnsupported(frame, `Unsupported push target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const current = readPath(path, frame, target.expression)
   if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  noteEffect(frame, `push mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   const loop = currentLoop(frame)
   if (loop?.mode === 'symbolic' && expression.arguments.length !== 1) return noteUnsupported(frame, 'Abstract loop push supports one item per iteration', expression)
   const values = evaluatedArguments(expression.arguments, frame)
