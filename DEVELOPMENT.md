@@ -29,7 +29,6 @@ bun install
 
 - [README.md](./README.md) — short project front door
 - [DOCUMENTATION.md](./DOCUMENTATION.md) — user-facing syntax, glossary, adoption guide, and supported checker surface
-- [STATIC-ANALYZER-BLUEPRINT.md](./STATIC-ANALYZER-BLUEPRINT.md) — user-facing architecture thesis for Freerange-style analyzers
 - [patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) — positive pattern specimens
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output

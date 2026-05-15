@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. Use [README.md](./README.md) as the short project front door. Use [STATIC-ANALYZER-BLUEPRINT.md](./STATIC-ANALYZER-BLUEPRINT.md) as the user-facing architecture thesis for Freerange-style analyzers, and update it when architectural lessons change. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes. **Every time before you commit, ensure you've synced the docs**.
+Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. Use [README.md](./README.md) as the short project front door. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes. **Every time before you commit, ensure you've synced the docs**.
 
 Do `bun install` if you're in a fresh checkout/worktree.
 

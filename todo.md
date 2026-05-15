@@ -2,7 +2,7 @@
 
 This is the living work queue after the interpreter cutover.
 
-Current syntax and supported source live in [DOCUMENTATION.md](./DOCUMENTATION.md). Commands and repo shape live in [DEVELOPMENT.md](./DEVELOPMENT.md). Longer direction notes live in [research.md](./research.md) and [STATIC-ANALYZER-BLUEPRINT.md](./STATIC-ANALYZER-BLUEPRINT.md).
+Current syntax and supported source live in [DOCUMENTATION.md](./DOCUMENTATION.md). Commands and repo shape live in [DEVELOPMENT.md](./DEVELOPMENT.md). Longer direction notes live in [research.md](./research.md).
 
 Freerange is a static checker for ordinary TypeScript layout code plus strict `@fit` comments. Keep the public DSL small: ranges, comparisons, field paths, and named layout facts. Do not add public lambdas, callbacks, `forall`, arbitrary folds, public alias syntax, or prose-as-truth.
 
