@@ -134,8 +134,8 @@ function addComparisonGraphEdge(graph: Map<string, ComparisonGraphEdge[]>, fromE
 type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) => ProofBackendResult | null
 
 const comparisonProofRules: ComparisonProofRule[] = [
-  evaluateSimplifiedComparison,
   evaluateChoiceOperandBound,
+  evaluateRoundingLossBound,
   evaluateRoundingBound,
   evaluateRoundingMonotonicity,
   evaluateModuloBelowDivisor,
@@ -147,6 +147,7 @@ const comparisonProofRules: ComparisonProofRule[] = [
   evaluateFlattenedGridIndexBelowCount,
   evaluateFloorDivisionBelowCount,
   evaluateCeilDivisionCoversTotal,
+  evaluateSimplifiedComparison,
 ]
 
 type LessComparisonGoal = {
@@ -159,11 +160,15 @@ type LessComparisonGoal = {
 
 type ComparisonReduction = {
   left: string
-  op: '<='
+  op: '<=' | '<'
   right: string
   reason: string
   rule: string
 }
+
+type RoundingFunctionName = 'floor' | 'ceil' | 'round' | 'trunc'
+type RoundingCall = {name: RoundingFunctionName; arg: string}
+type RoundingCallWithOffset = RoundingCall & {offset: number}
 
 function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
   const lessGoal = comparisonLessGoal(goal)
@@ -183,7 +188,6 @@ function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofBacken
 }
 
 function comparisonReductions(goal: LessComparisonGoal): ComparisonReduction[] {
-  if (goal.op !== '<=') return []
   return [
     ...lowerRoundingReductions(goal),
     ...upperRoundingReductions(goal),
@@ -191,32 +195,55 @@ function comparisonReductions(goal: LessComparisonGoal): ComparisonReduction[] {
 }
 
 function lowerRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[] {
-  const inner = callArg(goal.leftExpr, 'floor')
-  if (inner != null) {
-    return [{left: inner, op: '<=', right: goal.rightExpr, rule: 'rounding-simplification', reason: 'simplified comparison through rounding bounds'}]
-  }
+  const lower = roundingCall(goal.leftExpr)
+  if (lower == null) return []
+  const right = goal.rightExpr
 
-  const ceilInner = callArg(goal.leftExpr, 'ceil')
-  if (ceilInner != null && goal.right.isInteger) {
-    return [{left: ceilInner, op: '<=', right: goal.rightExpr, rule: 'rounding-simplification', reason: 'simplified comparison through integer rounding bounds'}]
+  switch (lower.name) {
+    case 'floor':
+      return goal.right.isInteger
+        ? [{left: lower.arg, op: '<', right: goal.op === '<' ? right : offsetExpression(right, 1), rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
+        : [{left: lower.arg, op: goal.op, right, rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
+    case 'ceil':
+      return goal.right.isInteger
+        ? [{left: lower.arg, op: '<=', right: goal.op === '<' ? offsetExpression(right, -1) : right, rule: 'rounding-simplification', reason: 'simplified comparison through integer ceil bounds'}]
+        : []
+    case 'round':
+      return goal.right.isInteger
+        ? [{left: lower.arg, op: '<', right: offsetExpression(right, goal.op === '<' ? -0.5 : 0.5), rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
+        : []
+    case 'trunc':
+      return []
   }
-
-  return []
 }
 
 function upperRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[] {
-  const inner = callArg(goal.rightExpr, 'ceil')
-  if (inner != null) {
-    return [{left: goal.leftExpr, op: '<=', right: inner, rule: 'rounding-simplification', reason: 'simplified comparison through rounding bounds'}]
-  }
+  if (!goal.left.isInteger) return []
+  const upper = roundingCall(goal.rightExpr)
+  if (upper == null) return []
+  const left = goal.leftExpr
 
-  const floorInner = callArg(goal.rightExpr, 'floor')
-  if (floorInner != null && goal.left.isInteger) {
-    return [{left: goal.leftExpr, op: '<=', right: floorInner, rule: 'rounding-simplification', reason: 'simplified comparison through integer rounding bounds'}]
+  switch (upper.name) {
+    case 'floor':
+      return [{left: goal.op === '<' ? offsetExpression(left, 1) : left, op: '<=', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through integer floor bounds'}]
+    case 'ceil':
+      return [{left: goal.op === '<' ? left : offsetExpression(left, -1), op: '<', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through ceil bounds'}]
+    case 'round':
+      return [{left: offsetExpression(left, goal.op === '<' ? 0.5 : -0.5), op: '<=', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
+    case 'trunc':
+      return []
   }
-
-  return []
 }
+
+function roundingCall(expression: string): RoundingCall | null {
+  for (const name of roundingFunctionNames) {
+    const arg = callArg(expression, name)
+    if (arg != null) return {name, arg}
+  }
+  return null
+}
+
+const roundingFunctionNames = ['floor', 'ceil', 'round', 'trunc'] as const
 
 function evaluateChoiceOperandBound(goal: ComparisonGoal): ProofBackendResult | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
@@ -236,6 +263,168 @@ function choiceHasOperand(choiceExpr: string, choiceName: 'min' | 'max', operand
   return args != null && args.some(arg => sameExpressionText(arg, operandExpr))
 }
 
+function evaluateRoundingLossBound(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  return lessGoal == null ? null : roundingLossDirectStatus(lessGoal, context)
+}
+
+function roundingLossDirectStatus(goal: LessComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const offsetStatus = roundingOffsetLossStatus(goal, context)
+  if (offsetStatus != null) return offsetStatus
+
+  const left = roundingCall(goal.leftExpr)
+  if (left != null) {
+    if (roundingUpperLossProves(left, goal.op, goal.rightExpr, context)) return passRoundingLossBound()
+    const missing = roundingUpperLossMissing(left, goal.rightExpr, context)
+    if (missing != null) return blockedRoundingLossBound(missing)
+  }
+
+  const right = roundingCall(goal.rightExpr)
+  if (right != null) {
+    if (roundingLowerLossProves(goal.leftExpr, goal.op, right, context)) return passRoundingLossBound()
+    const missing = roundingLowerLossMissing(goal.leftExpr, right, context)
+    if (missing != null) return blockedRoundingLossBound(missing)
+  }
+
+  return null
+}
+
+function roundingOffsetLossStatus(goal: LessComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const right = roundingCallWithOffset(goal.rightExpr)
+  if (right != null) {
+    if (right.name === 'floor' && right.offset === 1 && sameExpressionText(goal.leftExpr, right.arg)) {
+      return passRoundingLossBound()
+    }
+    if (right.name === 'round' && right.offset === 0.5 && sameExpressionText(goal.leftExpr, right.arg)) {
+      return passRoundingLossBound()
+    }
+    if (right.name === 'trunc' && right.offset === 1 && sameExpressionText(goal.leftExpr, right.arg)) {
+      return context.provesExprNonNegative(right.arg, false)
+        ? passRoundingLossBound()
+        : blockedRoundingLossBound(`${publicFitText(right.arg)} >= 0`)
+    }
+  }
+
+  const left = roundingCallWithOffset(goal.leftExpr)
+  if (left != null && left.name === 'ceil' && left.offset === -1 && sameExpressionText(goal.rightExpr, left.arg)) {
+    return passRoundingLossBound()
+  }
+  if (left != null && left.name === 'round' && left.offset === -0.5 && sameExpressionText(goal.rightExpr, left.arg) && goal.op === '<=') {
+    return passRoundingLossBound()
+  }
+
+  return null
+}
+
+function roundingCallWithOffset(expression: string): RoundingCallWithOffset | null {
+  const shape = expressionWithConstantOffset(expression)
+  const call = roundingCall(shape.base)
+  return call == null ? null : {...call, offset: shape.offset}
+}
+
+function roundingUpperLossProves(rounding: RoundingCall, op: '<=' | '<', rightExpr: string, context: ProofBackendContext) {
+  switch (rounding.name) {
+    case 'floor':
+      return nonStrictLawProvesGoal(op) && sameExpressionText(rightExpr, rounding.arg)
+        || strictLawProvesGoal(op) && sameExpressionWithOffset(rightExpr, roundingCallText(rounding), 1)
+    case 'ceil':
+      return strictLawProvesGoal(op) && sameExpressionWithOffset(rightExpr, rounding.arg, 1)
+    case 'round':
+      return nonStrictLawProvesGoal(op) && sameExpressionWithOffset(rightExpr, rounding.arg, 0.5)
+    case 'trunc':
+      if (nonStrictLawProvesGoal(op) && sameExpressionText(rightExpr, rounding.arg)) return context.provesExprNonNegative(rounding.arg, false)
+      if (strictLawProvesGoal(op) && sameExpressionWithOffset(rightExpr, rounding.arg, 1)) return context.hasComparisonFact(rounding.arg, '<=', '0')
+      if (nonStrictLawProvesGoal(op) && sameExpressionText(rightExpr, '0')) return context.hasComparisonFact(rounding.arg, '<=', '0')
+      return false
+  }
+}
+
+function roundingUpperLossMissing(rounding: RoundingCall, rightExpr: string, context: ProofBackendContext) {
+  if (rounding.name !== 'trunc') return null
+  if (sameExpressionText(rightExpr, rounding.arg) && !context.provesExprNonNegative(rounding.arg, false)) return `${publicFitText(rounding.arg)} >= 0`
+  if (sameExpressionWithOffset(rightExpr, rounding.arg, 1) && !context.hasComparisonFact(rounding.arg, '<=', '0')) return `${publicFitText(rounding.arg)} <= 0`
+  if (sameExpressionText(rightExpr, '0') && !context.hasComparisonFact(rounding.arg, '<=', '0')) return `${publicFitText(rounding.arg)} <= 0`
+  return null
+}
+
+function roundingLowerLossProves(leftExpr: string, op: '<=' | '<', rounding: RoundingCall, context: ProofBackendContext) {
+  switch (rounding.name) {
+    case 'floor':
+      return strictLawProvesGoal(op) && sameExpressionWithOffset(leftExpr, rounding.arg, -1)
+    case 'ceil':
+      return nonStrictLawProvesGoal(op) && sameExpressionText(leftExpr, rounding.arg)
+    case 'round':
+      return nonStrictLawProvesGoal(op) && sameExpressionWithOffset(leftExpr, rounding.arg, -0.5)
+    case 'trunc':
+      if (nonStrictLawProvesGoal(op) && sameExpressionText(leftExpr, rounding.arg)) return context.hasComparisonFact(rounding.arg, '<=', '0')
+      if (strictLawProvesGoal(op) && sameExpressionWithOffset(leftExpr, rounding.arg, -1)) return context.provesExprNonNegative(rounding.arg, false)
+      if (nonStrictLawProvesGoal(op) && sameExpressionText(leftExpr, '0')) return context.provesExprNonNegative(rounding.arg, false)
+      return false
+  }
+}
+
+function roundingLowerLossMissing(leftExpr: string, rounding: RoundingCall, context: ProofBackendContext) {
+  if (rounding.name !== 'trunc') return null
+  if (sameExpressionText(leftExpr, rounding.arg) && !context.hasComparisonFact(rounding.arg, '<=', '0')) return `${publicFitText(rounding.arg)} <= 0`
+  if (sameExpressionWithOffset(leftExpr, rounding.arg, -1) && !context.provesExprNonNegative(rounding.arg, false)) return `${publicFitText(rounding.arg)} >= 0`
+  if (sameExpressionText(leftExpr, '0') && !context.provesExprNonNegative(rounding.arg, false)) return `${publicFitText(rounding.arg)} >= 0`
+  return null
+}
+
+function roundingCallText(rounding: RoundingCall) {
+  return `${rounding.name}(${rounding.arg})`
+}
+
+function passRoundingLossBound() {
+  return pass('rounding-loss-bound', 'rounding result stays within its source-side loss bound')
+}
+
+function blockedRoundingLossBound(missing: string) {
+  return blocked('rounding-loss-bound', missing, 'rounding result stays within its source-side loss bound')
+}
+
+function nonStrictLawProvesGoal(op: '<=' | '<') {
+  return op === '<='
+}
+
+function strictLawProvesGoal(op: '<=' | '<') {
+  return op === '<' || op === '<='
+}
+
+function sameExpressionWithOffset(expression: string, base: string, offset: number) {
+  const shape = expressionWithConstantOffset(expression)
+  return shape.offset === offset && sameExpressionText(shape.base, base)
+}
+
+function expressionWithConstantOffset(expression: string): {base: string; offset: number} {
+  const plus = binaryExpression(expression, '+')
+  if (plus != null) {
+    const right = numericTextValue(plus.right)
+    if (right != null) return {base: plus.left, offset: right}
+    const left = numericTextValue(plus.left)
+    if (left != null) return {base: plus.right, offset: left}
+  }
+
+  const minus = binaryExpression(expression, '-')
+  if (minus != null) {
+    const right = numericTextValue(minus.right)
+    if (right != null) return {base: minus.left, offset: -right}
+  }
+
+  return {base: expression, offset: 0}
+}
+
+function numericTextValue(text: string) {
+  const trimmed = text.trim()
+  if (!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(trimmed)) return null
+  return Number(trimmed)
+}
+
+function offsetExpression(expression: string, offset: number) {
+  if (offset === 0) return expression
+  return offset > 0 ? `(${expression} + ${offset})` : `(${expression} - ${Math.abs(offset)})`
+}
+
 function evaluateRoundingBound(goal: ComparisonGoal): ProofBackendResult | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
   const leftCeil = callArg(goal.left.expr, 'ceil')
@@ -252,17 +441,16 @@ function evaluateRoundingBound(goal: ComparisonGoal): ProofBackendResult | null 
 function evaluateRoundingMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null || lessGoal.op !== '<=') return null
-  const shape = matchingUnaryCall(lessGoal.leftExpr, lessGoal.rightExpr, 'floor')
-    ?? matchingUnaryCall(lessGoal.leftExpr, lessGoal.rightExpr, 'ceil')
+  const shape = matchingRoundingCall(lessGoal.leftExpr, lessGoal.rightExpr)
   if (shape == null) return null
   if (context.hasComparisonFact(shape.left, '<=', shape.right)) return pass('rounding-monotonicity', 'rounding preserves non-strict order')
   return blocked('rounding-monotonicity', `${publicFitText(shape.left)} <= ${publicFitText(shape.right)}`, 'rounding preserves non-strict order')
 }
 
-function matchingUnaryCall(leftExpr: string, rightExpr: string, name: 'floor' | 'ceil'): {left: string; right: string} | null {
-  const left = callArg(leftExpr, name)
-  const right = callArg(rightExpr, name)
-  return left == null || right == null ? null : {left, right}
+function matchingRoundingCall(leftExpr: string, rightExpr: string): {left: string; right: string} | null {
+  const left = roundingCall(leftExpr)
+  const right = roundingCall(rightExpr)
+  return left == null || right == null || left.name !== right.name ? null : {left: left.arg, right: right.arg}
 }
 
 function evaluateModuloBelowDivisor(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {

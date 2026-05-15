@@ -269,7 +269,7 @@ missing: y < countY * cell
 
 This should grow only when a proof shape would otherwise split into separate proof and report helpers.
 
-Before adding a stronger backend, simplify proof goals into smaller proof goals where the rewrite is sound. E.g. `ceil(width / 2) <= outer` can become `width / 2 <= outer` when `outer` is proven integer. A simplification that cannot prove its smaller goal must not block a later stronger rule; backend dispatch should accept any passing rule, then keep the first useful blocked rule only for the final diagnostic.
+Before adding a stronger backend, simplify proof goals into smaller proof goals where the rewrite is sound. E.g. `ceil(width / 2) <= outer` can become `width / 2 <= outer` when `outer` is proven integer. Rounding should be handled as a family, not one function at a time: `floor(x) <= x < floor(x) + 1`, `ceil(x) - 1 < x <= ceil(x)`, `x - 0.5 <= round(x) <= x + 0.5`, non-strict monotonicity for the supported rounding calls, and sign-gated `trunc` bounds. `trunc` is not a disguised `floor` unless the sign is known. A simplification that cannot prove its smaller goal must not block a later stronger rule; backend dispatch should accept any passing rule, then keep the first useful blocked rule only for the final diagnostic.
 
 ## Module Boundaries
 

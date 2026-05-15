@@ -198,6 +198,7 @@ Freerange inferred lots of facts! Here's what we infer:
 - In the future, we can and might infer more convenience facts, such as `return.array1.length == return.array2.length`. But for now, to preserve a simple mental model and avoid bad surprises during code changes, we ask the user/agent to write those out explicitly in the function's `@fit` contracts.
 
 Freerange comes out of the box understanding the relevant DOM and JS apis, e.g. it knows that `array.length` is `int 0..Infinity` and that DOM `element.offsetWidth` is `int 0..Infinity`. Full glossary at the end of the docs.
+It also understands ordinary rounding loss for `Math.floor`, `Math.ceil`, `Math.round`, and `Math.trunc`. For example, it can prove `Math.floor(x) <= x`, `x < Math.floor(x) + 1`, `x <= Math.ceil(x)`, `Math.ceil(x) < x + 1`, and `x - 0.5 <= Math.round(x) <= x + 0.5`. `Math.trunc` needs Freerange to know the sign first.
 
 #### Branches
 
@@ -293,6 +294,7 @@ window.innerWidth/innerHeight/outerWidth/outerHeight: int 0..Infinity
 innerWidth/innerHeight/outerWidth/outerHeight: int 0..Infinity
 resizeObserverSize.inlineSize/blockSize: 0..Infinity
 visualViewport.width/height: 0..Infinity
+Math.floor/ceil/round/trunc(value) // inferred result ranges, non-strict order preservation, and ordinary rounding-loss bounds; trunc needs a known sign for floor/ceil-like bounds
 ```
 
 ```ts

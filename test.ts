@@ -169,6 +169,97 @@ if (
   console.log('proof simplification: rounded bound comparison')
 }
 
+const roundingFamilyChecks = verifyFitSource('rounding-family.ts', `/** @fit
+ * given value: -10..10
+ * return.floorValue <= value
+ * value < return.floorValue + 1
+ * value - 1 < return.floorValue
+ * value <= return.ceilValue
+ * return.ceilValue < value + 1
+ * return.ceilValue - 1 < value
+ * value - 0.5 <= return.roundValue
+ * return.roundValue <= value + 0.5
+ * return.roundValue - 0.5 <= value
+ * value < return.roundValue + 0.5
+ */
+function roundingLoss(value: number) {
+  return {
+    floorValue: Math.floor(value),
+    ceilValue: Math.ceil(value),
+    roundValue: Math.round(value),
+  }
+}
+
+/** @fit
+ * given positive: 0..10
+ * given negative: -10..0
+ * return.positiveTrunc >= 0
+ * return.positiveTrunc <= positive
+ * positive - 1 < return.positiveTrunc
+ * return.negativeTrunc >= negative
+ * return.negativeTrunc <= 0
+ * return.negativeTrunc < negative + 1
+ */
+function truncLoss(positive: number, negative: number) {
+  return {
+    positiveTrunc: Math.trunc(positive),
+    negativeTrunc: Math.trunc(negative),
+  }
+}
+
+/** @fit
+ * given left <= right
+ * return.floorLeft <= return.floorRight
+ * return.ceilLeft <= return.ceilRight
+ * return.roundLeft <= return.roundRight
+ * return.truncLeft <= return.truncRight
+ */
+function roundingMonotonicity(left: number, right: number) {
+  return {
+    floorLeft: Math.floor(left),
+    floorRight: Math.floor(right),
+    ceilLeft: Math.ceil(left),
+    ceilRight: Math.ceil(right),
+    roundLeft: Math.round(left),
+    roundRight: Math.round(right),
+    truncLeft: Math.trunc(left),
+    truncRight: Math.trunc(right),
+  }
+}
+
+/** @fit
+ * given value: -10..10
+ * return <= value
+ */
+function truncNeedsSign(value: number) {
+  return Math.trunc(value)
+}
+
+/** @fit
+ * given left < right
+ * return < Math.round(right)
+ */
+function roundMonotonicityIsNotStrict(left: number, right: number) {
+  return Math.round(left)
+}
+`)
+const roundingFamilyFailures = roundingFamilyChecks.filter(check => check.functionName !== 'truncNeedsSign' && check.functionName !== 'roundMonotonicityIsNotStrict' && check.status !== 'pass')
+const truncNeedsSignCheck = roundingFamilyChecks.find(check => check.functionName === 'truncNeedsSign' && check.text === 'return <= value')
+const roundStrictCheck = roundingFamilyChecks.find(check => check.functionName === 'roundMonotonicityIsNotStrict' && check.text === 'return < Math.round(right)')
+if (
+  roundingFamilyFailures.length > 0
+  || truncNeedsSignCheck?.status !== 'unknown'
+  || truncNeedsSignCheck.reason?.includes('missing: value >= 0') !== true
+  || roundStrictCheck?.status !== 'unknown'
+  || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
+) {
+  console.error('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases')
+  console.error(JSON.stringify(roundingFamilyChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('proof simplification: rounding family')
+}
+
 const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
 
 function bump() {

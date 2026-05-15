@@ -154,7 +154,7 @@ UNKNOWN negative-patterns.ts:negativeRoundingDoesNotKeepStrictOrder: return.floo
     floor(left): any integer
     floor(right): any integer
     assumed from input: given left < right
-  missing fact: floor(left) < floor(right)
+  missing: left < floor(right)
 UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minWidth
   known:
     width: 0..1000
