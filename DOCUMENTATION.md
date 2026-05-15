@@ -26,6 +26,21 @@ clampTest.ts:10:<top-level>
   missing: 10 <= 3
 ```
 
+## Commands
+
+```zsh
+Usage:
+  fr check [--annotations-only] [--audit] [file.ts ...]
+  fr infer [--function name] [--annotations-only] [--all] file.ts ...
+  fr infer --all
+```
+
+`fr check` checks your project for `@fit` contract correctness. It reuses TypeScript's project resolution logic, so it understands `tsconfig.json`, path aliases, and local package layout. You can also pass it one or more files to check.
+
+Use `fr check --annotations-only` to check written annotations and skip the broader scan of other places that call annotated functions. Use `--audit` for cleanup advice: redundant `Math.min/max` choices, `if` branches, `??` fallbacks, etc.
+
+`fr infer file.ts` shows the facts Freerange deduced for that file. It's like TypeScript's inferred-type hover, except for the layout facts in the file. Pass `--function funcName` to focus on just that function. Use `fr infer --all` for a project summary, or `fr infer --all file.ts` for the detailed all-function view of that file.
+
 ## Syntax Overview
 
 ```ts

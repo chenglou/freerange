@@ -1,6 +1,6 @@
 # Old Documentation Notes
 
-`DOCUMENTATION.md` is the user-facing source of truth. This file keeps older details that have not been folded into the main docs yet, mostly adoption advice, command behavior, support boundaries, and longer examples.
+`DOCUMENTATION.md` is the user-facing source of truth. This file keeps older details that have not been folded into the main docs yet, mostly adoption advice, support boundaries, and longer examples.
 
 ## Adoption
 
@@ -22,87 +22,9 @@ Bad first targets:
 
 Adoption pass:
 
-The working loop is: run `infer`, write the few comments that are product red
-lines, run `check`, and use the report to see which fact the source did not
-earn yet.
-
-1. Run `fr infer path/to/file.ts` before writing comments. Let the checker show what it already knows. Add `--function name` when you want one function. If a report looks like a shape problem, run `bun run shape-diff path/to/file.ts --function name` to see whether TypeScript already knows the missing object/array structure.
-2. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Put simple scalar domains and one-sided scalar relations on params with `// @fit`; keep object paths, array paths, and grouped relations in the function block.
-3. Add a small number of high-value checks. Prefer facts that would catch real agent mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents.
-4. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now.
-5. Use `infer` to see which function and loop claims already pass from code. `redundant` means emitted inferred facts already cover the check; the output names the covering fact. Keep explicit checks when they are useful documentation and remove them when they are only noise.
-6. When a report is `unknown`, decide which bucket it belongs to: missing input fact, unsupported source shape, helper boundary needing a contract, or a real missing proof feature.
+Start from what the checker already knows. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Prefer facts that would catch real mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now. When a proof stops, decide which bucket it belongs to: missing input fact, unsupported code shape, helper boundary needing a contract, or a real proof gap.
 
 The goal is not to annotate everything. The goal is to make important UI code harder for an agent to silently break.
-
-## Commands
-
-Run `fr --help` when you only want the command shapes.
-
-`fr check` is the normal proof command: it proves the annotations you wrote and
-checks calls to annotated helpers. With file args, it checks those files. With
-file args, it still uses the nearest `tsconfig.json` for TypeScript's module and
-type lookup. With no args, it reads that config and checks the source set. On
-success it prints only the summary:
-
-```txt
-fr check: 42 files, 139 pass, 0 fail, 0 requires, 0 unknown
-```
-
-Use `--annotations-only` when you want the quieter local pass:
-
-```sh
-fr check --annotations-only path/to/file.ts
-```
-
-That proves annotations where they are written and skips the broad callsite
-scan. It is useful while adopting Freerange in a file with many existing helper
-calls. Normal `fr check` still reports call preconditions needed for a written
-annotation, even in annotations-only mode.
-
-Use `--audit` when you want advisory cleanup:
-
-```sh
-fr check --audit path/to/file.ts
-```
-
-Today this audits pure selector shapes: `Math.min`, `Math.max`, exact
-min/max-shaped ternaries like `width < max ? width : max`, `if` conditions
-that are already always true or false, and `??` fallbacks whose left side is
-already proven present. If a guard value, branch, or fallback cannot change the
-result under the current facts, Freerange prints an `AUDIT` line and still exits
-successfully. `--annotations-only --audit` keeps the quieter annotated-function
-surface. Freerange does not yet audit arbitrary dead code or treat a userland
-clamp helper call as a single public audit shape.
-
-`fr infer path/to/file.ts` prints facts Freerange inferred about each function's
-return, surviving locals, and supported loops. It also shows which explicit
-comments are checked or assumed, which comments are redundant with inferred
-facts, and which unsupported source spots blocked proof. Add `--function name`
-to inspect one function, or `--annotations-only` to keep the old annotated-function
-filter. `fr infer` without a file path asks you to pass a file. `fr infer --all`
-with no file path reads the current `tsconfig.json` and prints a project summary:
-function count, fact counts, spec counts, noisiest functions, and top unsupported
-reasons. With file paths, `--all` still means the detailed all-function view for
-those files.
-
-When `check` prints a non-pass line, it also prints the next useful adoption
-command when there is one. Usually that is the caller or failing function's
-`fr infer --function ...` command. For `REQUIRES`, it is a reminder to either
-add a caller fact, validate before the call, or wrap the helper behind a
-narrower contract.
-
-Failure reports point at the spec line when they can:
-
-```txt
-UNKNOWN layout.ts:17:placeRows: return.rows[$i + 1].top >= return.rows[$i].bottom + gap
-  known:
-    assumed from input: given gap: 0..20
-    inferred from code: rows[].bottom == rows[].top + rows[].height
-  missing fact: adjacent row spacing
-```
-
-For agents, the useful loop is `fr infer`, edit the smallest source or spec line, then `fr check`. Treat `missing:` as the next thing to prove or the next input fact to say out loud. Unsupported source diagnostics may also name the source line where the interpreter had to stop; that is a clue about unsupported code shape, not a separate proof failure. When one unknown root causes many later property or assignment complaints, `infer` reports the root first instead of printing every derived miss.
 
 ## Class Members
 
@@ -130,24 +52,16 @@ Same-file calls like `rect.bottom` and `rect.area()` use the checked class-membe
 
 ## What Gets Checked
 
-Freerange's proof engine starts from annotations, not from the whole file.
-Normal `fr check` then adds a callsite scan for annotated helpers, so a helper
-contract is checked both where it is written and where it is used. Use
-`--annotations-only` to skip that broad scan.
+Freerange's proof engine starts from annotations, not from the whole file. The full proof pass also checks places that call annotated helpers, so a helper contract is checked both where it is written and where it is used. The quieter local pass skips that broader helper-use scan.
 
 - TypeScript syntax errors stop checking before proof starts. Freerange prints the TypeScript diagnostic code and does not trust parse recovery.
-- `given ...` and param `// @fit ...` are boundary facts. They are checked at call sites during normal `fr check` and become assumptions inside the function, but they do not trigger body proof on their own.
+- `given ...` and param `// @fit ...` are boundary facts. They are checked where annotated helpers are called and become assumptions inside the function, but they do not trigger body proof on their own.
 - `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
 - Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
 - Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved, and normal `fr check` also scans supported callsites to annotated helpers inside supported function bodies and top-level executable statements. If the call cannot satisfy a `given`, the report separates the helper requirement, what the caller passed, and the caller-side missing fact, such as `missing: cols - w >= 0`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, including returned ranges and returned-field comparisons, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
+- Helper preconditions are reported when the helper call is inside the value being proved, and the full proof pass also scans supported calls to annotated helpers inside supported function bodies and top-level executable statements. If the call cannot satisfy a `given`, the report separates the helper requirement, what the caller passed, and the caller-side missing fact, such as `missing: cols - w >= 0`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, including returned ranges and returned-field comparisons, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
 
-Freerange does not prove arbitrary unannotated behavior. A call like
-`unannotatedHelper(4, 3, 2)` has no contract to check. A call to an annotated
-helper, such as `clamp(4, 3, 2)`, is checked by normal `fr check`; in
-`--annotations-only` mode it only produces a report when it is inside a function
-or inline value that Freerange is proving. This is enough to check a quick
-helper probe:
+Freerange does not prove arbitrary unannotated behavior. A call like `unannotatedHelper(4, 3, 2)` has no contract to check. A call to an annotated helper, such as `clamp(4, 3, 2)`, is checked by the full proof pass; in the quieter local pass it only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
 
 ```ts
 const probe = clamp(4, 2, 3) // @fit 2
@@ -352,7 +266,7 @@ Assignments are conservative. Plain local assignment keeps the assigned value. P
 
 ## Reading Results
 
-`fr check` reports four statuses:
+Proof reports use four statuses:
 
 - `pass`: proven.
 - `fail`: proven false.
@@ -893,7 +807,7 @@ Supported today:
 - `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
 - small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, clear mutation statements whose changed roots can be forgotten, side-effect-free return branches, and a final `return`
 - `items.filter(item => predicate)` for same item fields, simple predicate-carried item facts, and `filtered.length <= items.length`
-- map/filter chains preserve the base origin fact for `fr infer`, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
+- map/filter chains preserve the base origin fact, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
 - conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
 - same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
 - adjacent labels over one collection, e.g. `rows[$i].top <= rows[$i + 1].top` and inferred row-spacing relations like `rows[$i + 1].top >= rows[$i].bottom + gap`
@@ -927,7 +841,7 @@ function mapRows(items: {height: number}[]) {
 
 The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, clear mutations, side-effect-free `if` branches that return, and a final `return`. A clear mutation means Freerange can name the changed root and forget it before continuing. That keeps normal code normal without turning callbacks into a public Freerange language.
 
-`fr infer` also prints the immediate origin fact for maps, such as
+Infer output also prints the immediate origin fact for maps, such as
 `return.rows follows items by index`. It is an inferred fact, not a new public
 annotation.
 
@@ -958,7 +872,7 @@ function positiveRows(items: {height: number}[]) {
 }
 ```
 
-It still does not prove `rows.length == items.length`, and it does not expose a public callback contract language. `fr infer` prints this as an order-preserving subset fact.
+It still does not prove `rows.length == items.length`, and it does not expose a public callback contract language. Infer output prints this as an order-preserving subset fact.
 
 Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
 
@@ -1232,7 +1146,7 @@ The checker understands a small pure subset:
 - symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
 - expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
 - expression-bodied `items.filter(...)` as a subsequence summary with same item domain, simple true-side predicate facts, and length no larger than source length
-- composed map/filter origin facts in `fr infer`
+- composed map/filter origin facts in infer output
 - simple `for...of` scalar running sums with direct or guarded `+=`
 - append-only scalar-array pushes like `rows.push(y)` in a supported loop
 - simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
