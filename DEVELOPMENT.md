@@ -1,7 +1,5 @@
 # Development Setup
 
-Install once:
-
 ```sh
 bun install
 ```
@@ -42,97 +40,36 @@ bun install
 
 ## Important Files
 
-- [src/check-core.ts](./src/check-core.ts) — checker, contract, report, `infer`, and callsite-check orchestration around the interpreter
-- [src/check-types.ts](./src/check-types.ts) — shared check/report/eval flow types
-- [src/obligations.ts](./src/obligations.ts) — explicit proof-obligation and proof-trace metadata attached to checks
-- [src/proof-broker.ts](./src/proof-broker.ts) — central wrapper for proving an obligation with an existing checker/proof step
-- [src/proof-facts.ts](./src/proof-facts.ts) — small publisher for the proof context that proof traces and future reports can show
-- [src/fact-inventory.ts](./src/fact-inventory.ts) — typed published facts and the inventory/index shape used by `infer` and future reports
-- [src/array-summary.ts](./src/array-summary.ts) — collection/sequence summary ownership, including map/filter lineage and summary merges
-- [src/domain-types.ts](./src/domain-types.ts) — shared abstract value and fact-state types used by the domain modules
-- [src/value-domain.ts](./src/value-domain.ts) — literal/object/array/null constructors, value joins, and assumption propagation through values
-- [src/ambient-facts.ts](./src/ambient-facts.ts) — tiny type-backed facts for browser-owned DOM layout dimensions
-- [src/assumptions.ts](./src/assumptions.ts) — linear/comparison assumption dedupe used by proof and branch facts
-- [src/constraint-reachability.ts](./src/constraint-reachability.ts) — tiny reachability check for combined branch assumptions
-- [src/number-domain.ts](./src/number-domain.ts) — numeric value construction, finite cases, arithmetic, and running-sum/extremum measures
-- [src/function-contracts.ts](./src/function-contracts.ts) — function-level contract collection and type-boundary detection
-- [src/function-call-contracts.ts](./src/function-call-contracts.ts) — helper-call precondition reports and checked contract summaries
-- [src/function-evaluation.ts](./src/function-evaluation.ts) — shared function input setup for checker, infer, audit, and shape inspection
-- [src/function-inputs.ts](./src/function-inputs.ts) — function parameter binding, argument binding, and typed input fallback shapes
-- [src/givens.ts](./src/givens.ts) — `given` validation, contradiction checks, and assumption seeding
-- [src/domain-paths.ts](./src/domain-paths.ts) — reusable reads/writes for Freerange domain paths inside abstract values
-- [src/shape-inspect.ts](./src/shape-inspect.ts) — dev-only shape comparison built from interpreter values and typed facts, not reparsed report strings
-- [src/interpreter/](./src/interpreter) — abstract interpreter core, scope helpers, source-shape readers, branch refinement, loop effects/value transforms, call-target resolution, `Math` primitives, value-path writes, and value-tree snapshot formatting
-- [src/interpreter/audit.ts](./src/interpreter/audit.ts) — advisory audit for redundant min/max-style choices, always-known branch conditions, and redundant nullish fallbacks
-- [src/interpreter/call-targets.ts](./src/interpreter/call-targets.ts) — identifier/import/namespace/class-member call resolution for interpreter calls
-- [src/interpreter/forgettable-loop.ts](./src/interpreter/forgettable-loop.ts) — conservative root invalidation for read-only unsupported loop shapes
-- [src/interpreter/state-cases.ts](./src/interpreter/state-cases.ts) — state partition helpers and budget checks for branch-local envs, assumptions, and return cases
-- [src/binding-patterns.ts](./src/binding-patterns.ts) — source binding-pattern traversal helpers used by interpreter inputs and local bindings
-- [src/function-shape.ts](./src/function-shape.ts) — function source-shape helpers for input roots, `this`, and nested-body boundaries
-- [src/interpreter-state.ts](./src/interpreter-state.ts) — checker/interpreter bridge types for evaluated state and helper-call recording
-- [src/module-values.ts](./src/module-values.ts) — top-level `const` literal reader used during module loading
-- [src/program-env.ts](./src/program-env.ts) — global/import environment bootstrapping for interpreter source evaluation
-- [src/source-expressions.ts](./src/source-expressions.ts) — source expression root/path helpers shared by givens, mutation, and call invalidation
-- [src/value-localize.ts](./src/value-localize.ts) — abstract value relabeling for parameters, imports, and wildcard element paths
-- [src/source-boundary.ts](./src/source-boundary.ts) — source line and check-boundary helpers
-- [src/check-specs.ts](./src/check-specs.ts) — already-parsed `@fit` spec proof and range-expression helpers
-- [src/facts.ts](./src/facts.ts) — value-to-fact publication used by `infer`, redundancy checks, and the internal fact layer
-- [src/guarded-facts.ts](./src/guarded-facts.ts) — branch guard truth, finite case refinement, and number-case transfer helpers
-- [src/indexed-facts.ts](./src/indexed-facts.ts) — finite index specialization, symbolic element-path rebasing, and local adjacent-neighbor facts
-- [src/sequence-facts.ts](./src/sequence-facts.ts) — adjacent sequence relation queries and rendering
-- [src/loop-source.ts](./src/loop-source.ts) — TypeScript loop source readers for pushes, guards, scalar updates, extrema, and indexed loop shape
-- [src/loop-summary.ts](./src/loop-summary.ts) — internal loop append streams, scalar updates, recurrences, and derived sequence summaries
-- [src/reports.ts](./src/reports.ts) — check report runners and file/source entrypoints
-- [src/infer-output.ts](./src/infer-output.ts) — pretty-printer for `fr infer`
-- [src/infer-summary.ts](./src/infer-summary.ts) — streaming project-summary aggregation for no-path `fr infer --all`
-- [src/infer-report.ts](./src/infer-report.ts) — inferred-spec status, redundancy, and unsupported-result helpers
-- [src/call-site-text.ts](./src/call-site-text.ts) — call-site expression text rebasing for helper summaries and call reports
-- [src/domain.ts](./src/domain.ts) — compatibility facade that re-exports the domain modules
-- [src/linear.ts](./src/linear.ts) — linear expressions, expression normalization, and reduction helpers
-- [src/proof.ts](./src/proof.ts) — range/comparison proof orchestration, interval checks, linear assumption reduction, and proof-step selection
-- [src/proof-backend.ts](./src/proof-backend.ts) — symbolic comparison composition, math lemmas, and small named comparison proof rules with report-facing rule ids
-- [src/modules.ts](./src/modules.ts) — source loading, TypeScript-backed import resolution, import-to-source declaration binding, and static helper-binding indexing
-- [src/shapes.ts](./src/shapes.ts) — the small shape-provider boundary over syntactic TS types and TypeScript checker types
-- [src/parser.ts](./src/parser.ts) — strict `@fit` parser
-- [src/bound-index.ts](./src/bound-index.ts) — same-index labels and adjacent-label spec checks backed by sequence facts
-- [src/reporting.ts](./src/reporting.ts) — failure context and report formatting
+CLI and reports:
+
 - [fr.ts](./fr.ts) — main CLI entrypoint
-- [shape-diff.ts](./shape-diff.ts) — dev-only TypeScript shape comparison diagnostic
-- [bench.ts](./bench.ts) — dev-only coarse timing helper
-- [bench-core.ts](./bench-core.ts) — shared benchmark runner used by `bench` and the budget guard
-- [verify-demo-contracts.ts](./verify-demo-contracts.ts) — local sibling-demo contract runner
-- [verify-photo-gallery-infer-snapshots.ts](./verify-photo-gallery-infer-snapshots.ts) — local photo-gallery `infer --all` snapshot runner
-- [verify-eval-snapshots.ts](./verify-eval-snapshots.ts) — interpreter-adjacent golden snapshot runner
-- [verify-interpreter-snapshots.ts](./verify-interpreter-snapshots.ts) — focused interpreter value/fact/unsupported snapshot runner
-- [verify-semantic-snapshots.ts](./verify-semantic-snapshots.ts) — tiny proof-obligation/proof-trace snapshot runner
-- [verify-corpus-probes.ts](./verify-corpus-probes.ts), [corpus-probes.ts](./corpus-probes.ts) — reproducible external corpus sweep runner and discovery rules
-- [verify-bench-budget.ts](./verify-bench-budget.ts) — loose warmed performance budget guard for the demo verifier
-- [snapshot.ts](./snapshot.ts) — tiny snapshot compare/update helper for dev-only harnesses
-- [audit-demo-contracts.ts](./audit-demo-contracts.ts) — local sibling-demo annotation audit
-- [demo-contract-paths.ts](./demo-contract-paths.ts) — shared sibling-demo path list
-- [test.ts](./test.ts) — pattern-suite runner
-- [import-pattern-helpers.ts](./import-pattern-helpers.ts), [import-pattern-alias-helpers.ts](./import-pattern-alias-helpers.ts), [import-pattern-barrel.ts](./import-pattern-barrel.ts), [import-pattern-tsx-helpers.tsx](./import-pattern-tsx-helpers.tsx), [import-pattern-declared-package](./import-pattern-declared-package), [import-pattern-declared-package-no-map](./import-pattern-declared-package-no-map), [negative-import-helpers.ts](./negative-import-helpers.ts), and [negative-import-barrel.ts](./negative-import-barrel.ts) — small imported-helper fixtures
-- [research/kernels](./research/kernels) — future pressure examples, not checked as guarantees yet
-- [experiments](./experiments) — tracked scratch artifacts from analyzer/product experiments; each experiment should carry its own notes and commands because these are not part of the default full gate unless a verifier says so
+- [src/reports.ts](./src/reports.ts), [src/check-core.ts](./src/check-core.ts), and [src/reporting.ts](./src/reporting.ts) — check/infer orchestration and report formatting
+- [src/obligations.ts](./src/obligations.ts), [src/proof-facts.ts](./src/proof-facts.ts), and [src/proof-broker.ts](./src/proof-broker.ts) — proof obligations, proof traces, and the wrapper around proof steps
+
+Contracts and source evaluation:
+
+- [src/parser.ts](./src/parser.ts), [src/check-specs.ts](./src/check-specs.ts), [src/givens.ts](./src/givens.ts), [src/function-contracts.ts](./src/function-contracts.ts), and [src/function-call-contracts.ts](./src/function-call-contracts.ts) — parsing, input assumptions, contract collection, and helper-call requirements
+- [src/interpreter/](./src/interpreter), [src/function-evaluation.ts](./src/function-evaluation.ts), [src/function-inputs.ts](./src/function-inputs.ts), [src/interpreter-state.ts](./src/interpreter-state.ts), and [src/function-shape.ts](./src/function-shape.ts) — source evaluation, function setup, `this`, nested functions, and helper-call recording
+- [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, imports, top-level constants, and structural shape fallback
+
+Facts, values, and proof:
+
+- [src/domain-types.ts](./src/domain-types.ts), [src/value-domain.ts](./src/value-domain.ts), [src/number-domain.ts](./src/number-domain.ts), [src/array-summary.ts](./src/array-summary.ts), [src/domain-paths.ts](./src/domain-paths.ts), and [src/domain.ts](./src/domain.ts) — abstract values, numeric ranges, arrays, paths, and the compatibility facade
+- [src/fact-inventory.ts](./src/fact-inventory.ts), [src/facts.ts](./src/facts.ts), [src/assumptions.ts](./src/assumptions.ts), [src/constraint-reachability.ts](./src/constraint-reachability.ts), [src/linear.ts](./src/linear.ts), [src/proof.ts](./src/proof.ts), and [src/proof-backend.ts](./src/proof-backend.ts) — published facts, assumptions, linear expressions, and comparison proof rules
+- [src/guarded-facts.ts](./src/guarded-facts.ts), [src/indexed-facts.ts](./src/indexed-facts.ts), [src/sequence-facts.ts](./src/sequence-facts.ts), [src/bound-index.ts](./src/bound-index.ts), [src/loop-source.ts](./src/loop-source.ts), and [src/loop-summary.ts](./src/loop-summary.ts) — branch, index, adjacent sequence, and loop facts
+
+Dev tools and harnesses:
+
+- [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
+- [test.ts](./test.ts), [patterns.ts](./patterns.ts), [negative-patterns.ts](./negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — pattern and report coverage
+- `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
+- [research/kernels](./research/kernels) and [experiments](./experiments) — tracked pressure examples and scratch artifacts outside the default full gate
 
 ## Infer Tool
 
-`bun run fr infer path/to/file.ts` is for us and for adoption-minded agents, not public annotation generation. It prints facts the checker already knows for every function in that file. Add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view:
+`bun run fr infer path/to/file.ts` is for adoption and debugging, not public annotation generation. The user-facing command behavior lives in [DOCUMENTATION.md](./DOCUMENTATION.md); this section is only the maintenance policy.
 
-- `return` facts from the returned value
-- `locals` from locals that survive to the return
-- loop-local facts for supported loops marked with `@fit`
-
-It also separates explicit function and loop comment lines into:
-
-- `assumptions` — valid `given` lines
-- `checked` — explicit checks proven from source
-- `not-inferred` — checks Freerange could not prove
-- `redundant` — checked claims already covered by emitted inferred facts, with the covering fact printed
-
-`redundant` is intentionally narrow: it means the emitted inferred facts already cover the explicit check. Treat it as a deletion or summary candidate, not an automatic cleanup command. Sometimes an explicit line is worth keeping because it is the public contract a reader should see.
-
-The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root. No-arg `fr infer` asks for a file path; no-arg `fr infer --all` reads the nearest `tsconfig.json` and prints a project summary instead of a per-function dump.
+The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
 Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
 
@@ -147,7 +84,7 @@ Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier.
 
 ## Selector Audit
 
-`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`: today it reports `Math.min`, `Math.max`, exact min/max-shaped ternaries, already-known `if` conditions, and `??` fallbacks where a guard value, branch, or fallback cannot affect the result. `--annotations-only --audit` keeps the annotated-function surface. This is separate from `audit:demos`, which summarizes redundant demo annotations.
+`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks. This is separate from `audit:demos`, which summarizes redundant demo annotations.
 
 ## External Corpus Probes
 
@@ -166,12 +103,9 @@ Do not leave comments in corpus branches just to make a repo look covered. If a 
 
 ## Shape Diff Tool
 
-`bun run shape-diff path/to/file.ts --function name` compares object/array
-structure Freerange kept with structure TypeScript can see. It answers a
-narrower question than `infer`: did Freerange lose because it did not know an
-object/array shape that TypeScript already knew?
+`bun run shape-diff path/to/file.ts --function name` compares object/array structure Freerange kept with structure TypeScript can see. It answers a narrower question than `infer`: did Freerange lose because it did not know a shape TypeScript already knew?
 
-It compares TypeScript shape against evaluated Freerange shape for params, locals, and returns. Raw call-return probing is opt-in with `--calls`, because calls are often consumed by a later local or return value. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
+Raw call-return probing is opt-in with `--calls`, because calls are often consumed by a later local or return value. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
 
 Use this when a report says a property or array path is unknown. If `shape-diff` sees the structure, the blocker is likely proof logic or missing input facts. If `shape-diff` does not see it, the blocker is still shape reading. The TypeScript walk has depth/width limits on purpose, so huge parser/library types are declined instead of turning the tool into a second checker.
 
