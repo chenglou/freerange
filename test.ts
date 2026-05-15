@@ -385,6 +385,59 @@ if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
   console.log('given typo: ambiguous root stays plain')
 }
 
+const typeGivenKeywordChecks = verifyFitSource('type-given-keyword.ts', `type Bar = {
+  b: number // @fit > 0
+}
+
+/** @fit
+ * given Bar.a > 10
+ */
+type Foo = {
+  a: Bar
+}
+
+/** @fit
+ * return > 0
+ */
+function read(foo: Foo) {
+  return foo.a.b
+}
+`)
+const typeGivenKeywordCheck = typeGivenKeywordChecks.find(check => check.text === 'given Bar.a > 10')
+if (
+  typeGivenKeywordCheck?.status !== 'unknown'
+  || typeGivenKeywordCheck.reason !== 'type @fit lines do not use given; write the field fact without given'
+) {
+  console.error('expected type @fit given keyword to be rejected directly')
+  console.error(JSON.stringify(typeGivenKeywordChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: given keyword rejected directly')
+}
+
+const typeGivenPrefixFieldChecks = verifyFitSource('type-given-prefix-field.ts', `/** @fit
+ * givenValue > 0
+ */
+type Box = {
+  givenValue: number
+}
+
+/** @fit
+ * return > 0
+ */
+function read(box: Box) {
+  return box.givenValue
+}
+`)
+const typeGivenPrefixFieldFailures = typeGivenPrefixFieldChecks.filter(check => check.status !== 'pass')
+if (typeGivenPrefixFieldFailures.length > 0) {
+  console.error('expected type @fit fields starting with given to keep working')
+  console.error(JSON.stringify(typeGivenPrefixFieldChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: given-prefixed field allowed')
+}
+
 const collapsedUnsupported = uniqueUnsupported([
   'unsupported render line 1: Unknown identifier events',
   'unsupported render line 1: Property access expected an object path: events.click',

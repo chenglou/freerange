@@ -49,6 +49,7 @@ type TopLevelComparison = {
 const identifierPattern = /(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])/g
 const shorthandComparisonPattern = /^(==|>=|<=|>|<)\s*(.+)$/
 const intRangePrefixPattern = /^(int\s+)([\s\S]+)$/
+const givenKeywordPattern = /^given(?:\s|$)/
 
 export function typeInputGivenContractForFunction(program: Program, fn: FitFunction): TypeContractResult<FitGivenSpec> {
   const results: TypeContractResult<FitGivenSpec>[] = []
@@ -221,6 +222,10 @@ function parseTypeCommentLines(
   for (const line of lines) {
     const body = typeCommentBody(line)
     if (body.length === 0) continue
+    if (givenKeywordPattern.test(body)) {
+      unsupported.push({text: body, reason: 'type @fit lines do not use given; write the field fact without given', line: line.line})
+      continue
+    }
     const parsed = typeLineText(body, scope, fieldRoot)
     if ('unsupported' in parsed) {
       unsupported.push({text: body, reason: parsed.unsupported, line: line.line})
