@@ -161,7 +161,7 @@ That is another general rule:
 
 > Small syntax is acceptable only when placement and error handling stay simple.
 
-Do not add lambdas, folds, public aliases, prose, browser runs, screenshots, or sampled cases just to make one example pass.
+Do not add lambdas, folds, public aliases, or prose just to make one example pass.
 
 ## USE INFER TO ADOPT, NOT TO HIDE CONTRACTS
 

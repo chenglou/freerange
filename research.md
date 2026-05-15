@@ -52,7 +52,7 @@ The useful part was not "the whole app is formally verified." The useful part wa
 - previous/next index math
 - stable line hit boxes
 
-That was enough to keep both agents away from screenshot or runner-side layout guesses. Browser reports stayed on browser-owned outcomes: hash sync, native selection, scroll restore, and occlusion.
+That was enough to keep the static claims on the geometry above.
 
 It also found a spec bug before implementation: a nullable left hit area cannot honestly promise `return.left.targetIndex` for every focused index. Splitting previous/next target helpers from nullable edge control flow made the contract true.
 
@@ -154,7 +154,7 @@ Corpus loop notes:
   - `floating-ui` is full of axis-parametric geometry: `coords[axis]`, `overflow[side]`, placement switches, platform callbacks, and async middleware. The pure arithmetic is good, but the natural spec wants either directional views or first-class axis aliases, not many copied X/Y comments.
   - `dnd-kit` and `fabric.js` put the cleanest geometry behind class methods and getters: rectangle `right`, `bottom`, `center`, `area`, `containsPoint`, intersection area, rounded-rect radii. Freerange supports local `@fit` checks on class methods/getters with `this` as an input root, same-file member summaries, and imported local-source class-member summaries for ordinary property/method calls.
   - `react-grid-layout` is a strong fit for the current arithmetic surface: column width, grid-to-pixel positions, clamped `calcXY` / `calcWH`, and background cell dimensions. The repeated friction is tuple/indexed params (`margin[0]`, `containerPadding[1]`), `Number.isFinite` branch refinement, and public clamp preconditions.
-  - `Chart.js` has a few small clamp/size helpers, but the interesting layout/data helpers use DOM/CSS measurement, sorted-window `while` loops, and `slice(start, end)`. A verifier should not pretend to own browser measurement there; the possible static seam is "cropped subsequence stays within sorted bounds," which needs monotone array facts first.
+  - `Chart.js` has a few small clamp/size helpers, but the interesting layout/data helpers use DOM/CSS measurement, sorted-window `while` loops, and `slice(start, end)`. The possible static fit is "cropped subsequence stays within sorted bounds," which needs monotone array facts first.
   - `d3-dag` is graph algorithm pressure: node/link mutation, `entries()` indexed iteration, Map/set state, tuple node sizes, and routed link points. It argues for staying humble. Freerange can check extracted geometry seams, not whole graph layout algorithms yet.
 - The next corpus batch added `gridstack.js`, `angular-grid-layout`, `moveable`, `interact.js`, and `2d-geometry`. The useful general addition was recognizing anonymous default-exported arrow/function expressions as local check boundaries; Interact's `center(rect)` shape is exactly that. The remaining blockers were proof-shape pressure, not new syntax pressure: relational facts do not yet refine `round((a - b) / positive) + 1` ranges, optional object branches lose exact object-field equalities, nested branch mutation in small geometry helpers is still unsupported, and ternary min/max written by hand is harder to prove than `Math.min` / `Math.max`.
 - Focused post-alias corpus rerun: react-grid-layout's clamp-heavy calculation files and xyflow's general/resizer utilities both check clean with ordinary input facts. The xyflow parent clamp case was useful because it stayed boring: say child dimensions are non-negative and no larger than the measured parent dimensions, then the existing helper contract proves the clamped position.
@@ -375,7 +375,6 @@ Before adding an atom, require:
 
 ## Did Not Earn Itself
 
-- Treating browser behavior as statically proved.
 - Hard-coding app helper names into the analyzer.
 - Rewriting app code into checker-shaped helpers like `add(...)` / `sub(...)`.
 - Public lambdas, `forall`, arbitrary folds, aliases, or prose as truth.

@@ -162,9 +162,7 @@ A good corpus iteration is one of two small loops:
 - read-only: run `bun run fr infer file` or `bun run fr check file` on a likely helper file, then classify the first blocker as missing input fact, unsupported source shape, helper boundary, report wording, or real proof gap.
 - annotation: add one or two `@fit` comments to a small numeric/layout-heavy helper, run `bun run fr check file`, classify the first blocker, then add a local pattern test before changing checker behavior.
 
-Do not leave comments in corpus branches just to make a repo look covered. If a
-file is mostly DOM, async, dynamic graph mutation, strings, or browser-owned
-measurement, the useful result may simply be "not a Freerange seam yet."
+Do not leave comments in corpus branches just to make a repo look covered. If a file is mostly async, dynamic graph mutation, or strings, the useful result may simply be "not a Freerange fit yet."
 
 ## Shape Diff Tool
 

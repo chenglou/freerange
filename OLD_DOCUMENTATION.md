@@ -1,50 +1,6 @@
-# Freerange Documentation
+# Old Documentation Notes
 
-Freerange is a static checker for strict `@fit` comments over ordinary TypeScript.
-
-The first big use-case is UI layout, because layout bugs are easy for agents to write and hard to verify from screenshots alone. The same approach should grow beyond layout: data-to-view cardinality, hit targets, scroll anchoring, text ranges, animation bounds, and other small invariants that matter in UI code.
-
-Freerange is not a runtime runner. It abstract-interprets a small TypeScript subset, earns facts from source, checked helper/type contracts, and explicit `given` lines, then proves the `@fit` claims you wrote. When source leaves that subset, the answer is `unknown`, not a guessed pass.
-
-## Glossary
-
-```ts
-@fit // marker for a Freerange spec block. Put it immediately above a named function, named `const` arrow/function expression, anonymous default export, class method/getter, or supported loop.
-// block form for function, loop, and type contract blocks:
-/**
- * @fit
- * ...
- */
-given width: 0..1000 // input assumption. Think precondition, not proof.
-given this.width: 0..1000 // input assumption for an instance method/getter.
-return.width: 0..320 // check fact. Freerange must prove this from source.
-2 // exact-number shorthand for 2..2.
-a..b // JavaScript number in the inclusive interval from a to b.
-a..<b // JavaScript number from a up to, but not including, b.
-int a..b // integer in the inclusive interval from a to b.
-0 | 40 | 200 // exact finite numeric set.
-width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
-width: number, // @fit >= min // param shorthand for `given width >= min`.
-// @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.
-// @fit <= max // local/field/return shorthand for proving the attached value `<= max`.
-height: number // @fit 0..40 // required type-field contract, reused at explicit typed boundaries.
-// @fit bottom >= top // type object-scope contract over sibling fields.
-items[] // every item in one anonymous collection.
-items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
-items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
-return // the returned value of a function-level spec.
-loop spec // a `@fit` block above a supported loop. It names locals directly; there is no `return`.
-checked // an explicit `@fit` check Freerange verified from code.
-assumptions // valid `given` lines in `infer` output.
-unknown // not proven. This is not a soft pass.
-fail // proven outside the requested range, or proven false.
-helper contract // a helper function's own `@fit` block, proven once and used as the call-site summary.
-imported contract // an exported helper contract from local source, reached through TypeScript module resolution or a local declaration map.
-atom // a named layout fact like `nondecreasing(rows.top)`, `spaced(rows, gap)`, or `extentEnd(rows, top)`.
-infer // `fr infer path`. It prints facts Freerange inferred and shows which explicit checks are assumptions, checked, not-inferred, or redundant with the covering fact.
-audit // `fr check --audit path`. It prints advisory cleanup when Freerange can prove a selector, branch condition, or nullish fallback does not affect the result.
-shape-diff // dev tool that compares object/array structure Freerange kept with structure TypeScript can see.
-```
+`DOCUMENTATION.md` is the user-facing source of truth. This file keeps older details that have not been folded into the main docs yet, mostly adoption advice, command behavior, support boundaries, and longer examples.
 
 ## Adoption
 
@@ -60,10 +16,8 @@ Good first targets:
 
 Bad first targets:
 
-- DOM mutation, rendering, or canvas/WebGL code
 - app event handlers with many side effects
 - string parsers, markdown walkers, and large switches
-- layout code that is only understandable after executing browser APIs
 - a giant function where the useful proof boundary should be a helper
 
 Adoption pass:
@@ -148,73 +102,9 @@ UNKNOWN layout.ts:17:placeRows: return.rows[$i + 1].top >= return.rows[$i].botto
   missing fact: adjacent row spacing
 ```
 
-For agents, the useful loop is `fr infer`, edit the smallest source/spec seam,
-then `fr check`. Treat `missing:` as the next thing to prove or the next input
-fact to say out loud. Unsupported source diagnostics may also name the source
-line where the interpreter had to stop; that is a source-shape clue, not a
-separate proof failure. When one unknown root causes many later property or
-assignment complaints, `infer` reports the root first instead of printing every
-derived miss.
+For agents, the useful loop is `fr infer`, edit the smallest source or spec line, then `fr check`. Treat `missing:` as the next thing to prove or the next input fact to say out loud. Unsupported source diagnostics may also name the source line where the interpreter had to stop; that is a clue about unsupported code shape, not a separate proof failure. When one unknown root causes many later property or assignment complaints, `infer` reports the root first instead of printing every derived miss.
 
-## A First Check
-
-Put `@fit` immediately above a named function, named `const` arrow/function expression, anonymous default export, or class method/getter:
-
-```ts
-/** @fit
- * return.capped: 0..320
- * return.overflow >= 0
- */
-function cappedOverflow(
-  width: number, // @fit 0..1000
-) {
-  const capped = Math.min(width, 320)
-  return {capped, overflow: width - capped}
-}
-```
-
-Param `// @fit` comments are input assumptions, exactly as if they were lifted to `given` lines in the function block. Use them for boring scalar domains and small scalar relations:
-
-```ts
-/** @fit
- * given min <= max
- * return: 0..100
- */
-function clampToUiRange(
-  value: number, // @fit 0..100
-  min: number, // @fit 0..100
-  max: number, // @fit 0..100
-) {
-  return Math.max(min, Math.min(value, max))
-}
-```
-
-Attached comparisons use the annotated value as the left side:
-
-```ts
-function bounded(
-  value: number, // @fit >= min
-  min: number, // @fit 0..100
-) {
-  return value
-}
-```
-
-Function-level `given` lines are still the right place for object paths, array paths, and relations that are clearer as a group:
-
-```ts
-/** @fit
- * given rows.length: int 0..100
- * given rows[].height: 0..40
- * given min <= max
- */
-```
-
-`given` lines and param inline facts describe inputs your function expects. They do not ask Freerange to audit the function body by themselves.
-
-Bare lines and `return` lines are claims Freerange must prove from the source.
-
-Unsupported annotation lines are errors. Unsupported source code becomes `unknown`.
+## Class Members
 
 For instance methods and getters, `this` is an input root:
 
@@ -570,43 +460,12 @@ Loop-level `given` works the same way, but is assumed from that point in the fun
 
 ## Ranges
 
-```ts
-/** @fit
- * given width: 0..1000
- * given items.length: int 0..100
- * return.x: 10..20
- * return.index: int 0..9
- */
-```
-
-`a..b` means a JavaScript number in that inclusive interval. A single expression like `2` is shorthand for `2..2`. `int a..b` also says the value is an integer. `a..<b` makes the upper bound exclusive. A small `|` list means the value must be exactly one of those numeric choices:
-
-```ts
-index: int 0..<items.length
-scale: 0..Infinity
-modeOffset: 0 | 40 | 200 | 213
-```
-
 Lower-exclusive and open-ended range spellings are not part of the language right now. Use a comparison when that is the clearer fact:
 
 ```ts
 given scale > 0
 return > 0
 ```
-
-Bounds can be numeric literals, `Infinity`, or the same simple input arithmetic accepted by `given` comparisons.
-
-Ranges can describe object fields and array items:
-
-```ts
-/** @fit
- * given item.height: 0..40
- * given items[].height: 0..40
- * return.rows[].height: 0..40
- */
-```
-
-`items[]` means every item in `items`.
 
 Nested array paths are fine when one collection is being discussed:
 
@@ -832,33 +691,6 @@ function overflow(width: number) {
 ```
 
 That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. For assignment-style code, it keeps small case splits across later `if` branches, which is enough for ordinary two-branch clamps. It does not treat arbitrary conditionals as min/max.
-
-## Browser Dimensions
-
-Freerange does not run browser code, but it knows a small set of browser-owned
-layout dimensions from TypeScript's DOM declarations. These values are
-non-negative because the platform owns the measurement:
-
-```ts
-/** @fit
- * return: int 0..Infinity
- */
-function viewportWidth() {
-  return document.documentElement.clientWidth
-}
-```
-
-The current set covers common viewport, element, screen, canvas, image, video,
-visual viewport, and `ResizeObserverSize` dimensions: `clientWidth`,
-`clientHeight`, `scrollWidth`, `scrollHeight`, `offsetWidth`, `offsetHeight`,
-`innerWidth`, `innerHeight`, `outerWidth`, `outerHeight`, `width`, `height`,
-`naturalWidth`, `naturalHeight`, `videoWidth`, `videoHeight`, `inlineSize`, and
-`blockSize` on the DOM interfaces that own those properties.
-
-This is deliberately type-backed. A plain app object with a field named
-`clientWidth` does not inherit a DOM fact. Scroll positions are also not treated
-as non-negative; RTL scrolling, overscroll, and rubber-banding can make them
-negative or beyond the usual bounds.
 
 ## Helpers
 
@@ -1239,10 +1071,6 @@ Freerange proves:
 - `lastEnd(rows) == bottom` when rows are known non-empty
 - `extentEnd(rows, top) == bottom` when the source has the same empty fallback
 
-`lastEnd(rows)` means the end of the final row. It only works when the rows are known non-empty.
-
-`extentEnd(rows, top)` means `top` for empty rows, otherwise the end of the final row. Use this for stacks that can be empty.
-
 The indexed loop shape is also supported:
 
 ```ts
@@ -1424,7 +1252,6 @@ Anything outside this surface should become `unknown`, not a fake proof.
 
 Not supported yet:
 
-- browser runs, screenshots, runtime traces, sampled sweeps
 - published package imports, declaration-only imports without a local source map, or unchecked summary files as checked `@fit` helper contracts.
 - prototype-assigned JavaScript methods, async, generators
 - rest params and destructured default params
