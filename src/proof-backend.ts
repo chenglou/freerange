@@ -44,12 +44,14 @@ export function evaluateBackendComparison(goal: ComparisonGoal, context: ProofBa
   if (goal.left.expr == null || goal.right.expr == null) return null
   if (context.hasComparisonFact(goal.left.expr, goal.op, goal.right.expr)) return pass('comparison-fact', 'matched a known comparison fact')
 
+  let blockedResult: ProofBackendResult | null = null
   for (const rule of comparisonProofRules) {
     const result = rule(goal, context)
-    if (result != null) return result
+    if (result?.status === 'pass') return result
+    if (result?.status === 'blocked' && blockedResult == null) blockedResult = result
   }
 
-  return null
+  return blockedResult
 }
 
 export function backendComparisonMissing(goal: ComparisonGoal, context: ProofBackendContext): string | null {
@@ -132,6 +134,7 @@ function addComparisonGraphEdge(graph: Map<string, ComparisonGraphEdge[]>, fromE
 type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) => ProofBackendResult | null
 
 const comparisonProofRules: ComparisonProofRule[] = [
+  evaluateSimplifiedComparison,
   evaluateChoiceOperandBound,
   evaluateRoundingBound,
   evaluateRoundingMonotonicity,
@@ -145,6 +148,75 @@ const comparisonProofRules: ComparisonProofRule[] = [
   evaluateFloorDivisionBelowCount,
   evaluateCeilDivisionCoversTotal,
 ]
+
+type LessComparisonGoal = {
+  left: NumberValue
+  leftExpr: string
+  op: '<=' | '<'
+  right: NumberValue
+  rightExpr: string
+}
+
+type ComparisonReduction = {
+  left: string
+  op: '<='
+  right: string
+  reason: string
+  rule: string
+}
+
+function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null) return null
+
+  const reductions = comparisonReductions(lessGoal)
+  if (reductions.length === 0) return null
+
+  for (const reduction of reductions) {
+    if (context.hasComparisonFact(reduction.left, reduction.op, reduction.right)) {
+      return pass(reduction.rule, reduction.reason)
+    }
+  }
+
+  const first = reductions[0]!
+  return blocked(first.rule, `${publicFitText(first.left)} ${first.op} ${publicFitText(first.right)}`, first.reason)
+}
+
+function comparisonReductions(goal: LessComparisonGoal): ComparisonReduction[] {
+  if (goal.op !== '<=') return []
+  return [
+    ...lowerRoundingReductions(goal),
+    ...upperRoundingReductions(goal),
+  ]
+}
+
+function lowerRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[] {
+  const inner = callArg(goal.leftExpr, 'floor')
+  if (inner != null) {
+    return [{left: inner, op: '<=', right: goal.rightExpr, rule: 'rounding-simplification', reason: 'simplified comparison through rounding bounds'}]
+  }
+
+  const ceilInner = callArg(goal.leftExpr, 'ceil')
+  if (ceilInner != null && goal.right.isInteger) {
+    return [{left: ceilInner, op: '<=', right: goal.rightExpr, rule: 'rounding-simplification', reason: 'simplified comparison through integer rounding bounds'}]
+  }
+
+  return []
+}
+
+function upperRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[] {
+  const inner = callArg(goal.rightExpr, 'ceil')
+  if (inner != null) {
+    return [{left: goal.leftExpr, op: '<=', right: inner, rule: 'rounding-simplification', reason: 'simplified comparison through rounding bounds'}]
+  }
+
+  const floorInner = callArg(goal.rightExpr, 'floor')
+  if (floorInner != null && goal.left.isInteger) {
+    return [{left: goal.leftExpr, op: '<=', right: floorInner, rule: 'rounding-simplification', reason: 'simplified comparison through integer rounding bounds'}]
+  }
+
+  return []
+}
 
 function evaluateChoiceOperandBound(goal: ComparisonGoal): ProofBackendResult | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
@@ -295,11 +367,11 @@ function evaluateNegativeScaleCancellation(goal: ComparisonGoal, context: ProofB
   return null
 }
 
-function comparisonLessGoal(goal: ComparisonGoal): {leftExpr: string; op: '<=' | '<'; rightExpr: string} | null {
+function comparisonLessGoal(goal: ComparisonGoal): LessComparisonGoal | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
-  if (goal.op === '<=' || goal.op === '<') return {leftExpr: goal.left.expr, op: goal.op, rightExpr: goal.right.expr}
-  if (goal.op === '>=') return {leftExpr: goal.right.expr, op: '<=', rightExpr: goal.left.expr}
-  if (goal.op === '>') return {leftExpr: goal.right.expr, op: '<', rightExpr: goal.left.expr}
+  if (goal.op === '<=' || goal.op === '<') return {left: goal.left, leftExpr: goal.left.expr, op: goal.op, right: goal.right, rightExpr: goal.right.expr}
+  if (goal.op === '>=') return {left: goal.right, leftExpr: goal.right.expr, op: '<=', right: goal.left, rightExpr: goal.left.expr}
+  if (goal.op === '>') return {left: goal.right, leftExpr: goal.right.expr, op: '<', right: goal.left, rightExpr: goal.left.expr}
   return null
 }
 

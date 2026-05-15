@@ -269,6 +269,8 @@ missing: y < countY * cell
 
 This should grow only when a proof shape would otherwise split into separate proof and report helpers.
 
+Before adding a stronger backend, simplify proof goals into smaller proof goals where the rewrite is sound. E.g. `ceil(width / 2) <= outer` can become `width / 2 <= outer` when `outer` is proven integer. A simplification that cannot prove its smaller goal must not block a later stronger rule; backend dispatch should accept any passing rule, then keep the first useful blocked rule only for the final diagnostic.
+
 ## Module Boundaries
 
 Imports should find contracts, not turn Freerange into a second TypeScript compiler. The first useful rule is:

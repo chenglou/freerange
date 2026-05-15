@@ -80,7 +80,7 @@ Inline `//` comments need to be on the same line as the type/value field, the fu
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. Reassigning a local `let` is fine; mutating an object/array or calling something unsupported gets rejected loudly.
+**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. For example, a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected.
 
 Syntax Glossary's at the end of the docs.
 

@@ -133,6 +133,42 @@ if (pureContractHelperCheck?.status !== 'pass') {
   console.log('contract expressions: pure helper call')
 }
 
+const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
+ * given width: int 320..2400
+ * given gap: int 1..32
+ * return.outer >= return.inner
+ */
+function frame(width: number, gap: number) {
+  const inner = Math.ceil(width / 2)
+  const outer = width + 2 * (gap + 8)
+  return {inner, outer}
+}
+
+/** @fit
+ * given width: int 0..100
+ * given gap: int 0..100
+ * return.outer >= return.inner
+ */
+function missingFrame(width: number, gap: number) {
+  const inner = Math.ceil(width / 2)
+  const outer = gap
+  return {inner, outer}
+}
+`)
+const simplifiedRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'frame' && check.text === 'return.outer >= return.inner')
+const missingRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'missingFrame' && check.text === 'return.outer >= return.inner')
+if (
+  simplifiedRoundingCheck?.status !== 'pass'
+  || missingRoundingCheck?.status !== 'unknown'
+  || missingRoundingCheck.reason?.includes('missing: (width / 2) <= gap') !== true
+) {
+  console.error('expected proof simplification to reduce rounding comparisons to smaller arithmetic')
+  console.error(JSON.stringify(simplifiedRoundingChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('proof simplification: rounded bound comparison')
+}
+
 const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
 
 function bump() {
