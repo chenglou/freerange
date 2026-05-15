@@ -51,13 +51,13 @@ function resolveNamespaceMemberCallTarget(namespace: string, exportedName: strin
   const binding = program.imports.get(namespace)
   if (binding == null || binding.kind === 'resolved') return {kind: 'unresolved', reason: `Unsupported call ${namespace}.${exportedName}`}
   if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
-  const member = binding.members.get(exportedName) ?? {module: binding.module, sourceName: exportedName}
+  const member = binding.members.get(exportedName) ?? {file: binding.file, sourceName: exportedName}
   return resolveImportedCallTarget(`${namespace}.${exportedName}`, {
     kind: 'resolved',
     importedName: exportedName,
     sourceName: member.sourceName,
     specifier: binding.specifier,
-    module: member.module,
+    file: member.file,
   }, seen)
 }
 
@@ -67,7 +67,7 @@ function resolveImportedCallTarget(
   seen: Set<string>,
 ): InterpreterCallTarget {
   const sourceName = binding.sourceName
-  const target = resolveIdentifierCallTarget(sourceName, binding.module, seen)
+  const target = resolveIdentifierCallTarget(sourceName, binding.file, seen)
   if (target.kind === 'unresolved') return {kind: 'unresolved', reason: `${localName} resolved to ${sourceName}: ${target.reason}`}
   if (target.kind === 'math') return target
   return {
@@ -85,7 +85,7 @@ export function classMemberFunctionForPropertyAccess(
   const program = programForClassMember(member.declaration, frame)
   if (program == null) return null
   const className = member.className
-  const functionName = `${className}.${access.name.text}`
+  const functionName = classMemberFunctionName(className, access.name.text, member.declaration)
   const fn = program.functions.get(functionName)
   if (fn == null) return null
   const imported = program === frame.program ? null : importedClassBinding(className, program, frame.program)
@@ -96,6 +96,15 @@ export function classMemberFunctionForPropertyAccess(
     fn,
     ...(imported == null ? {} : {imported}),
   }
+}
+
+function classMemberFunctionName(className: string, memberName: string, declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null) {
+  const owner = declaration != null && hasModifier(declaration, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
+  return `${owner}.${memberName}`
+}
+
+function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
+  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
 function classMemberForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {className: string; declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null} | null {
@@ -130,9 +139,9 @@ function programForClassMember(declaration: ts.MethodDeclaration | ts.GetAccesso
 function importedPrograms(program: Program): Program[] {
   const programs: Program[] = []
   for (const binding of program.imports.values()) {
-    if (binding.kind === 'resolved' || binding.kind === 'namespace') programs.push(binding.module)
+    if (binding.kind === 'resolved' || binding.kind === 'namespace') programs.push(binding.file)
     if (binding.kind !== 'namespace') continue
-    for (const member of binding.members.values()) programs.push(member.module)
+    for (const member of binding.members.values()) programs.push(member.file)
   }
   return programs
 }
@@ -144,7 +153,7 @@ function sameProgramSourceFile(program: Program, sourceFile: ts.SourceFile) {
 function importedClassBinding(className: string, classProgram: Program, callerProgram: Program): {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>} | null {
   for (const [localName, binding] of callerProgram.imports) {
     if (binding.kind !== 'resolved') continue
-    if (binding.module !== classProgram) continue
+    if (binding.file !== classProgram) continue
     if (binding.sourceName === className || binding.importedName === className) return {localName, binding}
   }
   return null

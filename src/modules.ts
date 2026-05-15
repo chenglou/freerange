@@ -7,7 +7,7 @@ import {
   type FitSpec,
 } from './parser.ts'
 import {
-  createTypeContractTemplateIndexMap,
+  createTypeContractTemplateIndex,
   type TypeContractTemplateIndex,
 } from './type-contracts.ts'
 
@@ -22,29 +22,36 @@ export type FitFunction = {
   name: string
   node: FitFunctionNode
   specNode: ts.Node
+  explicitSpecs: FitSpec[]
+  bodySpecs: FitBodySpecIndex
 }
 
-export type FitModule<TGlobal> = {
+export type FitProjectIndex<TGlobal> = {
+  files: Map<string, FitProjectFile<TGlobal>>
+  filesBySourceFile: Map<ts.SourceFile, FitProjectFile<TGlobal>>
+}
+
+export type FitProjectFile<TGlobal> = {
+  project: FitProjectIndex<TGlobal>
   sourceId: string
   file: string
   sourceFile: ts.SourceFile
   sourceText: string
   typeChecker: ts.TypeChecker | null
+  typeContracts: TypeContractTemplateIndex
+}
+
+export type FitFile<TGlobal> = FitProjectFile<TGlobal> & {
   globals: Map<string, TGlobal>
   functions: Map<string, FitFunction>
   callAliases: Map<string, FitCallAlias>
   unsupportedCallAliases: Map<string, string>
-  fitFunctions: Set<string>
-  specsByFunction: Map<string, FitSpec[]>
-  bodySpecsByFunction: Map<string, FitBodySpecIndex>
   topLevelBodySpecs: FitBodySpecIndex
-  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex>
-  imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
+  imports: Map<string, FitImportBinding<FitFile<TGlobal>>>
 }
 
-export type FitProject<TGlobal> = {
-  entries: FitModule<TGlobal>[]
-  modules: Map<string, FitModule<TGlobal>>
+export type FitProject<TGlobal> = FitProjectIndex<TGlobal> & {
+  entries: FitFile<TGlobal>[]
   configFile: string | null
 }
 
@@ -53,24 +60,24 @@ export type FitProjectLoadTiming = {
   typeProgramMs: number
   typeCheckerMs: number
   fileReadMs: number
-  moduleParseMs: number
+  fileParseMs: number
   importResolveMs: number
 }
 
-export type FitImportBinding<TModule> =
+export type FitImportBinding<TFile> =
   | {
       kind: 'resolved'
       importedName: string
       sourceName: string
       specifier: string
-      module: TModule
+      file: TFile
     }
   | {
       kind: 'namespace'
       importedName: '*'
       specifier: string
-      module: TModule
-      members: Map<string, FitImportSource<TModule>>
+      file: TFile
+      members: Map<string, FitImportSource<TFile>>
     }
   | {
       kind: 'unresolved'
@@ -79,9 +86,9 @@ export type FitImportBinding<TModule> =
       reason: string
     }
 
-export type FitImportSource<TModule> = {
+export type FitImportSource<TFile> = {
   sourceName: string
-  module: TModule
+  file: TFile
 }
 
 export type FitCallAlias =
@@ -111,7 +118,6 @@ type ResolutionContext = {
   cache: ts.ModuleResolutionCache
   typeProgram: ts.Program
   typeChecker: ts.TypeChecker
-  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex>
 }
 
 type ResolvedImport =
@@ -124,9 +130,20 @@ export function loadFitProject<TGlobal>(
   options: LoadFitProjectOptions = {},
 ): FitProject<TGlobal> {
   const resolution = createResolutionContext(paths, options.timing)
-  const modules = new Map<string, FitModule<TGlobal>>()
-  const entries = paths.map(path => loadModule(path, modules, resolution, readGlobal, options.timing))
-  return {entries, modules, configFile: resolution.configFile}
+  const project: FitProject<TGlobal> = {
+    entries: [],
+    files: new Map(),
+    filesBySourceFile: new Map(),
+    configFile: resolution.configFile,
+  }
+
+  for (const sourceFile of resolution.typeProgram.getSourceFiles()) {
+    if (!isSupportedFitSourceFile(sourceFile)) continue
+    parseProjectSourceFile(sourceFile, project, resolution)
+  }
+
+  project.entries = paths.map(path => loadProjectFile(toSourceId(path), project, resolution, readGlobal, options.timing))
+  return project
 }
 
 export function createFitProjectLoadTiming(): FitProjectLoadTiming {
@@ -135,7 +152,7 @@ export function createFitProjectLoadTiming(): FitProjectLoadTiming {
     typeProgramMs: 0,
     typeCheckerMs: 0,
     fileReadMs: 0,
-    moduleParseMs: 0,
+    fileParseMs: 0,
     importResolveMs: 0,
   }
 }
@@ -151,14 +168,18 @@ export function resolveFitProjectPaths(paths: string[]): {paths: string[]; confi
   }
 }
 
-export function buildFitSourceModule<TGlobal>(
+export function buildFitSourceFile<TGlobal>(
   file: string,
   sourceText: string,
   readGlobal: TopLevelGlobalReader<TGlobal>,
-): FitModule<TGlobal> {
+): FitFile<TGlobal> {
   const sourceId = toSourceId(file)
   const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
-  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile, undefined, createTypeContractTemplateIndexMap([sourceFile]))
+  const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map()}
+  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile, undefined, project)
+  project.files.set(cacheKeyFor(sourceId), fitFile)
+  project.filesBySourceFile.set(sourceFile, fitFile)
+  return fitFile
 }
 
 function throwOnSyntaxDiagnostics(
@@ -183,34 +204,80 @@ function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diag
   return (sourceFile as ts.SourceFile & {parseDiagnostics?: readonly ts.Diagnostic[]}).parseDiagnostics ?? []
 }
 
-function loadModule<TGlobal>(
+function parseProjectSourceFile<TGlobal>(
+  sourceFile: ts.SourceFile,
+  project: FitProject<TGlobal>,
+  resolution: ResolutionContext,
+): FitProjectFile<TGlobal> {
+  const sourceId = normalizePath(sourceFile.fileName)
+  const cacheKey = cacheKeyFor(sourceId)
+  const existing = project.files.get(cacheKey)
+  if (existing != null) return existing
+  const fitFile = parseTypeFile(sourceId, displayPath(sourceId), sourceFile.text, resolution.typeChecker, sourceFile, project)
+  project.files.set(cacheKey, fitFile)
+  project.filesBySourceFile.set(sourceFile, fitFile)
+  return fitFile
+}
+
+function loadProjectFile<TGlobal>(
   file: string,
-  modules: Map<string, FitModule<TGlobal>>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
-): FitModule<TGlobal> {
+): FitFile<TGlobal> {
   const sourceId = toSourceId(file)
   const cacheKey = cacheKeyFor(sourceId)
-  const existing = modules.get(cacheKey)
-  if (existing != null) return existing
-
-  const readStart = performance.now()
-  const sourceText = ts.sys.readFile(sourceId)
-  addTiming(timing, 'fileReadMs', readStart)
+  const existing = project.files.get(cacheKey)
+  if (existing != null && isFitFile(existing)) return existing
+  let sourceText = existing?.sourceText
+  if (sourceText == null) {
+    const readStart = performance.now()
+    sourceText = ts.sys.readFile(sourceId)
+    addTiming(timing, 'fileReadMs', readStart)
+  }
   if (sourceText == null) throw new Error(`Could not read ${displayPath(sourceId)}`)
 
-  const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
-  const syntaxDiagnostics = sourceFile == null ? null : resolution.typeProgram.getSyntacticDiagnostics(sourceFile)
+  const sourceFile = existing?.sourceFile ?? resolution.typeProgram.getSourceFile(sourceId)
+    ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
+  const programSourceFile = resolution.typeProgram.getSourceFile(sourceId)
+  const syntaxDiagnostics = programSourceFile == null
+    ? sourceFileParseDiagnostics(sourceFile)
+    : resolution.typeProgram.getSyntacticDiagnostics(programSourceFile)
   const parseStart = performance.now()
-  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile, syntaxDiagnostics ?? undefined, resolution.typeContractTemplatesBySourceFile)
-  addTiming(timing, 'moduleParseMs', parseStart)
-  modules.set(cacheKey, module)
-  loadImports(module, modules, resolution, readGlobal, timing)
-  return module
+  const typeChecker = programSourceFile == null ? null : resolution.typeChecker
+  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, syntaxDiagnostics, project, existing?.typeContracts)
+  addTiming(timing, 'fileParseMs', parseStart)
+  project.files.set(cacheKey, fitFile)
+  project.filesBySourceFile.set(sourceFile, fitFile)
+  loadImports(fitFile, project, resolution, readGlobal, timing)
+  return fitFile
 }
 
-function parseFitModule<TGlobal>(
+function isFitFile<TGlobal>(file: FitProjectFile<TGlobal>): file is FitFile<TGlobal> {
+  return 'functions' in file
+}
+
+function parseTypeFile<TGlobal>(
+  sourceId: string,
+  file: string,
+  sourceText: string,
+  typeChecker: ts.TypeChecker | null,
+  sourceFile: ts.SourceFile,
+  project: FitProjectIndex<TGlobal>,
+): FitProjectFile<TGlobal> {
+  return {
+    project,
+    sourceId,
+    file,
+    sourceFile,
+    sourceText,
+    typeChecker,
+    typeContracts: createTypeContractTemplateIndex(sourceText, sourceFile),
+  }
+}
+
+function parseFitFile<TGlobal>(
   sourceId: string,
   file: string,
   sourceText: string,
@@ -218,29 +285,28 @@ function parseFitModule<TGlobal>(
   typeChecker: ts.TypeChecker | null = null,
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
   syntaxDiagnostics?: readonly ts.Diagnostic[],
-  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex> = createTypeContractTemplateIndexMap([sourceFile]),
-): FitModule<TGlobal> {
+  project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map()},
+  typeContracts: TypeContractTemplateIndex = createTypeContractTemplateIndex(sourceText, sourceFile),
+): FitFile<TGlobal> {
   throwOnSyntaxDiagnostics(file, sourceFile, syntaxDiagnostics)
 
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, FitFunction>()
   const callAliases = new Map<string, FitCallAlias>()
   const unsupportedCallAliases = new Map<string, string>()
-  const fitFunctions = new Set<string>()
-  const specsByFunction = new Map<string, FitSpec[]>()
-  const bodySpecsByFunction = new Map<string, FitBodySpecIndex>()
-  const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
+  const imports = new Map<string, FitImportBinding<FitFile<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement)) {
+      if (statement.body == null) continue
       const isDefaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
       const functionName = statement.name?.text ?? (isDefaultExport ? 'default' : null)
       if (functionName == null) continue
-      collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
+      collectFitFunction(sourceText, file, functionName, statement, statement, functions)
       continue
     }
     if (ts.isClassDeclaration(statement) && statement.name != null) {
-      collectClassMemberFunctions(sourceText, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
+      collectClassMemberFunctions(sourceText, file, statement, functions)
       continue
     }
     if (ts.isExportDeclaration(statement)) continue
@@ -251,7 +317,7 @@ function parseFitModule<TGlobal>(
         if (alias != null) callAliases.set('default', alias)
         continue
       }
-      collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
+      collectFitFunction(sourceText, file, 'default', functionInitializer, statement, functions)
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
@@ -260,7 +326,7 @@ function parseFitModule<TGlobal>(
       if (ts.isIdentifier(declaration.name)) {
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
         if (functionInitializer != null) {
-          collectFitFunction(sourceText, declaration.name.text, functionInitializer, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
+          collectFitFunction(sourceText, file, declaration.name.text, functionInitializer, statement, functions)
         }
         const alias = functionInitializer == null && declaration.initializer != null
           ? callAliasFromExpression(declaration.initializer)
@@ -278,47 +344,43 @@ function parseFitModule<TGlobal>(
   }
 
   const topLevelBodySpecs = parseTopLevelFitSpecIndex(sourceText, sourceFile)
-  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, bodySpecsByFunction, topLevelBodySpecs, typeContractTemplatesBySourceFile, imports}
+  return {project, sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, topLevelBodySpecs, typeContracts, imports}
 }
 
 function collectClassMemberFunctions(
   sourceText: string,
+  file: string,
   declaration: ts.ClassDeclaration,
   functions: Map<string, FitFunction>,
-  fitFunctions: Set<string>,
-  specsByFunction: Map<string, FitSpec[]>,
-  bodySpecsByFunction: Map<string, FitBodySpecIndex>,
 ) {
   for (const member of declaration.members) {
     if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member)) continue
     if (member.body == null) continue
     const memberName = classMemberFunctionName(declaration.name!.text, member)
     if (memberName == null) continue
-    collectFitFunction(sourceText, memberName, member, member, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
+    collectFitFunction(sourceText, file, memberName, member, member, functions)
   }
 }
 
 function collectFitFunction(
   sourceText: string,
+  file: string,
   name: string,
   node: FitFunctionNode,
   specNode: ts.Node,
   functions: Map<string, FitFunction>,
-  fitFunctions: Set<string>,
-  specsByFunction: Map<string, FitSpec[]>,
-  bodySpecsByFunction: Map<string, FitBodySpecIndex>,
 ) {
-  const fn = {name, node, specNode}
-  const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
+  if (functions.has(name)) throw new Error(`Unsupported duplicate function implementation ${name} in ${file}`)
+  const explicitSpecs = parseFunctionFitSpecs(sourceText, specNode, node.parameters)
+  const bodySpecs = parseFunctionBodyFitSpecIndex(sourceText, node)
+  const fn = {name, node, specNode, explicitSpecs, bodySpecs}
   functions.set(fn.name, fn)
-  if (specs.length > 0) fitFunctions.add(fn.name)
-  specsByFunction.set(fn.name, specs)
-  bodySpecsByFunction.set(fn.name, parseFunctionBodyFitSpecIndex(sourceText, fn.node))
 }
 
 function classMemberFunctionName(className: string, member: ts.MethodDeclaration | ts.GetAccessorDeclaration): string | null {
   if (!ts.isIdentifier(member.name)) return null
-  return `${className}.${member.name.text}`
+  const owner = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
+  return `${owner}.${member.name.text}`
 }
 
 function supportedFunctionInitializer(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {
@@ -384,30 +446,30 @@ function mathDestructuringAliases(pattern: ts.ObjectBindingPattern): {localName:
 }
 
 function loadImports<TGlobal>(
-  module: FitModule<TGlobal>,
-  modules: Map<string, FitModule<TGlobal>>,
+  file: FitFile<TGlobal>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
 ) {
-  for (const statement of module.sourceFile.statements) {
+  for (const statement of file.sourceFile.statements) {
     if (!ts.isImportDeclaration(statement)) continue
     if (!ts.isStringLiteral(statement.moduleSpecifier)) continue
     const specifier = statement.moduleSpecifier.text
     const importClause = statement.importClause
     const importIsTypeOnly = importClause?.isTypeOnly === true
     if (importClause?.name != null) {
-      module.imports.set(importClause.name.text, importIsTypeOnly
+      file.imports.set(importClause.name.text, importIsTypeOnly
         ? unresolvedImport('default', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
-        : sourceImportBinding(module, modules, resolution, readGlobal, timing, importClause.name, 'default', specifier))
+        : sourceImportBinding(file, project, resolution, readGlobal, timing, importClause.name, 'default', specifier))
     }
 
     const namedBindings = importClause?.namedBindings
     if (namedBindings == null) continue
     if (ts.isNamespaceImport(namedBindings)) {
-      module.imports.set(namedBindings.name.text, importIsTypeOnly
+      file.imports.set(namedBindings.name.text, importIsTypeOnly
         ? unresolvedImport('*', specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`)
-        : sourceNamespaceImportBinding(module, modules, resolution, readGlobal, timing, namedBindings.name, specifier))
+        : sourceNamespaceImportBinding(file, project, resolution, readGlobal, timing, namedBindings.name, specifier))
       continue
     }
     if (!ts.isNamedImports(namedBindings)) continue
@@ -416,74 +478,74 @@ function loadImports<TGlobal>(
       const localName = element.name.text
       const exportedName = element.propertyName?.text ?? localName
       if (statement.importClause?.isTypeOnly === true || element.isTypeOnly) {
-        module.imports.set(localName, unresolvedImport(exportedName, specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`))
+        file.imports.set(localName, unresolvedImport(exportedName, specifier, `Type-only imports cannot provide @fit helpers: ${specifier}`))
         continue
       }
 
-      module.imports.set(localName, sourceImportBinding(module, modules, resolution, readGlobal, timing, element.name, exportedName, specifier))
+      file.imports.set(localName, sourceImportBinding(file, project, resolution, readGlobal, timing, element.name, exportedName, specifier))
     }
   }
 }
 
-function unresolvedImport<TGlobal>(exportedName: string, specifier: string, reason: string): FitImportBinding<FitModule<TGlobal>> {
+function unresolvedImport<TGlobal>(exportedName: string, specifier: string, reason: string): FitImportBinding<FitFile<TGlobal>> {
   return {kind: 'unresolved', exportedName, specifier, reason}
 }
 
 function sourceImportBinding<TGlobal>(
-  module: FitModule<TGlobal>,
-  modules: Map<string, FitModule<TGlobal>>,
+  file: FitFile<TGlobal>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
   localIdentifier: ts.Identifier,
   importedName: string,
   specifier: string,
-): FitImportBinding<FitModule<TGlobal>> {
-  const target = sourceImportSourceFromSymbol(resolution.typeChecker.getSymbolAtLocation(localIdentifier), modules, resolution, readGlobal, timing)
+): FitImportBinding<FitFile<TGlobal>> {
+  const target = sourceImportSourceFromSymbol(resolution.typeChecker.getSymbolAtLocation(localIdentifier), project, resolution, readGlobal, timing)
   if (target != null) return {kind: 'resolved', importedName, specifier, ...target}
 
-  const resolved = resolveImport(module, specifier, resolution, timing)
+  const resolved = resolveImport(file, specifier, resolution, timing)
   if (resolved.kind === 'unresolved') return unresolvedImport(importedName, specifier, resolved.reason)
-  const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
-  return {kind: 'resolved', importedName, sourceName: importedName, specifier, module: importedModule}
+  const importedFile = loadProjectFile(resolved.sourceId, project, resolution, readGlobal, timing)
+  return {kind: 'resolved', importedName, sourceName: importedName, specifier, file: importedFile}
 }
 
 function sourceNamespaceImportBinding<TGlobal>(
-  module: FitModule<TGlobal>,
-  modules: Map<string, FitModule<TGlobal>>,
+  file: FitFile<TGlobal>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
   namespaceIdentifier: ts.Identifier,
   specifier: string,
-): FitImportBinding<FitModule<TGlobal>> {
-  const resolved = resolveImport(module, specifier, resolution, timing)
+): FitImportBinding<FitFile<TGlobal>> {
+  const resolved = resolveImport(file, specifier, resolution, timing)
   if (resolved.kind === 'unresolved') return unresolvedImport('*', specifier, resolved.reason)
-  const importedModule = loadModule(resolved.sourceId, modules, resolution, readGlobal, timing)
+  const importedFile = loadProjectFile(resolved.sourceId, project, resolution, readGlobal, timing)
   return {
     kind: 'namespace',
     importedName: '*',
     specifier,
-    module: importedModule,
-    members: sourceNamespaceMembers(modules, resolution, readGlobal, timing, namespaceIdentifier),
+    file: importedFile,
+    members: sourceNamespaceMembers(project, resolution, readGlobal, timing, namespaceIdentifier),
   }
 }
 
 function sourceNamespaceMembers<TGlobal>(
-  modules: Map<string, FitModule<TGlobal>>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
   namespaceIdentifier: ts.Identifier,
-): Map<string, FitImportSource<FitModule<TGlobal>>> {
-  const members = new Map<string, FitImportSource<FitModule<TGlobal>>>()
+): Map<string, FitImportSource<FitFile<TGlobal>>> {
+  const members = new Map<string, FitImportSource<FitFile<TGlobal>>>()
   const symbol = resolution.typeChecker.getSymbolAtLocation(namespaceIdentifier)
   const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
     ? resolution.typeChecker.getAliasedSymbol(symbol)
     : symbol
   const exports = target == null ? [] : resolution.typeChecker.getExportsOfModule(target)
   for (const exported of exports) {
-    const source = sourceImportSourceFromSymbol(exported, modules, resolution, readGlobal, timing)
+    const source = sourceImportSourceFromSymbol(exported, project, resolution, readGlobal, timing)
     if (source != null) members.set(exported.name, source)
   }
   return members
@@ -491,11 +553,11 @@ function sourceNamespaceMembers<TGlobal>(
 
 function sourceImportSourceFromSymbol<TGlobal>(
   symbol: ts.Symbol | undefined,
-  modules: Map<string, FitModule<TGlobal>>,
+  project: FitProject<TGlobal>,
   resolution: ResolutionContext,
   readGlobal: TopLevelGlobalReader<TGlobal>,
   timing: FitProjectLoadTiming | undefined,
-): FitImportSource<FitModule<TGlobal>> | null {
+): FitImportSource<FitFile<TGlobal>> | null {
   const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
     ? resolution.typeChecker.getAliasedSymbol(symbol)
     : symbol
@@ -507,7 +569,7 @@ function sourceImportSourceFromSymbol<TGlobal>(
   if (sourceId == null) return null
   return {
     sourceName,
-    module: loadModule(sourceId, modules, resolution, readGlobal, timing),
+    file: loadProjectFile(sourceId, project, resolution, readGlobal, timing),
   }
 }
 
@@ -530,15 +592,15 @@ function sourceIdForDeclaration(declaration: ts.Declaration): string | null {
     : null
 }
 
-function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, resolution: ResolutionContext, timing: FitProjectLoadTiming | undefined): ResolvedImport {
+function resolveImport<TGlobal>(file: FitFile<TGlobal>, specifier: string, resolution: ResolutionContext, timing: FitProjectLoadTiming | undefined): ResolvedImport {
   const start = performance.now()
-  const result = ts.resolveModuleName(specifier, module.sourceId, resolution.compilerOptions, ts.sys, resolution.cache)
+  const result = ts.resolveModuleName(specifier, file.sourceId, resolution.compilerOptions, ts.sys, resolution.cache)
   addTiming(timing, 'importResolveMs', start)
   const resolved = result.resolvedModule
   if (resolved == null) {
     return {
       kind: 'unresolved',
-      reason: `Could not resolve ${specifier} from ${module.file} with TypeScript module resolution`,
+      reason: `Could not resolve ${specifier} from ${file.file} with TypeScript module resolution`,
     }
   }
   if (isDeclarationExtension(resolved.extension)) {
@@ -570,6 +632,12 @@ function resolveImport<TGlobal>(module: FitModule<TGlobal>, specifier: string, r
   return {kind: 'source', sourceId: normalizePath(resolved.resolvedFileName)}
 }
 
+function isSupportedFitSourceFile(sourceFile: ts.SourceFile) {
+  return !sourceFile.isDeclarationFile
+    && isSupportedSourcePath(sourceFile.fileName)
+    && !isNodeModulesPath(sourceFile.fileName)
+}
+
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
   return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
@@ -595,7 +663,6 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
     typeProgram,
     typeChecker,
-    typeContractTemplatesBySourceFile: createTypeContractTemplateIndexMap(typeProgram.getSourceFiles()),
   }
 }
 

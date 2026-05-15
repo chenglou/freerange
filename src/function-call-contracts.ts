@@ -95,13 +95,13 @@ export function verifyCallGivenSpecs(
   options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
   evaluators: CallContractEvaluators,
 ) {
-  const specs = functionContractSpecs(calleeProgram, fn)
+  const contractSpecs = functionContractSpecs(calleeProgram, fn)
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
   bindFunctionCallInputs(fn, argumentValues, env, calleeProgram, options.thisValue)
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
-  for (const spec of specs) {
+  for (const spec of contractSpecs) {
     let status: CallPreconditionStatus | null = null
     let usedFacts: string[] = []
     if (spec.kind === 'given-range') {

@@ -16,8 +16,12 @@ import {
 } from './type-contracts.ts'
 import {isFunctionLikeWithBody} from './function-shape.ts'
 
-export function functionHasBodyFitComment(program: Program, fn: FitFunction) {
-  return fitBodySpecIndexHasWork(program.bodySpecsByFunction.get(fn.name))
+export function functionHasBodyFitComment(fn: FitFunction) {
+  return fitBodySpecIndexHasWork(fn.bodySpecs)
+}
+
+export function functionHasExplicitSpecs(fn: FitFunction) {
+  return fn.explicitSpecs.length > 0
 }
 
 export function functionHasTypeContracts(program: Program, fn: FitFunction) {
@@ -26,18 +30,18 @@ export function functionHasTypeContracts(program: Program, fn: FitFunction) {
     || functionHasBodyTypeBoundary(program, fn)
 }
 
-export function functionContractSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
+export function functionContractSpecs(program: Program, fn: FitFunction): FitSpec[] {
   return [
     ...functionTypeGivenSpecs(program, fn),
-    ...explicitSpecs,
+    ...fn.explicitSpecs,
     ...functionTypeReturnSpecs(program, fn),
   ]
 }
 
-export function functionInputSpecs(program: Program, fn: FitFunction, explicitSpecs: FitSpec[] = program.specsByFunction.get(fn.name) ?? []): FitSpec[] {
+export function functionInputSpecs(program: Program, fn: FitFunction): FitSpec[] {
   return [
     ...functionTypeGivenSpecs(program, fn),
-    ...explicitSpecs,
+    ...fn.explicitSpecs,
   ]
 }
 

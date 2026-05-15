@@ -8,7 +8,7 @@ import type {
 import type {FitInferFact} from './facts.ts'
 import type {
   FitImportBinding,
-  FitModule,
+  FitFile,
 } from './modules.ts'
 import type {
   FitObligation,
@@ -145,7 +145,7 @@ export type FitShapeOptions = {
   calls?: boolean
 }
 
-export type Program = FitModule<Value>
+export type Program = FitFile<Value>
 
 export type ImportedBinding = FitImportBinding<Program>
 
@@ -156,7 +156,7 @@ export type ResolvedCallTarget =
     }
   | {
       kind: 'function'
-      module: Program
+      program: Program
       functionName: string
       imported?: {
         localName: string

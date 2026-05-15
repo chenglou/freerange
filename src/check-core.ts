@@ -98,6 +98,7 @@ import {functionInputRoots} from './function-shape.ts'
 import {
   emptyTypeContract,
   functionContractSpecs,
+  functionHasExplicitSpecs,
   functionHasBodyFitComment,
   functionHasBodyTypeBoundary,
   functionHasTypeContracts,
@@ -201,7 +202,7 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
+      if (options.functionName == null && options.all !== true && !functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
       functions.push(inferFunctionFacts(program, fn, contractCache))
     }
   }
@@ -227,8 +228,8 @@ export function inspectFitShapes(paths: string[], options: FitShapeOptions = {})
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !program.fitFunctions.has(functionName) && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
-      const state = options.functionName != null || program.fitFunctions.has(functionName) || functionHasBodyFitComment(program, fn) || functionHasTypeContracts(program, fn)
+      if (options.functionName == null && options.all !== true && !functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+      const state = options.functionName != null || functionHasExplicitSpecs(fn) || functionHasBodyFitComment(fn) || functionHasTypeContracts(program, fn)
         ? evaluateFunctionShapeState(program, fn, contractCache)
         : null
       insights.push(...inspectFunctionShapeInsights(program, fn, state, options))
@@ -244,9 +245,8 @@ export function createFunctionContractCache(): Map<string, FunctionContractProof
 export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
   for (const fn of program.functions.values()) {
-    const specs = program.specsByFunction.get(fn.name) ?? []
-    if (specs.length === 0 && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
-    checks.push(...verifyFunctionSpecs(program.file, program, fn, specs, contractCache))
+    if (!functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+    checks.push(...verifyFunctionSpecs(program.file, program, fn, contractCache))
   }
   checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
 
@@ -262,9 +262,8 @@ export function verifyFitProgramWithCallsites(
   const functionsWithRecordedCallsites = new Set<string>()
 
   for (const fn of program.functions.values()) {
-    const specs = program.specsByFunction.get(fn.name) ?? []
-    if (specs.length === 0 && !functionHasBodyFitComment(program, fn) && !functionHasTypeContracts(program, fn)) continue
-    const result = verifyFunctionSpecsDetailed(program.file, program, fn, specs, contractCache)
+    if (!functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+    const result = verifyFunctionSpecsDetailed(program.file, program, fn, contractCache)
     annotationChecks.push(...result.checks)
     if (result.recordedCallsites) {
       functionsWithRecordedCallsites.add(fn.name)
@@ -307,8 +306,8 @@ export function auditSelectorsInProgram(
 }
 
 function functionHasAuditAnnotationSurface(program: Program, fn: FitFunction) {
-  return program.fitFunctions.has(fn.name)
-    || functionHasBodyFitComment(program, fn)
+  return functionHasExplicitSpecs(fn)
+    || functionHasBodyFitComment(fn)
     || functionHasTypeContracts(program, fn)
 }
 
@@ -319,8 +318,7 @@ function auditTopLevelSelectors(program: Program, contractCache: Map<string, Fun
 }
 
 function auditFunctionSelectors(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
-  const specs = program.specsByFunction.get(fn.name) ?? []
-  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'silent'})
   const result = evaluateInterpreterFunctionBody(program, fn, context.env, context.stack, context.assumptions, interpreterHooks(context))
   return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
@@ -368,9 +366,7 @@ function checkTopLevelCallsites(program: Program, contractCache: Map<string, Fun
 }
 
 function checkFunctionCallsites(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
-  const functionName = fn.name
-  const specs = program.specsByFunction.get(functionName) ?? []
-  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'record'})
   evaluateFunctionBody(fn, context)
   return callChecks(context)
@@ -428,28 +424,26 @@ function verifyFunctionSpecs(
   file: string,
   program: Program,
   fn: FitFunction,
-  specs: FitSpec[],
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck[] {
-  return verifyFunctionSpecsDetailed(file, program, fn, specs, contractCache).checks
+  return verifyFunctionSpecsDetailed(file, program, fn, contractCache).checks
 }
 
 function verifyFunctionSpecsDetailed(
   file: string,
   program: Program,
   fn: FitFunction,
-  specs: FitSpec[],
   contractCache: Map<string, FunctionContractProof>,
 ): {checks: FitCheck[]; callsiteChecks: FitCheck[]; recordedCallsites: boolean} {
   const functionName = fn.name
-  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
   const checks = [...setup.givenChecks]
   checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
 
   checks.push(...setup.assumptionChecks)
   const recordsCallsites = functionHasBodyClaims(contractSpecs)
-  const hasBodyClaims = recordsCallsites || functionHasBodyFitComment(program, fn) || functionHasBodyTypeBoundary(program, fn)
+  const hasBodyClaims = recordsCallsites || functionHasBodyFitComment(fn) || functionHasBodyTypeBoundary(program, fn)
   const context = functionEvalContext(program, fn, setup, contractCache, {
     callObligations: recordsCallsites ? 'record' : 'silent',
   })
@@ -477,9 +471,8 @@ function functionHasBodyClaims(specs: FitSpec[]) {
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
   const functionName = fn.name
-  const specs = program.specsByFunction.get(functionName) ?? []
   const loops: FitInferLoopReport[] = []
-  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
   const typeContractChecks = typeUnsupportedChecks(program.file, functionName, functionTypeUnsupported(program, fn))
   const inferUnsupported: string[] = []
@@ -525,8 +518,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
 }
 
 function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): ShapeInspectState {
-  const specs = program.specsByFunction.get(fn.name) ?? []
-  const setup = prepareFunctionEvaluation(program, fn, specs, contractCache, givenEvaluators)
+  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const context = functionEvalContext(program, fn, setup, contractCache)
   const env = setup.env
   const baseEnv = new Map(env)
@@ -791,7 +783,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
   if (call.imported == null) return null
   return evaluateImportedFunctionCall(call.callName, {
     kind: 'function',
-    module: call.program,
+    program: call.program,
     functionName: call.functionName,
     imported: call.imported,
   }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings, call.thisValue)
@@ -884,7 +876,7 @@ function bodySpecsForStack(program: Program, stack: string[]) {
   for (let index = stack.length - 1; index >= 0; index--) {
     const name = stack[index]!
     if (name === '<top-level>') return program.topLevelBodySpecs
-    const bodySpecs = program.bodySpecsByFunction.get(name)
+    const bodySpecs = program.functions.get(name)?.bodySpecs
     if (bodySpecs != null) return bodySpecs
   }
   return undefined
@@ -1234,8 +1226,7 @@ function evaluateLocalFunctionCall(
     ? fallbackShape ?? result
     : valueWithStructuralFallback(result, fallbackShape)
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
-  const specs = context.program.specsByFunction.get(functionName) ?? []
-  const contractSpecs = functionContractSpecs(context.program, fn, specs)
+  const contractSpecs = functionContractSpecs(context.program, fn)
   if (contractSpecs.length === 0) return callSiteFallbackResult
   if (obligations !== 'pass') return callSiteFallbackResult
 
@@ -1326,25 +1317,24 @@ function evaluateImportedFunctionCall(
   callSiteBindings: CallSiteBindings,
   thisValue?: Value,
 ): Value {
-  const specs = target.module.specsByFunction.get(target.functionName) ?? []
-  const contractSpecs = functionContractSpecs(target.module, fn, specs)
-  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${target.functionName}Result`, fn.node, target.module))
+  const contractSpecs = functionContractSpecs(target.program, fn)
+  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${target.functionName}Result`, fn.node, target.program))
   if (target.imported == null) return resolvedStructuralFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
   if (contractSpecs.length === 0) {
     return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(
       callName,
       target.imported.binding,
-      `resolved to ${target.module.file}#${target.functionName}, but that function has no @fit contract`,
+      `resolved to ${target.program.file}#${target.functionName}, but that function has no @fit contract`,
     ))
   }
   if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for imported function ${target.functionName}`)
   if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
 
-  const proof = verifyFunctionContract(target.module, target.functionName, context.contractCache)
+  const proof = verifyFunctionContract(target.program, target.functionName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(callName, target.imported.binding, proof))
 
   const obligations = verifyCallGivenSpecs(
-    target.module,
+    target.program,
     fn,
     callText,
     argumentValues,
@@ -1354,11 +1344,11 @@ function evaluateImportedFunctionCall(
   )
   if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(callName, target.module, fn, contractSpecs, argumentValues, context.contractCache, {
+  return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, argumentValues, context.contractCache, {
     kind: 'imported',
-    sourceFile: target.module.file,
+    sourceFile: target.program.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.module), thisValue, callSiteBindings, callContractEvaluators)
+  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.program), thisValue, callSiteBindings, callContractEvaluators)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
@@ -1402,9 +1392,23 @@ function verifyFunctionContract(program: Program, functionName: string, contract
   }
 
   const fn = program.functions.get(functionName)
-  const specs = program.specsByFunction.get(functionName) ?? []
-  const contractSpecs = fn == null ? [] : functionContractSpecs(program, fn, specs)
-  if (fn == null || contractSpecs.length === 0) {
+  if (fn == null) {
+    const proof: FunctionContractProof = {
+      status: 'unknown',
+      checks: [{
+        file: program.file,
+        functionName,
+        text: '@fit contract',
+        status: 'unknown',
+        reason: `No @fit contract for ${functionName}`,
+      }],
+    }
+    contractCache.set(key, proof)
+    return proof
+  }
+
+  const contractSpecs = functionContractSpecs(program, fn)
+  if (contractSpecs.length === 0) {
     const proof: FunctionContractProof = {
       status: 'unknown',
       checks: [{
@@ -1420,7 +1424,7 @@ function verifyFunctionContract(program: Program, functionName: string, contract
   }
 
   contractCache.set(key, {status: 'verifying'})
-  const checks = verifyFunctionSpecs(program.file, program, fn, specs, contractCache)
+  const checks = verifyFunctionSpecs(program.file, program, fn, contractCache)
   const status = checks.some(check => check.status === 'fail') ? 'fail'
     : checks.some(check => check.status === 'unknown' || check.status === 'requires') ? 'unknown'
       : 'pass'

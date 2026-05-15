@@ -15,7 +15,7 @@ export type BenchRun = {
   loadMs: number
   verifyMs: number
   loadTiming: FitProjectLoadTiming
-  modules: number
+  files: number
   checks: FitCheck[]
 }
 
@@ -46,7 +46,7 @@ export function runBench(paths: string[]): BenchRun {
     loadMs,
     verifyMs,
     loadTiming,
-    modules: project.modules.size,
+    files: project.files.size,
     checks,
   }
 }
@@ -93,7 +93,7 @@ export function formatLoadTiming(timing: FitProjectLoadTiming, loadMs: number) {
     + timing.typeProgramMs
     + timing.typeCheckerMs
     + timing.fileReadMs
-    + timing.moduleParseMs
+    + timing.fileParseMs
     + timing.importResolveMs
   const other = Math.max(0, loadMs - known)
   return [
@@ -101,7 +101,7 @@ export function formatLoadTiming(timing: FitProjectLoadTiming, loadMs: number) {
     `ts ${formatMs(timing.typeProgramMs)}`,
     `checker ${formatMs(timing.typeCheckerMs)}`,
     `read ${formatMs(timing.fileReadMs)}`,
-    `parse/index ${formatMs(timing.moduleParseMs)}`,
+    `parse/index ${formatMs(timing.fileParseMs)}`,
     `resolve ${formatMs(timing.importResolveMs)}`,
     `other ${formatMs(other)}`,
   ].join(', ')

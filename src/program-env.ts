@@ -14,7 +14,7 @@ export function programGlobalEnv(program: Program): Map<string, Value> {
 
 function importedGlobalValue(localName: string, binding: ImportedBinding): Value | null {
   if (binding.kind !== 'resolved') return null
-  const value = binding.module.globals.get(binding.sourceName)
+  const value = binding.file.globals.get(binding.sourceName)
   if (value == null) return null
   return localizeValue(value, localName, {preserveLinear: true})
 }

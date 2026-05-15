@@ -91,15 +91,6 @@ const givenKeywordPattern = /^given(?:\s|$)/
 const typeContractTemplateRootPattern = /(?<![\w$.])__fit_type_root(?![\w$])/g
 const typeContractTemplatePathPattern = /(?<![\w$.])__fit_type_root(?:\.[A-Za-z_$][\w$]*|\[\]|\[\$[A-Za-z_][\w$]*(?:\s*[+-]\s*\d+)?\])*/g
 
-export function createTypeContractTemplateIndexMap(sourceFiles: readonly ts.SourceFile[]) {
-  const indexes = new Map<ts.SourceFile, TypeContractTemplateIndex>()
-  for (const sourceFile of sourceFiles) {
-    if (!isSupportedTypeContractSource(sourceFile)) continue
-    indexes.set(sourceFile, createTypeContractTemplateIndex(sourceFile.text, sourceFile))
-  }
-  return indexes
-}
-
 export function createTypeContractTemplateIndex(sourceText: string, sourceFile: ts.SourceFile): TypeContractTemplateIndex {
   const index = emptyTypeContractTemplateIndex()
   const visit = (node: ts.Node) => {
@@ -315,9 +306,9 @@ function collectObjectMemberContractSpecs(
 
 function templateIndexForNode(program: Program, node: ts.Node): TypeContractTemplateIndex {
   const sourceFile = node.getSourceFile()
-  const index = program.typeContractTemplatesBySourceFile.get(sourceFile)
-  if (index == null) throw new Error(`Missing type @fit template index for ${sourceFile.fileName}`)
-  return index
+  const file = program.project.filesBySourceFile.get(sourceFile)
+  if (file == null) throw new Error(`Missing parsed file for type @fit contracts in ${sourceFile.fileName}`)
+  return file.typeContracts
 }
 
 function typeTemplatesForNode(program: Program, node: ts.Node): TypeContractTemplateResult {

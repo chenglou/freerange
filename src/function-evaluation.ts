@@ -34,12 +34,11 @@ export type FunctionEvaluationSetup = {
 export function prepareFunctionEvaluation(
   program: Program,
   fn: FitFunction,
-  specs: FitSpec[],
   contractCache: Map<string, FunctionContractProof>,
   evaluators: GivenEvaluators,
 ): FunctionEvaluationSetup {
-  const inputSpecs = functionInputSpecs(program, fn, specs)
-  const contractSpecs = functionContractSpecs(program, fn, specs)
+  const inputSpecs = functionInputSpecs(program, fn)
+  const contractSpecs = functionContractSpecs(program, fn)
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 

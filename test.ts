@@ -438,6 +438,27 @@ if (typeGivenPrefixFieldFailures.length > 0) {
   console.log('type contracts: given-prefixed field allowed')
 }
 
+let duplicateFunctionError = ''
+try {
+  verifyFitSource('duplicate-function.ts', `function score() {
+  return 1
+}
+
+function score() {
+  return 2
+}
+`)
+} catch (error) {
+  duplicateFunctionError = error instanceof Error ? error.message : String(error)
+}
+if (duplicateFunctionError !== 'Unsupported duplicate function implementation score in duplicate-function.ts') {
+  console.error('expected duplicate function names to be rejected before they overwrite fit data')
+  console.error(duplicateFunctionError || '<no error>')
+  process.exitCode = 1
+} else {
+  console.log('function data: duplicate names rejected')
+}
+
 const collapsedUnsupported = uniqueUnsupported([
   'unsupported render line 1: Unknown identifier events',
   'unsupported render line 1: Property access expected an object path: events.click',

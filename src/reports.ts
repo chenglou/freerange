@@ -6,7 +6,7 @@ import {
 } from './check-core.ts'
 import type {FitAudit, FitCheck} from './check-types.ts'
 import {
-  buildFitSourceModule,
+  buildFitSourceFile,
   loadFitProject,
 } from './modules.ts'
 import {readTopLevelGlobal} from './module-values.ts'
@@ -72,7 +72,7 @@ export async function verifyFitFiles(paths: string[], options: FitCheckOptions =
 }
 
 export function verifyFitSource(file: string, sourceText: string): FitCheck[] {
-  const program = buildFitSourceModule(file, sourceText, readTopLevelGlobal)
+  const program = buildFitSourceFile(file, sourceText, readTopLevelGlobal)
   return verifyFitProgram(program, createFunctionContractCache())
 }
 

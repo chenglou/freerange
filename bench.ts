@@ -32,7 +32,7 @@ if (args.includes('--help') || args.includes('-h')) {
   for (let index = 0; index < options.runs; index++) {
     const run = runBench(paths)
     runs.push(run)
-    console.log(`run ${index + 1}: ${formatMs(run.totalMs)} total (${formatMs(run.loadMs)} load, ${formatMs(run.verifyMs)} verify) - ${formatSummary(run.checks)}, ${run.modules} modules`)
+    console.log(`run ${index + 1}: ${formatMs(run.totalMs)} total (${formatMs(run.loadMs)} load, ${formatMs(run.verifyMs)} verify) - ${formatSummary(run.checks)}, ${run.files} files`)
     console.log(`  load: ${formatLoadTiming(run.loadTiming, run.loadMs)}`)
   }
 
