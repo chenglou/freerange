@@ -512,15 +512,15 @@ FAIL negative-patterns.ts:negativeTypeRelationReturnCheck: return.k > return.b
 FAIL negative-patterns.ts:negativeTypeRelationCallBoundary: negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b
   caller passed: spring.k: 1, spring.b: 2
   missing: spring.k > spring.b
-FAIL negative-patterns.ts:negativeTypeRelationNestedReturnCheck: return.rows[].bottom >= return.rows[].top
+FAIL negative-patterns.ts:negativeTypeRelationArrayPathReturnCheck: return.rows[].bottom >= return.rows[].top
   applies to: every item in return.rows
   result: is false
   missing fact: 0 >= 10
-FAIL negative-patterns.ts:negativeTypeRelationNestedReturnCheck: return.rows[].cells[].right >= return.rows[].cells[].left
+FAIL negative-patterns.ts:negativeTypeRelationArrayPathReturnCheck: return.rows[].cells[].right >= return.rows[].cells[].left
   applies to: every item in return.rows[].cells
   result: is false
   missing fact: 1 >= 4
-UNKNOWN negative-patterns.ts:negativeTypeRelationCrossScope: x >= row.left
+UNKNOWN negative-patterns.ts:negativeTypeRelationCrossScope: rows[].cells[].x >= row.left
   type @fit reference "row" is not a required field in this object scope
 UNKNOWN negative-patterns.ts:negativeTypeRelationOptional: >= 0
   type @fit on optional fields is not supported yet

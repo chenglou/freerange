@@ -1036,31 +1036,37 @@ export function negativeTypeFieldArrayElement(): NegativeTypeFieldRows {
   return {rows: [{height: 100}]}
 }
 
+/** @fit
+ * k > b
+ */
 type NegativeTypeRelationSpring = {
   k: number
   b: number
-  // @fit k > b
 }
 
+/** @fit
+ * rows[].bottom >= rows[].top
+ * rows[].cells[].right >= rows[].cells[].left
+ */
 type NegativeTypeRelationRows = {
   rows: {
     top: number
     bottom: number
-    // @fit bottom >= top
     cells: {
       left: number
       right: number
-      // @fit right >= left
     }[]
   }[]
 }
 
+/** @fit
+ * rows[].cells[].x >= row.left
+ */
 type NegativeTypeRelationCrossScope = {
   rows: {
     left: number
     cells: {
       x: number
-      // @fit x >= row.left
     }[]
   }[]
 }
@@ -1085,7 +1091,7 @@ export function negativeTypeRelationCallBoundary() {
   return negativeNeedsTypeRelationSpring(spring)
 }
 
-export function negativeTypeRelationNestedReturnCheck(): NegativeTypeRelationRows {
+export function negativeTypeRelationArrayPathReturnCheck(): NegativeTypeRelationRows {
   return {rows: [{top: 10, bottom: 0, cells: [{left: 4, right: 1}]}]}
 }
 

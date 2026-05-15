@@ -152,7 +152,9 @@ Freerange comments work best when they say the missing fact, not the whole proof
 ```ts
 width: number // @fit 320..2000
 count: number // @fit > 0
-// @fit bottom >= top
+/** @fit
+ * bottom >= top
+ */
 ```
 
 We added inline comments for parameters, locals, object fields, and returns because real code wanted the red line near the value. We also restricted inline facts to line comments after block comments became ambiguous in too many positions.

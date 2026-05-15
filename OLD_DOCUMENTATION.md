@@ -124,19 +124,23 @@ Required fields in source-backed `type` and `interface` declarations can carry
 the same small inline comments:
 
 ```ts
+/** @fit
+ * k > b
+ */
 type Spring = {
   pos: number
   dest: number
   k: number // @fit > 0
   b: number // @fit > 0
-  // @fit k > b
 }
 
+/** @fit
+ * rows[].bottom >= rows[].top
+ */
 type RowStack = {
   rows: {
     top: number
     bottom: number
-    // @fit bottom >= top
     height: number // @fit 0..40
   }[]
 }
@@ -144,7 +148,7 @@ type RowStack = {
 
 These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. The type can live in the same file or in an imported local source file, including type-only imports and namespace-qualified type references. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
 
-Inside an object type, a full line like `// @fit bottom >= top` is relative to that object scope. In `RowStack`, it becomes `rows[].bottom >= rows[].top` at the boundary, and nested object/array fields get their own local sibling scope. Shorthand comments attached to one field still talk about that field: `height: number // @fit 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Type-field contracts recurse through required object fields and array element types; optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
+Type block facts can name nested array paths from the top of the type, like `rows[].bottom >= rows[].top`. Shorthand comments attached to a field still talk about that field: `height: number // @fit 0..40` inside `rows: {...}[]` becomes `rows[].height: 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
 
 Branch-local facts use ordinary TypeScript branches. Put the fact on the value made inside that branch; Freerange carries the `if` or ternary condition while checking it:
 
@@ -1123,7 +1127,7 @@ The checker understands a small pure subset:
 - simple named parameters and typed object/array destructuring parameters
 - param inline `// @fit` domains and attached comparisons on simple identifier parameters
 - omitted trailing arguments that use simple default parameter initializers, plus explicit `undefined`/optional arguments falling through to those defaults
-- source-backed type/interface line-comment field contracts and block-comment type-scope contracts on required fields and sibling relations, including imported local-source types, nested object fields, and array element fields, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
+- source-backed type/interface line-comment field contracts on required fields, including nested object and array element fields, and block-comment type-scope contracts on required field paths and sibling relations, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
 - obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
 - finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
 - top-level `const` literals: numbers, strings, booleans, `null`, and plain object/array literals made from those pieces

@@ -69,23 +69,15 @@ function layoutPhotos(availableWidth: number, photos: Photo[]) {
 }
 
 /** @fit
- * tiles.length: int 0..200
+ * cells.length: int 0..200
+ * cells[].right >= cells[].left
  */
 type PhotoGrid = {
-  tiles: {
-    top: number
-    height: number // @fit > 0
-    bottom: number
-    /** @fit
-     * bottom >= top
-     */
-    cells: {
-      left: number
-      right: number
-      /** @fit
-       * right >= left
-       */
-    }[]
+  gap: number // @fit >= 0
+  cells: {
+    left: number
+    right: number
+    width: number // @fit > 0
   }[]
 }
 ```

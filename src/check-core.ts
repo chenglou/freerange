@@ -7,12 +7,9 @@ import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
   fitExpressionParsed,
-  parseFitSpecs,
-  parseInlineFitSpecsForExpression,
-  parseLocalFitSpecs,
-  hasFitComment,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
+  instantiateInlineFitTemplates,
   publicFitText,
   type FitCheckSpec,
   type FitExpressionLike,
@@ -422,7 +419,7 @@ function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, 
   const context = topLevelEvalContext(program, contractCache)
   for (const statement of program.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
-    bindVariableStatement(statement, context)
+    bindVariableStatement(statement, context, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? [])
   }
   return context.checks
 }
@@ -808,9 +805,10 @@ function evaluateInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFra
 function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: InterpreterFrame, rootContext: EvalContext) {
   if (!shouldRecordInterpreterClaim(frame, rootContext)) return
   const context = interpreterEvalContext(frame, rootContext)
+  const bodySpecs = bodySpecsForStack(frame.program, frame.stack)
 
   if (claim.kind === 'variable') {
-    const localSpecs = ts.isVariableStatement(claim.statement) ? parseLocalFitSpecs(frame.program.sourceText, claim.statement) : []
+    const localSpecs = bodySpecs?.localSpecsByStatement.get(claim.statement) ?? []
     verifyLocalFitSpecs(localSpecs, context)
     if (!ts.isIdentifier(claim.declaration.name)) return
     const typeContract = mergeTypeContracts([
@@ -826,7 +824,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
   }
 
   if (claim.kind === 'return') {
-    const specs = parseInlineFitSpecsForExpression(frame.program.sourceText, claim.node, fitReturnPublicRoot)
+    const specs = bodySpecs?.returnSpecsByNode.get(claim.node) ?? []
     const typeContract = typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot)
     verifyInlineSpecsForValue(specs, value, context)
     const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
@@ -835,7 +833,8 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
     return
   }
 
-  const specs = parseInlineFitSpecsForExpression(frame.program.sourceText, claim.property, objectPathText(claim.path))
+  const templates = bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []
+  const specs = instantiateInlineFitTemplates(templates, objectPathText(claim.path), 'check')
   verifyInlineSpecsForValue(specs, value, context)
 }
 
@@ -848,7 +847,7 @@ function evaluateInterpreterLoop(
   if (!shouldRecordInterpreterClaim(frame, rootContext)) return evaluate()
   const context = interpreterEvalContext(frame, rootContext)
   const checksStart = rootContext.checks.length
-  const rawLocalSpecs = parseFitSpecs(frame.program.sourceText, claim.statement)
+  const rawLocalSpecs = bodySpecsForStack(frame.program, frame.stack)?.loopSpecsByStatement.get(claim.statement) ?? []
   const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
   reportLoopResultSpecs(resultSpecs, context)
   applyLocalGivenSpecs(localSpecs, context)
@@ -863,8 +862,9 @@ function evaluateInterpreterLoop(
 
 function interpreterClaimRecordsCalls(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext) {
   if (rootContext.callObligations === 'record') return true
+  const bodySpecs = bodySpecsForStack(frame.program, frame.stack)
   if (claim.kind === 'variable') {
-    if (parseLocalFitSpecs(frame.program.sourceText, claim.statement).length > 0) return true
+    if ((bodySpecs?.localSpecsByStatement.get(claim.statement) ?? []).length > 0) return true
     if (!ts.isIdentifier(claim.declaration.name)) return false
     return hasTypeContractWork(mergeTypeContracts([
       typeCheckContractForTypeNode(frame.program, claim.declaration.type, claim.declaration.name.text),
@@ -874,10 +874,20 @@ function interpreterClaimRecordsCalls(claim: InterpreterClaim, frame: Interprete
     ]))
   }
   if (claim.kind === 'return') {
-    return parseInlineFitSpecsForExpression(frame.program.sourceText, claim.node, fitReturnPublicRoot).length > 0
+    return (bodySpecs?.returnSpecsByNode.get(claim.node) ?? []).length > 0
       || hasTypeContractWork(typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot))
   }
-  return parseInlineFitSpecsForExpression(frame.program.sourceText, claim.property, objectPathText(claim.path)).length > 0
+  return (bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []).length > 0
+}
+
+function bodySpecsForStack(program: Program, stack: string[]) {
+  for (let index = stack.length - 1; index >= 0; index--) {
+    const name = stack[index]!
+    if (name === '<top-level>') return program.topLevelBodySpecs
+    const bodySpecs = program.bodySpecsByFunction.get(name)
+    if (bodySpecs != null) return bodySpecs
+  }
+  return undefined
 }
 
 function shouldRecordInterpreterClaim(frame: InterpreterFrame, rootContext: EvalContext) {
@@ -947,8 +957,7 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
   verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
 }
 
-function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext) {
-  const specs = parseLocalFitSpecs(context.program.sourceText, statement)
+function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext, specs: FitCheckSpec[]) {
   for (const declaration of statement.declarationList.declarations) {
     bindVariableDeclaration(declaration, context, {claim: specs.length > 0})
   }
@@ -1037,7 +1046,7 @@ function recordInferLoop(
   factRoots: Set<string>,
 ) {
   if (context.inferLoops == null) return
-  if (!hasFitComment(context.program.sourceText, statement)) return
+  if (specs.length === 0) return
 
   const checks = context.checks.slice(checksStart)
   const specReports = inferLoopSpecReports(specs, checks)

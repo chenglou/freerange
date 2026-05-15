@@ -76,6 +76,28 @@ export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
 export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
 export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
 
+export type FitInlineSpecTemplate =
+  | {
+      kind: 'range'
+      range: FitRange
+      line?: number
+    }
+  | {
+      kind: 'comparison'
+      op: ComparisonOperator
+      right: FitExpression
+      line?: number
+    }
+
+export type FitBodySpecIndex = {
+  localSpecsByStatement: Map<ts.VariableStatement, FitCheckSpec[]>
+  returnSpecsByNode: Map<ts.Node, FitCheckSpec[]>
+  objectPropertyTemplatesByNode: Map<ts.PropertyAssignment | ts.ShorthandPropertyAssignment, FitInlineSpecTemplate[]>
+  loopSpecsByStatement: Map<ts.ForOfStatement | ts.ForStatement, FitSpec[]>
+}
+
+type FitExpressionParser = (text: string) => FitExpression
+
 const identifierPattern = '[A-Za-z_$][\\w$]*'
 const indexLabelPattern = '\\$[A-Za-z_][\\w$]*(?:\\s*[+-]\\s*\\d+)?'
 const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'g')
@@ -161,19 +183,6 @@ export function fitBlockSpecCommentLines(sourceText: string, node: ts.Node): Fit
   return lines
 }
 
-export function fitCommentLineGroupsInRange(sourceText: string, start: number, end: number): FitCommentLine[][] {
-  const commentPattern = /\/\*[\s\S]*?\*\/|\/\/[^\r\n]*/g
-  commentPattern.lastIndex = start
-  const groups: FitCommentLine[][] = []
-  for (;;) {
-    const match = commentPattern.exec(sourceText)
-    if (match == null || match.index >= end) break
-    const rangeEnd = Math.min(commentPattern.lastIndex, end)
-    groups.push(commentRangeLines(sourceText, {pos: match.index, end: rangeEnd, kind: ts.SyntaxKind.SingleLineCommentTrivia, hasTrailingNewLine: false}))
-  }
-  return groups
-}
-
 export function parseFunctionFitSpecs(
   sourceText: string,
   specNode: ts.Node,
@@ -191,7 +200,7 @@ export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclar
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
   const paramName = param.name.text
-  return lines.map(line => parseInlineFitSpecLine(line.text, paramName, 'given-range', line.line))
+  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), paramName, 'given')
 }
 
 export function hasFitComment(sourceText: string, node: ts.Node): boolean {
@@ -212,21 +221,172 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
     throw new Error('Inline @fit comments support one simple variable declaration')
   }
   const expression = declarations[0]!.name.text
-  return lines.map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
+  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), expression, 'check')
 }
 
 export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, node)
-  return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, undefined, line.line))
+  return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'check')
 }
 
 export function parseInlineGivenFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitGivenSpec[] {
   rejectInlineBlockFitComments(sourceText, node)
-  return inlineFitCommentLines(sourceText, node).map(line => parseInlineFitSpecLine(line.text, expression, 'given-range', line.line))
+  return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'given')
 }
 
 export function inlineFitCommentLinesForNode(sourceText: string, node: ts.Node): FitCommentLine[] {
   return inlineFitCommentLines(sourceText, node)
+}
+
+export function parseInlineFitTemplatesForNode(sourceText: string, node: ts.Node): FitInlineSpecTemplate[] {
+  rejectInlineBlockFitComments(sourceText, node)
+  return inlineFitCommentLines(sourceText, node).map(parseInlineFitTemplate)
+}
+
+export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'check'): FitCheckSpec[]
+export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'given'): FitGivenSpec[]
+export function instantiateInlineFitTemplates(
+  templates: FitInlineSpecTemplate[],
+  expression: string,
+  mode: 'check' | 'given',
+): FitCheckSpec[] | FitGivenSpec[] {
+  const parsedExpression = parseFitExpressionText(expression)
+  const publicExpression = publicFitText(expression)
+  const specs: FitSpec[] = []
+  for (const template of templates) {
+    switch (template.kind) {
+      case 'comparison': {
+        const text = `${publicExpression} ${template.op} ${publicFitText(template.right.text)}`
+        specs.push(mode === 'given'
+          ? {
+            kind: 'given-comparison',
+            left: parsedExpression,
+            op: template.op,
+            right: template.right,
+            text: `given ${text}`,
+            ...(template.line == null ? {} : {line: template.line}),
+          }
+          : {
+            kind: 'check-comparison',
+            left: parsedExpression,
+            op: template.op,
+            right: template.right,
+            text,
+            ...(template.line == null ? {} : {line: template.line}),
+          })
+        break
+      }
+      case 'range': {
+        const text = `${publicExpression}: ${publicFitText(template.range.text)}`
+        specs.push(mode === 'given'
+          ? {
+            kind: 'given-range',
+            expression: parsedExpression,
+            range: template.range,
+            text: `given ${text}`,
+            ...(template.line == null ? {} : {line: template.line}),
+          }
+          : {
+            kind: 'check-range',
+            expression: parsedExpression,
+            range: template.range,
+            text,
+            ...(template.line == null ? {} : {line: template.line}),
+          })
+        break
+      }
+    }
+  }
+  return mode === 'given' ? specs as FitGivenSpec[] : specs as FitCheckSpec[]
+}
+
+export function emptyFitBodySpecIndex(): FitBodySpecIndex {
+  return {
+    localSpecsByStatement: new Map(),
+    returnSpecsByNode: new Map(),
+    objectPropertyTemplatesByNode: new Map(),
+    loopSpecsByStatement: new Map(),
+  }
+}
+
+export function fitBodySpecIndexHasWork(index: FitBodySpecIndex | undefined) {
+  return index != null
+    && (index.localSpecsByStatement.size > 0
+      || index.returnSpecsByNode.size > 0
+      || index.objectPropertyTemplatesByNode.size > 0
+      || index.loopSpecsByStatement.size > 0)
+}
+
+export function parseFunctionBodyFitSpecIndex(sourceText: string, fn: ts.FunctionLikeDeclaration): FitBodySpecIndex {
+  const index = emptyFitBodySpecIndex()
+  if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) {
+    const specs = parseInlineFitSpecsForExpression(sourceText, fn, fitReturnPublicRoot)
+    if (specs.length > 0) index.returnSpecsByNode.set(fn, specs)
+    collectBodyFitSpecIndex(sourceText, fn.body, index)
+    return index
+  }
+  if (fn.body == null) return index
+  collectBodyFitSpecIndex(sourceText, fn.body, index)
+  return index
+}
+
+export function parseTopLevelFitSpecIndex(sourceText: string, sourceFile: ts.SourceFile): FitBodySpecIndex {
+  const index = emptyFitBodySpecIndex()
+  for (const statement of sourceFile.statements) {
+    if (topLevelDeclarationOnly(statement)) continue
+    collectBodyFitSpecIndexForNode(sourceText, statement, index)
+  }
+  return index
+}
+
+function collectBodyFitSpecIndex(sourceText: string, root: ts.Node, index: FitBodySpecIndex) {
+  const visit = (node: ts.Node) => {
+    if (node !== root && isFunctionLikeWithBodyNode(node)) return
+    collectBodyFitSpecIndexForNode(sourceText, node, index)
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+}
+
+function collectBodyFitSpecIndexForNode(sourceText: string, node: ts.Node, index: FitBodySpecIndex) {
+  if (ts.isVariableStatement(node)) {
+    const specs = parseLocalFitSpecs(sourceText, node)
+    if (specs.length > 0) index.localSpecsByStatement.set(node, specs)
+    return
+  }
+  if (ts.isReturnStatement(node) && node.expression != null) {
+    const specs = parseInlineFitSpecsForExpression(sourceText, node, fitReturnPublicRoot)
+    if (specs.length > 0) index.returnSpecsByNode.set(node, specs)
+    return
+  }
+  if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
+    const templates = parseInlineFitTemplatesForNode(sourceText, node)
+    if (templates.length > 0) index.objectPropertyTemplatesByNode.set(node, templates)
+    return
+  }
+  if (ts.isForOfStatement(node) || ts.isForStatement(node)) {
+    const specs = parseFitSpecs(sourceText, node)
+    if (specs.length > 0) index.loopSpecsByStatement.set(node, specs)
+  }
+}
+
+function topLevelDeclarationOnly(statement: ts.Statement) {
+  return ts.isImportDeclaration(statement)
+    || ts.isExportDeclaration(statement)
+    || ts.isFunctionDeclaration(statement)
+    || ts.isClassDeclaration(statement)
+    || ts.isInterfaceDeclaration(statement)
+    || ts.isTypeAliasDeclaration(statement)
+    || ts.isModuleDeclaration(statement)
+    || ts.isEnumDeclaration(statement)
+}
+
+function isFunctionLikeWithBodyNode(node: ts.Node) {
+  return ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
 }
 
 function fitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[][] {
@@ -349,7 +509,7 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
   if (givenRange != null) {
     const expression = parseFitExpressionText(givenRange[1]!.trim())
-    const range = parseRangeText(givenRange[2]!.trim())
+    const range = parseFitRangeText(givenRange[2]!.trim())
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     return {
       kind: 'given-range',
@@ -377,7 +537,7 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const checkRange = /^(.+)\s*:\s*(.+)$/.exec(line)
   if (checkRange != null) {
     const expression = parseFitExpressionText(checkRange[1]!.trim())
-    const range = parseRangeText(checkRange[2]!.trim())
+    const range = parseFitRangeText(checkRange[2]!.trim())
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     return {
       kind: 'check-range',
@@ -408,7 +568,7 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   throw new Error(`Unsupported @fit line: ${line}`)
 }
 
-function parseRangeText(text: string): FitRange | null {
+export function parseFitRangeText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitRange | null {
   const valueKindMatch = /^(?:(int)\s+)?([\s\S]+)$/.exec(text)
   if (valueKindMatch == null) return null
   const body = valueKindMatch[2]!.trim()
@@ -419,8 +579,8 @@ function parseRangeText(text: string): FitRange | null {
     const upper = Math.max(...finiteValues)
     return {
       valueKind,
-      lower: parseFitExpressionText(String(lower)),
-      upper: parseFitExpressionText(String(upper)),
+      lower: parseExpression(String(lower)),
+      upper: parseExpression(String(upper)),
       lowerValue: lower,
       upperValue: upper,
       lowerInclusive: true,
@@ -437,8 +597,8 @@ function parseRangeText(text: string): FitRange | null {
     if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
     return {
       valueKind,
-      lower: parseFitExpressionText(lower),
-      upper: parseFitExpressionText(upper),
+      lower: parseExpression(lower),
+      upper: parseExpression(upper),
       lowerValue: parseRangeBoundNumber(lower),
       upperValue: parseRangeBoundNumber(upper),
       lowerInclusive: true,
@@ -448,7 +608,7 @@ function parseRangeText(text: string): FitRange | null {
   }
   if (isRangeBoundText(body)) {
     const normalizedBody = normalizeFitText(body)
-    const expression = parseFitExpressionText(normalizedBody)
+    const expression = parseExpression(normalizedBody)
     return {
       valueKind,
       lower: expression,
@@ -513,56 +673,24 @@ function splitRangeBounds(text: string): {lower: string; upper: string; upperInc
   return null
 }
 
-function parseInlineFitSpecLine(line: string, expression: string, kind?: 'check-range', lineNumber?: number): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
-function parseInlineFitSpecLine(line: string, expression: string, kind: 'given-range', lineNumber?: number): Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
-function parseInlineFitSpecLine(
-  line: string,
-  expression: string,
-  kind: 'check-range' | 'given-range' = 'check-range',
-  lineNumber?: number,
-): Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}> | Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}> {
-  const body = line.slice('@fit'.length).trim()
-  const parsedExpression = parseFitExpressionText(expression)
-  const publicExpression = publicFitText(expression)
+function parseInlineFitTemplate(line: FitCommentLine): FitInlineSpecTemplate {
+  const body = line.text.slice('@fit'.length).trim()
   const comparison = /^(==|>=|<=|>|<)\s*(.+)$/.exec(body)
   if (comparison != null) {
     const right = parseFitExpressionText(comparison[2]!.trim())
-    if (kind === 'given-range') {
-      return {
-        kind: 'given-comparison',
-        left: parsedExpression,
-        op: comparison[1]! as ComparisonOperator,
-        right,
-        text: `given ${publicExpression} ${comparison[1]} ${publicFitText(right.text)}`,
-        ...(lineNumber == null ? {} : {line: lineNumber}),
-      }
-    }
     return {
-      kind: 'check-comparison',
-      left: parsedExpression,
+      kind: 'comparison',
       op: comparison[1]! as ComparisonOperator,
       right,
-      text: `${publicExpression} ${comparison[1]} ${publicFitText(right.text)}`,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
+      line: line.line,
     }
   }
-  const range = parseRangeText(body)
-  if (range == null) throw new Error(`Unsupported inline @fit range: ${line}`)
-  if (kind === 'given-range') {
-    return {
-      kind,
-      expression: parsedExpression,
-      range,
-      text: `given ${publicExpression}: ${publicFitText(body)}`,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
-    }
-  }
+  const range = parseFitRangeText(body)
+  if (range == null) throw new Error(`Unsupported inline @fit range: ${line.text}`)
   return {
-    kind,
-    expression: parsedExpression,
+    kind: 'range',
     range,
-    text: `${publicExpression}: ${publicFitText(body)}`,
-    ...(lineNumber == null ? {} : {line: lineNumber}),
+    line: line.line,
   }
 }
 

@@ -1158,10 +1158,12 @@ export function typeFieldAsReturn() {
   return {pos: 0, dest: 0, k: 290, b: 30} as TypeFieldSpring
 }
 
+/** @fit
+ * k > b
+ */
 type TypeRelationSpring = {
   k: number
   b: number
-  // @fit k > b
 }
 
 /** @fit
@@ -1172,15 +1174,17 @@ type TypeRelationBounds = {
   high: number
 }
 
+/** @fit
+ * rows[].bottom >= rows[].top
+ * rows[].cells[].right >= rows[].cells[].left
+ */
 type TypeRelationRows = {
   rows: {
     top: number
     bottom: number
-    // @fit bottom >= top
     cells: {
       left: number
       right: number
-      // @fit right >= left
     }[]
   }[]
 }
@@ -1208,7 +1212,7 @@ export function typeRelationCallBoundary() {
   return typeRelationParamGiven(spring)
 }
 
-export function typeRelationNestedReturnCheck(): TypeRelationRows {
+export function typeRelationArrayPathReturnCheck(): TypeRelationRows {
   return {rows: [{top: 0, bottom: 10, cells: [{left: 1, right: 4}]}]}
 }
 

@@ -1,8 +1,7 @@
 import * as ts from 'typescript'
 import {
   fitReturnPublicRoot,
-  hasFitComment,
-  hasInlineFitComment,
+  fitBodySpecIndexHasWork,
   type FitCheckSpec,
   type FitGivenSpec,
   type FitSpec,
@@ -18,20 +17,7 @@ import {
 import {isFunctionLikeWithBody} from './function-shape.ts'
 
 export function functionHasBodyFitComment(program: Program, fn: FitFunction) {
-  if (fn.node.body == null) return false
-  let found = false
-  const visit = (node: ts.Node) => {
-    if (found) return
-    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-    if (hasInlineFitComment(program.sourceText, node) || hasFitComment(program.sourceText, node)) {
-      found = true
-      return
-    }
-    ts.forEachChild(node, visit)
-  }
-  if (hasInlineFitComment(program.sourceText, fn.node)) return true
-  visit(fn.node.body)
-  return found
+  return fitBodySpecIndexHasWork(program.bodySpecsByFunction.get(fn.name))
 }
 
 export function functionHasTypeContracts(program: Program, fn: FitFunction) {

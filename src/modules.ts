@@ -1,5 +1,15 @@
 import * as ts from 'typescript'
-import {parseFunctionFitSpecs, type FitSpec} from './parser.ts'
+import {
+  parseFunctionBodyFitSpecIndex,
+  parseFunctionFitSpecs,
+  parseTopLevelFitSpecIndex,
+  type FitBodySpecIndex,
+  type FitSpec,
+} from './parser.ts'
+import {
+  createTypeContractTemplateIndexMap,
+  type TypeContractTemplateIndex,
+} from './type-contracts.ts'
 
 export type FitFunctionNode =
   | ts.FunctionDeclaration
@@ -26,6 +36,9 @@ export type FitModule<TGlobal> = {
   unsupportedCallAliases: Map<string, string>
   fitFunctions: Set<string>
   specsByFunction: Map<string, FitSpec[]>
+  bodySpecsByFunction: Map<string, FitBodySpecIndex>
+  topLevelBodySpecs: FitBodySpecIndex
+  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex>
   imports: Map<string, FitImportBinding<FitModule<TGlobal>>>
 }
 
@@ -98,6 +111,7 @@ type ResolutionContext = {
   cache: ts.ModuleResolutionCache
   typeProgram: ts.Program
   typeChecker: ts.TypeChecker
+  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex>
 }
 
 type ResolvedImport =
@@ -144,7 +158,7 @@ export function buildFitSourceModule<TGlobal>(
 ): FitModule<TGlobal> {
   const sourceId = toSourceId(file)
   const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
-  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile)
+  return parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile, undefined, createTypeContractTemplateIndexMap([sourceFile]))
 }
 
 function throwOnSyntaxDiagnostics(
@@ -189,7 +203,7 @@ function loadModule<TGlobal>(
   const sourceFile = resolution.typeProgram.getSourceFile(sourceId)
   const syntaxDiagnostics = sourceFile == null ? null : resolution.typeProgram.getSyntacticDiagnostics(sourceFile)
   const parseStart = performance.now()
-  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile, syntaxDiagnostics ?? undefined)
+  const module = parseFitModule(sourceId, displayPath(sourceId), sourceText, readGlobal, sourceFile == null ? null : resolution.typeChecker, sourceFile, syntaxDiagnostics ?? undefined, resolution.typeContractTemplatesBySourceFile)
   addTiming(timing, 'moduleParseMs', parseStart)
   modules.set(cacheKey, module)
   loadImports(module, modules, resolution, readGlobal, timing)
@@ -204,6 +218,7 @@ function parseFitModule<TGlobal>(
   typeChecker: ts.TypeChecker | null = null,
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
   syntaxDiagnostics?: readonly ts.Diagnostic[],
+  typeContractTemplatesBySourceFile: Map<ts.SourceFile, TypeContractTemplateIndex> = createTypeContractTemplateIndexMap([sourceFile]),
 ): FitModule<TGlobal> {
   throwOnSyntaxDiagnostics(file, sourceFile, syntaxDiagnostics)
 
@@ -213,6 +228,7 @@ function parseFitModule<TGlobal>(
   const unsupportedCallAliases = new Map<string, string>()
   const fitFunctions = new Set<string>()
   const specsByFunction = new Map<string, FitSpec[]>()
+  const bodySpecsByFunction = new Map<string, FitBodySpecIndex>()
   const imports = new Map<string, FitImportBinding<FitModule<TGlobal>>>()
 
   for (const statement of sourceFile.statements) {
@@ -220,11 +236,11 @@ function parseFitModule<TGlobal>(
       const isDefaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
       const functionName = statement.name?.text ?? (isDefaultExport ? 'default' : null)
       if (functionName == null) continue
-      collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction)
+      collectFitFunction(sourceText, functionName, statement, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
       continue
     }
     if (ts.isClassDeclaration(statement) && statement.name != null) {
-      collectClassMemberFunctions(sourceText, statement, functions, fitFunctions, specsByFunction)
+      collectClassMemberFunctions(sourceText, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
       continue
     }
     if (ts.isExportDeclaration(statement)) continue
@@ -235,7 +251,7 @@ function parseFitModule<TGlobal>(
         if (alias != null) callAliases.set('default', alias)
         continue
       }
-      collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction)
+      collectFitFunction(sourceText, 'default', functionInitializer, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
       continue
     }
     if (!ts.isVariableStatement(statement)) continue
@@ -244,7 +260,7 @@ function parseFitModule<TGlobal>(
       if (ts.isIdentifier(declaration.name)) {
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
         if (functionInitializer != null) {
-          collectFitFunction(sourceText, declaration.name.text, functionInitializer, statement, functions, fitFunctions, specsByFunction)
+          collectFitFunction(sourceText, declaration.name.text, functionInitializer, statement, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
         }
         const alias = functionInitializer == null && declaration.initializer != null
           ? callAliasFromExpression(declaration.initializer)
@@ -261,7 +277,8 @@ function parseFitModule<TGlobal>(
     }
   }
 
-  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, imports}
+  const topLevelBodySpecs = parseTopLevelFitSpecIndex(sourceText, sourceFile)
+  return {sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, fitFunctions, specsByFunction, bodySpecsByFunction, topLevelBodySpecs, typeContractTemplatesBySourceFile, imports}
 }
 
 function collectClassMemberFunctions(
@@ -270,13 +287,14 @@ function collectClassMemberFunctions(
   functions: Map<string, FitFunction>,
   fitFunctions: Set<string>,
   specsByFunction: Map<string, FitSpec[]>,
+  bodySpecsByFunction: Map<string, FitBodySpecIndex>,
 ) {
   for (const member of declaration.members) {
     if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member)) continue
     if (member.body == null) continue
     const memberName = classMemberFunctionName(declaration.name!.text, member)
     if (memberName == null) continue
-    collectFitFunction(sourceText, memberName, member, member, functions, fitFunctions, specsByFunction)
+    collectFitFunction(sourceText, memberName, member, member, functions, fitFunctions, specsByFunction, bodySpecsByFunction)
   }
 }
 
@@ -288,12 +306,14 @@ function collectFitFunction(
   functions: Map<string, FitFunction>,
   fitFunctions: Set<string>,
   specsByFunction: Map<string, FitSpec[]>,
+  bodySpecsByFunction: Map<string, FitBodySpecIndex>,
 ) {
   const fn = {name, node, specNode}
   const specs = parseFunctionFitSpecs(sourceText, fn.specNode, fn.node.parameters)
   functions.set(fn.name, fn)
   if (specs.length > 0) fitFunctions.add(fn.name)
   specsByFunction.set(fn.name, specs)
+  bodySpecsByFunction.set(fn.name, parseFunctionBodyFitSpecIndex(sourceText, fn.node))
 }
 
 function classMemberFunctionName(className: string, member: ts.MethodDeclaration | ts.GetAccessorDeclaration): string | null {
@@ -575,6 +595,7 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
     typeProgram,
     typeChecker,
+    typeContractTemplatesBySourceFile: createTypeContractTemplateIndexMap(typeProgram.getSourceFiles()),
   }
 }
 
