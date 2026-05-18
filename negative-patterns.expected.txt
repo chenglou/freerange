@@ -826,9 +826,10 @@ FAIL negative-patterns.ts:negativeInlineParamComparison: given value > max
     assumed from input: given value: 0..50
   missing fact: value > max
 UNKNOWN negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
-  given comparisons only support input paths, numbers, and simple arithmetic
+  Unsupported @fit contract expression: max.toString()
+    unsupported negativeGivenRangeBoundCannotCallInputMethod line 1: Unsupported call max.toString
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
-  given comparisons only support input paths, numbers, and simple arithmetic
+  Array index int 0..9 as index was not proven inside length int 0..10 as items.length; prove 0 <= index < length or use a finite literal index
 UNKNOWN negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
   Array.at(-2) expected length >= 2
 UNKNOWN negative-patterns.ts:negativeTypedArrayConstructorKeepsExactLength: return.length == count + 1
@@ -888,7 +889,8 @@ FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: re
     assumed from input: given focused: int 0..1000
   missing: (focused - 1) >= 0
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
-  given comparisons only support input paths, numbers, and simple arithmetic
+  Unsupported @fit contract expression: width.toString()
+    unsupported negativeGivenComparisonCannotCallInputMethod line 1: Unsupported call width.toString
 UNKNOWN negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   rows not found in this contract scope
 FAIL negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40

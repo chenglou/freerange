@@ -13,6 +13,7 @@ import {
   unknownArray,
   type FactSource,
   type LinearConstraint,
+  type NumberValue,
   type Value,
 } from './domain.ts'
 import {
@@ -27,7 +28,6 @@ import {
   linearScaleExact,
   linearVariable,
   mergeScale,
-  numericLiteralValue,
   sameExpressionText,
   isFixedElementPathExpression,
   type LinearExpr,
@@ -51,7 +51,6 @@ import {
 } from './proof.ts'
 import {
   arrayLengthRoot,
-  expressionRootNamesFromText,
 } from './source-expressions.ts'
 import {formatRangeSpec} from './reporting.ts'
 
@@ -159,17 +158,47 @@ function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'g
   switch (spec.kind) {
     case 'given-range':
       return [...new Set([
-        ...expressionRootNamesFromText(spec.expression),
+        ...givenExpressionRootNamesFromText(spec.expression),
         ...rangeBoundRootNames(spec.range.lower),
         ...rangeBoundRootNames(spec.range.upper),
       ])]
     case 'given-comparison':
-      return [...new Set([...expressionRootNamesFromText(spec.left), ...expressionRootNamesFromText(spec.right)])]
+      return [...new Set([...givenExpressionRootNamesFromText(spec.left), ...givenExpressionRootNamesFromText(spec.right)])]
   }
 }
 
 function rangeBoundRootNames(text: FitExpressionLike) {
-  return parsePrintedNumber(fitExpressionText(text)) == null ? expressionRootNamesFromText(text) : []
+  return parsePrintedNumber(fitExpressionText(text)) == null ? givenExpressionRootNamesFromText(text) : []
+}
+
+function givenExpressionRootNamesFromText(text: FitExpressionLike) {
+  const parsed = fitExpressionParsed(text)
+  const ignored = [...parsed.domainPaths.keys()]
+  const roots = [...parsed.domainPaths.values()].map(domainPath => domainPath.root)
+  roots.push(...givenExpressionRootNames(parsed.expression, ignored))
+  return roots
+}
+
+function givenExpressionRootNames(expression: ts.Expression, ignored: string[]): string[] {
+  if (ts.isIdentifier(expression)) return ignored.includes(expression.text) ? [] : [expression.text]
+  if (expression.kind === ts.SyntaxKind.ThisKeyword) return ignored.includes('this') ? [] : ['this']
+  if (ts.isCallExpression(expression)) {
+    const roots: string[] = []
+    for (const argument of expression.arguments) roots.push(...givenExpressionRootNames(argument, ignored))
+    return roots
+  }
+  if (ts.isPropertyAccessExpression(expression)) return givenExpressionRootNames(expression.expression, ignored)
+  if (ts.isElementAccessExpression(expression)) {
+    const roots = givenExpressionRootNames(expression.expression, ignored)
+    if (expression.argumentExpression != null) roots.push(...givenExpressionRootNames(expression.argumentExpression, ignored))
+    return roots
+  }
+
+  const roots: string[] = []
+  for (const child of expression.getChildren()) {
+    if (ts.isExpression(child)) roots.push(...givenExpressionRootNames(child, ignored))
+  }
+  return roots
 }
 
 function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
@@ -191,62 +220,19 @@ function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges
 }
 
 function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
-  const roots = givenRootNames(spec)
-  if (roots.length === 0) return 'given must mention an input'
-
   if (spec.kind === 'given-range') {
     if (parseDomainPathText(spec.expression.text) == null) {
       const expression = fitExpressionParsed(spec.expression).expression
       if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
     }
-    const lower = givenComparisonExpressionProblem(spec.range.lower)
-    if (lower != null) return lower
-    return givenComparisonExpressionProblem(spec.range.upper)
   }
-
-  const left = givenComparisonExpressionProblem(spec.left)
-  if (left != null) return left
-  return givenComparisonExpressionProblem(spec.right)
-}
-
-function givenComparisonExpressionProblem(text: FitExpressionLike): string | null {
-  if (parsePrintedNumber(fitExpressionText(text)) != null) return null
-  return isGivenComparisonExpression(fitExpressionParsed(text).expression)
-    ? null
-    : 'given comparisons only support input paths, numbers, and simple arithmetic'
+  return null
 }
 
 function isGivenRangeExpression(expression: ts.Expression): boolean {
   if (isFixedElementPathExpression(expression)) return true
   if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
   return false
-}
-
-function isGivenComparisonExpression(expression: ts.Expression): boolean {
-  if (ts.isIdentifier(expression)) return true
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return true
-  if (numericLiteralValue(expression) != null) return true
-  if (ts.isPropertyAccessExpression(expression)) return isGivenComparisonExpression(expression.expression)
-  if (ts.isElementAccessExpression(expression)) return isFixedElementPathExpression(expression)
-  if (ts.isParenthesizedExpression(expression)) return isGivenComparisonExpression(expression.expression)
-  if (ts.isPrefixUnaryExpression(expression)) {
-    return (expression.operator === ts.SyntaxKind.PlusToken || expression.operator === ts.SyntaxKind.MinusToken)
-      && isGivenComparisonExpression(expression.operand)
-  }
-  if (ts.isBinaryExpression(expression) && isGivenArithmeticOperator(expression.operatorToken.kind)) {
-    return isGivenComparisonExpression(expression.left)
-      && isGivenComparisonExpression(expression.right)
-  }
-  return false
-}
-
-function isGivenArithmeticOperator(kind: ts.SyntaxKind) {
-  return kind === ts.SyntaxKind.PlusToken
-    || kind === ts.SyntaxKind.MinusToken
-    || kind === ts.SyntaxKind.AsteriskToken
-    || kind === ts.SyntaxKind.SlashToken
-    || kind === ts.SyntaxKind.PercentToken
-    || kind === ts.SyntaxKind.AsteriskAsteriskToken
 }
 
 function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, reason: string): FitCheck {
@@ -269,12 +255,22 @@ export function collectGivenAssumptions(
   for (const given of givens) {
     if (given.kind === 'range') {
       const spec = given.spec
-      const value = evaluators.evaluateSpecExpression(spec.expression, context)
-      if (value.kind !== 'number') continue
-      const lower = evaluators.evaluateRangeBound(spec.range.lower, context)
-      const upper = evaluators.evaluateRangeBound(spec.range.upper, context)
-      if (lower.kind !== 'number' || upper.kind !== 'number') continue
-      const facts = rangeFactsFromBounds(value, lower, spec.range.lowerInclusive, upper, spec.range.upperInclusive, spec.text, given.source)
+      const value = evaluateGivenNumber(file, functionName, spec, spec.expression, context, evaluators)
+      if (value.kind === 'invalid') {
+        checks.push(value.check)
+        continue
+      }
+      const lower = evaluateGivenNumber(file, functionName, spec, spec.range.lower, context, evaluators, 'range lower bound')
+      if (lower.kind === 'invalid') {
+        checks.push(lower.check)
+        continue
+      }
+      const upper = evaluateGivenNumber(file, functionName, spec, spec.range.upper, context, evaluators, 'range upper bound')
+      if (upper.kind === 'invalid') {
+        checks.push(upper.check)
+        continue
+      }
+      const facts = rangeFactsFromBounds(value.value, lower.value, spec.range.lowerInclusive, upper.value, spec.range.upperInclusive, spec.text, given.source)
       const contradiction = givenRangeContradictionReason(facts, assumptions)
       if (contradiction != null) {
         checks.push({
@@ -292,23 +288,29 @@ export function collectGivenAssumptions(
     }
 
     const spec = given.spec
-    const left = evaluators.evaluateSpecExpression(spec.left, context)
-    const right = evaluators.evaluateSpecExpression(spec.right, context)
-    if (left.kind === 'number' && right.kind === 'number') {
-      const status = proveComparison(left, spec.op, right, assumptions)
-      if (status.status === 'fail') {
-        checks.push({
-          file,
-          ...(spec.line == null ? {} : {line: spec.line}),
-          functionName,
-          text: spec.text,
-          status: 'fail',
-          reason: `no input can satisfy this with the earlier given lines\n${status.reason ?? ''}`.trimEnd(),
-        })
-        continue
-      }
+    const comparison = evaluateGivenComparison(file, functionName, spec, context, evaluators)
+    if (comparison.kind === 'invalid') {
+      checks.push(comparison.check)
+      continue
     }
-    const fact = comparisonFactFromSpec(spec, context, given.source, evaluators)
+    if (!givenValuesMentionInput([comparison.left, comparison.right], inputRoots)) {
+      checks.push(invalidGivenCheck(file, functionName, spec, 'given must mention an input'))
+      continue
+    }
+    const status = proveComparison(comparison.left, spec.op, comparison.right, assumptions)
+    if (status.status === 'fail') {
+      checks.push({
+        file,
+        ...(spec.line == null ? {} : {line: spec.line}),
+        functionName,
+        text: spec.text,
+        status: 'fail',
+        reason: `no input can satisfy this with the earlier given lines\n${status.reason ?? ''}`.trimEnd(),
+      })
+      continue
+    }
+
+    const fact = comparisonConstraint(comparison.left, spec.op, comparison.right, spec.text, given.source)
     if (fact != null) {
       const contradiction = givenComparisonContradictionReason(fact, assumptions)
       if (contradiction != null) {
@@ -328,24 +330,75 @@ export function collectGivenAssumptions(
   return {assumptions, checks}
 }
 
+type EvaluatedGivenNumber =
+  | {kind: 'number'; value: NumberValue}
+  | {kind: 'invalid'; check: FitCheck}
+
+type GivenNumberRole = 'expression' | 'range lower bound' | 'range upper bound'
+
+function evaluateGivenComparison(
+  file: string,
+  functionName: string,
+  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
+  context: EvalContext,
+  evaluators: GivenEvaluators,
+): {kind: 'comparison'; left: NumberValue; right: NumberValue} | {kind: 'invalid'; check: FitCheck} {
+  const left = evaluateGivenNumber(file, functionName, spec, spec.left, context, evaluators)
+  if (left.kind === 'invalid') return left
+  const right = evaluateGivenNumber(file, functionName, spec, spec.right, context, evaluators)
+  if (right.kind === 'invalid') return right
+  return {kind: 'comparison', left: left.value, right: right.value}
+}
+
+function evaluateGivenNumber(
+  file: string,
+  functionName: string,
+  spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>,
+  expression: FitExpressionLike,
+  context: EvalContext,
+  evaluators: GivenEvaluators,
+  role: GivenNumberRole = 'expression',
+): EvaluatedGivenNumber {
+  const value = role === 'expression'
+    ? evaluators.evaluateSpecExpression(expression, context)
+    : evaluators.evaluateRangeBound(expression, context)
+  if (value.kind === 'number') return {kind: 'number', value}
+  const text = publicFitText(fitExpressionText(expression))
+  return {kind: 'invalid', check: invalidGivenCheck(file, functionName, spec, givenNonNumberReason(role, text, value))}
+}
+
+function givenNonNumberReason(role: string, text: string, value: Exclude<Value, NumberValue>) {
+  return value.kind === 'unknown' ? value.reason : `given ${role} must evaluate to a number: ${text}`
+}
+
+function givenValuesMentionInput(values: NumberValue[], inputRoots: string[]) {
+  return values.some(value => givenValueMentionsInput(value, inputRoots))
+}
+
+function givenValueMentionsInput(value: NumberValue, inputRoots: string[]) {
+  if (value.linear?.terms != null) {
+    for (const name of value.linear.terms.keys()) {
+      if (inputRoots.includes(expressionBaseRoot(name))) return true
+    }
+  }
+  if (value.expr != null) {
+    return givenExpressionRootNamesFromText(value.expr).some(root => inputRoots.includes(root))
+  }
+  return false
+}
+
+function expressionBaseRoot(text: string) {
+  if (text === 'this' || text.startsWith('this.')) return 'this'
+  const match = /^([A-Za-z_$][\w$]*)/.exec(text)
+  return match?.[1] ?? text
+}
+
 function givenRangeContradictionReason(facts: LinearConstraint[], assumptions: LinearConstraint[]): string | null {
   for (const fact of facts) {
     const contradiction = givenComparisonContradictionReason(fact, assumptions)
     if (contradiction != null) return contradiction
   }
   return null
-}
-
-function comparisonFactFromSpec(
-  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
-  context: EvalContext,
-  source: FactSource,
-  evaluators: GivenEvaluators,
-): LinearConstraint | null {
-  const left = evaluators.evaluateSpecExpression(spec.left, context)
-  const right = evaluators.evaluateSpecExpression(spec.right, context)
-  if (left.kind !== 'number' || right.kind !== 'number') return null
-  return comparisonConstraint(left, spec.op, right, spec.text, source)
 }
 
 function givenComparisonContradictionReason(fact: LinearConstraint, assumptions: LinearConstraint[]): string | null {
@@ -410,6 +463,7 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
   const closed = closedRangeApprox(spec.range)
+  if (closed == null && spec.range.finiteValues == null) return
   const expressionText = spec.expression.text
   const value = spec.range.finiteValues == null
     ? numberValue(

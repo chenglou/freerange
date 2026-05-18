@@ -133,6 +133,30 @@ if (pureContractHelperCheck?.status !== 'pass') {
   console.log('contract expressions: pure helper call')
 }
 
+const pureGivenHelperChecks = verifyFitSource('given-contract-purity.ts', `function double(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given max >= double(min)
+ * given width: double(min)..max
+ * return.scaled <= max
+ * return.width >= double(min)
+ * return.width <= max
+ */
+function bounded(min: number, width: number, max: number) {
+  return {scaled: double(min), width}
+}
+`)
+const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.status !== 'pass')
+if (pureGivenHelperFailures.length > 0) {
+  console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
+  console.error(JSON.stringify(pureGivenHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: pure helper call')
+}
+
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
  * given width: int 320..2400
  * given gap: int 1..32
@@ -335,6 +359,57 @@ if (
   process.exitCode = 1
 } else {
   console.log('contract expressions: mutable alias rejected')
+}
+
+const unsupportedGivenExpressionChecks = verifyFitSource('given-contract-unsupported.ts', `const box = {limit: 0}
+
+function bump(value: number) {
+  box.limit += value
+  return box.limit
+}
+
+function double(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given max >= bump(min)
+ */
+function impure(min: number, max: number) {
+  return max
+}
+
+/** @fit
+ * given double(10) > 0
+ */
+function noInput(value: number) {
+  return value
+}
+
+/** @fit
+ * given double(value): 0..10
+ */
+function derivedRangeTarget(value: number) {
+  return value
+}
+`)
+const impureGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impure' && check.text === 'given max >= bump(min)')
+const noInputGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInput' && check.text === 'given double(10) > 0')
+const derivedRangeTargetCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'derivedRangeTarget' && check.text === 'given double(value): 0..10')
+if (
+  impureGivenCheck?.status !== 'unknown'
+  || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
+  || impureGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || noInputGivenCheck?.status !== 'unknown'
+  || noInputGivenCheck.reason !== 'given must mention an input'
+  || derivedRangeTargetCheck?.status !== 'unknown'
+  || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
+) {
+  console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
+  console.error(JSON.stringify(unsupportedGivenExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: unsupported cases rejected')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)
