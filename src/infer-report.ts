@@ -5,9 +5,12 @@ import {
 } from './check-types.ts'
 import {type FitInferFact} from './facts.ts'
 import {
+  fitRangeCases,
   fitExpressionText,
   parseFitSpecLine,
   type FitExpressionLike,
+  type FitRange,
+  type FitRangeCase,
   type FitSpec,
 } from './parser.ts'
 import {type Value} from './domain.ts'
@@ -208,18 +211,42 @@ function parseFitSpecLineForInference(text: string): FitSpec | null {
 function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
   if (range == null) return null
-  if (spec.range.finiteValues != null) {
-    return range.values != null && range.values.every(value => spec.range.finiteValues!.includes(value)) ? range.text : null
-  }
-  const lowerOk = spec.range.lowerValue != null
-    && (spec.range.lowerInclusive ? range.min >= spec.range.lowerValue : range.min > spec.range.lowerValue)
-  const upperOk = spec.range.upperValue != null
-    && (spec.range.upperInclusive ? range.max <= spec.range.upperValue : range.max < spec.range.upperValue)
-  return lowerOk
-    && upperOk
-    && (spec.range.valueKind !== 'int' || range.isInteger)
+  return inferredRangeInsideSpec(range, spec.range)
     ? range.text
     : null
+}
+
+function inferredRangeInsideSpec(
+  range: Extract<FitInferFact, {kind: 'range'}>,
+  specRange: FitRange,
+) {
+  if (specRange.valueKind === 'int' && !range.isInteger) return false
+  if (range.values != null) return range.values.every(value => valueInsideRangeCases(value, specRange))
+  return fitRangeCases(specRange).some(rangeCaseContainsInferredRange(range, specRange))
+}
+
+function valueInsideRangeCases(value: number, range: FitRange) {
+  return fitRangeCases(range).some(rangeCase => valueInsideRangeCase(value, range, rangeCase))
+}
+
+function valueInsideRangeCase(value: number, range: FitRange, rangeCase: FitRangeCase) {
+  if (range.valueKind === 'int' && !Number.isInteger(value)) return false
+  if (rangeCase.lowerValue == null || rangeCase.upperValue == null) return false
+  const lowerOk = rangeCase.lowerInclusive ? value >= rangeCase.lowerValue : value > rangeCase.lowerValue
+  const upperOk = rangeCase.upperInclusive ? value <= rangeCase.upperValue : value < rangeCase.upperValue
+  return lowerOk && upperOk
+}
+
+function rangeCaseContainsInferredRange(
+  range: Extract<FitInferFact, {kind: 'range'}>,
+  specRange: FitRange,
+) {
+  return (rangeCase: FitRangeCase) => {
+    if (rangeCase.lowerValue == null || rangeCase.upperValue == null) return false
+    const lowerOk = rangeCase.lowerInclusive ? range.min >= rangeCase.lowerValue : range.min > rangeCase.lowerValue
+    const upperOk = rangeCase.upperInclusive ? range.max <= rangeCase.upperValue : range.max < rangeCase.upperValue
+    return lowerOk && upperOk && (specRange.valueKind !== 'int' || range.isInteger)
+  }
 }
 
 function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {

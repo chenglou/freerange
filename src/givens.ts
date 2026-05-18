@@ -11,13 +11,13 @@ import {
   linearNameForExpression,
   numberValue,
   unknownArray,
+  withNumberCases,
   type FactSource,
   type LinearConstraint,
   type NumberValue,
   type Value,
 } from './domain.ts'
 import {
-  closedRangeApprox,
   parsePrintedNumber,
   setDomainPathValue,
 } from './domain-paths.ts'
@@ -35,9 +35,12 @@ import {
 import {
   fitExpressionParsed,
   fitExpressionText,
+  fitRangeCases,
   parseDomainPathText,
   publicFitText,
   type FitExpressionLike,
+  type FitRange,
+  type FitRangeCase,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -159,8 +162,10 @@ function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'g
     case 'given-range':
       return [...new Set([
         ...givenExpressionRootNamesFromText(spec.expression),
-        ...rangeBoundRootNames(spec.range.lower),
-        ...rangeBoundRootNames(spec.range.upper),
+        ...fitRangeCases(spec.range).flatMap(rangeCase => [
+          ...rangeBoundRootNames(rangeCase.lower),
+          ...rangeBoundRootNames(rangeCase.upper),
+        ]),
       ])]
     case 'given-comparison':
       return [...new Set([...givenExpressionRootNamesFromText(spec.left), ...givenExpressionRootNamesFromText(spec.right)])]
@@ -175,6 +180,7 @@ function givenExpressionRootNamesFromText(text: FitExpressionLike) {
   const parsed = fitExpressionParsed(text)
   const ignored = [...parsed.domainPaths.keys()]
   const roots = [...parsed.domainPaths.values()].map(domainPath => domainPath.root)
+  if (typeof text !== 'string' && text.scopeSourceId != null) return roots
   roots.push(...givenExpressionRootNames(parsed.expression, ignored))
   return roots
 }
@@ -202,21 +208,42 @@ function givenExpressionRootNames(expression: ts.Expression, ignored: string[]):
 }
 
 function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
-  const closed = closedRangeApprox(spec.range)
-  if (closed != null && closed.min > closed.max) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
+  const closed = closedRangeCases(spec.range)
+  if (closed != null && closed.every(range => range.min > range.max)) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
   for (const range of ranges) {
     if (!sameExpressionText(range.expression, spec.expression)) continue
     if (spec.range.finiteValues != null && range.range.finiteValues != null) {
       const overlap = spec.range.finiteValues.some(value => range.range.finiteValues!.includes(value))
       if (!overlap) return `no input can satisfy both ${range.text} and ${spec.text}`
     }
-    const earlier = closedRangeApprox(range.range)
+    const earlier = closedRangeCases(range.range)
     if (closed == null || earlier == null) continue
-    if (closed.max < earlier.min || closed.min > earlier.max) {
+    if (!rangeCaseSetsOverlap(closed, earlier)) {
       return `no input can satisfy both ${range.text} and ${spec.text}`
     }
   }
   return null
+}
+
+function closedRangeCases(range: FitRange): {min: number; max: number}[] | null {
+  const cases = fitRangeCases(range).map(rangeCase => closedStaticRangeCase(range, rangeCase))
+  return cases.some(item => item == null) ? null : cases as {min: number; max: number}[]
+}
+
+function closedStaticRangeCase(range: FitRange, rangeCase: FitRangeCase): {min: number; max: number} | null {
+  if (rangeCase.lowerValue == null || rangeCase.upperValue == null) return null
+  const min = range.valueKind === 'int' && !rangeCase.lowerInclusive ? Math.floor(rangeCase.lowerValue) + 1 : rangeCase.lowerValue
+  const max = range.valueKind === 'int' && !rangeCase.upperInclusive ? Math.ceil(rangeCase.upperValue) - 1 : rangeCase.upperValue
+  return {min, max}
+}
+
+function rangeCaseSetsOverlap(left: {min: number; max: number}[], right: {min: number; max: number}[]) {
+  for (const leftCase of left) {
+    for (const rightCase of right) {
+      if (leftCase.max >= rightCase.min && rightCase.max >= leftCase.min) return true
+    }
+  }
+  return false
 }
 
 function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
@@ -260,17 +287,36 @@ export function collectGivenAssumptions(
         checks.push(value.check)
         continue
       }
-      const lower = evaluateGivenNumber(file, functionName, spec, spec.range.lower, context, evaluators, 'range lower bound')
+      const rangeCases = fitRangeCases(spec.range)
+      if (rangeCases.length !== 1) {
+        let invalid = false
+        for (const rangeCase of rangeCases) {
+          const lower = evaluateGivenNumber(file, functionName, spec, rangeCase.lower, context, evaluators, 'range lower bound')
+          const upper = evaluateGivenNumber(file, functionName, spec, rangeCase.upper, context, evaluators, 'range upper bound')
+          if (lower.kind === 'invalid') {
+            checks.push(lower.check)
+            invalid = true
+          }
+          if (upper.kind === 'invalid') {
+            checks.push(upper.check)
+            invalid = true
+          }
+        }
+        if (invalid) continue
+        continue
+      }
+      const rangeCase = rangeCases[0]!
+      const lower = evaluateGivenNumber(file, functionName, spec, rangeCase.lower, context, evaluators, 'range lower bound')
       if (lower.kind === 'invalid') {
         checks.push(lower.check)
         continue
       }
-      const upper = evaluateGivenNumber(file, functionName, spec, spec.range.upper, context, evaluators, 'range upper bound')
+      const upper = evaluateGivenNumber(file, functionName, spec, rangeCase.upper, context, evaluators, 'range upper bound')
       if (upper.kind === 'invalid') {
         checks.push(upper.check)
         continue
       }
-      const facts = rangeFactsFromBounds(value.value, lower.value, spec.range.lowerInclusive, upper.value, spec.range.upperInclusive, spec.text, given.source)
+      const facts = rangeFactsFromBounds(value.value, lower.value, rangeCase.lowerInclusive, upper.value, rangeCase.upperInclusive, spec.text, given.source)
       const contradiction = givenRangeContradictionReason(facts, assumptions)
       if (contradiction != null) {
         checks.push({
@@ -462,18 +508,9 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
 }
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
-  const closed = closedRangeApprox(spec.range)
-  if (closed == null && spec.range.finiteValues == null) return
   const expressionText = spec.expression.text
-  const value = spec.range.finiteValues == null
-    ? numberValue(
-      closed?.min ?? Number.NEGATIVE_INFINITY,
-      closed?.max ?? Number.POSITIVE_INFINITY,
-      spec.range.valueKind === 'int',
-      expressionText,
-      linearVariable(linearNameForExpression(expressionText)),
-    )
-    : finiteNumberValue(spec.range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)))
+  const value = staticRangeValue(spec.range, expressionText)
+  if (value == null) return
   if (expressionText.includes('[]')) {
     const domainPath = parseDomainPathText(expressionText)
     if (domainPath != null && domainPath.segments.length > 0) {
@@ -498,4 +535,44 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSp
   const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
   env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+}
+
+function staticRangeValue(range: FitRange, expressionText: string): NumberValue | null {
+  if (range.finiteValues != null) return finiteNumberValue(range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)))
+  const cases = fitRangeCases(range).map(rangeCase => staticRangeCaseApprox(range, rangeCase))
+  if (cases.every(rangeCase => rangeCase == null)) return null
+  const approximatedCases = cases.map(rangeCase => rangeCase ?? {min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY})
+  return rangeCasesValue(range, expressionText, approximatedCases)
+}
+
+function staticRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase): {min: number; max: number} | null {
+  if (rangeCase.lowerValue == null && rangeCase.upperValue == null && range.valueKind !== 'int') return null
+  const min = rangeCase.lowerValue == null
+    ? Number.NEGATIVE_INFINITY
+    : range.valueKind === 'int' && !rangeCase.lowerInclusive
+      ? Math.floor(rangeCase.lowerValue) + 1
+      : rangeCase.lowerValue
+  const max = rangeCase.upperValue == null
+    ? Number.POSITIVE_INFINITY
+    : range.valueKind === 'int' && !rangeCase.upperInclusive
+      ? Math.ceil(rangeCase.upperValue) - 1
+      : rangeCase.upperValue
+  return {min, max}
+}
+
+function rangeCasesValue(range: FitRange, expressionText: string, cases: {min: number; max: number}[]): NumberValue {
+  const linear = linearVariable(linearNameForExpression(expressionText))
+  const value = numberValue(
+    Math.min(...cases.map(rangeCase => rangeCase.min)),
+    Math.max(...cases.map(rangeCase => rangeCase.max)),
+    range.valueKind === 'int',
+    expressionText,
+    linear,
+  )
+  return cases.length === 1
+    ? value
+    : withNumberCases(value, cases.map(rangeCase => ({
+      value: numberValue(rangeCase.min, rangeCase.max, range.valueKind === 'int', expressionText, linear),
+      assumptions: [],
+    })))
 }

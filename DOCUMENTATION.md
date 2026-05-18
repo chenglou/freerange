@@ -87,6 +87,7 @@ Inline `//` comments need to be on the same line as the type/value field, the fu
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
+Range bounds and operator sides can use pure TypeScript expressions that evaluate to numbers. In type contracts, field names refer to the value being checked; other names resolve where the type is declared.
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. For example, a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected.
 
 Syntax Glossary's at the end of the docs.
@@ -256,6 +257,8 @@ a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
 int a..<b // integer from a up to, but not including, b.
 0 | 40 | 200 // exact finite numeric set.
+0..10 | 20..30 // numeric alternatives. The value must fit one alternative.
+low() | high() // pure expression alternatives. Equivalent to low()..low() | high()..high().
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.

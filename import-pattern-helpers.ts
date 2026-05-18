@@ -85,6 +85,16 @@ export type ImportedTypeFieldRows = {
   }[]
 }
 
+export const importedTypeMinWidth = 80
+
+export function importedTypeDouble(value: number) {
+  return value * 2
+}
+
+export type ImportedScopedTypeWidth = {
+  width: number // @fit importedTypeDouble(importedTypeMinWidth)..Infinity
+}
+
 export type ImportedBox<T> = {
   value: T
 }
@@ -102,4 +112,12 @@ export function importedTupleCenter(sourceX: number, sourceY: number, targetX: n
   const xOffset = Math.abs(targetX - sourceX)
   const yOffset = Math.abs(targetY - sourceY)
   return [sourceX + xOffset, sourceY + yOffset, xOffset, yOffset]
+}
+
+/** @fit
+ * given min <= max
+ * return: min..max
+ */
+export function importedDynamicRange(min: number, max: number) {
+  return min + (max - max)
 }

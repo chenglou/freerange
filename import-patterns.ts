@@ -1,8 +1,8 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import defaultImportedClampWidth, {ImportedClassBox, importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter} from './import-pattern-helpers'
+import defaultImportedClampWidth, {ImportedClassBox, importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedDynamicRange, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
-import type {ImportedPickedRows, ImportedShapeRows, ImportedTypeFieldRows, ImportedTypeFieldSpring} from './import-pattern-helpers'
+import type {ImportedPickedRows, ImportedScopedTypeWidth, ImportedShapeRows, ImportedTypeFieldRows, ImportedTypeFieldSpring} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
 import {declaredClampWidth} from '@fit-fixtures/import-pattern-declared-package'
 import importedDefaultMaxAlias, {namedMaxAlias as importedNamedMaxAlias} from './import-pattern-alias-helpers'
@@ -108,6 +108,13 @@ export function namespaceMemberAliasContract(width: number) {
  */
 export function importedHelperAliasContract(value: number) {
   return addImportedGap(value)
+}
+
+/** @fit
+ * return: 10..20
+ */
+export function importedDynamicRangeSummaryContract() {
+  return importedDynamicRange(10, 20)
 }
 
 /** @fit
@@ -247,6 +254,13 @@ export function importedTypeFieldArrayElement(input: ImportedTypeFieldRows) {
 export function namespaceImportedTypeFieldArrayElement(input: importedShapes.ImportedTypeFieldRows) {
   const rows = input.rows.map(row => ({height: row.height}))
   return {rows}
+}
+
+/** @fit
+ * return >= 160
+ */
+export function importedTypeContractDeclarationScope(input: ImportedScopedTypeWidth) {
+  return input.width
 }
 
 /** @fit

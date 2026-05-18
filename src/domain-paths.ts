@@ -1,9 +1,11 @@
 import * as ts from 'typescript'
 import {
+  fitRangeCases,
   publicFitText,
   type FitDomainPath,
   type FitDomainPathSegment,
   type FitRange,
+  type FitRangeCase,
 } from './parser.ts'
 import {
   unknown,
@@ -26,12 +28,22 @@ export function parsePrintedNumber(text: string): number | null {
 }
 
 export function closedRangeApprox(range: FitRange): {min: number; max: number} | null {
-  const lower = range.lowerValue ?? Number.NEGATIVE_INFINITY
-  const upper = range.upperValue ?? Number.POSITIVE_INFINITY
-  const min = range.valueKind === 'int' && range.lowerValue != null && !range.lowerInclusive
+  const cases = fitRangeCases(range).map(rangeCase => closedRangeCaseApprox(range, rangeCase))
+  if (cases.some(rangeCase => rangeCase == null)) return null
+  const closed = cases as {min: number; max: number}[]
+  const min = Math.min(...closed.map(rangeCase => rangeCase.min))
+  const max = Math.max(...closed.map(rangeCase => rangeCase.max))
+  if (!Number.isFinite(min) && !Number.isFinite(max) && min === Number.NEGATIVE_INFINITY && max === Number.POSITIVE_INFINITY) return null
+  return {min, max}
+}
+
+function closedRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase): {min: number; max: number} | null {
+  const lower = rangeCase.lowerValue ?? Number.NEGATIVE_INFINITY
+  const upper = rangeCase.upperValue ?? Number.POSITIVE_INFINITY
+  const min = range.valueKind === 'int' && rangeCase.lowerValue != null && !rangeCase.lowerInclusive
     ? Math.floor(lower) + 1
     : lower
-  const max = range.valueKind === 'int' && range.upperValue != null && !range.upperInclusive
+  const max = range.valueKind === 'int' && rangeCase.upperValue != null && !rangeCase.upperInclusive
     ? Math.ceil(upper) - 1
     : upper
   if (!Number.isFinite(min) && !Number.isFinite(max) && min === Number.NEGATIVE_INFINITY && max === Number.POSITIVE_INFINITY) return null

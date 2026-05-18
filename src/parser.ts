@@ -17,18 +17,23 @@ export type ParsedFitExpression = {
 export type FitExpression = {
   text: string
   parsed: ParsedFitExpression
+  scopeSourceId?: string
 }
 
 export type FitExpressionLike = string | FitExpression
 
-export type FitRange = {
-  valueKind: 'int' | 'number'
+export type FitRangeCase = {
   lower: FitExpression
   upper: FitExpression
   lowerValue: number | null
   upperValue: number | null
   lowerInclusive: boolean
   upperInclusive: boolean
+}
+
+export type FitRange = FitRangeCase & {
+  valueKind: 'int' | 'number'
+  alternatives?: FitRangeCase[]
   finiteValues?: number[]
   text: string
 }
@@ -150,6 +155,25 @@ function fitExpressionFromParsedExpression(parsed: ParsedFitExpression, expressi
     text: normalizeFitText(publicParsedExpressionText(parsed, expression)),
     parsed: {expression, domainPaths: parsed.domainPaths},
   }
+}
+
+export function fitExpressionScopeSourceId(expression: FitExpressionLike) {
+  return typeof expression === 'string' ? undefined : expression.scopeSourceId
+}
+
+export function withFitExpressionScope(expression: FitExpression, scopeSourceId: string | undefined): FitExpression {
+  return scopeSourceId == null ? expression : {...expression, scopeSourceId}
+}
+
+export function fitRangeCases(range: FitRange): FitRangeCase[] {
+  return range.alternatives ?? [{
+    lower: range.lower,
+    upper: range.upper,
+    lowerValue: range.lowerValue,
+    upperValue: range.upperValue,
+    lowerInclusive: range.lowerInclusive,
+    upperInclusive: range.upperInclusive,
+  }]
 }
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
@@ -573,66 +597,138 @@ export function parseFitRangeText(text: string, parseExpression: FitExpressionPa
   if (valueKindMatch == null) return null
   const body = valueKindMatch[2]!.trim()
   const valueKind = valueKindMatch[1] == null ? 'number' : 'int'
-  const finiteValues = parseFiniteSetText(body)
-  if (finiteValues != null) {
-    const lower = Math.min(...finiteValues)
-    const upper = Math.max(...finiteValues)
+
+  const alternatives = splitTopLevelAlternatives(body)
+  if (alternatives != null) {
+    const cases = alternatives.map(part => parseFitRangeCaseText(part, parseExpression))
+    if (cases.some(item => item == null)) return null
+    const rangeCases = cases as FitRangeCase[]
+    const envelope = rangeCaseEnvelope(rangeCases)
+    const finiteValues = finiteValuesFromRangeCases(rangeCases)
     return {
       valueKind,
-      lower: parseExpression(String(lower)),
-      upper: parseExpression(String(upper)),
-      lowerValue: lower,
-      upperValue: upper,
-      lowerInclusive: true,
-      upperInclusive: true,
-      finiteValues,
+      ...envelope,
+      ...(rangeCases.length === 1 ? {} : {alternatives: rangeCases}),
+      ...(finiteValues == null ? {} : {finiteValues}),
       text,
     }
   }
-  const bounds = splitRangeBounds(body)
+
+  const single = parseFitRangeCaseText(body, parseExpression)
+  if (single == null) return null
+  return {
+    valueKind,
+    ...single,
+    text,
+  }
+}
+
+function parseFitRangeCaseText(text: string, parseExpression: FitExpressionParser): FitRangeCase | null {
+  const bounds = splitRangeBounds(text)
   if (bounds != null) {
     const {upperInclusive} = bounds
     const lower = normalizeFitText(bounds.lower)
     const upper = normalizeFitText(bounds.upper)
     if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
     return {
-      valueKind,
       lower: parseExpression(lower),
       upper: parseExpression(upper),
       lowerValue: parseRangeBoundNumber(lower),
       upperValue: parseRangeBoundNumber(upper),
       lowerInclusive: true,
       upperInclusive,
-      text,
     }
   }
-  if (isRangeBoundText(body)) {
-    const normalizedBody = normalizeFitText(body)
+  if (isRangeBoundText(text)) {
+    const normalizedBody = normalizeFitText(text)
     const expression = parseExpression(normalizedBody)
     return {
-      valueKind,
       lower: expression,
       upper: expression,
       lowerValue: parseRangeBoundNumber(normalizedBody),
       upperValue: parseRangeBoundNumber(normalizedBody),
       lowerInclusive: true,
       upperInclusive: true,
-      text,
     }
   }
   return null
 }
 
-function parseFiniteSetText(text: string): number[] | null {
-  if (!text.includes('|')) return null
+function rangeCaseEnvelope(cases: FitRangeCase[]): FitRangeCase {
+  const lowerCase = cases.reduce((best, current) => rangeCaseLowerSortValue(current) < rangeCaseLowerSortValue(best) ? current : best)
+  const upperCase = cases.reduce((best, current) => rangeCaseUpperSortValue(current) > rangeCaseUpperSortValue(best) ? current : best)
+  return {
+    lower: lowerCase.lower,
+    upper: upperCase.upper,
+    lowerValue: cases.every(item => item.lowerValue != null) ? Math.min(...cases.map(item => item.lowerValue!)) : null,
+    upperValue: cases.every(item => item.upperValue != null) ? Math.max(...cases.map(item => item.upperValue!)) : null,
+    lowerInclusive: lowerCase.lowerInclusive,
+    upperInclusive: upperCase.upperInclusive,
+  }
+}
+
+function rangeCaseLowerSortValue(rangeCase: FitRangeCase) {
+  return rangeCase.lowerValue ?? Number.NEGATIVE_INFINITY
+}
+
+function rangeCaseUpperSortValue(rangeCase: FitRangeCase) {
+  return rangeCase.upperValue ?? Number.POSITIVE_INFINITY
+}
+
+function finiteValuesFromRangeCases(cases: FitRangeCase[]): number[] | null {
   const values: number[] = []
-  for (const part of text.split('|')) {
-    const value = parseRangeBoundNumber(part.trim())
-    if (value == null || !Number.isFinite(value)) return null
-    values.push(value)
+  for (const rangeCase of cases) {
+    if (
+      rangeCase.lowerValue == null
+      || rangeCase.upperValue == null
+      || rangeCase.lowerValue !== rangeCase.upperValue
+      || !Number.isFinite(rangeCase.lowerValue)
+      || !rangeCase.lowerInclusive
+      || !rangeCase.upperInclusive
+    ) return null
+    values.push(rangeCase.lowerValue)
   }
   const unique = [...new Set(values)]
   return unique.length === 0 ? null : unique.sort((left, right) => left - right)
+}
+
+function splitTopLevelAlternatives(text: string): string[] | null {
+  const parts: string[] = []
+  let start = 0
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i]
+    if (quote != null) {
+      if (char === '\\') i++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (char === '|' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      if (text[i - 1] === '|' || text[i + 1] === '|') return null
+      const part = text.slice(start, i).trim()
+      if (part.length === 0) return null
+      parts.push(part)
+      start = i + 1
+    }
+  }
+  if (parts.length === 0) return null
+  const last = text.slice(start).trim()
+  if (last.length === 0) return null
+  parts.push(last)
+  return parts
 }
 
 function splitRangeBounds(text: string): {lower: string; upper: string; upperInclusive: boolean} | null {

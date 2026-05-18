@@ -1,11 +1,14 @@
 import * as ts from 'typescript'
 import {
+  buildFitSourceFile,
   loadFitProject,
   type FitFunction,
+  type FitProjectFile,
 } from './modules.ts'
 import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
+  fitExpressionScopeSourceId,
   fitExpressionParsed,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
@@ -17,6 +20,7 @@ import {
   type FitSpec,
 } from './parser.ts'
 import {
+  evaluateRangeValue as evaluateParsedRangeValue,
   evaluateRangeBound as evaluateParsedRangeBound,
   evaluateSpecExpression as evaluateParsedSpecExpression,
   proveRangeSpec as proveParsedRangeSpec,
@@ -382,7 +386,7 @@ function callChecks(context: EvalContext) {
 
 function toCallsiteCheck(check: FitCheck): FitCheck {
   const status = check.status === 'pass' ? 'pass'
-    : check.status === 'unknown' ? 'unknown'
+    : isUnsupportedCallRequirement(check) ? 'unknown'
       : isDefiniteCallFailure(check) ? 'fail' : 'requires'
   return {
     file: check.file,
@@ -397,6 +401,10 @@ function toCallsiteCheck(check: FitCheck): FitCheck {
 
 function isDefiniteCallFailure(check: FitCheck) {
   return check.detail?.kind === 'call-precondition' && check.detail.definiteFailure
+}
+
+function isUnsupportedCallRequirement(check: FitCheck) {
+  return check.detail?.kind === 'call-precondition' && check.detail.unsupported
 }
 
 function dedupeCallsiteChecks(checks: FitCheck[]) {
@@ -545,7 +553,40 @@ function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContra
 const checkSpecHooks: CheckSpecHooks = {
   evaluateExpression: (expression, context) => evaluateContractExpression(expression, context),
   evaluateDomainPath: (domainPath, context) => evaluateDomainPathValue(domainPath, context.env),
+  contextForExpression: (expression, context) => contextForScopedFitExpression(expression, context),
   parsePrintedNumber,
+}
+
+function contextForScopedFitExpression(expression: FitExpressionLike, context: EvalContext): EvalContext {
+  const scopeSourceId = fitExpressionScopeSourceId(expression)
+  if (scopeSourceId == null || scopeSourceId === context.program.sourceId) {
+    return scopeSourceId == null ? context : contextWithDeclarationScope(context.program, context)
+  }
+  const scopeProgram = programForSourceId(context.program, scopeSourceId)
+  return scopeProgram == null ? context : contextWithDeclarationScope(scopeProgram, context)
+}
+
+function contextWithDeclarationScope(scopeProgram: Program, context: EvalContext): EvalContext {
+  return {
+    ...context,
+    program: scopeProgram,
+    file: scopeProgram.file,
+    env: programGlobalEnv(scopeProgram),
+  }
+}
+
+function programForSourceId(program: Program, sourceId: string): Program | null {
+  let typeOnlyFile: FitProjectFile<Value> | null = null
+  for (const file of program.project.files.values()) {
+    if (file.sourceId !== sourceId) continue
+    if (isLoadedProgram(file)) return file
+    typeOnlyFile = file
+  }
+  return typeOnlyFile == null ? null : buildFitSourceFile(typeOnlyFile.sourceId, typeOnlyFile.sourceText, readTopLevelGlobal)
+}
+
+function isLoadedProgram(file: FitProjectFile<Value>): file is Program {
+  return 'globals' in file && 'functions' in file && 'imports' in file
 }
 
 function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {
@@ -686,6 +727,9 @@ function verifyCheckSpecForResultCases(
     return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache)
   }
 
+  const joinedCheck = verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache)
+  if (joinedCheck.status === 'pass') return joinedCheck
+
   const caseChecks = returnCases.map(returnCase => verifyCheckSpec(
     file,
     program,
@@ -712,6 +756,10 @@ function evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Valu
   return evaluateParsedRangeBound(text, context, checkSpecHooks)
 }
 
+function evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, provenance: string[] = []): Value {
+  return evaluateParsedRangeValue(range, context, checkSpecHooks, expr, provenance)
+}
+
 function evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value {
   return evaluateParsedSpecExpression(text, context, checkSpecHooks)
 }
@@ -722,6 +770,7 @@ const givenEvaluators = {
 }
 
 const callContractEvaluators = {
+  evaluateRangeValue,
   evaluateSpecExpression,
   proveRangeSpec,
 }

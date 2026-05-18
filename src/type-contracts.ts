@@ -9,6 +9,7 @@ import {
   parseFitExpressionText,
   parseFitRangeText,
   publicFitText,
+  withFitExpressionScope,
   type ComparisonOperator,
   type FitCheckSpec,
   type FitCommentLine,
@@ -39,12 +40,14 @@ export type TypeContractResult<T extends TypeContractSpec> = {
 export type TypeContractTemplate =
   | {
       kind: 'range'
+      scopeSourceId?: string
       expression: FitExpression
       range: FitRange
       line?: number
     }
   | {
       kind: 'comparison'
+      scopeSourceId?: string
       left: FitExpression
       op: ComparisonOperator
       right: FitExpression
@@ -182,7 +185,11 @@ function visitTypeContractFieldTemplateChild(sourceText: string, node: ts.Node, 
 }
 
 function setTypeContractTemplates(index: TypeContractTemplateIndex, node: ts.Node, result: TypeContractTemplateResult) {
-  index.byNode.set(node, result)
+  const scopeSourceId = node.getSourceFile().fileName
+  index.byNode.set(node, {
+    unsupported: result.unsupported,
+    templates: result.templates.map(template => ({...template, scopeSourceId})),
+  })
 }
 
 export function typeInputGivenContractForFunction(program: Program, fn: FitFunction): TypeContractResult<FitGivenSpec> {
@@ -335,8 +342,8 @@ function instantiateTypeContractTemplates(
 function instantiateTypeContractTemplate(template: TypeContractTemplate, root: string, kind: ContractKind): TypeContractSpec {
   switch (template.kind) {
     case 'range': {
-      const expression = instantiateTypeTemplateExpression(template.expression, root)
-      const range = instantiateTypeTemplateRange(template.range, root)
+      const expression = instantiateTypeTemplateExpression(template.expression, root, template.scopeSourceId)
+      const range = instantiateTypeTemplateRange(template.range, root, template.scopeSourceId)
       const text = `${publicFitText(expression.text)}: ${range.text}`
       return kind === 'given'
         ? {
@@ -355,8 +362,8 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
         }
     }
     case 'comparison': {
-      const left = instantiateTypeTemplateExpression(template.left, root)
-      const right = instantiateTypeTemplateExpression(template.right, root)
+      const left = instantiateTypeTemplateExpression(template.left, root, template.scopeSourceId)
+      const right = instantiateTypeTemplateExpression(template.right, root, template.scopeSourceId)
       const text = `${publicFitText(left.text)} ${template.op} ${publicFitText(right.text)}`
       return kind === 'given'
         ? {
@@ -379,24 +386,31 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
   }
 }
 
-function instantiateTypeTemplateRange(range: FitRange, root: string): FitRange {
+function instantiateTypeTemplateRange(range: FitRange, root: string, scopeSourceId: string | undefined): FitRange {
   return {
     ...range,
-    lower: instantiateTypeTemplateExpression(range.lower, root),
-    upper: instantiateTypeTemplateExpression(range.upper, root),
+    lower: instantiateTypeTemplateExpression(range.lower, root, scopeSourceId),
+    upper: instantiateTypeTemplateExpression(range.upper, root, scopeSourceId),
+    ...(range.alternatives == null ? {} : {
+      alternatives: range.alternatives.map(rangeCase => ({
+        ...rangeCase,
+        lower: instantiateTypeTemplateExpression(rangeCase.lower, root, scopeSourceId),
+        upper: instantiateTypeTemplateExpression(rangeCase.upper, root, scopeSourceId),
+      })),
+    }),
     text: instantiateTypeContractTemplateText(range.text, root),
   }
 }
 
-function instantiateTypeTemplateExpression(expression: FitExpression, root: string): FitExpression {
+function instantiateTypeTemplateExpression(expression: FitExpression, root: string, scopeSourceId: string | undefined): FitExpression {
   const domainPaths = new Map<string, FitDomainPath>()
   for (const [name, domainPath] of expression.parsed.domainPaths) {
     domainPaths.set(name, instantiateTypeTemplateDomainPath(domainPath, root))
   }
-  return {
+  return withFitExpressionScope({
     text: normalizeFitText(instantiateTypeContractTemplateText(expression.text, root)),
     parsed: {expression: expression.parsed.expression, domainPaths},
-  }
+  }, scopeSourceId)
 }
 
 function instantiateTypeTemplateDomainPath(domainPath: FitDomainPath, root: string): FitDomainPath {
@@ -587,7 +601,6 @@ function rewriteExpressionReferences(text: string, scope: TypeScope): TypeTextRe
     const name = match[1]!
     if (name === rootName || name === 'Infinity' || name === 'NaN' || name.startsWith('$')) continue
     if (scope.optionalFields.has(name)) return {unsupported: `type @fit reference "${name}" is optional; optional field contracts are not supported yet`}
-    return {unsupported: `type @fit reference "${name}" is not a required field in this object scope`}
   }
   return {text: publicFitText(rewritten)}
 }

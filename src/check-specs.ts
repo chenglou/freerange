@@ -7,19 +7,25 @@ import {
 import {
   finiteNumberSet,
   numberValue,
+  withNumberCases,
+  numberBranches,
   type ArrayValue,
+  type LinearConstraint,
   type NumberValue,
   type Value,
 } from './domain.ts'
 import {linearConstant, unwrapExpression} from './linear.ts'
 import {
+  fitExpressionScopeSourceId,
   fitExpressionParsed,
   fitExpressionText,
+  fitRangeCases,
   fitReturnInternalRoot,
   publicFitText,
   type FitDomainPath,
   type FitExpressionLike,
   type FitRange,
+  type FitRangeCase,
   type FitSpec,
 } from './parser.ts'
 import {proveComparison, proveComparisonWithStep} from './proof.ts'
@@ -27,6 +33,8 @@ import {
   finiteRangeSpecFailureReason,
   formatArraySummary,
   formatRange,
+  formatRangeSpec,
+  knownProofContextMany,
   rangeSpecFailureReason,
 } from './reporting.ts'
 import {
@@ -49,6 +57,7 @@ import {proofFactsFromValues} from './proof-facts.ts'
 export type CheckSpecHooks = {
   evaluateExpression: (expression: ts.Expression, context: EvalContext) => Value
   evaluateDomainPath: (domainPath: FitDomainPath, context: EvalContext) => Value
+  contextForExpression?: (expression: FitExpressionLike, context: EvalContext) => EvalContext
   parsePrintedNumber: (text: string) => number | null
 }
 
@@ -193,42 +202,193 @@ function wildcardCollectionLabel(collection: string) {
 
 export function proveRangeSpec(value: Value, range: FitRange, context: EvalContext, hooks: CheckSpecHooks): {status: FitCheckStatus; reason?: string} {
   if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
-  if (range.finiteValues != null) return proveFiniteRangeSpec(value, range)
-  if (staticRangeInside(value, range)) return {status: 'pass'}
-  const lower = evaluateRangeBound(range.lower, context, hooks)
-  if (lower.kind !== 'number') return {status: 'unknown', reason: rangeBoundNumberReason('lower', lower, range.lower.text)}
-  const upper = evaluateRangeBound(range.upper, context, hooks)
-  if (upper.kind !== 'number') return {status: 'unknown', reason: rangeBoundNumberReason('upper', upper, range.upper.text)}
+  const expected = evaluateRangeCases(range, context, hooks)
+  if (expected.kind === 'invalid') return {status: 'unknown', reason: rangeBoundNumberReason(expected.bound, expected.value, expected.text)}
+  return proveNumberInsideRangeCases(value, range, expected.cases, context.assumptions)
+}
 
-  const lowerStatus = proveComparison(value, range.lowerInclusive ? '>=' : '>', lower, context.assumptions)
-  const upperStatus = proveComparison(value, range.upperInclusive ? '<=' : '<', upper, context.assumptions)
-  const integerStatus: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
+type EvaluatedRangeCase = {
+  source: FitRangeCase
+  lower: NumberValue
+  upper: NumberValue
+}
+
+type EvaluatedRangeCases =
+  | {kind: 'cases'; cases: EvaluatedRangeCase[]}
+  | {kind: 'invalid'; bound: 'lower' | 'upper'; value: Exclude<Value, NumberValue>; text: string}
+
+export function evaluateRangeValue(
+  range: FitRange,
+  context: EvalContext,
+  hooks: CheckSpecHooks,
+  expr: string | null,
+  provenance: string[] = [],
+): Value {
+  const evaluated = evaluateRangeCases(range, context, hooks)
+  if (evaluated.kind === 'invalid') return {kind: 'unknown', reason: rangeBoundNumberReason(evaluated.bound, evaluated.value, evaluated.text)}
+  const cases = evaluated.cases.map(rangeCase => evaluatedRangeCaseValue(range, rangeCase, expr, provenance))
+  const min = Math.min(...cases.map(item => item.min))
+  const max = Math.max(...cases.map(item => item.max))
+  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.isInteger), expr, null, null, provenance)
+  return withNumberCases(value, cases.map(item => ({value: item, assumptions: []})))
+}
+
+function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckSpecHooks): EvaluatedRangeCases {
+  const cases: EvaluatedRangeCase[] = []
+  for (const rangeCase of fitRangeCases(range)) {
+    const lower = evaluateRangeBound(rangeCase.lower, context, hooks)
+    if (lower.kind !== 'number') return {kind: 'invalid', bound: 'lower', value: lower, text: rangeCase.lower.text}
+    const upper = evaluateRangeBound(rangeCase.upper, context, hooks)
+    if (upper.kind !== 'number') return {kind: 'invalid', bound: 'upper', value: upper, text: rangeCase.upper.text}
+    cases.push({source: rangeCase, lower, upper})
+  }
+  return {kind: 'cases', cases}
+}
+
+function evaluatedRangeCaseValue(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, provenance: string[]): NumberValue {
+  const exactSameExpression = rangeCase.source.lowerInclusive
+    && rangeCase.source.upperInclusive
+    && rangeCase.source.lower.text === rangeCase.source.upper.text
+  if (exactSameExpression) {
+    const value = rangeCase.lower
+    return numberValue(value.min, value.max, range.valueKind === 'int' || value.isInteger, expr ?? value.expr, value.linear, value.cases, mergeRangeProvenance(value, provenance))
+  }
+  return numberValue(
+    rangeCase.lower.min,
+    rangeCase.upper.max,
+    range.valueKind === 'int',
+    expr,
+    null,
+    null,
+    mergeRangeProvenance(rangeCase.lower, rangeCase.upper, provenance),
+  )
+}
+
+function mergeRangeProvenance(...items: (NumberValue | string[])[]) {
+  const lines: string[] = []
+  for (const item of items) lines.push(...(Array.isArray(item) ? item : item.provenance))
+  return [...new Set(lines)]
+}
+
+function proveNumberInsideRangeCases(
+  value: NumberValue,
+  range: FitRange,
+  cases: EvaluatedRangeCase[],
+  assumptions: LinearConstraint[],
+): {status: FitCheckStatus; reason?: string} {
+  if (range.finiteValues != null) {
+    const finite = proveFiniteRangeSpec(value, range)
+    if (finite.status === 'pass' || cases.length === range.finiteValues.length) return finite
+  }
+
+  const joined = proveNumberInsideAnyRangeCase(value, range, cases, assumptions)
+  if (joined.kind === 'pass') return {status: 'pass'}
+
+  let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus} | null = null
+  for (const branch of numberBranches(value)) {
+    const branchAssumptions = [...assumptions, ...branch.assumptions]
+    const branchProof = proveNumberInsideAnyRangeCase(branch.value, range, cases, branchAssumptions)
+    if (branchProof.kind === 'pass') continue
+    if (branchProof.kind === 'unknown') {
+      unknown ??= {case: branchProof.case, status: branchProof.status}
+      continue
+    }
+    return {status: 'fail', reason: rangeSpecFailureReasonForCases(branch.value, range, cases, branchAssumptions, branchProof.status, branchProof.case)}
+  }
+  if (unknown != null) return {status: 'unknown', reason: rangeSpecFailureReasonForCases(value, range, cases, assumptions, unknown.status, unknown.case)}
+  return {status: 'pass'}
+}
+
+type RangeCasesProof =
+  | {kind: 'pass'}
+  | {kind: 'unknown'; case: EvaluatedRangeCase; status: RangeCaseStatus}
+  | {kind: 'fail'; case: EvaluatedRangeCase; status: RangeCaseStatus}
+
+function proveNumberInsideAnyRangeCase(
+  value: NumberValue,
+  range: FitRange,
+  cases: EvaluatedRangeCase[],
+  assumptions: LinearConstraint[],
+): RangeCasesProof {
+  let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus} | null = null
+  for (const rangeCase of cases) {
+    const status = proveNumberInsideRangeCase(value, range, rangeCase, assumptions)
+    if (status.status === 'pass') return {kind: 'pass'}
+    if (status.status === 'unknown' && unknown == null) unknown = {case: rangeCase, status}
+  }
+  if (unknown != null) return {kind: 'unknown', case: unknown.case, status: unknown.status}
+  const first = cases[0]!
+  return {kind: 'fail', case: first, status: proveNumberInsideRangeCase(value, range, first, assumptions)}
+}
+
+type RangeCaseStatus = {
+  status: FitCheckStatus
+  lower: ReturnType<typeof proveComparison>
+  upper: ReturnType<typeof proveComparison>
+  integer: {status: FitCheckStatus; reason?: string}
+}
+
+function proveNumberInsideRangeCase(
+  value: NumberValue,
+  range: FitRange,
+  rangeCase: EvaluatedRangeCase,
+  assumptions: LinearConstraint[],
+): RangeCaseStatus {
+  const lower = rangeBoundProofStatus(
+    proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, assumptions),
+    staticLowerBoundExceeded(value, rangeCase.source),
+  )
+  const upper = rangeBoundProofStatus(
+    proveComparison(value, rangeCase.source.upperInclusive ? '<=' : '<', rangeCase.upper, assumptions),
+    staticUpperBoundExceeded(value, rangeCase.source),
+  )
+  const integer: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
     ? {status: 'fail', reason: `need: ${value.expr ?? formatRange(value)} to be integer`}
     : {status: 'pass'}
+  const status: FitCheckStatus = lower.status === 'pass' && upper.status === 'pass' && integer.status === 'pass'
+    ? 'pass'
+    : lower.status === 'fail' || upper.status === 'fail' || integer.status === 'fail'
+      ? 'fail'
+      : 'unknown'
+  return {status, lower, upper, integer}
+}
 
-  if (lowerStatus.status === 'pass' && upperStatus.status === 'pass' && integerStatus.status === 'pass') return {status: 'pass'}
-  const missing = {
-    lower: lowerStatus.status !== 'pass',
-    upper: upperStatus.status !== 'pass',
-    integer: integerStatus.status !== 'pass',
+function rangeBoundProofStatus(proof: ReturnType<typeof proveComparison>, staticBoundExceeded: boolean): ReturnType<typeof proveComparison> {
+  return proof.status === 'unknown' && staticBoundExceeded
+    ? {...proof, status: 'fail'}
+    : proof
+}
+
+function staticLowerBoundExceeded(value: NumberValue, rangeCase: FitRangeCase) {
+  if (rangeCase.lowerValue == null) return false
+  return rangeCase.lowerInclusive ? value.min < rangeCase.lowerValue : value.min <= rangeCase.lowerValue
+}
+
+function staticUpperBoundExceeded(value: NumberValue, rangeCase: FitRangeCase) {
+  if (rangeCase.upperValue == null) return false
+  return rangeCase.upperInclusive ? value.max > rangeCase.upperValue : value.max >= rangeCase.upperValue
+}
+
+function rangeSpecFailureReasonForCases(
+  value: NumberValue,
+  range: FitRange,
+  cases: EvaluatedRangeCase[],
+  assumptions: LinearConstraint[],
+  status: RangeCaseStatus,
+  rangeCase: EvaluatedRangeCase,
+) {
+  if (cases.length === 1) {
+    return rangeSpecFailureReason(value, range, rangeCase.lower, rangeCase.upper, assumptions, {
+      lower: status.lower.status !== 'pass',
+      upper: status.upper.status !== 'pass',
+      integer: status.integer.status !== 'pass',
+    })
   }
-  const definitelyOutsideLower = range.lowerValue != null
-    && lowerStatus.status !== 'pass'
-    && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue)
-  const definitelyOutsideUpper = range.upperValue != null
-    && upperStatus.status !== 'pass'
-    && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue)
-  const status: FitCheckStatus = lowerStatus.status === 'fail'
-    || upperStatus.status === 'fail'
-    || integerStatus.status === 'fail'
-    || definitelyOutsideLower
-    || definitelyOutsideUpper
-    ? 'fail'
-    : 'unknown'
-  return {
-    status,
-    reason: rangeSpecFailureReason(value, range, lower, upper, context.assumptions, missing),
-  }
+  const lines = [`range was ${formatRange(value)}, expected inside ${formatRangeSpec(range)}`]
+  const known = knownProofContextMany([value, ...cases.flatMap(item => [item.lower, item.upper])], assumptions)
+  if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
+  lines.push(`missing: ${value.expr ?? formatRange(value)} in ${formatRangeSpec(range)}`)
+  return lines.join('\n')
 }
 
 function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
@@ -270,18 +430,6 @@ function specBoundIndexContext(context: EvalContext, hooks: CheckSpecHooks): Bou
       }
     },
   }
-}
-
-function staticRangeInside(value: NumberValue, range: FitRange) {
-  if (range.finiteValues != null) {
-    const produced = finiteNumberSet(value)
-    return produced != null && produced.every(choice => range.finiteValues!.includes(choice))
-  }
-  if (range.valueKind === 'int' && !value.isInteger) return false
-  if (range.lowerValue == null || range.upperValue == null) return false
-  const lowerOk = range.lowerInclusive ? value.min >= range.lowerValue : value.min > range.lowerValue
-  const upperOk = range.upperInclusive ? value.max <= range.upperValue : value.max < range.upperValue
-  return lowerOk && upperOk
 }
 
 export function evaluateRangeBound(text: FitExpressionLike, context: EvalContext, hooks: CheckSpecHooks): Value {
@@ -344,11 +492,12 @@ function domainPathText(domainPath: FitDomainPath) {
 
 export function evaluateSpecExpression(text: FitExpressionLike, context: EvalContext, hooks: CheckSpecHooks): Value {
   const parsed = fitExpressionParsed(text)
-  if (parsed.domainPaths.size === 0) return hooks.evaluateExpression(parsed.expression, context)
+  const scopedContext = fitExpressionScopeSourceId(text) == null ? context : hooks.contextForExpression?.(text, context) ?? context
+  if (parsed.domainPaths.size === 0) return hooks.evaluateExpression(parsed.expression, scopedContext)
 
-  const env = new Map(context.env)
+  const env = new Map(scopedContext.env)
   for (const [name, domainPath] of parsed.domainPaths) env.set(name, hooks.evaluateDomainPath(domainPath, context))
-  return hooks.evaluateExpression(parsed.expression, {...context, env})
+  return hooks.evaluateExpression(parsed.expression, {...scopedContext, env})
 }
 
 type AtomProof = {

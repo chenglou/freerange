@@ -157,6 +157,95 @@ if (pureGivenHelperFailures.length > 0) {
   console.log('given contract expressions: pure helper call')
 }
 
+const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
+  return 10
+}
+
+function high() {
+  return 20
+}
+
+/** @fit
+ * given min <= max
+ * return: min..max
+ */
+function keepInside(min: number, max: number) {
+  return min
+}
+
+/** @fit
+ * given min: int 0..100
+ * given max: int 0..100
+ * given min <= max
+ * return: int min..max
+ */
+function keepInsideInt(min: number, max: number) {
+  return min + (max - max)
+}
+
+/** @fit
+ * return: 10..20
+ */
+function usesDynamicSummary() {
+  return keepInside(10, 20)
+}
+
+/** @fit
+ * return: int 10..20
+ */
+function usesIntDynamicSummary() {
+  return keepInsideInt(10, 20)
+}
+
+/** @fit
+ * return: low() | high()
+ */
+function picksAlternative(flag: boolean) {
+  return flag ? low() : high()
+}
+
+/** @fit
+ * return: low() | high()
+ */
+function missesAlternative() {
+  return 15
+}
+
+/** @fit
+ * return: 0..10 | 20..30
+ */
+function picksRangeAlternative(flag: boolean) {
+  return flag ? 5 : 25
+}
+
+/** @fit
+ * return: 0..10 | 20..30
+ */
+function missesRangeAlternative() {
+  return 15
+}
+`)
+const dynamicSummaryCheck = dynamicRangeContractChecks.find(check => check.functionName === 'usesDynamicSummary' && check.text === 'return: 10..20')
+const intDynamicSummaryCheck = dynamicRangeContractChecks.find(check => check.functionName === 'usesIntDynamicSummary' && check.text === 'return: int 10..20')
+const dynamicAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'picksAlternative' && check.text === 'return: low() | high()')
+const missedAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'missesAlternative' && check.text === 'return: low() | high()')
+const dynamicRangeAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'picksRangeAlternative' && check.text === 'return: 0..10 | 20..30')
+const missedRangeAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'missesRangeAlternative' && check.text === 'return: 0..10 | 20..30')
+if (
+  dynamicSummaryCheck?.status !== 'pass'
+  || intDynamicSummaryCheck?.status !== 'pass'
+  || dynamicAlternativeCheck?.status !== 'pass'
+  || missedAlternativeCheck?.status !== 'fail'
+  || dynamicRangeAlternativeCheck?.status !== 'pass'
+  || missedRangeAlternativeCheck?.status !== 'fail'
+) {
+  console.error('expected dynamic range summaries and numeric alternatives to be checked')
+  console.error(JSON.stringify(dynamicRangeContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: dynamic bounds and alternatives')
+}
+
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
  * given width: int 320..2400
  * given gap: int 1..32
@@ -340,6 +429,33 @@ if (
   console.log('contract expressions: unsupported calls rejected')
 }
 
+const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}
+
+function bump() {
+  box.limit += 1
+  return box.limit
+}
+
+/** @fit
+ * return: bump() | 2
+ */
+function bad() {
+  return 2
+}
+`)
+const unsupportedRangeExpressionCheck = unsupportedRangeExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return: bump() | 2')
+if (
+  unsupportedRangeExpressionCheck?.status !== 'unknown'
+  || unsupportedRangeExpressionCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
+  || unsupportedRangeExpressionCheck.reason.includes('assignment mutates box.limit') !== true
+) {
+  console.error('expected unsupported range expressions to reject the same way as comparisons')
+  console.error(JSON.stringify(unsupportedRangeExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: unsupported expression rejected')
+}
+
 const mutableAliasContractChecks = verifyFitSource('contract-mutable-alias.ts', `let max = Math.max
 
 /** @fit
@@ -511,6 +627,53 @@ if (typeGivenPrefixFieldFailures.length > 0) {
   process.exitCode = 1
 } else {
   console.log('type contracts: given-prefixed field allowed')
+}
+
+const typeContractScopeChecks = verifyFitSource('type-contract-scope.ts', `const typeScopedMin = 80
+
+function typeScopedDouble(value: number) {
+  return value * 2
+}
+
+type ScopedTile = {
+  width: number // @fit typeScopedDouble(typeScopedMin)..Infinity
+}
+
+/** @fit
+ * return >= 160
+ */
+function readsScopedType(tile: ScopedTile) {
+  return tile.width
+}
+
+function rejectsUsageLocal() {
+  const typeScopedMin = 0
+  const tile: ScopedTile = {width: 40}
+  return tile.width
+}
+
+type MissingScopedTile = {
+  width: number // @fit missingTypeMin..Infinity
+}
+
+function reportsMissingDeclarationName(tile: MissingScopedTile) {
+  return tile.width
+}
+`)
+const scopedTypeReadCheck = typeContractScopeChecks.find(check => check.functionName === 'readsScopedType' && check.text === 'return >= 160')
+const usageLocalCaptureCheck = typeContractScopeChecks.find(check => check.functionName === 'rejectsUsageLocal' && check.text === 'tile.width: typeScopedDouble(typeScopedMin)..Infinity')
+const missingDeclarationNameCheck = typeContractScopeChecks.find(check => check.functionName === 'reportsMissingDeclarationName' && check.text === 'given tile.width: missingTypeMin..Infinity')
+if (
+  scopedTypeReadCheck?.status !== 'pass'
+  || usageLocalCaptureCheck?.status !== 'fail'
+  || missingDeclarationNameCheck?.status !== 'unknown'
+  || missingDeclarationNameCheck.reason?.includes('Unknown identifier missingTypeMin') !== true
+) {
+  console.error('expected type @fit contracts to evaluate free names where the type is declared')
+  console.error(JSON.stringify(typeContractScopeChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: declaration scope')
 }
 
 let duplicateFunctionError = ''

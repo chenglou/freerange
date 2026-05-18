@@ -131,9 +131,7 @@ export function formatExpectedRange(min: number, max: number, isInteger: boolean
 }
 
 export function formatRangeSpec(range: FitRange) {
-  if (range.finiteValues != null) return publicFitText(range.text)
-  const prefix = range.valueKind === 'int' ? 'int ' : ''
-  return publicFitText(`${prefix}${range.lower.text}${range.upperInclusive ? '..' : '..<'}${range.upper.text}`)
+  return publicFitText(range.text)
 }
 
 export function formatLinearConstraint(constraint: ReportLinearConstraint): string {

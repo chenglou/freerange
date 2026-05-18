@@ -14,7 +14,6 @@ import type {
   Program,
 } from './check-types.ts'
 import {
-  finiteNumberValue,
   linearNameForExpression,
   mergeProvenance,
   numberBranches,
@@ -26,7 +25,6 @@ import {
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {
-  closedRangeApprox,
   finiteElementAccessRoot,
   parsePrintedNumber,
   setDomainPathValue,
@@ -45,6 +43,7 @@ import type {FitFunction} from './modules.ts'
 import {
   fitExpressionParsed,
   fitExpressionText,
+  fitRangeCases,
   fitReturnInternalRoot,
   parseDomainPathText,
   parseExpression,
@@ -75,6 +74,7 @@ import {expressionRootNameDeep} from './source-expressions.ts'
 
 export type CallContractEvaluators = {
   evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value
+  evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, provenance?: string[]): Value
   proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string}
 }
 
@@ -174,6 +174,7 @@ function withCallRangeDetail(
     callerPassed: formatCallBinding(spec.expression.text, value),
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(value) != null,
+    unsupported: false,
   })
 }
 
@@ -183,6 +184,7 @@ function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBind
   if (range.finiteValues != null) {
     return [`${valueText} in {${range.finiteValues.join(', ')}}`]
   }
+  if (fitRangeCases(range).length > 1) return [`${valueText}: ${rangeText}`]
   const missing = {
     lower: range.lowerValue != null && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue),
     upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
@@ -196,7 +198,7 @@ function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBind
   if (missing.lower) lines.push(`${valueText} ${range.lowerInclusive ? '>=' : '>'} ${callSiteText(range.lower.text, callSiteBindings)}`)
   if (missing.upper) lines.push(`${valueText} ${range.upperInclusive ? '<=' : '<'} ${callSiteText(range.upper.text, callSiteBindings)}`)
   if (missing.integer) lines.push(`${valueText} is an integer`)
-  return lines
+  return lines.length === 0 ? [`${valueText}: ${rangeText}`] : lines
 }
 
 function withCallComparisonDetail(
@@ -220,6 +222,7 @@ function withCallComparisonDetail(
     callerPassed: formatCallComparisonBinding(spec, left, right),
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(left) != null && exactNumber(right) != null,
+    unsupported: false,
   })
 }
 
@@ -244,6 +247,7 @@ function withUnsupportedCallDetail(
     callerPassed,
     missing,
     definiteFailure: false,
+    unsupported: true,
   })
 }
 
@@ -363,49 +367,60 @@ function applySummaryRangeSpec(
   evaluators: CallContractEvaluators,
 ) {
   if (simpleResultPathText(spec.expression) == null) return
-  const closed = closedRangeApprox(spec.range)
-  if (closed == null) return
   const current = evaluators.evaluateSpecExpression(spec.expression, context)
+  const rangeValue = evaluators.evaluateRangeValue(spec.range, context, current.kind === 'number' ? current.expr : spec.expression.text, [checkedContractFact(source, spec.text)])
+  if (rangeValue.kind !== 'number') return
   setSummaryPathValue(
     env,
     spec.expression.text,
-    summaryRangeValue(current, spec, closed, source),
+    summaryRangeValue(current, rangeValue, source, spec.text),
   )
 }
 
 function summaryRangeValue(
   current: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'}>,
-  closed: {min: number; max: number},
+  rangeValue: NumberValue,
   source: FunctionContractSource,
+  text: string,
 ): NumberValue {
-  const provenance = [checkedContractFact(source, spec.text)]
-  const expressionText = spec.expression.text
-  if (current.kind !== 'number') {
-    return spec.range.finiteValues == null
-      ? numberValue(
-        closed.min,
-        closed.max,
-        spec.range.valueKind === 'int',
-        expressionText,
-        linearVariable(linearNameForExpression(expressionText)),
-        null,
-        provenance,
-      )
-      : finiteNumberValue(spec.range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)), provenance)
-  }
+  const provenance = [checkedContractFact(source, text)]
+  if (current.kind !== 'number') return {...rangeValue, provenance: mergeProvenance(rangeValue, provenance)}
 
-  const expr = current.expr ?? expressionText
-  const linear = current.linear ?? linearVariable(linearNameForExpression(expr))
-  if (spec.range.finiteValues != null) return finiteNumberValue(spec.range.finiteValues, expr, linear, mergeProvenance(current, provenance))
+  const expr = current.expr ?? rangeValue.expr
+  const linear = current.linear ?? (expr == null ? rangeValue.linear : linearVariable(linearNameForExpression(expr)))
+  if (rangeValue.cases != null) {
+    return withNumberCases(
+      numberValue(
+        Math.max(current.min, rangeValue.min),
+        Math.min(current.max, rangeValue.max),
+        current.isInteger || rangeValue.isInteger,
+        expr,
+        linear,
+        null,
+        mergeProvenance(current, rangeValue, provenance),
+      ),
+      numberBranches(rangeValue).map(branch => ({
+        value: numberValue(
+          Math.max(current.min, branch.value.min),
+          Math.min(current.max, branch.value.max),
+          current.isInteger || branch.value.isInteger,
+          expr,
+          linear,
+          null,
+          mergeProvenance(current, branch.value, provenance),
+        ),
+        assumptions: branch.assumptions,
+      })),
+    )
+  }
   return numberValue(
-    Math.max(current.min, closed.min),
-    Math.min(current.max, closed.max),
-    current.isInteger || spec.range.valueKind === 'int',
+    Math.max(current.min, rangeValue.min),
+    Math.min(current.max, rangeValue.max),
+    current.isInteger || rangeValue.isInteger,
     expr,
     linear,
     null,
-    mergeProvenance(current, provenance),
+    mergeProvenance(current, rangeValue, provenance),
   )
 }
 

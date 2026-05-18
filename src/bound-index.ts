@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import {
   fitExpressionParsed,
+  fitRangeCases,
   publicFitText,
   type FitDomainPath,
   type FitExpressionLike,
@@ -44,8 +45,10 @@ export function proveBoundIndexRangeSpec(
 ): {status: BoundIndexStatus; reason?: string} | null {
   const uses = [
     ...boundIndexUses(spec.expression),
-    ...boundIndexUses(spec.range.lower),
-    ...boundIndexUses(spec.range.upper),
+    ...fitRangeCases(spec.range).flatMap(rangeCase => [
+      ...boundIndexUses(rangeCase.lower),
+      ...boundIndexUses(rangeCase.upper),
+    ]),
   ]
   if (uses.length === 0) return null
   const nonZeroOffset = uses.find(use => use.offset !== 0)

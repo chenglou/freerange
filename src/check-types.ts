@@ -50,6 +50,7 @@ export type FitCheckDetail =
       callerPassed: string
       missing: string[]
       definiteFailure: boolean
+      unsupported: boolean
     }
 
 export type FitInferSpecStatus = 'checked' | 'assumed' | 'not-inferred'
