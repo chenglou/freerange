@@ -93,9 +93,8 @@ Inline `//` comments need to be on the same line as the type/value field, the fu
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-Range bounds and operator sides can use pure TypeScript expressions that evaluate to numbers. In type contracts, field names refer to the value being checked; other names resolve where the type is declared.
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. For example, a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected.
-An `@fit` line that's just a pure TypeScript function call is a boolean check. Freerange must prove the call returns `true`; built-ins such as `nondecreasing(...)` keep their dedicated behavior.
+**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected). They also work for the special range expression: `given myInputA: 0..calcConstant(myInputB)`.
+An `@fit` line that's just a pure TS function call that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
 
 Syntax Glossary's at the end of the docs.
 
