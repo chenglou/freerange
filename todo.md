@@ -10,3 +10,4 @@
 - Exhaustive integer sweeps.
 - public aggregate syntax, public callback contracts, or conditional postconditions.
 - atoms: nondecreasing, partitions, sourceOrder, sameSource
+- Finish remaining `Math.*` built-ins except `Math.random`: interval-aware `Math.sin/cos/tan/cosh/atan2`, `Math.hypot`, and `Math.sumPrecise`. Define the range rule first; don't add one-off call cases.

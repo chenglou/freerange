@@ -489,6 +489,87 @@ if (
   console.log('proof simplification: rounding family')
 }
 
+const expandedMathChecks = verifyFitSource('expanded-math.ts', `/** @fit
+ * return.pi: 3..4
+ * return.powValue: 8
+ * return.cbrtValue: 2
+ * return.froundValue: 1..2
+ * return.f16roundValue: 1..2
+ * return.clzValue: int 31..31
+ * return.imulValue: int 6..6
+ */
+function exactMath() {
+  return {
+    pi: Math.PI,
+    powValue: Math.pow(2, 3),
+    cbrtValue: Math.cbrt(8),
+    froundValue: Math.fround(1.25),
+    f16roundValue: Math.f16round(1.25),
+    clzValue: Math.clz32(1),
+    imulValue: Math.imul(2, 3),
+  }
+}
+
+/** @fit
+ * given value: 1..4
+ * given signed: -1..1
+ * given unit: -0.5..0.5
+ * return.expValue: 2..55
+ * return.expm1Value: 1..54
+ * return.logValue: 0..2
+ * return.log2Value: 0..2
+ * return.log10Value: 0..1
+ * return.log1pValue: 0..2
+ * return.asinValue: -1..1
+ * return.acosValue: 1..3
+ * return.atanValue: -1..1
+ * return.sinhValue: -2..2
+ * return.asinhValue: -1..1
+ * return.tanhValue: -1..1
+ * return.acoshValue: 0..3
+ * return.atanhValue: -1..1
+ */
+function monotoneMath(value: number, signed: number, unit: number) {
+  return {
+    expValue: Math.exp(value),
+    expm1Value: Math.expm1(value),
+    logValue: Math.log(value),
+    log2Value: Math.log2(value),
+    log10Value: Math.log10(value),
+    log1pValue: Math.log1p(value),
+    asinValue: Math.asin(unit),
+    acosValue: Math.acos(unit),
+    atanValue: Math.atan(signed),
+    sinhValue: Math.sinh(signed),
+    asinhValue: Math.asinh(signed),
+    tanhValue: Math.tanh(signed),
+    acoshValue: Math.acosh(value),
+    atanhValue: Math.atanh(unit),
+  }
+}
+
+/** @fit
+ * given value: -1..1
+ * return: -Infinity..Infinity
+ */
+function logNeedsPositive(value: number) {
+  return Math.log(value)
+}
+`)
+const expandedMathFailures = expandedMathChecks.filter(check => check.functionName !== 'logNeedsPositive' && check.status !== 'pass')
+const logNeedsPositiveCheck = expandedMathChecks.find(check => check.functionName === 'logNeedsPositive' && check.text === 'return: -Infinity..Infinity')
+if (
+  expandedMathFailures.length > 0
+  || logNeedsPositiveCheck?.status !== 'unknown'
+  || logNeedsPositiveCheck.reason?.includes('Math.log expected a non-negative number') !== true
+) {
+  console.error('expected expanded Math builtin families to infer ranges and reject unsafe domains')
+  console.error(JSON.stringify(expandedMathChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('math builtins: constants, integer/coarse, and monotone functions')
+}
+
 const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
 
 function bump() {

@@ -152,7 +152,7 @@ import {
   isForgettableForStatement,
   isForgettableReadExpression,
 } from './forgettable-loop.ts'
-import {evaluateMathCall} from './math.ts'
+import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {
   classMemberFunctionForPropertyAccess,
   resolveCallTarget,
@@ -1568,6 +1568,10 @@ function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Val
 }
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
+  if (ts.isIdentifier(expression.expression) && expression.expression.text === 'Math') {
+    const value = evaluateMathProperty(expression.name.text, expression.getText(frame.program.sourceFile))
+    if (value != null) return value
+  }
   if (!hasQuestionDotToken(expression)) {
     const ambient = ambientPropertyFact(expression, frame.program)
     if (ambient != null) return ambient

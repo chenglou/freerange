@@ -6,6 +6,7 @@ import {
   numberValue,
   numberBranches,
   plainNumber,
+  powerNumbers,
   unknown,
   withNumberCases,
   type NumberValue,
@@ -22,31 +23,91 @@ import {
 import {noteUnsupported, type InterpreterFrame} from './context.ts'
 import {auditMathSelector} from './audit.ts'
 
+const int32Min = -2147483648
+const int32Max = 2147483647
+
+const mathConstants = new Map<string, number>([
+  ['E', Math.E],
+  ['LN10', Math.LN10],
+  ['LN2', Math.LN2],
+  ['LOG10E', Math.LOG10E],
+  ['LOG2E', Math.LOG2E],
+  ['PI', Math.PI],
+  ['SQRT1_2', Math.SQRT1_2],
+  ['SQRT2', Math.SQRT2],
+])
+
+export function evaluateMathProperty(name: string, text: string): Value | null {
+  const value = mathConstants.get(name)
+  return value == null ? null : numberValue(value, value, false, text, linearConstant(value))
+}
+
 export function evaluateMathCall(name: string, values: Value[], frame: InterpreterFrame, expression: ts.CallExpression): Value {
   if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`, expression)
   const numbers = values as NumberValue[]
-  switch (name) {
-    case 'min':
-    case 'max':
-      auditMathSelector(name, numbers, frame, expression)
-      return evaluateMathMinMax(name, numbers, frame)
-    case 'floor':
-      return evaluateUnaryMath(name, numbers, floorNumber)
-    case 'ceil':
-      return evaluateUnaryMath(name, numbers, ceilNumber)
-    case 'round':
-      return evaluateUnaryMath(name, numbers, roundNumber)
-    case 'trunc':
-      return evaluateUnaryMath(name, numbers, truncNumber)
-    case 'sqrt':
-      return evaluateUnaryMath(name, numbers, sqrtNumber)
-    case 'abs':
-      return evaluateUnaryMath(name, numbers, value => absNumber(value, frame))
-    case 'sign':
-      return evaluateUnaryMath(name, numbers, signNumber)
-    default:
-      return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`, expression)
+  const evaluator = mathCallEvaluators.get(name)
+  if (evaluator == null) return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`, expression)
+  return evaluator(name, numbers, frame, expression)
+}
+
+type MathCallEvaluator = (name: string, values: NumberValue[], frame: InterpreterFrame, expression: ts.CallExpression) => Value
+type UnaryNumberEvaluator = (value: NumberValue, frame: InterpreterFrame, name: string) => Value
+type BinaryNumberEvaluator = (left: NumberValue, right: NumberValue, frame: InterpreterFrame, name: string) => Value
+type MathDomainSpec = (name: string) => MathDomain
+
+const mathCallEvaluators = new Map<string, MathCallEvaluator>([
+  ['min', selectorMath('min')],
+  ['max', selectorMath('max')],
+  ['floor', unaryMath(floorNumber)],
+  ['ceil', unaryMath(ceilNumber)],
+  ['round', unaryMath(roundNumber)],
+  ['trunc', unaryMath(truncNumber)],
+  ['sqrt', unaryMath(sqrtNumber)],
+  ['abs', unaryMath((value, frame) => absNumber(value, frame))],
+  ['sign', unaryMath(signNumber)],
+  ['pow', binaryMath(powerNumbers)],
+  ['cbrt', unaryMath(monotoneMath(Math.cbrt))],
+  ['fround', unaryMath(monotoneMath(Math.fround))],
+  ['f16round', unaryMath(monotoneMath(Math.f16round))],
+  ['clz32', unaryMath(clz32Number)],
+  ['imul', binaryMath(imulNumber)],
+  ['exp', unaryMath(monotoneMath(Math.exp))],
+  ['expm1', unaryMath(monotoneMath(Math.expm1))],
+  ['log', unaryMath(monotoneMath(Math.log, domainAtLeast(0, 'a non-negative number')))],
+  ['log2', unaryMath(monotoneMath(Math.log2, domainAtLeast(0, 'a non-negative number')))],
+  ['log10', unaryMath(monotoneMath(Math.log10, domainAtLeast(0, 'a non-negative number')))],
+  ['log1p', unaryMath(monotoneMath(Math.log1p, domainAtLeast(-1, 'a number at least -1')))],
+  ['asin', unaryMath(monotoneMath(Math.asin, domainBetween(-1, 1, 'a number between -1 and 1')))],
+  ['acos', unaryMath(monotoneMath(Math.acos, domainBetween(-1, 1, 'a number between -1 and 1'), 'decreasing'))],
+  ['atan', unaryMath(monotoneMath(Math.atan))],
+  ['sinh', unaryMath(monotoneMath(Math.sinh))],
+  ['asinh', unaryMath(monotoneMath(Math.asinh))],
+  ['tanh', unaryMath(monotoneMath(Math.tanh))],
+  ['acosh', unaryMath(monotoneMath(Math.acosh, domainAtLeast(1, 'a number at least 1')))],
+  ['atanh', unaryMath(monotoneMath(Math.atanh, domainBetween(-1, 1, 'a number between -1 and 1')))],
+])
+
+function selectorMath(kind: 'min' | 'max'): MathCallEvaluator {
+  return (_name, values, frame, expression) => {
+    auditMathSelector(kind, values, frame, expression)
+    return evaluateMathMinMax(kind, values, frame)
   }
+}
+
+function unaryMath(evaluate: UnaryNumberEvaluator): MathCallEvaluator {
+  return (name, values, frame) => evaluateUnaryMath(name, values, value => evaluate(value, frame, name))
+}
+
+function binaryMath(evaluate: BinaryNumberEvaluator): MathCallEvaluator {
+  return (name, values, frame) => evaluateBinaryMath(name, values, (left, right) => evaluate(left, right, frame, name))
+}
+
+function monotoneMath(
+  evaluate: (value: number) => number,
+  domain?: MathDomainSpec,
+  direction: 'increasing' | 'decreasing' = 'increasing',
+): UnaryNumberEvaluator {
+  return (value, _frame, name) => monotoneNumber(name, value, evaluate, domain?.(name), direction)
 }
 
 function evaluateMathMinMax(kind: 'min' | 'max', values: NumberValue[], frame: InterpreterFrame): Value {
@@ -59,6 +120,11 @@ function evaluateMathMinMax(kind: 'min' | 'max', values: NumberValue[], frame: I
 function evaluateUnaryMath(name: string, values: NumberValue[], evaluate: (value: NumberValue) => Value): Value {
   if (values.length !== 1) return unknown(`Math.${name} expected one argument`)
   return evaluateNumberUnary(values[0]!, evaluate)
+}
+
+function evaluateBinaryMath(name: string, values: NumberValue[], evaluate: (left: NumberValue, right: NumberValue) => Value): Value {
+  if (values.length !== 2) return unknown(`Math.${name} expected two arguments`)
+  return evaluate(values[0]!, values[1]!)
 }
 
 function evaluateNumberUnary(value: NumberValue, evaluate: (value: NumberValue) => Value): Value {
@@ -99,6 +165,67 @@ function truncNumber(value: NumberValue): NumberValue {
 function sqrtNumber(value: NumberValue): Value {
   if (value.min < 0) return unknown('Math.sqrt expected a non-negative number')
   return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`, null, null, value.provenance)
+}
+
+type MathDomain = {
+  min?: number
+  max?: number
+  message: string
+}
+
+function domainAtLeast(min: number, description: string): MathDomainSpec {
+  return name => ({min, message: `Math.${name} expected ${description}`})
+}
+
+function domainBetween(min: number, max: number, description: string): MathDomainSpec {
+  return name => ({min, max, message: `Math.${name} expected ${description}`})
+}
+
+function monotoneNumber(
+  name: string,
+  value: NumberValue,
+  evaluate: (value: number) => number,
+  domain?: MathDomain,
+  direction: 'increasing' | 'decreasing' = 'increasing',
+): Value {
+  if (domain != null && !numberInDomain(value, domain)) return unknown(domain.message)
+  const lowerArg = direction === 'increasing' ? value.min : value.max
+  const upperArg = direction === 'increasing' ? value.max : value.min
+  return numberValue(
+    evaluate(lowerArg),
+    evaluate(upperArg),
+    false,
+    callExpr(name, [value]),
+    null,
+    null,
+    value.provenance,
+  )
+}
+
+function numberInDomain(value: NumberValue, domain: MathDomain | undefined): boolean {
+  if (domain == null) return true
+  if (domain.min != null && value.min < domain.min) return false
+  if (domain.max != null && value.max > domain.max) return false
+  return true
+}
+
+function clz32Number(value: NumberValue): NumberValue {
+  const expr = callExpr('clz32', [value])
+  if (value.min === value.max && Number.isFinite(value.min)) {
+    const result = Math.clz32(value.min)
+    return numberValue(result, result, true, expr, null, null, value.provenance)
+  }
+  return numberValue(0, 32, true, expr, null, null, value.provenance)
+}
+
+function imulNumber(left: NumberValue, right: NumberValue): NumberValue {
+  const expr = callExpr('imul', [left, right])
+  const provenance = mergeProvenance(left, right)
+  if (left.min === left.max && right.min === right.max && Number.isFinite(left.min) && Number.isFinite(right.min)) {
+    const value = Math.imul(left.min, right.min)
+    return numberValue(value, value, true, expr, null, null, provenance)
+  }
+  return numberValue(int32Min, int32Max, true, expr, null, null, provenance)
 }
 
 function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
