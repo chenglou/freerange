@@ -88,7 +88,7 @@ type PhotoGrid = {
 }
 ```
 
-`given` lines are input contracts. `return` refers to the return value.
+`given` lines are starting assumptions Freerange treats as true. All other lines (aka lines without `given`) are for Freerange to verify to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
