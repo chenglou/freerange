@@ -101,6 +101,8 @@ if (
   || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
   || tracedObligationCheck?.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
   || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
+  || sequenceObligationCheck?.obligation?.goal.kind !== 'expression'
+  || sequenceObligationCheck.trace?.steps.some(step => step.message === 'checked boolean expression') !== true
   || sequenceObligationCheck?.trace?.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {
   console.error('expected checks to carry proof obligations and used facts')
@@ -192,17 +194,27 @@ function unknownLayout(width: number) {
 function unsupportedLayout() {
   return {width: 10}
 }
+
+/** @fit
+ * 1 + 2
+ */
+function numericExpression() {
+  return {width: 10}
+}
 `)
 const validLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'validLayout' && check.text === 'isValidLayout(return)')
 const invalidLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'invalidLayout' && check.text === 'isValidLayout(return)')
 const unknownLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unknownLayout' && check.text === 'isValidLayout(return)')
 const unsupportedLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unsupportedLayout' && check.text === 'randomLayoutCheck(return)')
+const numericExpressionCheck = booleanCallContractChecks.find(check => check.functionName === 'numericExpression' && check.text === '1 + 2')
 if (
   validLayoutCheck?.status !== 'pass'
   || invalidLayoutCheck?.status !== 'fail'
   || unknownLayoutCheck?.status !== 'unknown'
   || unsupportedLayoutCheck?.status !== 'unknown'
   || unsupportedLayoutCheck.reason?.includes('Unsupported Math.random call') !== true
+  || numericExpressionCheck?.status !== 'unknown'
+  || numericExpressionCheck.reason?.includes('expected a boolean result') !== true
 ) {
   console.error('expected bare pure boolean call contracts to be checked')
   console.error(JSON.stringify(booleanCallContractChecks, null, 2))

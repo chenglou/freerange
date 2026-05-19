@@ -693,7 +693,7 @@ function verifyCheckSpec(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
@@ -718,7 +718,7 @@ function verifyCheckSpecForResultCases(
   baseEnv: Map<string, Value>,
   result: Value,
   returnCases: InterpreterReturnCase[] | undefined,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
   contractCache: Map<string, FunctionContractProof>,
@@ -1166,8 +1166,8 @@ function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
     case 'given-comparison':
     case 'check-comparison':
       return [spec.left, spec.right]
-    case 'check-atom':
-      return [spec.name, ...spec.args]
+    case 'check-expression':
+      return [spec.expression]
   }
 }
 

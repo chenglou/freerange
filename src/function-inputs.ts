@@ -149,12 +149,10 @@ function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'n
       if (next === 'object') shape = 'object'
       continue
     }
-    if (spec.kind === 'check-atom') {
-      for (const arg of spec.args) {
-        const next = specExpressionParamShape(arg, name)
-        if (next === 'array') return 'array'
-        if (next === 'object') shape = 'object'
-      }
+    if (spec.kind === 'check-expression') {
+      const next = specExpressionParamShape(spec.expression, name)
+      if (next === 'array') return 'array'
+      if (next === 'object') shape = 'object'
       continue
     }
     for (const expression of [spec.left, spec.right]) {

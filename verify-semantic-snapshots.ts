@@ -52,8 +52,8 @@ function goalText(goal: SemanticGoal) {
       return `range ${goal.target} in ${goal.range}`
     case 'comparison':
       return `comparison ${goal.left} ${goal.op} ${goal.right}`
-    case 'atom':
-      return `atom ${goal.name}(${goal.args.join(', ')})`
+    case 'expression':
+      return `expression ${goal.expression}`
     case 'call-precondition':
       return `call-precondition ${goal.requirement}`
     case 'audit':

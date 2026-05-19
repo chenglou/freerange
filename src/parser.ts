@@ -70,15 +70,15 @@ export type FitSpec =
       line?: number
     }
   | {
-      kind: 'check-atom'
-      name: string
-      args: FitExpression[]
+      kind: 'check-expression'
+      expression: FitExpression
       text: string
       line?: number
     }
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
-export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
+export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>
+export type FitInlineCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
 export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
 
 export type FitInlineSpecTemplate =
@@ -95,8 +95,8 @@ export type FitInlineSpecTemplate =
     }
 
 export type FitBodySpecIndex = {
-  localSpecsByStatement: Map<ts.VariableStatement, FitCheckSpec[]>
-  returnSpecsByNode: Map<ts.Node, FitCheckSpec[]>
+  localSpecsByStatement: Map<ts.VariableStatement, FitInlineCheckSpec[]>
+  returnSpecsByNode: Map<ts.Node, FitInlineCheckSpec[]>
   objectPropertyTemplatesByNode: Map<ts.PropertyAssignment | ts.ShorthandPropertyAssignment, FitInlineSpecTemplate[]>
   loopSpecsByStatement: Map<ts.ForOfStatement | ts.ForStatement, FitSpec[]>
 }
@@ -148,13 +148,6 @@ export function fitExpressionText(expression: FitExpressionLike) {
 
 export function fitExpressionParsed(expression: FitExpressionLike) {
   return typeof expression === 'string' ? parseFitExpression(expression) : expression.parsed
-}
-
-function fitExpressionFromParsedExpression(parsed: ParsedFitExpression, expression: ts.Expression): FitExpression {
-  return {
-    text: normalizeFitText(publicParsedExpressionText(parsed, expression)),
-    parsed: {expression, domainPaths: parsed.domainPaths},
-  }
 }
 
 export function fitExpressionScopeSourceId(expression: FitExpressionLike) {
@@ -236,7 +229,7 @@ export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean 
   return inlineFitCommentLines(sourceText, node).length > 0
 }
 
-export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitCheckSpec[] {
+export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, statement)
   const lines = inlineFitCommentLines(sourceText, statement)
   if (lines.length === 0) return []
@@ -248,7 +241,7 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
   return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), expression, 'check')
 }
 
-export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitCheckSpec[] {
+export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, node)
   return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'check')
 }
@@ -267,13 +260,13 @@ export function parseInlineFitTemplatesForNode(sourceText: string, node: ts.Node
   return inlineFitCommentLines(sourceText, node).map(parseInlineFitTemplate)
 }
 
-export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'check'): FitCheckSpec[]
+export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'check'): FitInlineCheckSpec[]
 export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'given'): FitGivenSpec[]
 export function instantiateInlineFitTemplates(
   templates: FitInlineSpecTemplate[],
   expression: string,
   mode: 'check' | 'given',
-): FitCheckSpec[] | FitGivenSpec[] {
+): FitInlineCheckSpec[] | FitGivenSpec[] {
   const parsedExpression = parseFitExpressionText(expression)
   const publicExpression = publicFitText(expression)
   const specs: FitSpec[] = []
@@ -321,7 +314,7 @@ export function instantiateInlineFitTemplates(
       }
     }
   }
-  return mode === 'given' ? specs as FitGivenSpec[] : specs as FitCheckSpec[]
+  return mode === 'given' ? specs as FitGivenSpec[] : specs as FitInlineCheckSpec[]
 }
 
 export function emptyFitBodySpecIndex(): FitBodySpecIndex {
@@ -586,10 +579,12 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
     }
   }
 
-  const checkAtom = parseCheckAtom(line, lineNumber)
-  if (checkAtom != null) return checkAtom
-
-  throw new Error(`Unsupported @fit line: ${line}`)
+  return {
+    kind: 'check-expression',
+    expression: parseFitExpressionText(line),
+    text: line,
+    ...(lineNumber == null ? {} : {line: lineNumber}),
+  }
 }
 
 export function parseFitRangeText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitRange | null {
@@ -805,19 +800,6 @@ function parseRangeBoundNumber(text: string): number | null {
   if (text === '-Infinity') return Number.NEGATIVE_INFINITY
   const value = Number(text)
   return Number.isFinite(value) ? value : null
-}
-
-function parseCheckAtom(line: string, lineNumber?: number): Extract<FitSpec, {kind: 'check-atom'}> | null {
-  const parsed = parseFitExpressionText(line)
-  const expression = parsed.parsed.expression
-  if (!ts.isCallExpression(expression) || !ts.isIdentifier(expression.expression)) return null
-  return {
-    kind: 'check-atom',
-    name: expression.expression.text,
-    args: expression.arguments.map(argument => fitExpressionFromParsedExpression(parsed.parsed, argument)),
-    text: line,
-    ...(lineNumber == null ? {} : {line: lineNumber}),
-  }
 }
 
 export function parseExpression(text: string): ts.Expression {

@@ -4,6 +4,7 @@ import {
   proveBoundIndexRangeSpec,
   type BoundIndexContext,
 } from './bound-index.ts'
+import {nondecreasingFailureReason} from './ambient-builtins.ts'
 import {
   finiteNumberSet,
   numberValue,
@@ -14,7 +15,7 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
-import {linearConstant, unwrapExpression} from './linear.ts'
+import {linearConstant} from './linear.ts'
 import {
   fitExpressionScopeSourceId,
   fitExpressionParsed,
@@ -39,8 +40,6 @@ import {
 } from './reporting.ts'
 import {
   adjacentComparisonText,
-  hasNondecreasingProp,
-  provedSpacing,
   proveAdjacentComparison,
   sequenceRelationText,
 } from './sequence-facts.ts'
@@ -78,7 +77,7 @@ export function verifyCheckSpec(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
   contractCache: Map<string, FunctionContractProof>,
@@ -93,7 +92,7 @@ export function verifyCheckSpecWithProof(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
   contractCache: Map<string, FunctionContractProof>,
@@ -129,7 +128,7 @@ export function verifyCheckSpecWithProof(
     }, 'numeric', 'range', 'checked numeric range claim', [value], context.assumptions)
   }
 
-  if (spec.kind === 'check-atom') return verifyAtomSpec(file, functionName, spec, context, hooks)
+  if (spec.kind === 'check-expression') return verifyBooleanExpressionSpec(file, functionName, spec, context, hooks)
 
   const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
   if (boundIndexCheck != null) {
@@ -500,17 +499,15 @@ export function evaluateSpecExpression(text: FitExpressionLike, context: EvalCon
   return hooks.evaluateExpression(parsed.expression, {...scopedContext, env})
 }
 
-type AtomProof = {
-  status: FitCheckStatus
-  reason?: string
-  values: Value[]
-  domain: string
-  rule: string
-  message: string
-}
-
-function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): CheckSpecProof {
-  const status = proveAtomSpec(spec, context, hooks)
+function verifyBooleanExpressionSpec(
+  file: string,
+  functionName: string,
+  spec: Extract<FitSpec, {kind: 'check-expression'}>,
+  context: EvalContext,
+  hooks: CheckSpecHooks,
+): CheckSpecProof {
+  const value = evaluateSpecExpression(spec.expression, context, hooks)
+  const status = proveBooleanTrue(spec.text, value)
   return checkProof({
     file,
     ...(spec.line == null ? {} : {line: spec.line}),
@@ -518,60 +515,7 @@ function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpe
     text: spec.text,
     status: status.status,
     ...(status.reason == null ? {} : {reason: status.reason}),
-  }, status.domain, status.rule, status.message, status.values, context.assumptions)
-}
-
-function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
-  switch (spec.name) {
-    case 'nondecreasing':
-      return proveNondecreasingAtom(spec, context, hooks)
-    case 'spaced':
-      return proveSpacedAtom(spec, context, hooks)
-    default:
-      return proveBooleanCallAtom(spec, context, hooks)
-  }
-}
-
-function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
-  const target = sequencePropArgument(spec.args, context, hooks)
-  if (target == null) return sequenceAtomProof('nondecreasing', 'unknown', [], 'nondecreasing expects return.rows.top')
-  if (hasNondecreasingProp(target.array, target.prop)) return sequenceAtomProof('nondecreasing', 'pass', [target.array])
-  return sequenceAtomProof('nondecreasing', 'unknown', [target.array], nondecreasingFailureReason(spec.text, target))
-}
-
-function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
-  if (spec.args.length !== 2) return sequenceAtomProof('spaced', 'unknown', [], 'spaced expects spaced(rows, gap)')
-  const rows = evaluateSpecExpression(spec.args[0]!, context, hooks)
-  const gap = evaluateSpecExpression(spec.args[1]!, context, hooks)
-  const values = [rows, gap]
-  if (rows.kind !== 'array') return sequenceAtomProof('spaced', 'unknown', values, 'spaced expected an array')
-  if (gap.kind !== 'number' || gap.expr == null) return sequenceAtomProof('spaced', 'unknown', values, 'spaced expected a known gap expression')
-  if (provedSpacing(rows, gap.expr) != null) return sequenceAtomProof('spaced', 'pass', values)
-  return sequenceAtomProof('spaced', 'unknown', values, spacedFailureReason(spec.text, rows, gap.expr))
-}
-
-function sequenceAtomProof(name: string, status: FitCheckStatus, values: Value[], reason?: string): AtomProof {
-  return {
-    status,
-    ...(reason == null ? {} : {reason}),
-    values,
-    domain: 'sequence',
-    rule: `atom-${name}`,
-    message: 'checked layout atom claim',
-  }
-}
-
-function proveBooleanCallAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
-  const value = evaluateSpecExpression(spec.text, context, hooks)
-  const result = proveBooleanTrue(spec.text, value)
-  return {
-    status: result.status,
-    ...(result.reason == null ? {} : {reason: result.reason}),
-    values: [value],
-    domain: 'literal',
-    rule: 'boolean-call',
-    message: 'checked pure boolean call',
-  }
+  }, 'boolean', 'expression', 'checked boolean expression', [value], context.assumptions)
 }
 
 function proveBooleanTrue(text: string, value: Value): {status: FitCheckStatus; reason?: string} {
@@ -582,46 +526,6 @@ function proveBooleanTrue(text: string, value: Value): {status: FitCheckStatus; 
   if (booleans.every(item => item === true)) return {status: 'pass'}
   if (booleans.every(item => item === false)) return {status: 'fail', reason: `${text} returned false`}
   return {status: 'unknown', reason: `${text} was not proven true`}
-}
-
-function nondecreasingFailureReason(text: string, target: {array: ArrayValue; prop: string}) {
-  const lines = [
-    `${text} was not inferred`,
-    `need: every next .${target.prop} >= previous .${target.prop}`,
-  ]
-  const known: string[] = []
-  const advance = target.array.summary?.advances.find(fact => fact.prop === target.prop)
-  if (advance != null) known.push(`row advance for .${target.prop}: ${formatRange(advance.value)}`)
-  known.push(`sequence facts: ${formatArraySummary(target.array)}`)
-  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-
-  if (advance?.value.expr != null) {
-    lines.push(`missing: given ${advance.value.expr} >= 0`)
-  } else {
-    lines.push(`missing: sequence facts for .${target.prop}`)
-  }
-  return lines.join('\n')
-}
-
-function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
-  const lines = [
-    `${text} was not inferred`,
-    `need: every next row top == previous top + previous height + ${gapExpr}`,
-  ]
-  const known: string[] = []
-  const spacing = rows.summary?.spaced[0]
-  if (spacing != null) {
-    known.push(`loop proved: row advance ${spacing.advanceExpr} = previous height ${spacing.heightExpr} + ${spacing.gapExpr}`)
-  }
-  known.push(`sequence facts: ${formatArraySummary(rows)}`)
-  lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
-
-  if (spacing != null) {
-    lines.push(`missing: given ${spacing.gapExpr} == ${gapExpr}`)
-  } else {
-    lines.push('missing: recognized adjacent row spacing')
-  }
-  return lines.join('\n')
 }
 
 function adjacentComparisonFailureReason(text: string, collectionText: string, rows: ArrayValue) {
@@ -638,17 +542,4 @@ function adjacentComparisonFailureReason(text: string, collectionText: string, r
     `known:\n${known.map(line => `  ${line}`).join('\n')}`,
     'missing: recognized adjacent row relation',
   ].join('\n')
-}
-
-function sequencePropArgument(args: FitExpressionLike[], context: EvalContext, hooks: CheckSpecHooks): {array: ArrayValue; prop: string} | null {
-  if (args.length !== 1) return null
-  let expression = unwrapExpression(fitExpressionParsed(args[0]!).expression)
-  const path: string[] = []
-  while (ts.isPropertyAccessExpression(expression)) {
-    path.unshift(expression.name.text)
-    const array = hooks.evaluateExpression(expression.expression, context)
-    if (array.kind === 'array') return {array, prop: path.join('.')}
-    expression = unwrapExpression(expression.expression)
-  }
-  return null
 }

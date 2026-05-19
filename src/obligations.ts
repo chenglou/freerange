@@ -3,7 +3,7 @@ import {
   fitExpressionText,
   publicFitText,
   type ComparisonOperator,
-  type FitSpec,
+  type FitCheckSpec,
 } from './parser.ts'
 
 export type FitObligationBoundary =
@@ -17,7 +17,7 @@ export type FitObligationBoundary =
 export type FitObligationGoal =
   | {kind: 'range'; text: string; target: string; range: string}
   | {kind: 'comparison'; text: string; left: string; op: ComparisonOperator; right: string}
-  | {kind: 'atom'; text: string; name: string; args: string[]}
+  | {kind: 'expression'; text: string; expression: string}
   | {kind: 'call-precondition'; text: string; requirement: string}
   | {kind: 'audit'; text: string}
 
@@ -48,7 +48,7 @@ export type FitProofTrace = {
 export function obligationForSpec(
   file: string,
   functionName: string,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>,
+  spec: FitCheckSpec,
   boundary: FitObligationBoundary,
   sourceBoundary?: {line?: number; boundaryLine?: number},
 ): FitObligation {
@@ -119,7 +119,7 @@ function createObligation(input: Omit<FitObligation, 'id'>): FitObligation {
   }
 }
 
-function goalForSpec(spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>): FitObligationGoal {
+function goalForSpec(spec: FitCheckSpec): FitObligationGoal {
   switch (spec.kind) {
     case 'check-range':
       return {kind: 'range', text: spec.text, target: publicFitText(fitExpressionText(spec.expression)), range: publicFitText(spec.range.text)}
@@ -131,7 +131,7 @@ function goalForSpec(spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'chec
         op: spec.op,
         right: publicFitText(fitExpressionText(spec.right)),
       }
-    case 'check-atom':
-      return {kind: 'atom', text: spec.text, name: spec.name, args: spec.args.map(arg => publicFitText(fitExpressionText(arg)))}
+    case 'check-expression':
+      return {kind: 'expression', text: spec.text, expression: publicFitText(fitExpressionText(spec.expression))}
   }
 }

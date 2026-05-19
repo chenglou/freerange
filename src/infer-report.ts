@@ -9,6 +9,7 @@ import {
   fitExpressionText,
   parseFitSpecLine,
   type FitExpressionLike,
+  type FitCheckSpec,
   type FitRange,
   type FitRangeCase,
   type FitSpec,
@@ -21,7 +22,7 @@ export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './ch
 export function inferFunctionSpecReports(
   specs: FitSpec[],
   backgroundChecks: FitCheck[],
-  verify: (spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-atom'}>) => FitCheck,
+  verify: (spec: FitCheckSpec) => FitCheck,
 ): FitInferSpec[] {
   const checkByText = new Map<string, FitCheck>()
   for (const check of backgroundChecks) {
@@ -195,7 +196,7 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
 
   const spec = parseFitSpecLineForInference(specText)
   if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
-  if (spec.kind === 'check-atom') return null
+  if (spec.kind === 'check-expression') return null
   if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
   return comparisonFactReasonForSpec(spec, facts)
 }

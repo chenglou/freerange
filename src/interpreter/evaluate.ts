@@ -67,8 +67,11 @@ import {readGuardedLoopPushes, type LoopSourceContext} from '../loop-source.ts'
 import {
   linearConstant,
   numericLiteralValue,
-  sameExpressionText,
 } from '../linear.ts'
+import {
+  evaluateAmbientBuiltinCall,
+  extentEndSummaryValue,
+} from '../ambient-builtins.ts'
 import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
@@ -141,11 +144,7 @@ import {
   literalBoolean,
 } from './refine.ts'
 import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
-import {publicFitText} from '../parser.ts'
-import {
-  formatArraySummary,
-  formatRange,
-} from '../reporting.ts'
+import {formatRange} from '../reporting.ts'
 import {
   forgetRoot,
   forgetRoots,
@@ -2063,18 +2062,14 @@ function arrayFromLengthExpression(expression: ts.Expression, frame: Interpreter
   return value.kind === 'array' ? value : null
 }
 
-function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExpr?: string): NumberValue | null {
-  const extentEnds = array.summary?.extentEnds ?? []
-  return extentEnds.find(fact =>
-    sameExpressionText(fact.emptyExpr, emptyExpr)
-    && (nonEmptyExpr == null || sameExpressionText(fact.nonEmptyExpr, nonEmptyExpr))
-  )?.value ?? null
-}
-
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
-  if (ts.isIdentifier(target) && target.text === 'lastEnd') return evaluateLastEndCall(expression, frame)
-  if (ts.isIdentifier(target) && target.text === 'extentEnd') return evaluateExtentEndCall(expression, frame)
+  const ambient = evaluateAmbientBuiltinCall({
+    expression,
+    evaluateExpression: current => evaluateExpression(current, frame),
+    expressionText: current => nodeText(current, frame),
+  })
+  if (ambient != null) return ambient
   const fallback = valueFromCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
     return valueWithStructuralFallback(evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression), fallback)
@@ -2108,54 +2103,6 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback, frame)
   if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
   return noteUnsupported(frame, resolved.reason, expression)
-}
-
-function evaluateLastEndCall(expression: ts.CallExpression, frame: InterpreterFrame): Value {
-  const targetExpression = expression.arguments[0]
-  if (targetExpression == null || expression.arguments.length !== 1) return noteUnsupported(frame, 'lastEnd expects one array', expression)
-  const target = evaluateExpression(targetExpression, frame)
-  if (target.kind !== 'array') return noteUnsupported(frame, 'lastEnd expected an array', targetExpression)
-  return target.summary?.lastEnd ?? unknown(lastEndFailureReason(nodeText(targetExpression, frame), target))
-}
-
-function evaluateExtentEndCall(expression: ts.CallExpression, frame: InterpreterFrame): Value {
-  const targetExpression = expression.arguments[0]
-  const emptyExpression = expression.arguments[1]
-  if (targetExpression == null || emptyExpression == null || expression.arguments.length !== 2) {
-    return noteUnsupported(frame, 'extentEnd expects extentEnd(rows, emptyValue)', expression)
-  }
-  const target = evaluateExpression(targetExpression, frame)
-  if (target.kind !== 'array') return noteUnsupported(frame, 'extentEnd expected an array', targetExpression)
-  const empty = evaluateExpression(emptyExpression, frame)
-  if (empty.kind !== 'number' || empty.expr == null) return noteUnsupported(frame, 'extentEnd expected a known empty value', emptyExpression)
-
-  if (target.length.max === 0) return empty
-  if (target.length.min >= 1 && target.summary?.lastEnd != null) return target.summary.lastEnd
-  return extentEndSummaryValue(target, empty.expr) ?? unknown(extentEndFailureReason(nodeText(targetExpression, frame), empty.expr, target))
-}
-
-function lastEndFailureReason(targetText: string, target: ArrayValue) {
-  const missing = target.length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
-  const publicTargetText = publicFitText(targetText)
-  const lines = [
-    `lastEnd(${publicTargetText}) was not inferred`,
-    'need: a non-empty append-only row loop that pushes height',
-    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
-  ]
-  lines.push(`missing: ${missing}`)
-  return lines.join('\n')
-}
-
-function extentEndFailureReason(targetText: string, emptyExpr: string, target: ArrayValue) {
-  const publicTargetText = publicFitText(targetText)
-  const publicEmptyExpr = publicFitText(emptyExpr)
-  const lines = [
-    `extentEnd(${publicTargetText}, ${publicEmptyExpr}) was not inferred`,
-    'need: an append-only row loop plus the empty fallback used by the source',
-    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
-  ]
-  lines.push('missing: empty-safe row end')
-  return lines.join('\n')
 }
 
 function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value | null {

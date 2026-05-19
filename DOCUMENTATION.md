@@ -94,7 +94,7 @@ Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected). They also work for the special range expression: `given myInputA: 0..calcConstant(myInputB)`.
-An `@fit` line that's just a pure TS function call that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
+An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
 
 Syntax Glossary's at the end of the docs.
 
@@ -103,8 +103,8 @@ Syntax Glossary's at the end of the docs.
 We expose some useful functions in `@fit` comments:
 
 ```ts
-nondecreasing(values: number[]): void // values in the array should prove to be bigger than or equal to their previous cell value
-spaced(rows: {top: number; height: number}[], gap: number): void // each next row should prove to start after previous top + previous height + gap
+nondecreasing(values: number[]): boolean // values in the array should prove to be bigger than or equal to their previous cell value
+spaced(rows: {top: number; height: number}[], gap: number): boolean // each next row should prove to start after previous top + previous height + gap
 lastEnd(rows: {top: number; height: number}[]): number // returns the final row's .top + .height; rows must prove non-empty
 extentEnd(rows: {top: number; height: number}[], emptyValue: number): number // returns emptyValue for empty rows, otherwise the final row's .top + .height
 ```
