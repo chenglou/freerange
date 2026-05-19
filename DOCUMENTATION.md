@@ -41,16 +41,22 @@ Use `fr check --annotations-only` to check annotated places and skip the broader
 
 `fr infer file.ts` shows the facts Freerange deduced for that file. It's like TypeScript's inferred-type hover, except for the layout facts in the file. Pass `--function funcName` to focus on just that function. Use `fr infer --all` for a project summary, or `fr infer --all file.ts` for the detailed all-function view of that file.
 
-## Syntax Overview
+## Features Overview
 
 ```ts
+function hasPositiveArea(tile: {width: number; height: number}) {
+  return tile.width > 0 && tile.height > 0
+}
+
 /** @fit
  * given photos.length: int 0..200
  * given availableWidth: 320..<2000
  * given photos[].naturalWidth > 0
  * return.tiles[].width > 0
+ * return.tiles[].height > 0
  * return.tiles[$i].width <= photos[$i].naturalWidth
  * return.tiles[$i + 1].top >= return.tiles[$i].bottom
+ * hasPositiveArea(return.tiles[])
  * nondecreasing(return.tiles.top)
  */
 function layoutPhotos(availableWidth: number, photos: Photo[]) {
