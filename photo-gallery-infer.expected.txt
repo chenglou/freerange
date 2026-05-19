@@ -3,8 +3,7 @@ photo-gallery/index.ts --all
 function scheduleRender
 unsupported:
   unsupported scheduleRender line 6: Unknown identifier scheduledRender
-  unsupported scheduleRender > <if-true> line 6: Empty return
-  unsupported scheduleRender > <if-false> line 8: Unknown function requestAnimationFrame
+  Unsupported branch condition: scheduledRender
 
 function spring
 return:
@@ -137,19 +136,7 @@ assumptions:
   given data[].fxFactor.b > 0
 
 function render
-locals:
-  newWindowSizeX == document.documentElement.clientWidth
-  newWindowSizeX: int 0..Infinity
-  windowSizeY == document.documentElement.clientHeight
-  windowSizeY: int 0..Infinity
 unsupported:
   unsupported render line 233: Unknown identifier events
   unsupported render line 249: Unknown identifier debug
-  unsupported render > <if-true> line 251: Unknown identifier debugTimestamp
-  unsupported render line 258: Unknown identifier reducedMotion
-  unsupported render line 259: Unknown identifier isSafari
-  unsupported render > <conditional-true> line 259: Unknown identifier document
-  unsupported render > <conditional-false> line 259: Unknown identifier window
-  unsupported render line 261: Unsupported call window.location.hash.slice
-  unsupported render line 263: Indexed for loops support block bodies only
-  unsupported render: State partition budget exceeded: 12 branch states exceed limit 8; Freerange refuses to summarize branch states silently
+  Unsupported branch condition: debug

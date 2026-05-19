@@ -217,6 +217,8 @@ function layout(pinned: boolean) {
 
 This infers as `{left: 0, width: 100} | {left: 20, width: 80}`
 
+Freerange only splits code branches after it can read the condition as a boolean. A typed boolean, numeric comparison, finite boolean value, or simple numeric truthiness is fine. An unresolved predicate, say `someLibrary.isVisible(row)`, stops there and reports that condition instead of guessing through both bodies.
+
 Today, written contracts can express the flattened numeric pieces:
 
 ```ts

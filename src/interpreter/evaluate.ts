@@ -72,8 +72,8 @@ import {
 import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
-  valueFromCallReturnShape,
   valueFromFunctionReturnShape,
+  valueFromProjectCallReturnShape,
   valueFromSyntaxTypeShape,
   valueWithStructuralFallback,
 } from '../shapes.ts'
@@ -138,7 +138,6 @@ import {
   branchFrame,
   compareNumbers,
   isComparisonOperator,
-  literalBoolean,
 } from './refine.ts'
 import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
 import {publicFitText} from '../parser.ts'
@@ -680,7 +679,9 @@ function evaluateIfStatement(
   nextIndex = 0,
 ): InterpreterFlow {
   auditBranchCondition(statement.expression, auditReadFrame(frame), evaluateExpression)
-  const truth = literalBoolean(evaluateExpression(statement.expression, frame))
+  const truthValues = evaluateConditionTruthiness(statement.expression, frame, 'Branch condition')
+  if (truthValues == null) return returnFlow(unknown(`Unsupported branch condition: ${nodeText(statement.expression, frame)}`), frame)
+  const truth = singleBooleanValue(truthValues)
   if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
@@ -1883,6 +1884,18 @@ function truthinessValues(value: Value): boolean[] | null {
   return null
 }
 
+function evaluateConditionTruthiness(expression: ts.Expression, frame: InterpreterFrame, label: string): boolean[] | null {
+  const issueCount = frame.issues.length
+  const values = truthinessValues(evaluateExpression(expression, frame))
+  if (values != null) return values
+  if (frame.issues.length === issueCount) noteUnsupported(frame, `${label} ${nodeText(expression, frame)} expected boolean-like values`, expression)
+  return null
+}
+
+function singleBooleanValue(values: boolean[]): boolean | null {
+  return values.length === 1 ? values[0]! : null
+}
+
 function uniqueBooleanValues(values: boolean[]) {
   return [...new Set(values)]
 }
@@ -1999,7 +2012,9 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
   const extentEnd = evaluateExtentEndConditional(expression, frame)
   if (extentEnd != null) return extentEnd
   auditConditionalSelector(expression, auditReadFrame(frame), evaluateExpression)
-  const truth = literalBoolean(evaluateExpression(expression.condition, frame))
+  const truthValues = evaluateConditionTruthiness(expression.condition, frame, 'Conditional expression')
+  if (truthValues == null) return unknown(`Unsupported conditional condition: ${nodeText(expression.condition, frame)}`)
+  const truth = singleBooleanValue(truthValues)
   if (truth === true) return evaluateExpression(expression.whenTrue, frame)
   if (truth === false) return evaluateExpression(expression.whenFalse, frame)
   const trueFrame = branchFrame(frame, expression.condition, true, '<conditional-true>', evaluateExpression)
@@ -2075,9 +2090,13 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   const target = unwrapExpression(expression.expression)
   if (ts.isIdentifier(target) && target.text === 'lastEnd') return evaluateLastEndCall(expression, frame)
   if (ts.isIdentifier(target) && target.text === 'extentEnd') return evaluateExtentEndCall(expression, frame)
-  const fallback = valueFromCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
+  let structuralFallback: Value | null | undefined
+  const fallback = () => {
+    structuralFallback ??= valueFromProjectCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
+    return structuralFallback
+  }
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
-    return valueWithStructuralFallback(evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression), fallback)
+    return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target)) {
@@ -2098,15 +2117,16 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
         functionName: member.functionName,
         fn: member.fn,
         ...(member.imported == null ? {} : {imported: member.imported}),
-      }, fallback, frame, receiver)
+      }, fallback(), frame, receiver)
     }
   }
   const resolved = resolveCallTarget(target, frame.program)
   if (resolved.kind === 'math') {
-    return valueWithStructuralFallback(evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression), fallback)
+    return evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
-  if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback, frame)
-  if (fallback?.kind === 'object' || fallback?.kind === 'array') return fallback
+  if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback(), frame)
+  const unresolvedFallback = fallback()
+  if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
   return noteUnsupported(frame, resolved.reason, expression)
 }
 

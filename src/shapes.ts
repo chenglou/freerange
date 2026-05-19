@@ -24,6 +24,9 @@ export type ShapeProgram = {
   sourceId: string
   sourceFile: ts.SourceFile
   typeChecker: ts.TypeChecker | null
+  project?: {
+    filesBySourceFile: Map<ts.SourceFile, unknown>
+  }
 }
 
 const maxTsShapeDepth = 8
@@ -66,6 +69,22 @@ export function valueFromCallReturnShape(expr: string, call: ts.CallExpression, 
     if (signature == null) return null
     return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call, tsShapeState(), 0)
   })
+}
+
+export function valueFromProjectCallReturnShape(expr: string, call: ts.CallExpression, program: ShapeProgram): Value | null {
+  const checker = program.typeChecker
+  if (checker == null) return null
+  return safeTsShape(() => {
+    const signature = checker.getResolvedSignature(call)
+    if (signature == null || !signatureBelongsToProject(signature, program)) return null
+    return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call, tsShapeState(), 0)
+  })
+}
+
+function signatureBelongsToProject(signature: ts.Signature, program: ShapeProgram) {
+  const declaration = signature.declaration
+  if (declaration == null) return false
+  return program.project?.filesBySourceFile.has(declaration.getSourceFile()) === true
 }
 
 export function structuralShape(value: Value | null): Value | null {

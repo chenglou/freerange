@@ -5,6 +5,7 @@ import {
 } from './binding-patterns.ts'
 import {
   tupleElements,
+  nullableValue,
   unknown,
   unknownArray,
   unknownNumber,
@@ -37,7 +38,7 @@ export function bindFunctionInputParameters(fn: FitFunction, specs: FitSpec[], p
   }
   for (const param of fn.node.parameters) {
     if (ts.isIdentifier(param.name)) {
-      env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param.name))
+      env.set(param.name.text, unknownParamValue(param.name.text, specs, param.type, program, param))
       continue
     }
     bindPatternFromValue(param.name, unknownParamPatternValue(param, program), env)
@@ -127,13 +128,21 @@ function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
 }
 
 export function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | undefined, program: Program, node?: ts.Node): Value {
-  const typed = (node == null ? null : valueFromNodeShape(name, node, program)) ?? valueFromSyntaxTypeShape(name, type, program, new Set())
-  if (typed != null) return typed
+  const typed = valueFromSyntaxTypeShape(name, type, program, new Set())
+    ?? (type == null && node != null ? valueFromNodeShape(name, node, program) : null)
+    ?? (type == null ? null : unknownObject(name))
+  if (typed != null) return parameterOptionalValue(name, typed, node)
 
   const shape = specParamShape(name, specs)
   if (shape === 'array') return unknownArray(name)
   if (shape === 'object') return unknownObject(name)
   return unknownNumber(name)
+}
+
+function parameterOptionalValue(name: string, value: Value, node: ts.Node | undefined) {
+  return node != null && ts.isParameter(node) && node.questionToken != null
+    ? nullableValue(value, name, 'undefined')
+    : value
 }
 
 export function unknownResultValue(specs: FitSpec[], program: Program): Value {
