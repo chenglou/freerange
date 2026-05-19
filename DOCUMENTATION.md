@@ -89,6 +89,7 @@ Block comments need to be above the function, type, and loop scope.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
 Range bounds and operator sides can use pure TypeScript expressions that evaluate to numbers. In type contracts, field names refer to the value being checked; other names resolve where the type is declared.
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure. For example, a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected.
+An `@fit` line that's just a pure TypeScript function call is a boolean check. Freerange must prove the call returns `true`; built-ins such as `nondecreasing(...)` keep their dedicated behavior.
 
 Syntax Glossary's at the end of the docs.
 
@@ -268,6 +269,7 @@ items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
 nondecreasing(rows.top) // built-in check: each next row top is at least the previous row top.
+isValidLayout(return) // pure boolean call. Freerange must prove it returns true.
 spaced(rows, gap) // built-in check: adjacent rows are separated by previous height plus `gap`.
 lastEnd(rows) // built-in expression: the end of the final row. Needs rows proven non-empty.
 extentEnd(rows, top) // built-in expression: `top` when rows are empty, otherwise the end of the final row.

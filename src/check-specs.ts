@@ -504,6 +504,9 @@ type AtomProof = {
   status: FitCheckStatus
   reason?: string
   values: Value[]
+  domain: string
+  rule: string
+  message: string
 }
 
 function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): CheckSpecProof {
@@ -515,7 +518,7 @@ function verifyAtomSpec(file: string, functionName: string, spec: Extract<FitSpe
     text: spec.text,
     status: status.status,
     ...(status.reason == null ? {} : {reason: status.reason}),
-  }, 'sequence', `atom-${spec.name}`, 'checked layout atom claim', status.values, context.assumptions)
+  }, status.domain, status.rule, status.message, status.values, context.assumptions)
 }
 
 function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
@@ -525,26 +528,60 @@ function proveAtomSpec(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: Ev
     case 'spaced':
       return proveSpacedAtom(spec, context, hooks)
     default:
-      return {status: 'unknown', reason: `Unknown layout atom ${spec.name}`, values: []}
+      return proveBooleanCallAtom(spec, context, hooks)
   }
 }
 
 function proveNondecreasingAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
   const target = sequencePropArgument(spec.args, context, hooks)
-  if (target == null) return {status: 'unknown', reason: 'nondecreasing expects return.rows.top', values: []}
-  if (hasNondecreasingProp(target.array, target.prop)) return {status: 'pass', values: [target.array]}
-  return {status: 'unknown', reason: nondecreasingFailureReason(spec.text, target), values: [target.array]}
+  if (target == null) return sequenceAtomProof('nondecreasing', 'unknown', [], 'nondecreasing expects return.rows.top')
+  if (hasNondecreasingProp(target.array, target.prop)) return sequenceAtomProof('nondecreasing', 'pass', [target.array])
+  return sequenceAtomProof('nondecreasing', 'unknown', [target.array], nondecreasingFailureReason(spec.text, target))
 }
 
 function proveSpacedAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
-  if (spec.args.length !== 2) return {status: 'unknown', reason: 'spaced expects spaced(rows, gap)', values: []}
+  if (spec.args.length !== 2) return sequenceAtomProof('spaced', 'unknown', [], 'spaced expects spaced(rows, gap)')
   const rows = evaluateSpecExpression(spec.args[0]!, context, hooks)
   const gap = evaluateSpecExpression(spec.args[1]!, context, hooks)
   const values = [rows, gap]
-  if (rows.kind !== 'array') return {status: 'unknown', reason: 'spaced expected an array', values}
-  if (gap.kind !== 'number' || gap.expr == null) return {status: 'unknown', reason: 'spaced expected a known gap expression', values}
-  if (provedSpacing(rows, gap.expr) != null) return {status: 'pass', values}
-  return {status: 'unknown', reason: spacedFailureReason(spec.text, rows, gap.expr), values}
+  if (rows.kind !== 'array') return sequenceAtomProof('spaced', 'unknown', values, 'spaced expected an array')
+  if (gap.kind !== 'number' || gap.expr == null) return sequenceAtomProof('spaced', 'unknown', values, 'spaced expected a known gap expression')
+  if (provedSpacing(rows, gap.expr) != null) return sequenceAtomProof('spaced', 'pass', values)
+  return sequenceAtomProof('spaced', 'unknown', values, spacedFailureReason(spec.text, rows, gap.expr))
+}
+
+function sequenceAtomProof(name: string, status: FitCheckStatus, values: Value[], reason?: string): AtomProof {
+  return {
+    status,
+    ...(reason == null ? {} : {reason}),
+    values,
+    domain: 'sequence',
+    rule: `atom-${name}`,
+    message: 'checked layout atom claim',
+  }
+}
+
+function proveBooleanCallAtom(spec: Extract<FitSpec, {kind: 'check-atom'}>, context: EvalContext, hooks: CheckSpecHooks): AtomProof {
+  const value = evaluateSpecExpression(spec.text, context, hooks)
+  const result = proveBooleanTrue(spec.text, value)
+  return {
+    status: result.status,
+    ...(result.reason == null ? {} : {reason: result.reason}),
+    values: [value],
+    domain: 'literal',
+    rule: 'boolean-call',
+    message: 'checked pure boolean call',
+  }
+}
+
+function proveBooleanTrue(text: string, value: Value): {status: FitCheckStatus; reason?: string} {
+  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason}
+  if (value.kind !== 'literal') return {status: 'unknown', reason: `${text} expected a boolean result`}
+  const booleans = value.values.filter(item => typeof item === 'boolean')
+  if (booleans.length !== value.values.length) return {status: 'unknown', reason: `${text} expected a boolean result`}
+  if (booleans.every(item => item === true)) return {status: 'pass'}
+  if (booleans.every(item => item === false)) return {status: 'fail', reason: `${text} returned false`}
+  return {status: 'unknown', reason: `${text} was not proven true`}
 }
 
 function nondecreasingFailureReason(text: string, target: {array: ArrayValue; prop: string}) {

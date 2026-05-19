@@ -157,6 +157,60 @@ if (pureGivenHelperFailures.length > 0) {
   console.log('given contract expressions: pure helper call')
 }
 
+const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
+  return layout.width > 0
+}
+
+function randomLayoutCheck(layout: {width: number}) {
+  return Math.random() > layout.width
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function validLayout() {
+  return {width: 10}
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function invalidLayout() {
+  return {width: 0}
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function unknownLayout(width: number) {
+  return {width}
+}
+
+/** @fit
+ * randomLayoutCheck(return)
+ */
+function unsupportedLayout() {
+  return {width: 10}
+}
+`)
+const validLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'validLayout' && check.text === 'isValidLayout(return)')
+const invalidLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'invalidLayout' && check.text === 'isValidLayout(return)')
+const unknownLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unknownLayout' && check.text === 'isValidLayout(return)')
+const unsupportedLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unsupportedLayout' && check.text === 'randomLayoutCheck(return)')
+if (
+  validLayoutCheck?.status !== 'pass'
+  || invalidLayoutCheck?.status !== 'fail'
+  || unknownLayoutCheck?.status !== 'unknown'
+  || unsupportedLayoutCheck?.status !== 'unknown'
+  || unsupportedLayoutCheck.reason?.includes('Unsupported Math.random call') !== true
+) {
+  console.error('expected bare pure boolean call contracts to be checked')
+  console.error(JSON.stringify(booleanCallContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: bare boolean helper call')
+}
+
 const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
   return 10
 }
@@ -244,6 +298,56 @@ if (
   process.exitCode = 1
 } else {
   console.log('range contracts: dynamic bounds and alternatives')
+}
+
+const collectionExpressionChecks = verifyFitSource('collection-expression-contracts.ts', `function twice(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given items.length: int 1..10
+ * given items[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[$i].height == items[$i].height
+ * twice(return.rows[$i].height) == twice(items[$i].height)
+ * return.rows[$i + 1].height: 0..40
+ * return.rows[$i + 1].height >= 0
+ * twice(return.rows[].height) <= 80
+ */
+function copyRows(items: {height: number}[]) {
+  return {rows: items.map(item => ({height: item.height}))}
+}
+
+/** @fit
+ * given items.length: int 1..10
+ * given boxes.length: int 1..10
+ * given items[].height: 0..40
+ * given boxes[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[$i + 1].height == boxes[$i].height
+ */
+function offsetAcrossCollections(items: {height: number}[], boxes: {height: number}[]) {
+  return {rows: items.map(item => ({height: item.height})), boxes}
+}
+`)
+const collectionExpressionPasses = [
+  'twice(return.rows[$i].height) == twice(items[$i].height)',
+  'return.rows[$i + 1].height: 0..40',
+  'return.rows[$i + 1].height >= 0',
+  'twice(return.rows[].height) <= 80',
+].map(text => collectionExpressionChecks.find(check => check.functionName === 'copyRows' && check.text === text)?.status)
+const crossCollectionOffsetCheck = collectionExpressionChecks.find(check =>
+  check.functionName === 'offsetAcrossCollections'
+  && check.text === 'return.rows[$i + 1].height == boxes[$i].height')
+if (
+  collectionExpressionPasses.some(status => status !== 'pass')
+  || crossCollectionOffsetCheck?.status !== 'unknown'
+) {
+  console.error('expected indexed and wildcard checks to keep expression support where the index meaning is clear')
+  console.error(JSON.stringify(collectionExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('collection contracts: pure expressions with wildcards and indexed paths')
 }
 
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit

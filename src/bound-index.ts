@@ -53,6 +53,7 @@ export function proveBoundIndexRangeSpec(
   if (uses.length === 0) return null
   const nonZeroOffset = uses.find(use => use.offset !== 0)
   if (nonZeroOffset != null) {
+    if (!needsCrossCollectionLengthProof(uses)) return null
     return {
       status: 'unknown',
       reason: `Bound index label ${nonZeroOffset.label} in range specs currently supports same-index labels without offsets`,
@@ -73,6 +74,7 @@ export function proveBoundIndexComparisonSpec(
 
   const nonZeroOffset = uses.find(use => use.offset !== 0)
   if (nonZeroOffset != null) {
+    if (!needsCrossCollectionLengthProof(uses)) return null
     return {
       status: 'unknown',
       reason: `Bound index label ${nonZeroOffset.label} currently supports same-index ${nonZeroOffset.label} comparisons and adjacent ${nonZeroOffset.label} + 1 comparisons backed by inferred sequence facts`,
@@ -284,6 +286,16 @@ function proveSameIndexCollectionLengths(
     }
   }
   return {status: 'pass'}
+}
+
+function needsCrossCollectionLengthProof(uses: BoundIndexUse[]) {
+  const byLabel = new Map<string, Set<string>>()
+  for (const use of uses) {
+    const collections = byLabel.get(use.label) ?? new Set<string>()
+    collections.add(use.collectionKey)
+    byLabel.set(use.label, collections)
+  }
+  return [...byLabel.values()].some(collections => collections.size > 1)
 }
 
 function uniqueBoundCollections(uses: BoundIndexUse[]) {
