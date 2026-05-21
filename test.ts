@@ -917,6 +917,30 @@ if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n'))
   console.log('diagnostics: collapsed unsupported root fallout')
 }
 
+const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `function danger() {
+  return missing.value
+}
+
+/** @fit
+ * return: 1
+ */
+function sample() {
+  if (externalPredicate()) return danger()
+  return 1
+}
+`)
+const unsupportedBranchConditionCheck = unsupportedBranchConditionChecks.find(check => check.functionName === 'sample' && check.text === 'return: 1')
+if (
+  unsupportedBranchConditionCheck?.status !== 'unknown'
+  || unsupportedBranchConditionCheck.reason !== 'Unsupported branch condition: externalPredicate()'
+) {
+  console.error('expected unsupported branch conditions to stop before speculating through branch bodies')
+  console.error(JSON.stringify(unsupportedBranchConditionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('control flow: unsupported branch condition stops')
+}
+
 const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
 const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedInferFacts = [
@@ -1729,6 +1753,13 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     const infer = runFr(['infer', 'src/bound-index.ts', '--function', 'proveBoundIndexComparisonSpec'])
     expectCli(infer.exitCode === 0, 'expected self-hosted bound-index infer to stay bounded', infer.output)
     expectCli(infer.output.includes('src/bound-index.ts:proveBoundIndexComparisonSpec'), 'expected bound-index infer header', infer.output)
+  }
+
+  {
+    const infer = runFr(['infer', 'src/interpreter/evaluate.ts', '--function', 'evaluateExpression'])
+    expectCli(infer.exitCode === 0, 'expected self-hosted evaluateExpression infer to stay bounded', infer.output)
+    expectCli(infer.output.includes('Unsupported branch condition: ts.isParenthesizedExpression(expression)'), 'expected evaluateExpression infer to report the first unsupported branch condition', infer.output)
+    expectCli(infer.output.split('\n').length < 30, 'expected evaluateExpression infer to avoid cascading through every branch body', infer.output)
   }
 
   await withCliFixture({

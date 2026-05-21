@@ -276,16 +276,33 @@ export function verifyFitProgramWithCallsites(
   }
   annotationChecks.push(...verifyTopLevelInlineSpecs(program, contractCache))
 
-  rawCallsiteChecks.push(...checkTopLevelCallsites(program, contractCache))
-  for (const fn of program.functions.values()) {
-    if (functionsWithRecordedCallsites.has(fn.name)) continue
-    rawCallsiteChecks.push(...checkFunctionCallsites(program, fn, contractCache))
+  if (reachableProgramHasCallPreconditions(program)) {
+    rawCallsiteChecks.push(...checkTopLevelCallsites(program, contractCache))
+    for (const fn of program.functions.values()) {
+      if (functionsWithRecordedCallsites.has(fn.name)) continue
+      rawCallsiteChecks.push(...checkFunctionCallsites(program, fn, contractCache))
+    }
   }
 
   return {
     annotationChecks,
     callsiteChecks: dedupeCallsiteChecks(rawCallsiteChecks.map(toCallsiteCheck)),
   }
+}
+
+function reachableProgramHasCallPreconditions(program: Program, seen = new Set<string>()): boolean {
+  if (seen.has(program.sourceId)) return false
+  seen.add(program.sourceId)
+  if ([...program.functions.values()].some(fn => functionHasCallPreconditionSpecs(program, fn))) return true
+  for (const binding of program.imports.values()) {
+    if (binding.kind === 'resolved' && reachableProgramHasCallPreconditions(binding.file, seen)) return true
+    if (binding.kind === 'namespace' && reachableProgramHasCallPreconditions(binding.file, seen)) return true
+  }
+  return false
+}
+
+function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
+  return functionContractSpecs(program, fn).some(spec => spec.kind === 'given-range' || spec.kind === 'given-comparison')
 }
 
 export function checkCallsitesInProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {

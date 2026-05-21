@@ -960,12 +960,12 @@ FAIL negative-patterns.ts:negativeStrictSpringMutation: return.k > 0
   missing fact: -1 > 0
 UNKNOWN negative-patterns.ts:negativeStrictSpringObjectAssign: return.k > 0
   known:
-    Object.assign(negativeStrictSpring(), {k: -1}).k: any number
-  missing fact: Object.assign(negativeStrictSpring(), {k: -1}).k > 0
+    return.k: any number
+  missing fact: return.k > 0
 UNKNOWN negative-patterns.ts:negativeStrictSpringObjectAssign: return.b > 0
   known:
-    Object.assign(negativeStrictSpring(), {k: -1}).b: any number
-  missing fact: Object.assign(negativeStrictSpring(), {k: -1}).b > 0
+    return.b: any number
+  missing fact: return.b > 0
 FAIL negative-patterns.ts:negativeMapCallbackMutationForgetsReturnedFact: return[].value > 0
   applies to: every item in return
   result: is false
