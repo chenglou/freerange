@@ -72,6 +72,7 @@ locals:
   rows follows items by index
 patterns.ts:localLoopAnnotation
 return:
+  return.bottom == (y - gap)
   return.bottom: -10..3500
   return.rows.length == items.length
   return.rows.length: int 1..50
@@ -82,6 +83,7 @@ return:
   nondecreasing(return.rows.top)
   spaced(return.rows, gap)
   return.rows[$i + 1].top == return.rows[$i].top + return.rows[$i].height + gap
+  lastEnd(return.rows) == (y - gap)
   lastEnd(return.rows): -10..3500
   extentEnd(return.rows, top) == extentEnd(rows, top)
   extentEnd(return.rows, top): -10..3500
@@ -94,10 +96,11 @@ locals:
   nondecreasing(rows.top)
   spaced(rows, gap)
   rows[$i + 1].top == rows[$i].top + rows[$i].height + gap
+  lastEnd(rows) == (y - gap)
   lastEnd(rows): -10..3500
   extentEnd(rows, top): -10..3500
   y: 0..3500
-loop 1087: for (const item of items)
+loop 1092: for (const item of items)
   inferred:
     rows.length == items.length
     rows.length: int 1..50
@@ -107,6 +110,7 @@ loop 1087: for (const item of items)
     nondecreasing(rows.top)
     spaced(rows, gap)
     rows[$i + 1].top == rows[$i].top + rows[$i].height + gap
+    lastEnd(rows) == (y - gap)
     lastEnd(rows): -10..3500
     extentEnd(rows, top): -10..3500
     y: 0..3500
@@ -115,6 +119,7 @@ loop 1087: for (const item of items)
     rows[].height: 0..40
     nondecreasing(rows.top)
     spaced(rows, gap)
+    lastEnd(rows) == y - gap
   assumptions:
     given items[].height: 0..40
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout

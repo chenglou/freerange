@@ -207,6 +207,7 @@ export function sequenceSummaryFromLoopPush(
     resolveNumber: options.resolveNumber,
     includeExtentEnd: true,
     assumptions: options.assumptions,
+    cursorEnd: update.end,
   })
 }
 
@@ -237,6 +238,7 @@ function sequenceSummaryFromAppendClock(
     resolveNumber: (expr: string) => NumberValue | null
     includeExtentEnd: boolean
     assumptions?: LinearConstraint[]
+    cursorEnd?: NumberValue
   },
 ): ArraySummary | null {
   const recurrence = clock.recurrence
@@ -257,7 +259,9 @@ function sequenceSummaryFromAppendClock(
   if (samePath(recurrence.path, ['top'])) summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
   if (!options.includeExtentEnd || !samePath(recurrence.path, ['top'])) return summary
 
-  const nonEmptyEnd = lastEndFromLoopEnd(nonEmptyLoopEnd(recurrence.start, recurrence.advance, clock.length), gapExpr, options.resolveNumber)
+  const loopEndName = `lastEnd(${clock.arrayName})`
+  const loopEnd = options.cursorEnd ?? nonEmptyLoopEnd(loopEndName, recurrence.start, recurrence.advance, clock.length)
+  const nonEmptyEnd = lastEndFromLoopEnd(loopEnd, gapExpr, options.resolveNumber)
   if (clock.length.min >= 1) summary.lastEnd = nonEmptyEnd
   const extentEnd = extentEndFromLoopPush(clock.arrayName, recurrence.start, nonEmptyEnd)
   if (extentEnd != null) summary.extentEnds.push(extentEnd)
@@ -419,9 +423,9 @@ function repeatedAdvanceBounds(length: NumberValue, advance: NumberValue): {min:
   }
 }
 
-function nonEmptyLoopEnd(start: NumberValue, advance: NumberValue, length: NumberValue): NumberValue {
+function nonEmptyLoopEnd(targetName: string, start: NumberValue, advance: NumberValue, length: NumberValue): NumberValue {
   const nonEmptyLength = {...length, min: Math.max(1, length.min)}
-  return runningSumNumber(start, nonEmptyLength, advance)
+  return runningSumNumber(targetName, start, nonEmptyLength, advance)
 }
 
 function extentEndFromLoopPush(

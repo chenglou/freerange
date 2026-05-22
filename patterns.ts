@@ -633,6 +633,7 @@ export function numericLimitRangeLoop(limit: number) {
  * return.rows.length == items.length
  * nondecreasing(return.rows.top)
  * spaced(return.rows, gap)
+ * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoop(items: number[], top: number, step: number, gap: number) {
   const rows = []
@@ -705,8 +706,10 @@ export function indexedPerItemField(items: {height: number}[], index: number) {
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
+ * return.bottom >= top
  * nondecreasing(return.rows.top)
  * spaced(return.rows, gap)
+ * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoopPerItemHeight(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -1072,6 +1075,7 @@ export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) 
  * given items.length: int 1..50
  * given top: 0..1000
  * given gap: 0..10
+ * return.bottom >= top
  * return.rows.length == items.length
  */
 export function localLoopAnnotation(items: {height: number}[], top: number, gap: number) {
@@ -1083,6 +1087,7 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
    * rows[].height: 0..40
    * nondecreasing(rows.top)
    * spaced(rows, gap)
+   * lastEnd(rows) == y - gap
    */
   for (const item of items) {
     rows.push({top: y, height: item.height})
@@ -1282,6 +1287,26 @@ export function inlineComparisonPrefixVariants(
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
+ * given top: 0..1000
+ * given gap: 0..10
+ * return.rows.length == items.length
+ * return.rows[].height: 0..40
+ * extentEnd(return.rows, top) == return.bottom
+ */
+export function extentEndHandlesEmptyRows(items: {height: number}[], top: number, gap: number) {
+  const rows = []
+  let y = top
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height + gap
+  }
+  const bottom = rows.length === 0 ? top : y - gap
+  return {rows, bottom}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
  * return.rows.length == items.length
  * return.rows[].height: 0..40
  */
@@ -1393,7 +1418,9 @@ export function indexedLoopNamedIndexField(items: {height: number}[]) {
  * return.rows[].index: int 0..49
  * return.rows[].index < params.items.length
  * return.rows[].height: 0..40
+ * return.bottom >= params.top
  * nondecreasing(return.rows.top)
+ * lastEnd(return.rows) == return.bottom
  */
 export function indexedLoopAliasRows(params: {items: {height: number}[]; top: number}) {
   const rows = []
@@ -1427,6 +1454,7 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
  * return.rows.length <= items.length
  * return.rows[].top: 0..3000
  * return.rows[].height: 0..40
+ * return.bottom >= top
  */
 export function conditionalPushRowsWithCursor(items: {height: number; visible: boolean}[], top: number) {
   const rows = []

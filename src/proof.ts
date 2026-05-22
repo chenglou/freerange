@@ -478,6 +478,23 @@ export function runningSumFacts(value: NumberValue, start: NumberValue, count: N
     const upper = comparisonConstraint(value, '<=', start, `${value.expr ?? formatRange(value)} <= ${start.expr ?? formatRange(start)}`)
     if (upper != null) facts.push(upper)
   }
+  if (count.min >= 1 && start.linear != null && increment.linear != null) {
+    const oneIterEnd = numberValue(
+      start.min + increment.min,
+      start.max + increment.max,
+      start.isInteger && increment.isInteger,
+      null,
+      linearAdd(start.linear, increment.linear),
+    )
+    if (increment.min >= 0) {
+      const lower = comparisonConstraint(value, '>=', oneIterEnd, `${value.expr ?? formatRange(value)} >= start + increment`)
+      if (lower != null) facts.push(lower)
+    }
+    if (increment.max <= 0) {
+      const upper = comparisonConstraint(value, '<=', oneIterEnd, `${value.expr ?? formatRange(value)} <= start + increment`)
+      if (upper != null) facts.push(upper)
+    }
+  }
   if (start.min === 0 && start.max === 0 && increment.min === 1 && increment.max === 1) {
     const upper = comparisonConstraint(value, '<=', count, `${value.expr ?? formatRange(value)} <= ${count.expr ?? formatRange(count)}`)
     if (upper != null) facts.push(upper)

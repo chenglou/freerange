@@ -52,6 +52,7 @@ if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotie
 }
 
 const unboundedNonnegativeRunningSum = runningSumNumber(
+  'y',
   numberValue(0, Number.POSITIVE_INFINITY, false, 'start'),
   numberValue(0, Number.POSITIVE_INFINITY, true, 'count'),
   numberValue(0, Number.POSITIVE_INFINITY, false, 'increment'),

@@ -230,7 +230,7 @@ UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows,
   need: every next row top == previous top + previous height + otherGap
   known:
     loop proved: row advance (step + gap) = previous height step + gap
-    sequence facts: nondecreasing(.top), spaced(gap), lastEnd = -10..3500
+    sequence facts: nondecreasing(.top), spaced(gap), lastEnd = -10..3500 as (y - gap)
   missing: given gap == otherGap
 UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: return.rows[].bottom == return.rows[].top + return.rows[].height
   applies to: every item in return.rows
@@ -292,14 +292,14 @@ UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: no
   need: every next .top >= previous .top
   known:
     row advance for .top: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = any number
+    sequence facts: spaced(0), lastEnd = any number as y
   missing: given items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >= 0
   known:
-    any number
+    total: any number
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
-  missing fact: any number >= 0
+  missing fact: total >= 0
 FAIL negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
   range was any number as total, expected inside 0..10
   known:
@@ -346,7 +346,7 @@ UNKNOWN negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > l
   need: every next .top >= previous .top
   known:
     row advance for .top: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = any number
+    sequence facts: spaced(0), lastEnd = any number as y
   missing: given items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeLoopFitHasNoReturn > loop: given return.rows.length == items.length
   loop @fit specs do not have return; name local values directly
@@ -360,7 +360,8 @@ UNKNOWN negative-patterns.ts:negativeWildcardRowsNeedParentBottom: return.rows[]
     assumed from input: given top: 0..1000
     assumed from input: given gap: 0..10
     assumed from input: given parent.bottom: 0..2000
-    inferred from code: 0..3500 >= top
+    inferred from code: y >= top
+    inferred from code: y >= start + increment
   missing fact: (rows[].top + items[].height) <= parent.bottom
 UNKNOWN negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: return.sections[].rows[].height <= maxHeight
   applies to: every item in return.sections[].rows
@@ -387,7 +388,7 @@ UNKNOWN negative-patterns.ts:negativeAdjacentBoundIndexNeedsNondecreasingRows: r
   need: every next .top >= previous .top
   known:
     row advance for .top: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = any number
+    sequence facts: spaced(0), lastEnd = any number as y
   missing: given items[].height >= 0
 FAIL negative-patterns.ts:negativeCallGiven: negativeNeedsSmallValue(value): requires value: 0..10
   caller passed: value: 0..20
@@ -419,13 +420,13 @@ UNKNOWN negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: ret
 UNKNOWN negative-patterns.ts:negativeExtentEndCatchesEmptyRows: extentEnd(return.rows, top) == return.bottom
   known:
     extentEnd(rows, top): -10..3500
-    -10..3500
+    (y - gap): -10..3500
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: 0..40
     assumed from input: given top: 0..1000
     assumed from input: given gap: 0..10
-    inferred from code: 0..3500 >= top
-  missing fact: extentEnd(rows, top) == -10..3500
+    inferred from code: y >= top
+  missing fact: extentEnd(rows, top) == (y - gap)
 FAIL negative-patterns.ts:negativeMapRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
   known:
@@ -605,7 +606,7 @@ UNKNOWN negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[]
   missing: (rowIndex + 1) < items.length
 UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: return.bottom >= params.top
   known:
-    any number
+    y: any number
     params.top: 0..1000
     assumed from input: given params.items.length: int 1..50
     assumed from input: given params.items[].height: -40..40
@@ -614,13 +615,13 @@ UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: retur
     inferred from code: i - params.items.length < 0
     inferred from code: params.items[i].height >= -40
     inferred from code: params.items[i].height <= 40
-  missing fact: any number >= params.top
+  missing fact: y >= params.top
 UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
   known:
     row advance for .top: -40..40 as params.items[i].height
-    sequence facts: spaced(0), lastEnd = any number
+    sequence facts: spaced(0), lastEnd = any number as y
   missing: given params.items[i].height >= 0
 UNKNOWN negative-patterns.ts:negativeStaleGapAfterRefactor: spaced(return.rows, gap)
   spaced(return.rows, gap) was not inferred
@@ -672,13 +673,13 @@ UNKNOWN negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows
   missing fact: rows.length == items.length
 UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: return.bottom >= top
   known:
-    any number
+    y: any number
     top: 0..1000
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
     assumed from input: given top: 0..1000
     inferred from code: -items.length + rows.length <= 0
-  missing fact: any number >= top
+  missing fact: y >= top
 UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: return.rows.length == items.length
   known:
     rows.length: int 0..50
@@ -841,7 +842,8 @@ UNKNOWN negative-patterns.ts:negativeForwardSymbolicSlotsAreNotSamePath: return.
     assumed from input: given items[].height: 0..40
     assumed from input: given focused: int 0..<items.length
     assumed from input: given focused + 1 < items.length
-    inferred from code: 0..2000 >= 0
+    inferred from code: top >= 0
+    inferred from code: top >= start + increment
     inferred from code: rows[focused + 1].top - rows[focused].top >= 0
     inferred from code: rows[focused + 1].top - rows[focused].top + rows[focused].height == 0
     inferred from code: rows[focused + 1].top - rows[focused].height == 0

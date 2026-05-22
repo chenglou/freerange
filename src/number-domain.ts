@@ -187,16 +187,17 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right), null, null, mergeProvenance(left, right))
 }
 
-export function runningSumNumber(start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
+export function runningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
   const exactIncrement = increment.min === increment.max ? increment.min : null
-  const linear = exactIncrement == null || start.linear == null || count.linear == null
+  const exactLinear = exactIncrement == null || start.linear == null || count.linear == null
     ? null
     : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
+  const linear = exactLinear ?? linearVariable(linearNameForExpression(targetName))
   if (count.min < 0 || increment.min < 0) return numberValue(
     Number.NEGATIVE_INFINITY,
     Number.POSITIVE_INFINITY,
     false,
-    null,
+    targetName,
     linear,
     null,
     mergeProvenance(start, count, increment),
@@ -207,7 +208,7 @@ export function runningSumNumber(start: NumberValue, count: NumberValue, increme
     result.min,
     result.max,
     start.isInteger && count.isInteger && increment.isInteger,
-    null,
+    targetName,
     linear,
     null,
     mergeProvenance(start, count, increment),

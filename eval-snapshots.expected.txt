@@ -65,6 +65,7 @@ infer matrix abstract guarded for-of rows
   local rows[].height == items[].height
   local rows is an order-preserving subset of items
 infer matrix abstract for-of cursor values
+  return return.bottom == y
   return return.bottom: 0..3000
   return return.rows.length == items.length
   return return.rows.length: int 0..50
@@ -128,6 +129,7 @@ infer matrix indexed array guarded rows
   local rows[].sourceIndex: int 0..19
   local rows is an order-preserving subset of items
 infer matrix indexed array guarded cursor values
+  return return.bottom == y
   return return.bottom: 0..3000
   return return.rows.length == rows.length
   return return.rows.length: int 0..50
@@ -139,6 +141,7 @@ infer matrix indexed array guarded cursor values
   local rows is an order-preserving subset of items
   local y: 0..3000
 infer matrix indexed array cursor values
+  return return.bottom == y
   return return.bottom: 0..3000
   return return.rows.length == items.length
   return return.rows.length: int 0..50

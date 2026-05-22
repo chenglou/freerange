@@ -116,7 +116,7 @@ export function finalizeLoopEffects(
   for (const [targetName, pending] of effects.scalarAdds) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, pending.node)
-    const end = runningSumNumber(start, loop.source.length, pending.increment)
+    const end = runningSumNumber(targetName, start, loop.source.length, pending.increment)
     updates.set(targetName, {start, increment: pending.increment, end})
     frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, pending.increment))
   }
