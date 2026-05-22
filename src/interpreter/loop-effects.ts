@@ -1,15 +1,15 @@
 import * as ts from 'typescript'
 import {
-  conditionalRunningSumNumber,
   mergeArraySummary,
   mergeElementValue,
-  runningExtremumNumber,
-  runningSumNumber,
   type NumberValue,
   type Value,
 } from '../domain.ts'
 import {mergeAssumptions} from '../assumptions.ts'
 import {
+  conditionalRunningSumNumber,
+  runningExtremumNumber,
+  runningSumNumber,
   sequenceSummaryFromLoopPush,
   type LoopExtremum,
   type LoopScalarUpdate,

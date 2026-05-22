@@ -2,9 +2,10 @@ import * as ts from 'typescript'
 import {
   addNumbers,
   mergeElementValue,
+  mergeProvenance,
+  multiplyNumbers,
+  nonNanExtrema,
   numberValue,
-  runningExtremumNumber,
-  runningSumNumber,
   subtractNumbers,
   unknown,
   unknownNumber,
@@ -20,6 +21,7 @@ import {
 import {
   linearAdd,
   linearConstant,
+  linearScale,
   linearVariable,
   sameExpressionText,
   sameLinear,
@@ -78,6 +80,77 @@ export type AppendRecurrence = {
   start: NumberValue
   advance: NumberValue
   size: NumberValue
+}
+
+export function runningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
+  const exactIncrement = increment.min === increment.max ? increment.min : null
+  const exactLinear = exactIncrement == null || start.linear == null || count.linear == null
+    ? null
+    : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
+  const linear = exactLinear ?? linearVariable(linearNameForExpression(targetName))
+  if (count.min < 0 || increment.min < 0) return numberValue(
+    Number.NEGATIVE_INFINITY,
+    Number.POSITIVE_INFINITY,
+    false,
+    targetName,
+    linear,
+    null,
+    mergeProvenance(start, count, increment),
+  )
+  const delta = multiplyNumbers(count, increment)
+  const result = addNumbers(start, delta)
+  return numberValue(
+    result.min,
+    result.max,
+    start.isInteger && count.isInteger && increment.isInteger,
+    targetName,
+    linear,
+    null,
+    mergeProvenance(start, count, increment),
+  )
+}
+
+export function conditionalRunningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
+  const deltaBounds = nonNanExtrema([
+    0,
+    count.max * increment.min,
+    count.max * increment.max,
+  ])
+  const delta = numberValue(deltaBounds.min, deltaBounds.max, count.isInteger && increment.isInteger, null, null, null, mergeProvenance(count, increment))
+  const result = addNumbers(start, delta)
+  return numberValue(
+    result.min,
+    result.max,
+    start.isInteger && count.isInteger && increment.isInteger,
+    targetName,
+    linearVariable(targetName),
+    null,
+    mergeProvenance(start, count, increment),
+  )
+}
+
+export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, start: NumberValue, count: NumberValue, candidate: NumberValue): NumberValue {
+  if (count.max <= 0) {
+    return numberValue(start.min, start.max, start.isInteger, targetName, linearVariable(linearNameForExpression(targetName)), null, start.provenance)
+  }
+
+  const hasItem = count.min >= 1
+  const min = kind === 'max'
+    ? hasItem ? Math.max(start.min, candidate.min) : start.min
+    : Math.min(start.min, candidate.min)
+  const max = kind === 'max'
+    ? Math.max(start.max, candidate.max)
+    : hasItem ? Math.min(start.max, candidate.max) : start.max
+
+  return numberValue(
+    min,
+    max,
+    start.isInteger && candidate.isInteger,
+    targetName,
+    linearVariable(linearNameForExpression(targetName)),
+    null,
+    mergeProvenance(start, count, candidate),
+  )
 }
 
 export function loopExtremaConflictWithAdds(extrema: Map<string, LoopExtremum>, adds: Map<string, NumberValue>) {

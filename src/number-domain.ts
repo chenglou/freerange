@@ -120,12 +120,6 @@ function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | nul
   return null
 }
 
-function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_INFINITY, fallbackMax = Number.POSITIVE_INFINITY) {
-  const cleanValues = values.filter(value => !Number.isNaN(value))
-  if (cleanValues.length === 0) return {min: fallbackMin, max: fallbackMax}
-  return {min: Math.min(...cleanValues), max: Math.max(...cleanValues)}
-}
-
 export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
   const min = left.min + right.min
   const max = left.max + right.max
@@ -187,75 +181,10 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right), null, null, mergeProvenance(left, right))
 }
 
-export function runningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
-  const exactIncrement = increment.min === increment.max ? increment.min : null
-  const exactLinear = exactIncrement == null || start.linear == null || count.linear == null
-    ? null
-    : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
-  const linear = exactLinear ?? linearVariable(linearNameForExpression(targetName))
-  if (count.min < 0 || increment.min < 0) return numberValue(
-    Number.NEGATIVE_INFINITY,
-    Number.POSITIVE_INFINITY,
-    false,
-    targetName,
-    linear,
-    null,
-    mergeProvenance(start, count, increment),
-  )
-  const delta = multiplyNumbers(count, increment)
-  const result = addNumbers(start, delta)
-  return numberValue(
-    result.min,
-    result.max,
-    start.isInteger && count.isInteger && increment.isInteger,
-    targetName,
-    linear,
-    null,
-    mergeProvenance(start, count, increment),
-  )
-}
-
-export function conditionalRunningSumNumber(targetName: string, start: NumberValue, count: NumberValue, increment: NumberValue): NumberValue {
-  const deltaBounds = nonNanExtrema([
-    0,
-    count.max * increment.min,
-    count.max * increment.max,
-  ])
-  const delta = numberValue(deltaBounds.min, deltaBounds.max, count.isInteger && increment.isInteger, null, null, null, mergeProvenance(count, increment))
-  const result = addNumbers(start, delta)
-  return numberValue(
-    result.min,
-    result.max,
-    start.isInteger && count.isInteger && increment.isInteger,
-    targetName,
-    linearVariable(targetName),
-    null,
-    mergeProvenance(start, count, increment),
-  )
-}
-
-export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, start: NumberValue, count: NumberValue, candidate: NumberValue): NumberValue {
-  if (count.max <= 0) {
-    return numberValue(start.min, start.max, start.isInteger, targetName, linearVariable(linearNameForExpression(targetName)), null, start.provenance)
-  }
-
-  const hasItem = count.min >= 1
-  const min = kind === 'max'
-    ? hasItem ? Math.max(start.min, candidate.min) : start.min
-    : Math.min(start.min, candidate.min)
-  const max = kind === 'max'
-    ? Math.max(start.max, candidate.max)
-    : hasItem ? Math.min(start.max, candidate.max) : start.max
-
-  return numberValue(
-    min,
-    max,
-    start.isInteger && candidate.isInteger,
-    targetName,
-    linearVariable(linearNameForExpression(targetName)),
-    null,
-    mergeProvenance(start, count, candidate),
-  )
+export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_INFINITY, fallbackMax = Number.POSITIVE_INFINITY) {
+  const cleanValues = values.filter(value => !Number.isNaN(value))
+  if (cleanValues.length === 0) return {min: fallbackMin, max: fallbackMax}
+  return {min: Math.min(...cleanValues), max: Math.max(...cleanValues)}
 }
 
 export function powerNumbers(left: NumberValue, right: NumberValue): Value {

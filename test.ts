@@ -1,5 +1,6 @@
 import {inferFitFiles} from './src/check-core.ts'
-import {divideNumbers, multiplyNumbers, numberValue, runningSumNumber, subtractNumbers} from './src/domain.ts'
+import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from './src/domain.ts'
+import {runningSumNumber} from './src/loop-summary.ts'
 import {uniqueUnsupported} from './src/infer-report.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from './src/reports.ts'
 

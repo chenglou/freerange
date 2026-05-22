@@ -1,6 +1,5 @@
 import * as ts from 'typescript'
 import {
-  runningExtremumNumber,
   unknownNumber,
   type NumberValue,
   type Value,
@@ -12,6 +11,7 @@ import {
   unwrapExpression,
 } from './linear.ts'
 import {
+  runningExtremumNumber,
   type GuardedLoopPush,
   type LoopExtremum,
   type LoopPush,
