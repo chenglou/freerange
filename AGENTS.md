@@ -8,7 +8,7 @@ Do `bun install` if you're in a fresh checkout/worktree.
 - This project is private. Do NOT consider legacy and interop when refactoring.
 - Add positive and negative tests. Prefer making the implementation less ad hoc over adding public syntax.
 
-As much as you can, avoid these jargons: source-shaped, source-owned, seam, semantic facts
+Avoid invented compound word jargons like: -shaped, -owned
 
 **Important:** when a small general family is visible, implement the family. If supporting `total += row.height` naturally includes `total = total + row.height` and guarded additions, define that invariant and reject the unsafe cases. Before coding, say what belongs in the family and what stays out.
 
