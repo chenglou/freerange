@@ -354,7 +354,12 @@ function tupleLengthValue(expr: string, minLength: number, maxLength: number) {
 
 export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undefined, program: ShapeProgram, seen: Set<string>): Value | null {
   if (type == null) return null
+  const checked = valueFromTypeNodeShape(expr, type, program)
+  if (checked != null) return checked
+  return valueFromWrittenTypeShape(expr, type, program, seen)
+}
 
+function valueFromWrittenTypeShape(expr: string, type: ts.TypeNode, program: ShapeProgram, seen: Set<string>): Value | null {
   if (ts.isParenthesizedTypeNode(type)) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
   if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) return valueFromSyntaxTypeShape(expr, type.type, program, seen)
   if (type.kind === ts.SyntaxKind.NumberKeyword) return unknownNumber(expr)
@@ -370,7 +375,7 @@ export function valueFromSyntaxTypeShape(expr: string, type: ts.TypeNode | undef
   if (ts.isLiteralTypeNode(type)) return valueFromLiteralSyntaxType(expr, type)
   if (ts.isTypeLiteralNode(type)) return objectValueFromTypeMembers(expr, type.members, program, seen)
   if (ts.isTypeReferenceNode(type)) return valueFromTypeReference(expr, type, program, seen)
-  return valueFromTypeNodeShape(expr, type, program)
+  return null
 }
 
 function valueFromLiteralSyntaxType(expr: string, type: ts.LiteralTypeNode): Value {
