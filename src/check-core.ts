@@ -306,12 +306,6 @@ function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
   return functionContractSpecs(program, fn).some(spec => spec.kind === 'given-range' || spec.kind === 'given-comparison')
 }
 
-export function checkCallsitesInProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
-  const checks: FitCheck[] = []
-  checks.push(...checkTopLevelCallsites(program, contractCache))
-  for (const fn of program.functions.values()) checks.push(...checkFunctionCallsites(program, fn, contractCache))
-  return dedupeCallsiteChecks(checks.map(toCallsiteCheck))
-}
 
 export function auditSelectorsInProgram(
   program: Program,

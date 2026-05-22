@@ -63,10 +63,6 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
   return proofStatus(proveComparisonWithStep(left, op, right, assumptions))
 }
 
-export function comparisonProofStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProofStep {
-  return proveComparisonWithStep(left, op, right, assumptions).step
-}
-
 export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProof {
   const structuralEquality = proveStructuralEquality(left, op, right)
   if (structuralEquality != null) return {...structuralEquality, step: structuralEqualityProofStep(left, op, right)!}

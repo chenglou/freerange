@@ -1,12 +1,7 @@
 import {
   addNumbers,
-  joinValues,
-  numberBranches,
   numberValue,
-  tupleElements,
-  unknown,
   unknownNumber,
-  valueWithAssumptions,
   withNumberCases,
   type ArrayValue,
   type LinearConstraint,
@@ -19,20 +14,6 @@ import {
 } from './domain.ts'
 import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.ts'
 import {comparisonConstraint, proveComparison} from './proof.ts'
-
-export function elementValueForIndexCases(target: ArrayValue, index: NumberValue): Value | null {
-  const elements = tupleElements(target)
-  if (elements == null || index.cases == null) return null
-  let value: Value | null = null
-  for (const indexCase of numberBranches(index)) {
-    const slot = exactFiniteArrayIndex(indexCase.value, elements.length)
-    if (slot == null) return null
-    const element = elements[slot] ?? target.element ?? unknown('Array element values are not tracked')
-    const elementCase = valueWithAssumptions(element, indexCase.assumptions)
-    value = value == null ? elementCase : joinValues(value, elementCase)
-  }
-  return value
-}
 
 export function exactFiniteArrayIndex(index: NumberValue, length: number): number | null {
   if (!index.isInteger || index.min !== index.max) return null

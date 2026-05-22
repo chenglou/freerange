@@ -7,7 +7,6 @@ import {
   nonNanExtrema,
   numberValue,
   subtractNumbers,
-  unknown,
   unknownNumber,
   unknownObject,
   linearNameForExpression,
@@ -153,22 +152,6 @@ export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, s
   )
 }
 
-export function loopExtremaConflictWithAdds(extrema: Map<string, LoopExtremum>, adds: Map<string, NumberValue>) {
-  for (const targetName of extrema.keys()) {
-    if (adds.has(targetName)) return true
-  }
-  return false
-}
-
-export function applyLoopExtrema(extrema: Map<string, LoopExtremum>, length: NumberValue, env: Map<string, Value>, targetError: string): Value | null {
-  for (const extremum of extrema.values()) {
-    const start = env.get(extremum.targetName)
-    if (start == null || start.kind !== 'number') return unknown(targetError)
-    env.set(extremum.targetName, runningExtremumNumber(extremum.kind, extremum.targetName, start, length, extremum.candidate))
-  }
-  return null
-}
-
 export function conditionalPushLength(arrayName: string, sourceLength: NumberValue, startLength: NumberValue = numberValue(0, 0, true, '0', linearConstant(0))): NumberValue {
   return numberValue(startLength.min, startLength.max + sourceLength.max, true, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
 }
@@ -242,15 +225,6 @@ export function applySegmentedStackCursorUpdate(push: GuardedLoopPush, element: 
   const start = env.get(push.segmentedStack.cursorName)
   if (start?.kind !== 'number') return
   env.set(push.segmentedStack.cursorName, segmentedStackCursorValue(push.segmentedStack.cursorName, start, sourceLength, advance))
-}
-
-export function indexedLoopElementFromPush(push: LoopPush, indexName: string, sourceLength: NumberValue): Value | null {
-  if (push.element == null) return null
-  return indexedLoopValueFromPush(push.element, indexName, sourceLength, `${push.arrayName}[]`)
-}
-
-export function indexedElementValue(arrayName: string, prop: string, sourceLength: NumberValue): NumberValue {
-  return indexedElementPathValue(`${arrayName}[].${prop}`, sourceLength)
 }
 
 export function indexedElementPathValue(expr: string, sourceLength: NumberValue): NumberValue {
@@ -425,22 +399,6 @@ function setObjectPathValue(value: Value, path: string[], replacement: Value): V
   return {...value, props}
 }
 
-function indexedLoopValueFromPush(value: Value, indexName: string, sourceLength: NumberValue, expr: string): Value {
-  if (value.kind === 'number' && value.expr === indexName) return indexedElementPathValue(expr, sourceLength)
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      elements: value.elements == null ? null : value.elements.map((element, index) => indexedLoopValueFromPush(element, indexName, sourceLength, `${expr}[${index}]`)),
-      element: value.element == null ? null : indexedLoopValueFromPush(value.element, indexName, sourceLength, `${expr}[]`),
-    }
-  }
-  if (value.kind !== 'object') return value
-  const props = new Map<string, Value>()
-  for (const [name, prop] of value.props) {
-    props.set(name, indexedLoopValueFromPush(prop, indexName, sourceLength, `${expr}.${name}`))
-  }
-  return {...value, props}
-}
 
 function loopCursorElementValue(
   update: LoopScalarUpdate,

@@ -5,7 +5,6 @@ import {
 } from './domain.ts'
 import {
   linearAdd,
-  numericLiteralValue,
   sameLinear,
   unwrapExpression,
 } from './linear.ts'
@@ -23,12 +22,6 @@ export type LoopSourceContext = {
   evaluateExpression: (expression: ts.Expression, env: Map<string, Value>) => Value
   bindVariableStatement: (statement: ts.VariableStatement, env: Map<string, Value>) => void
   isSideEffectFreeExpression: (expression: ts.Expression) => boolean
-}
-
-export type IndexedLoopShape = {
-  indexName: string
-  sourceExpression: ts.Expression
-  sourceKind: 'array' | 'limit'
 }
 
 export function readLoopPush(expression: ts.CallExpression, context: LoopSourceContext): Omit<LoopPush, 'arrayName' | 'length'> {
@@ -103,21 +96,6 @@ export function pushCallFromStatement(statement: ts.Statement): (ts.CallExpressi
   if (!ts.isBlock(statement) || statement.statements.length !== 1) return null
   const child = statement.statements[0]
   return child != null && ts.isExpressionStatement(child) && isPushCall(child.expression) ? child.expression : null
-}
-
-export function indexedLoopShape(statement: ts.ForStatement): IndexedLoopShape | null {
-  if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
-  if (statement.initializer.declarations.length !== 1) return null
-  const declaration = statement.initializer.declarations[0]
-  if (declaration == null || !ts.isIdentifier(declaration.name)) return null
-  if (declaration.initializer == null || numericLiteralValue(declaration.initializer) !== 0) return null
-
-  const indexName = declaration.name.text
-  if (statement.condition == null || statement.incrementor == null) return null
-  const source = indexedLoopSource(statement.condition, indexName)
-  if (source == null) return null
-  if (!indexedLoopIncrements(statement.incrementor, indexName)) return null
-  return {indexName, sourceExpression: source.expression, sourceKind: source.kind}
 }
 
 export function isPushCall(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression & {expression: ts.Identifier}} {
@@ -224,27 +202,6 @@ function isResettableScalarAssignment(
   return reset.min >= tracked.min && reset.max <= tracked.max
 }
 
-
-function indexedLoopSource(expression: ts.Expression, indexName: string): {kind: 'array' | 'limit'; expression: ts.Expression} | null {
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.LessThanToken) return null
-  if (!ts.isIdentifier(expression.left) || expression.left.text !== indexName) return null
-  if (ts.isPropertyAccessExpression(expression.right) && expression.right.name.text === 'length') {
-    return {kind: 'array', expression: expression.right.expression}
-  }
-  return {kind: 'limit', expression: expression.right}
-}
-
-function indexedLoopIncrements(expression: ts.Expression, indexName: string) {
-  if ((ts.isPostfixUnaryExpression(expression) || ts.isPrefixUnaryExpression(expression))
-    && expression.operator === ts.SyntaxKind.PlusPlusToken
-    && ts.isIdentifier(expression.operand)
-    && expression.operand.text === indexName) return true
-
-  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
-  return ts.isIdentifier(expression.left)
-    && expression.left.text === indexName
-    && numericLiteralValue(expression.right) === 1
-}
 
 function objectPropertyExpression(expression: ts.ObjectLiteralExpression, name: string): ts.Expression | null {
   for (const property of expression.properties) {

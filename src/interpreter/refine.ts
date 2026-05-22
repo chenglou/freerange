@@ -73,10 +73,6 @@ export function compareNumbers(left: number, kind: ts.SyntaxKind, right: number)
   }
 }
 
-export function literalBoolean(value: Value): boolean | null {
-  return value.kind === 'literal' && value.values.length === 1 && typeof value.values[0] === 'boolean' ? value.values[0] : null
-}
-
 function refineCondition(frame: InterpreterFrame, condition: ts.Expression, truth: boolean, evaluateExpression: EvaluateRefinementExpression) {
   const current = unwrapExpression(condition)
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {

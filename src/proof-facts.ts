@@ -1,10 +1,8 @@
 import {
   publicFitText,
-  type ComparisonOperator,
 } from './parser.ts'
 import {
   formatArraySummary,
-  formatRange,
   formatKnownProofFact,
   knownValueFacts,
 } from './reporting.ts'
@@ -55,6 +53,3 @@ function formatAssumptionFact(assumption: LinearConstraint): string {
   return formatKnownProofFact(assumption)
 }
 
-export function proofFactForComparison(left: NumberValue, op: ComparisonOperator, right: NumberValue) {
-  return `${publicFitText(left.expr ?? formatRange(left))} ${op} ${publicFitText(right.expr ?? formatRange(right))}`
-}

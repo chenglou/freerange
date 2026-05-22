@@ -265,11 +265,6 @@ export function hasFitComment(sourceText: string, node: ts.Node): boolean {
   return fitCommentLines(sourceText, node).some(lines => lines.some(line => line.text === '@fit'))
 }
 
-export function hasInlineFitComment(sourceText: string, node: ts.Node): boolean {
-  rejectInlineBlockFitComments(sourceText, node)
-  return inlineFitCommentLines(sourceText, node).length > 0
-}
-
 export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, statement)
   const lines = inlineFitCommentLines(sourceText, statement)
@@ -285,11 +280,6 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
 export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, node)
   return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'check')
-}
-
-export function parseInlineGivenFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitGivenSpec[] {
-  rejectInlineBlockFitComments(sourceText, node)
-  return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'given')
 }
 
 export function inlineFitCommentLinesForNode(sourceText: string, node: ts.Node): FitCommentLine[] {
