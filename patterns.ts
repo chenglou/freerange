@@ -361,21 +361,6 @@ export function floorHitIndexInsideCount(pointer: number, cellSize: number, coun
 }
 
 /** @fit
- * given px: 0..Infinity
- * given py: 0..Infinity
- * given blockSize: 1..Infinity
- * given countX: int 1..Infinity
- * given _countY: int 1..Infinity
- * given px < countX * blockSize
- * given py < _countY * blockSize
- * return >= 0
- * return < countX * _countY
- */
-export function flattenedGridHitIndex(px: number, py: number, blockSize: number, countX: number, _countY: number) {
-  return Math.floor(py / blockSize) * countX + Math.floor(px / blockSize)
-}
-
-/** @fit
  * given items.length: int 1..50
  * given index: int 0..<items.length
  * return >= 0
@@ -411,17 +396,6 @@ export function positiveScaleKeepsOrder(content: number, available: number, scal
 }
 
 /** @fit
- * given scale > 0
- * given content * scale <= available * scale
- * return <= available
- */
-export function positiveScaleCancellationKeepsOrder(content: number, available: number, scale: number) {
-  void available
-  void scale
-  return content
-}
-
-/** @fit
  * given scale < 0
  * given content <= available
  * return <= content * scale
@@ -429,17 +403,6 @@ export function positiveScaleCancellationKeepsOrder(content: number, available: 
 export function negativeScaleFlipsOrder(content: number, available: number, scale: number) {
   void content
   return available * scale
-}
-
-/** @fit
- * given scale < 0
- * given available * scale <= content * scale
- * return <= available
- */
-export function negativeScaleCancellationKeepsOrder(content: number, available: number, scale: number) {
-  void available
-  void scale
-  return content
 }
 
 /** @fit
@@ -670,7 +633,6 @@ export function numericLimitRangeLoop(limit: number) {
  * return.rows.length == items.length
  * nondecreasing(return.rows.top)
  * spaced(return.rows, gap)
- * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoop(items: number[], top: number, step: number, gap: number) {
   const rows = []
@@ -743,10 +705,8 @@ export function indexedPerItemField(items: {height: number}[], index: number) {
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
- * return.bottom >= top
  * nondecreasing(return.rows.top)
  * spaced(return.rows, gap)
- * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoopPerItemHeight(items: {height: number}[], top: number, gap: number) {
   const rows = []
@@ -1112,7 +1072,6 @@ export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) 
  * given items.length: int 1..50
  * given top: 0..1000
  * given gap: 0..10
- * return.bottom >= top
  * return.rows.length == items.length
  */
 export function localLoopAnnotation(items: {height: number}[], top: number, gap: number) {
@@ -1124,7 +1083,6 @@ export function localLoopAnnotation(items: {height: number}[], top: number, gap:
    * rows[].height: 0..40
    * nondecreasing(rows.top)
    * spaced(rows, gap)
-   * lastEnd(rows) == y - gap
    */
   for (const item of items) {
     rows.push({top: y, height: item.height})
@@ -1455,9 +1413,7 @@ export function indexedLoopNamedIndexField(items: {height: number}[]) {
  * return.rows[].index: int 0..49
  * return.rows[].index < params.items.length
  * return.rows[].height: 0..40
- * return.bottom >= params.top
  * nondecreasing(return.rows.top)
- * lastEnd(return.rows) == return.bottom
  */
 export function indexedLoopAliasRows(params: {items: {height: number}[]; top: number}) {
   const rows = []
@@ -1491,7 +1447,6 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
  * return.rows.length <= items.length
  * return.rows[].top: 0..3000
  * return.rows[].height: 0..40
- * return.bottom >= top
  */
 export function conditionalPushRowsWithCursor(items: {height: number; visible: boolean}[], top: number) {
   const rows = []

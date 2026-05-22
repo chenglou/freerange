@@ -112,17 +112,6 @@ UNKNOWN negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: return < coun
     assumed from input: given count: int 1..10
     inferred from branch: pointer >= (count * cellSize)
   missing: pointer < count * cellSize
-UNKNOWN negative-patterns.ts:negativeFlattenedGridHitIndexNeedsYBound: return < countX * _countY
-  known:
-    ((floor((py / blockSize)) * countX) + floor((px / blockSize))): int 0..Infinity
-    (countX * _countY): int 1..Infinity
-    assumed from input: given px: 0..Infinity
-    assumed from input: given py: 0..Infinity
-    assumed from input: given blockSize: 1..Infinity
-    assumed from input: given countX: int 1..Infinity
-    assumed from input: given _countY: int 1..Infinity
-    assumed from input: given px < countX * blockSize
-  missing: py < _countY * blockSize
 UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled <= return.limit
   known:
     (content * scale): -2000..2000
@@ -132,23 +121,11 @@ UNKNOWN negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled 
     assumed from input: given scale: -2..2
     assumed from input: given content <= available
   missing: scale >= 0
-UNKNOWN negative-patterns.ts:negativeScaleCancellationNeedsPositiveFactor: return <= available
-  known:
-    content: any number
-    available: any number
-    assumed from input: given content * scale <= available * scale
-  missing: scale > 0
 UNKNOWN negative-patterns.ts:negativeScaleFlipNeedsNegativeFactor: return <= content * scale
   known:
     (available * scale): any number
     (content * scale): any number
     assumed from input: given content <= available
-  missing: scale < 0
-UNKNOWN negative-patterns.ts:negativeScaleCancellationNeedsNegativeFactor: return <= available
-  known:
-    content: any number
-    available: any number
-    assumed from input: given available * scale <= content * scale
   missing: scale < 0
 UNKNOWN negative-patterns.ts:negativeModuloNeedsPositiveCount: return < count
   Modulo is only supported for non-negative values and positive divisors
@@ -217,14 +194,6 @@ UNKNOWN negative-patterns.ts:negativeUnboundedWidthNeedsCap: return <= 500
     (width / 2): 0.5..Infinity
     assumed from input: given width: 1..Infinity
   missing fact: (width / 2) <= 500
-UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: return.bottom >= top
-  known:
-    runningSum(top, items.length, step): any number
-    top: 0..1000
-    assumed from input: given items.length: int 0..50
-    assumed from input: given top: 0..1000
-    assumed from input: given step: -40..40
-  missing: step >= 0
 UNKNOWN negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
@@ -318,14 +287,6 @@ FAIL negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
     assumed from input: given index < items.length
   missing: items[index].height >= 0
   missing: items[index].height <= 40
-UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: return.bottom >= top
-  known:
-    runningSum(top, items.length, items[].height): any number
-    top: 0..1000
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: -40..40
-    assumed from input: given top: 0..1000
-  missing: items[].height >= 0
 UNKNOWN negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
@@ -338,7 +299,7 @@ UNKNOWN negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >=
     runningSum(0, items.length, items[].height): any number
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
-  missing: items[].height >= 0
+  missing fact: runningSum(0, items.length, items[].height) >= 0
 FAIL negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
   range was any number as total, expected inside 0..10
   known:
@@ -651,7 +612,7 @@ UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: retur
     inferred from code: i - params.items.length < 0
     inferred from code: params.items[i].height >= -40
     inferred from code: params.items[i].height <= 40
-  missing: params.items[i].height >= 0
+  missing fact: runningSum(params.top, params.items.length, params.items[i].height) >= params.top
 UNKNOWN negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
@@ -715,7 +676,7 @@ UNKNOWN negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: 
     assumed from input: given items[].height: -40..40
     assumed from input: given top: 0..1000
     inferred from code: -items.length + rows.length <= 0
-  missing: items[].height >= 0
+  missing fact: runningSum(top, items.length, items[].height) >= top
 UNKNOWN negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: return.rows.length == items.length
   known:
     rows.length: int 0..50

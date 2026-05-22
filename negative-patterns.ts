@@ -227,19 +227,6 @@ export function negativeFloorHitIndexNeedsUpperBound(pointer: number, cellSize: 
 }
 
 /** @fit
- * given px: 0..Infinity
- * given py: 0..Infinity
- * given blockSize: 1..Infinity
- * given countX: int 1..Infinity
- * given _countY: int 1..Infinity
- * given px < countX * blockSize
- * return < countX * _countY
- */
-export function negativeFlattenedGridHitIndexNeedsYBound(px: number, py: number, blockSize: number, countX: number, _countY: number) {
-  return Math.floor(py / blockSize) * countX + Math.floor(px / blockSize)
-}
-
-/** @fit
  * given content: 0..1000
  * given available: 0..1000
  * given scale: -2..2
@@ -254,32 +241,12 @@ export function negativeScaleNeedsNonNegativeFactor(content: number, available: 
 }
 
 /** @fit
- * given content * scale <= available * scale
- * return <= available
- */
-export function negativeScaleCancellationNeedsPositiveFactor(content: number, available: number, scale: number) {
-  void available
-  void scale
-  return content
-}
-
-/** @fit
  * given content <= available
  * return <= content * scale
  */
 export function negativeScaleFlipNeedsNegativeFactor(content: number, available: number, scale: number) {
   void content
   return available * scale
-}
-
-/** @fit
- * given available * scale <= content * scale
- * return <= available
- */
-export function negativeScaleCancellationNeedsNegativeFactor(content: number, available: number, scale: number) {
-  void available
-  void scale
-  return content
 }
 
 /** @fit
@@ -417,7 +384,6 @@ export function negativeUnboundedWidthNeedsCap(width: number) {
  * given items.length: int 0..50
  * given top: 0..1000
  * given step: -40..40
- * return.bottom >= top
  * nondecreasing(return.rows.top)
  */
 export function negativeRunningSumNeedsNonNegativeStep(items: number[], top: number, step: number) {
@@ -658,7 +624,6 @@ export function negativePerItemFieldNeedsDomain(items: {height: number}[], index
  * given items.length: int 1..50
  * given items[].height: -40..40
  * given top: 0..1000
- * return.bottom >= top
  * nondecreasing(return.rows.top)
  */
 export function negativeRunningSumPerItemHeightNeedsNonNegative(items: {height: number}[], top: number) {

@@ -136,15 +136,9 @@ type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) 
 const comparisonProofRules: ComparisonProofRule[] = [
   evaluateChoiceOperandBound,
   evaluateRoundingLossBound,
-  evaluateRoundingBound,
   evaluateRoundingMonotonicity,
   evaluateModuloBelowDivisor,
-  evaluateRunningSumAtLeastStart,
-  evaluateRunningSumMinusTrailingGapAtLeastStart,
-  evaluatePositiveScaleCancellation,
-  evaluateNegativeScaleCancellation,
   evaluateScaleMonotonicity,
-  evaluateFlattenedGridIndexBelowCount,
   evaluateFloorDivisionBelowCount,
   evaluateCeilDivisionCoversTotal,
   evaluateSimplifiedComparison,
@@ -425,19 +419,6 @@ function offsetExpression(expression: string, offset: number) {
   return offset > 0 ? `(${expression} + ${offset})` : `(${expression} - ${Math.abs(offset)})`
 }
 
-function evaluateRoundingBound(goal: ComparisonGoal): ProofBackendResult | null {
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  const leftCeil = callArg(goal.left.expr, 'ceil')
-  if (goal.op === '>=' && leftCeil != null && sameExpressionText(leftCeil, goal.right.expr)) return pass('rounding-bound', 'rounding result keeps its source-side bound')
-  const leftFloor = callArg(goal.left.expr, 'floor')
-  if (goal.op === '<=' && leftFloor != null && sameExpressionText(leftFloor, goal.right.expr)) return pass('rounding-bound', 'rounding result keeps its source-side bound')
-  const rightCeil = callArg(goal.right.expr, 'ceil')
-  if (goal.op === '<=' && rightCeil != null && sameExpressionText(goal.left.expr, rightCeil)) return pass('rounding-bound', 'rounding result keeps its source-side bound')
-  const rightFloor = callArg(goal.right.expr, 'floor')
-  if (goal.op === '>=' && rightFloor != null && sameExpressionText(goal.left.expr, rightFloor)) return pass('rounding-bound', 'rounding result keeps its source-side bound')
-  return null
-}
-
 function evaluateRoundingMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null || lessGoal.op !== '<=') return null
@@ -470,56 +451,6 @@ function evaluateModuloBelowDivisor(goal: ComparisonGoal, context: ProofBackendC
   return blocked('modulo-below-divisor', missing.join(' and '), 'modulo result stays below a positive divisor')
 }
 
-function evaluateRunningSumAtLeastStart(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  if (goal.op !== '>=' && goal.op !== '>') return null
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  const args = callArgs(goal.left.expr, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, goal.right.expr)) return null
-  const missing = runningSumMissing(args[1]!, args[2]!, context)
-  if (missing.length > 0) return blocked('running-sum-at-least-start', missing.join(' and '), 'running sum cannot decrease below its start')
-  return goal.op === '>=' ? pass('running-sum-at-least-start', 'running sum cannot decrease below its start') : null
-}
-
-function evaluateRunningSumMinusTrailingGapAtLeastStart(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  if (goal.op !== '>=' && goal.op !== '>') return null
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  const trailingGap = binaryExpression(goal.left.expr, '-')
-  if (trailingGap == null) return null
-  const args = callArgs(trailingGap.left, 'runningSum')
-  if (args == null || args.length !== 3 || !sameExpressionText(args[0]!, goal.right.expr)) return null
-  const count = args[1]!
-  const increment = args[2]!
-  const gap = trailingGap.right
-  const missing = []
-  if (!context.hasComparisonFact(count, '>=', '1')) missing.push(`${publicFitText(count)} >= 1`)
-  if (!context.provesExprNonNegative(gap, false)) missing.push(`${publicFitText(gap)} >= 0`)
-  const incrementCoversGap = sameExpressionText(increment, gap) || incrementHasNonNegativeRemainder(increment, gap, context)
-  if (!incrementCoversGap) missing.push(`${publicFitText(increment)} >= ${publicFitText(gap)}`)
-  if (missing.length > 0) return blocked('running-sum-minus-gap-at-least-start', missing.join(' and '), 'running sum minus trailing gap stays above its start')
-  return goal.op === '>=' ? pass('running-sum-minus-gap-at-least-start', 'running sum minus trailing gap stays above its start') : null
-}
-
-function runningSumMissing(count: string, increment: string, context: ProofBackendContext) {
-  const missing = []
-  if (!runningSumCountIsKnownNonNegative(count, context)) missing.push(`${publicFitText(count)} >= 0`)
-  if (!context.provesExprNonNegative(increment, false)) missing.push(`${publicFitText(increment)} >= 0`)
-  return missing
-}
-
-function runningSumCountIsKnownNonNegative(expression: string, context: ProofBackendContext) {
-  return expression.endsWith('.length') || context.provesExprNonNegative(expression, false)
-}
-
-function incrementHasNonNegativeRemainder(increment: string, gap: string, context: ProofBackendContext) {
-  const incrementSum = binaryExpression(increment, '+')
-  if (incrementSum == null) return false
-  const base =
-    sameExpressionText(incrementSum.left, gap) ? incrementSum.right
-      : sameExpressionText(incrementSum.right, gap) ? incrementSum.left
-        : null
-  return base != null && context.provesExprNonNegative(base, false)
-}
-
 function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null) return null
@@ -531,28 +462,6 @@ function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendCo
   const passing = obligations.find(obligation => obligation.factorProven && obligation.baseProven)
   if (passing != null) return pass('scale-monotonicity', 'shared scale preserves the comparison under known sign facts')
   return blocked('scale-monotonicity', monotoneMissing(obligations.find(obligation => obligation.baseProven || obligation.factorProven) ?? obligations[0]!), 'shared scale preserves the comparison under known sign facts')
-}
-
-function evaluatePositiveScaleCancellation(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  const lessGoal = comparisonLessGoal(goal)
-  if (lessGoal == null) return null
-  for (const factor of cancellationFactors(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context, 'positive')) {
-    if (context.hasComparisonFact(factor, '<=', '0')) continue
-    if (context.provesExprNonNegative(factor, true)) return pass('positive-scale-cancellation', 'positive shared factor can be cancelled')
-    return blocked('positive-scale-cancellation', `${publicFitText(factor)} > 0`, 'positive shared factor can be cancelled')
-  }
-  return null
-}
-
-function evaluateNegativeScaleCancellation(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  const lessGoal = comparisonLessGoal(goal)
-  if (lessGoal == null) return null
-  for (const factor of cancellationFactors(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context, 'negative')) {
-    if (context.hasComparisonFact(factor, '>=', '0')) continue
-    if (context.hasComparisonFact(factor, '<', '0')) return pass('negative-scale-cancellation', 'negative shared factor reverses before cancellation')
-    return blocked('negative-scale-cancellation', `${publicFitText(factor)} < 0`, 'negative shared factor reverses before cancellation')
-  }
-  return null
 }
 
 function comparisonLessGoal(goal: ComparisonGoal): LessComparisonGoal | null {
@@ -577,68 +486,6 @@ function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ProofBac
   if (boundProven) return blocked('floor-division-below-count', divisorNeed, 'floor division stays below count from its product bound')
   if (divisorProven) return blocked('floor-division-below-count', boundNeed, 'floor division stays below count from its product bound')
   return blocked('floor-division-below-count', `${divisorNeed} and ${boundNeed}`, 'floor division stays below count from its product bound')
-}
-
-function evaluateFlattenedGridIndexBelowCount(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  if (goal.op !== '<' && goal.op !== '<=') return null
-  if (goal.left.expr == null || goal.right.expr == null || !goal.left.isInteger || !goal.right.isInteger) return null
-  const sum = binaryExpression(goal.left.expr, '+')
-  const rightFactors = productFactors(goal.right.expr)
-  if (sum == null || rightFactors == null || rightFactors.length < 2) return null
-
-  for (const [rowTerm, columnTerm] of [[sum.left, sum.right], [sum.right, sum.left]] as const) {
-    const shape = flattenedGridIndexShape(rowTerm, columnTerm, rightFactors)
-    if (shape == null) continue
-    const obligations = [
-      {need: `${shape.x.left} < ${shape.stride} * ${shape.x.right}`, proven: hasProductComparisonFact(shape.x.left, '<', shape.stride, shape.x.right, context)},
-      {need: `${shape.y.left} < ${shape.rows} * ${shape.y.right}`, proven: hasProductComparisonFact(shape.y.left, '<', shape.rows, shape.y.right, context)},
-      {need: `${shape.x.right} > 0`, proven: context.provesExprNonNegative(shape.x.right, true)},
-      {need: `${shape.y.right} > 0`, proven: context.provesExprNonNegative(shape.y.right, true)},
-      {need: `${shape.stride} > 0`, proven: context.provesExprNonNegative(shape.stride, true)},
-    ]
-    const missing = obligations.filter(obligation => !obligation.proven).map(obligation => obligation.need)
-    return missing.length === 0
-      ? pass('flattened-grid-index-below-count', 'flattened two-dimensional grid index stays below total count')
-      : blocked('flattened-grid-index-below-count', missing.join(' and '), 'flattened two-dimensional grid index stays below total count')
-  }
-
-  return null
-}
-
-type FlattenedGridIndexShape = {
-  stride: string
-  rows: string
-  x: {left: string; right: string}
-  y: {left: string; right: string}
-}
-
-function flattenedGridIndexShape(rowTerm: string, columnTerm: string, rightFactors: string[]): FlattenedGridIndexShape | null {
-  const row = floorDivisionProduct(rowTerm)
-  const column = floorDivision(columnTerm)
-  if (row == null || column == null) return null
-  const rowCount = productWithoutFactor(rightFactors, row.factor)
-  return rowCount == null ? null : {stride: row.factor, rows: rowCount, x: column, y: row.floor}
-}
-
-function floorDivisionProduct(text: string): {floor: {left: string; right: string}; factor: string} | null {
-  const factors = productFactors(text)
-  if (factors == null) return null
-  for (let index = 0; index < factors.length; index++) {
-    const floor = floorDivision(factors[index]!)
-    if (floor == null) continue
-    return {floor, factor: productText(factors.filter((_, factorIndex) => factorIndex !== index))}
-  }
-  return null
-}
-
-function productWithoutFactor(factors: string[], factor: string) {
-  const index = factors.findIndex(item => sameExpressionText(item, factor))
-  if (index < 0) return null
-  return productText(factors.filter((_, factorIndex) => factorIndex !== index))
-}
-
-function hasProductComparisonFact(left: string, op: ComparisonOperator, factorA: string, factorB: string, context: ProofBackendContext) {
-  return context.hasComparisonFact(left, op, productText([factorA, factorB]))
 }
 
 function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
@@ -723,61 +570,6 @@ function negativeProductObligations(leftExpr: string, op: '<=' | '<', rightExpr:
     }
   }
   return obligations
-}
-
-function cancellationFactors(
-  goalLeft: string,
-  goalOp: '<=' | '<',
-  goalRight: string,
-  context: ProofBackendContext,
-  sign: 'positive' | 'negative',
-): string[] {
-  const factors: string[] = []
-  for (const assumption of context.assumptions) {
-    for (const shape of assumptionLessShapes(assumption)) {
-      if (!comparisonFactIsStrongEnough(shape.op, goalOp)) continue
-      const leftProduct = productFactors(shape.left)
-      const rightProduct = productFactors(shape.right)
-      if (leftProduct == null || rightProduct == null) continue
-      for (let leftIndex = 0; leftIndex < leftProduct.length; leftIndex++) {
-        for (let rightIndex = 0; rightIndex < rightProduct.length; rightIndex++) {
-          const leftFactor = leftProduct[leftIndex]!
-          const rightFactor = rightProduct[rightIndex]!
-          if (!sameExpressionText(leftFactor, rightFactor)) continue
-          const leftBase = productText(leftProduct.filter((_, index) => index !== leftIndex))
-          const rightBase = productText(rightProduct.filter((_, index) => index !== rightIndex))
-          const matches = sign === 'positive'
-            ? sameExpressionText(leftBase, goalLeft) && sameExpressionText(rightBase, goalRight)
-            : sameExpressionText(leftBase, goalRight) && sameExpressionText(rightBase, goalLeft)
-          if (matches) factors.push(leftFactor)
-        }
-      }
-    }
-  }
-  return factors
-}
-
-function assumptionLessShapes(assumption: LinearConstraint): {left: string; op: '<=' | '<'; right: string}[] {
-  if (assumption.leftExpr == null || assumption.rightExpr == null) return []
-  switch (assumption.op) {
-    case '<=':
-      return [{left: assumption.leftExpr, op: '<=', right: assumption.rightExpr}]
-    case '<':
-      return [{left: assumption.leftExpr, op: '<', right: assumption.rightExpr}]
-    case '>=':
-      return [{left: assumption.rightExpr, op: '<=', right: assumption.leftExpr}]
-    case '>':
-      return [{left: assumption.rightExpr, op: '<', right: assumption.leftExpr}]
-    case '==':
-      return [
-        {left: assumption.leftExpr, op: '<=', right: assumption.rightExpr},
-        {left: assumption.rightExpr, op: '<=', right: assumption.leftExpr},
-      ]
-  }
-}
-
-function comparisonFactIsStrongEnough(actual: '<=' | '<', needed: '<=' | '<') {
-  return actual === needed || (actual === '<' && needed === '<=')
 }
 
 function monotoneMissing(obligation: ScaleMonotoneObligation) {

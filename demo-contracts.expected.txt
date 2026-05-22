@@ -1,4 +1,4 @@
-summary: 14 files, 94 pass, 0 fail, 0 requires, 0 unknown
+summary: 14 files, 93 pass, 0 fail, 0 requires, 0 unknown
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:8:center: return == (container - containee) / 2
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:25:stackLayout: return.length == rowSizes.length
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:10:getCorners: return.length == 4
@@ -6,7 +6,6 @@ PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:11:getCorners:
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:12:getCorners: return[].y: 20..3900
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:38:decayRestPos: return == pos + velocity / decayFriction
 PASS ../vibescript/demos/life-calendar/grid-sizing.ts:17:hitIndexInside: return >= 0
-PASS ../vibescript/demos/life-calendar/grid-sizing.ts:18:hitIndexInside: return < countX * _countY
 PASS ../vibescript/demos/mobile-test-standalone/index.ts:21:center: return == (b - a) / 2
 PASS ../vibescript/demos/mobile-test-standalone/index.ts:25:fit: return <= maxW
 PASS ../vibescript/demos/mobile-test-standalone/index.ts:26:fit: return <= maxH * ar
