@@ -1,13 +1,13 @@
 import ts from 'typescript'
 import {
   fitExpressionText,
+  fitValueSpecExpressions,
   lowerFitValueSpecTextForTypeScript,
   parseFitSpecLine,
   parseFunctionBodyFitSpecIndex,
   parseFunctionFitSpecs,
   type FitRange,
   type FitSpec,
-  type FitValueSpec,
 } from './src/parser.ts'
 
 function expect(condition: boolean, message: string): asserts condition {
@@ -36,17 +36,6 @@ function expectSpecKind<K extends FitSpec['kind']>(spec: FitSpec, kind: K): Extr
   return spec as Extract<FitSpec, {kind: K}>
 }
 
-function expectValueKind<K extends FitValueSpec['kind']>(value: FitValueSpec, kind: K): Extract<FitValueSpec, {kind: K}> {
-  expect(value.kind === kind, `expected ${kind}, got ${value.kind}`)
-  return value as Extract<FitValueSpec, {kind: K}>
-}
-
-function objectProp(object: Extract<FitValueSpec, {kind: 'object'}>, name: string) {
-  const prop = object.props.find(item => item.name === name)
-  expect(prop != null, `expected object prop ${name}`)
-  return prop.value
-}
-
 function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int') {
   expectEqual(range.text, text, 'expected range text')
   expectEqual(range.valueKind, valueKind, 'expected range value kind')
@@ -68,21 +57,15 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
   )
   expectEqual(fitExpressionText(spec.expression), '__fit_return', 'expected return to be normalized')
   expectEqual(spec.line, 12, 'expected line number to be carried')
-  const value = expectValueKind(spec.value, 'union')
-  expectEqual(value.cases.length, 2, 'expected two whole-value cases')
-
-  const small = expectValueKind(value.cases[0]!, 'object')
-  const smallKind = expectValueKind(objectProp(small, 'kind'), 'literal')
-  expectEqual(smallKind.values[0], 'small', 'expected string literal')
-  const smallWidth = expectValueKind(objectProp(small, 'width'), 'number')
-  expectRange(smallWidth.range, '100..200', 'number')
-  const smallCols = expectValueKind(objectProp(small, 'cols'), 'number')
-  expectRange(smallCols.range, 'int 1..<7', 'int')
-  expectEqual(smallCols.range.upperInclusive, false, 'expected exclusive upper bound')
-
-  const large = expectValueKind(value.cases[1]!, 'object')
-  const largeWidth = expectValueKind(objectProp(large, 'width'), 'number')
-  expectRange(largeWidth.range, 'minWidth()..maxWidth()', 'number')
+  expectEqual(spec.value.typeText, lowered.typeText, 'expected check-value spec to keep lowered TS type text')
+  expectEqual(spec.value.ranges.size, 4, 'expected range side table to stay attached')
+  expectEqual(ts.isUnionTypeNode(spec.value.typeNode), true, 'expected TS union type node')
+  expectRange(spec.value.ranges.get('r0')!, '100..200', 'number')
+  const smallCols = spec.value.ranges.get('r1')!
+  expectRange(smallCols, 'int 1..<7', 'int')
+  expectEqual(smallCols.upperInclusive, false, 'expected exclusive upper bound')
+  expectRange(spec.value.ranges.get('r2')!, 'minWidth()..maxWidth()', 'number')
+  expectRange(spec.value.ranges.get('r3')!, '7', 'number')
 }
 
 {
@@ -94,15 +77,9 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
 
 {
   const spec = expectSpecKind(parseFitSpecLine('return: {rows: {height: 10..20}[], snap: [0..10, 20..30]}'), 'check-value')
-  const root = expectValueKind(spec.value, 'object')
-  const rows = expectValueKind(objectProp(root, 'rows'), 'array')
-  const row = expectValueKind(rows.element, 'object')
-  const rowHeight = expectValueKind(objectProp(row, 'height'), 'number')
-  expectRange(rowHeight.range, '10..20', 'number')
-  const snap = expectValueKind(objectProp(root, 'snap'), 'tuple')
-  expectEqual(snap.elements.length, 2, 'expected tuple length')
-  expectRange(expectValueKind(snap.elements[0]!, 'number').range, '0..10', 'number')
-  expectRange(expectValueKind(snap.elements[1]!, 'number').range, '20..30', 'number')
+  expectEqual(spec.value.typeText, '{rows: ({height: __FRNumber<"r0">})[]; snap: [__FRNumber<"r1">, __FRNumber<"r2">]}', 'expected nested spec to lower to TS shape')
+  expectEqual(spec.value.ranges.size, 3, 'expected nested range side table')
+  expectEqual(fitValueSpecExpressions(spec.value).map(fitExpressionText).join(', '), '10, 20, 0, 10, 20, 30', 'expected expressions to come from side-table ranges')
 }
 
 {

@@ -38,35 +38,11 @@ export type FitRange = FitRangeCase & {
   text: string
 }
 
-export type FitValueSpec =
-  | {
-      kind: 'number'
-      range: FitRange
-    }
-  | {
-      kind: 'literal'
-      values: (string | boolean)[]
-    }
-  | {
-      kind: 'object'
-      props: {name: string; value: FitValueSpec}[]
-    }
-  | {
-      kind: 'array'
-      element: FitValueSpec
-    }
-  | {
-      kind: 'tuple'
-      elements: FitValueSpec[]
-    }
-  | {
-      kind: 'union'
-      cases: FitValueSpec[]
-    }
-
-export type FitValueSpecLowering = {
+export type FitValueSpec = {
+  kind: 'type'
   typeText: string
   ranges: Map<string, FitRange>
+  typeNode: ts.TypeNode
 }
 
 export type FitSpec =
@@ -209,20 +185,26 @@ export function fitRangeCases(range: FitRange): FitRangeCase[] {
 }
 
 export function fitValueSpecExpressions(spec: FitValueSpec): FitExpressionLike[] {
-  switch (spec.kind) {
-    case 'number':
-      return fitRangeCases(spec.range).flatMap(rangeCase => [rangeCase.lower, rangeCase.upper])
-    case 'object':
-      return spec.props.flatMap(prop => fitValueSpecExpressions(prop.value))
-    case 'array':
-      return fitValueSpecExpressions(spec.element)
-    case 'tuple':
-      return spec.elements.flatMap(fitValueSpecExpressions)
-    case 'union':
-      return spec.cases.flatMap(fitValueSpecExpressions)
-    case 'literal':
-      return []
+  return fitValueTypeExpressions(spec.typeNode, spec.ranges)
+}
+
+function fitValueTypeExpressions(node: ts.TypeNode, ranges: Map<string, FitRange>): FitExpressionLike[] {
+  if (ts.isParenthesizedTypeNode(node)) return fitValueTypeExpressions(node.type, ranges)
+  if (ts.isUnionTypeNode(node)) return node.types.flatMap(type => fitValueTypeExpressions(type, ranges))
+  const range = fitValueSpecRangeForTypeNode(node, ranges)
+  if (range != null) return fitRangeCases(range).flatMap(rangeCase => [rangeCase.lower, rangeCase.upper])
+  if (ts.isTypeLiteralNode(node)) {
+    return node.members.flatMap(member => ts.isPropertySignature(member) && member.type != null ? fitValueTypeExpressions(member.type, ranges) : [])
   }
+  if (ts.isArrayTypeNode(node)) return fitValueTypeExpressions(node.elementType, ranges)
+  if (ts.isTupleTypeNode(node)) return node.elements.flatMap(element => fitTupleElementExpressions(element, ranges))
+  return []
+}
+
+function fitTupleElementExpressions(node: ts.TypeNode | ts.NamedTupleMember, ranges: Map<string, FitRange>): FitExpressionLike[] {
+  if (ts.isNamedTupleMember(node)) return []
+  if (ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return fitValueTypeExpressions(node.type, ranges)
+  return fitValueTypeExpressions(node, ranges)
 }
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
@@ -698,10 +680,10 @@ export function parseFitValueSpecText(text: string, parseExpression: FitExpressi
   const lowered = lowerFitValueSpecTextForTypeScript(text, parseExpression)
   if (lowered == null) return null
   const typeNode = parseFitValueSpecTypeNode(lowered.typeText)
-  return typeNode == null ? null : fitValueSpecFromTypeNode(typeNode, lowered.ranges)
+  return typeNode == null ? null : {...lowered, kind: 'type', typeNode}
 }
 
-export function lowerFitValueSpecTextForTypeScript(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitValueSpecLowering | null {
+export function lowerFitValueSpecTextForTypeScript(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): Omit<FitValueSpec, 'kind' | 'typeNode'> | null {
   const ranges = new Map<string, FitRange>()
   const typeText = lowerFitValueSpecFragment(text.trim(), ranges, parseExpression)
   return typeText == null ? null : {typeText, ranges}
@@ -773,65 +755,21 @@ function parseFitValueSpecTypeNode(typeText: string): ts.TypeNode | null {
   return statement != null && ts.isTypeAliasDeclaration(statement) ? statement.type : null
 }
 
-function fitValueSpecFromTypeNode(node: ts.TypeNode, ranges: Map<string, FitRange>): FitValueSpec | null {
-  if (ts.isParenthesizedTypeNode(node)) return fitValueSpecFromTypeNode(node.type, ranges)
-  if (ts.isUnionTypeNode(node)) {
-    const cases = node.types.map(type => fitValueSpecFromTypeNode(type, ranges))
-    return cases.some(item => item == null) ? null : {kind: 'union', cases: cases as FitValueSpec[]}
-  }
-  const rangeSlot = fitValueRangeSlot(node, ranges)
-  if (rangeSlot != null) return {kind: 'number', range: rangeSlot}
-  if (ts.isTypeLiteralNode(node)) return fitObjectSpecFromTypeNode(node, ranges)
-  if (ts.isArrayTypeNode(node)) {
-    const element = fitValueSpecFromTypeNode(node.elementType, ranges)
-    return element == null ? null : {kind: 'array', element}
-  }
-  if (ts.isTupleTypeNode(node)) {
-    const elements = node.elements.map(element => fitTupleElementSpecFromTypeNode(element, ranges))
-    return elements.some(item => item == null) ? null : {kind: 'tuple', elements: elements as FitValueSpec[]}
-  }
-  if (ts.isLiteralTypeNode(node)) return fitLiteralSpecFromTypeNode(node)
-  if (node.kind === ts.SyntaxKind.BooleanKeyword) return {kind: 'literal', values: [false, true]}
-  if (node.kind === ts.SyntaxKind.NumberKeyword) {
-    const range = parseFitRangeText('-Infinity..Infinity')
-    return range == null ? null : {kind: 'number', range}
-  }
-  return null
-}
-
-function fitValueRangeSlot(node: ts.TypeNode, ranges: Map<string, FitRange>): FitRange | null {
+export function fitValueSpecRangeForTypeNode(node: ts.TypeNode, ranges: Map<string, FitRange>): FitRange | null {
   if (!ts.isTypeReferenceNode(node) || !ts.isIdentifier(node.typeName) || node.typeName.text !== fitValueRangeTypeName) return null
   const argument = node.typeArguments?.[0]
   if (argument == null || !ts.isLiteralTypeNode(argument) || !ts.isStringLiteralLike(argument.literal)) return null
   return ranges.get(argument.literal.text) ?? null
 }
 
-function fitObjectSpecFromTypeNode(node: ts.TypeLiteralNode, ranges: Map<string, FitRange>): Extract<FitValueSpec, {kind: 'object'}> | null {
-  const props: {name: string; value: FitValueSpec}[] = []
-  for (const member of node.members) {
-    if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) return null
-    const name = typePropertySpecName(member.name)
-    if (name == null) return null
-    const value = fitValueSpecFromTypeNode(member.type, ranges)
-    if (value == null) return null
-    props.push({name, value})
-  }
-  return {kind: 'object', props}
-}
-
-function fitTupleElementSpecFromTypeNode(node: ts.TypeNode | ts.NamedTupleMember, ranges: Map<string, FitRange>): FitValueSpec | null {
-  if (ts.isNamedTupleMember(node) || ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
-  return fitValueSpecFromTypeNode(node, ranges)
-}
-
-function fitLiteralSpecFromTypeNode(node: ts.LiteralTypeNode): Extract<FitValueSpec, {kind: 'literal'}> | null {
-  if (ts.isStringLiteralLike(node.literal)) return {kind: 'literal', values: [node.literal.text]}
-  if (node.literal.kind === ts.SyntaxKind.TrueKeyword) return {kind: 'literal', values: [true]}
-  if (node.literal.kind === ts.SyntaxKind.FalseKeyword) return {kind: 'literal', values: [false]}
+export function fitValueSpecLiteralValues(node: ts.LiteralTypeNode): (string | boolean)[] | null {
+  if (ts.isStringLiteralLike(node.literal)) return [node.literal.text]
+  if (node.literal.kind === ts.SyntaxKind.TrueKeyword) return [true]
+  if (node.literal.kind === ts.SyntaxKind.FalseKeyword) return [false]
   return null
 }
 
-function typePropertySpecName(name: ts.PropertyName): string | null {
+export function fitValueSpecPropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) return name.text
   return null
 }

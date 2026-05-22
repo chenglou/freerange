@@ -24,7 +24,11 @@ import {
   fitExpressionParsed,
   fitExpressionText,
   fitRangeCases,
+  fitValueSpecLiteralValues,
+  fitValueSpecPropertyName,
+  fitValueSpecRangeForTypeNode,
   fitReturnInternalRoot,
+  parseFitRangeText,
   publicFitText,
   type FitDomainPath,
   type FitExpressionLike,
@@ -231,19 +235,37 @@ type ValueSpecProof = {
 }
 
 function proveValueSpec(value: Value, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
-  if (spec.kind === 'union') return proveValueUnionSpec(value, spec.cases, context, hooks, path)
-  if (spec.kind === 'number') {
-    const status = proveRangeSpec(value, spec.range, context, hooks)
-    return {...status, values: [value], matched: status.status === 'pass' ? 1 : 0}
-  }
-  if (spec.kind === 'literal') return proveLiteralSpec(value, spec.values, path)
-  if (spec.kind === 'object') return proveObjectSpec(value, spec, context, hooks, path)
-  if (spec.kind === 'array') return proveArraySpec(value, spec, context, hooks, path)
-  return proveTupleSpec(value, spec, context, hooks, path)
+  return proveValueTypeSpec(value, spec.typeNode, spec, context, hooks, path)
 }
 
-function proveValueUnionSpec(value: Value, cases: FitValueSpec[], context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
-  const proofs = cases.map(current => proveValueSpec(value, current, context, hooks, path))
+function proveValueTypeSpec(value: Value, node: ts.TypeNode, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  if (ts.isParenthesizedTypeNode(node)) return proveValueTypeSpec(value, node.type, spec, context, hooks, path)
+  if (ts.isUnionTypeNode(node)) return proveValueUnionSpec(value, node.types, spec, context, hooks, path)
+  const range = fitValueSpecRangeForTypeNode(node, spec.ranges)
+  if (range != null) {
+    const status = proveRangeSpec(value, range, context, hooks)
+    return {...status, values: [value], matched: status.status === 'pass' ? 1 : 0}
+  }
+  if (ts.isLiteralTypeNode(node)) {
+    const values = fitValueSpecLiteralValues(node)
+    return values == null
+      ? {status: 'unknown', reason: `${path} expected a supported literal value`, values: [value], matched: 0}
+      : proveLiteralSpec(value, values, path)
+  }
+  if (ts.isTypeLiteralNode(node)) return proveObjectSpec(value, node, spec, context, hooks, path)
+  if (ts.isArrayTypeNode(node)) return proveArraySpec(value, node.elementType, spec, context, hooks, path)
+  if (ts.isTupleTypeNode(node)) return proveTupleSpec(value, node, spec, context, hooks, path)
+  if (node.kind === ts.SyntaxKind.BooleanKeyword) return proveLiteralSpec(value, [false, true], path)
+  if (node.kind === ts.SyntaxKind.NumberKeyword) {
+    const range = parseBroadNumberRange()
+    const status = proveRangeSpec(value, range, context, hooks)
+    return {...status, values: [value], matched: status.status === 'pass' ? 1 : 0}
+  }
+  return {status: 'unknown', reason: `${path} used unsupported value spec syntax`, values: [value], matched: 0}
+}
+
+function proveValueUnionSpec(value: Value, cases: ts.NodeArray<ts.TypeNode>, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  const proofs = cases.map(current => proveValueTypeSpec(value, current, spec, context, hooks, path))
   const pass = proofs.find(proof => proof.status === 'pass')
   if (pass != null) return pass
   const unknown = highestMatchedProof(proofs.filter(proof => proof.status === 'unknown'))
@@ -265,19 +287,24 @@ function proveLiteralSpec(value: Value, expected: LiteralPrimitive[], path: stri
   }
 }
 
-function proveObjectSpec(value: Value, spec: Extract<FitValueSpec, {kind: 'object'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+function proveObjectSpec(value: Value, node: ts.TypeLiteralNode, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
   if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
   if (value.kind !== 'object') return {status: 'unknown', reason: `${path} expected an object`, values: [value], matched: 0}
-  return combineValueSpecProofs(spec.props.map(prop => {
-    const propPath = `${path}.${prop.name}`
-    const propValue = value.props.get(prop.name)
+  return combineValueSpecProofs(node.members.map(member => {
+    if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) {
+      return {status: 'unknown', reason: `${path} used unsupported object value spec syntax`, values: [value], matched: 0} satisfies ValueSpecProof
+    }
+    const name = fitValueSpecPropertyName(member.name)
+    if (name == null) return {status: 'unknown', reason: `${path} used unsupported object property syntax`, values: [value], matched: 0} satisfies ValueSpecProof
+    const propPath = `${path}.${name}`
+    const propValue = value.props.get(name)
     return propValue == null
       ? {status: 'fail', reason: `${propPath} was missing`, values: [value], matched: 0} satisfies ValueSpecProof
-      : proveValueSpec(propValue, prop.value, context, hooks, propPath)
+      : proveValueTypeSpec(propValue, member.type, spec, context, hooks, propPath)
   }))
 }
 
-function proveArraySpec(value: Value, spec: Extract<FitValueSpec, {kind: 'array'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+function proveArraySpec(value: Value, element: ts.TypeNode, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
   if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
   if (value.kind !== 'array') return {status: 'unknown', reason: `${path} expected an array`, values: [value], matched: 0}
   if (value.element == null) {
@@ -285,16 +312,29 @@ function proveArraySpec(value: Value, spec: Extract<FitValueSpec, {kind: 'array'
       ? {status: 'pass', values: [value], matched: 1}
       : {status: 'unknown', reason: `${path}[] was not inferred`, values: [value], matched: 0}
   }
-  return proveValueSpec(value.element, spec.element, context, hooks, `${path}[]`)
+  return proveValueTypeSpec(value.element, element, spec, context, hooks, `${path}[]`)
 }
 
-function proveTupleSpec(value: Value, spec: Extract<FitValueSpec, {kind: 'tuple'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+function proveTupleSpec(value: Value, node: ts.TupleTypeNode, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
   if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
   if (value.kind !== 'array') return {status: 'unknown', reason: `${path} expected an array`, values: [value], matched: 0}
-  const length = proveTupleLength(value, spec.elements.length, path)
+  const elements = node.elements.map(tupleElementType).filter(element => element != null)
+  if (elements.length !== node.elements.length) return {status: 'unknown', reason: `${path} used unsupported tuple value spec syntax`, values: [value], matched: 0}
+  const length = proveTupleLength(value, elements.length, path)
   if (length.status !== 'pass') return length
   if (value.elements == null) return {status: 'unknown', reason: `${path} elements were not inferred as a tuple`, values: [value], matched: length.matched}
-  return combineValueSpecProofs(spec.elements.map((element, index) => proveValueSpec(value.elements![index]!, element, context, hooks, `${path}[${index}]`)))
+  return combineValueSpecProofs(elements.map((element, index) => proveValueTypeSpec(value.elements![index]!, element, spec, context, hooks, `${path}[${index}]`)))
+}
+
+function tupleElementType(node: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {
+  if (ts.isNamedTupleMember(node) || ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
+  return node
+}
+
+function parseBroadNumberRange() {
+  const range = parseFitRangeText('-Infinity..Infinity')
+  if (range == null) throw new Error('Internal error: broad number range failed to parse')
+  return range
 }
 
 function proveTupleLength(value: ArrayValue, expected: number, path: string): ValueSpecProof {

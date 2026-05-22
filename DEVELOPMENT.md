@@ -7,7 +7,7 @@ bun install
 ## Day-To-Day
 
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
-- `bun run test:parser` — focused parser-layer checks for contract syntax classification and value-shape lowering
+- `bun run test:parser` — focused parser-layer checks for contract syntax classification and TS type lowering
 - `bun run fr --help` — print the CLI command shapes
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
