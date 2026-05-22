@@ -134,6 +134,10 @@ UNKNOWN negative-patterns.ts:negativeRoundingDoesNotKeepStrictOrder: return.floo
     floor(left): any integer
     floor(right): any integer
     assumed from input: given left < right
+    inferred from code: floor(left) <= left
+    inferred from code: floor(left) > left - 1
+    inferred from code: floor(right) <= right
+    inferred from code: floor(right) > right - 1
   missing: left < floor(right)
 UNKNOWN negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minWidth
   known:
@@ -515,7 +519,9 @@ FAIL negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols
   range was 7, expected inside int 1..6
   known:
     assumed from input: given containerWidth: 320..2000
-    inferred from branch: (floor((containerWidth / 240))) > 7
+    inferred from code: floor((containerWidth / 240)) <= (containerWidth / 240)
+    inferred from code: floor((containerWidth / 240)) > (containerWidth / 240) - 1
+    inferred from branch: floor((containerWidth / 240)) - 7 > 0
     checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return >= min
     checked helper contract: negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
   missing: 7 <= 6

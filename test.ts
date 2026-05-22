@@ -523,7 +523,7 @@ const roundStrictCheck = roundingFamilyChecks.find(check => check.functionName =
 if (
   roundingFamilyFailures.length > 0
   || truncNeedsSignCheck?.status !== 'unknown'
-  || truncNeedsSignCheck.reason?.includes('missing: value >= 0') !== true
+  || truncNeedsSignCheck.reason?.includes('missing fact: trunc(value) <= value') !== true
   || roundStrictCheck?.status !== 'unknown'
   || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
 ) {

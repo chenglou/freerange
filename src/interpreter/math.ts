@@ -1,6 +1,7 @@
 import type * as ts from 'typescript'
 import {
   callExpr,
+  linearNameForExpression,
   maxNumberCases,
   mergeProvenance,
   numberValue,
@@ -9,12 +10,13 @@ import {
   powerNumbers,
   unknown,
   withNumberCases,
+  type LinearConstraint,
   type NumberValue,
   type NumberCase,
   type Value,
 } from '../domain.ts'
 import {mergeAssumptions} from '../assumptions.ts'
-import {linearConstant, linearScale} from '../linear.ts'
+import {linearConstant, linearScale, linearVariable} from '../linear.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {
   comparisonConstraint,
@@ -47,7 +49,55 @@ export function evaluateMathCall(name: string, values: Value[], frame: Interpret
   const numbers = values as NumberValue[]
   const evaluator = mathCallEvaluators.get(name)
   if (evaluator == null) return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`, expression)
-  return evaluator(name, numbers, frame, expression)
+  const result = evaluator(name, numbers, frame, expression)
+  if (result.kind === 'number' && numbers.length === 1 && isRoundingFunctionName(name)) {
+    frame.assumptions = mergeAssumptions(frame.assumptions, roundingFacts(name, result, numbers[0]!))
+  }
+  return result
+}
+
+type RoundingName = 'floor' | 'ceil' | 'round' | 'trunc'
+
+function isRoundingFunctionName(name: string): name is RoundingName {
+  return name === 'floor' || name === 'ceil' || name === 'round' || name === 'trunc'
+}
+
+function roundingFacts(name: RoundingName, result: NumberValue, input: NumberValue): LinearConstraint[] {
+  if (result.linear == null || input.linear == null || result.expr == null || input.expr == null) return []
+  const inputPlus = (offset: number) => numberValue(input.min + offset, input.max + offset, input.isInteger, null, {constant: input.linear!.constant + offset, terms: input.linear!.terms})
+  const facts: LinearConstraint[] = []
+  const floorStyle = () => {
+    const upper = comparisonConstraint(result, '<=', input, `${result.expr} <= ${input.expr}`)
+    if (upper != null) facts.push(upper)
+    const lower = comparisonConstraint(result, '>', inputPlus(-1), `${result.expr} > ${input.expr} - 1`)
+    if (lower != null) facts.push(lower)
+  }
+  const ceilStyle = () => {
+    const lower = comparisonConstraint(result, '>=', input, `${result.expr} >= ${input.expr}`)
+    if (lower != null) facts.push(lower)
+    const upper = comparisonConstraint(result, '<', inputPlus(1), `${result.expr} < ${input.expr} + 1`)
+    if (upper != null) facts.push(upper)
+  }
+  switch (name) {
+    case 'floor':
+      floorStyle()
+      return facts
+    case 'ceil':
+      ceilStyle()
+      return facts
+    case 'round': {
+      // JS Math.round rounds half toward positive infinity, so the lower bound is strict.
+      const lower = comparisonConstraint(result, '>', inputPlus(-0.5), `${result.expr} > ${input.expr} - 0.5`)
+      if (lower != null) facts.push(lower)
+      const upper = comparisonConstraint(result, '<=', inputPlus(0.5), `${result.expr} <= ${input.expr} + 0.5`)
+      if (upper != null) facts.push(upper)
+      return facts
+    }
+    case 'trunc':
+      if (input.min >= 0) floorStyle()
+      else if (input.max <= 0) ceilStyle()
+      return facts
+  }
 }
 
 type MathCallEvaluator = (name: string, values: NumberValue[], frame: InterpreterFrame, expression: ts.CallExpression) => Value
@@ -143,23 +193,26 @@ function evaluateNumberUnary(value: NumberValue, evaluate: (value: NumberValue) 
 }
 
 function floorNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
-  return numberValue(Math.floor(value.min), Math.floor(value.max), true, value.expr == null ? null : `floor(${value.expr})`, null, null, value.provenance)
+  return roundingResult('floor', Math.floor, value)
 }
 
 function ceilNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
-  return numberValue(Math.ceil(value.min), Math.ceil(value.max), true, value.expr == null ? null : `ceil(${value.expr})`, null, null, value.provenance)
+  return roundingResult('ceil', Math.ceil, value)
 }
 
 function roundNumber(value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
-  return numberValue(Math.round(value.min), Math.round(value.max), true, value.expr == null ? null : `round(${value.expr})`, null, null, value.provenance)
+  return roundingResult('round', Math.round, value)
 }
 
 function truncNumber(value: NumberValue): NumberValue {
+  return roundingResult('trunc', Math.trunc, value)
+}
+
+function roundingResult(name: 'floor' | 'ceil' | 'round' | 'trunc', apply: (n: number) => number, value: NumberValue): NumberValue {
   if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
-  return numberValue(Math.trunc(value.min), Math.trunc(value.max), true, value.expr == null ? null : `trunc(${value.expr})`, null, null, value.provenance)
+  const expr = value.expr == null ? null : `${name}(${value.expr})`
+  const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
+  return numberValue(apply(value.min), apply(value.max), true, expr, linear, null, value.provenance)
 }
 
 function sqrtNumber(value: NumberValue): Value {
