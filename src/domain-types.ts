@@ -74,7 +74,7 @@ export type ArraySummary = {
   advances: {prop: string; value: NumberValue}[]
   spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
   lastEnd: NumberValue | null
-  extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: NumberValue}[]
+  extentEnds: {emptyExpr: string; value: NumberValue}[]
 }
 
 export type ArrayOrigin =

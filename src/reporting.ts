@@ -32,7 +32,7 @@ export type ReportArrayValue = {
     advances: {prop: string; value: ReportNumberValue}[]
     spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
     lastEnd: ReportNumberValue | null
-    extentEnds: {emptyExpr: string; nonEmptyExpr: string; value: ReportNumberValue}[]
+    extentEnds: {emptyExpr: string; value: ReportNumberValue}[]
   } | null
 }
 

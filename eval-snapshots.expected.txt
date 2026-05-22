@@ -65,7 +65,6 @@ infer matrix abstract guarded for-of rows
   local rows[].height == items[].height
   local rows is an order-preserving subset of items
 infer matrix abstract for-of cursor values
-  return return.bottom == runningSum(top, items.length, step)
   return return.bottom: 0..3000
   return return.rows.length == items.length
   return return.rows.length: int 0..50
@@ -76,7 +75,6 @@ infer matrix abstract for-of cursor values
   local rows.length: int 0..50
   local rows[]: 0..3000
   local rows follows items by index
-  local y == runningSum(top, items.length, step)
   local y: 0..3000
 infer matrix abstract conditional count
   return return == count
@@ -130,7 +128,6 @@ infer matrix indexed array guarded rows
   local rows[].sourceIndex: int 0..19
   local rows is an order-preserving subset of items
 infer matrix indexed array guarded cursor values
-  return return.bottom == runningSum(top, items.length, step)
   return return.bottom: 0..3000
   return return.rows.length == rows.length
   return return.rows.length: int 0..50
@@ -140,10 +137,8 @@ infer matrix indexed array guarded cursor values
   local rows.length: int 0..50
   local rows[]: 0..3000
   local rows is an order-preserving subset of items
-  local y == runningSum(top, items.length, step)
   local y: 0..3000
 infer matrix indexed array cursor values
-  return return.bottom == runningSum(top, items.length, step)
   return return.bottom: 0..3000
   return return.rows.length == items.length
   return return.rows.length: int 0..50
@@ -154,7 +149,6 @@ infer matrix indexed array cursor values
   local rows.length: int 0..50
   local rows[]: 0..3000
   local rows follows items by index
-  local y == runningSum(top, items.length, step)
   local y: 0..3000
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length

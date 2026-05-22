@@ -34,12 +34,9 @@ export function evaluateAmbientBuiltinCall(context: AmbientBuiltinContext): Valu
   }
 }
 
-export function extentEndSummaryValue(array: ArrayValue, emptyExpr: string, nonEmptyExpr?: string): NumberValue | null {
+export function extentEndSummaryValue(array: ArrayValue, emptyExpr: string): NumberValue | null {
   const extentEnds = array.summary?.extentEnds ?? []
-  return extentEnds.find(fact =>
-    sameExpressionText(fact.emptyExpr, emptyExpr)
-    && (nonEmptyExpr == null || sameExpressionText(fact.nonEmptyExpr, nonEmptyExpr))
-  )?.value ?? null
+  return extentEnds.find(fact => sameExpressionText(fact.emptyExpr, emptyExpr))?.value ?? null
 }
 
 function evaluateNondecreasingCall(context: AmbientBuiltinContext): Value {

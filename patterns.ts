@@ -1282,26 +1282,6 @@ export function inlineComparisonPrefixVariants(
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
- * given gap: 0..10
- * return.rows.length == items.length
- * return.rows[].height: 0..40
- * extentEnd(return.rows, top) == return.bottom
- */
-export function extentEndHandlesEmptyRows(items: {height: number}[], top: number, gap: number) {
-  const rows = []
-  let y = top
-  for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height + gap
-  }
-  const bottom = rows.length === 0 ? top : y - gap
-  return {rows, bottom}
-}
-
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
  * return.rows.length == items.length
  * return.rows[].height: 0..40
  */

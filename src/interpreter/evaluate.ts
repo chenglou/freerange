@@ -2030,9 +2030,8 @@ function evaluateExtentEndConditional(expression: ts.ConditionalExpression, fram
   if (trueValue.kind !== 'number' || falseValue.kind !== 'number') return null
 
   const emptyValue = condition.emptyWhenTrue ? trueValue : falseValue
-  const nonEmptyValue = condition.emptyWhenTrue ? falseValue : trueValue
-  if (emptyValue.expr == null || nonEmptyValue.expr == null) return null
-  return extentEndSummaryValue(condition.array, emptyValue.expr, nonEmptyValue.expr)
+  if (emptyValue.expr == null) return null
+  return extentEndSummaryValue(condition.array, emptyValue.expr)
 }
 
 function arrayLengthZeroCondition(expression: ts.Expression, frame: InterpreterFrame): {array: ArrayValue; emptyWhenTrue: boolean} | null {

@@ -115,7 +115,6 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
     lastEnd: summary.lastEnd == null ? null : numberWithCallSiteText(summary.lastEnd, bindings),
     extentEnds: summary.extentEnds.map(fact => ({
       emptyExpr: callSiteText(fact.emptyExpr, bindings),
-      nonEmptyExpr: callSiteText(fact.nonEmptyExpr, bindings),
       value: numberWithCallSiteText(fact.value, bindings),
     })),
   }

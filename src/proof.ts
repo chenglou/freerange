@@ -468,7 +468,7 @@ function nonNumberReason(value: Exclude<Value, NumberValue>) {
   return value.kind === 'array' ? 'Expected a number, got an array' : 'Expected a number, got an object'
 }
 
-export function conditionalRunningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
+export function runningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
   const facts: LinearConstraint[] = []
   if (increment.min >= 0) {
     const lower = comparisonConstraint(value, '>=', start, `${value.expr ?? formatRange(value)} >= ${start.expr ?? formatRange(start)}`)

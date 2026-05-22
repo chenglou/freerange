@@ -429,10 +429,9 @@ function extentEndFromLoopPush(
   empty: NumberValue,
   nonEmptyEnd: NumberValue | null,
 ): ArraySummary['extentEnds'][number] | null {
-  if (empty.expr == null || nonEmptyEnd?.expr == null) return null
+  if (empty.expr == null || nonEmptyEnd == null) return null
   return {
     emptyExpr: empty.expr,
-    nonEmptyExpr: nonEmptyEnd.expr,
     value: numberValue(
       Math.min(empty.min, nonEmptyEnd.min),
       Math.max(empty.max, nonEmptyEnd.max),

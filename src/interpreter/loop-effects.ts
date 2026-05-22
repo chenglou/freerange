@@ -14,7 +14,7 @@ import {
   type LoopExtremum,
   type LoopScalarUpdate,
 } from '../loop-summary.ts'
-import {conditionalRunningSumFacts} from '../proof.ts'
+import {runningSumFacts} from '../proof.ts'
 import {
   identifierTargetName,
   isIdentifierNamed,
@@ -116,18 +116,16 @@ export function finalizeLoopEffects(
   for (const [targetName, pending] of effects.scalarAdds) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, pending.node)
-    updates.set(targetName, {
-      start,
-      increment: pending.increment,
-      end: runningSumNumber(start, loop.source.length, pending.increment),
-    })
+    const end = runningSumNumber(start, loop.source.length, pending.increment)
+    updates.set(targetName, {start, increment: pending.increment, end})
+    frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, pending.increment))
   }
   for (const [targetName, pending] of effects.conditionalScalarAdds) {
     const start = frame.env.get(targetName)
     if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, pending.node)
     const end = conditionalRunningSumNumber(targetName, start, loop.source.length, pending.increment)
     updates.set(targetName, {start, increment: pending.increment, end})
-    frame.assumptions = mergeAssumptions(frame.assumptions, conditionalRunningSumFacts(end, start, loop.source.length, pending.increment))
+    frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, pending.increment))
   }
   for (const [targetName, extremum] of effects.extrema) {
     const start = frame.env.get(targetName)

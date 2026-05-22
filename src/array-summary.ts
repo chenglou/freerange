@@ -96,7 +96,6 @@ function sameSpacedFact(left: ArraySummary['spaced'][number], right: ArraySummar
 
 function sameExtentEndFact(left: ArraySummary['extentEnds'][number], right: ArraySummary['extentEnds'][number]) {
   return sameExpressionText(left.emptyExpr, right.emptyExpr)
-    && sameExpressionText(left.nonEmptyExpr, right.nonEmptyExpr)
     && (left.value.expr ?? null) === (right.value.expr ?? null)
 }
 
