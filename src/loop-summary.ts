@@ -256,8 +256,8 @@ function sequenceSummaryFromAppendClock(
   if (gapExpr == null) return summary
 
   addSpacedRelations(summary, clock, recurrence.path, sizeExpr, gapExpr)
-  if (samePath(recurrence.path, ['top'])) summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
-  if (!options.includeExtentEnd || !samePath(recurrence.path, ['top'])) return summary
+  summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
+  if (!options.includeExtentEnd) return summary
 
   const loopEndName = `lastEnd(${clock.arrayName})`
   const loopEnd = options.cursorEnd ?? nonEmptyLoopEnd(loopEndName, recurrence.start, recurrence.advance, clock.length)

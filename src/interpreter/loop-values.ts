@@ -7,7 +7,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
-import {linearConstant, linearVariable} from '../linear.ts'
+import {linearConstant, linearEpsilon, linearSubtract, linearVariable, sameExpressionText} from '../linear.ts'
 import {
   indexedElementPathValue,
   type LoopPush as LoopSummaryPush,
@@ -42,14 +42,17 @@ export function indexedElementAssumptions(value: NumberValue, length: NumberValu
 
 export function loopAppendShapeWithCursorUpdates(append: LoopAppend, updates: Map<string, LoopScalarUpdate>): LoopSummaryPush {
   const cursorPaths = append.cursorPaths.filter(cursorPath => updates.has(cursorPath.targetName))
-  const topPath = cursorPaths[0]?.path ?? null
+  const cursorPath = cursorPaths[0]
+  const cursorName = cursorPath?.targetName ?? null
+  const topPath = cursorPath?.path ?? null
+  const increment = cursorName == null ? null : updates.get(cursorName)?.increment ?? null
   return {
     arrayName: append.arrayName,
     length: append.length,
     element: append.element,
-    topName: cursorPaths[0]?.targetName ?? null,
+    topName: cursorName,
     topPath,
-    height: topPath == null ? null : heightValueForTopPath(append.element, topPath),
+    height: topPath == null || increment == null ? null : siblingSizeValue(append.element, topPath, increment),
     cursorPaths,
   }
 }
@@ -87,11 +90,38 @@ function setLoopElementPathValue(value: Value, path: string[], replacement: Valu
   return {...value, props}
 }
 
-function heightValueForTopPath(value: Value | null, topPath: string[]): NumberValue | null {
-  if (topPath.at(-1) !== 'top') return null
-  const heightPath = [...topPath.slice(0, -1), 'height']
-  const height = valueAtObjectPath(value, heightPath)
-  return height?.kind === 'number' ? height : null
+function siblingSizeValue(value: Value | null, cursorPath: string[], increment: NumberValue): NumberValue | null {
+  if (cursorPath.length === 0) return null
+  const parent = valueAtObjectPath(value, cursorPath.slice(0, -1))
+  if (parent?.kind !== 'object') return null
+  const cursorField = cursorPath.at(-1)!
+  for (const [name, prop] of parent.props) {
+    if (name === cursorField) continue
+    if (prop.kind !== 'number') continue
+    if (incrementSizeMatch(increment, prop)) return prop
+  }
+  return null
+}
+
+function incrementSizeMatch(increment: NumberValue, size: NumberValue): boolean {
+  if (increment.linear != null && size.linear != null) {
+    const remainder = linearSubtract(increment.linear, size.linear)
+    if (remainder == null) return false
+    if (remainder.constant < -linearEpsilon) return false
+    for (const coef of remainder.terms.values()) if (coef < -linearEpsilon) return false
+    return true
+  }
+  if (increment.expr != null && size.expr != null) {
+    return sameExpressionText(increment.expr, size.expr) || incrementExprIncludesSize(increment.expr, size.expr)
+  }
+  return false
+}
+
+function incrementExprIncludesSize(incrementExpr: string, sizeExpr: string): boolean {
+  if (sameExpressionText(incrementExpr, sizeExpr)) return true
+  const stripped = incrementExpr.replace(/^\(|\)$/g, '')
+  const parts = stripped.split('+').map(part => part.trim())
+  return parts.some(part => sameExpressionText(part, sizeExpr))
 }
 
 function valueAtObjectPath(value: Value | null, path: string[]): Value | null {

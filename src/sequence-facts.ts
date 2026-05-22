@@ -30,15 +30,18 @@ export function provedSpacing(array: ArrayValue, gapExpr: string) {
   return array.summary?.relations.find(relation => {
     if (relation.kind !== 'adjacent-comparison') return false
     if (relation.op !== '==') return false
-    if (!sameSequenceTerm(relation.left, {item: 'next', path: ['top']})) return false
+    if (relation.left.item !== 'next') return false
     if (!sameAddends(relation.right.addends, gapExpr === '0' ? [] : [gapExpr])) return false
-    return sameSequenceTerms(relation.right.terms, [
-      {item: 'previous', path: ['top']},
-      {item: 'previous', path: ['height']},
-    ]) || sameSequenceTerms(relation.right.terms, [
-      {item: 'previous', path: ['bottom']},
-    ])
+    const terms = relation.right.terms
+    if (!terms.every(term => term.item === 'previous')) return false
+    if (terms.length === 1) return true
+    if (terms.length === 2) return terms.some(term => samePath(term.path, relation.left.path))
+    return false
   }) ?? null
+}
+
+function samePath(left: string[], right: string[]) {
+  return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
 export function adjacentComparisonText(collection: string, comparison: AdjacentComparison) {
