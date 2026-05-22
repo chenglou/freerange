@@ -190,7 +190,9 @@ export function fitValueSpecExpressions(spec: FitValueSpec): FitExpressionLike[]
 
 function fitValueTypeExpressions(node: ts.TypeNode, ranges: Map<string, FitRange>): FitExpressionLike[] {
   if (ts.isParenthesizedTypeNode(node)) return fitValueTypeExpressions(node.type, ranges)
+  if (ts.isTypeOperatorNode(node)) return fitValueTypeExpressions(node.type, ranges)
   if (ts.isUnionTypeNode(node)) return node.types.flatMap(type => fitValueTypeExpressions(type, ranges))
+  if (ts.isIntersectionTypeNode(node)) return node.types.flatMap(type => fitValueTypeExpressions(type, ranges))
   const range = fitValueSpecRangeForTypeNode(node, ranges)
   if (range != null) return fitRangeCases(range).flatMap(rangeCase => [rangeCase.lower, rangeCase.upper])
   if (ts.isTypeLiteralNode(node)) {
@@ -198,6 +200,7 @@ function fitValueTypeExpressions(node: ts.TypeNode, ranges: Map<string, FitRange
   }
   if (ts.isArrayTypeNode(node)) return fitValueTypeExpressions(node.elementType, ranges)
   if (ts.isTupleTypeNode(node)) return node.elements.flatMap(element => fitTupleElementExpressions(element, ranges))
+  if (ts.isTypeReferenceNode(node)) return node.typeArguments?.flatMap(type => fitValueTypeExpressions(type, ranges)) ?? []
   return []
 }
 
@@ -594,8 +597,9 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   if (checkRange != null) {
     const expression = parseFitExpressionText(checkRange.left)
     const body = checkRange.right
-    const value = shouldParseFitValueSpec(body) ? parseFitValueSpecText(body) : null
-    if (value != null) {
+    if (shouldParseFitValueSpec(body)) {
+      const value = parseFitValueSpecText(body)
+      if (value == null) throw new Error(`Unsupported @fit value spec: ${line}`)
       return {
         kind: 'check-value',
         expression,
@@ -671,9 +675,10 @@ export function parseFitRangeText(text: string, parseExpression: FitExpressionPa
 function shouldParseFitValueSpec(text: string): boolean {
   const body = text.trim()
   if (body.length === 0) return false
-  if (body.startsWith('{') || body.startsWith('[') || quotedStringText(body) != null || body === 'true' || body === 'false') return true
+  if (body.startsWith('{') || body.startsWith('[') || quotedStringText(body) != null || body === 'true' || body === 'false' || body === 'number' || body === 'boolean') return true
   const alternatives = splitTopLevelAlternatives(body)
-  return alternatives != null && alternatives.some(shouldParseFitValueSpec)
+  if (alternatives != null && alternatives.some(shouldParseFitValueSpec)) return true
+  return parseFitRangeText(body) == null && parseFitValueSpecText(body) != null
 }
 
 export function parseFitValueSpecText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitValueSpec | null {
@@ -685,66 +690,155 @@ export function parseFitValueSpecText(text: string, parseExpression: FitExpressi
 
 export function lowerFitValueSpecTextForTypeScript(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): Omit<FitValueSpec, 'kind' | 'typeNode'> | null {
   const ranges = new Map<string, FitRange>()
-  const typeText = lowerFitValueSpecFragment(text.trim(), ranges, parseExpression)
+  const typeText = lowerFitValueRangeLeaves(text.trim(), ranges, parseExpression)
   return typeText == null ? null : {typeText, ranges}
 }
 
-function lowerFitValueSpecFragment(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
-  const body = text.trim()
-  if (body.length === 0) return null
-
-  const alternatives = splitTopLevelAlternatives(body)
-  if (alternatives != null) {
-    const cases = alternatives.map(part => lowerFitValueSpecFragment(part, ranges, parseExpression))
-    return cases.some(item => item == null) ? null : cases.join(' | ')
+function lowerFitValueRangeLeaves(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
+  if (text.length === 0) return null
+  let result = text
+  let searchStart = 0
+  for (;;) {
+    const operator = findFitRangeOperator(result, searchStart)
+    if (operator == null) break
+    const bounds = rangeLeafBounds(result, operator)
+    if (bounds == null) return null
+    const rangeText = result.slice(bounds.start, bounds.end).trim()
+    const range = parseFitRangeText(rangeText, parseExpression)
+    if (range == null) return null
+    const id = `r${ranges.size}`
+    ranges.set(id, range)
+    const replacement = `${fitValueRangeTypeName}<"${id}">`
+    result = `${result.slice(0, bounds.start)}${replacement}${result.slice(bounds.end)}`
+    searchStart = bounds.start + replacement.length
   }
-
-  const object = lowerFitObjectSpecText(body, ranges, parseExpression)
-  if (object != null) return object
-
-  const array = lowerFitArraySpecText(body, ranges, parseExpression)
-  if (array != null) return array
-
-  if (quotedStringText(body) != null || body === 'true' || body === 'false' || body === 'number' || body === 'boolean') return body
-
-  const range = parseFitRangeText(body, parseExpression)
-  if (range == null) return null
-  const id = `r${ranges.size}`
-  ranges.set(id, range)
-  return `${fitValueRangeTypeName}<"${id}">`
+  return result
 }
 
-function lowerFitObjectSpecText(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
-  if (!text.startsWith('{') || !text.endsWith('}')) return null
-  const body = text.slice(1, -1).trim()
-  if (body.length === 0) return '{}'
-  const fields = splitTopLevelList(body)
-  if (fields == null) return null
-  const members: string[] = []
-  for (const field of fields) {
-    const colon = findTopLevelColon(field)
-    if (colon == null || propertySpecName(colon.left) == null) return null
-    const value = lowerFitValueSpecFragment(colon.right, ranges, parseExpression)
-    if (value == null) return null
-    members.push(`${colon.left.trim()}: ${value}`)
-  }
-  return `{${members.join('; ')}}`
+type FitRangeOperator = {
+  position: number
+  length: 2 | 3
 }
 
-function lowerFitArraySpecText(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
-  const elementText = topLevelArrayElementText(text)
-  if (elementText != null) {
-    const element = lowerFitValueSpecFragment(elementText, ranges, parseExpression)
-    return element == null ? null : `(${element})[]`
+function findFitRangeOperator(text: string, start: number): FitRangeOperator | null {
+  let quote: '"' | "'" | '`' | null = null
+  for (let index = start; index < text.length - 1; index++) {
+    const char = text[index]
+    if (quote != null) {
+      if (char === '\\') index++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (!text.startsWith('..', index) || text.startsWith('...', index)) continue
+    return text.startsWith('..<', index) ? {position: index, length: 3} : {position: index, length: 2}
   }
+  return null
+}
 
-  if (!text.startsWith('[') || !text.endsWith(']')) return null
-  const body = text.slice(1, -1).trim()
-  if (body.length === 0) return '[]'
-  const parts = splitTopLevelList(body)
-  if (parts == null) return null
-  const elements = parts.map(part => lowerFitValueSpecFragment(part, ranges, parseExpression))
-  return elements.some(item => item == null) ? null : `[${elements.join(', ')}]`
+function rangeLeafBounds(text: string, operator: FitRangeOperator): {start: number; end: number} | null {
+  const start = rangeLeafStart(text, operator.position)
+  const end = rangeLeafEnd(text, operator.position + operator.length)
+  return start == null || end == null || start >= operator.position || end <= operator.position + operator.length
+    ? null
+    : {start, end}
+}
+
+function rangeLeafStart(text: string, position: number): number | null {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  for (let index = position - 1; index >= 0; index--) {
+    const char = text[index]
+    if (char == null) continue
+    if (char === '"' || char === "'" || char === '`') {
+      index = stringStartBefore(text, index, char)
+      continue
+    }
+    if (char === ')') parenDepth++
+    else if (char === ']') bracketDepth++
+    else if (char === '}') braceDepth++
+    else if (char === '(') {
+      if (parenDepth === 0) return trimmedStart(text, index + 1, position)
+      parenDepth--
+    } else if (char === '[') {
+      if (bracketDepth === 0) return trimmedStart(text, index + 1, position)
+      bracketDepth--
+    } else if (char === '{') {
+      if (braceDepth === 0) return trimmedStart(text, index + 1, position)
+      braceDepth--
+    } else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && isRangeLeafStartDelimiter(char)) {
+      return trimmedStart(text, index + 1, position)
+    }
+  }
+  return trimmedStart(text, 0, position)
+}
+
+function rangeLeafEnd(text: string, position: number): number | null {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let index = position; index < text.length; index++) {
+    const char = text[index]
+    if (char == null) continue
+    if (quote != null) {
+      if (char === '\\') index++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === '[') bracketDepth++
+    else if (char === '{') braceDepth++
+    else if (char === ')') {
+      if (parenDepth === 0) return trimmedEnd(text, position, index)
+      parenDepth--
+    } else if (char === ']') {
+      if (bracketDepth === 0) return trimmedEnd(text, position, index)
+      bracketDepth--
+    } else if (char === '}') {
+      if (braceDepth === 0) return trimmedEnd(text, position, index)
+      braceDepth--
+    } else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && isRangeLeafEndDelimiter(char)) {
+      return trimmedEnd(text, position, index)
+    }
+  }
+  return trimmedEnd(text, position, text.length)
+}
+
+function isRangeLeafStartDelimiter(char: string) {
+  return char === ':' || char === ',' || char === ';' || char === '|' || char === '&' || char === '<'
+}
+
+function isRangeLeafEndDelimiter(char: string) {
+  return char === ',' || char === ';' || char === '|' || char === '&' || char === '>'
+}
+
+function stringStartBefore(text: string, quoteEnd: number, quote: string) {
+  for (let index = quoteEnd - 1; index >= 0; index--) {
+    if (text[index] !== quote) continue
+    let backslashes = 0
+    for (let cursor = index - 1; cursor >= 0 && text[cursor] === '\\'; cursor--) backslashes++
+    if (backslashes % 2 === 0) return index
+  }
+  return -1
+}
+
+function trimmedStart(text: string, start: number, end: number) {
+  while (start < end && /\s/.test(text[start]!)) start++
+  return start
+}
+
+function trimmedEnd(text: string, start: number, end: number) {
+  while (end > start && /\s/.test(text[end - 1]!)) end--
+  return end
 }
 
 function parseFitValueSpecTypeNode(typeText: string): ts.TypeNode | null {
@@ -769,6 +863,15 @@ export function fitValueSpecLiteralValues(node: ts.LiteralTypeNode): (string | b
   return null
 }
 
+export function fitValueSpecNumberLiteralValue(node: ts.LiteralTypeNode): number | null {
+  if (ts.isNumericLiteral(node.literal)) return Number(node.literal.text)
+  if (ts.isPrefixUnaryExpression(node.literal) && ts.isNumericLiteral(node.literal.operand)) {
+    const value = Number(node.literal.operand.text)
+    return node.literal.operator === ts.SyntaxKind.MinusToken ? -value : value
+  }
+  return null
+}
+
 export function fitValueSpecPropertyName(name: ts.PropertyName): string | null {
   if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) return name.text
   return null
@@ -785,91 +888,12 @@ function quotedStringText(text: string): string | null {
   return initializer != null && ts.isStringLiteralLike(initializer) ? initializer.text : null
 }
 
-function propertySpecName(text: string): string | null {
-  const trimmed = text.trim()
-  if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) return trimmed
-  if (/^\d+$/.test(trimmed)) return trimmed
-  return quotedStringText(trimmed)
-}
-
 function findTopLevelColon(text: string): {left: string; right: string} | null {
   const result = scanTopLevel(text, (source, position) => source[position] === ':' ? ':' : null)
   if (result == null) return null
   const left = text.slice(0, result.position).trim()
   const right = text.slice(result.position + 1).trim()
   return left.length === 0 || right.length === 0 ? null : {left, right}
-}
-
-function topLevelArrayElementText(text: string): string | null {
-  if (!text.endsWith('[]')) return null
-  const element = text.slice(0, -2).trim()
-  if (element.length === 0) return null
-  return hasBalancedTopLevelText(element) ? element : null
-}
-
-function hasBalancedTopLevelText(text: string): boolean {
-  let parenDepth = 0
-  let bracketDepth = 0
-  let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index]
-    if (quote != null) {
-      if (char === '\\') index++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    if (parenDepth < 0 || bracketDepth < 0 || braceDepth < 0) return false
-  }
-  return quote == null && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0
-}
-
-function splitTopLevelList(text: string): string[] | null {
-  if (text.trim().length === 0) return []
-  const parts: string[] = []
-  let start = 0
-  let parenDepth = 0
-  let bracketDepth = 0
-  let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index]
-    if (quote != null) {
-      if (char === '\\') index++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    else if ((char === ',' || char === ';') && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      const part = text.slice(start, index).trim()
-      if (part.length === 0) return null
-      parts.push(part)
-      start = index + 1
-    }
-  }
-  const last = text.slice(start).trim()
-  if (last.length === 0) return null
-  parts.push(last)
-  return parts
 }
 
 function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {

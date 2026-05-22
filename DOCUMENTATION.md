@@ -239,6 +239,19 @@ If the pairing matters, write the returned shape directly:
 
 This means every real return value must fit at least one whole case. The range syntax works anywhere that case shape expects a number.
 
+Whole-value shapes use normal TypeScript type syntax, with Freerange ranges where a numeric leaf would go:
+
+```ts
+type TileBox<T> = { value: T }
+
+/** @fit
+ * return: TileBox<{width: 10..20}>
+ * return: {left: 0..10} & {width: int 1..5}
+ */
+```
+
+If a numeric leaf comes from a helper, put the helper call in a range endpoint, e.g. `{width: minWidth()..maxWidth()}`. A bare helper call like `{width: dynamicWidth()}` is not TypeScript type syntax, so Freerange rejects it there instead of guessing.
+
 Freerange currently keeps up to 8 reachable branch states from code. If code needs more than that, it keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`. That 8-case budget is for inferred code branches, which isn't necessarily the same as the number of alternations of output like `1 | 2 | 3`.
 
 (TypeScript avoids this problem by widening to `{left: number; width: number}`, which avoids needing to track branches, but this isn't good enough for Freerange)
@@ -268,6 +281,8 @@ int a..<b // integer from a up to, but not including, b.
 0..10 | 20..30 // numeric alternatives. The value must fit one alternative.
 low() | high() // pure expression alternatives. Equivalent to low()..low() | high()..high().
 return: {left: 0, width: 100} | {left: 20, width: 80} // whole returned object alternatives. The pairing is checked case by case.
+return: {left: 0..10} & {width: int 1..5} // whole-value specs use TypeScript type syntax plus Freerange numeric ranges.
+return: TileBox<{width: 10..20}> // type aliases, interfaces, generics, and type-only imports declared in your source can be used in whole-value specs.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.

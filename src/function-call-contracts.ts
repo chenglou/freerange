@@ -44,18 +44,26 @@ import type {FitFunction} from './modules.ts'
 import {
   fitExpressionParsed,
   fitExpressionText,
+  fitValueSpecNumberLiteralValue,
   fitRangeCases,
   fitValueSpecPropertyName,
   fitValueSpecRangeForTypeNode,
   fitReturnInternalRoot,
   parseDomainPathText,
   parseExpression,
+  parseFitRangeText,
   type ComparisonOperator,
   type FitExpressionLike,
   type FitRange,
   type FitSpec,
   type FitValueSpec,
 } from './parser.ts'
+import {
+  createFitValueSpecTypeEnv,
+  fitValueSpecTupleElementType,
+  withResolvedFitValueSpecTypeReference,
+  type FitValueSpecTypeEnv,
+} from './value-specs.ts'
 import {
   callPreconditionObligation,
 } from './obligations.ts'
@@ -375,7 +383,7 @@ function applySummaryValueSpec(
 ) {
   const rootPath = simpleResultPathText(expression)
   if (rootPath == null) return
-  const ranges = valueSpecRangeValues(valueSpec.typeNode, valueSpec, rootPath, text, context, source, evaluators)
+  const ranges = valueSpecRangeValues(valueSpec.typeNode, createFitValueSpecTypeEnv(context.program, valueSpec), rootPath, text, context, source, evaluators)
   for (const [path, value] of ranges) {
     if (value.kind !== 'number') continue
     const current = evaluators.evaluateSpecExpression(path, context)
@@ -385,16 +393,17 @@ function applySummaryValueSpec(
 
 function valueSpecRangeValues(
   node: ts.TypeNode,
-  spec: FitValueSpec,
+  env: FitValueSpecTypeEnv,
   path: string,
   text: string,
   context: EvalContext,
   source: FunctionContractSource,
   evaluators: CallContractEvaluators,
 ): Map<string, Value> {
-  if (ts.isParenthesizedTypeNode(node)) return valueSpecRangeValues(node.type, spec, path, text, context, source, evaluators)
+  if (ts.isParenthesizedTypeNode(node)) return valueSpecRangeValues(node.type, env, path, text, context, source, evaluators)
+  if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.ReadonlyKeyword) return valueSpecRangeValues(node.type, env, path, text, context, source, evaluators)
   if (ts.isUnionTypeNode(node)) {
-    const caseMaps = node.types.map(current => valueSpecRangeValues(current, spec, path, text, context, source, evaluators))
+    const caseMaps = node.types.map(current => valueSpecRangeValues(current, env, path, text, context, source, evaluators))
     const sharedPaths = caseMaps[0] == null ? [] : [...caseMaps[0].keys()].filter(key => caseMaps.every(caseMap => caseMap.has(key)))
     const result = new Map<string, Value>()
     for (const sharedPath of sharedPaths) {
@@ -408,31 +417,59 @@ function valueSpecRangeValues(
     }
     return result
   }
-  const range = fitValueSpecRangeForTypeNode(node, spec.ranges)
+  if (ts.isIntersectionTypeNode(node)) {
+    return intersectValueSpecRangeMaps(node.types.map(current => valueSpecRangeValues(current, env, path, text, context, source, evaluators)))
+  }
+  const range = fitValueSpecRangeForTypeNode(node, env.spec.ranges)
   if (range != null) {
     const value = evaluators.evaluateRangeValue(range, context, path, [checkedContractFact(source, text)])
     return new Map([[path, value]])
   }
-  if (ts.isTypeLiteralNode(node)) {
-    return mergeValueSpecRangeMaps(node.members.map(member => {
-      if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) return new Map()
-      const name = fitValueSpecPropertyName(member.name)
-      return name == null ? new Map() : valueSpecRangeValues(member.type, spec, `${path}.${name}`, text, context, source, evaluators)
-    }))
+  if (ts.isLiteralTypeNode(node)) {
+    const value = fitValueSpecNumberLiteralValue(node)
+    if (value == null) return new Map()
+    const range = parseFitRangeText(String(value))
+    return range == null ? new Map() : new Map([[path, evaluators.evaluateRangeValue(range, context, path, [checkedContractFact(source, text)])]])
   }
-  if (ts.isArrayTypeNode(node)) return valueSpecRangeValues(node.elementType, spec, `${path}[]`, text, context, source, evaluators)
+  if (ts.isTypeLiteralNode(node)) {
+    return valueSpecMemberRangeValues(node.members, env, path, text, context, source, evaluators)
+  }
+  if (ts.isArrayTypeNode(node)) return valueSpecRangeValues(node.elementType, env, `${path}[]`, text, context, source, evaluators)
   if (ts.isTupleTypeNode(node)) {
     return mergeValueSpecRangeMaps(node.elements.map((element, index) => {
-      const type = tupleElementType(element)
-      return type == null ? new Map() : valueSpecRangeValues(type, spec, `${path}[${index}]`, text, context, source, evaluators)
+      const type = fitValueSpecTupleElementType(element)
+      return type == null ? new Map() : valueSpecRangeValues(type, env, `${path}[${index}]`, text, context, source, evaluators)
     }))
+  }
+  if (ts.isTypeReferenceNode(node)) {
+    return withResolvedFitValueSpecTypeReference(node, env, current => {
+      switch (current.kind) {
+        case 'node':
+          return valueSpecRangeValues(current.node, current.env, path, text, context, source, evaluators)
+        case 'members':
+          return valueSpecMemberRangeValues(current.members, current.env, path, text, context, source, evaluators)
+        case 'array':
+          return valueSpecRangeValues(current.element, current.env, `${path}[]`, text, context, source, evaluators)
+      }
+    }) ?? new Map()
   }
   return new Map()
 }
 
-function tupleElementType(node: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {
-  if (ts.isNamedTupleMember(node) || ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
-  return node
+function valueSpecMemberRangeValues(
+  members: ts.NodeArray<ts.TypeElement>,
+  env: FitValueSpecTypeEnv,
+  path: string,
+  text: string,
+  context: EvalContext,
+  source: FunctionContractSource,
+  evaluators: CallContractEvaluators,
+) {
+  return mergeValueSpecRangeMaps(members.map(member => {
+    if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) return new Map()
+    const name = fitValueSpecPropertyName(member.name)
+    return name == null ? new Map() : valueSpecRangeValues(member.type, env, `${path}.${name}`, text, context, source, evaluators)
+  }))
 }
 
 function mergeValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value> {
@@ -444,6 +481,30 @@ function mergeValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value>
     }
   }
   return result
+}
+
+function intersectValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value> {
+  const result = new Map<string, Value>()
+  for (const map of maps) {
+    for (const [path, value] of map) {
+      const current = result.get(path)
+      result.set(path, current == null ? value : summaryIntersectionValue(current, value))
+    }
+  }
+  return result
+}
+
+function summaryIntersectionValue(left: Value, right: Value): Value {
+  if (left.kind !== 'number' || right.kind !== 'number') return joinValues(left, right)
+  return numberValue(
+    Math.max(left.min, right.min),
+    Math.min(left.max, right.max),
+    left.isInteger || right.isInteger,
+    left.expr ?? right.expr,
+    left.linear ?? right.linear,
+    null,
+    mergeProvenance(left, right),
+  )
 }
 
 function applySummaryRangeSpec(

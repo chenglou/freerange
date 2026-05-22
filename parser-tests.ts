@@ -46,10 +46,10 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
   expect(lowered != null, 'expected whole-value spec to lower to TS type syntax')
   expectEqual(
     lowered.typeText,
-    '{kind: "small"; width: __FRNumber<"r0">; cols: __FRNumber<"r1">} | {kind: "large"; width: __FRNumber<"r2">; cols: __FRNumber<"r3">}',
+    '{kind: "small", width: __FRNumber<"r0">, cols: __FRNumber<"r1">} | {kind: "large", width: __FRNumber<"r2">, cols: 7}',
     'expected range leaves to become branded number slots',
   )
-  expectEqual(lowered.ranges.size, 4, 'expected one side-table range per numeric leaf')
+  expectEqual(lowered.ranges.size, 3, 'expected one side-table range per range leaf')
 
   const spec = expectSpecKind(
     parseFitSpecLine('return: {kind: "small", width: 100..200, cols: int 1..<7} | {kind: "large", width: minWidth()..maxWidth(), cols: 7}', 12),
@@ -58,14 +58,13 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
   expectEqual(fitExpressionText(spec.expression), '__fit_return', 'expected return to be normalized')
   expectEqual(spec.line, 12, 'expected line number to be carried')
   expectEqual(spec.value.typeText, lowered.typeText, 'expected check-value spec to keep lowered TS type text')
-  expectEqual(spec.value.ranges.size, 4, 'expected range side table to stay attached')
+  expectEqual(spec.value.ranges.size, 3, 'expected range side table to stay attached')
   expectEqual(ts.isUnionTypeNode(spec.value.typeNode), true, 'expected TS union type node')
   expectRange(spec.value.ranges.get('r0')!, '100..200', 'number')
   const smallCols = spec.value.ranges.get('r1')!
   expectRange(smallCols, 'int 1..<7', 'int')
   expectEqual(smallCols.upperInclusive, false, 'expected exclusive upper bound')
   expectRange(spec.value.ranges.get('r2')!, 'minWidth()..maxWidth()', 'number')
-  expectRange(spec.value.ranges.get('r3')!, '7', 'number')
 }
 
 {
@@ -77,9 +76,33 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
 
 {
   const spec = expectSpecKind(parseFitSpecLine('return: {rows: {height: 10..20}[], snap: [0..10, 20..30]}'), 'check-value')
-  expectEqual(spec.value.typeText, '{rows: ({height: __FRNumber<"r0">})[]; snap: [__FRNumber<"r1">, __FRNumber<"r2">]}', 'expected nested spec to lower to TS shape')
+  expectEqual(spec.value.typeText, '{rows: {height: __FRNumber<"r0">}[], snap: [__FRNumber<"r1">, __FRNumber<"r2">]}', 'expected nested spec to lower to TS type syntax')
   expectEqual(spec.value.ranges.size, 3, 'expected nested range side table')
   expectEqual(fitValueSpecExpressions(spec.value).map(fitExpressionText).join(', '), '10, 20, 0, 10, 20, 30', 'expected expressions to come from side-table ranges')
+}
+
+{
+  const spec = expectSpecKind(parseFitSpecLine('return: ({left: 0..10} & {width: int 1..5}) | {kind: "empty", width: 0}'), 'check-value')
+  expectEqual(spec.value.typeText, '({left: __FRNumber<"r0">} & {width: __FRNumber<"r1">}) | {kind: "empty", width: 0}', 'expected intersections to stay TypeScript type syntax')
+  expectEqual(ts.isUnionTypeNode(spec.value.typeNode), true, 'expected intersection union to parse through TS')
+  expectEqual(spec.value.ranges.size, 2, 'expected range slots only for range leaves')
+}
+
+{
+  const spec = expectSpecKind(parseFitSpecLine('return: Box<{width: 0..maxWidth()}>'), 'check-value')
+  expectEqual(spec.value.typeText, 'Box<{width: __FRNumber<"r0">}>', 'expected generic type syntax to stay in TypeScript form')
+  expectEqual(ts.isTypeReferenceNode(spec.value.typeNode), true, 'expected generic type reference to parse through TS')
+  expectEqual(fitValueSpecExpressions(spec.value).map(fitExpressionText).join(', '), '0, maxWidth()', 'expected expressions inside type arguments')
+}
+
+{
+  try {
+    parseFitSpecLine('return: {width: dynamicWidth()}')
+    throw new Error('expected unsupported value expression leaf to be rejected')
+  } catch (error) {
+    expect(error instanceof Error, 'expected parser error')
+    expect(error.message.includes('Unsupported @fit value spec'), 'expected unsupported value spec error')
+  }
 }
 
 {

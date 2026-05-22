@@ -48,7 +48,7 @@ CLI and reports:
 
 Contracts and source evaluation:
 
-- [src/parser.ts](./src/parser.ts), [src/check-specs.ts](./src/check-specs.ts), [src/givens.ts](./src/givens.ts), [src/function-contracts.ts](./src/function-contracts.ts), and [src/function-call-contracts.ts](./src/function-call-contracts.ts) — parsing, input assumptions, contract collection, and helper-call requirements
+- [src/parser.ts](./src/parser.ts), [src/value-specs.ts](./src/value-specs.ts), [src/check-specs.ts](./src/check-specs.ts), [src/givens.ts](./src/givens.ts), [src/function-contracts.ts](./src/function-contracts.ts), and [src/function-call-contracts.ts](./src/function-call-contracts.ts) — parsing, whole-value type syntax, input assumptions, contract collection, and helper-call requirements
 - [src/interpreter/](./src/interpreter), [src/function-evaluation.ts](./src/function-evaluation.ts), [src/function-inputs.ts](./src/function-inputs.ts), [src/interpreter-state.ts](./src/interpreter-state.ts), and [src/function-shape.ts](./src/function-shape.ts) — source evaluation, function setup, `this`, nested functions, and helper-call recording
 - [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, imports, top-level constants, and structural shape fallback
 
@@ -80,7 +80,7 @@ adoption loop: inspect what source proves, keep the human-important `@fit`
 comments, then classify any remaining failure as missing input fact, unsupported
 source shape, helper boundary, or real proof gap.
 
-Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange.
+Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange. Whole-value contract syntax is the narrow exception: `src/parser.ts` lowers Freerange range leaves, then `src/value-specs.ts` resolves the surrounding TypeScript type syntax just far enough to check the written contract.
 
 ## Selector Audit
 

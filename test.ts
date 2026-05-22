@@ -312,6 +312,50 @@ if (
   console.log('range contracts: dynamic bounds and alternatives')
 }
 
+const wholeValueTypeSyntaxChecks = verifyFitSource('whole-value-type-syntax.ts', `type Box<T> = {
+  value: T
+}
+
+interface ImportedLookingTile {
+  width: number
+}
+
+/** @fit
+ * return: {left: 0..10} & {width: int 1..5}
+ */
+function intersectionValue() {
+  return {left: 5, width: 3}
+}
+
+/** @fit
+ * return: Box<{tile: ImportedLookingTile & {width: 10..20}}>
+ */
+function genericAliasValue() {
+  return {value: {tile: {width: 15}}}
+}
+
+/** @fit
+ * return: Box<{tile: ImportedLookingTile & {width: 10..20}}>
+ */
+function genericAliasMiss() {
+  return {value: {tile: {width: 30}}}
+}
+`)
+const intersectionValueCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'intersectionValue' && check.text.startsWith('return: {left'))
+const genericAliasValueCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'genericAliasValue' && check.text.startsWith('return: Box'))
+const genericAliasMissCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'genericAliasMiss' && check.text.startsWith('return: Box'))
+if (
+  intersectionValueCheck?.status !== 'pass'
+  || genericAliasValueCheck?.status !== 'pass'
+  || genericAliasMissCheck?.status !== 'fail'
+) {
+  console.error('expected whole-value contracts to use TypeScript type syntax with range leaves')
+  console.error(JSON.stringify(wholeValueTypeSyntaxChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('whole-value contracts: TypeScript type syntax')
+}
+
 const collectionExpressionChecks = verifyFitSource('collection-expression-contracts.ts', `function twice(value: number) {
   return value * 2
 }
@@ -1379,6 +1423,40 @@ function plain() {
     expectCli(check.exitCode === 1, 'expected project type roots to enforce imported type-field facts', check.output)
     expectCli(check.output.includes('FAIL return.value: 0..10'), 'expected project type root failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 requires, 0 unknown'), 'expected project type root failure summary', check.output)
+  })
+
+  await withCliFixture({
+    'tsconfig.json': JSON.stringify({
+      compilerOptions: {
+        target: 'ESNext',
+        module: 'ESNext',
+        moduleResolution: 'bundler',
+        strict: true,
+        noEmit: true,
+      },
+      include: ['*.ts'],
+    }, null, 2),
+    'project-types.ts': `export type RangeBox<T> = {
+  value: T
+}
+
+export interface TileBase {
+  width: number
+}
+`,
+    'project-consumer.ts': `import type {RangeBox, TileBase} from './project-types'
+
+/** @fit
+ * return: RangeBox<TileBase & {width: 10..20}>
+ */
+export function makeBox() {
+  return {value: {width: 15}}
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'project-consumer.ts'], dir)
+    expectCli(check.exitCode === 0, 'expected whole-value specs to resolve imported type syntax', check.output)
+    expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected imported whole-value type spec to pass', check.output)
   })
 
   await withCliFixture({
