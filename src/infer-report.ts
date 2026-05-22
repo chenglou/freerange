@@ -197,6 +197,7 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
   const spec = parseFitSpecLineForInference(specText)
   if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
   if (spec.kind === 'check-expression') return null
+  if (spec.kind === 'check-value') return null
   if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
   return comparisonFactReasonForSpec(spec, facts)
 }

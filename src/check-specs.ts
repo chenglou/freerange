@@ -7,11 +7,14 @@ import {
 import {nondecreasingFailureReason} from './ambient-builtins.ts'
 import {
   finiteNumberSet,
+  isDefinitelyEmptyArray,
+  literalKey,
   numberValue,
   withNumberCases,
   numberBranches,
   type ArrayValue,
   type LinearConstraint,
+  type LiteralPrimitive,
   type NumberValue,
   type Value,
 } from './domain.ts'
@@ -28,6 +31,7 @@ import {
   type FitRange,
   type FitRangeCase,
   type FitSpec,
+  type FitValueSpec,
 } from './parser.ts'
 import {proveComparison, proveComparisonWithStep} from './proof.ts'
 import {
@@ -77,7 +81,7 @@ export function verifyCheckSpec(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
   contractCache: Map<string, FunctionContractProof>,
@@ -92,7 +96,7 @@ export function verifyCheckSpecWithProof(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
+  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
   contractCache: Map<string, FunctionContractProof>,
@@ -126,6 +130,19 @@ export function verifyCheckSpecWithProof(
       status: status.status,
       ...(status.reason == null ? {} : {reason: status.reason}),
     }, 'numeric', 'range', 'checked numeric range claim', [value], context.assumptions)
+  }
+
+  if (spec.kind === 'check-value') {
+    const value = evaluateSpecExpression(spec.expression, context, hooks)
+    const status = proveValueSpec(value, spec.value, context, hooks, publicFitText(fitExpressionText(spec.expression)))
+    return checkProof({
+      file,
+      ...(spec.line == null ? {} : {line: spec.line}),
+      functionName,
+      text: spec.text,
+      status: status.status,
+      ...(status.reason == null ? {} : {reason: status.reason}),
+    }, 'value', 'shape', 'checked value shape claim', status.values, context.assumptions)
   }
 
   if (spec.kind === 'check-expression') return verifyBooleanExpressionSpec(file, functionName, spec, context, hooks)
@@ -204,6 +221,112 @@ export function proveRangeSpec(value: Value, range: FitRange, context: EvalConte
   const expected = evaluateRangeCases(range, context, hooks)
   if (expected.kind === 'invalid') return {status: 'unknown', reason: rangeBoundNumberReason(expected.bound, expected.value, expected.text)}
   return proveNumberInsideRangeCases(value, range, expected.cases, context.assumptions)
+}
+
+type ValueSpecProof = {
+  status: FitCheckStatus
+  reason?: string
+  values: Value[]
+  matched: number
+}
+
+function proveValueSpec(value: Value, spec: FitValueSpec, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  if (spec.kind === 'union') return proveValueUnionSpec(value, spec.cases, context, hooks, path)
+  if (spec.kind === 'number') {
+    const status = proveRangeSpec(value, spec.range, context, hooks)
+    return {...status, values: [value], matched: status.status === 'pass' ? 1 : 0}
+  }
+  if (spec.kind === 'literal') return proveLiteralSpec(value, spec.values, path)
+  if (spec.kind === 'object') return proveObjectSpec(value, spec, context, hooks, path)
+  if (spec.kind === 'array') return proveArraySpec(value, spec, context, hooks, path)
+  return proveTupleSpec(value, spec, context, hooks, path)
+}
+
+function proveValueUnionSpec(value: Value, cases: FitValueSpec[], context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  const proofs = cases.map(current => proveValueSpec(value, current, context, hooks, path))
+  const pass = proofs.find(proof => proof.status === 'pass')
+  if (pass != null) return pass
+  const unknown = highestMatchedProof(proofs.filter(proof => proof.status === 'unknown'))
+  if (unknown != null) return unknown
+  return highestMatchedProof(proofs) ?? {status: 'unknown', reason: `Empty value alternatives for ${path}`, values: [value], matched: 0}
+}
+
+function proveLiteralSpec(value: Value, expected: LiteralPrimitive[], path: string): ValueSpecProof {
+  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
+  if (value.kind !== 'literal') return {status: 'unknown', reason: `${path} expected a literal value`, values: [value], matched: 0}
+  const expectedKeys = new Set(expected.map(literalKey))
+  const actualKeys = value.values.map(literalKey)
+  if (actualKeys.every(key => expectedKeys.has(key))) return {status: 'pass', values: [value], matched: 1}
+  return {
+    status: 'fail',
+    reason: `${path} was ${value.values.map(String).join(' | ')}, expected ${expected.map(String).join(' | ')}`,
+    values: [value],
+    matched: 0,
+  }
+}
+
+function proveObjectSpec(value: Value, spec: Extract<FitValueSpec, {kind: 'object'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
+  if (value.kind !== 'object') return {status: 'unknown', reason: `${path} expected an object`, values: [value], matched: 0}
+  return combineValueSpecProofs(spec.props.map(prop => {
+    const propPath = `${path}.${prop.name}`
+    const propValue = value.props.get(prop.name)
+    return propValue == null
+      ? {status: 'fail', reason: `${propPath} was missing`, values: [value], matched: 0} satisfies ValueSpecProof
+      : proveValueSpec(propValue, prop.value, context, hooks, propPath)
+  }))
+}
+
+function proveArraySpec(value: Value, spec: Extract<FitValueSpec, {kind: 'array'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
+  if (value.kind !== 'array') return {status: 'unknown', reason: `${path} expected an array`, values: [value], matched: 0}
+  if (value.element == null) {
+    return isDefinitelyEmptyArray(value)
+      ? {status: 'pass', values: [value], matched: 1}
+      : {status: 'unknown', reason: `${path}[] was not inferred`, values: [value], matched: 0}
+  }
+  return proveValueSpec(value.element, spec.element, context, hooks, `${path}[]`)
+}
+
+function proveTupleSpec(value: Value, spec: Extract<FitValueSpec, {kind: 'tuple'}>, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
+  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
+  if (value.kind !== 'array') return {status: 'unknown', reason: `${path} expected an array`, values: [value], matched: 0}
+  const length = proveTupleLength(value, spec.elements.length, path)
+  if (length.status !== 'pass') return length
+  if (value.elements == null) return {status: 'unknown', reason: `${path} elements were not inferred as a tuple`, values: [value], matched: length.matched}
+  return combineValueSpecProofs(spec.elements.map((element, index) => proveValueSpec(value.elements![index]!, element, context, hooks, `${path}[${index}]`)))
+}
+
+function proveTupleLength(value: ArrayValue, expected: number, path: string): ValueSpecProof {
+  if (value.length.min === expected && value.length.max === expected) return {status: 'pass', values: [value.length], matched: 1}
+  if (value.length.max < expected || value.length.min > expected) {
+    return {status: 'fail', reason: `${path}.length was ${value.length.min}..${value.length.max}, expected ${expected}`, values: [value.length], matched: 0}
+  }
+  return {status: 'unknown', reason: `${path}.length was not proven to be ${expected}`, values: [value.length], matched: 0}
+}
+
+function combineValueSpecProofs(proofs: ValueSpecProof[]): ValueSpecProof {
+  const aggregate = aggregateValueSpecProofs(proofs)
+  const fail = proofs.find(proof => proof.status === 'fail')
+  if (fail != null) return {...fail, ...aggregate}
+  const unknown = proofs.find(proof => proof.status === 'unknown')
+  if (unknown != null) return {...unknown, ...aggregate}
+  return {status: 'pass', ...aggregate}
+}
+
+function aggregateValueSpecProofs(proofs: ValueSpecProof[]) {
+  return {
+    values: proofs.flatMap(proof => proof.values),
+    matched: proofs.reduce((sum, proof) => sum + proof.matched, 0),
+  }
+}
+
+function highestMatchedProof(proofs: ValueSpecProof[]): ValueSpecProof | null {
+  let best: ValueSpecProof | null = null
+  for (const proof of proofs) {
+    if (best == null || proof.matched > best.matched) best = proof
+  }
+  return best
 }
 
 type EvaluatedRangeCase = {

@@ -138,6 +138,14 @@ export function negativeBroadStringDoesNotBecomeFinite(kind: string, panelX: num
 }
 
 /** @fit
+ * return: {left: 0, width: 100} | {left: 20, width: 80}
+ */
+export function negativePairedObjectReturnShape(pinned: boolean) {
+  if (pinned) return {left: 20, width: 81}
+  return {left: 0, width: 100}
+}
+
+/** @fit
  * given minWidth: 0..1000
  * given width: 0..1000
  * return >= minWidth

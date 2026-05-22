@@ -38,6 +38,32 @@ export type FitRange = FitRangeCase & {
   text: string
 }
 
+export type FitValueSpec =
+  | {
+      kind: 'number'
+      range: FitRange
+    }
+  | {
+      kind: 'literal'
+      values: (string | boolean)[]
+    }
+  | {
+      kind: 'object'
+      props: {name: string; value: FitValueSpec}[]
+    }
+  | {
+      kind: 'array'
+      element: FitValueSpec
+    }
+  | {
+      kind: 'tuple'
+      elements: FitValueSpec[]
+    }
+  | {
+      kind: 'union'
+      cases: FitValueSpec[]
+    }
+
 export type FitSpec =
   | {
       kind: 'given-range'
@@ -62,6 +88,13 @@ export type FitSpec =
       line?: number
     }
   | {
+      kind: 'check-value'
+      expression: FitExpression
+      value: FitValueSpec
+      text: string
+      line?: number
+    }
+  | {
       kind: 'check-comparison'
       left: FitExpression
       op: ComparisonOperator
@@ -77,7 +110,7 @@ export type FitSpec =
     }
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
-export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>
+export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>
 export type FitInlineCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
 export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
 
@@ -167,6 +200,23 @@ export function fitRangeCases(range: FitRange): FitRangeCase[] {
     lowerInclusive: range.lowerInclusive,
     upperInclusive: range.upperInclusive,
   }]
+}
+
+export function fitValueSpecExpressions(spec: FitValueSpec): FitExpressionLike[] {
+  switch (spec.kind) {
+    case 'number':
+      return fitRangeCases(spec.range).flatMap(rangeCase => [rangeCase.lower, rangeCase.upper])
+    case 'object':
+      return spec.props.flatMap(prop => fitValueSpecExpressions(prop.value))
+    case 'array':
+      return fitValueSpecExpressions(spec.element)
+    case 'tuple':
+      return spec.elements.flatMap(fitValueSpecExpressions)
+    case 'union':
+      return spec.cases.flatMap(fitValueSpecExpressions)
+    case 'literal':
+      return []
+  }
 }
 
 export function parseFitSpecs(sourceText: string, node: ts.Node): FitSpec[] {
@@ -523,10 +573,11 @@ const numberPattern = '-?\\d+(?:\\.\\d+)?'
 const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 
 export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
-  const givenRange = /^given\s+(.+)\s*:\s*(.+)$/.exec(line)
+  const givenBody = /^given\s+([\s\S]+)$/.exec(line)?.[1]
+  const givenRange = givenBody == null ? null : findTopLevelColon(givenBody)
   if (givenRange != null) {
-    const expression = parseFitExpressionText(givenRange[1]!.trim())
-    const range = parseFitRangeText(givenRange[2]!.trim())
+    const expression = parseFitExpressionText(givenRange.left)
+    const range = parseFitRangeText(givenRange.right)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     return {
       kind: 'given-range',
@@ -551,10 +602,21 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
     }
   }
 
-  const checkRange = /^(.+)\s*:\s*(.+)$/.exec(line)
+  const checkRange = findTopLevelColon(line)
   if (checkRange != null) {
-    const expression = parseFitExpressionText(checkRange[1]!.trim())
-    const range = parseFitRangeText(checkRange[2]!.trim())
+    const expression = parseFitExpressionText(checkRange.left)
+    const body = checkRange.right
+    const value = shouldParseFitValueSpec(body) ? parseFitValueSpecText(body) : null
+    if (value != null) {
+      return {
+        kind: 'check-value',
+        expression,
+        value,
+        text: line,
+        ...(lineNumber == null ? {} : {line: lineNumber}),
+      }
+    }
+    const range = parseFitRangeText(body)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
     return {
       kind: 'check-range',
@@ -616,6 +678,218 @@ export function parseFitRangeText(text: string, parseExpression: FitExpressionPa
     ...single,
     text,
   }
+}
+
+function shouldParseFitValueSpec(text: string): boolean {
+  const body = text.trim()
+  if (body.length === 0) return false
+  if (body.startsWith('{') || body.startsWith('[') || quotedStringText(body) != null || body === 'true' || body === 'false') return true
+  const alternatives = splitTopLevelAlternatives(body)
+  return alternatives != null && alternatives.some(shouldParseFitValueSpec)
+}
+
+export function parseFitValueSpecText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitValueSpec | null {
+  const body = text.trim()
+  const alternatives = splitTopLevelAlternatives(body)
+  if (alternatives != null) {
+    const cases = alternatives.map(part => parseFitValueSpecText(part, parseExpression))
+    if (cases.some(item => item == null)) return null
+    return {kind: 'union', cases: cases as FitValueSpec[]}
+  }
+
+  const object = parseFitObjectSpecText(body, parseExpression)
+  if (object != null) return object
+
+  const array = parseFitArraySpecText(body, parseExpression)
+  if (array != null) return array
+
+  const literal = parseFitLiteralSpecText(body)
+  if (literal != null) return literal
+
+  const keyword = parseFitKeywordSpecText(body, parseExpression)
+  if (keyword != null) return keyword
+
+  const range = parseFitRangeText(body, parseExpression)
+  return range == null ? null : {kind: 'number', range}
+}
+
+function parseFitObjectSpecText(text: string, parseExpression: FitExpressionParser): Extract<FitValueSpec, {kind: 'object'}> | null {
+  if (!text.startsWith('{') || !text.endsWith('}')) return null
+  const body = text.slice(1, -1).trim()
+  if (body.length === 0) return {kind: 'object', props: []}
+  const fields = splitTopLevelList(body)
+  if (fields == null) return null
+  const props: {name: string; value: FitValueSpec}[] = []
+  for (const field of fields) {
+    const colon = findTopLevelColon(field)
+    if (colon == null) return null
+    const name = propertySpecName(colon.left)
+    if (name == null) return null
+    const value = parseFitValueSpecText(colon.right, parseExpression)
+    if (value == null) return null
+    props.push({name, value})
+  }
+  return {kind: 'object', props}
+}
+
+function parseFitArraySpecText(text: string, parseExpression: FitExpressionParser): Extract<FitValueSpec, {kind: 'array'} | {kind: 'tuple'}> | null {
+  const elementText = topLevelArrayElementText(text)
+  if (elementText != null) {
+    const element = parseFitValueSpecText(elementText, parseExpression)
+    return element == null ? null : {kind: 'array', element}
+  }
+
+  if (!text.startsWith('[') || !text.endsWith(']')) return null
+  const body = text.slice(1, -1).trim()
+  if (body.length === 0) return {kind: 'tuple', elements: []}
+  const parts = splitTopLevelList(body)
+  if (parts == null) return null
+  const elements = parts.map(part => parseFitValueSpecText(part, parseExpression))
+  return elements.some(item => item == null) ? null : {kind: 'tuple', elements: elements as FitValueSpec[]}
+}
+
+function parseFitLiteralSpecText(text: string): Extract<FitValueSpec, {kind: 'literal'}> | null {
+  if (text === 'true') return {kind: 'literal', values: [true]}
+  if (text === 'false') return {kind: 'literal', values: [false]}
+  const string = quotedStringText(text)
+  return string == null ? null : {kind: 'literal', values: [string]}
+}
+
+function parseFitKeywordSpecText(text: string, parseExpression: FitExpressionParser): FitValueSpec | null {
+  if (text === 'number') {
+    const range = parseFitRangeText('-Infinity..Infinity', parseExpression)
+    return range == null ? null : {kind: 'number', range}
+  }
+  if (text === 'boolean') return {kind: 'literal', values: [false, true]}
+  return null
+}
+
+function quotedStringText(text: string): string | null {
+  if (text.length < 2) return null
+  const quote = text[0]
+  if ((quote !== '"' && quote !== "'") || text.at(-1) !== quote) return null
+  const sourceFile = ts.createSourceFile('fit-spec-literal.ts', `const value = ${text}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const statement = sourceFile.statements[0]
+  if (statement == null || !ts.isVariableStatement(statement)) return null
+  const initializer = statement.declarationList.declarations[0]?.initializer
+  return initializer != null && ts.isStringLiteralLike(initializer) ? initializer.text : null
+}
+
+function propertySpecName(text: string): string | null {
+  const trimmed = text.trim()
+  if (/^[A-Za-z_$][\w$]*$/.test(trimmed)) return trimmed
+  if (/^\d+$/.test(trimmed)) return trimmed
+  return quotedStringText(trimmed)
+}
+
+function findTopLevelColon(text: string): {left: string; right: string} | null {
+  const result = scanTopLevel(text, (source, position) => source[position] === ':' ? ':' : null)
+  if (result == null) return null
+  const left = text.slice(0, result.position).trim()
+  const right = text.slice(result.position + 1).trim()
+  return left.length === 0 || right.length === 0 ? null : {left, right}
+}
+
+function topLevelArrayElementText(text: string): string | null {
+  if (!text.endsWith('[]')) return null
+  const element = text.slice(0, -2).trim()
+  if (element.length === 0) return null
+  return hasBalancedTopLevelText(element) ? element : null
+}
+
+function hasBalancedTopLevelText(text: string): boolean {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]
+    if (quote != null) {
+      if (char === '\\') index++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    if (parenDepth < 0 || bracketDepth < 0 || braceDepth < 0) return false
+  }
+  return quote == null && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0
+}
+
+function splitTopLevelList(text: string): string[] | null {
+  if (text.trim().length === 0) return []
+  const parts: string[] = []
+  let start = 0
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]
+    if (quote != null) {
+      if (char === '\\') index++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if ((char === ',' || char === ';') && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      const part = text.slice(start, index).trim()
+      if (part.length === 0) return null
+      parts.push(part)
+      start = index + 1
+    }
+  }
+  const last = text.slice(start).trim()
+  if (last.length === 0) return null
+  parts.push(last)
+  return parts
+}
+
+function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {
+  let parenDepth = 0
+  let bracketDepth = 0
+  let braceDepth = 0
+  let quote: '"' | "'" | '`' | null = null
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]
+    if (quote != null) {
+      if (char === '\\') index++
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === '"' || char === "'" || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '(') parenDepth++
+    else if (char === ')') parenDepth--
+    else if (char === '[') bracketDepth++
+    else if (char === ']') bracketDepth--
+    else if (char === '{') braceDepth++
+    else if (char === '}') braceDepth--
+    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
+      const token = visit(text, index)
+      if (token != null) return {position: index, token}
+    }
+  }
+  return null
 }
 
 function parseFitRangeCaseText(text: string, parseExpression: FitExpressionParser): FitRangeCase | null {

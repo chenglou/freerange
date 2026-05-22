@@ -123,6 +123,8 @@ function goalForSpec(spec: FitCheckSpec): FitObligationGoal {
   switch (spec.kind) {
     case 'check-range':
       return {kind: 'range', text: spec.text, target: publicFitText(fitExpressionText(spec.expression)), range: publicFitText(spec.range.text)}
+    case 'check-value':
+      return {kind: 'expression', text: spec.text, expression: publicFitText(fitExpressionText(spec.expression))}
     case 'check-comparison':
       return {
         kind: 'comparison',

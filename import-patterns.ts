@@ -1,6 +1,6 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import defaultImportedClampWidth, {ImportedClassBox, importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedDynamicRange, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter} from './import-pattern-helpers'
+import defaultImportedClampWidth, {ImportedClassBox, importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedDynamicRange, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter, importedValueSpecRows} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedScopedTypeWidth, ImportedShapeRows, ImportedTypeFieldRows, ImportedTypeFieldSpring} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
@@ -115,6 +115,13 @@ export function importedHelperAliasContract(value: number) {
  */
 export function importedDynamicRangeSummaryContract() {
   return importedDynamicRange(10, 20)
+}
+
+/** @fit
+ * return.rows[].height: 10..20
+ */
+export function importedValueSpecSummaryContract() {
+  return importedValueSpecRows()
 }
 
 /** @fit

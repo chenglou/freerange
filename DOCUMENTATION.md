@@ -228,7 +228,7 @@ Today, written contracts can express the flattened numeric pieces:
  */
 ```
 
-That does not express the pairing. A future TS-like contract shape could:
+If the pairing matters, write the returned shape directly:
 
 ```ts
 /** @fit
@@ -237,7 +237,7 @@ That does not express the pairing. A future TS-like contract shape could:
  */
 ```
 
-This would mean every real return value must fit at least one whole case. The range syntax should work anywhere that case shape expects a number.
+This means every real return value must fit at least one whole case. The range syntax works anywhere that case shape expects a number.
 
 Freerange currently keeps up to 8 reachable branch states from code. If code needs more than that, it keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`. That 8-case budget is for inferred code branches, which isn't necessarily the same as the number of alternations of output like `1 | 2 | 3`.
 
@@ -267,6 +267,7 @@ int a..<b // integer from a up to, but not including, b.
 0 | 40 | 200 // exact finite numeric set.
 0..10 | 20..30 // numeric alternatives. The value must fit one alternative.
 low() | high() // pure expression alternatives. Equivalent to low()..low() | high()..high().
+return: {left: 0, width: 100} | {left: 20, width: 80} // whole returned object alternatives. The pairing is checked case by case.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
 // @fit 0..100 // local/field/return shorthand for proving the attached value is in a range.

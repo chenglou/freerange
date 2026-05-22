@@ -60,6 +60,9 @@ FAIL negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresh
     (panelX + 100): 100..1100
     assumed from input: given panelX: 0..1000
   missing: strict comparison cannot hold when both sides are (panelX + 100)
+FAIL negative-patterns.ts:negativePairedObjectReturnShape: return: {left: 0, width: 100} | {left: 20, width: 80}
+  range was 81, expected inside 80
+  missing: 81 <= 80
 FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > minWidth
   result: is false by exact linear facts
   known:

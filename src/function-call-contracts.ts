@@ -15,6 +15,7 @@ import type {
 } from './check-types.ts'
 import {
   linearNameForExpression,
+  joinValues,
   mergeProvenance,
   numberBranches,
   numberValue,
@@ -51,6 +52,7 @@ import {
   type FitExpressionLike,
   type FitRange,
   type FitSpec,
+  type FitValueSpec,
 } from './parser.ts'
 import {
   callPreconditionObligation,
@@ -350,6 +352,7 @@ export function valueWithFunctionContractSummary(
 
   for (const spec of specs) {
     if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, context, source, evaluators)
+    if (spec.kind === 'check-value') applySummaryValueSpec(env, spec.value, spec.expression, spec.text, context, source, evaluators)
   }
   for (const spec of specs) {
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source, evaluators)
@@ -357,6 +360,73 @@ export function valueWithFunctionContractSummary(
 
   const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
   return valueWithCallSiteText(summary, callSiteBindings)
+}
+
+function applySummaryValueSpec(
+  env: Map<string, Value>,
+  valueSpec: FitValueSpec,
+  expression: FitExpressionLike,
+  text: string,
+  context: EvalContext,
+  source: FunctionContractSource,
+  evaluators: CallContractEvaluators,
+) {
+  const rootPath = simpleResultPathText(expression)
+  if (rootPath == null) return
+  const ranges = valueSpecRangeValues(valueSpec, rootPath, text, context, source, evaluators)
+  for (const [path, value] of ranges) {
+    if (value.kind !== 'number') continue
+    const current = evaluators.evaluateSpecExpression(path, context)
+    setSummaryPathValue(env, path, summaryRangeValue(current, value, source, text))
+  }
+}
+
+function valueSpecRangeValues(
+  spec: FitValueSpec,
+  path: string,
+  text: string,
+  context: EvalContext,
+  source: FunctionContractSource,
+  evaluators: CallContractEvaluators,
+): Map<string, Value> {
+  if (spec.kind === 'union') {
+    const caseMaps = spec.cases.map(current => valueSpecRangeValues(current, path, text, context, source, evaluators))
+    const sharedPaths = caseMaps[0] == null ? [] : [...caseMaps[0].keys()].filter(key => caseMaps.every(caseMap => caseMap.has(key)))
+    const result = new Map<string, Value>()
+    for (const sharedPath of sharedPaths) {
+      let value: Value | null = null
+      for (const caseMap of caseMaps) {
+        const next = caseMap.get(sharedPath)
+        if (next == null) continue
+        value = value == null ? next : joinValues(value, next)
+      }
+      if (value != null) result.set(sharedPath, value)
+    }
+    return result
+  }
+  if (spec.kind === 'number') {
+    const value = evaluators.evaluateRangeValue(spec.range, context, path, [checkedContractFact(source, text)])
+    return new Map([[path, value]])
+  }
+  if (spec.kind === 'object') {
+    return mergeValueSpecRangeMaps(spec.props.map(prop => valueSpecRangeValues(prop.value, `${path}.${prop.name}`, text, context, source, evaluators)))
+  }
+  if (spec.kind === 'array') return valueSpecRangeValues(spec.element, `${path}[]`, text, context, source, evaluators)
+  if (spec.kind === 'tuple') {
+    return mergeValueSpecRangeMaps(spec.elements.map((element, index) => valueSpecRangeValues(element, `${path}[${index}]`, text, context, source, evaluators)))
+  }
+  return new Map()
+}
+
+function mergeValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value> {
+  const result = new Map<string, Value>()
+  for (const map of maps) {
+    for (const [path, value] of map) {
+      const current = result.get(path)
+      result.set(path, current == null ? value : joinValues(current, value))
+    }
+  }
+  return result
 }
 
 function applySummaryRangeSpec(

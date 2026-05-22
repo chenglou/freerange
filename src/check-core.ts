@@ -10,6 +10,7 @@ export {readTopLevelGlobal} from './module-values.ts'
 import {
   fitExpressionScopeSourceId,
   fitExpressionParsed,
+  fitValueSpecExpressions,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
   instantiateInlineFitTemplates,
@@ -511,12 +512,13 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     ...setup.assumptionChecks,
     ...context.checks,
   ]
-  const specReports = inferFunctionSpecReports(contractSpecs, backgroundChecks, spec => verifyCheckSpec(
+  const specReports = inferFunctionSpecReports(contractSpecs, backgroundChecks, spec => verifyCheckSpecForResultCases(
     program.file,
     program,
     functionName,
     env,
     state.result,
+    state.returnCases,
     spec,
     [...backgroundChecks],
     state.assumptions,
@@ -1009,7 +1011,7 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     ? evaluateInterpreterExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
     : evaluateCheckedExpression(declaration.initializer!, context)
   const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
-  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, context.program), context)
+  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, declaration.type, context.program), context)
   const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
   pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
   verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
@@ -1180,6 +1182,8 @@ function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
     case 'given-range':
     case 'check-range':
       return [spec.expression]
+    case 'check-value':
+      return [spec.expression, ...fitValueSpecExpressions(spec.value)]
     case 'given-comparison':
     case 'check-comparison':
       return [spec.left, spec.right]

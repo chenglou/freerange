@@ -234,6 +234,34 @@ export function booleanLiteralBranchesSpecialize(top: number) {
 }
 
 /** @fit
+ * return: {left: 0, width: 100} | {left: 20, width: 80}
+ */
+export function pairedObjectReturnShape(pinned: boolean) {
+  if (pinned) return {left: 20, width: 80}
+  return {left: 0, width: 100}
+}
+
+export function lowShapeBound() {
+  return 10
+}
+
+export function highShapeBound() {
+  return 20
+}
+
+/** @fit
+ * return: {rows: {height: lowShapeBound()..highShapeBound()}[]}
+ */
+export function arrayObjectReturnShape() {
+  return {
+    rows: [
+      {height: 10},
+      {height: 20},
+    ],
+  }
+}
+
+/** @fit
  * given value: int 0..10
  * return: int 3..7
  */

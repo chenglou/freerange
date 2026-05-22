@@ -164,6 +164,12 @@ function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'n
       if (next === 'object') shape = 'object'
       continue
     }
+    if (spec.kind === 'check-value') {
+      const next = specExpressionParamShape(spec.expression, name)
+      if (next === 'array') return 'array'
+      if (next === 'object') shape = 'object'
+      continue
+    }
     for (const expression of [spec.left, spec.right]) {
       const next = specExpressionParamShape(expression, name)
       if (next === 'array') return 'array'
@@ -184,9 +190,9 @@ function specExpressionParamShape(text: FitExpressionLike, name: string): 'array
   return 'number'
 }
 
-export function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, program: Program): Value {
+export function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, type: ts.TypeNode | undefined, program: Program): Value {
   if (!ts.isIdentifier(name)) return value
-  return valueWithStructuralFallback(value, valueFromNodeShape(name.text, name, program))
+  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(name.text, type, program, new Set()) ?? valueFromNodeShape(name.text, name, program))
 }
 
 export function arrayPatternElementValue(value: Value, index: number): Value {

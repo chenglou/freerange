@@ -121,3 +121,10 @@ export function importedTupleCenter(sourceX: number, sourceY: number, targetX: n
 export function importedDynamicRange(min: number, max: number) {
   return min + (max - max)
 }
+
+/** @fit
+ * return: {rows: {height: 10..20}[]}
+ */
+export function importedValueSpecRows() {
+  return {rows: [{height: 10}, {height: 20}]}
+}
