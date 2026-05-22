@@ -888,7 +888,7 @@ function quotedStringText(text: string): string | null {
   return initializer != null && ts.isStringLiteralLike(initializer) ? initializer.text : null
 }
 
-function findTopLevelColon(text: string): {left: string; right: string} | null {
+export function findTopLevelColon(text: string): {left: string; right: string} | null {
   const result = scanTopLevel(text, (source, position) => source[position] === ':' ? ':' : null)
   if (result == null) return null
   const left = text.slice(0, result.position).trim()
@@ -896,7 +896,22 @@ function findTopLevelColon(text: string): {left: string; right: string} | null {
   return left.length === 0 || right.length === 0 ? null : {left, right}
 }
 
-function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {
+export function findTopLevelComparison(text: string): {left: string; op: ComparisonOperator; right: string} | null {
+  const result = scanTopLevel(text, (source, position) => {
+    for (const op of ['==', '>=', '<=', '>', '<'] as const) {
+      if (!source.startsWith(op, position)) continue
+      if (op === '<' && source[position - 1] === '.') continue
+      return op
+    }
+    return null
+  })
+  if (result == null) return null
+  const left = text.slice(0, result.position).trim()
+  const right = text.slice(result.position + result.token.length).trim()
+  return left.length === 0 || right.length === 0 ? null : {left, op: result.token, right}
+}
+
+export function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {
   let parenDepth = 0
   let bracketDepth = 0
   let braceDepth = 0

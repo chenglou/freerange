@@ -1,6 +1,8 @@
 import * as ts from 'typescript'
 import {
   domainPathSyntheticName,
+  findTopLevelColon,
+  findTopLevelComparison,
   fitBlockSpecCommentLines,
   fitReturnPublicRoot,
   inlineFitCommentLinesForNode,
@@ -79,12 +81,6 @@ type TypeTextResult = {
   text: string
 } | {
   unsupported: string
-}
-
-type TopLevelComparison = {
-  left: string
-  op: ComparisonOperator
-  right: string
 }
 
 const identifierPattern = /(?<![\w$.])([A-Za-z_$][\w$]*)(?![\w$])/g
@@ -489,7 +485,7 @@ function typeLineText(
     return parseTypeComparisonTemplate(fieldRoot, shorthandComparison[1]! as ComparisonOperator, right.text)
   }
 
-  const range = splitTopLevelColon(body)
+  const range = findTopLevelColon(body)
   if (range != null) {
     const expression = rewriteExpressionReferences(range.left, scope)
     if ('unsupported' in expression) return expression
@@ -605,64 +601,6 @@ function rewriteExpressionReferences(text: string, scope: TypeScope): TypeTextRe
   return {text: publicFitText(rewritten)}
 }
 
-function splitTopLevelColon(text: string): {left: string; right: string} | null {
-  const index = findTopLevelToken(text, ':')
-  if (index == null) return null
-  const left = text.slice(0, index).trim()
-  const right = text.slice(index + 1).trim()
-  return left.length === 0 || right.length === 0 ? null : {left, right}
-}
-
-function findTopLevelComparison(text: string): TopLevelComparison | null {
-  const index = scanTopLevel(text, (source, position) => {
-    for (const op of ['==', '>=', '<=', '>', '<'] as const) {
-      if (!source.startsWith(op, position)) continue
-      if (op === '<' && source[position - 1] === '.') continue
-      return op
-    }
-    return null
-  })
-  if (index == null) return null
-  const {position, token: op} = index
-  const left = text.slice(0, position).trim()
-  const right = text.slice(position + op.length).trim()
-  return left.length === 0 || right.length === 0 ? null : {left, op, right}
-}
-
-function findTopLevelToken(text: string, token: string): number | null {
-  const result = scanTopLevel(text, (source, position) => source.startsWith(token, position) ? token : null)
-  return result?.position ?? null
-}
-
-function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {
-  let parenDepth = 0
-  let bracketDepth = 0
-  let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index]
-    if (quote != null) {
-      if (char === '\\') index++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      const token = visit(text, index)
-      if (token != null) return {position: index, token}
-    }
-  }
-  return null
-}
 
 function typeAttachedCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
   return uniqueLines([
