@@ -174,9 +174,23 @@ export function buildFitSourceFile<TGlobal>(
   readGlobal: TopLevelGlobalReader<TGlobal>,
 ): FitFile<TGlobal> {
   const sourceId = toSourceId(file)
-  const sourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
+  const compilerOptions = defaultCompilerOptions()
+  const host = ts.createCompilerHost(compilerOptions)
+  const baseGetSourceFile = host.getSourceFile.bind(host)
+  const baseReadFile = host.readFile.bind(host)
+  const baseFileExists = host.fileExists.bind(host)
+  host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+    if (fileName === sourceId) return ts.createSourceFile(sourceId, sourceText, languageVersion, true, scriptKindForFile(sourceId))
+    return baseGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
+  }
+  host.readFile = fileName => fileName === sourceId ? sourceText : baseReadFile(fileName)
+  host.fileExists = fileName => fileName === sourceId ? true : baseFileExists(fileName)
+  const typeProgram = ts.createProgram([sourceId], compilerOptions, host)
+  const typeChecker = typeProgram.getTypeChecker()
+  const sourceFile = typeProgram.getSourceFile(sourceId)
+    ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
   const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map()}
-  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, null, sourceFile, undefined, project)
+  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, undefined, project)
   project.files.set(cacheKeyFor(sourceId), fitFile)
   project.filesBySourceFile.set(sourceFile, fitFile)
   return fitFile

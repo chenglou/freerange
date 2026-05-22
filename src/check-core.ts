@@ -58,7 +58,7 @@ import {proveComparison} from './proof.ts'
 import {
   structuralShape,
   valueFromFunctionReturnShape,
-  valueFromSyntaxTypeShape,
+  valueFromTypeNodeShape,
   valueWithStructuralFallback,
 } from './shapes.ts'
 import {
@@ -1290,7 +1290,7 @@ function evaluateLocalFunctionCall(
     ...(context.contractExpressionProblems == null ? {} : {contractExpressionProblems: context.contractExpressionProblems}),
   })
   const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn.node, context.program)
-    ?? valueFromSyntaxTypeShape(`${functionName}Result`, fn.node.type, context.program, new Set())
+    ?? valueFromTypeNodeShape(`${functionName}Result`, fn.node.type, context.program)
     ?? options.fallback
   const fallbackResult = result.kind === 'unknown'
     ? fallbackShape ?? result

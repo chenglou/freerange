@@ -75,9 +75,10 @@ import {
 import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
+  valueFromClassInstanceShape,
   valueFromFunctionReturnShape,
   valueFromProjectCallReturnShape,
-  valueFromSyntaxTypeShape,
+  valueFromTypeNodeShape,
   valueWithStructuralFallback,
 } from '../shapes.ts'
 import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
@@ -371,33 +372,7 @@ function bindInstanceThis(fn: FitFunction, program: Program, env: Map<string, Va
 function classInstanceThisValue(fn: FitFunction, program: Program): Value | null {
   const classNode = ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node) ? fn.node.parent : null
   if (classNode == null || !ts.isClassDeclaration(classNode)) return null
-
-  const props = new Map<string, Value>()
-  for (const member of classNode.members) {
-    if (ts.isPropertyDeclaration(member)) {
-      const name = propertyNameText(member.name)
-      if (name == null) continue
-      const expr = `this.${name}`
-      props.set(name, valueFromSyntaxTypeShape(expr, member.type, program, new Set()) ?? unknownNumber(expr))
-      continue
-    }
-    if (!ts.isConstructorDeclaration(member)) continue
-    for (const param of member.parameters) {
-      if (!isParameterProperty(param) || !ts.isIdentifier(param.name)) continue
-      const expr = `this.${param.name.text}`
-      props.set(param.name.text, valueFromSyntaxTypeShape(expr, param.type, program, new Set()) ?? unknownNumber(expr))
-    }
-  }
-  return {kind: 'object', props, expr: 'this'}
-}
-
-function isParameterProperty(param: ts.ParameterDeclaration) {
-  return ts.canHaveModifiers(param) && ts.getModifiers(param)?.some(modifier =>
-    modifier.kind === ts.SyntaxKind.PublicKeyword
-    || modifier.kind === ts.SyntaxKind.PrivateKeyword
-    || modifier.kind === ts.SyntaxKind.ProtectedKeyword
-    || modifier.kind === ts.SyntaxKind.ReadonlyKeyword,
-  ) === true
+  return valueFromClassInstanceShape('this', classNode, program)
 }
 
 function invokeInlineFunction(
@@ -465,12 +440,12 @@ function parameterDefaultValue(argument: Value | null, param: ts.ParameterDeclar
 
 function parameterValue(param: ts.ParameterDeclaration, value: Value, frame: InterpreterFrame): Value {
   const expr = ts.isIdentifier(param.name) ? param.name.text : param.name.getText(frame.program.sourceFile)
-  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, param.type, frame.program, new Set()))
+  return valueWithStructuralFallback(value, valueFromTypeNodeShape(expr, param.type, frame.program))
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
   const shape = ts.isIdentifier(param.name)
-    ? valueFromSyntaxTypeShape(param.name.text, param.type, frame.program, new Set())
+    ? valueFromTypeNodeShape(param.name.text, param.type, frame.program)
     : null
   if (shape != null) return shape
   const name = param.name
@@ -604,7 +579,7 @@ function evaluateVariableDeclaration(statement: ts.VariableStatement, declaratio
 
 function declarationValue(declaration: ts.VariableDeclaration, value: Value, frame: InterpreterFrame): Value {
   const expr = ts.isIdentifier(declaration.name) ? declaration.name.text : declaration.name.getText(frame.program.sourceFile)
-  const shaped = valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, declaration.type, frame.program, new Set()))
+  const shaped = valueWithStructuralFallback(value, valueFromTypeNodeShape(expr, declaration.type, frame.program))
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return shaped
   return isContainerLiteralInitializer(declaration.initializer) ? localizeContainerLiteralValue(shaped, declaration.name.text, {preserveLinear: true}) : shaped
 }

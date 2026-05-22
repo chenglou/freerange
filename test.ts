@@ -1796,7 +1796,7 @@ const opacity = clamp(1.2, 0, 1) // @fit 0..1
   })
 
   await withCliFixture({
-    'helper.ts.tmp': `/** @fit
+    'helper.ts': `/** @fit
  * given min <= max
  * return >= min
  * return <= max
@@ -1809,7 +1809,7 @@ export function clamp(min: number, value: number, max: number): number {
 const opacity = clamp(0, 10, 2) // @fit 0..1
 `,
   }, dir => {
-    const check = runFr(['check', 'helper.ts.tmp'], dir)
+    const check = runFr(['check', 'helper.ts'], dir)
     expectCli(check.exitCode === 1, 'expected de-inlined clamp example to fail without crashing', check.output)
     expectCli(check.output.includes('FAIL opacity: 0..1'), 'expected de-inlined clamp example failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 requires, 0 unknown'), 'expected de-inlined clamp example summary', check.output)

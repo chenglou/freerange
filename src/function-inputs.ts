@@ -21,7 +21,7 @@ import {
 } from './parser.ts'
 import {
   valueFromNodeShape,
-  valueFromSyntaxTypeShape,
+  valueFromTypeNodeShape,
   valueWithStructuralFallback,
 } from './shapes.ts'
 import {
@@ -55,7 +55,7 @@ export function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: 
 
 export function parameterArgumentValue(param: ts.ParameterDeclaration, value: Value, program: Program): Value {
   const expr = ts.isIdentifier(param.name) ? param.name.text : 'param'
-  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(expr, param.type, program, new Set()))
+  return valueWithStructuralFallback(value, valueFromTypeNodeShape(expr, param.type, program))
 }
 
 export function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, thisValue?: Value) {
@@ -71,7 +71,7 @@ export function bindFunctionThisInput(fn: FitFunction, env: Map<string, Value>, 
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
   return valueFromNodeShape('param', param.name, program)
-    ?? valueFromSyntaxTypeShape('param', param.type, program, new Set())
+    ?? valueFromTypeNodeShape('param', param.type, program)
     ?? unknownObject('param')
 }
 
@@ -128,7 +128,7 @@ function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
 }
 
 export function unknownParamValue(name: string, specs: FitSpec[], type: ts.TypeNode | undefined, program: Program, node?: ts.Node): Value {
-  const typed = valueFromSyntaxTypeShape(name, type, program, new Set())
+  const typed = valueFromTypeNodeShape(name, type, program)
     ?? (type == null && node != null ? valueFromNodeShape(name, node, program) : null)
     ?? (type == null ? null : unknownObject(name))
   if (typed != null) return parameterOptionalValue(name, typed, node)
@@ -192,7 +192,7 @@ function specExpressionParamShape(text: FitExpressionLike, name: string): 'array
 
 export function valueWithBindingShapeFallback(name: ts.BindingName, value: Value, type: ts.TypeNode | undefined, program: Program): Value {
   if (!ts.isIdentifier(name)) return value
-  return valueWithStructuralFallback(value, valueFromSyntaxTypeShape(name.text, type, program, new Set()) ?? valueFromNodeShape(name.text, name, program))
+  return valueWithStructuralFallback(value, valueFromTypeNodeShape(name.text, type, program) ?? valueFromNodeShape(name.text, name, program))
 }
 
 export function arrayPatternElementValue(value: Value, index: number): Value {

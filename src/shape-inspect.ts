@@ -21,7 +21,7 @@ import {
   valueFromCallReturnShape,
   valueFromFunctionReturnShape,
   valueFromNodeShape,
-  valueFromSyntaxTypeShape,
+  valueFromTypeNodeShape,
 } from './shapes.ts'
 
 export type ShapeInspectState = {
@@ -51,12 +51,12 @@ export function inspectFunctionShapeInsights(
   for (const param of fn.node.parameters) {
     if (!ts.isIdentifier(param.name)) continue
     const subject = `param ${param.name.text}`
-    const freerange = state?.baseEnv.get(param.name.text) ?? valueFromSyntaxTypeShape(param.name.text, param.type, program, new Set())
+    const freerange = state?.baseEnv.get(param.name.text) ?? valueFromTypeNodeShape(param.name.text, param.type, program)
     const typescript = valueFromNodeShape(param.name.text, param.name, program)
     addShapeInsight(insights, program, functionName, subject, param.name.text, freerange, typescript)
   }
 
-  const syntaxReturn = valueFromSyntaxTypeShape(fitReturnPublicRoot, fn.node.type, program, new Set())
+  const syntaxReturn = valueFromTypeNodeShape(fitReturnPublicRoot, fn.node.type, program)
   const tsReturn = valueFromFunctionReturnShape(fitReturnPublicRoot, fn.node, program)
   addShapeInsight(insights, program, functionName, 'return type', fitReturnPublicRoot, state?.result ?? syntaxReturn, tsReturn)
 
@@ -78,7 +78,7 @@ function collectShapeInsightsFromNode(
   if (node !== program.sourceFile && isNestedFunctionLike(node)) return
 
   if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-    const freerange = state?.env.get(node.name.text) ?? valueFromSyntaxTypeShape(node.name.text, node.type, program, new Set())
+    const freerange = state?.env.get(node.name.text) ?? valueFromTypeNodeShape(node.name.text, node.type, program)
     const typescript = valueFromNodeShape(node.name.text, node.name, program)
     addShapeInsight(insights, program, functionName, `local ${node.name.text}`, node.name.text, freerange, typescript)
   }
