@@ -10,6 +10,7 @@
   "scripts": {
     "fr": "bun fr.ts",
     "test": "bun test.ts",
+    "test:parser": "bun parser-tests.ts",
     "shape-diff": "bun shape-diff.ts",
     "bench": "bun bench.ts",
     "verify:demos": "bun verify-demo-contracts.ts",
@@ -20,7 +21,7 @@
     "verify:corpus": "bun verify-corpus-probes.ts",
     "verify:bench": "bun verify-bench-budget.ts",
     "audit:demos": "bun audit-demo-contracts.ts",
-    "check": "bun run test && bun run verify:demos && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && bun run verify:semantics && bun run verify:corpus && bun run verify:bench && tsc && oxlint --type-aware src patterns.ts import-patterns.ts import-pattern-helpers.ts import-pattern-alias-helpers.ts import-pattern-barrel.ts import-pattern-tsx-helpers.tsx interpreter-matrix-patterns.ts negative-patterns.ts negative-import-patterns.ts negative-import-helpers.ts negative-import-barrel.ts interpreter-matrix-negative.ts test.ts shape-diff.ts bench.ts bench-core.ts fr.ts verify-demo-contracts.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts verify-semantic-snapshots.ts verify-corpus-probes.ts verify-bench-budget.ts audit-demo-contracts.ts demo-contract-paths.ts corpus-probes.ts snapshot.ts research/kernels --ignore-pattern '*.js'"
+    "check": "bun run test && bun run test:parser && bun run verify:demos && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && bun run verify:semantics && bun run verify:corpus && bun run verify:bench && tsc && oxlint --type-aware src patterns.ts import-patterns.ts import-pattern-helpers.ts import-pattern-alias-helpers.ts import-pattern-barrel.ts import-pattern-tsx-helpers.tsx interpreter-matrix-patterns.ts negative-patterns.ts negative-import-patterns.ts negative-import-helpers.ts negative-import-barrel.ts interpreter-matrix-negative.ts test.ts parser-tests.ts shape-diff.ts bench.ts bench-core.ts fr.ts verify-demo-contracts.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts verify-semantic-snapshots.ts verify-corpus-probes.ts verify-bench-budget.ts audit-demo-contracts.ts demo-contract-paths.ts corpus-probes.ts snapshot.ts research/kernels --ignore-pattern '*.js'"
   },
   "devDependencies": {
     "oxlint": "latest",

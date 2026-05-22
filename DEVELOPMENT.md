@@ -7,6 +7,7 @@ bun install
 ## Day-To-Day
 
 - `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
+- `bun run test:parser` — focused parser-layer checks for contract syntax classification and value-shape lowering
 - `bun run fr --help` — print the CLI command shapes
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
@@ -23,7 +24,7 @@ bun install
 - `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
-- `bun run check` — full local gate: pattern tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, and lint
+- `bun run check` — full local gate: pattern tests, parser tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, and lint
 
 ## Current Sources Of Truth
 
@@ -60,7 +61,7 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
-- [test.ts](./test.ts), [patterns.ts](./patterns.ts), [negative-patterns.ts](./negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — pattern and report coverage
+- [test.ts](./test.ts), [parser-tests.ts](./parser-tests.ts), [patterns.ts](./patterns.ts), [negative-patterns.ts](./negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, and report coverage
 - `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
 - [research/kernels](./research/kernels) and [experiments](./experiments) — tracked pressure examples and scratch artifacts outside the default full gate
 

@@ -64,6 +64,11 @@ export type FitValueSpec =
       cases: FitValueSpec[]
     }
 
+export type FitValueSpecLowering = {
+  typeText: string
+  ranges: Map<string, FitRange>
+}
+
 export type FitSpec =
   | {
       kind: 'given-range'
@@ -143,6 +148,7 @@ export const fitReturnPublicRoot = 'return'
 export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
 const internalReturnRootPattern = /(?<![\w$.])__fit_return(?![\w$])/g
+const fitValueRangeTypeName = '__FRNumber'
 const parsedExpressionCache = new Map<string, ParsedFitExpression>()
 const parsedExpressionFailures = new Map<string, string>()
 
@@ -689,78 +695,144 @@ function shouldParseFitValueSpec(text: string): boolean {
 }
 
 export function parseFitValueSpecText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitValueSpec | null {
-  const body = text.trim()
-  const alternatives = splitTopLevelAlternatives(body)
-  if (alternatives != null) {
-    const cases = alternatives.map(part => parseFitValueSpecText(part, parseExpression))
-    if (cases.some(item => item == null)) return null
-    return {kind: 'union', cases: cases as FitValueSpec[]}
-  }
-
-  const object = parseFitObjectSpecText(body, parseExpression)
-  if (object != null) return object
-
-  const array = parseFitArraySpecText(body, parseExpression)
-  if (array != null) return array
-
-  const literal = parseFitLiteralSpecText(body)
-  if (literal != null) return literal
-
-  const keyword = parseFitKeywordSpecText(body, parseExpression)
-  if (keyword != null) return keyword
-
-  const range = parseFitRangeText(body, parseExpression)
-  return range == null ? null : {kind: 'number', range}
+  const lowered = lowerFitValueSpecTextForTypeScript(text, parseExpression)
+  if (lowered == null) return null
+  const typeNode = parseFitValueSpecTypeNode(lowered.typeText)
+  return typeNode == null ? null : fitValueSpecFromTypeNode(typeNode, lowered.ranges)
 }
 
-function parseFitObjectSpecText(text: string, parseExpression: FitExpressionParser): Extract<FitValueSpec, {kind: 'object'}> | null {
+export function lowerFitValueSpecTextForTypeScript(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitValueSpecLowering | null {
+  const ranges = new Map<string, FitRange>()
+  const typeText = lowerFitValueSpecFragment(text.trim(), ranges, parseExpression)
+  return typeText == null ? null : {typeText, ranges}
+}
+
+function lowerFitValueSpecFragment(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
+  const body = text.trim()
+  if (body.length === 0) return null
+
+  const alternatives = splitTopLevelAlternatives(body)
+  if (alternatives != null) {
+    const cases = alternatives.map(part => lowerFitValueSpecFragment(part, ranges, parseExpression))
+    return cases.some(item => item == null) ? null : cases.join(' | ')
+  }
+
+  const object = lowerFitObjectSpecText(body, ranges, parseExpression)
+  if (object != null) return object
+
+  const array = lowerFitArraySpecText(body, ranges, parseExpression)
+  if (array != null) return array
+
+  if (quotedStringText(body) != null || body === 'true' || body === 'false' || body === 'number' || body === 'boolean') return body
+
+  const range = parseFitRangeText(body, parseExpression)
+  if (range == null) return null
+  const id = `r${ranges.size}`
+  ranges.set(id, range)
+  return `${fitValueRangeTypeName}<"${id}">`
+}
+
+function lowerFitObjectSpecText(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
   if (!text.startsWith('{') || !text.endsWith('}')) return null
   const body = text.slice(1, -1).trim()
-  if (body.length === 0) return {kind: 'object', props: []}
+  if (body.length === 0) return '{}'
   const fields = splitTopLevelList(body)
   if (fields == null) return null
-  const props: {name: string; value: FitValueSpec}[] = []
+  const members: string[] = []
   for (const field of fields) {
     const colon = findTopLevelColon(field)
-    if (colon == null) return null
-    const name = propertySpecName(colon.left)
+    if (colon == null || propertySpecName(colon.left) == null) return null
+    const value = lowerFitValueSpecFragment(colon.right, ranges, parseExpression)
+    if (value == null) return null
+    members.push(`${colon.left.trim()}: ${value}`)
+  }
+  return `{${members.join('; ')}}`
+}
+
+function lowerFitArraySpecText(text: string, ranges: Map<string, FitRange>, parseExpression: FitExpressionParser): string | null {
+  const elementText = topLevelArrayElementText(text)
+  if (elementText != null) {
+    const element = lowerFitValueSpecFragment(elementText, ranges, parseExpression)
+    return element == null ? null : `(${element})[]`
+  }
+
+  if (!text.startsWith('[') || !text.endsWith(']')) return null
+  const body = text.slice(1, -1).trim()
+  if (body.length === 0) return '[]'
+  const parts = splitTopLevelList(body)
+  if (parts == null) return null
+  const elements = parts.map(part => lowerFitValueSpecFragment(part, ranges, parseExpression))
+  return elements.some(item => item == null) ? null : `[${elements.join(', ')}]`
+}
+
+function parseFitValueSpecTypeNode(typeText: string): ts.TypeNode | null {
+  const sourceFile = ts.createSourceFile('fit-value-spec.ts', `type __FRValueSpec = ${typeText}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const parseDiagnostics = (sourceFile as ts.SourceFile & {parseDiagnostics: readonly ts.Diagnostic[]}).parseDiagnostics
+  if (parseDiagnostics.length > 0 || sourceFile.statements.length !== 1) return null
+  const statement = sourceFile.statements[0]
+  return statement != null && ts.isTypeAliasDeclaration(statement) ? statement.type : null
+}
+
+function fitValueSpecFromTypeNode(node: ts.TypeNode, ranges: Map<string, FitRange>): FitValueSpec | null {
+  if (ts.isParenthesizedTypeNode(node)) return fitValueSpecFromTypeNode(node.type, ranges)
+  if (ts.isUnionTypeNode(node)) {
+    const cases = node.types.map(type => fitValueSpecFromTypeNode(type, ranges))
+    return cases.some(item => item == null) ? null : {kind: 'union', cases: cases as FitValueSpec[]}
+  }
+  const rangeSlot = fitValueRangeSlot(node, ranges)
+  if (rangeSlot != null) return {kind: 'number', range: rangeSlot}
+  if (ts.isTypeLiteralNode(node)) return fitObjectSpecFromTypeNode(node, ranges)
+  if (ts.isArrayTypeNode(node)) {
+    const element = fitValueSpecFromTypeNode(node.elementType, ranges)
+    return element == null ? null : {kind: 'array', element}
+  }
+  if (ts.isTupleTypeNode(node)) {
+    const elements = node.elements.map(element => fitTupleElementSpecFromTypeNode(element, ranges))
+    return elements.some(item => item == null) ? null : {kind: 'tuple', elements: elements as FitValueSpec[]}
+  }
+  if (ts.isLiteralTypeNode(node)) return fitLiteralSpecFromTypeNode(node)
+  if (node.kind === ts.SyntaxKind.BooleanKeyword) return {kind: 'literal', values: [false, true]}
+  if (node.kind === ts.SyntaxKind.NumberKeyword) {
+    const range = parseFitRangeText('-Infinity..Infinity')
+    return range == null ? null : {kind: 'number', range}
+  }
+  return null
+}
+
+function fitValueRangeSlot(node: ts.TypeNode, ranges: Map<string, FitRange>): FitRange | null {
+  if (!ts.isTypeReferenceNode(node) || !ts.isIdentifier(node.typeName) || node.typeName.text !== fitValueRangeTypeName) return null
+  const argument = node.typeArguments?.[0]
+  if (argument == null || !ts.isLiteralTypeNode(argument) || !ts.isStringLiteralLike(argument.literal)) return null
+  return ranges.get(argument.literal.text) ?? null
+}
+
+function fitObjectSpecFromTypeNode(node: ts.TypeLiteralNode, ranges: Map<string, FitRange>): Extract<FitValueSpec, {kind: 'object'}> | null {
+  const props: {name: string; value: FitValueSpec}[] = []
+  for (const member of node.members) {
+    if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) return null
+    const name = typePropertySpecName(member.name)
     if (name == null) return null
-    const value = parseFitValueSpecText(colon.right, parseExpression)
+    const value = fitValueSpecFromTypeNode(member.type, ranges)
     if (value == null) return null
     props.push({name, value})
   }
   return {kind: 'object', props}
 }
 
-function parseFitArraySpecText(text: string, parseExpression: FitExpressionParser): Extract<FitValueSpec, {kind: 'array'} | {kind: 'tuple'}> | null {
-  const elementText = topLevelArrayElementText(text)
-  if (elementText != null) {
-    const element = parseFitValueSpecText(elementText, parseExpression)
-    return element == null ? null : {kind: 'array', element}
-  }
-
-  if (!text.startsWith('[') || !text.endsWith(']')) return null
-  const body = text.slice(1, -1).trim()
-  if (body.length === 0) return {kind: 'tuple', elements: []}
-  const parts = splitTopLevelList(body)
-  if (parts == null) return null
-  const elements = parts.map(part => parseFitValueSpecText(part, parseExpression))
-  return elements.some(item => item == null) ? null : {kind: 'tuple', elements: elements as FitValueSpec[]}
+function fitTupleElementSpecFromTypeNode(node: ts.TypeNode | ts.NamedTupleMember, ranges: Map<string, FitRange>): FitValueSpec | null {
+  if (ts.isNamedTupleMember(node) || ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
+  return fitValueSpecFromTypeNode(node, ranges)
 }
 
-function parseFitLiteralSpecText(text: string): Extract<FitValueSpec, {kind: 'literal'}> | null {
-  if (text === 'true') return {kind: 'literal', values: [true]}
-  if (text === 'false') return {kind: 'literal', values: [false]}
-  const string = quotedStringText(text)
-  return string == null ? null : {kind: 'literal', values: [string]}
+function fitLiteralSpecFromTypeNode(node: ts.LiteralTypeNode): Extract<FitValueSpec, {kind: 'literal'}> | null {
+  if (ts.isStringLiteralLike(node.literal)) return {kind: 'literal', values: [node.literal.text]}
+  if (node.literal.kind === ts.SyntaxKind.TrueKeyword) return {kind: 'literal', values: [true]}
+  if (node.literal.kind === ts.SyntaxKind.FalseKeyword) return {kind: 'literal', values: [false]}
+  return null
 }
 
-function parseFitKeywordSpecText(text: string, parseExpression: FitExpressionParser): FitValueSpec | null {
-  if (text === 'number') {
-    const range = parseFitRangeText('-Infinity..Infinity', parseExpression)
-    return range == null ? null : {kind: 'number', range}
-  }
-  if (text === 'boolean') return {kind: 'literal', values: [false, true]}
+function typePropertySpecName(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteralLike(name) || ts.isNumericLiteral(name)) return name.text
   return null
 }
 
