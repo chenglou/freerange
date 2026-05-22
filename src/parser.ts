@@ -564,81 +564,34 @@ const numberPattern = '-?\\d+(?:\\.\\d+)?'
 const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 
 export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
-  const givenBody = /^given\s+([\s\S]+)$/.exec(line)?.[1]
-  const givenRange = givenBody == null ? null : findTopLevelColon(givenBody)
-  if (givenRange != null) {
-    const expression = parseFitExpressionText(givenRange.left)
-    const range = parseFitRangeText(givenRange.right)
-    if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
-    return {
-      kind: 'given-range',
-      expression,
-      range,
-      text: line,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
-    }
-  }
+  const givenMatch = /^given\s+([\s\S]+)$/.exec(line)
+  const body = givenMatch?.[1] ?? line
+  const isGiven = givenMatch != null
+  const lineFields = lineNumber == null ? {} : {line: lineNumber}
 
-  const givenComparison = /^given\s+(.+?)\s*(==|>=|<=|>|<)\s*(.+)$/.exec(line)
-  if (givenComparison != null) {
-    const left = parseFitExpressionText(givenComparison[1]!.trim())
-    const right = parseFitExpressionText(givenComparison[3]!.trim())
-    return {
-      kind: 'given-comparison',
-      left,
-      op: givenComparison[2]! as ComparisonOperator,
-      right,
-      text: line,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
-    }
-  }
-
-  const checkRange = findTopLevelColon(line)
-  if (checkRange != null) {
-    const expression = parseFitExpressionText(checkRange.left)
-    const body = checkRange.right
-    if (shouldParseFitValueSpec(body)) {
-      const value = parseFitValueSpecText(body)
+  const colonSplit = findTopLevelColon(body)
+  if (colonSplit != null) {
+    const expression = parseFitExpressionText(colonSplit.left)
+    const rangeBody = colonSplit.right
+    if (!isGiven && shouldParseFitValueSpec(rangeBody)) {
+      const value = parseFitValueSpecText(rangeBody)
       if (value == null) throw new Error(`Unsupported @fit value spec: ${line}`)
-      return {
-        kind: 'check-value',
-        expression,
-        value,
-        text: line,
-        ...(lineNumber == null ? {} : {line: lineNumber}),
-      }
+      return {kind: 'check-value', expression, value, text: line, ...lineFields}
     }
-    const range = parseFitRangeText(body)
+    const range = parseFitRangeText(rangeBody)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
-    return {
-      kind: 'check-range',
-      expression,
-      range,
-      text: line,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
-    }
+    return {kind: isGiven ? 'given-range' : 'check-range', expression, range, text: line, ...lineFields}
   }
 
-  const checkComparison = /^(.+?)\s*(==|>=|<=|>|<)\s*(.+)$/.exec(line)
-  if (checkComparison != null) {
-    const left = parseFitExpressionText(checkComparison[1]!.trim())
-    const right = parseFitExpressionText(checkComparison[3]!.trim())
-    return {
-      kind: 'check-comparison',
-      left,
-      op: checkComparison[2]! as ComparisonOperator,
-      right,
-      text: line,
-      ...(lineNumber == null ? {} : {line: lineNumber}),
-    }
+  const comparison = findTopLevelComparison(body)
+  if (comparison != null) {
+    const left = parseFitExpressionText(comparison.left)
+    const right = parseFitExpressionText(comparison.right)
+    return {kind: isGiven ? 'given-comparison' : 'check-comparison', left, op: comparison.op, right, text: line, ...lineFields}
   }
 
-  return {
-    kind: 'check-expression',
-    expression: parseFitExpressionText(line),
-    text: line,
-    ...(lineNumber == null ? {} : {line: lineNumber}),
-  }
+  if (isGiven) throw new Error(`Unsupported @fit given: ${line}`)
+  return {kind: 'check-expression', expression: parseFitExpressionText(line), text: line, ...lineFields}
 }
 
 export function parseFitRangeText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitRange | null {
