@@ -47,7 +47,7 @@ export type {
   ArrayOrigin,
   ArraySummary,
   ArrayValue,
-  FactSource,
+  ConstraintSource,
   LinearConstraint,
   LiteralPrimitive,
   LiteralValue,

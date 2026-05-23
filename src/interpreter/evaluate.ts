@@ -1,8 +1,8 @@
 import * as ts from 'typescript'
 import {
-  ambientIdentifierFact,
-  ambientPropertyFact,
-} from '../ambient-facts.ts'
+  ambientIdentifierBound,
+  ambientPropertyBound,
+} from '../ambient-bounds.ts'
 import type {
   ArrayCallbackFunction,
   Program,
@@ -1538,7 +1538,7 @@ function evaluateVoidExpression(expression: ts.VoidExpression, frame: Interprete
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
   if (expression.text === 'undefined') return nullValue('undefined')
   if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, 'Infinity')
-  const ambient = ambientIdentifierFact(expression, frame.program)
+  const ambient = ambientIdentifierBound(expression, frame.program)
   if (ambient != null) return ambient
   return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
 }
@@ -1549,7 +1549,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
     if (value != null) return value
   }
   if (!hasQuestionDotToken(expression)) {
-    const ambient = ambientPropertyFact(expression, frame.program)
+    const ambient = ambientPropertyBound(expression, frame.program)
     if (ambient != null) return ambient
   }
   const getter = classMemberFunctionForPropertyAccess(expression, frame)

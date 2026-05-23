@@ -7,12 +7,12 @@ export type LinearConstraint = {
   text?: string
   leftExpr?: string
   rightExpr?: string
-  source: FactSource
-  rangeFact?: true
+  source: ConstraintSource
+  fromRange?: true
   integerStrict?: true
 }
 
-export type FactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
+export type ConstraintSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
 export type Value = NumberValue | LiteralValue | ObjectValue | ArrayValue | NullValue | NullableValue | UnknownValue
 

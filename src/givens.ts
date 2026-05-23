@@ -12,7 +12,7 @@ import {
   numberValue,
   unknownArray,
   withNumberCases,
-  type FactSource,
+  type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
   type Value,
@@ -46,11 +46,11 @@ import {
 import {
   comparisonConstraint,
   comparisonFactContradictedByAssumptions,
-  nonNegativeFacts,
+  nonNegativeConstraints,
   proveComparison,
-  proveNonNegativeFromFacts,
-  rangeFactsFromBounds,
-  type NonNegativeFact,
+  proveNonNegativeFromConstraints,
+  constraintsFromRange,
+  type NonNegativeConstraint,
 } from './proof.ts'
 import {
   arrayLengthRoot,
@@ -67,7 +67,7 @@ export function validateGivenSpecs(
   functionName: string,
   specs: FitSpec[],
   allowedRoots: string[],
-  source: Extract<FactSource, 'function-given' | 'loop-given'>,
+  source: Extract<ConstraintSource, 'function-given' | 'loop-given'>,
 ): {assumedGivens: AssumedGivenSpec[]; checks: FitCheck[]} {
   const assumedGivens: AssumedGivenSpec[] = []
   const checks: FitCheck[] = []
@@ -316,7 +316,7 @@ export function collectGivenAssumptions(
         checks.push(upper.check)
         continue
       }
-      const facts = rangeFactsFromBounds(value.value, lower.value, rangeCase.lowerInclusive, upper.value, rangeCase.upperInclusive, spec.text, given.source)
+      const facts = constraintsFromRange(value.value, lower.value, rangeCase.lowerInclusive, upper.value, rangeCase.upperInclusive, spec.text, given.source)
       const contradiction = givenRangeContradictionReason(facts, assumptions)
       if (contradiction != null) {
         checks.push({
@@ -448,17 +448,17 @@ function givenRangeContradictionReason(facts: LinearConstraint[], assumptions: L
 }
 
 function givenComparisonContradictionReason(fact: LinearConstraint, assumptions: LinearConstraint[]): string | null {
-  const facts = nonNegativeFacts(fact)
-  const earlierFacts = assumptions.flatMap(nonNegativeFacts)
+  const facts = nonNegativeConstraints(fact)
+  const earlierConstraints = assumptions.flatMap(nonNegativeConstraints)
   for (const next of facts) {
-    if (nonNegativeFactIsImpossible(next)) return `no input can satisfy this: ${fact.text ?? 'given comparison'} is impossible`
-    for (const earlier of earlierFacts) {
-      if (!nonNegativeFactsConflict(next, earlier)) continue
+    if (nonNegativeConstraintIsImpossible(next)) return `no input can satisfy this: ${fact.text ?? 'given comparison'} is impossible`
+    for (const earlier of earlierConstraints) {
+      if (!nonNegativeConstraintsConflict(next, earlier)) continue
       const earlierText = earlier.text ?? 'an earlier given line'
       const nextText = fact.text ?? 'this given line'
       return `no input can satisfy both ${earlierText} and ${nextText}`
     }
-    if (nonNegativeFactConflictsWithEarlierFacts(next, earlierFacts)) {
+    if (nonNegativeConstraintConflictsWithEarlier(next, earlierConstraints)) {
       return `no input can satisfy this with the earlier given lines; they already rule out ${givenFactLabel(fact.text)}`
     }
   }
@@ -468,13 +468,13 @@ function givenComparisonContradictionReason(fact: LinearConstraint, assumptions:
   return null
 }
 
-function nonNegativeFactIsImpossible(fact: NonNegativeFact) {
+function nonNegativeConstraintIsImpossible(fact: NonNegativeConstraint) {
   const clean = cleanLinear(fact.diff)
   if (clean.terms.size > 0) return false
   return fact.strict ? clean.constant <= linearEpsilon : clean.constant < -linearEpsilon
 }
 
-function nonNegativeFactsConflict(left: NonNegativeFact, right: NonNegativeFact) {
+function nonNegativeConstraintsConflict(left: NonNegativeConstraint, right: NonNegativeConstraint) {
   const scale = positiveTermCancelScale(left.diff, right.diff)
   if (scale == null) return false
   const combined = linearAdd(left.diff, linearScaleExact(right.diff, scale))
@@ -483,8 +483,8 @@ function nonNegativeFactsConflict(left: NonNegativeFact, right: NonNegativeFact)
   return (left.strict || right.strict) && combined.constant <= linearEpsilon
 }
 
-function nonNegativeFactConflictsWithEarlierFacts(fact: NonNegativeFact, earlierFacts: NonNegativeFact[]) {
-  return proveNonNegativeFromFacts(linearScaleExact(fact.diff, -1), !fact.strict, earlierFacts)
+function nonNegativeConstraintConflictsWithEarlier(fact: NonNegativeConstraint, earlierConstraints: NonNegativeConstraint[]) {
+  return proveNonNegativeFromConstraints(linearScaleExact(fact.diff, -1), !fact.strict, earlierConstraints)
 }
 
 function givenFactLabel(text: string | undefined) {

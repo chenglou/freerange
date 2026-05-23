@@ -20,7 +20,7 @@ import {
   numberBranches,
   numberValue,
   unknownNumber,
-  type FactSource,
+  type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
   type Value,
@@ -45,7 +45,7 @@ import {
 
 export type Truth = 'true' | 'false' | 'maybe'
 
-export type NonNegativeFact = {
+export type NonNegativeConstraint = {
   diff: LinearExpr
   strict: boolean
   text?: string
@@ -282,7 +282,7 @@ function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: Num
   const diff = comparisonDiff(left, op, right)
   if (diff == null) return null
   const target = cleanLinear(diff)
-  for (const fact of assumptions.filter(assumption => assumption.rangeFact !== true).flatMap(nonNegativeFacts)) {
+  for (const fact of assumptions.filter(assumption => assumption.fromRange !== true).flatMap(nonNegativeConstraints)) {
     for (const scale of reductionScales(target, fact.diff)) {
       const scaledFact = linearScaleExact(fact.diff, scale)
       const remainder = linearSubtract(target, scaledFact)
@@ -317,7 +317,7 @@ function singleLinearBound(linear: LinearExpr) {
   return coefficient > 0 ? `${name} >= 0` : `${name} <= 0`
 }
 
-export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: FactSource = 'code'): LinearConstraint | null {
+export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: ConstraintSource = 'code'): LinearConstraint | null {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
   if (diff == null && text == null && (left.expr == null || right.expr == null)) return null
@@ -355,19 +355,19 @@ function contradictoryComparisons(op: ComparisonOperator): ComparisonOperator[] 
   }
 }
 
-export function rangeFactsFromBounds(
+export function constraintsFromRange(
   value: NumberValue,
   lower: NumberValue,
   lowerInclusive: boolean,
   upper: NumberValue,
   upperInclusive: boolean,
   text: string,
-  source: FactSource,
+  source: ConstraintSource,
 ): LinearConstraint[] {
   return [
     comparisonConstraint(value, lowerInclusive ? '>=' : '>', lower, text, source),
     comparisonConstraint(value, upperInclusive ? '<=' : '<', upper, text, source),
-  ].filter(fact => fact != null).map(fact => ({...fact, rangeFact: true}))
+  ].filter(fact => fact != null).map(fact => ({...fact, fromRange: true}))
 }
 
 function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
@@ -392,18 +392,18 @@ function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberV
 }
 
 function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: LinearConstraint[]) {
-  const facts = assumptions.flatMap(nonNegativeFacts)
-  return proveNonNegativeFromFacts(diff, strict, facts)
+  const facts = assumptions.flatMap(nonNegativeConstraints)
+  return proveNonNegativeFromConstraints(diff, strict, facts)
 }
 
-export function proveNonNegativeFromFacts(diff: LinearExpr, strict: boolean, facts: NonNegativeFact[]) {
+export function proveNonNegativeFromConstraints(diff: LinearExpr, strict: boolean, facts: NonNegativeConstraint[]) {
   return reduceToNonNegative(diff, strict, facts, maxLinearReductionDepth, new Set())
 }
 
 function reduceToNonNegative(
   diff: LinearExpr,
   strict: boolean,
-  facts: NonNegativeFact[],
+  facts: NonNegativeConstraint[],
   depth: number,
   seen: Set<string>,
 ): boolean {
@@ -430,35 +430,35 @@ function reduceToNonNegative(
   return false
 }
 
-export function nonNegativeFacts(assumption: LinearConstraint): NonNegativeFact[] {
+export function nonNegativeConstraints(assumption: LinearConstraint): NonNegativeConstraint[] {
   if (assumption.diff == null) return []
   switch (assumption.op) {
     case '==':
       return [
-        nonNegativeFact(assumption.diff, false, assumption.text),
-        nonNegativeFact(linearScaleExact(assumption.diff, -1), false, assumption.text == null ? undefined : `${assumption.text} reversed`),
+        nonNegativeConstraint(assumption.diff, false, assumption.text),
+        nonNegativeConstraint(linearScaleExact(assumption.diff, -1), false, assumption.text == null ? undefined : `${assumption.text} reversed`),
       ]
     case '>=':
-      return [nonNegativeFact(assumption.diff, false, assumption.text)]
+      return [nonNegativeConstraint(assumption.diff, false, assumption.text)]
     case '<=':
-      return [nonNegativeFact(linearScaleExact(assumption.diff, -1), false, assumption.text)]
+      return [nonNegativeConstraint(linearScaleExact(assumption.diff, -1), false, assumption.text)]
     case '>':
-      return strictNonNegativeFacts(assumption.diff, assumption)
+      return strictNonNegativeConstraints(assumption.diff, assumption)
     case '<':
-      return strictNonNegativeFacts(linearScaleExact(assumption.diff, -1), assumption)
+      return strictNonNegativeConstraints(linearScaleExact(assumption.diff, -1), assumption)
   }
 }
 
-function strictNonNegativeFacts(diff: LinearExpr, assumption: LinearConstraint): NonNegativeFact[] {
-  const facts = [nonNegativeFact(diff, true, assumption.text)]
+function strictNonNegativeConstraints(diff: LinearExpr, assumption: LinearConstraint): NonNegativeConstraint[] {
+  const facts = [nonNegativeConstraint(diff, true, assumption.text)]
   if (assumption.integerStrict === true) {
     const stepped = linearAdd(diff, linearConstant(-1))
-    if (stepped != null) facts.push(nonNegativeFact(stepped, false, assumption.text))
+    if (stepped != null) facts.push(nonNegativeConstraint(stepped, false, assumption.text))
   }
   return facts
 }
 
-function nonNegativeFact(diff: LinearExpr, strict: boolean, text?: string): NonNegativeFact {
+function nonNegativeConstraint(diff: LinearExpr, strict: boolean, text?: string): NonNegativeConstraint {
   return {diff, strict, ...(text == null ? {} : {text})}
 }
 

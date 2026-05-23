@@ -25,7 +25,7 @@ function assumptionKey(assumption: LinearConstraint) {
     hasExpressionPair || assumption.diff == null ? '' : linearKey(assumption.diff),
     expressionKeyOrEmpty(assumption.leftExpr),
     expressionKeyOrEmpty(assumption.rightExpr),
-    assumption.rangeFact === true ? 'range' : '',
+    assumption.fromRange === true ? 'range' : '',
     assumption.integerStrict === true ? 'integer-strict' : '',
   ].join('\0')
 }

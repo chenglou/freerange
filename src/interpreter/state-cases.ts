@@ -261,7 +261,7 @@ function assumptionFingerprint(assumption: LinearConstraint) {
     leftExpr: assumption.leftExpr ?? null,
     rightExpr: assumption.rightExpr ?? null,
     source: assumption.source,
-    rangeFact: assumption.rangeFact === true,
+    fromRange: assumption.fromRange === true,
     integerStrict: assumption.integerStrict === true,
     diff: assumption.diff == null ? null : linearKey(assumption.diff),
   })
@@ -277,7 +277,7 @@ function sameAssumptionKey(left: LinearConstraint, right: LinearConstraint) {
     && (left.leftExpr ?? null) === (right.leftExpr ?? null)
     && (left.rightExpr ?? null) === (right.rightExpr ?? null)
     && left.source === right.source
-    && left.rangeFact === right.rangeFact
+    && left.fromRange === right.fromRange
     && left.integerStrict === right.integerStrict
     && (left.diff == null ? null : linearKey(left.diff)) === (right.diff == null ? null : linearKey(right.diff))
 }

@@ -20,11 +20,11 @@ export type ReportLinearConstraint = {
   text?: string
   leftExpr?: string
   rightExpr?: string
-  source: ReportFactSource
-  rangeFact?: true
+  source: ConstraintSource
+  fromRange?: true
 }
 
-export type ReportFactSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
+export type ConstraintSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
 export type ReportArrayValue = {
   summary: {

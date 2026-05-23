@@ -7,25 +7,25 @@ import {
 } from './domain.ts'
 import {linearVariable} from './linear.ts'
 
-type AmbientNumberFact = {
+type AmbientNumberBound = {
   min: number
   max: number
   isInteger: boolean
 }
 
-const nonnegativeInteger: AmbientNumberFact = {
+const nonnegativeInteger: AmbientNumberBound = {
   min: 0,
   max: Number.POSITIVE_INFINITY,
   isInteger: true,
 }
 
-const nonnegativeNumber: AmbientNumberFact = {
+const nonnegativeNumber: AmbientNumberBound = {
   min: 0,
   max: Number.POSITIVE_INFINITY,
   isInteger: false,
 }
 
-const ambientPropertyFacts = new Map<string, AmbientNumberFact>([
+const ambientPropertyBounds = new Map<string, AmbientNumberBound>([
   ['Element.clientHeight', nonnegativeInteger],
   ['Element.clientWidth', nonnegativeInteger],
   ['Element.scrollHeight', nonnegativeInteger],
@@ -58,25 +58,25 @@ const ambientPropertyFacts = new Map<string, AmbientNumberFact>([
   ['Window.outerWidth', nonnegativeInteger],
 ])
 
-const ambientGlobalFacts = new Map<string, AmbientNumberFact>([
+const ambientGlobalBounds = new Map<string, AmbientNumberBound>([
   ['innerHeight', nonnegativeInteger],
   ['innerWidth', nonnegativeInteger],
   ['outerHeight', nonnegativeInteger],
   ['outerWidth', nonnegativeInteger],
 ])
 
-export function ambientPropertyFact(expression: ts.PropertyAccessExpression, program: Program): NumberValue | null {
-  const fact = ambientFactForProperty(expression.name.text, expression.expression, program)
+export function ambientPropertyBound(expression: ts.PropertyAccessExpression, program: Program): NumberValue | null {
+  const fact = ambientBoundForProperty(expression.name.text, expression.expression, program)
   return fact == null ? null : ambientNumberValue(expression.getText(program.sourceFile), fact)
 }
 
-export function ambientIdentifierFact(expression: ts.Identifier, program: Program): NumberValue | null {
-  const fact = ambientGlobalFacts.get(expression.text)
+export function ambientIdentifierBound(expression: ts.Identifier, program: Program): NumberValue | null {
+  const fact = ambientGlobalBounds.get(expression.text)
   if (fact == null || !hasLibDomGlobalDeclaration(expression, program)) return null
   return ambientNumberValue(expression.text, fact)
 }
 
-function ambientNumberValue(expr: string, fact: AmbientNumberFact) {
+function ambientNumberValue(expr: string, fact: AmbientNumberBound) {
   return numberValue(
     fact.min,
     fact.max,
@@ -86,23 +86,23 @@ function ambientNumberValue(expr: string, fact: AmbientNumberFact) {
   )
 }
 
-function ambientFactForProperty(propertyName: string, receiver: ts.Expression, program: Program): AmbientNumberFact | null {
+function ambientBoundForProperty(propertyName: string, receiver: ts.Expression, program: Program): AmbientNumberBound | null {
   const checker = program.typeChecker
   if (checker == null) return null
   const type = checker.getTypeAtLocation(receiver)
   const members = type.isUnion() ? type.types : [type]
-  const facts: AmbientNumberFact[] = []
+  const facts: AmbientNumberBound[] = []
   for (const member of members) {
     if (isNullishType(member)) return null
     const fact = typeMemberAmbientFact(member, propertyName, checker)
     if (fact == null) return null
     facts.push(fact)
   }
-  return mergeAmbientNumberFacts(facts)
+  return mergeAmbientNumberBounds(facts)
 }
 
-function mergeAmbientNumberFacts(facts: AmbientNumberFact[]): AmbientNumberFact | null {
-  let result: AmbientNumberFact | null = null
+function mergeAmbientNumberBounds(facts: AmbientNumberBound[]): AmbientNumberBound | null {
+  let result: AmbientNumberBound | null = null
   for (const fact of facts) {
     result = result == null
       ? fact
@@ -115,17 +115,17 @@ function mergeAmbientNumberFacts(facts: AmbientNumberFact[]): AmbientNumberFact 
   return result
 }
 
-function typeMemberAmbientFact(type: ts.Type, propertyName: string, checker: ts.TypeChecker): AmbientNumberFact | null {
+function typeMemberAmbientFact(type: ts.Type, propertyName: string, checker: ts.TypeChecker): AmbientNumberBound | null {
   const property = checker.getPropertyOfType(checker.getApparentType(type), propertyName)
   if (property == null) return null
-  return ambientFactForSymbol(property, propertyName)
+  return ambientBoundForSymbol(property, propertyName)
 }
 
-function ambientFactForSymbol(symbol: ts.Symbol, propertyName: string): AmbientNumberFact | null {
+function ambientBoundForSymbol(symbol: ts.Symbol, propertyName: string): AmbientNumberBound | null {
   for (const declaration of symbol.getDeclarations() ?? []) {
     if (!isLibDomDeclaration(declaration)) continue
     const owner = declarationOwnerName(declaration)
-    const fact = owner == null ? null : ambientPropertyFacts.get(`${owner}.${propertyName}`)
+    const fact = owner == null ? null : ambientPropertyBounds.get(`${owner}.${propertyName}`)
     if (fact != null) return fact
   }
   return null

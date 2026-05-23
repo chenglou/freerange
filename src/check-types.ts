@@ -1,6 +1,6 @@
 import type * as ts from 'typescript'
 import type {
-  FactSource,
+  ConstraintSource,
   LinearConstraint,
   NullishKind,
   Value,
@@ -209,8 +209,8 @@ export type LocalizeOptions = {
 }
 
 export type AssumedGivenSpec =
-  | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
-  | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<FactSource, 'function-given' | 'loop-given'>}
+  | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
+  | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
 
 export type ImportedContractSource = {
   sourceFile: string
