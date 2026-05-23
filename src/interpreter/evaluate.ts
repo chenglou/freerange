@@ -182,14 +182,14 @@ import {
   type StateCaseSetResult,
 } from './state-cases.ts'
 
-export type InterpreterFunctionResult = {
+type InterpreterFunctionResult = {
   value: Value
   issues: InterpreterIssue[]
   effects: InterpreterEffect[]
   audits: InterpreterAudit[]
 }
 
-export type InterpreterBodyResult = InterpreterFunctionResult & {
+type InterpreterBodyResult = InterpreterFunctionResult & {
   env: Map<string, Value>
   assumptions: LinearConstraint[]
   returnCases?: InterpreterReturnCase[]
