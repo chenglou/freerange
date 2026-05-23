@@ -23,13 +23,13 @@ export type ComparisonGoal = {
   right: NumberValue
 }
 
-export type ProofBackendContext = {
+export type ProofRulesContext = {
   assumptions: LinearConstraint[]
   hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string): boolean
   provesExprNonNegative(expression: string, strict: boolean): boolean
 }
 
-export type ProofBackendResult =
+export type ProofRuleResult =
   | {status: 'pass'; rule: string; message: string}
   | {status: 'blocked'; rule: string; message: string; missing: string}
 
@@ -38,11 +38,11 @@ type ComparisonGraphEdge = {
   strict: boolean
 }
 
-export function evaluateBackendComparison(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+export function evaluateComparisonRules(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
   if (context.hasComparisonFact(goal.left.expr, goal.op, goal.right.expr)) return pass('comparison-fact', 'matched a known comparison fact')
 
-  let blockedResult: ProofBackendResult | null = null
+  let blockedResult: ProofRuleResult | null = null
   for (const rule of comparisonProofRules) {
     const result = rule(goal, context)
     if (result?.status === 'pass') return result
@@ -52,8 +52,8 @@ export function evaluateBackendComparison(goal: ComparisonGoal, context: ProofBa
   return blockedResult
 }
 
-export function backendComparisonMissing(goal: ComparisonGoal, context: ProofBackendContext): string | null {
-  const result = evaluateBackendComparison(goal, context)
+export function comparisonRulesMissing(goal: ComparisonGoal, context: ProofRulesContext): string | null {
+  const result = evaluateComparisonRules(goal, context)
   return result?.status === 'blocked' ? result.missing : null
 }
 
@@ -129,7 +129,7 @@ function addComparisonGraphEdge(graph: Map<string, ComparisonGraphEdge[]>, fromE
   graph.set(from, edges)
 }
 
-type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) => ProofBackendResult | null
+type ComparisonProofRule = (goal: ComparisonGoal, context: ProofRulesContext) => ProofRuleResult | null
 
 const comparisonProofRules: ComparisonProofRule[] = [
   evaluateRoundingMonotonicity,
@@ -158,7 +158,7 @@ type ComparisonReduction = {
 type RoundingFunctionName = 'floor' | 'ceil' | 'round' | 'trunc'
 type RoundingCall = {name: RoundingFunctionName; arg: string}
 
-function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null) return null
 
@@ -238,7 +238,7 @@ function offsetExpression(expression: string, offset: number) {
   return offset > 0 ? `(${expression} + ${offset})` : `(${expression} - ${Math.abs(offset)})`
 }
 
-function evaluateRoundingMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateRoundingMonotonicity(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null || lessGoal.op !== '<=') return null
   const shape = matchingRoundingCall(lessGoal.leftExpr, lessGoal.rightExpr)
@@ -253,7 +253,7 @@ function matchingRoundingCall(leftExpr: string, rightExpr: string): {left: strin
   return left == null || right == null || left.name !== right.name ? null : {left: left.arg, right: right.arg}
 }
 
-function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null) return null
   const obligations = [
@@ -274,7 +274,7 @@ function comparisonLessGoal(goal: ComparisonGoal): LessComparisonGoal | null {
   return null
 }
 
-function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   if (goal.op !== '<' && goal.op !== '<=') return null
   if (goal.left.expr == null || goal.right.expr == null || !goal.right.isInteger) return null
   const shape = floorDivision(goal.left.expr)
@@ -290,7 +290,7 @@ function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ProofBac
   return blocked('floor-division-below-count', `${divisorNeed} and ${boundNeed}`, 'floor division stays below count from its product bound')
 }
 
-function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
+function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   if (goal.op !== '>=') return null
   if (goal.left.expr == null || goal.right.expr == null) return null
   const shape = ceilDivisionProduct(goal.left.expr)
@@ -306,14 +306,14 @@ type ScaleMonotoneObligation = {
   baseProven: boolean
 }
 
-function positiveMonotoneObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext) {
+function positiveMonotoneObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofRulesContext) {
   return [
     ...positiveDivisionObligations(leftExpr, op, rightExpr, context),
     ...positiveProductObligations(leftExpr, op, rightExpr, context),
   ]
 }
 
-function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
+function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofRulesContext): ScaleMonotoneObligation[] {
   const leftDivision = binaryExpression(leftExpr, '/')
   const rightDivision = binaryExpression(rightExpr, '/')
   if (leftDivision == null || rightDivision == null || !sameExpressionText(leftDivision.right, rightDivision.right)) return []
@@ -326,7 +326,7 @@ function positiveDivisionObligations(leftExpr: string, op: '<=' | '<', rightExpr
   }]
 }
 
-function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
+function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofRulesContext): ScaleMonotoneObligation[] {
   const leftProduct = productFactors(leftExpr)
   const rightProduct = productFactors(rightExpr)
   if (leftProduct == null || rightProduct == null) return []
@@ -350,7 +350,7 @@ function positiveProductObligations(leftExpr: string, op: '<=' | '<', rightExpr:
   return obligations
 }
 
-function negativeProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofBackendContext): ScaleMonotoneObligation[] {
+function negativeProductObligations(leftExpr: string, op: '<=' | '<', rightExpr: string, context: ProofRulesContext): ScaleMonotoneObligation[] {
   const leftProduct = productFactors(leftExpr)
   const rightProduct = productFactors(rightExpr)
   if (leftProduct == null || rightProduct == null) return []
@@ -380,10 +380,10 @@ function monotoneMissing(obligation: ScaleMonotoneObligation) {
   return `${obligation.factorNeed} and ${obligation.baseNeed}`
 }
 
-function pass(rule: string, message: string): ProofBackendResult {
+function pass(rule: string, message: string): ProofRuleResult {
   return {status: 'pass', rule, message}
 }
 
-function blocked(rule: string, missing: string, message: string): ProofBackendResult {
+function blocked(rule: string, missing: string, message: string): ProofRuleResult {
   return {status: 'blocked', rule, message, missing}
 }

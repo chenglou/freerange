@@ -5,11 +5,11 @@ import {
   formatRange,
 } from './reporting.ts'
 import {
-  backendComparisonMissing,
-  evaluateBackendComparison,
+  comparisonRulesMissing,
+  evaluateComparisonRules,
   symbolicComparisonProves,
-  type ProofBackendContext,
-} from './proof-backend.ts'
+  type ProofRulesContext,
+} from './proof-rules.ts'
 import type {FitCheck} from './check-types.ts'
 import {
   proofTraceForStatus,
@@ -156,8 +156,8 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
   if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) {
     return {domain: 'source', rule: 'same-expression', message: 'matched the same source expression'}
   }
-  const backend = evaluateBackendComparison({left, op, right}, proofBackendContext(assumptions))
-  if (backend?.status === 'pass') return {domain: 'numeric', rule: backend.rule, message: backend.message}
+  const ruleResult = evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))
+  if (ruleResult?.status === 'pass') return {domain: 'numeric', rule: ruleResult.rule, message: ruleResult.message}
 
   const truth = compareRanges(left, op, right)
   if (truth !== 'maybe') return {domain: 'numeric', rule: 'range-comparison', message: 'checked comparison from interval bounds'}
@@ -165,7 +165,7 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
   const linearTruth = compareLinear(left, op, right, assumptions)
   if (linearTruth !== 'maybe') return {domain: 'numeric', rule: 'linear-comparison', message: 'checked comparison from exact linear facts'}
 
-  if (backend != null) return {domain: 'numeric', rule: backend.rule, message: backend.message}
+  if (ruleResult != null) return {domain: 'numeric', rule: ruleResult.rule, message: ruleResult.message}
 
   return {domain: 'numeric', rule: 'comparison', message: 'checked comparison claim'}
 }
@@ -196,7 +196,7 @@ function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberV
 }
 
 function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
-  return evaluateBackendComparison({left, op, right}, proofBackendContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
+  return evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
 }
 
 function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
@@ -205,7 +205,7 @@ function provesExprNonNegative(expression: string, strict: boolean, assumptions:
   return linear != null && provesNonNegative(linear, strict, assumptions)
 }
 
-function proofBackendContext(assumptions: LinearConstraint[]): ProofBackendContext {
+function proofRulesContext(assumptions: LinearConstraint[]): ProofRulesContext {
   return {
     assumptions,
     hasComparisonFact: (leftExpr, op, rightExpr) => hasComparisonFact(leftExpr, op, rightExpr, assumptions),
@@ -258,8 +258,8 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
 function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
   const strictSelf = strictSelfComparisonMissing(left, op, right)
   if (strictSelf != null) return strictSelf
-  const backendMissing = backendComparisonMissing({left, op, right}, proofBackendContext(assumptions))
-  if (backendMissing != null) return backendMissing
+  const rulesMissing = comparisonRulesMissing({left, op, right}, proofRulesContext(assumptions))
+  if (rulesMissing != null) return rulesMissing
   const missingLinear = missingLinearFact(left, op, right, assumptions)
   if (missingLinear != null) return missingLinear
   return `given ${comparisonNeed(left, op, right)}`
