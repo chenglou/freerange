@@ -32,12 +32,16 @@ FAIL negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
   known:
     (width - width): int 0..0
     assumed from input: given width: 0..1000
+    inferred from code: min(width, 320) <= width
+    inferred from code: min(width, 320) <= 320
     inferred from branch: width - 320 <= 0
   missing: strict comparison cannot hold when both sides are (width - width)
 FAIL negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: return < 4
   result: is false
   known:
     assumed from input: given value: 0..10
+    inferred from code: min(value, 4) <= value
+    inferred from code: min(value, 4) <= 4
     inferred from branch: -value + 4 <= 0
   missing: strict comparison cannot hold when both sides are 4
 UNKNOWN negative-patterns.ts:negativeMutableMathAlias: return >= 0
@@ -70,6 +74,8 @@ FAIL negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > m
     assumed from input: given minWidth: 0..1000
     assumed from input: given width: 0..1000
     inferred from branch: minWidth - width >= 0
+    inferred from code: max(minWidth, width) >= minWidth
+    inferred from code: max(minWidth, width) >= width
     checked helper contract: negative-patterns.ts#negativeAtLeastMinWidth: return >= minWidth
   missing: strict comparison cannot hold when both sides are minWidth
 UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.length
@@ -786,6 +792,8 @@ UNKNOWN negative-patterns.ts:negativeArrowFunctionContract: return >= min
   known:
     (min - 1): any number
     min: any number
+    inferred from code: min(value, (min - 1)) <= value
+    inferred from code: min(value, (min - 1)) <= (min - 1)
     inferred from branch: min - value - 1 <= 0
   missing fact: (min - 1) >= min
 UNKNOWN negative-patterns.ts:negativeDestructuredArrowParamClaim: return >= width
@@ -1002,6 +1010,8 @@ UNKNOWN negative-import-patterns.ts:negativeImportedHelperSourceContractFails: r
   known:
     width: 0..1000
     assumed from input: given width: 0..1000
+    inferred from code: min(width, 320) <= width
+    inferred from code: min(width, 320) <= 320
     inferred from branch: width - 320 <= 0
   missing: width <= 100
 FAIL negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 0..100

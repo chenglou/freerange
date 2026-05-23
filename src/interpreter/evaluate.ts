@@ -1915,8 +1915,14 @@ function evaluatePlainNumberBinary(
       return multiplyNumbers(left, right)
     case ts.SyntaxKind.SlashToken:
       return divideNumbers(left, right)
-    case ts.SyntaxKind.PercentToken:
-      return moduloNumbers(left, right)
+    case ts.SyntaxKind.PercentToken: {
+      const result = moduloNumbers(left, right)
+      if (result.kind === 'number' && result.linear != null && right.linear != null) {
+        const upper = comparisonConstraint(result, '<', right, `${result.expr} < ${right.expr}`)
+        if (upper != null) frame.assumptions = mergeAssumptions(frame.assumptions, [upper])
+      }
+      return result
+    }
     case ts.SyntaxKind.AsteriskAsteriskToken:
       return powerNumbers(left, right)
     default:

@@ -9,11 +9,9 @@ import {
 import {
   binaryExpression,
   callArg,
-  callArgs,
   ceilDivisionProduct,
   expressionKeyFromText,
   floorDivision,
-  moduloExpression,
   productFactors,
   productText,
   sameExpressionText,
@@ -134,9 +132,7 @@ function addComparisonGraphEdge(graph: Map<string, ComparisonGraphEdge[]>, fromE
 type ComparisonProofRule = (goal: ComparisonGoal, context: ProofBackendContext) => ProofBackendResult | null
 
 const comparisonProofRules: ComparisonProofRule[] = [
-  evaluateChoiceOperandBound,
   evaluateRoundingMonotonicity,
-  evaluateModuloBelowDivisor,
   evaluateScaleMonotonicity,
   evaluateFloorDivisionBelowCount,
   evaluateCeilDivisionCoversTotal,
@@ -237,24 +233,6 @@ function roundingCall(expression: string): RoundingCall | null {
 
 const roundingFunctionNames = ['floor', 'ceil', 'round', 'trunc'] as const
 
-function evaluateChoiceOperandBound(goal: ComparisonGoal): ProofBackendResult | null {
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  if (goal.op === '<=') {
-    if (choiceHasOperand(goal.left.expr, 'min', goal.right.expr)) return pass('choice-operand-bound', 'choice result is bounded by a selected operand')
-    if (choiceHasOperand(goal.right.expr, 'max', goal.left.expr)) return pass('choice-operand-bound', 'choice result is bounded by a selected operand')
-  }
-  if (goal.op === '>=') {
-    if (choiceHasOperand(goal.left.expr, 'max', goal.right.expr)) return pass('choice-operand-bound', 'choice result is bounded by a selected operand')
-    if (choiceHasOperand(goal.right.expr, 'min', goal.left.expr)) return pass('choice-operand-bound', 'choice result is bounded by a selected operand')
-  }
-  return null
-}
-
-function choiceHasOperand(choiceExpr: string, choiceName: 'min' | 'max', operandExpr: string) {
-  const args = callArgs(choiceExpr, choiceName)
-  return args != null && args.some(arg => sameExpressionText(arg, operandExpr))
-}
-
 function offsetExpression(expression: string, offset: number) {
   if (offset === 0) return expression
   return offset > 0 ? `(${expression} + ${offset})` : `(${expression} - ${Math.abs(offset)})`
@@ -273,23 +251,6 @@ function matchingRoundingCall(leftExpr: string, rightExpr: string): {left: strin
   const left = roundingCall(leftExpr)
   const right = roundingCall(rightExpr)
   return left == null || right == null || left.name !== right.name ? null : {left: left.arg, right: right.arg}
-}
-
-function evaluateModuloBelowDivisor(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {
-  if (goal.op !== '<' && goal.op !== '<=') return null
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  const shape = moduloExpression(goal.left.expr)
-  if (shape == null || !sameExpressionText(shape.right, goal.right.expr)) return null
-  const dividendNeed = `${publicFitText(shape.left)} >= 0`
-  const divisorNeed = `${publicFitText(shape.right)} > 0`
-  const dividendProven = context.provesExprNonNegative(shape.left, false)
-  const divisorProven = context.provesExprNonNegative(shape.right, true)
-  if (dividendProven && divisorProven) return pass('modulo-below-divisor', 'modulo result stays below a positive divisor')
-  const missing = [
-    ...(dividendProven ? [] : [dividendNeed]),
-    ...(divisorProven ? [] : [divisorNeed]),
-  ]
-  return blocked('modulo-below-divisor', missing.join(' and '), 'modulo result stays below a positive divisor')
 }
 
 function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofBackendContext): ProofBackendResult | null {

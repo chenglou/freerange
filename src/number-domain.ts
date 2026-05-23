@@ -178,7 +178,9 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
 export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 || left.min < 0) return unknownValue('Modulo is only supported for non-negative values and positive divisors')
   const max = left.isInteger && right.isInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
-  return numberValue(0, max, left.isInteger && right.isInteger, binaryExpr(left, '%', right), null, null, mergeProvenance(left, right))
+  const expr = binaryExpr(left, '%', right)
+  const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
+  return numberValue(0, max, left.isInteger && right.isInteger, expr, linear, null, mergeProvenance(left, right))
 }
 
 export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_INFINITY, fallbackMax = Number.POSITIVE_INFINITY) {

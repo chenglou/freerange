@@ -328,11 +328,11 @@ function signNumber(value: NumberValue): NumberValue {
 }
 
 function minNumberPair(left: NumberValue, right: NumberValue, frame: InterpreterFrame): NumberValue {
-  return choiceNumberPair('min', left, right, '<=', '<=', frame.assumptions)
+  return choiceNumberPair('min', left, right, '<=', '<=', frame)
 }
 
 function maxNumberPair(left: NumberValue, right: NumberValue, frame: InterpreterFrame): NumberValue {
-  return choiceNumberPair('max', left, right, '>=', '>=', frame.assumptions)
+  return choiceNumberPair('max', left, right, '>=', '>=', frame)
 }
 
 function choiceNumberPair(
@@ -341,14 +341,27 @@ function choiceNumberPair(
   right: NumberValue,
   leftOp: ComparisonOperator,
   rightOp: ComparisonOperator,
-  assumptions: ReturnType<typeof mergeAssumptions>,
+  frame: InterpreterFrame,
 ): NumberValue {
+  const assumptions = frame.assumptions
   const plainLeft = plainNumber(left)
   const plainRight = plainNumber(right)
+  const expr = callExpr(name, [plainLeft, plainRight])
+  const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
   const joined =
     name === 'min'
-      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]), null, null, mergeProvenance(plainLeft, plainRight))
-      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, callExpr(name, [plainLeft, plainRight]), null, null, mergeProvenance(plainLeft, plainRight))
+      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeProvenance(plainLeft, plainRight))
+      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeProvenance(plainLeft, plainRight))
+
+  if (expr != null) {
+    const op: ComparisonOperator = name === 'min' ? '<=' : '>='
+    const leftFact = comparisonConstraint(joined, op, plainLeft, `${expr} ${op} ${plainLeft.expr ?? '?'}`)
+    const rightFact = comparisonConstraint(joined, op, plainRight, `${expr} ${op} ${plainRight.expr ?? '?'}`)
+    const facts: LinearConstraint[] = []
+    if (leftFact != null) facts.push(leftFact)
+    if (rightFact != null) facts.push(rightFact)
+    if (facts.length > 0) frame.assumptions = mergeAssumptions(frame.assumptions, facts)
+  }
 
   const cases: NumberCase[] = []
   for (const leftCase of numberBranches(left)) {
