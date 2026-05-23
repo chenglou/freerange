@@ -5,15 +5,43 @@ import {
   type InterpreterStateCase,
 } from './context.ts'
 import {
+  maxNumberCases,
+  numberBranches,
   unknown,
   valueWithAssumptions,
   type LinearConstraint,
+  type NumberCase,
+  type NumberValue,
   type Value,
 } from '../domain.ts'
 import {linearKey} from '../linear.ts'
+import {mergeAssumptions} from '../assumptions.ts'
 import {assumptionsAreReachable} from '../constraint-reachability.ts'
 
 export const maxStateCases = 8
+
+export function combineNumberCases(
+  left: NumberValue,
+  right: NumberValue,
+  evaluate: (left: NumberValue, right: NumberValue) => Value,
+): NumberCase[] | null {
+  if (left.cases == null && right.cases == null) return null
+  const cases: NumberCase[] = []
+  for (const leftCase of numberBranches(left)) {
+    for (const rightCase of numberBranches(right)) {
+      const value = evaluate(leftCase.value, rightCase.value)
+      if (value.kind !== 'number') return null
+      const assumptions = mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
+      if (!assumptionsAreReachable(assumptions)) continue
+      cases.push({
+        value,
+        assumptions,
+      })
+      if (cases.length > maxNumberCases) return null
+    }
+  }
+  return cases
+}
 
 export type StateCaseSetResult =
   | {kind: 'ok'}

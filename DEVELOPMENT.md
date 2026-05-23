@@ -55,8 +55,8 @@ Contracts and source evaluation:
 Facts, values, and proof:
 
 - [src/domain-types.ts](./src/domain-types.ts), [src/value-domain.ts](./src/value-domain.ts), [src/number-domain.ts](./src/number-domain.ts), [src/array-summary.ts](./src/array-summary.ts), [src/domain-paths.ts](./src/domain-paths.ts), and [src/domain.ts](./src/domain.ts) — abstract values, numeric ranges, arrays, paths, and the compatibility facade
-- [src/fact-inventory.ts](./src/fact-inventory.ts), [src/facts.ts](./src/facts.ts), [src/assumptions.ts](./src/assumptions.ts), [src/constraint-reachability.ts](./src/constraint-reachability.ts), [src/linear.ts](./src/linear.ts), [src/proof.ts](./src/proof.ts), and [src/proof-rules.ts](./src/proof-rules.ts) — published facts, assumptions, linear expressions, and comparison proof rules
-- [src/guarded-facts.ts](./src/guarded-facts.ts), [src/indexed-facts.ts](./src/indexed-facts.ts), [src/sequence-facts.ts](./src/sequence-facts.ts), [src/bound-index.ts](./src/bound-index.ts), [src/loop-source.ts](./src/loop-source.ts), and [src/loop-summary.ts](./src/loop-summary.ts) — branch, index, adjacent sequence, and loop facts
+- [src/facts.ts](./src/facts.ts), [src/assumptions.ts](./src/assumptions.ts), [src/constraint-reachability.ts](./src/constraint-reachability.ts), [src/linear.ts](./src/linear.ts), [src/proof.ts](./src/proof.ts), and [src/proof-rules.ts](./src/proof-rules.ts) — published facts, assumptions, linear expressions, and comparison proof rules
+- [src/indexed-facts.ts](./src/indexed-facts.ts), [src/sequence-facts.ts](./src/sequence-facts.ts), [src/bound-index.ts](./src/bound-index.ts), [src/loop-source.ts](./src/loop-source.ts), and [src/loop-summary.ts](./src/loop-summary.ts) — index, adjacent sequence, and loop facts
 
 Dev tools and harnesses:
 
