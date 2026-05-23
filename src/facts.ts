@@ -1,3 +1,4 @@
+// Naming split: `*Constraint*` is internal proof state (LinearConstraint, NonNegativeConstraint, ConstraintSource); `*Fact*` is user-facing inference output that `fr infer` shows. They live on different sides of the checker and should not be confused.
 import {
   fitReturnInternalRoot,
   publicFitText,

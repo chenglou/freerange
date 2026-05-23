@@ -4,7 +4,7 @@ import {
   proveBoundIndexRangeSpec,
   type BoundIndexContext,
 } from './bound-index.ts'
-import {nondecreasingFailureReason} from './ambient-builtins.ts'
+import {nondecreasingFailureReason} from './builtins.ts'
 import {
   finiteNumberSet,
   isDefinitelyEmptyArray,

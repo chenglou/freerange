@@ -11,13 +11,13 @@ import {publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
 import {hasNondecreasingProp, provedSpacing} from './sequence-facts.ts'
 
-export type AmbientBuiltinContext = {
+export type BuiltinContext = {
   expression: ts.CallExpression
   evaluateExpression: (expression: ts.Expression) => Value
   expressionText: (expression: ts.Expression) => string
 }
 
-export function evaluateAmbientBuiltinCall(context: AmbientBuiltinContext): Value | null {
+export function evaluateBuiltinCall(context: BuiltinContext): Value | null {
   const name = ambientCallName(context.expression)
   if (name == null) return null
   switch (name) {
@@ -39,7 +39,7 @@ export function extentEndSummaryValue(array: ArrayValue, emptyExpr: string): Num
   return extentEnds.find(fact => sameExpressionText(fact.emptyExpr, emptyExpr))?.value ?? null
 }
 
-function evaluateNondecreasingCall(context: AmbientBuiltinContext): Value {
+function evaluateNondecreasingCall(context: BuiltinContext): Value {
   const text = context.expressionText(context.expression)
   const target = sequencePropArgument(context.expression.arguments, context.evaluateExpression)
   if (target == null) return unknown('nondecreasing expects return.rows.top')
@@ -49,7 +49,7 @@ function evaluateNondecreasingCall(context: AmbientBuiltinContext): Value {
   return unknown(nondecreasingFailureReason(text, target))
 }
 
-function evaluateSpacedCall(context: AmbientBuiltinContext): Value {
+function evaluateSpacedCall(context: BuiltinContext): Value {
   const text = context.expressionText(context.expression)
   const args = context.expression.arguments
   if (args.length !== 2) return unknown('spaced expects spaced(rows, gap)')
@@ -63,7 +63,7 @@ function evaluateSpacedCall(context: AmbientBuiltinContext): Value {
   return unknown(spacedFailureReason(text, rows, gap.expr))
 }
 
-function evaluateLastEndCall(context: AmbientBuiltinContext): Value {
+function evaluateLastEndCall(context: BuiltinContext): Value {
   const targetExpression = context.expression.arguments[0]
   if (targetExpression == null || context.expression.arguments.length !== 1) return unknown('lastEnd expects one array')
   const target = context.evaluateExpression(targetExpression)
@@ -71,7 +71,7 @@ function evaluateLastEndCall(context: AmbientBuiltinContext): Value {
   return target.summary?.lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
 }
 
-function evaluateExtentEndCall(context: AmbientBuiltinContext): Value {
+function evaluateExtentEndCall(context: BuiltinContext): Value {
   const targetExpression = context.expression.arguments[0]
   const emptyExpression = context.expression.arguments[1]
   if (targetExpression == null || emptyExpression == null || context.expression.arguments.length !== 2) {

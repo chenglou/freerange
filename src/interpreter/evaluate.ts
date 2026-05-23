@@ -69,9 +69,9 @@ import {
   numericLiteralValue,
 } from '../linear.ts'
 import {
-  evaluateAmbientBuiltinCall,
+  evaluateBuiltinCall,
   extentEndSummaryValue,
-} from '../ambient-builtins.ts'
+} from '../builtins.ts'
 import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
@@ -2063,7 +2063,7 @@ function arrayFromLengthExpression(expression: ts.Expression, frame: Interpreter
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
-  const ambient = evaluateAmbientBuiltinCall({
+  const ambient = evaluateBuiltinCall({
     expression,
     evaluateExpression: current => evaluateExpression(current, frame),
     expressionText: current => nodeText(current, frame),
