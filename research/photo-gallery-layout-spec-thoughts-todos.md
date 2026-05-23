@@ -117,7 +117,7 @@ for distinct items $a, $b:
     || $b.layoutBox.y + $b.layoutBox.sizeY <= $a.layoutBox.y
 ```
 
-This probably wants a named pairwise atom with a clear report, not general
+This probably wants a named pairwise built-in with a clear report, not general
 boolean logic sprayed everywhere.
 
 ### Adjacent Gaps In A Derived Order

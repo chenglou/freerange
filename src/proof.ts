@@ -104,7 +104,7 @@ function proofStatus(proof: ComparisonProof): {status: 'pass' | 'fail' | 'unknow
 }
 
 function nonNumberComparisonStep(): ComparisonProofStep {
-  return {domain: 'kernel', rule: 'non-number-comparison', message: 'checked comparison shape'}
+  return {domain: 'shape', rule: 'non-number-comparison', message: 'checked comparison shape'}
 }
 
 function branchComparisonStep(): ComparisonProofStep {

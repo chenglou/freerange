@@ -1188,12 +1188,12 @@ export function negativeNullablePropertyNeedsPresentGuard(focused: number) {
 }
 
 export function negativeOptionalNumberNeedsPresentGuard(max?: number) {
-  // @ts-expect-error This kernel intentionally checks the missing present guard.
+  // @ts-expect-error This case intentionally checks the missing present guard.
   return Math.max(max, 0) // @fit >= max
 }
 
 export function negativeNullishFallbackNeedsNumericDefault(dimensions: {width?: number}, label: string) {
-  // @ts-expect-error This kernel intentionally keeps a non-numeric fallback.
+  // @ts-expect-error This case intentionally keeps a non-numeric fallback.
   return Math.max(dimensions?.width ?? label, 0) // @fit >= 0
 }
 

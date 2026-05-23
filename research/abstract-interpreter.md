@@ -92,15 +92,15 @@ Current core:
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct kernels, class method/getter `this`, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct callers, class method/getter `this`, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree, origin-fact, and unsupported-shape snapshots
-- `verify-interpreter-snapshots.ts`: focused kernels for interpreter evolution
+- `verify-interpreter-snapshots.ts`: focused tests for interpreter evolution
 
 ## Cutover Notes
 
 The interpreter now answers function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, supported loop reports, and helper-call obligations. `src/check-core.ts` holds the current checker shell around interpreter state.
 
-The useful comparison was behavioral, not architectural. The old evaluator helped reveal missing surfaces, then got deleted with the differential harness once demos, negative reports, inferred facts, focused interpreter kernels, the corpus sweep, and type/lint all had enough coverage.
+The useful comparison was behavioral, not architectural. The old evaluator helped reveal missing surfaces, then got deleted with the differential harness once demos, negative reports, inferred facts, focused interpreter tests, the corpus sweep, and type/lint all had enough coverage.
 
 Lessons worth keeping:
 

@@ -167,7 +167,7 @@ export function negativeMatrixArrayAtDynamicUnsupported(items: number[], index: 
 }
 
 export function negativeMatrixNullishFallbackString(dimensions: {width?: number}): number {
-  // @ts-expect-error This kernel intentionally keeps a non-numeric fallback.
+  // @ts-expect-error This case intentionally keeps a non-numeric fallback.
   return Math.max(dimensions?.width ?? 'wide', 0)
 }
 

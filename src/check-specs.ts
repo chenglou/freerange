@@ -159,7 +159,7 @@ export function verifyCheckSpecWithProof(
   if (wildcardCheck.kind === 'unsupported') {
     return checkProof(
       {file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'unknown', reason: wildcardCheck.reason},
-      'kernel',
+      'shape',
       'wildcard-shape',
       'checked wildcard claim shape',
       [],

@@ -1,6 +1,6 @@
-# Layout Kernels
+# Focused Tests
 
-Small pure layout kernels. They are not mini apps. They are meant to be easy to read alone, with enough real geometry to keep the verifier honest.
+Small pure layout examples. They are not mini apps. They are meant to be easy to read alone, with enough real geometry to keep the verifier honest.
 
 ## `generated-list-geometry.ts`
 
@@ -32,4 +32,4 @@ Why it stresses the verifier:
 - later single-column cells can still dominate after a span
 - range mode can take structured cell constraints and prove lower bounds on the resulting vector
 
-When a kernel suggests a general proof shape, add the smallest representative to [patterns.ts](../../patterns.ts). Keep these kernels readable.
+When a test suggests a general proof shape, add the smallest representative to [patterns.ts](../../patterns.ts). Keep these readable.

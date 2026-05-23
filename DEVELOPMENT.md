@@ -19,7 +19,7 @@ bun install
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
-- `bun run verify:interpreter` — run the interpreter on focused kernels and snapshot the abstract return values it builds
+- `bun run verify:interpreter` — run the interpreter on focused tests and snapshot the abstract return values it builds
 - `bun run verify:semantics` — snapshot the internal obligation/proof-trace shape for a tiny checked fixture
 - `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
@@ -34,7 +34,7 @@ bun install
 - [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter kernels, proof-trace shape, and the external corpus sweep
+- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter tests, proof-trace shape, and the external corpus sweep
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -63,7 +63,7 @@ Dev tools and harnesses:
 - [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
 - [test.ts](./test.ts), [parser-tests.ts](./parser-tests.ts), [patterns.ts](./patterns.ts), [negative-patterns.ts](./negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, and report coverage
 - `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
-- [research/kernels](./research/kernels) and [experiments](./experiments) — tracked pressure examples and scratch artifacts outside the default full gate
+- [research/focused-tests](./research/focused-tests) and [experiments](./experiments) — tracked pressure examples and scratch artifacts outside the default full gate
 
 ## Infer Tool
 
