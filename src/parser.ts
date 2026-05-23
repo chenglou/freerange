@@ -828,7 +828,7 @@ function quotedStringText(text: string): string | null {
 }
 
 export function findTopLevelColon(text: string): {left: string; right: string} | null {
-  const result = scanTopLevel(text, (source, position) => source[position] === ':' ? ':' : null)
+  const result = scanTopLevel(text, kind => kind === ts.SyntaxKind.ColonToken ? ':' : null)
   if (result == null) return null
   const left = text.slice(0, result.position).trim()
   const right = text.slice(result.position + 1).trim()
@@ -836,13 +836,20 @@ export function findTopLevelColon(text: string): {left: string; right: string} |
 }
 
 export function findTopLevelComparison(text: string): {left: string; op: ComparisonOperator; right: string} | null {
-  const result = scanTopLevel(text, (source, position) => {
-    for (const op of ['==', '>=', '<=', '>', '<'] as const) {
-      if (!source.startsWith(op, position)) continue
-      if (op === '<' && source[position - 1] === '.') continue
-      return op
+  const result = scanTopLevel<ComparisonOperator>(text, (kind, position) => {
+    switch (kind) {
+      case ts.SyntaxKind.EqualsEqualsToken: return '=='
+      case ts.SyntaxKind.LessThanEqualsToken: return '<='
+      case ts.SyntaxKind.GreaterThanToken:
+        // The scanner refuses to combine `>` with the next char (generic-close ambiguity), so check
+        // the source for a trailing `=` ourselves to recover `>=`.
+        return text[position + 1] === '=' ? '>=' : '>'
+      case ts.SyntaxKind.LessThanToken:
+        // Skip the `<` of a `..<` range upper bound. Range syntax isn't valid TypeScript,
+        // so the scanner has no notion of `..<` — peek the source instead.
+        return text[position - 1] === '.' ? null : '<'
+      default: return null
     }
-    return null
   })
   if (result == null) return null
   const left = text.slice(0, result.position).trim()
@@ -850,32 +857,34 @@ export function findTopLevelComparison(text: string): {left: string; op: Compari
   return left.length === 0 || right.length === 0 ? null : {left, op: result.token, right}
 }
 
-export function scanTopLevel<T extends string>(text: string, visit: (source: string, position: number) => T | null): {position: number; token: T} | null {
+// Yields tokens at brace/bracket/paren depth zero (TypeScript's scanner handles strings, templates,
+// and regex for us — none of those interiors yield tokens here).
+function* topLevelTokens(text: string): Generator<{kind: ts.SyntaxKind; position: number}> {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, /*skipTrivia*/ true)
+  scanner.setText(text)
   let parenDepth = 0
   let bracketDepth = 0
   let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  for (let index = 0; index < text.length; index++) {
-    const char = text[index]
-    if (quote != null) {
-      if (char === '\\') index++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      const token = visit(text, index)
-      if (token != null) return {position: index, token}
-    }
+  while (true) {
+    const kind = scanner.scan()
+    if (kind === ts.SyntaxKind.EndOfFileToken) return
+    if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) yield {kind, position: scanner.getTokenStart()}
+    if (kind === ts.SyntaxKind.OpenParenToken) parenDepth++
+    else if (kind === ts.SyntaxKind.CloseParenToken) parenDepth--
+    else if (kind === ts.SyntaxKind.OpenBracketToken) bracketDepth++
+    else if (kind === ts.SyntaxKind.CloseBracketToken) bracketDepth--
+    else if (kind === ts.SyntaxKind.OpenBraceToken) braceDepth++
+    else if (kind === ts.SyntaxKind.CloseBraceToken) braceDepth--
+  }
+}
+
+export function scanTopLevel<T extends string>(
+  text: string,
+  visit: (kind: ts.SyntaxKind, position: number) => T | null,
+): {position: number; token: T} | null {
+  for (const {kind, position} of topLevelTokens(text)) {
+    const token = visit(kind, position)
+    if (token != null) return {position, token}
   }
   return null
 }
@@ -952,34 +961,13 @@ function finiteValuesFromRangeCases(cases: FitRangeCase[]): number[] | null {
 function splitTopLevelAlternatives(text: string): string[] | null {
   const parts: string[] = []
   let start = 0
-  let parenDepth = 0
-  let bracketDepth = 0
-  let braceDepth = 0
-  let quote: '"' | "'" | '`' | null = null
-  for (let i = 0; i < text.length; i++) {
-    const char = text[i]
-    if (quote != null) {
-      if (char === '\\') i++
-      else if (char === quote) quote = null
-      continue
-    }
-    if (char === '"' || char === "'" || char === '`') {
-      quote = char
-      continue
-    }
-    if (char === '(') parenDepth++
-    else if (char === ')') parenDepth--
-    else if (char === '[') bracketDepth++
-    else if (char === ']') bracketDepth--
-    else if (char === '{') braceDepth++
-    else if (char === '}') braceDepth--
-    else if (char === '|' && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      if (text[i - 1] === '|' || text[i + 1] === '|') return null
-      const part = text.slice(start, i).trim()
-      if (part.length === 0) return null
-      parts.push(part)
-      start = i + 1
-    }
+  for (const {kind, position} of topLevelTokens(text)) {
+    if (kind === ts.SyntaxKind.BarBarToken) return null
+    if (kind !== ts.SyntaxKind.BarToken) continue
+    const part = text.slice(start, position).trim()
+    if (part.length === 0) return null
+    parts.push(part)
+    start = position + 1
   }
   if (parts.length === 0) return null
   const last = text.slice(start).trim()
