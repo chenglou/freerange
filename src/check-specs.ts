@@ -80,25 +80,10 @@ type WildcardUse =
   | {kind: 'one'; collection: string}
   | {kind: 'unsupported'; reason: string}
 
-export type CheckSpecProof = {
+type CheckSpecProof = {
   check: FitCheck
   step: FitProofStep
   usedFacts: string[]
-}
-
-export function verifyCheckSpec(
-  file: string,
-  program: Program,
-  functionName: string,
-  baseEnv: Map<string, Value>,
-  result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
-  checks: FitCheck[],
-  assumptions: EvalContext['assumptions'],
-  contractCache: Map<string, FunctionContractProof>,
-  hooks: CheckSpecHooks,
-): FitCheck {
-  return verifyCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, hooks).check
 }
 
 export function verifyCheckSpecWithProof(
