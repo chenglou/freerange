@@ -1,13 +1,29 @@
-## Todo Ideas
+## Features Under Consideration
 
--. Tighten input honesty where reports stay obvious. `given` contradiction checks already catch empty ranges, direct range contradictions, opposing linear comparison bounds, short chained contradictions, and obvious range/comparison chains. Widen this only when the failure can name the bad input fact plainly.
-- Keep helper/import report lines precise. Reports should say where a fact came from: input assumption, loop `@fit`, source inference, branch inference, checked helper contract, or checked imported contract. Missing facts should name the smaller obligation when possible, e.g. `scale >= 0` or `count > 0`, not only the whole failed comparison.
-- Turn scalar accumulators into reusable internal measures. Keep improving source inference for totals, guarded counts, extrema, and cursor updates when they feed later comparisons and reports cleanly. Do this as source inference, not public folds.
-- Open-ended range spelling such as `int 1..` or `0..`. Keep `Infinity` until inline annotations are common enough that the visual noise matters.
-- Public views: e.g. `view rows as spans(start: .top, size: .height)`
-- Conditional helper contracts. Useful, but not just nicer comment placement.
-- `sameLength` as a primitive. Append and running-sum inference often prove length directly.
-- Exhaustive integer sweeps.
-- public aggregate syntax, public callback contracts, or conditional postconditions.
-- atoms: nondecreasing, partitions, sourceOrder, sameSource
-- Finish remaining `Math.*` built-ins except `Math.random`: interval-aware `Math.sin/cos/tan/cosh/atan2`, `Math.hypot`, and `Math.sumPrecise`. Define the range rule first; don't add one-off call cases.
+- **Pairwise non-overlap**: `for all i ≠ j, rects don't overlap`. The defining proof for "agents don't need a browser" — forces the cross-index quantifier primitive.
+- **At most N visible boxes pass the `if`**: counting bound on the render loop's visible set. Smaller than pairwise non-overlap, demonstrates a "CSS can't do this" claim.
+- **"3 items don't fit vertically"** in the general form. Different from the simple-N case that works today; needs a cross-subset claim.
+- **Visibility predicate equivalence**: prove an inline overlap check equals the canonical `rectsIntersect` — would let the analyzer trust user-written predicates.
+- **Existentials**: `there exists i such that ...`.
+- **Cross-collection indices**: comparing items across two arrays.
+- **Views**: `view rows as spans(start: .top, size: .height)`. Postponed pending more thought on the syntax.
+- **Annotate the actual photo gallery** with the contracts the project goal demands.
+
+## Smaller Adds
+
+- Open-ended range spellings like `int 1..` and `0..`. Hold off until inline annotations are common enough that the `Infinity` noise hurts.
+- `sameLength` as a built-in. Append and running-sum inference often prove length directly already.
+- Conditional helper contracts — useful only if it's more than nicer comment placement.
+- Finish remaining `Math.*` built-ins except `Math.random`: interval-aware `Math.sin/cos/tan/cosh/atan2`, `Math.hypot`, `Math.sumPrecise`. Write the range rule once, not per call.
+
+## Engine Work
+
+- Continue improving source inference for totals, guarded counts, min/max accumulators, and cursor updates when those feed later comparisons or reports more cleanly. Source inference, not public folds.
+- Exhaustive integer sweeps for the small fully-bounded comparison cases (probably useful for the cross-index quantifier later).
+- `ts.createScanner`-based `@fit` lowering. Would replace the bespoke char-walkers in `src/parser.ts` with TS's scanner. Marginal cost-benefit today; revisit when something else makes us touch the parser.
+- Segmented stack field-name generalization beyond `top`/`height`/`bottom`. Likely waits for views.
+
+## Maintenance
+
+- Reject the obvious bad `given` lines early (empty ranges, direct contradictions, short linear chains) before proof gets to run on an empty input set. Widen only when the failure can plainly name the bad input.
+- Keep report lines naming where each fact came from: input assumption, loop `@fit`, source inference, branch inference, checked helper, checked imported. Missing pieces should name the smaller relation when possible (`scale >= 0`, `count > 0`), not the whole failed comparison.

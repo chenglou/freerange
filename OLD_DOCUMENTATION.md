@@ -1,30 +1,23 @@
 # Old Documentation Notes
 
-`DOCUMENTATION.md` is the user-facing source of truth. This file keeps older details that have not been folded into the main docs yet, mostly adoption advice, support boundaries, and longer examples.
+Salvage pile. Bits to pluck into `DOCUMENTATION.md` on the next pass. Each section here is something the main doc currently doesn't cover.
 
-## Adoption
-
-When adding Freerange to existing code, start with code that is already trying to be pure: sizing helpers, layout model functions, hit-testing helpers, row builders, scroll math, and small imported math utilities.
+## Where To Start
 
 Good first targets:
 
 - a helper that clamps or centers a value
-- a function returning `{width, height}`, `{rows, bottom}`, or `{items, contentHeight}`
+- a function returning `{width, height}` or `{rows, bottom}`
 - a loop that pushes one output item per input item
 - a `map` that preserves length
-- a helper used by several layout functions
 
 Bad first targets:
 
-- app event handlers with many side effects
-- string parsers, markdown walkers, and large switches
-- a giant function where the useful proof boundary should be a helper
+- event handlers with side effects
+- string parsers, markdown walkers, large switches
+- huge functions where the real proof boundary should be a smaller helper
 
-Adoption pass:
-
-Start from what the checker already knows. Add input domains the source cannot prove: viewport ranges, item dimensions, index bounds, positive counts, and non-negative gaps. Prefer facts that would catch real mistakes: preserved length, non-negative sizes, bounds inside a parent, monotone positions, and final extents. If the code shape is unsupported, do not contort the whole function. Extract a small pure helper or leave the function alone for now. When a proof stops, decide which bucket it belongs to: missing input fact, unsupported code shape, helper boundary needing a contract, or a real proof gap.
-
-The goal is not to annotate everything. The goal is to make important UI code harder for an agent to silently break.
+Don't annotate everything. Annotate the layout math an agent could silently break.
 
 ## Class Members
 
@@ -32,10 +25,7 @@ For instance methods and getters, `this` is an input root:
 
 ```ts
 class Rect {
-  constructor(
-    public top: number,
-    public height: number,
-  ) {}
+  constructor(public top: number, public height: number) {}
 
   /** @fit
    * given this.top: 0..1000
@@ -48,80 +38,59 @@ class Rect {
 }
 ```
 
-Same-file calls like `rect.bottom` and `rect.area()` use the checked class-member contract too. The receiver becomes `this`, so a getter that says `given this.height: 0..1000` makes the caller prove `rect.height: 0..1000`.
+Same-file calls like `rect.bottom` and `rect.area()` reuse the checked contract. The receiver becomes `this`, so a getter saying `given this.height: 0..1000` makes the caller prove `rect.height: 0..1000`.
 
 ## What Gets Checked
 
-Freerange's proof engine starts from annotations, not from the whole file. The full proof pass also checks places that call annotated helpers, so a helper contract is checked both where it is written and where it is used. The quieter local pass skips that broader helper-use scan.
+Two kinds of `@fit` lines, with different jobs:
 
-- TypeScript syntax errors stop checking before proof starts. Freerange prints the TypeScript diagnostic code and does not trust parse recovery.
-- `given ...` and param `// @fit ...` are boundary facts. They are checked where annotated helpers are called and become assumptions inside the function, but they do not trigger body proof on their own.
-- `return...`, bare comparisons, and atoms are function-level claims. They make Freerange evaluate enough of the body to prove the requested facts.
-- Local, top-level variable, object-field, and return `// @fit ...` comments are targeted claims. Freerange proves that value and reports helper preconditions needed for that proof.
-- Loop `@fit` blocks are targeted loop claims. Loop specs name locals directly; there is no `return` inside a loop.
-- Helper preconditions are reported when the helper call is inside the value being proved, and the full proof pass also scans supported calls to annotated helpers inside supported function bodies and top-level executable statements. If the call cannot satisfy a `given`, the report separates the helper requirement, what the caller passed, and the caller-side missing fact, such as `missing: cols - w >= 0`. If an earlier unclaimed local stores a helper return, Freerange may still use the proven helper summary later, including returned ranges and returned-field comparisons, but only when that call's preconditions prove silently. Missing preconditions prevent the summary.
+- `given ...` and param `// @fit ...` are **input facts**. They are checked where the function is called, then assumed inside.
+- `return ...`, bare relations, and built-in calls like `nondecreasing(...)` are **checks**. They make Freerange interpret enough of the body to prove the requested thing.
 
-Freerange does not prove arbitrary unannotated behavior. A call like `unannotatedHelper(4, 3, 2)` has no contract to check. A call to an annotated helper, such as `clamp(4, 3, 2)`, is checked by the full proof pass; in the quieter local pass it only produces a report when it is inside a function or inline value that Freerange is proving. This is enough to check a quick helper probe:
+Local, top-level, field, and return `// @fit ...` are local checks. The attached value is what gets proven.
 
-```ts
-const probe = clamp(4, 2, 3) // @fit 2
+Loop `@fit` blocks are loop checks. They name locals directly; no `return` inside a loop.
+
+Helper preconditions get reported separately. If a helper says `given min <= max` and the caller can't prove it, the report distinguishes the helper requirement, what the caller passed, and the caller-side missing relation, e.g. `missing: cols - w >= 0`.
+
+A call like `unannotatedHelper(4, 3, 2)` has no contract to check. A call like `clamp(4, 3, 2)` does.
+
+## Reading Reports
+
+Four statuses:
+
+- `pass` — proven
+- `fail` — proven false
+- `unknown` — not proven, but not proven false either. Usually means the known facts still admit good and bad cases, or the source shape isn't supported, or an input fact is missing.
+- `requires` — a helper call needs a precondition the caller hasn't proven
+
+A useful report names where each fact came from:
+
+```txt
+known:
+  assumed from input: given width: 0..1000
+  inferred from code: rows[].index >= 0
+  inferred from branch: width - 320 <= 0
+  checked imported contract: layout-math.ts#clampWidth: return: 0..320
 ```
 
-So this is only a boundary contract:
+`given` facts are promises. Code, branch, and imported facts are earned.
 
-```ts
-function helper(
-  width: number, // @fit 320..2000
-) {
-  return otherHelper(width)
-}
-```
+## Inline Local Checks
 
-And this asks for proof:
-
-```ts
-/** @fit
- * return: 0..100
- */
-function helper(
-  width: number, // @fit 320..2000
-) {
-  return otherHelper(width)
-}
-```
-
-## Local Checks
-
-When a fact belongs to one local value, keep it near that value:
+Keep the check next to the value:
 
 ```ts
 function hitIndex(pointer: number, cellSize: number) {
-  // @fit int 0..100
-  const index = Math.floor(pointer / cellSize)
+  const index = Math.floor(pointer / cellSize) // @fit int 0..100
   const clamped = Math.min(index, 100) // @fit int 0..100
   return clamped
 }
 ```
 
-On locals, object fields, and returns, inline `@fit` is shorthand for the value it is attached to. A range checks the attached value's range. A leading comparison operator checks the attached value against the right side:
+On params, the same syntax means an input `given`. On locals, fields, and returns, it means a check. A range like `// @fit 0..100` checks the attached value's range. A leading operator like `// @fit <= maxWidth` checks the attached value against the right side.
 
-```ts
-const index = focused - step // @fit >= 0
-const capped = Math.min(width, maxWidth) // @fit <= maxWidth
-
-return {
-  width: container - padding * 2, // @fit 0..1200
-  targetIndex: focused + step, // @fit < items.length
-  rows: {
-    count: rows.length, // @fit int 0..100
-  },
-}
-```
-
-There it is a check, not an input `given`. On params, the same small syntax means an input `given`: `// @fit 0..100` becomes `given param: 0..100`, and `// @fit >= min` becomes `given param >= min`. Attached inline facts use line comments: either a leading `// @fit ...` line or a trailing `// @fit ...` side comment. Block comments are only for function, loop, and type contract blocks; use `// @fit ...` when the fact sits beside a value, param, field, or return. Object-field inline checks support simple identifier fields and nested object literals. Computed keys, methods, accessors, and spreads do not grow special annotation behavior.
-
-Required fields in source-backed `type` and `interface` declarations can carry
-the same small inline comments:
+## Type-Field Contracts
 
 ```ts
 /** @fit
@@ -133,456 +102,38 @@ type Spring = {
   k: number // @fit > 0
   b: number // @fit > 0
 }
-
-/** @fit
- * rows[].bottom >= rows[].top
- */
-type RowStack = {
-  rows: {
-    top: number
-    bottom: number
-    height: number // @fit 0..40
-  }[]
-}
 ```
 
-These are reusable type-field contracts. A simple param typed as `Spring` receives `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, a local `const spring: Spring = ...`, or a `satisfies Spring` return must prove those facts from source. The type can live in the same file or in an imported local source file, including type-only imports and namespace-qualified type references. Freerange still does not nominally tag unannotated objects: `const spring = {k: 290, b: 30}` just has ordinary object facts until it reaches an explicit typed boundary.
+A param typed `Spring` arrives with `given spring.k > 0`, `given spring.b > 0`, and `given spring.k > spring.b`. A function returning `Spring`, or a local typed `Spring`, must prove those.
 
-Type block facts can name nested array paths from the top of the type, like `rows[].bottom >= rows[].top`. Shorthand comments attached to a field still talk about that field: `height: number // @fit 0..40` inside `rows: {...}[]` becomes `rows[].height: 0..40`. Cross-scope names and optional-field annotations are reported as `unknown` rather than guessed. Optional fields are intentionally conservative for now because annotating presence-dependent facts needs a separate "if present" model.
+Type contracts can name nested array paths: `rows[].bottom >= rows[].top`. Shorthand comments on fields inside `rows: {...}[]` become `rows[].height: 0..40`. Optional fields stay conservative on purpose: presence-dependent contracts need a separate "if present" model.
 
-Branch-local facts use ordinary TypeScript branches. Put the fact on the value made inside that branch; Freerange carries the `if` or ternary condition while checking it:
+## Branch-Local Facts
+
+Put the check on the value made inside the branch:
 
 ```ts
 if (focused > 0) return focused - 1 // @fit >= 0
 return focused // @fit == 0
-
-return focused > 0
-  ? {
-    targetIndex: focused - 1, // @fit >= 0
-  }
-  : {
-    targetIndex: focused, // @fit == 0
-  }
 ```
 
-Function-level `return` facts still mean every return after the branches are joined.
-When branches produce distinct concrete values, the joined value can stay a small
-finite set:
+Function-level `return` facts still mean every return after branches join.
 
-```ts
-/** @fit
- * return: 0 | 100
- */
-function tabOffset(isPinned: boolean) {
-  return isPinned ? 0 : 100
-}
-```
+Repeated `let` reassignments inside `if` keep correlated values. If one branch gives `x = 1, y = 10` and the other gives `x = 2, y = 20`, `x + y` later is `11 | 22`, not the invented cross-product `12 | 21`.
 
-Finite TypeScript literal domains also narrow through ordinary branches. This is
-useful for layout code that has two named modes but one shared helper:
+Freerange keeps up to 8 reachable branch states. Past that, it keeps facts identical in every branch, forgets facts that differ, and reports the state-partition budget. Checks needing the forgotten facts become `unknown`.
 
-```ts
-type ColumnKind = 'ordered' | 'inverted'
+Guard branches that `throw` are treated as exits. Code after the `if` keeps the surviving path's facts.
 
-function thresholds(kind: ColumnKind, x: number) {
-  if (kind === 'ordered') {
-    return {y: x + 100, u: x + 300}
-  }
-  return {y: x + 300, u: x + 100}
-}
-```
+## Assignment And Mutation
 
-Freerange understands real finite TS unions of string literals and booleans, and
-it can narrow object discriminants such as `spec.kind` through `if`, ternary, and
-small `switch` branches. Broad `string`, string operations, parser-style
-switches, and arbitrary semantic predicates stay opaque.
+Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot. Unsupported `while` / `do while` get the same treatment when the condition is side-effect-free and the body only mutates clear local roots.
 
-Exact-operand ternaries written as hand-rolled min/max also keep their branch facts:
+## Comparisons Compose
 
-```ts
-const capped = width < max ? width : max // like Math.min(width, max)
-const raised = height < min ? min : height // like Math.max(height, min)
-```
+If source or checked helper contracts give `a <= b` and `b <= c`, Freerange uses that to prove `a <= c`. Strict checks still need a strict edge somewhere in the chain.
 
-Simple side-effecting branches can fall through too. Freerange keeps the branch
-states separate while it evaluates later statements, then reports the joined
-facts:
-
-```ts
-/** @fit
- * given width: 0..100
- * return: 0..100
- */
-function pickWidth(width: number) {
-  let chosen = 0
-  if (width > 40) {
-    chosen = width
-  }
-  return chosen
-}
-```
-
-Those joined branch cases can feed later branches. A normal handwritten clamp can
-therefore use assignments instead of expression-shaped `Math.min` / `Math.max`:
-
-```ts
-/** @fit
- * given max >= min
- * return >= min
- * return <= max
- */
-function clamp(value: number, min: number, max: number) {
-  let next = value
-  if (next < min) next = min
-  if (next > max) next = max
-  return next
-}
-```
-
-Keeping whole branch states also preserves correlated locals. If one branch makes
-`x = 1, y = 10` and the other makes `x = 2, y = 20`, a later `x + y` has the two
-real outcomes `11 | 22`, not the invented cross-product `12 | 21`. Repeated
-numeric ternaries with contradictory comparison facts get the same pruning.
-Repeated boolean ternaries are still value-local; use an `if` branch when that
-correlation is the fact you care about.
-
-Freerange keeps up to 8 reachable straight-line branch states. If code needs
-more than that, Freerange keeps facts that are identical in every branch, forgets
-facts that vary by branch, and records a state-partition budget message. Checks
-that need the forgotten facts become `unknown` instead of passing from a widened
-summary.
-
-Guard branches that throw are treated as exits. The code after the `if` keeps the
-facts from the surviving path:
-
-```ts
-/** @fit
- * given step: -10..10
- * return > 0
- */
-function positiveStep(step: number) {
-  if (step <= 0) throw new Error('step must be positive')
-  return step
-}
-```
-
-Assignments are conservative. Plain local assignment keeps the assigned value. Property/index assignment and unsupported scalar `+=` forget the changed root, so unrelated facts can still prove while stale facts about the mutated value cannot. Unsupported `while` / `do while` loops get the same treatment when their condition is side-effect-free and the body only mutates clear local roots.
-
-## Reading Results
-
-Proof reports use four statuses:
-
-- `pass`: proven.
-- `fail`: proven false.
-- `unknown`: not proven, but also not proven false.
-- `requires`: a helper call needs a callee precondition that the caller has not proven.
-
-`unknown` is not a soft pass. It usually means the known facts still include both good and bad cases, the source shape is not supported yet, or the function needs another input fact.
-If a `given` names something outside its contract scope, Freerange reports that root as not found and may suggest a nearby input or supported top-level constant.
-
-A useful report says where facts came from:
-
-```txt
-known:
-  assumed from input: given width: 0..1000
-  inferred from code: rows[].index >= 0
-  inferred from branch: width - 320 <= 0
-  checked imported contract: layout-math.ts#clampWidth: return: 0..320
-```
-
-That distinction matters. Facts from `given` are promises. Facts from code, branch splits, and imported contracts are earned from source.
-
-## Input Facts
-
-Use `given` for the input domain:
-
-```ts
-/** @fit
- * given containee: 0..1000
- * given container: 0..1000
- * given container >= containee
- * return >= 0
- */
-function centeredOffset(containee: number, container: number) {
-  return (container - containee) / 2
-}
-```
-
-Top-level `given` can name function parameters and top-level numeric constants, including named imported numeric constants from local source. It cannot name `return`, locals created inside the function, or mutable values produced while the function runs. Those facts need to be proven from source.
-
-Range `given` lines name one input path:
-
-```ts
-given width: 0..1000
-given item.height: 0..40
-given items[].height: 0..40
-given extent[1][0]: 0..1000
-```
-
-Comparison `given` lines can use simple arithmetic over input paths:
-
-```ts
-given container >= containee + padding
-given index < items.length
-given child.width <= extent[1][0] - extent[0][0]
-```
-
-Fixed tuple/array slots like `extent[1][0]` are input paths. Dynamic reads like `items[index]` are source expressions and need the index bounds proven from code. `given` lines cannot call methods, index arrays by a local index, or put derived expressions on the range side:
-
-```ts
-// Not accepted as input facts.
-given width + 1: 0..10
-given items[index] >= 0
-given width.toString() == 10
-```
-
-Freerange also rejects the obvious impossible inputs:
-
-```ts
-/** @fit
- * given width: 500..400
- */
-function impossible(width: number) {
-  return width
-}
-
-/** @fit
- * given width >= 100
- * given width <= 50
- */
-function impossibleComparison(width: number) {
-  return width
-}
-
-/** @fit
- * given left >= middle
- * given middle >= right
- * given right > left
- */
-function impossibleChain(left: number, middle: number, right: number) {
-  return {left, middle, right}
-}
-
-/** @fit
- * given left >= middle
- * given middle >= right
- * given right: 20..30
- * given left: 0..10
- */
-function impossibleRangeChain(left: number, middle: number, right: number) {
-  return {left, middle, right}
-}
-```
-
-Loop-level `given` works the same way, but is assumed from that point in the function forward.
-
-## Ranges
-
-Lower-exclusive and open-ended range spellings are not part of the language right now. Use a comparison when that is the clearer fact:
-
-```ts
-given scale > 0
-return > 0
-```
-
-Nested array paths are fine when one collection is being discussed:
-
-```ts
-/** @fit
- * given sections[].rows[].height: 0..40
- * given maxHeight: 40..100
- * return.sections[].rows[].height <= maxHeight
- */
-```
-
-Anonymous `[]` does not guess what two collection sides mean:
-
-```ts
-// Not supported yet.
-rows[].top <= boxes[].bottom
-```
-
-That could mean same index, all pairs, visible pairs, or something else. The syntax should say that before the checker accepts it.
-
-The same collection can appear on both sides. That means every item in that
-collection must satisfy the relation:
-
-```ts
-/** @fit
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- */
-```
-
-So `[]` stays the anonymous one-collection shorthand.
-
-When you really mean same index, use a bound index label:
-
-```ts
-/** @fit
- * given items.length: int 1..50
- * given items[].height: 0..40
- * return.rows.length == items.length
- * return.rows[$i].height == items[$i].height
- */
-function sameIndexRows(items: {height: number}[]) {
-  const rows = items.map(item => ({height: item.height}))
-  return {rows}
-}
-```
-
-Reusing `$i` means the compared collections must have matching lengths. This is
-not a TypeScript variable and it is not a numeric ghost parameter; it only binds
-array positions inside the spec.
-
-The first adjacent form is intentionally tiny. It can prove monotone neighboring
-checks from an inferred `nondecreasing` row fact:
-
-```ts
-/** @fit
- * given items.length: int 1..50
- * given items[].height: 0..40
- * return.rows[$i].top <= return.rows[$i + 1].top
- */
-function monotoneRows(items: {height: number}[]) {
-  const rows = []
-  let y = 0
-  for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height
-  }
-  return {rows}
-}
-```
-
-It can also consume an exact adjacent row relation when a supported loop proves
-one:
-
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * given gap: 0..10
- * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
- */
-function spacedRows(items: {height: number}[], gap: number) {
-  const rows = []
-  let nextRowTop = 0
-  let rowHeight = 0
-  for (let i = 0; i < items.length; i++) {
-    rowHeight = Math.max(rowHeight, items[i]!.height)
-    if (i % 3 === 2 || i === items.length - 1) {
-      const top = nextRowTop
-      const bottom = top + rowHeight
-      rows.push({top, height: rowHeight, bottom})
-      nextRowTop = bottom + gap
-      rowHeight = 0
-    }
-  }
-  return {rows}
-}
-```
-
-This does not replace the named atoms. Prefer `nondecreasing(rows.top)` and
-`spaced(rows, gap)` when those names express the intent better. Labels are the
-escape hatch for specific red lines that do not deserve a public atom.
-
-The adjacent path can be nested. If a loop pushes rows shaped like
-`{rowRect: {top, height}}`, Freerange can prove
-`nondecreasing(rows.rowRect.top)` and exact neighboring `rowRect.top` facts.
-The pathless `spaced(rows, gap)`, `lastEnd(rows)`, and `extentEnd(rows, top)`
-remain top-level row shorthands until views earn a real syntax.
-
-## Comparisons
-
-```ts
-/** @fit
- * given container >= content
- * given index < items.length
- * return.left == (container - content) / 2
- * return.right > return.left
- */
-```
-
-Supported operators:
-
-```ts
-== >= <= > <
-```
-
-Most comparisons are numeric. One non-numeric equality is supported because it falls out of normal source shape: the exact same object or array expression can equal itself through the returned structure.
-
-```ts
-/** @fit
- * return.rows == input.rows
- */
-function carryRows(input: {rows: {height: number}[]}) {
-  return {rows: input.rows}
-}
-```
-
-Freerange does not compare array contents or object fields recursively for equality. It only proves the same source expression.
-
-The checker carries small linear facts from ranges and comparisons:
-
-```ts
-/** @fit
- * given content: 0..1000
- * given padding: 0..100
- * given width: 0..1200
- * given width >= content + padding
- * return >= 0
- */
-function remaining(width: number, content: number) {
-  return width - content
-}
-```
-
-It is intentionally not a full algebra system. It proves the common layout slack first.
-
-## Math
-
-Supported arithmetic:
-
-```ts
-+ - * / % **
-```
-
-Division needs a divisor range that excludes zero. `%` is supported for non-negative values and positive divisors. `**` is currently useful for non-negative squares and constant bases.
-
-Supported `Math` calls:
-
-```ts
-Math.floor
-Math.ceil
-Math.round
-Math.trunc
-Math.abs
-Math.sqrt
-Math.sign
-Math.min
-Math.max
-```
-
-Some layout facts are built in because they show up everywhere:
-
-```ts
-Math.floor(x) <= x
-Math.ceil(x) >= x
-Math.floor(a) <= Math.floor(b) // when a <= b
-Math.ceil(a) <= Math.ceil(b) // when a <= b
-Math.ceil(total / count) * count >= total // when count > 0
-Math.floor(pointer / cellSize) < count // when cellSize > 0 and pointer < count * cellSize
-Math.floor(y / cell) * countX + Math.floor(x / cell) < countX * countY // when both coordinates are inside a positive integer grid
-index % count < count
-```
-
-Comparison facts compose transitively. If source or checked helper contracts give
-`a <= b` and `b <= c`, Freerange can use that to prove `a <= c`; strict checks
-still need a strict edge somewhere in the chain.
-
-Shared factors also use the sign Freerange can prove. A non-negative factor
-preserves non-strict order, a positive factor can be cancelled, and a negative
-factor flips order:
+Shared factors use the sign Freerange can prove. Non-negative factor preserves non-strict order; positive factor can be cancelled; negative factor flips order:
 
 ```ts
 content <= available
@@ -595,176 +146,24 @@ content <= available
 // proves available * scale <= content * scale when scale < 0
 ```
 
-`Math.min`, `Math.max`, and `Math.sign` keep the small branch facts they introduce:
+## Math Built-Ins
 
 ```ts
-/** @fit
- * given width: 0..1000
- * return.overflow >= 0
- */
-function overflow(width: number) {
-  const capped = Math.min(width, 320)
-  return {overflow: width - capped}
-}
+Math.floor(x) <= x
+Math.ceil(x) >= x
+Math.floor(a) <= Math.floor(b)  // when a <= b
+Math.ceil(a) <= Math.ceil(b)    // when a <= b
+Math.ceil(total / count) * count >= total  // when count > 0
+index % count < count
 ```
 
-That works because either `capped == width`, or `capped == 320` and `width >= 320`. Freerange also recognizes the exact hand-written ternary form when the branches are the compared operands, such as `width < 320 ? width : 320`. For assignment-style code, it keeps small case splits across later `if` branches, which is enough for ordinary two-branch clamps. It does not treat arbitrary conditionals as min/max.
+`Math.min`, `Math.max`, and `Math.sign` keep small branch facts. `Math.min(width, 320)` means either `capped == width`, or `capped == 320 and width >= 320`. The hand-written form `width < 320 ? width : 320` is recognized as the same thing.
 
-## Helpers
+## Helper Calls
 
-When a checked helper is called, its input facts become things the caller must prove:
+Imported helpers use their exported `@fit` contract as the boundary. Freerange follows named imports, default imports, namespace-qualified calls, and `export *` barrels when TypeScript lands on a local `.ts`/`.tsx`/`.mts`/`.cts` source. It does not inline imported bodies, and it never trusts `.d.ts` as a checked contract.
 
-```ts
-/** @fit
- * given value: 4..14
- * return: 5..15
- */
-function addOne(value: number) {
-  return value + 1
-}
-
-/** @fit
- * given width: 0..10
- * return: 5..15
- */
-function caller(width: number) {
-  return addOne(width + 4)
-}
-```
-
-Same-file helpers can still be read from source. If their own `@fit` contract is proven and the call satisfies its input facts, return facts like `return >= min` and `return <= max` also narrow the caller's local value. Class methods and getters work the same way, with the receiver bound to `this`; this works for same-file classes and imported local-source classes. Freerange keeps the caller's bottomed-out numeric expressions through local aliases and helper parameters, so a local `const max = cols - w` can satisfy a helper's `given min <= max` from `given w <= params.cols`. Reports and inferred facts use those caller-side expressions too: if the helper cannot prove `max >= min`, the caller sees `cols - w >= 0`, not a private helper name. It may use a proven summary even when the helper call was stored in an unannotated local before a later `@fit` check. It does not use the summary when the call preconditions are missing or false.
-
-Tuple-shaped helper contracts work through destructuring too. A checked helper can promise `return.length == 4`, `return[2] >= 0`, and `return[3] >= 0`; a caller can write `const [, , offsetX, offsetY] = center(...)` and keep those slot facts.
-
-Imported helpers use their exported `@fit` contract as the module boundary:
-
-```ts
-// layout-math.ts
-/** @fit
- * given width: 0..1000
- * return: 0..320
- */
-export function clampWidth(width: number) {
-  return Math.min(width, 320)
-}
-
-// card.ts
-import {clampWidth} from './layout-math'
-
-/** @fit
- * given width: 0..1000
- * return: 0..320
- */
-function cardWidth(width: number) {
-  return clampWidth(width)
-}
-```
-
-Freerange follows named imports, default imports, namespace-qualified helper calls, and `export *` source barrels that TypeScript resolves to local `.ts`, `.tsx`, `.mts`, or `.cts` source files. That includes relative imports and `tsconfig` `paths` aliases. If TypeScript resolves a local workspace package to a declaration file, Freerange can use a single-source declaration map to recover the local source file for function helpers. It proves the imported function or class member's own contract from source, then uses that contract at the call site. It can also read named exported top-level `const` literals from those local modules: numbers, strings, booleans, `null`, and plain object/array literals made from the same pieces. Imported type-field contracts are read from local source-backed `type` / `interface` declarations, including type-only imports and namespace-qualified type references. Freerange does not inline imported function bodies, and it never trusts `.d.ts` declarations as checked contracts.
-
-Ordinary top-level `const` bindings of known helpers work too:
-
-```ts
-const {min, max} = Math
-const clampValue = clampWidth
-export default max
-```
-
-Every hop must be statically known: a top-level `const`, import, or export whose final target is a supported `Math` call, a same-file helper, or a local-source imported helper. Mutable helper bindings are not followed.
-
-TypeScript shape is a separate, weaker kind of help. If TypeScript knows an imported type alias, utility type, generic instantiation, property-access call, namespace-imported call, or helper return is an object or array, Freerange can use that structure so paths like `return.rows.length` are meaningful. That does not prove numeric domains by itself. Type-field contracts are the exception because they are checked `@fit` source, not TypeScript shape. An imported helper still needs a checked `@fit` contract before its return can satisfy `return.width: 0..320` or `return.height >= 0`.
-
-Optional and nullable values stay conservative:
-
-```ts
-type MaybeRows = {
-  rows?: {height: number}[]
-}
-
-/** @fit
- * return.rows.length >= 0
- */
-function maybeRows(input: MaybeRows) {
-  return {rows: input.rows}
-}
-```
-
-Freerange reports this as unknown because `rows` may be absent.
-If ordinary TypeScript control flow narrows the property first, Freerange can use
-the narrowed shape at that expression:
-
-```ts
-/** @fit
- * return >= 0
- */
-function guardedRowsLength(input: MaybeRows) {
-  if (input.rows == null) return 0
-  return input.rows.length
-}
-```
-
-The same applies to optional numeric params. A guard that proves the undefined
-side is gone lets normal math use the value:
-
-```ts
-function floorAtZero(max?: number) {
-  if (typeof max !== 'undefined') {
-    return Math.max(max, 0) // @fit >= max
-  }
-  return 0
-}
-```
-
-For the common "use zero when absent" shape, nullish fallback is also numeric
-when both sides are numeric:
-
-```ts
-function safeWidth(dimensions: {width?: number}) {
-  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
-}
-```
-
-Freerange also keeps source facts for a nullable value made by a branch, but only
-after an ordinary null guard proves the present side. The guard can name a local
-or a property path:
-
-```ts
-/** @fit
- * given focused: int 0..50
- * return: int 0..49
- */
-function previousIndex(focused: number) {
-  const previous = focused > 0 ? focused - 1 : null
-  if (previous == null) return 0
-  return previous
-}
-
-/** @fit
- * given focused: int 0..50
- * return: int 0..49
- */
-function previousFromState(focused: number) {
-  const state = {
-    previous: focused > 0 ? {targetIndex: focused - 1} : null,
-  }
-  if (state.previous == null) return 0
-  return state.previous.targetIndex
-}
-```
-
-When an import boundary cannot be used, the report says which bucket it fell into:
-
-```txt
-imported helper contract was not available
-helper: clampWidth from ./layout-math
-reason: resolved to layout-math.ts#clampWidth, but that function has no @fit contract
-
-imported helper contract failed in source before this call could use it
-helper: clampWidth from ./layout-math
-failed check: layout-math.ts:clampWidth: return: 0..320
-```
-
-Explicit named re-export barrels and local source star barrels work too:
+Re-export forms:
 
 ```ts
 export {clampWidth} from './layout-math'
@@ -772,189 +171,131 @@ export {clampWidth as cardClampWidth} from './layout-math'
 export * from './layout-math'
 ```
 
-This is intentionally small: package imports only work when TypeScript lands on local source or a declaration map points back to one local source file. Declaration-only imports without that source map and unchecked summary files stay opaque.
+Top-level rebindings work when every hop is statically known:
+
+```ts
+const {min, max} = Math
+const clampValue = clampWidth
+export default max
+```
+
+When an import boundary can't be used, the report names which case:
+
+```txt
+imported helper contract was not available
+helper: clampWidth from ./layout-math
+reason: resolved to layout-math.ts#clampWidth, but that function has no @fit contract
+```
+
+## Optionals
+
+```ts
+type MaybeRows = { rows?: {height: number}[] }
+
+function maybeRows(input: MaybeRows) {
+  return {rows: input.rows}  // unknown: rows may be absent
+}
+
+function guardedRowsLength(input: MaybeRows) {
+  if (input.rows == null) return 0
+  return input.rows.length  // ok
+}
+```
+
+Same for optional numeric params:
+
+```ts
+function floorAtZero(max?: number) {
+  if (typeof max !== 'undefined') return Math.max(max, 0) // @fit >= max
+  return 0
+}
+
+function safeWidth(d: {width?: number}) {
+  return Math.max(d?.width ?? 0, 0) // @fit >= 0
+}
+```
+
+A nullable made by a branch keeps its source facts after the null guard:
+
+```ts
+function previousIndex(focused: number) {
+  const previous = focused > 0 ? focused - 1 : null
+  if (previous == null) return 0
+  return previous  // int 0..49 when given focused: int 0..50
+}
+```
 
 ## Arrays
 
-Freerange understands the common array facts that layout code tends to need:
+Supported:
 
-```ts
-/** @fit
- * given items.length: int 1..50
- * given items[].height: 0..40
- * given index: int 0..49
- * given index < items.length
- * return: 0..40
- */
-function indexedPerItemField(items: {height: number}[], index: number) {
-  return items[index]!.height
-}
-```
-
-Supported today:
-
-- `items.length`
-- `items[]: 0..400`
-- `items[].height: 0..40`
-- array literal length and summarized item values
-- exact fixed-slot access only for tuple/product-shaped values like `return[2] >= 0`
-- TypeScript-known required fixed tuple slots, including fixed length and per-slot shape
-- optional/rest tuple shapes keep safe length ranges, but do not expose exact per-slot facts
-- local and parameter array destructuring, including skipped tuple slots like `const [, , offsetX] = center`
+- `items.length`, `items[]`, `items[].field`, array literal length
+- tuple/product fixed-slot reads like `tuple[2]`
+- typed tuple slots, including required fixed length and shape; optional/rest stay safe but don't expose per-slot facts
+- destructuring with skipped slots: `const [, , offsetX] = center`
 - `[...items, value]` length
-- length-bearing constructors such as `new Array(count)` and `new Int8Array(count)`, preserving the constructed value's `.length`
-- bounded literal indexing; exact finite index cases like `0 | 2` only read those slots on tuple/product-shaped values
+- length-bearing constructors: `new Array(count)`, `new Int8Array(count)`
 - `items[index]` when `index` is proven integer and `0 <= index < items.length`
-- symbolic reads like `items[focused]` keep the element domain but use the concrete path in reports; local adjacent sequence facts can specialize previous/current and current/next neighborhoods once bounds prove them live
-- `items.at(-k)` for tuple/product-shaped values and constant negative integer `k` when the length is known; dynamic `.at(index)` is not in the static subset yet
-- Same-loop previous-last recurrences are not proven yet. `rows.at(-1)` and `rows[rows.length - 1]` are both kept conservative inside loop summaries so Freerange does not mistake the initial array for the evolving one.
-- `items.map(item => expression)` and `items.map((item, index) => expression)` for length, item fields, and map index facts
-- small block-bodied `items.map(...)` callbacks, including arrow or function-expression callbacks with local `const` bindings, clear mutation statements whose changed roots can be forgotten, side-effect-free return branches, and a final `return`
-- `items.filter(item => predicate)` for same item fields, simple predicate-carried item facts, and `filtered.length <= items.length`
-- map/filter chains preserve the base origin fact, so `items.filter(...).map(...)` is still reported as an order-preserving subset of `items`
-- conditional push length in supported `for...of` and indexed loops, e.g. `rows.length <= items.length`
-- same-index labels in comparisons, e.g. `rows[$i].height == items[$i].height`, when same-index collection lengths can be proven equal
-- adjacent labels over one collection, e.g. `rows[$i].top <= rows[$i + 1].top` and inferred row-spacing relations like `rows[$i + 1].top >= rows[$i].bottom + gap`
+- `items.at(-k)` for tuple/product values with constant negative `k` and known length
+- `items.map(...)` expression bodies and tiny block bodies with `const` locals, side-effect-free `if`/`return`, and a final `return`
+- `items.filter(...)` as an order-preserving subset with same item domain and `filtered.length <= items.length`; expression and one-line `return` block predicates carry true-side facts
+- map/filter chains preserve the base origin fact
 
-Strict branch checks know integer steps. If `focused` is proven integer, `focused > 0` is enough to prove `focused - 1 >= 0`; `focused >= 0` is not. That matters for previous/next indices:
+Mutation is conservative. `reverse()` and `sort()` keep length and item domains but drop row-order facts. `splice()` and indexed assignment make length and item facts unknown.
+
+Strict branch checks know integer steps. If `focused` is proven integer, `focused > 0` proves `focused - 1 >= 0`; `focused >= 0` does not.
+
+## Same-Index And Adjacent Labels
 
 ```ts
-if (focused > 0) return items[focused - 1]!
+return.rows[$i].height == items[$i].height
+return.rows[$i].top <= return.rows[$i + 1].top
+return.rows[$i + 1].top >= return.rows[$i].bottom + gap
 ```
 
-Normal arrays are collections, so Freerange uses their element summary instead
-of unrolling every literal slot through `map`, `filter`, or `for...of`.
-Fixed slots are a tuple/product feature: annotate the value as a tuple, return
-a tuple-typed helper, or use an explicit fixed index path when the proof really
-depends on one position.
+Reusing `$i` means matching positions when lengths are proven equal. `$i + 1` is an adjacent label; it's not a TS variable. `$i + 2` and `$i - 1` aren't supported.
 
-`map` support is deliberately tiny:
+Adjacent labels work when an inferred sequence fact backs them (monotone from `nondecreasing(rows.top)`, exact spacing from a supported segmented loop).
 
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * return.rows.length == items.length
- * return.rows[].height: 0..40
- */
-function mapRows(items: {height: number}[]) {
-  const rows = items.map(item => ({height: item.height}))
-  return {rows}
-}
-```
+## Loops — Scalar Accumulators
 
-The callback must have an item parameter and optional index parameter. Expression bodies work. Tiny block bodies also work when they are local `const` bindings, clear mutations, side-effect-free `if` branches that return, and a final `return`. A clear mutation means Freerange can name the changed root and forget it before continuing. That keeps normal code normal without turning callbacks into a public Freerange language.
-
-Infer output also prints the immediate origin fact for maps, such as
-`return.rows follows items by index`. It is an inferred fact, not a new public
-annotation.
-
-`filter` support is even smaller:
+Running sums:
 
 ```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * return.rows.length <= items.length
- * return.rows[].height: 0..40
- */
-function visibleRows(items: {height: number; visible: boolean}[]) {
-  const rows = items.filter(item => item.visible)
-  return {rows}
-}
-```
-
-Freerange treats this as a subsequence: same item domain, length between zero and the source length. For expression-bodied predicates and one-line `return` block predicates, it carries the true-side item facts onto the filtered element:
-
-```ts
-/** @fit
- * given items[].height: -40..40
- * return.rows[].height > 0
- */
-function positiveRows(items: {height: number}[]) {
-  return {rows: items.filter(item => item.height > 0)}
-}
-```
-
-It still does not prove `rows.length == items.length`, and it does not expose a public callback contract language. Infer output prints this as an order-preserving subset fact.
-
-Array mutation is conservative. `reverse()` and `sort()` keep length and item domains, but drop row-order facts like `nondecreasing`, `spaced`, `lastEnd`, and `extentEnd`. `splice()` and indexed assignment make length and item facts unknown.
-
-## Scalar Loops
-
-Freerange supports narrow accumulator shapes:
-
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * return: 0..2000
- */
 function totalHeight(items: {height: number}[]) {
   let total = 0
-  for (const item of items) {
-    total += item.height
-  }
-  return total
+  for (const item of items) total += item.height
+  return total  // 0..2000 when items[].height: 0..40 and items.length: int 0..50
 }
 ```
 
-The update can also be a direct self-assignment when the added expression does
-not read the accumulator:
+The update can also be self-assignment when the added expression doesn't read the accumulator: `total = total + item.height` or `total = Math.max(item.height, minHeight) + total`.
+
+Guarded totals and counts:
 
 ```ts
-total = total + item.height
-total = Math.max(item.height, minHeight) + total
-```
-
-Guarded totals and counts work too:
-
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * return: 0..2000
- */
 function visibleHeight(items: {height: number; visible: boolean}[]) {
   let total = 0
-  for (const item of items) {
-    if (item.visible) total += item.height
-  }
+  for (const item of items) if (item.visible) total += item.height
   return total
 }
 ```
 
-Simple min/max accumulators work when the assignment keeps the same target on one side:
+Min/max accumulators when the assignment keeps the same target on one side:
 
 ```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].width: 0..80
- * return: 0..80
- */
 function widest(items: {width: number}[]) {
   let maxWidth = 0
-  for (const item of items) {
-    maxWidth = Math.max(maxWidth, item.width)
-  }
+  for (const item of items) maxWidth = Math.max(maxWidth, item.width)
   return maxWidth
 }
 ```
 
-This is useful when the increment or candidate range is known. It is not general reducer support:
+Not general reducer support. `items.reduce(...)`, `total = Math.max(item.height, minHeight)`, and `Math.max(...items.map(...))` aren't proven.
 
-```ts
-items.reduce(...)
-total = Math.max(item.height, minHeight)
-total += Math.max(total, item.height)
-Math.max(...items.map(item => item.width))
-```
+## Loops — Row Stacks
 
-Those should land only when real code needs them, not as public `sum(map(...))` syntax.
-
-## Row Loops
-
-This is the main layout shape today:
+The main layout shape:
 
 ```ts
 /** @fit
@@ -986,112 +327,28 @@ Freerange proves:
 - `rows[].height: 0..40`
 - `nondecreasing(rows.top)` when the cursor increment is non-negative
 - `spaced(rows, gap)` when the cursor advances by `height + gap`
-- `lastEnd(rows) == bottom` when rows are known non-empty
+- `lastEnd(rows) == bottom` when rows are non-empty
 - `extentEnd(rows, top) == bottom` when the source has the same empty fallback
 
-The indexed loop shape is also supported:
+Indexed-loop variant:
 
 ```ts
-/** @fit
- * given items.length: int 1..50
- * given items[].height: 0..40
- * return.rows.length == items.length
- * return.rows[].rowIndex: int 0..<items.length
- */
-function indexedRows(items: {height: number}[]) {
-  const rows = []
-  for (let rowIndex = 0; rowIndex < items.length; rowIndex++) {
-    rows.push({rowIndex, height: items[rowIndex]!.height})
-  }
-  return {rows}
+for (let i = 0; i < items.length; i++) {
+  const item = items[i]!
+  rows.push({top: y, height: item.height})
+  y += item.height
 }
 ```
 
-The loop-index field does not have to be named `index`; Freerange follows the actual pushed field. The body may also bind the current item and advance a simple numeric cursor:
+The loop-index field doesn't have to be named `index`; Freerange follows the actual pushed field.
 
-```ts
-/** @fit
- * given params.items.length: int 1..50
- * given params.items[].height: 0..40
- * given params.top: 0..1000
- * return.rows.length == params.items.length
- * nondecreasing(return.rows.top)
- * lastEnd(return.rows) == return.bottom
- */
-function indexedStackRows(params: {items: {height: number}[]; top: number}) {
-  const rows = []
-  let y = params.top
-  for (let i = 0; i < params.items.length; i++) {
-    const item = params.items[i]!
-    rows.push({top: y, height: item.height})
-    y += item.height
-  }
-  return {rows, bottom: y}
-}
-```
+Conditional push gets a weaker but honest fact: `rows.length <= items.length`. It doesn't claim equal length.
 
-Conditional push gets a weaker, honest fact:
-
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * return.rows.length <= items.length
- * return.rows[].height: 0..40
- */
-function visibleRows(items: {height: number; visible: boolean}[]) {
-  const rows = []
-  for (const item of items) {
-    if (item.visible) rows.push({height: item.height})
-  }
-  return {rows}
-}
-```
-
-The same weaker fact works in the supported indexed loop shape. The guarded block may also update a simple numeric cursor; the honest length fact is still `rows.length <= items.length`.
-
-It does not claim equal length.
-
-Segmented row loops can also prove the row-boundary shape when the guarded block
-pushes one row, advances the next row cursor by `bottom + gap` or the equivalent
-`top + height + gap`, and resets the per-row max:
-
-```ts
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * given top: 0..1000
- * given gap: 0..10
- * return.rows.length <= items.length
- * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- * nondecreasing(return.rows.top)
- * spaced(return.rows, gap)
- */
-function segmentedRows(items: {height: number}[], top: number, gap: number) {
-  const rows = []
-  let nextRowTop = top
-  let rowHeight = 0
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!
-    rowHeight = Math.max(rowHeight, item.height)
-    if (i % 3 === 2 || i === items.length - 1) {
-      const rowTop = nextRowTop
-      rows.push({top: rowTop, height: rowHeight, bottom: rowTop + rowHeight})
-      nextRowTop = rowTop + rowHeight + gap
-      rowHeight = 0
-    }
-  }
-  return {rows}
-}
-```
-
-That still only proves what the source earns. It proves `rows.length <=
-items.length`, not the exact row count or a `ceil(items.length / columns)` fact.
+Segmented row loops can prove row-boundary shape when the guarded block pushes one row, advances the next-row cursor by `bottom + gap` (or `top + height + gap`), and resets the per-row max.
 
 ## Loop Specs
 
-Put `@fit` immediately above a supported loop when the fact belongs to that loop:
+Put `@fit` directly above the loop when the fact belongs there:
 
 ```ts
 function stackRows(items: {height: number}[], top: number, gap: number) {
@@ -1113,76 +370,63 @@ function stackRows(items: {height: number}[], top: number, gap: number) {
 }
 ```
 
-The marker is still `@fit`. Placement decides the scope. Loop specs name locals directly; there is no `return` inside a loop spec.
-
-Loop `given` lines can describe function inputs. They cannot describe loop-built values like `rows` or mutable cursors like `y`.
+Placement decides scope. Loop specs name locals directly; no `return`. Loop `given` can describe function inputs but not loop-built values like `rows` or cursors like `y`.
 
 ## Supported Source
 
-The checker understands a small pure subset:
+Small pure subset:
 
-- function declarations, named `const` arrow/function expressions, and anonymous default-exported function/arrow boundaries
-- immediately-invoked arrow/function expressions, evaluated with their surrounding local bindings
-- class methods and getters, with `this` as an input root for instance members
-- simple named parameters and typed object/array destructuring parameters
-- param inline `// @fit` domains and attached comparisons on simple identifier parameters
-- omitted trailing arguments that use simple default parameter initializers, plus explicit `undefined`/optional arguments falling through to those defaults
-- source-backed type/interface line-comment field contracts on required fields, including nested object and array element fields, and block-comment type-scope contracts on required field paths and sibling relations, applied at simple params, return types, local type annotations, and `satisfies` / `as` expression boundaries
-- obvious TypeScript shapes through a small bounded provider: arrays, readonly arrays, object type literals, local and imported interfaces/type aliases, utility types like `Pick`, generic instantiations, unions, intersections, property-access call shapes, namespace-imported structural call shapes, and helper return shapes
-- finite TypeScript literal domains for string literals and booleans, including discriminant narrowing through ordinary branches
-- top-level `const` literals: numbers, strings, booleans, `null`, and plain object/array literals made from those pieces
-- `const` / `let` locals with initializers, including object and array binding patterns
-- `return expression`, with optional inline range/comparison checks
-- ternaries, including exact-operand min/max forms like `a < b ? a : b`
-- return-style `if` guards, `throw` guards, state-partitioned fall-through `if` / `else` branches, and small finite-literal `switch` branches
-- branch-created and TypeScript-backed nullable values refined by ordinary `== null` / `!= null` guards, `typeof value !== 'undefined'` for optional values, and numeric `??` fallbacks such as `dimensions?.width ?? 0`
-- plain local assignment, plus conservative forgetting for property/index assignment and unsupported scalar `+=`
-- direct same-file function calls, class method calls, and class getter reads
-- named pure calls only; function-valued parameters and arbitrary callbacks are not treated as callees with contracts
-- same-file return type shapes when a helper body is outside the source subset
-- named imports of exported top-level `const` literals, plus named/default/namespace-qualified/star-barrel exported `@fit` functions and imported class methods/getters when TypeScript resolves them to local source or a local declaration map recovers source; top-level `const` helper bindings can point at those same targets
-- TypeScript-known imported object/array shape, without treating it as a checked helper contract; source-backed imported type-field comments are checked as type contracts
-- explicit named re-exports of checked `@fit` functions
-- object literals with normal properties, shorthand properties, and object spread
+- function decls, named `const` arrow/function expressions, anonymous default-exported boundaries
+- immediately-invoked arrow/function with surrounding locals
+- class methods and getters, `this` as input root
+- simple named params, typed object/array destructuring params, param inline `// @fit`
+- default-param fall-through for omitted or `undefined`/optional trailing args
+- source-backed type-field comments on required fields (line and block forms)
+- bounded TS shape: arrays, readonly arrays, object literals, local/imported interfaces and type aliases, `Pick`/etc., generic instantiations, unions, intersections, property-access call shapes
+- finite TS literal domains for string literals and booleans, discriminant narrowing through branches
+- top-level `const` literals of numbers, strings, booleans, `null`, plain object/array
+- `const`/`let` with initializers, destructuring binding
+- `return expression`, with optional inline range/comparison
+- ternaries, including exact-operand min/max forms
+- return-style `if` guards, `throw` guards, state-partitioned fall-through branches, small finite-literal `switch`
+- nullable refinement via `== null`, `!= null`, `typeof !== 'undefined'`, and numeric `??`
+- plain local assignment; conservative forgetting for property/index assignment and unsupported `+=`
+- same-file calls, class method/getter reads
+- named pure calls only; function-valued params and callbacks aren't callees-with-contracts
+- imports of `const` literals and `@fit` functions/methods/getters when TypeScript resolves to local source (relative, `tsconfig` paths, declaration-map recovery)
 - `as` / `satisfies` wrappers
-- array literals, spread, `.length`, summarized element values, bounded indexing, and exact tuple/product-slot indexing
-- length-bearing `new Array(...)` and typed-array constructors when called with one length argument
-- symbolic element reads with concrete path reporting, plus previous/current and current/next specialization for inferred adjacent sequence facts
-- expression-bodied `items.map(...)`, plus tiny block-bodied arrow/function callbacks with local `const` bindings, clear mutation statements, side-effect-free return branches, and `return`; TypeScript can fill structural callback return shape while source still owns the array length
-- expression-bodied `items.filter(...)` as a subsequence summary with same item domain, simple true-side predicate facts, and length no larger than source length
-- composed map/filter origin facts in infer output
-- simple `for...of` scalar running sums with direct or guarded `+=`
-- append-only scalar-array pushes like `rows.push(y)` in a supported loop
-- simple scalar min/max accumulators like `maxWidth = Math.max(maxWidth, item.width)`
-- append-only `for...of` row loops
-- simple indexed `for` loops over `items.length`, including current-item aliases and cursor updates
-- simple numeric-limit indexed loops such as `for (let i = 0; i < limit; i++) values.push(i)`
-- guarded conditional pushes inside supported `for...of` and indexed loops, including simple cursor updates in the guarded block
-- guarded segmented row-boundary pushes that prove `bottom == top + height`, `nondecreasing(rows.top)`, `spaced(rows, gap)`, and exact adjacent row relations
-- same-index labels in comparisons, plus adjacent `$i + 1` comparisons backed by inferred sequence facts
-- shared-factor arithmetic like `a * scale <= b * scale` when the checker can prove the factor sign, including positive cancellation and negative order flipping
-- conservative invalidation for `reverse`, `sort`, `splice`, and indexed assignment
-- conservative skipping for unsupported indexed-style `for`, `while`, and `do while` loops whose conditions and bodies are read-only except for roots Freerange forgets
+- array literals, spread, `.length`, summarized items, bounded indexing, tuple slot reads
+- length-bearing array constructors with one length argument
+- expression-bodied `map` and `filter`, tiny block-bodied callbacks
+- composed map/filter origin facts
+- simple `for...of` running sums with direct or guarded `+=`
+- append-only scalar-array pushes
+- simple min/max accumulators
+- append-only `for...of` and simple indexed `for` loops over `items.length`
+- numeric-limit indexed loops like `for (let i = 0; i < limit; i++)`
+- guarded conditional pushes inside supported loops, including simple cursor updates
+- guarded segmented row-boundary pushes (`bottom == top + height`, `nondecreasing`, `spaced`, exact adjacent relations)
+- same-index labels in comparisons; adjacent `$i + 1` backed by inferred sequence facts
+- shared-factor arithmetic when the factor sign is proven
+- conservative invalidation for `reverse`, `sort`, `splice`, indexed assignment
+- conservative skipping of unsupported loop forms whose conditions and bodies are read-only except for forgettable roots
 
-Anything outside this surface should become `unknown`, not a fake proof.
+Anything outside this should be `unknown`, not a fake pass.
 
 ## Missing On Purpose
 
-Not supported yet:
-
-- published package imports, declaration-only imports without a local source map, or unchecked summary files as checked `@fit` helper contracts.
-- prototype-assigned JavaScript methods, async, generators
-- rest params and destructured default params
-- type-field contracts on optional fields, declaration-only imported types, computed type fields, index signatures, mapped types, generic substitution, and cross-scope relation names
-- general TS control-flow narrowing, overload semantics, and generic value reasoning
-- higher-order call contracts, general closures, or callback reasoning
-- broad strings, string operations, branded types, and semantic narrowing beyond finite literal/object/array shape
-- public lambdas, `forall`, arbitrary folds, prose-as-truth
-- numeric ghost parameters like `0..$n`, all-pairs labels, source/id matching labels, and adjacent formulas not backed by an inferred sequence fact
-- geometry names like `rectInside`, `rectEquals`, `nonOverlapX`, `nonOverlapY`
-- Pretext text facts
+- published package imports, declaration-only imports without a source map, or unchecked summary files as checked `@fit` contracts
+- async, generators, prototype-assigned methods
+- rest params, destructured default params
+- type-field contracts on optional fields, declaration-only imported types, computed fields, index signatures, mapped types, generic substitution, cross-scope relation names
+- general TS control-flow narrowing, overload semantics, generic value reasoning
+- higher-order call contracts, general closures, callback reasoning
+- broad strings, string operations, branded types, semantic narrowing beyond finite literal/object/array shape
+- public lambdas, `forall`, arbitrary folds
+- numeric ghost params like `0..$n`, all-pairs labels, source/id labels, adjacent formulas not backed by an inferred sequence fact
+- geometry names like `rectInside`, `nonOverlapX`
 - table/grid/flex column negotiation
 - general loops
-- general nonlinear arithmetic beyond the small named shapes above
+- nonlinear arithmetic beyond the small named shapes
 
-This list should shrink through source inference first and public syntax second. If ordinary TypeScript already says the thing clearly, Freerange should understand the code instead of asking the user to write a cleverer comment.
+This list shrinks through source inference first and public syntax second.
