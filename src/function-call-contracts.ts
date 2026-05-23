@@ -16,7 +16,7 @@ import type {
 import {
   linearNameForExpression,
   joinValues,
-  mergeProvenance,
+  mergeOrigin,
   numberBranches,
   numberValue,
   unknown,
@@ -86,7 +86,7 @@ import {expressionRootNameDeep} from './source-expressions.ts'
 
 export type CallContractEvaluators = {
   evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value
-  evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, provenance?: string[]): Value
+  evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, origin?: string[]): Value
   proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string}
 }
 
@@ -503,7 +503,7 @@ function summaryIntersectionValue(left: Value, right: Value): Value {
     left.expr ?? right.expr,
     left.linear ?? right.linear,
     null,
-    mergeProvenance(left, right),
+    mergeOrigin(left, right),
   )
 }
 
@@ -531,8 +531,8 @@ function summaryRangeValue(
   source: FunctionContractSource,
   text: string,
 ): NumberValue {
-  const provenance = [checkedContractFact(source, text)]
-  if (current.kind !== 'number') return {...rangeValue, provenance: mergeProvenance(rangeValue, provenance)}
+  const origin = [checkedContractFact(source, text)]
+  if (current.kind !== 'number') return {...rangeValue, origin: mergeOrigin(rangeValue, origin)}
 
   const expr = current.expr ?? rangeValue.expr
   const linear = current.linear ?? (expr == null ? rangeValue.linear : linearVariable(linearNameForExpression(expr)))
@@ -545,7 +545,7 @@ function summaryRangeValue(
         expr,
         linear,
         null,
-        mergeProvenance(current, rangeValue, provenance),
+        mergeOrigin(current, rangeValue, origin),
       ),
       numberBranches(rangeValue).map(branch => ({
         value: numberValue(
@@ -555,7 +555,7 @@ function summaryRangeValue(
           expr,
           linear,
           null,
-          mergeProvenance(current, branch.value, provenance),
+          mergeOrigin(current, branch.value, origin),
         ),
         assumptions: branch.assumptions,
       })),
@@ -568,7 +568,7 @@ function summaryRangeValue(
     expr,
     linear,
     null,
-    mergeProvenance(current, rangeValue, provenance),
+    mergeOrigin(current, rangeValue, origin),
   )
 }
 
@@ -613,7 +613,7 @@ function applySummaryFactToPath(
 ) {
   const current = evaluators.evaluateSpecExpression(path, context)
   if (current.kind !== 'number') return
-  setSummaryPathValue(env, path, numberWithSummaryFact({...current, provenance: mergeProvenance(current, [fact])}, summaryFact))
+  setSummaryPathValue(env, path, numberWithSummaryFact({...current, origin: mergeOrigin(current, [fact])}, summaryFact))
 }
 
 function applySummaryComparisonToPath(
@@ -627,7 +627,7 @@ function applySummaryComparisonToPath(
 ) {
   const current = evaluators.evaluateSpecExpression(path, context)
   if (current.kind !== 'number') return
-  const provenance = mergeProvenance(current, other, [fact])
+  const origin = mergeOrigin(current, other, [fact])
   const withSummaryFact = (value: NumberValue): NumberValue => {
     const summaryFact = comparisonConstraint(value, op, other, fact, 'contract')
     if (summaryFact == null) return value
@@ -636,15 +636,15 @@ function applySummaryComparisonToPath(
 
   switch (op) {
     case '==':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, other.cases, provenance)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, other.cases, origin)))
       return
     case '>=':
     case '>':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, provenance)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, origin)))
       return
     case '<=':
     case '<':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, provenance)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, origin)))
       return
   }
 }

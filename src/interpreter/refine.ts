@@ -259,15 +259,15 @@ function refineNumberPathCases(
 function narrowNumber(value: NumberValue, op: ComparisonOperator, other: number): NumberValue {
   switch (op) {
     case '==':
-      return numberValue(other, other, Number.isInteger(other), value.expr, value.linear, null, value.provenance)
+      return numberValue(other, other, Number.isInteger(other), value.expr, value.linear, null, value.origin)
     case '>=':
-      return numberValue(Math.max(value.min, other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.provenance)
+      return numberValue(Math.max(value.min, other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.origin)
     case '>':
-      return numberValue(Math.max(value.min, value.isInteger ? Math.floor(other) + 1 : other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.provenance)
+      return numberValue(Math.max(value.min, value.isInteger ? Math.floor(other) + 1 : other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.origin)
     case '<=':
-      return numberValue(value.min, Math.min(value.max, other), value.isInteger, value.expr, value.linear, value.cases, value.provenance)
+      return numberValue(value.min, Math.min(value.max, other), value.isInteger, value.expr, value.linear, value.cases, value.origin)
     case '<':
-      return numberValue(value.min, Math.min(value.max, value.isInteger ? Math.ceil(other) - 1 : other), value.isInteger, value.expr, value.linear, value.cases, value.provenance)
+      return numberValue(value.min, Math.min(value.max, value.isInteger ? Math.ceil(other) - 1 : other), value.isInteger, value.expr, value.linear, value.cases, value.origin)
   }
 }
 
@@ -300,7 +300,7 @@ function refineLiteralEquality(
 function writeLiteralFilter(frame: InterpreterFrame, path: ValuePath, current: Extract<Value, {kind: 'literal'}>, keep: (value: string | boolean) => boolean) {
   const values = current.values.filter(keep)
   if (values.length === 0 || values.length === current.values.length) return
-  const next = literalValue(values, current.expr, current.provenance)
+  const next = literalValue(values, current.expr, current.origin)
   if (next.kind !== 'literal') return
   writePath(path, next, frame)
 }

@@ -914,7 +914,7 @@ function switchLiteralFrame(frame: InterpreterFrame, expression: ts.Expression, 
   const current = readPath(path, branch, expression)
   if (current.kind !== 'literal') return branch
   const keys = new Set(values.map(literalKey))
-  const next = literalValue(current.values.filter(value => keys.has(literalKey(value))), current.expr, current.provenance)
+  const next = literalValue(current.values.filter(value => keys.has(literalKey(value))), current.expr, current.origin)
   if (next.kind === 'literal') writePath(path, next, branch)
   return branch
 }
@@ -1371,7 +1371,7 @@ function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame:
   const expr = limit.expr ?? expression.getText(frame.program.sourceFile)
   const min = Math.max(0, limit.min)
   const max = Math.max(0, limit.max)
-  return numberValue(min, max, true, expr, limit.linear, null, limit.provenance)
+  return numberValue(min, max, true, expr, limit.linear, null, limit.origin)
 }
 
 function evaluateIndexedForPush(

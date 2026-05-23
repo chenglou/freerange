@@ -6,7 +6,7 @@ export type ReportNumberValue = {
   isInteger: boolean
   expr: string | null
   linear: ReportLinearExpr | null
-  provenance?: string[]
+  origin?: string[]
 }
 
 export type ReportLinearExpr = {
@@ -179,7 +179,7 @@ export function knownProofContextMany(values: ReportNumberValue[], assumptions: 
 
 export function knownValueFacts(value: ReportNumberValue) {
   const fact = knownValueFact(value)
-  return [...(fact == null ? [] : [fact]), ...(value.provenance ?? [])]
+  return [...(fact == null ? [] : [fact]), ...(value.origin ?? [])]
 }
 
 function knownValueFact(value: ReportNumberValue) {

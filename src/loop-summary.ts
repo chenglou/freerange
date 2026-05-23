@@ -2,7 +2,7 @@ import * as ts from 'typescript'
 import {
   addNumbers,
   mergeElementValue,
-  mergeProvenance,
+  mergeOrigin,
   multiplyNumbers,
   nonNanExtrema,
   numberValue,
@@ -94,7 +94,7 @@ export function runningSumNumber(targetName: string, start: NumberValue, count: 
     targetName,
     linear,
     null,
-    mergeProvenance(start, count, increment),
+    mergeOrigin(start, count, increment),
   )
   const delta = multiplyNumbers(count, increment)
   const result = addNumbers(start, delta)
@@ -105,7 +105,7 @@ export function runningSumNumber(targetName: string, start: NumberValue, count: 
     targetName,
     linear,
     null,
-    mergeProvenance(start, count, increment),
+    mergeOrigin(start, count, increment),
   )
 }
 
@@ -115,7 +115,7 @@ export function conditionalRunningSumNumber(targetName: string, start: NumberVal
     count.max * increment.min,
     count.max * increment.max,
   ])
-  const delta = numberValue(deltaBounds.min, deltaBounds.max, count.isInteger && increment.isInteger, null, null, null, mergeProvenance(count, increment))
+  const delta = numberValue(deltaBounds.min, deltaBounds.max, count.isInteger && increment.isInteger, null, null, null, mergeOrigin(count, increment))
   const result = addNumbers(start, delta)
   return numberValue(
     result.min,
@@ -124,13 +124,13 @@ export function conditionalRunningSumNumber(targetName: string, start: NumberVal
     targetName,
     linearVariable(targetName),
     null,
-    mergeProvenance(start, count, increment),
+    mergeOrigin(start, count, increment),
   )
 }
 
 export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, start: NumberValue, count: NumberValue, candidate: NumberValue): NumberValue {
   if (count.max <= 0) {
-    return numberValue(start.min, start.max, start.isInteger, targetName, linearVariable(linearNameForExpression(targetName)), null, start.provenance)
+    return numberValue(start.min, start.max, start.isInteger, targetName, linearVariable(linearNameForExpression(targetName)), null, start.origin)
   }
 
   const hasItem = count.min >= 1
@@ -148,7 +148,7 @@ export function runningExtremumNumber(kind: 'min' | 'max', targetName: string, s
     targetName,
     linearVariable(linearNameForExpression(targetName)),
     null,
-    mergeProvenance(start, count, candidate),
+    mergeOrigin(start, count, candidate),
   )
 }
 

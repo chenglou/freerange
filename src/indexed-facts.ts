@@ -135,7 +135,7 @@ function numberWithRebasedElementPath(value: NumberValue, sourceElementExpr: str
     expr,
     expr === value.expr ? value.linear : null,
     null,
-    value.provenance,
+    value.origin,
   )
   if (value.cases == null) return rebased
   return withNumberCases(rebased, value.cases.map(branch => ({

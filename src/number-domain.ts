@@ -33,35 +33,35 @@ export function numberValue(
   expr: string | null,
   linear: LinearExpr | null = null,
   cases: NumberCase[] | null = null,
-  provenance: string[] = [],
+  origin: string[] = [],
 ): NumberValue {
   const clean = linear == null ? null : cleanLinear(linear)
-  const cleanProvenance = [...new Set(provenance)]
+  const cleanOrigin = [...new Set(origin)]
   const cleanMin = Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max
   if (clean != null && clean.terms.size === 0 && Number.isFinite(clean.constant)) {
-    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases, provenance: cleanProvenance}
+    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases, origin: cleanOrigin}
   }
   if (cleanMin > cleanMax) {
-    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, isInteger: false, expr, linear: clean, cases, provenance: cleanProvenance}
+    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, isInteger: false, expr, linear: clean, cases, origin: cleanOrigin}
   }
-  return {kind: 'number', min: cleanMin, max: cleanMax, isInteger, expr, linear: clean, cases, provenance: cleanProvenance}
+  return {kind: 'number', min: cleanMin, max: cleanMax, isInteger, expr, linear: clean, cases, origin: cleanOrigin}
 }
 
 export function finiteNumberValue(
   values: number[],
   expr: string | null,
   linear: LinearExpr | null = expr == null ? null : linearVariable(linearNameForExpression(expr)),
-  provenance: string[] = [],
+  origin: string[] = [],
 ): NumberValue {
   const finiteValues = finiteNumberSetValues(values)
   if (finiteValues.length === 0) return unknownNumber(expr ?? '<empty finite set>')
   const min = finiteValues[0]!
   const max = finiteValues[finiteValues.length - 1]!
   const isInteger = finiteValues.every(Number.isInteger)
-  const value = numberValue(min, max, isInteger, expr, linear, null, provenance)
+  const value = numberValue(min, max, isInteger, expr, linear, null, origin)
   return withNumberCases(value, finiteValues.map(choice => ({
-    value: numberValue(choice, choice, Number.isInteger(choice), String(choice), linearConstant(choice), null, provenance),
+    value: numberValue(choice, choice, Number.isInteger(choice), String(choice), linearConstant(choice), null, origin),
     assumptions: [],
   })))
 }
@@ -89,14 +89,14 @@ export function unknownNumber(name: string): NumberValue {
     expr: name,
     linear: linearVariable(linearNameForExpression(name)),
     cases: null,
-    provenance: [],
+    origin: [],
   }
 }
 
-export function mergeProvenance(...items: (NumberValue | LiteralValue | string[])[]) {
+export function mergeOrigin(...items: (NumberValue | LiteralValue | string[])[]) {
   const lines: string[] = []
   for (const item of items) {
-    lines.push(...(Array.isArray(item) ? item : item.provenance))
+    lines.push(...(Array.isArray(item) ? item : item.origin))
   }
   return [...new Set(lines)]
 }
@@ -130,7 +130,7 @@ export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
     binaryExpr(left, '+', right),
     linearAdd(left.linear, right.linear),
     null,
-    mergeProvenance(left, right),
+    mergeOrigin(left, right),
   )
 }
 
@@ -144,16 +144,16 @@ export function subtractNumbers(left: NumberValue, right: NumberValue): NumberVa
     binaryExpr(left, '-', right),
     linearSubtract(left.linear, right.linear),
     null,
-    mergeProvenance(left, right),
+    mergeOrigin(left, right),
   )
 }
 
 export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberValue {
   if (left.min === 0 && left.max === 0) {
-    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
   }
   if (right.min === 0 && right.max === 0) {
-    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
   }
   const products = nonNanExtrema([
     left.min * right.min,
@@ -161,7 +161,7 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
     left.max * right.min,
     left.max * right.max,
   ])
-  return numberValue(products.min, products.max, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeProvenance(left, right))
+  return numberValue(products.min, products.max, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
 }
 
 export function divideNumbers(left: NumberValue, right: NumberValue): Value {
@@ -172,7 +172,7 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
     left.max / right.min,
     left.max / right.max,
   ])
-  return numberValue(quotients.min, quotients.max, false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeProvenance(left, right))
+  return numberValue(quotients.min, quotients.max, false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeOrigin(left, right))
 }
 
 export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
@@ -180,7 +180,7 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   const max = left.isInteger && right.isInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
   const expr = binaryExpr(left, '%', right)
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
-  return numberValue(0, max, left.isInteger && right.isInteger, expr, linear, null, mergeProvenance(left, right))
+  return numberValue(0, max, left.isInteger && right.isInteger, expr, linear, null, mergeOrigin(left, right))
 }
 
 export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_INFINITY, fallbackMax = Number.POSITIVE_INFINITY) {
@@ -191,8 +191,8 @@ export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_IN
 
 export function powerNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min !== right.max) return unknownValue('Non-constant exponent is unsupported')
-  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
-  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right), null, null, mergeProvenance(left, right))
+  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
+  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
   return unknownValue('Only square of non-negative ranges is supported')
 }
 

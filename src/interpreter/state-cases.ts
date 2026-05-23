@@ -175,14 +175,14 @@ function valueFingerprint(value: Value): string {
           value: valueFingerprint(stateCase.value),
           assumptions: stateCase.assumptions.map(assumptionFingerprint).sort(),
         })) ?? null,
-        provenance: [...value.provenance].sort(),
+        origin: [...value.origin].sort(),
       })
     case 'literal':
       return JSON.stringify({
         kind: value.kind,
         values: value.values,
         expr: value.expr,
-        provenance: [...value.provenance].sort(),
+        origin: [...value.origin].sort(),
       })
     case 'object':
       return JSON.stringify({

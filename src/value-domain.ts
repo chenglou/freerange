@@ -7,7 +7,7 @@ import {mergeAssumptions} from './assumptions.ts'
 import {
   linearNameForExpression,
   maxNumberCases,
-  mergeProvenance,
+  mergeOrigin,
   numberBranches,
   numberValue,
   withNumberCases,
@@ -27,11 +27,11 @@ import type {
   Value,
 } from './domain-types.ts'
 
-export function literalValue(values: LiteralPrimitive[], expr: string | null, provenance: string[] = []): LiteralValue | UnknownValue {
+export function literalValue(values: LiteralPrimitive[], expr: string | null, origin: string[] = []): LiteralValue | UnknownValue {
   const finiteValues = finiteLiteralSetValues(values)
   if (finiteValues.length === 0) return unknown(`Empty finite literal set: ${expr ?? '<literal>'}`)
   if (finiteValues.length > maxNumberCases) return unknown(`Finite literal set exceeded ${maxNumberCases} choices: ${expr ?? '<literal>'}`)
-  return {kind: 'literal', values: finiteValues, expr, provenance: [...new Set(provenance)]}
+  return {kind: 'literal', values: finiteValues, expr, origin: [...new Set(origin)]}
 }
 
 export function finiteLiteralSetValues(values: LiteralPrimitive[]) {
@@ -174,7 +174,7 @@ export function joinValues(left: Value, right: Value): Value {
       left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
       left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
       null,
-      mergeProvenance(left, right),
+      mergeOrigin(left, right),
     )
     if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
@@ -183,7 +183,7 @@ export function joinValues(left: Value, right: Value): Value {
     return literalValue(
       [...left.values, ...right.values],
       left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
-      mergeProvenance(left, right),
+      mergeOrigin(left, right),
     )
   }
   if (left.kind === 'object' && right.kind === 'object') {

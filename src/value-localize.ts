@@ -16,7 +16,7 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
       expr,
       options.preserveLinear === true ? value.linear : linearVariable(linearNameForExpression(expr)),
       options.preserveLinear === true ? value.cases : null,
-      value.provenance,
+      value.origin,
     )
   }
   if (value.kind === 'literal') return {...value, expr}

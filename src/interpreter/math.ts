@@ -3,7 +3,7 @@ import {
   callExpr,
   linearNameForExpression,
   maxNumberCases,
-  mergeProvenance,
+  mergeOrigin,
   numberValue,
   numberBranches,
   plainNumber,
@@ -209,15 +209,15 @@ function truncNumber(value: NumberValue): NumberValue {
 }
 
 function roundingResult(name: 'floor' | 'ceil' | 'round' | 'trunc', apply: (n: number) => number, value: NumberValue): NumberValue {
-  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.provenance)
+  if (value.isInteger) return numberValue(value.min, value.max, true, value.expr, value.linear, null, value.origin)
   const expr = value.expr == null ? null : `${name}(${value.expr})`
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
-  return numberValue(apply(value.min), apply(value.max), true, expr, linear, null, value.provenance)
+  return numberValue(apply(value.min), apply(value.max), true, expr, linear, null, value.origin)
 }
 
 function sqrtNumber(value: NumberValue): Value {
   if (value.min < 0) return unknown('Math.sqrt expected a non-negative number')
-  return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`, null, null, value.provenance)
+  return numberValue(Math.sqrt(value.min), Math.sqrt(value.max), false, value.expr == null ? null : `sqrt(${value.expr})`, null, null, value.origin)
 }
 
 type MathDomain = {
@@ -251,7 +251,7 @@ function monotoneNumber(
     callExpr(name, [value]),
     null,
     null,
-    value.provenance,
+    value.origin,
   )
 }
 
@@ -266,31 +266,31 @@ function clz32Number(value: NumberValue): NumberValue {
   const expr = callExpr('clz32', [value])
   if (value.min === value.max && Number.isFinite(value.min)) {
     const result = Math.clz32(value.min)
-    return numberValue(result, result, true, expr, null, null, value.provenance)
+    return numberValue(result, result, true, expr, null, null, value.origin)
   }
-  return numberValue(0, 32, true, expr, null, null, value.provenance)
+  return numberValue(0, 32, true, expr, null, null, value.origin)
 }
 
 function imulNumber(left: NumberValue, right: NumberValue): NumberValue {
   const expr = callExpr('imul', [left, right])
-  const provenance = mergeProvenance(left, right)
+  const origin = mergeOrigin(left, right)
   if (left.min === left.max && right.min === right.max && Number.isFinite(left.min) && Number.isFinite(right.min)) {
     const value = Math.imul(left.min, right.min)
-    return numberValue(value, value, true, expr, null, null, provenance)
+    return numberValue(value, value, true, expr, null, null, origin)
   }
-  return numberValue(int32Min, int32Max, true, expr, null, null, provenance)
+  return numberValue(int32Min, int32Max, true, expr, null, null, origin)
 }
 
 function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
   const plain = plainNumber(value)
   if (plain.min >= 0) return withNumberCases(plain, value.cases)
   if (plain.max <= 0) {
-    const result = evaluateNumberUnary(value, current => numberValue(-current.max, -current.min, current.isInteger, current.expr == null ? null : `abs(${current.expr})`, linearScale(current.linear, -1), null, current.provenance))
-    return result.kind === 'number' ? result : numberValue(-plain.max, -plain.min, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, linearScale(plain.linear, -1), null, plain.provenance)
+    const result = evaluateNumberUnary(value, current => numberValue(-current.max, -current.min, current.isInteger, current.expr == null ? null : `abs(${current.expr})`, linearScale(current.linear, -1), null, current.origin))
+    return result.kind === 'number' ? result : numberValue(-plain.max, -plain.min, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, linearScale(plain.linear, -1), null, plain.origin)
   }
 
   const max = Math.max(Math.abs(plain.min), Math.abs(plain.max))
-  const joined = numberValue(0, max, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, null, null, plain.provenance)
+  const joined = numberValue(0, max, plain.isInteger, plain.expr == null ? null : `abs(${plain.expr})`, null, null, plain.origin)
   const cases: NumberCase[] = []
   for (const valueCase of numberBranches(value)) {
     const nonNegative = comparisonConstraint(valueCase.value, '>=', numberValue(0, 0, true, '0', linearConstant(0)), undefined, 'branch')
@@ -308,7 +308,7 @@ function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
     }
     if (negativeStatus.status !== 'fail') {
       cases.push({
-        value: numberValue(-valueCase.value.max, -valueCase.value.min, valueCase.value.isInteger, valueCase.value.expr == null ? null : `abs(${valueCase.value.expr})`, linearScale(valueCase.value.linear, -1), null, valueCase.value.provenance),
+        value: numberValue(-valueCase.value.max, -valueCase.value.min, valueCase.value.isInteger, valueCase.value.expr == null ? null : `abs(${valueCase.value.expr})`, linearScale(valueCase.value.linear, -1), null, valueCase.value.origin),
         assumptions: negativeStatus.status === 'pass' ? valueCase.assumptions : mergeAssumptions(valueCase.assumptions, [nonPositive]),
       })
     }
@@ -319,12 +319,12 @@ function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
 
 function signNumber(value: NumberValue): NumberValue {
   const expr = value.expr == null ? null : `sign(${value.expr})`
-  if (value.min === 0 && value.max === 0) return numberValue(0, 0, true, expr, null, null, value.provenance)
-  if (value.min > 0) return numberValue(1, 1, true, expr, null, null, value.provenance)
-  if (value.max < 0) return numberValue(-1, -1, true, expr, null, null, value.provenance)
-  if (value.min >= 0) return numberValue(0, 1, true, expr, null, null, value.provenance)
-  if (value.max <= 0) return numberValue(-1, 0, true, expr, null, null, value.provenance)
-  return numberValue(-1, 1, true, expr, null, null, value.provenance)
+  if (value.min === 0 && value.max === 0) return numberValue(0, 0, true, expr, null, null, value.origin)
+  if (value.min > 0) return numberValue(1, 1, true, expr, null, null, value.origin)
+  if (value.max < 0) return numberValue(-1, -1, true, expr, null, null, value.origin)
+  if (value.min >= 0) return numberValue(0, 1, true, expr, null, null, value.origin)
+  if (value.max <= 0) return numberValue(-1, 0, true, expr, null, null, value.origin)
+  return numberValue(-1, 1, true, expr, null, null, value.origin)
 }
 
 function minNumberPair(left: NumberValue, right: NumberValue, frame: InterpreterFrame): NumberValue {
@@ -350,8 +350,8 @@ function choiceNumberPair(
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
   const joined =
     name === 'min'
-      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeProvenance(plainLeft, plainRight))
-      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeProvenance(plainLeft, plainRight))
+      ? numberValue(Math.min(plainLeft.min, plainRight.min), Math.min(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeOrigin(plainLeft, plainRight))
+      : numberValue(Math.max(plainLeft.min, plainRight.min), Math.max(plainLeft.max, plainRight.max), plainLeft.isInteger && plainRight.isInteger, expr, linear, null, mergeOrigin(plainLeft, plainRight))
 
   if (expr != null) {
     const op: ComparisonOperator = name === 'min' ? '<=' : '>='

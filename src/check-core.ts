@@ -769,8 +769,8 @@ function evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Valu
   return evaluateParsedRangeBound(text, context, checkSpecHooks)
 }
 
-function evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, provenance: string[] = []): Value {
-  return evaluateParsedRangeValue(range, context, checkSpecHooks, expr, provenance)
+function evaluateRangeValue(range: FitRange, context: EvalContext, expr: string | null, origin: string[] = []): Value {
+  return evaluateParsedRangeValue(range, context, checkSpecHooks, expr, origin)
 }
 
 function evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value {

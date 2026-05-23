@@ -40,13 +40,13 @@ function proofFactsFromNumber(value: NumberValue) {
 }
 
 function proofFactsFromLiteral(value: LiteralValue) {
-  const facts = [...proofFactsFromProvenance(value.provenance)]
+  const facts = [...proofFactsFromOrigin(value.origin)]
   if (value.expr != null) facts.unshift(`${publicFitText(value.expr)}: ${value.values.map(String).join(' | ')}`)
   return facts
 }
 
-function proofFactsFromProvenance(provenance: string[]) {
-  return provenance.map(publicFitText)
+function proofFactsFromOrigin(origin: string[]) {
+  return origin.map(publicFitText)
 }
 
 function formatAssumptionFact(assumption: LinearConstraint): string {

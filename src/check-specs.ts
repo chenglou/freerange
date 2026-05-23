@@ -397,14 +397,14 @@ export function evaluateRangeValue(
   context: EvalContext,
   hooks: CheckSpecHooks,
   expr: string | null,
-  provenance: string[] = [],
+  origin: string[] = [],
 ): Value {
   const evaluated = evaluateRangeCases(range, context, hooks)
   if (evaluated.kind === 'invalid') return {kind: 'unknown', reason: rangeBoundNumberReason(evaluated.bound, evaluated.value, evaluated.text)}
-  const cases = evaluated.cases.map(rangeCase => evaluatedRangeCaseValue(range, rangeCase, expr, provenance))
+  const cases = evaluated.cases.map(rangeCase => evaluatedRangeCaseValue(range, rangeCase, expr, origin))
   const min = Math.min(...cases.map(item => item.min))
   const max = Math.max(...cases.map(item => item.max))
-  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.isInteger), expr, null, null, provenance)
+  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.isInteger), expr, null, null, origin)
   return withNumberCases(value, cases.map(item => ({value: item, assumptions: []})))
 }
 
@@ -420,13 +420,13 @@ function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckS
   return {kind: 'cases', cases}
 }
 
-function evaluatedRangeCaseValue(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, provenance: string[]): NumberValue {
+function evaluatedRangeCaseValue(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, origin: string[]): NumberValue {
   const exactSameExpression = rangeCase.source.lowerInclusive
     && rangeCase.source.upperInclusive
     && rangeCase.source.lower.text === rangeCase.source.upper.text
   if (exactSameExpression) {
     const value = rangeCase.lower
-    return numberValue(value.min, value.max, range.valueKind === 'int' || value.isInteger, expr ?? value.expr, value.linear, value.cases, mergeRangeProvenance(value, provenance))
+    return numberValue(value.min, value.max, range.valueKind === 'int' || value.isInteger, expr ?? value.expr, value.linear, value.cases, mergeRangeOrigin(value, origin))
   }
   return numberValue(
     rangeCase.lower.min,
@@ -435,13 +435,13 @@ function evaluatedRangeCaseValue(range: FitRange, rangeCase: EvaluatedRangeCase,
     expr,
     null,
     null,
-    mergeRangeProvenance(rangeCase.lower, rangeCase.upper, provenance),
+    mergeRangeOrigin(rangeCase.lower, rangeCase.upper, origin),
   )
 }
 
-function mergeRangeProvenance(...items: (NumberValue | string[])[]) {
+function mergeRangeOrigin(...items: (NumberValue | string[])[]) {
   const lines: string[] = []
-  for (const item of items) lines.push(...(Array.isArray(item) ? item : item.provenance))
+  for (const item of items) lines.push(...(Array.isArray(item) ? item : item.origin))
   return [...new Set(lines)]
 }
 

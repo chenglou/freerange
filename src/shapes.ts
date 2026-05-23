@@ -148,7 +148,7 @@ function isBroadUnknownNumber(value: Value) {
     && value.max === Number.POSITIVE_INFINITY
     && !value.isInteger
     && value.cases == null
-    && value.provenance.length === 0
+    && value.origin.length === 0
 }
 
 function safeTsShape(evaluate: () => Value | null): Value | null {

@@ -27,14 +27,14 @@ export type NumberValue = {
   expr: string | null
   linear: LinearExpr | null
   cases: NumberCase[] | null
-  provenance: string[]
+  origin: string[]
 }
 
 export type LiteralValue = {
   kind: 'literal'
   values: LiteralPrimitive[]
   expr: string | null
-  provenance: string[]
+  origin: string[]
 }
 
 export type ObjectValue = {

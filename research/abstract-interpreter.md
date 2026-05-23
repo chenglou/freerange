@@ -12,7 +12,7 @@ Current milestone: one interpreter owns source evaluation. The checker layer own
 
 `Value` remains the semantic currency:
 
-- numbers: intervals, integer bit, finite cases, linear expression, provenance
+- numbers: intervals, integer bit, finite cases, linear expression, origin
 - literals: finite booleans / strings
 - objects: required known props
 - arrays: length, collection element summary, tuple/product slots, sequence summary

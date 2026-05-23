@@ -12,7 +12,7 @@ export {
   finiteNumberValue,
   linearNameForExpression,
   maxNumberCases,
-  mergeProvenance,
+  mergeOrigin,
   moduloNumbers,
   multiplyNumbers,
   nonNanExtrema,
