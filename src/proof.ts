@@ -10,6 +10,12 @@ import {
   symbolicComparisonProves,
   type ProofBackendContext,
 } from './proof-backend.ts'
+import type {FitCheck} from './check-types.ts'
+import {
+  proofTraceForStatus,
+  type FitObligation,
+  type FitProofStep,
+} from './obligations.ts'
 import {
   numberBranches,
   numberValue,
@@ -496,4 +502,20 @@ export function runningSumFacts(value: NumberValue, start: NumberValue, count: N
     if (upper != null) facts.push(upper)
   }
   return facts
+}
+
+export type ProveObligationOptions = {
+  obligation: FitObligation
+  step: FitProofStep
+  usedFacts?: string[]
+  prove: () => FitCheck
+}
+
+export function proveObligation(options: ProveObligationOptions): FitCheck {
+  const check = options.prove()
+  return {
+    ...check,
+    obligation: options.obligation,
+    trace: proofTraceForStatus(options.obligation, check.status, [options.step], options.usedFacts),
+  }
 }

@@ -67,12 +67,12 @@ import {
 import {
   callPreconditionObligation,
 } from './obligations.ts'
-import {proveObligation} from './proof-broker.ts'
 import {programGlobalEnv} from './program-env.ts'
 import {
   comparisonConstraint,
   flipComparison,
   proveComparison,
+  proveObligation,
 } from './proof.ts'
 import {proofFactsFromValues} from './proof-facts.ts'
 import {

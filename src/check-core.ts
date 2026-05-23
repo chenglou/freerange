@@ -54,7 +54,7 @@ import {
   type Value,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
-import {proveComparison} from './proof.ts'
+import {proveComparison, proveObligation} from './proof.ts'
 import {
   structuralShape,
   valueFromFunctionReturnShape,
@@ -149,7 +149,6 @@ import {
   proofTraceForStatus,
   type FitObligationBoundary,
 } from './obligations.ts'
-import {proveObligation} from './proof-broker.ts'
 import type {
   InterpreterAudit,
   InterpreterCall,

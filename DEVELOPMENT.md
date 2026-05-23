@@ -44,7 +44,7 @@ CLI and reports:
 
 - [fr.ts](./fr.ts) — main CLI entrypoint
 - [src/reports.ts](./src/reports.ts), [src/check-core.ts](./src/check-core.ts), and [src/reporting.ts](./src/reporting.ts) — check/infer orchestration and report formatting
-- [src/obligations.ts](./src/obligations.ts), [src/proof-facts.ts](./src/proof-facts.ts), and [src/proof-broker.ts](./src/proof-broker.ts) — proof obligations, proof traces, and the wrapper around proof steps
+- [src/obligations.ts](./src/obligations.ts) and [src/proof-facts.ts](./src/proof-facts.ts) — proof obligations and proof traces
 
 Contracts and source evaluation:
 
