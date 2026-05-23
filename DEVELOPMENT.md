@@ -24,7 +24,8 @@ bun install
 - `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
 - `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
 - `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
-- `bun run check` — full local gate: pattern tests, parser tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, and lint
+- `bun run knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
+- `bun run check` — full local gate: pattern tests, parser tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, lint, and knip
 
 ## Current Sources Of Truth
 

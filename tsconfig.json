@@ -25,7 +25,8 @@
     "exactOptionalPropertyTypes": true,
     "allowUnreachableCode": true,
     "noFallthroughCasesInSwitch": true,
-    "noPropertyAccessFromIndexSignature": true
+    "noPropertyAccessFromIndexSignature": true,
+    "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "*.ts", "*.tsx", "research/kernels/**/*.ts"]
+  "include": ["src/**/*.ts", "*.ts", "*.tsx", "research/focused-tests/**/*.ts"]
 }

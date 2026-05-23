@@ -2,7 +2,6 @@ import type * as ts from 'typescript'
 import type {
   ConstraintSource,
   LinearConstraint,
-  NullishKind,
   Value,
 } from './domain.ts'
 import type {FitInferFact} from './facts.ts'
@@ -66,7 +65,6 @@ export type FitInferRedundantSpec = {
   reason: string
 }
 
-export type FitInferLoopSpecStatus = FitInferSpecStatus
 export type FitInferLoopSpec = FitInferSpec
 
 export type FitInferLoopReport = {
@@ -191,18 +189,7 @@ export type EvalContext = {
   insideLoop?: true
 }
 
-export type EvalFlow =
-  | {kind: 'return'; value: Value}
-  | {kind: 'exit'}
-  | {kind: 'fallthrough'}
-
 export type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
-
-export type PresenceGuard = {
-  target: ts.Expression
-  nullish: NullishKind
-  presentWhenTrue: boolean
-}
 
 export type LocalizeOptions = {
   preserveLinear?: boolean

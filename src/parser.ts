@@ -261,10 +261,6 @@ export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclar
   return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), paramName, 'given')
 }
 
-export function hasFitComment(sourceText: string, node: ts.Node): boolean {
-  return fitCommentLines(sourceText, node).some(lines => lines.some(line => line.text === '@fit'))
-}
-
 export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, statement)
   const lines = inlineFitCommentLines(sourceText, statement)

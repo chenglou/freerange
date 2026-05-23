@@ -15,13 +15,6 @@ import {
 import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.ts'
 import {comparisonConstraint, proveComparison} from './proof.ts'
 
-export function exactFiniteArrayIndex(index: NumberValue, length: number): number | null {
-  if (!index.isInteger || index.min !== index.max) return null
-  const slot = index.min
-  if (!Number.isInteger(slot) || slot < 0 || slot >= length) return null
-  return slot
-}
-
 export function adjacentElementAccessFacts(
   target: ArrayValue,
   index: NumberValue,

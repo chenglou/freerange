@@ -171,7 +171,6 @@ export type {
   FitInferFunctionReport,
   FitInferLoopReport,
   FitInferLoopSpec,
-  FitInferLoopSpecStatus,
   FitInferReport,
   FitShapeInsight,
   FitShapeOptions,

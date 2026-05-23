@@ -276,10 +276,6 @@ export function floorDivision(text: FitExpressionLike): {left: string; right: st
   return floorArg == null ? null : binaryExpression(floorArg, '/')
 }
 
-export function moduloExpression(text: FitExpressionLike): {left: string; right: string} | null {
-  return binaryExpression(text, '%')
-}
-
 export function binaryExpression(text: FitExpressionLike, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
   const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
