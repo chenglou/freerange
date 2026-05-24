@@ -4,7 +4,6 @@ Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. U
 
 Do `bun install` if you're in a fresh checkout/worktree.
 
-- Before adding an atom, write down what it means, what it does not imply, the proof shape, the report shape, and a few non-demo uses.
 - This project is private. Do NOT consider legacy and interop when refactoring.
 - Add positive and negative tests. Prefer making the implementation less ad hoc over adding public syntax.
 
