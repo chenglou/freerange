@@ -1,29 +1,20 @@
 ## Features Under Consideration
 
-- **Pairwise non-overlap**: `for all i ≠ j, rects don't overlap`. The defining proof for "agents don't need a browser" — forces the cross-index quantifier primitive.
-- **At most N visible boxes pass the `if`**: counting bound on the render loop's visible set. Smaller than pairwise non-overlap, demonstrates a "CSS can't do this" claim.
-- **"3 items don't fit vertically"** in the general form. Different from the simple-N case that works today; needs a cross-subset claim.
-- **Visibility predicate equivalence**: prove an inline overlap check equals the canonical `rectsIntersect` — would let the analyzer trust user-written predicates.
-- **Existentials**: `there exists i such that ...`.
-- **Cross-collection indices**: comparing items across two arrays.
-- **Views**: `view rows as spans(start: .top, size: .height)`. Postponed pending more thought on the syntax.
-- **Annotate the actual photo gallery** with the contracts the project goal demands.
-
-## Smaller Adds
-
-- Open-ended range spellings like `int 1..` and `0..`. Hold off until inline annotations are common enough that the `Infinity` noise hurts.
-- `sameLength` as a built-in. Append and running-sum inference often prove length directly already.
-- Conditional helper contracts — useful only if it's more than nicer comment placement.
-- Finish remaining `Math.*` built-ins except `Math.random`: interval-aware `Math.sin/cos/tan/cosh/atan2`, `Math.hypot`, `Math.sumPrecise`. Write the range rule once, not per call.
+- **Arbitrary-pair non-overlap** for freely-positioned 2D boxes (the predictive-keyframes case). Outside the linear-plus-adjacent vocabulary. Either accept as outside, or add a small targeted decision procedure (small-array exhaustive, transitive closure, or SMT).
+- **`reduce` recognition** for summing arbitrary numbers. The 0|1 counting case is covered by `filter(p).length`; `reduce` would cover summing widths, weights, totals.
+- **Views via pure code**: users transform their field names with `arr.map(item => ({start, size}))` before calling catalog items. Confirm this works for the layouts that currently can't use `top/height/bottom` directly. Segmented-stack still hardcodes those names; revisit when a real case demands it.
+- **Open-ended range spellings** (`int 1..`, `0..`). Hold off until the noise from spelling `Infinity` becomes annoying.
 
 ## Engine Work
 
-- Continue improving source inference for totals, guarded counts, min/max accumulators, and cursor updates when those feed later comparisons or reports more cleanly. Source inference, not public folds.
-- Exhaustive integer sweeps for the small fully-bounded comparison cases (probably useful for the cross-index quantifier later).
-- `ts.createScanner`-based `@fit` lowering. Would replace the bespoke char-walkers in `src/parser.ts` with TS's scanner. Marginal cost-benefit today; revisit when something else makes us touch the parser.
-- Segmented stack field-name generalization beyond `top`/`height`/`bottom`. Likely waits for views.
+- **Scalar-push loops** don't emit nondecreasing relations today. `result.push(top); top += rowSize` with non-negative `rowSize` should give `nondecreasing(result)`; loop-source/loop-summary need the scalar-cursor case. Surfaced from draggable-cards `stackLayout` validation.
+- **Nested array paths** for `nondecreasing` / `noOverlap` claims. `nondecreasing(return[].rowRect.top)` isn't supported by the current syntax; would help nicer-hacker-news. Either extend the call-argument parser to accept indexed paths, or require users to map first.
+- Continue widening source inference so the same semantic claim works across more code spellings. Two pushes of `{top, height}` vs `{top, bottom}` should converge to the same relations. The Phase B refactor partially closed this; finish when a real divergence surfaces.
+- Exhaustive integer sweeps for fully-bounded small comparisons (useful for any future cross-index bounded case).
+- `ts.createScanner`-based `@fit` lowering. Replaces bespoke char-walkers in `src/parser.ts`. Marginal cost-benefit today; revisit when the parser needs touching anyway.
 
 ## Maintenance
 
-- Reject the obvious bad `given` lines early (empty ranges, direct contradictions, short linear chains) before proof gets to run on an empty input set. Widen only when the failure can plainly name the bad input.
-- Keep report lines naming where each fact came from: input assumption, loop `@fit`, source inference, branch inference, checked helper, checked imported. Missing pieces should name the smaller relation when possible (`scale >= 0`, `count > 0`), not the whole failed comparison.
+- Reject obvious bad `given` lines early (empty ranges, direct contradictions) before proof runs.
+- Report lines name where each fact came from. Missing pieces name the smaller relation when possible (`scale >= 0`, `count > 0`) instead of the whole failed comparison.
+- Vacuity warnings for inconsistent assumptions.

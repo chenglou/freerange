@@ -12,9 +12,12 @@ import {
   numberValue,
   unknownArray,
   withNumberCases,
+  type ArraySummary,
+  type ArrayValue,
   type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
+  type SequenceRelation,
   type Value,
 } from './domain.ts'
 import {
@@ -74,6 +77,10 @@ export function validateGivenSpecs(
   const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
 
   for (const spec of specs) {
+    if (spec.kind === 'given-expression') {
+      assumedGivens.push({kind: 'expression', spec, source})
+      continue
+    }
     if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
@@ -333,6 +340,21 @@ export function collectGivenAssumptions(
       continue
     }
 
+    if (given.kind === 'expression') {
+      const reason = projectGivenExpression(env, given.spec)
+      if (reason != null) {
+        checks.push({
+          file,
+          ...(given.spec.line == null ? {} : {line: given.spec.line}),
+          functionName,
+          text: given.spec.text,
+          status: 'unknown',
+          reason,
+        })
+      }
+      continue
+    }
+
     const spec = given.spec
     const comparison = evaluateGivenComparison(file, functionName, spec, context, evaluators)
     if (comparison.kind === 'invalid') {
@@ -505,6 +527,87 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
     if (scale === Number.NEGATIVE_INFINITY) return null
   }
   return scale
+}
+
+function projectGivenExpression(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-expression'}>): string | null {
+  const parsed = fitExpressionParsed(spec.expression)
+  if (!ts.isCallExpression(parsed.expression)) return `Unsupported given expression shape: ${publicFitText(spec.text)}`
+  const target = parsed.expression.expression
+  if (!ts.isIdentifier(target)) return `Unsupported given expression shape: ${publicFitText(spec.text)}`
+  const name = target.text
+  const args = parsed.expression.arguments
+
+  if (name === 'spaced' && args.length === 2) {
+    const arrayRoot = identifierRoot(args[0]!)
+    if (arrayRoot == null) return `Unsupported given expression target: ${publicFitText(spec.text)}`
+    const array = env.get(arrayRoot)
+    if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${arrayRoot}`
+    const gapText = args[1]!.getText()
+    const updated = arrayWithSpacedRelation(array, gapText)
+    env.set(arrayRoot, updated)
+    return null
+  }
+
+  if (name === 'nondecreasing' && args.length === 1) {
+    const propPath = nondecreasingPropPath(args[0]!)
+    if (propPath == null) return `Unsupported given expression target: ${publicFitText(spec.text)}`
+    const array = env.get(propPath.root)
+    if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${propPath.root}`
+    const updated = arrayWithNondecreasingRelation(array, propPath.path)
+    env.set(propPath.root, updated)
+    return null
+  }
+
+  return `Unsupported given expression: ${publicFitText(spec.text)}`
+}
+
+function identifierRoot(expression: ts.Expression): string | null {
+  if (ts.isIdentifier(expression)) return expression.text
+  return null
+}
+
+function nondecreasingPropPath(expression: ts.Expression): {root: string; path: string[]} | null {
+  if (ts.isIdentifier(expression)) return {root: expression.text, path: []}
+  if (ts.isPropertyAccessExpression(expression)) {
+    const inner = nondecreasingPropPath(expression.expression)
+    if (inner == null) return null
+    return {root: inner.root, path: [...inner.path, expression.name.text]}
+  }
+  return null
+}
+
+function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue {
+  const relation: SequenceRelation = {
+    kind: 'adjacent-comparison',
+    left: {item: 'next', path: ['top']},
+    op: '==',
+    right: {
+      terms: [{item: 'previous', path: ['bottom']}],
+      addends: gapText === '0' ? [] : [gapText],
+    },
+  }
+  return {...array, summary: appendRelation(array.summary, relation)}
+}
+
+function arrayWithNondecreasingRelation(array: ArrayValue, path: string[]): ArrayValue {
+  const relation: SequenceRelation = {
+    kind: 'adjacent-comparison',
+    left: {item: 'next', path},
+    op: '>=',
+    right: {terms: [{item: 'previous', path}], addends: []},
+  }
+  return {...array, summary: appendRelation(array.summary, relation)}
+}
+
+function appendRelation(summary: ArraySummary | null, relation: SequenceRelation): ArraySummary {
+  const base: ArraySummary = summary ?? {
+    origin: null,
+    relations: [],
+    advances: [],
+    lastEnd: null,
+    extentEnds: [],
+  }
+  return {...base, relations: [...base.relations, relation]}
 }
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {

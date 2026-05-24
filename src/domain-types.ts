@@ -70,9 +70,7 @@ export type NullableValue = {
 export type ArraySummary = {
   origin?: ArrayOrigin | null
   relations: SequenceRelation[]
-  nondecreasingProps: string[]
   advances: {prop: string; value: NumberValue}[]
-  spaced: {gapExpr: string; heightExpr: string; advanceExpr: string}[]
   lastEnd: NumberValue | null
   extentEnds: {emptyExpr: string; value: NumberValue}[]
 }

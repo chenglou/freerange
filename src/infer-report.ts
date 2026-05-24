@@ -30,7 +30,7 @@ export function inferFunctionSpecReports(
   }
 
   return specs.map(spec => {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') {
       const check = checkByText.get(spec.text)
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
@@ -195,7 +195,7 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
   if (exactFact != null) return exactFact.text
 
   const spec = parseFitSpecLineForInference(specText)
-  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison') return null
+  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') return null
   if (spec.kind === 'check-expression') return null
   if (spec.kind === 'check-value') return null
   if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)

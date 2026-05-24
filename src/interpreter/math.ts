@@ -135,7 +135,14 @@ const mathCallEvaluators = new Map<string, MathCallEvaluator>([
   ['tanh', unaryMath(monotoneMath(Math.tanh))],
   ['acosh', unaryMath(monotoneMath(Math.acosh, domainAtLeast(1, 'a number at least 1')))],
   ['atanh', unaryMath(monotoneMath(Math.atanh, domainBetween(-1, 1, 'a number between -1 and 1')))],
+  ['sin', unaryMath(boundedOutputMath(-1, 1))],
+  ['cos', unaryMath(boundedOutputMath(-1, 1))],
+  ['cosh', unaryMath(boundedOutputMath(1, Number.POSITIVE_INFINITY))],
 ])
+
+function boundedOutputMath(min: number, max: number): UnaryNumberEvaluator {
+  return (value, _frame, name) => numberValue(min, max, false, callExpr(`Math.${name}`, [value]))
+}
 
 function selectorMath(kind: 'min' | 'max'): MathCallEvaluator {
   return (_name, values, frame, expression) => {

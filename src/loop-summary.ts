@@ -290,7 +290,7 @@ function sequenceSummaryFromAppendClock(
 ): ArraySummary | null {
   const recurrence = clock.recurrence
   if (recurrence == null) return null
-  const summary: ArraySummary = {relations: [], nondecreasingProps: [], advances: [{prop: pathText(recurrence.path), value: recurrence.advance}], spaced: [], lastEnd: null, extentEnds: []}
+  const summary: ArraySummary = {relations: [], advances: [{prop: pathText(recurrence.path), value: recurrence.advance}], lastEnd: null, extentEnds: []}
   const advanceIsNonnegative = recurrence.advance.min >= 0
     && (options.assumptions == null
       || proveComparison(recurrence.advance, '>=', numberValue(0, 0, true, '0', linearConstant(0)), options.assumptions).status === 'pass')
@@ -303,7 +303,6 @@ function sequenceSummaryFromAppendClock(
   if (gapExpr == null) return summary
 
   addSpacedRelations(summary, clock, recurrence.path, sizeExpr, gapExpr)
-  summary.spaced.push({gapExpr, heightExpr: sizeExpr, advanceExpr})
   if (!options.includeExtentEnd) return summary
 
   const loopEndName = `lastEnd(${clock.arrayName})`
@@ -316,7 +315,6 @@ function sequenceSummaryFromAppendClock(
 }
 
 function addNondecreasingRelation(summary: ArraySummary, path: string[]) {
-  summary.nondecreasingProps.push(pathText(path))
   summary.relations.push({
     kind: 'adjacent-comparison',
     left: nextTerm(path),

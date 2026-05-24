@@ -472,7 +472,7 @@ function verifyFunctionSpecsDetailed(
   if (hasBodyClaims) checks.push(...context.checks)
 
   for (const spec of contractSpecs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
+    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') continue
     checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, contractCache))
   }
 
@@ -484,7 +484,7 @@ function verifyFunctionSpecsDetailed(
 }
 
 function functionHasBodyClaims(specs: FitSpec[]) {
-  return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison')
+  return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison' && spec.kind !== 'given-expression')
 }
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
@@ -1180,6 +1180,7 @@ function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
     case 'check-comparison':
       return [spec.left, spec.right]
     case 'check-expression':
+    case 'given-expression':
       return [spec.expression]
   }
 }
@@ -1226,7 +1227,7 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
   const loopResult = unknown('Loop annotations do not have return; name local values directly')
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') continue
+    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') continue
     context.checks.push(verifyCheckSpec(
       context.file,
       context.program,

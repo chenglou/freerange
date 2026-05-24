@@ -1968,10 +1968,44 @@ function evaluateComparisonExpression(expression: ts.BinaryExpression, frame: In
   if (left.kind === 'number' && right.kind === 'number' && left.min === left.max && right.min === right.max) {
     return literalValue([compareNumbers(left.min, expression.operatorToken.kind, right.min)], expression.getText(frame.program.sourceFile))
   }
+  if (left.kind === 'number' && right.kind === 'number') {
+    const proved = provedNumberComparison(left, right, expression.operatorToken.kind, frame)
+    if (proved != null) return literalValue([proved], expression.getText(frame.program.sourceFile))
+  }
   if (left.kind === 'literal' && right.kind === 'literal' && isEqualityComparison(expression.operatorToken.kind)) {
     return literalValue(compareLiteralSets(left.values, right.values, expression.operatorToken.kind), expression.getText(frame.program.sourceFile))
   }
   return literalValue([true, false], expression.getText(frame.program.sourceFile))
+}
+
+function provedNumberComparison(left: NumberValue, right: NumberValue, kind: ts.SyntaxKind, frame: InterpreterFrame): boolean | null {
+  const op = comparisonOperatorFromKind(kind)
+  if (op == null) return null
+  const direct = proveComparisonPlain(left, op.op, right, frame.assumptions)
+  if (direct.status === 'pass') return op.negated ? false : true
+  if (direct.status === 'fail') return op.negated ? true : false
+  return null
+}
+
+function comparisonOperatorFromKind(kind: ts.SyntaxKind): {op: '==' | '>=' | '<=' | '>' | '<'; negated: boolean} | null {
+  switch (kind) {
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.EqualsEqualsToken:
+      return {op: '==', negated: false}
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+      return {op: '==', negated: true}
+    case ts.SyntaxKind.LessThanToken:
+      return {op: '<', negated: false}
+    case ts.SyntaxKind.LessThanEqualsToken:
+      return {op: '<=', negated: false}
+    case ts.SyntaxKind.GreaterThanToken:
+      return {op: '>', negated: false}
+    case ts.SyntaxKind.GreaterThanEqualsToken:
+      return {op: '>=', negated: false}
+    default:
+      return null
+  }
 }
 
 function isEqualityComparison(kind: ts.SyntaxKind): boolean {
@@ -2085,6 +2119,8 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'at') return evaluateArrayAtCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
+  if (ts.isPropertyAccessExpression(target) && target.name.text === 'every') return evaluateEverySomeCall(expression, target, 'every', frame)
+  if (ts.isPropertyAccessExpression(target) && target.name.text === 'some') return evaluateEverySomeCall(expression, target, 'some', frame)
   if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
   if (ts.isPropertyAccessExpression(target)) {
     const member = classMemberFunctionForPropertyAccess(target, frame)
@@ -2235,6 +2271,39 @@ function currentLoopPushSummary(frame: InterpreterFrame) {
   return emptyArraySummary(origin)
 }
 
+function evaluateEverySomeCall(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  kind: 'every' | 'some',
+  frame: InterpreterFrame,
+): Value {
+  const source = evaluateExpression(target.expression, frame)
+  if (source.kind !== 'array') return noteUnsupported(frame, `${kind} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  const callback = expression.arguments[0]
+  const callbackFn = callback == null ? null : unwrapExpression(callback)
+  if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, `${kind} callback must be an inline function`, callback ?? expression)
+  const text = expression.getText(frame.program.sourceFile)
+  if (source.length.max === 0) return literalValue([kind === 'every'], text)
+  const sourceExpr = sourceExpression(source, target.expression, frame)
+  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, source.length)
+  const raw = invokeInlineFunction(`<${kind}-predicate>`, callbackFn, [item, index, source], frame)
+  const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, source.length))
+  const truth = truthinessValues(refined)
+  if (truth == null) return literalValue([true, false], text)
+  if (truth.every(value => value === true)) {
+    if (kind === 'every') return literalValue([true], text)
+    if (source.length.min >= 1) return literalValue([true], text)
+    return literalValue([true, false], text)
+  }
+  if (truth.every(value => value === false)) {
+    if (kind === 'some') return literalValue([false], text)
+    if (source.length.min >= 1) return literalValue([false], text)
+    return literalValue([true, false], text)
+  }
+  return literalValue([true, false], text)
+}
+
 function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
   const source = evaluateExpression(target.expression, frame)
   if (source.kind !== 'array') return noteUnsupported(frame, `map expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
@@ -2279,7 +2348,8 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   const sourceExpr = sourceExpression(source, target.expression, frame)
   const element = filteredElement(source, sourceExpr, callbackFn, frame)
   const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
-  const length = numberValue(0, source.length.max, true, `${expression.getText(frame.program.sourceFile)}.length`)
+  const text = expression.getText(frame.program.sourceFile)
+  const length = filteredLength(source, callbackFn, frame, text)
   addLengthAtMostSourceFact(length, source.length, frame)
   return {
     kind: 'array',
@@ -2287,9 +2357,28 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
     length,
     elements: null,
     element,
-    expr: expression.getText(frame.program.sourceFile),
+    expr: text,
     summary,
   }
+}
+
+function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame, text: string): NumberValue {
+  const fallback = numberValue(0, source.length.max, true, `${text}.length`)
+  if (source.length.max === 0) return numberValue(0, 0, true, `${text}.length`)
+  const sourceExpr = source.expr ?? text
+  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const index = indexedElementPathValue(`filterIndex(${sourceExpr})`, source.length)
+  const raw = invokeInlineFunction('<filter-predicate>', callbackFn, [item, index, source], frame)
+  const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, source.length))
+  const truth = truthinessValues(refined)
+  if (truth == null) return fallback
+  if (truth.every(value => value === true)) {
+    return numberValue(source.length.min, source.length.max, true, `${text}.length`, source.length.linear)
+  }
+  if (truth.every(value => value === false)) {
+    return numberValue(0, 0, true, `${text}.length`)
+  }
+  return fallback
 }
 
 function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {

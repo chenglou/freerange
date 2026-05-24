@@ -105,13 +105,7 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
       ...relation,
       right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
     })),
-    nondecreasingProps: summary.nondecreasingProps,
     advances: summary.advances.map(fact => ({...fact, value: numberWithCallSiteText(fact.value, bindings)})),
-    spaced: summary.spaced.map(fact => ({
-      gapExpr: callSiteText(fact.gapExpr, bindings),
-      heightExpr: callSiteText(fact.heightExpr, bindings),
-      advanceExpr: callSiteText(fact.advanceExpr, bindings),
-    })),
     lastEnd: summary.lastEnd == null ? null : numberWithCallSiteText(summary.lastEnd, bindings),
     extentEnds: summary.extentEnds.map(fact => ({
       emptyExpr: callSiteText(fact.emptyExpr, bindings),

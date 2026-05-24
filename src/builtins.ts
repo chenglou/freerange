@@ -7,9 +7,9 @@ import {
   type Value,
 } from './domain.ts'
 import {sameExpressionText} from './linear.ts'
-import {publicFitText} from './parser.ts'
+import {parseExpression, publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
-import {hasNondecreasingProp, provedSpacing} from './sequence-facts.ts'
+import {hasNondecreasingProp, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
 
 export type BuiltinContext = {
   expression: ts.CallExpression
@@ -29,6 +29,8 @@ export function evaluateBuiltinCall(context: BuiltinContext): Value | null {
       return evaluateLastEndCall(context)
     case 'extentEnd':
       return evaluateExtentEndCall(context)
+    case 'noOverlap':
+      return evaluateNoOverlapCall(context)
     default:
       return null
   }
@@ -71,6 +73,46 @@ function evaluateLastEndCall(context: BuiltinContext): Value {
   return target.summary?.lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
 }
 
+function evaluateNoOverlapCall(context: BuiltinContext): Value {
+  const text = context.expressionText(context.expression)
+  const args = context.expression.arguments
+  if (args.length !== 1) return unknown('noOverlap expects noOverlap(arr)')
+  const arr = context.evaluateExpression(args[0]!)
+  if (arr.kind !== 'array') return unknown('noOverlap expected an array')
+  const summary = arr.summary
+  if (summary == null) return unknown(noOverlapFailureReason(text, arr, null))
+  for (const shape of spacedShapesFromRelations(summary.relations)) {
+    if (gapIsNonnegative(shape.gapExpr, context)) {
+      return literalValue([true], text, [`lifted from spaced(${shape.gapExpr}): ${formatArraySummary(arr)}`])
+    }
+  }
+  return unknown(noOverlapFailureReason(text, arr, spacedShapesFromRelations(summary.relations)[0] ?? null))
+}
+
+function gapIsNonnegative(gapExpr: string, context: BuiltinContext): boolean {
+  if (gapExpr === '0') return true
+  try {
+    const expr = parseExpression(gapExpr)
+    const value = context.evaluateExpression(expr)
+    if (value.kind === 'number' && value.min >= 0) return true
+  } catch {}
+  return false
+}
+
+function noOverlapFailureReason(text: string, arr: ArrayValue, spacing: {gapExpr: string; heightExpr: string; advanceExpr: string} | null): string {
+  const lines = [
+    `${publicFitText(text)} was not inferred`,
+    'need: adjacent items separated by a non-negative gap',
+    `known: sequence facts: ${formatArraySummary(arr)}`,
+  ]
+  if (spacing != null) {
+    lines.push(`missing: given ${publicFitText(spacing.gapExpr)} >= 0`)
+  } else {
+    lines.push('missing: recognized adjacent row spacing')
+  }
+  return lines.join('\n')
+}
+
 function evaluateExtentEndCall(context: BuiltinContext): Value {
   const targetExpression = context.expression.arguments[0]
   const emptyExpression = context.expression.arguments[1]
@@ -102,6 +144,8 @@ function sequencePropArgument(args: ts.NodeArray<ts.Expression>, evaluateExpress
     if (array.kind === 'array') return {array, prop: path.join('.')}
     expression = unwrapExpression(expression.expression)
   }
+  const direct = evaluateExpression(expression)
+  if (direct.kind === 'array') return {array: direct, prop: ''}
   return null
 }
 
@@ -145,9 +189,12 @@ function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
     `need: every next row top == previous top + previous height + ${publicGapExpr}`,
   ]
   const known: string[] = []
-  const spacing = rows.summary?.spaced[0]
+  const spacing = rows.summary == null ? null : spacedShapesFromRelations(rows.summary.relations)[0] ?? null
   if (spacing != null) {
-    known.push(`loop proved: row advance ${publicFitText(spacing.advanceExpr)} = previous height ${publicFitText(spacing.heightExpr)} + ${publicFitText(spacing.gapExpr)}`)
+    const advance = publicFitText(spacing.advanceExpr)
+    const size = publicFitText(spacing.heightExpr)
+    const gap = publicFitText(spacing.gapExpr)
+    known.push(`loop proved: next.${advance} = previous.${size} + ${gap}`)
   }
   known.push(`sequence facts: ${formatArraySummary(rows)}`)
   lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)

@@ -17,6 +17,7 @@ import {
   type FitProofStep,
 } from './obligations.ts'
 import {
+  literalKey,
   numberBranches,
   numberValue,
   unknownNumber,
@@ -70,6 +71,8 @@ export function proveComparison(left: Value, op: ComparisonOperator, right: Valu
 }
 
 export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProof {
+  const literalEquality = proveLiteralEquality(left, op, right)
+  if (literalEquality != null) return literalEquality
   const structuralEquality = proveStructuralEquality(left, op, right)
   if (structuralEquality != null) return {...structuralEquality, step: structuralEqualityProofStep(left, op, right)!}
   if (left.kind !== 'number') {
@@ -109,6 +112,27 @@ function nonNumberComparisonStep(): ComparisonProofStep {
 
 function branchComparisonStep(): ComparisonProofStep {
   return {domain: 'numeric', rule: 'branch-comparison', message: 'checked comparison across finite numeric branches'}
+}
+
+function proveLiteralEquality(left: Value, op: ComparisonOperator, right: Value): ComparisonProof | null {
+  if (op !== '==') return null
+  if (left.kind !== 'literal' || right.kind !== 'literal') return null
+  const leftKeys = new Set(left.values.map(literalKey))
+  const rightKeys = new Set(right.values.map(literalKey))
+  const overlap = [...leftKeys].some(key => rightKeys.has(key))
+  const equalSets = leftKeys.size === rightKeys.size && [...leftKeys].every(key => rightKeys.has(key))
+  const step: ComparisonProofStep = {domain: 'literal', rule: 'literal-equality', message: 'checked literal equality'}
+  if (equalSets && leftKeys.size === 1) return {status: 'pass', step}
+  if (!overlap) {
+    const leftText = formatLiteralSet(left.values)
+    const rightText = formatLiteralSet(right.values)
+    return {status: 'fail', reason: `${leftText} cannot equal ${rightText}`, step}
+  }
+  return {status: 'unknown', reason: 'literal values overlap but are not equal', step}
+}
+
+function formatLiteralSet(values: ReadonlyArray<string | boolean>) {
+  return values.length === 1 ? String(values[0]) : `{${values.map(String).join(', ')}}`
 }
 
 function proveStructuralEquality(left: Value, op: ComparisonOperator, right: Value): {status: 'pass' | 'unknown'; reason?: string} | null {

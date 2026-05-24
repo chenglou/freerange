@@ -10,7 +10,11 @@ import {
 } from './domain.ts'
 import {sameExpressionText} from './linear.ts'
 import {formatExpectedRange} from './reporting.ts'
-import {sequenceRelationText} from './sequence-facts.ts'
+import {
+  nondecreasingPropsFromRelations,
+  sequenceRelationText,
+  spacedShapesFromRelations,
+} from './sequence-facts.ts'
 
 export type FitInferFact = FitRangeFact | FitEqualityFact | FitSequenceFact | FitOriginFact
 
@@ -180,7 +184,7 @@ function addFactsFromValue(inventory: FactInventory, path: string, value: Value)
         fact: {kind: value.summary.origin.kind, path: publicFitText(path), sourcePath},
       }, {kind: 'loop-summary'}, publicFitText(path))
     }
-    for (const prop of value.summary.nondecreasingProps) {
+    for (const prop of nondecreasingPropsFromRelations(value.summary.relations)) {
       inventory.add({
         kind: 'sequence',
         source: 'sequence',
@@ -188,7 +192,7 @@ function addFactsFromValue(inventory: FactInventory, path: string, value: Value)
         fact: {kind: 'nondecreasing', path, prop},
       }, {kind: 'loop-summary'}, publicFitText(path))
     }
-    for (const fact of value.summary.spaced) {
+    for (const fact of spacedShapesFromRelations(value.summary.relations)) {
       inventory.add({
         kind: 'sequence',
         source: 'sequence',

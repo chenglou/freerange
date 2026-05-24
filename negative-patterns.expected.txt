@@ -84,7 +84,6 @@ UNKNOWN negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.l
     items.length: int 0..10
     assumed from input: given items.length: int 0..10
     assumed from input: given index: int 0..10
-    inferred from branch: items.length < 0
   missing fact: index < items.length
 FAIL negative-patterns.ts:negativeArrayLengthCallGiven: negativeNeedsShortArray(items): requires items.length: int 0..10
   caller passed: items.length: int 0..20
@@ -239,7 +238,7 @@ UNKNOWN negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows,
   spaced(return.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap
   known:
-    loop proved: row advance (step + gap) = previous height step + gap
+    loop proved: next.top = previous.height + gap
     sequence facts: nondecreasing(.top), spaced(gap), lastEnd = -10..3500 as (y - gap)
   missing: given gap == otherGap
 UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: return.rows[].bottom == return.rows[].top + return.rows[].height
@@ -260,7 +259,7 @@ UNKNOWN negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(r
   spaced(return.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap
   known:
-    loop proved: row advance (rows[].height + otherGap) = previous height rows[].height + otherGap
+    loop proved: next.top = previous.height + otherGap
     sequence facts: nondecreasing(.top), spaced(otherGap)
   missing: given otherGap == gap
 UNKNOWN negative-patterns.ts:negativeGuardedFlushCannotMixSameArrayAppend: spaced(return.rows, gap)
@@ -639,7 +638,7 @@ UNKNOWN negative-patterns.ts:negativeStaleGapAfterRefactor: spaced(return.rows, 
   spaced(return.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap
   known:
-    loop proved: row advance (items[].height + (gap + 1)) = previous height items[].height + (gap + 1)
+    loop proved: next.top = previous.height + (gap + 1)
     sequence facts: nondecreasing(.top), spaced((gap + 1))
   missing: given (gap + 1) == gap
 UNKNOWN negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
@@ -872,14 +871,12 @@ UNKNOWN negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch:
   known:
     (focused - 1): int -1..999
     assumed from input: given focused: int 0..1000
-    inferred from branch: focused >= 0
   missing fact: (focused - 1) >= 0
 FAIL negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return: int 0..1000
   range was int -1..999 as (focused - 1), expected inside int 0..1000
   known:
     (focused - 1): int -1..999
     assumed from input: given focused: int 0..1000
-    inferred from branch: focused >= 0
   missing: (focused - 1) >= 0
 UNKNOWN negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   Unsupported @fit contract expression: width.toString()

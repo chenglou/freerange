@@ -16,11 +16,13 @@ import type {
 import {
   linearNameForExpression,
   joinValues,
+  literalValue,
   mergeOrigin,
   numberBranches,
   numberValue,
   unknown,
   withNumberCases,
+  type LiteralValue,
   type NumberValue,
   type Value,
 } from './domain.ts'
@@ -366,6 +368,7 @@ export function valueWithFunctionContractSummary(
   }
   for (const spec of specs) {
     if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source, evaluators)
+    if (spec.kind === 'check-expression') applySummaryExpressionSpec(env, spec, source)
   }
 
   const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
@@ -595,12 +598,38 @@ function applySummaryComparisonSpec(
   if (leftPath != null && rightPath == null) {
     const right = evaluators.evaluateSpecExpression(spec.right, context)
     if (right.kind === 'number') applySummaryComparisonToPath(env, context, leftPath, spec.op, right, fact, evaluators)
+    else if (right.kind === 'literal' && spec.op === '==') applySummaryLiteralEqualityToPath(env, leftPath, right, fact)
     return
   }
   if (rightPath != null && leftPath == null) {
     const left = evaluators.evaluateSpecExpression(spec.left, context)
     if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left, fact, evaluators)
+    else if (left.kind === 'literal' && spec.op === '==') applySummaryLiteralEqualityToPath(env, rightPath, left, fact)
   }
+}
+
+function applySummaryLiteralEqualityToPath(
+  env: Map<string, Value>,
+  path: string,
+  other: LiteralValue,
+  fact: string,
+) {
+  const projected = literalValue(other.values, path, [...other.origin, fact])
+  setSummaryPathValue(env, path, projected)
+}
+
+function applySummaryExpressionSpec(
+  env: Map<string, Value>,
+  spec: Extract<FitSpec, {kind: 'check-expression'}>,
+  source: FunctionContractSource,
+) {
+  const path = simpleResultPathText(spec.expression)
+  if (path == null) return
+  const parsed = fitExpressionParsed(spec.expression)
+  if (parsed.domainPaths.size !== 0) return
+  if (!ts.isIdentifier(parsed.expression)) return
+  if (parsed.expression.text !== fitReturnInternalRoot) return
+  setSummaryPathValue(env, path, literalValue([true], path, [checkedContractFact(source, spec.text)]))
 }
 
 function applySummaryConstraintToPath(

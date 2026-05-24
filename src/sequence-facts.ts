@@ -7,6 +7,63 @@ import {
 import {sameExpressionText} from './linear.ts'
 import {type ComparisonOperator} from './parser.ts'
 
+export type SpacedShape = {gapExpr: string; heightExpr: string; advanceExpr: string}
+
+export function nondecreasingPropsFromRelations(relations: SequenceRelation[]): string[] {
+  const props = new Set<string>()
+  for (const relation of relations) {
+    if (relation.kind !== 'adjacent-comparison') continue
+    if (relation.op !== '>=' && relation.op !== '==') continue
+    if (relation.left.item !== 'next') continue
+    if (relation.right.addends.length > 0) continue
+    if (relation.right.terms.length !== 1) continue
+    const term = relation.right.terms[0]!
+    if (term.item !== 'previous') continue
+    if (!samePath(relation.left.path, term.path)) continue
+    props.add(relation.left.path.join('.'))
+  }
+  return [...props].sort()
+}
+
+export function spacedShapesFromRelations(relations: SequenceRelation[]): SpacedShape[] {
+  const shapes: SpacedShape[] = []
+  const seen = new Set<string>()
+  for (const relation of relations) {
+    const shape = spacedShapeFromRelation(relation)
+    if (shape == null) continue
+    const key = `${shape.advanceExpr}|${shape.gapExpr}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    shapes.push(shape)
+  }
+  return shapes
+}
+
+function spacedShapeFromRelation(relation: SequenceRelation): SpacedShape | null {
+  if (relation.kind !== 'adjacent-comparison') return null
+  if (relation.op !== '==') return null
+  if (relation.left.item !== 'next') return null
+  const terms = relation.right.terms
+  if (terms.length === 0 || !terms.every(term => term.item === 'previous')) return null
+  if (terms.length === 1) {
+    const heightPath = terms[0]!.path
+    const heightExpr = heightPath.join('.')
+    const gapExpr = relation.right.addends.length === 0 ? '0' : relation.right.addends.join(' + ')
+    const advanceExpr = relation.left.path.join('.')
+    return {gapExpr, heightExpr, advanceExpr}
+  }
+  if (terms.length === 2) {
+    const match = terms.find(term => samePath(term.path, relation.left.path))
+    const other = terms.find(term => !samePath(term.path, relation.left.path))
+    if (match == null || other == null) return null
+    const heightExpr = other.path.join('.')
+    const gapExpr = relation.right.addends.length === 0 ? '0' : relation.right.addends.join(' + ')
+    const advanceExpr = relation.left.path.join('.')
+    return {gapExpr, heightExpr, advanceExpr}
+  }
+  return null
+}
+
 export type AdjacentComparison = {
   left: SequenceTerm
   op: ComparisonOperator

@@ -62,6 +62,12 @@ export type FitSpec =
       line?: number
     }
   | {
+      kind: 'given-expression'
+      expression: FitExpression
+      text: string
+      line?: number
+    }
+  | {
       kind: 'check-range'
       expression: FitExpression
       range: FitRange
@@ -93,7 +99,7 @@ export type FitSpec =
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
 export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>
 export type FitInlineCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
-export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>
+export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'} | {kind: 'given-expression'}>
 
 export type FitInlineSpecTemplate =
   | {
@@ -576,7 +582,7 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
     return {kind: isGiven ? 'given-comparison' : 'check-comparison', left, op: comparison.op, right, text: line, ...lineFields}
   }
 
-  if (isGiven) throw new Error(`Unsupported @fit given: ${line}`)
+  if (isGiven) return {kind: 'given-expression', expression: parseFitExpressionText(body), text: line, ...lineFields}
   return {kind: 'check-expression', expression: parseFitExpressionText(line), text: line, ...lineFields}
 }
 

@@ -198,6 +198,7 @@ export type LocalizeOptions = {
 export type AssumedGivenSpec =
   | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
   | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
+  | {kind: 'expression'; spec: Extract<FitSpec, {kind: 'given-expression'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
 
 export type ImportedContractSource = {
   sourceFile: string
