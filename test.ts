@@ -5,8 +5,8 @@ import {uniqueUnsupported} from './src/infer-report.ts'
 import {buildFitSourceFile} from './src/modules.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from './src/reports.ts'
 
-const positiveFiles = ['patterns.ts', 'import-patterns.ts', 'interpreter-matrix-patterns.ts']
-const negativeFiles = ['negative-patterns.ts', 'negative-import-patterns.ts', 'interpreter-matrix-negative.ts']
+const positiveFiles = ['tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('.', import.meta.url).pathname
@@ -1146,7 +1146,7 @@ if (
   console.log('control flow: unsupported branch condition stops')
 }
 
-const inferReport = inferFitFiles(['patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
+const inferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
 const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedInferFacts = [
   'return.rows.length == params.items.length',
@@ -1163,7 +1163,7 @@ if (missingInferFacts.length > 0) {
   console.log(`infer: ${expectedInferFacts.length} expected facts`)
 }
 
-const filterInferReport = inferFitFiles(['patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
+const filterInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
 const filterInferFacts = new Set(filterInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedFilterInferFacts = [
   'return.rows is an order-preserving subset of items',
@@ -1177,7 +1177,7 @@ if (missingFilterInferFacts.length > 0) {
   console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
 }
 
-const filterMapInferReport = inferFitFiles(['patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
+const filterMapInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
 const filterMapInferFacts = new Set(filterMapInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedFilterMapInferFacts = [
   'return.rows is an order-preserving subset of items',
@@ -1191,7 +1191,7 @@ if (missingFilterMapInferFacts.length > 0) {
   console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
 }
 
-const loopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'localLoopAnnotation'})
+const loopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'localLoopAnnotation'})
 const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]
 const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
@@ -1233,7 +1233,7 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
 
-const segmentedLoopInferReport = inferFitFiles(['patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
+const segmentedLoopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
 const segmentedFunction = segmentedLoopInferReport.functions[0]
 const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
 const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
@@ -1259,7 +1259,7 @@ if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
   console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
 }
 
-const redundantInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarPushLoop'})
+const redundantInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarPushLoop'})
 const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedRedundantFacts = [
@@ -1283,7 +1283,7 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
-const tupleInferReport = inferFitFiles(['patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
+const tupleInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
 const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 if (!tupleFacts.has('return.length == 2')) {
   console.error('expected fixed tuple length inference to stay readable')
@@ -1310,7 +1310,7 @@ if (missingEqualityRedundantFacts.length > 0) {
   console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
 }
 
-const callSiteTextReport = inferFitFiles(['patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
+const callSiteTextReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
 const callSiteTextFacts = new Set(callSiteTextReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedCallSiteTextFacts = [
   'return == max(0, min(value, (position.cols - w)))',
@@ -1325,13 +1325,13 @@ if (missingCallSiteTextFacts.length > 0) {
 }
 
 const actualInferSnapshot = normalizeText([
-  formatInferSnapshot(['patterns.ts'], 'typedObjectParamArrayShape'),
-  formatInferSnapshot(['patterns.ts'], 'propertyAccessCallShape'),
-  formatInferSnapshot(['patterns.ts'], 'mapCallbackReturnShape'),
-  formatInferSnapshot(['patterns.ts'], 'scalarPushLoop'),
-  formatInferSnapshot(['import-patterns.ts'], 'namespaceImportedStructuralShape'),
-  formatInferSnapshot(['patterns.ts'], 'mapBlockRowsWithDestructure'),
-  formatInferSnapshot(['patterns.ts'], 'localLoopAnnotation'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'typedObjectParamArrayShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'propertyAccessCallShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapCallbackReturnShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'scalarPushLoop'),
+  formatInferSnapshot(['tests/imports/import-patterns.ts'], 'namespaceImportedStructuralShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapBlockRowsWithDestructure'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'localLoopAnnotation'),
   formatInferSnapshot([
     '../vibescript/demos/photo-gallery/layout.ts',
     '../vibescript/demos/photo-gallery/prompt-layout.ts',
@@ -1479,7 +1479,7 @@ function displayFile(file: string) {
 }
 
 async function runCliRegressionTests() {
-  const explicitCheck = runFr(['check', 'patterns.ts', 'import-patterns.ts'])
+  const explicitCheck = runFr(['check', 'tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts'])
   expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
   expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
   expectCli(explicitCheck.output.includes('0 fail, 0 requires, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)

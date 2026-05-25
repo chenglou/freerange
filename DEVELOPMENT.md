@@ -31,8 +31,8 @@ bun install
 
 - [README.md](./README.md) — short project front door
 - [DOCUMENTATION.md](./DOCUMENTATION.md) — user-facing syntax, glossary, adoption guide, and supported checker surface
-- [patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) — positive pattern specimens
-- [negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) — intentionally bad patterns
+- [tests/patterns/patterns.ts](./tests/patterns/patterns.ts) and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) — positive pattern specimens
+- [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
 - [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter tests, proof-trace shape, and the external corpus sweep
@@ -62,9 +62,8 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
-- [test.ts](./test.ts), [parser-tests.ts](./parser-tests.ts), [patterns.ts](./patterns.ts), [negative-patterns.ts](./negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, and report coverage
+- [test.ts](./test.ts), [parser-tests.ts](./parser-tests.ts), [tests/patterns/patterns.ts](./tests/patterns/patterns.ts), [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, and report coverage
 - `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
-- [research/focused-tests](./research/focused-tests) and [experiments](./experiments) — tracked pressure examples and scratch artifacts outside the default full gate
 
 ## Infer Tool
 
@@ -112,9 +111,9 @@ Use this when a report says a property or array path is unknown. If `shape-diff`
 
 ## Adding Support
 
-[patterns.ts](./patterns.ts) and [import-patterns.ts](./import-patterns.ts) are the runnable catalog of good examples.
+[tests/patterns/patterns.ts](./tests/patterns/patterns.ts) and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) are the runnable catalog of good examples.
 
-[negative-patterns.ts](./negative-patterns.ts) and [negative-import-patterns.ts](./negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
+[tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
 
 For a new guarantee:
 

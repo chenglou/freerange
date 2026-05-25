@@ -167,7 +167,7 @@ infer imported literal nested map/defaults
   return return[].springs follows importedNestedLiteralSpringData.groups[].items by index
   return return follows importedNestedLiteralSpringData.groups by index
 shape imported literal nested map/defaults shape
-  import-patterns.ts:importedNestedLiteralArrayMapDefaultFields: call importedNestedLiteralSpringData.groups.map(group => ({ springs: group.items.map(item => importedLiteralSpring(item.position)), }))
+  tests/imports/import-patterns.ts:importedNestedLiteralArrayMapDefaultFields: call importedNestedLiteralSpringData.groups.map(group => ({ springs: group.items.map(item => importedLiteralSpring(item.position)), }))
     typescript shape.length: int 0..Infinity
     typescript shape[].springs.length: int 0..Infinity
     typescript shape[].springs[].b: number

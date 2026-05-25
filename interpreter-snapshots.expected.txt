@@ -1,4 +1,4 @@
-case matrix nested iife/map/defaults: interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
+case matrix nested iife/map/defaults: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
   return.length: int 2..2
   return[].length: int 1..2
   return[][].spring.pos: int 4..12
@@ -7,135 +7,135 @@ case matrix nested iife/map/defaults: interpreter-matrix-patterns.ts:matrixNeste
   return[][].index: int 0..1
   fact return[] follows matrixInput.groups[].items by index
   fact return follows matrixInput.groups by index
-case matrix default param order: interpreter-matrix-patterns.ts:matrixDefaultParamOrder
+case matrix default param order: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixDefaultParamOrder
   return.pos: int 0..0
   return.k: int 10..10
   return.b: int 11..11
-case matrix explicit undefined defaults: interpreter-matrix-patterns.ts:matrixExplicitUndefinedDefaults
+case matrix explicit undefined defaults: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixExplicitUndefinedDefaults
   return.pos: int 0..0
   return.k: int 290..290
   return.b: int 30..30
-case matrix if refines nonnegative: interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
+case matrix if refines nonnegative: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
   return: 0..Infinity
-case matrix ternary literal join: interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
+case matrix ternary literal join: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
   return: int 3..7
-case matrix filter/map literal booleans: interpreter-matrix-patterns.ts:matrixFilterMapLiteralBooleans
+case matrix filter/map literal booleans: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixFilterMapLiteralBooleans
   return.length: int 0..3
   return[]: int -1..3
   fact return is an order-preserving subset of items
-case matrix for-of push visible rows: interpreter-matrix-patterns.ts:matrixForOfPushVisibleRows
+case matrix for-of push visible rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfPushVisibleRows
   return.length: int 0..3
   return[].height: int 2..6
   fact return is an order-preserving subset of items
-case matrix abstract for-of cursor values: interpreter-matrix-patterns.ts:matrixForOfParamCursorValues
+case matrix abstract for-of cursor values: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfParamCursorValues
   return.rows.length: int 0..Infinity
   return.rows[]: int 10..Infinity
   return.bottom: int 10..Infinity
   fact return.rows follows items by index
-case matrix abstract conditional count: interpreter-matrix-patterns.ts:matrixForOfParamConditionalCount
+case matrix abstract conditional count: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfParamConditionalCount
   return: int 0..Infinity
-case matrix abstract running max: interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
+case matrix abstract running max: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
   return: 0..Infinity
-case matrix indexed conditional count: interpreter-matrix-patterns.ts:matrixIndexedArrayConditionalCount
+case matrix indexed conditional count: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayConditionalCount
   return: int 0..Infinity
-case matrix indexed running max: interpreter-matrix-patterns.ts:matrixIndexedArrayRunningMax
+case matrix indexed running max: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayRunningMax
   return: 0..Infinity
-case matrix indexed limit range: interpreter-matrix-patterns.ts:matrixIndexedLimitRange
+case matrix indexed limit range: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedLimitRange
   return.length: int 5..5
   return[]: int 0..4
-case matrix indexed array param rows: interpreter-matrix-patterns.ts:matrixIndexedArrayParamRows
+case matrix indexed array param rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayParamRows
   return.rows.length: int 0..Infinity
   return.rows[].height: any number
   return.rows[].sourceIndex: int 0..Infinity
   fact return.rows follows items by index
-case matrix indexed array guarded rows: interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedRows
+case matrix indexed array guarded rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedRows
   return.rows.length: int 0..Infinity
   return.rows[].height: any number
   return.rows[].sourceIndex: int 0..Infinity
   fact return.rows is an order-preserving subset of items
-case matrix indexed array guarded cursor values: interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedCursorValues
+case matrix indexed array guarded cursor values: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedCursorValues
   return.rows.length: int 0..Infinity
   return.rows[]: int 10..Infinity
   return.bottom: int 10..Infinity
   fact return.rows is an order-preserving subset of items
-case matrix indexed array cursor values: interpreter-matrix-patterns.ts:matrixIndexedArrayCursorValues
+case matrix indexed array cursor values: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayCursorValues
   return.rows.length: int 0..Infinity
   return.rows[]: int 10..Infinity
   return.bottom: int 10..Infinity
   fact return.rows follows items by index
-case matrix Math clamp columns: interpreter-matrix-patterns.ts:matrixMathClampColumns
+case matrix Math clamp columns: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixMathClampColumns
   return: int 1..7
-case matrix else-if continuation: interpreter-matrix-patterns.ts:matrixElseIfContinuation
+case matrix else-if continuation: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixElseIfContinuation
   return: int -1..1
-case matrix throw guard narrows positive: interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
+case matrix throw guard narrows positive: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
   return: 0..Infinity
-case matrix switch finite literal: interpreter-matrix-patterns.ts:matrixSwitchFiniteLiteral
+case matrix switch finite literal: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchFiniteLiteral
   return: int 0..1 | 4
-case matrix switch continuation: interpreter-matrix-patterns.ts:matrixSwitchContinuation
+case matrix switch continuation: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchContinuation
   return: int 0..1
-case matrix switch grouped cases: interpreter-matrix-patterns.ts:matrixSwitchGroupedCases
+case matrix switch grouped cases: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchGroupedCases
   return: "hidden" | "visible"
-case matrix switch narrows discriminant path: interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
+case matrix switch narrows discriminant path: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
   return: int 0..1 | 4
-case matrix array at last: interpreter-matrix-patterns.ts:matrixArrayAtLast
+case matrix array at last: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixArrayAtLast
   return: 10 | 20 | 30
-case matrix stringish mutation preserves tuple: interpreter-matrix-patterns.ts:matrixStringishMutationPreservesTuple
+case matrix stringish mutation preserves tuple: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixStringishMutationPreservesTuple
   return.length: int 2..2
   return[0]: unknown (Stringish assignment changed path += `M ${items.length}`)
   return[1]: int 5..5
   return[]: unknown (Stringish assignment changed path += `M ${items.length}`)
   unsupported matrixStringishMutationPreservesTuple line 328: Template string `M ${items.length}`
-case matrix typeof undefined guard: interpreter-matrix-patterns.ts:matrixTypeofUndefinedGuard
+case matrix typeof undefined guard: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTypeofUndefinedGuard
   return: 0..Infinity
-case matrix optional property nullish fallback: interpreter-matrix-patterns.ts:matrixOptionalPropertyNullishFallback
+case matrix optional property nullish fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixOptionalPropertyNullishFallback
   return: 0..Infinity
-case matrix nullable object optional fallback: interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
+case matrix nullable object optional fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
   return: 0..Infinity
-case matrix local Math alias: interpreter-matrix-patterns.ts:matrixLocalMathAlias
+case matrix local Math alias: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixLocalMathAlias
   return: 10..Infinity
-case matrix property access call shape: interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
+case matrix property access call shape: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
   return.rows.length: int 0..Infinity
   return.rows[].height: any number
-case matrix class method this: interpreter-matrix-patterns.ts:matrixClassMethodThis
+case matrix class method this: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixClassMethodThis
   return: any number
-case negative default value surface: interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
+case negative default value surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
-case negative alias mutation surface: interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
+case negative alias mutation surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
   return.length: int 1..1
   return[].value: int -1..-1
   fact return follows source by index
-case negative cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixCursorUpdateBeforePush
+case negative cursor update before push surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixCursorUpdateBeforePush
   return: unknown (Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
   unsupported negativeMatrixCursorUpdateBeforePush line 33: Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
-case negative conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
+case negative conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
   return: unknown (Abstract for..of conditional running sums do not support else branches)
   unsupported negativeMatrixConditionalElseCount line 41: Abstract for..of conditional running sums do not support else branches
-case negative mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
+case negative mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
   return: unknown (Abstract for..of scalar extrema support extrema updates only)
   unsupported negativeMatrixMixedExtremumAndCursor line 52: Abstract for..of scalar extrema support extrema updates only
-case negative indexed loop starts at one surface: interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
+case negative indexed loop starts at one surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
   return: unknown (Unsupported for loop body: {
     values.push(i)
   })
   unsupported negativeMatrixIndexedLoopStartsAtOne line 59: Unsupported for loop body: {
     values.push(i)
   }
-case negative indexed array guarded else surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
+case negative indexed array guarded else surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
   return: unknown (Indexed for loop guarded pushes do not support else branches)
   unsupported negativeMatrixIndexedArrayGuardedElse line 70: Indexed for loop guarded pushes do not support else branches
-case negative indexed array pushes into source surface: interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
+case negative indexed array pushes into source surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
   return: unknown (Indexed for loop cannot push into its source array)
   unsupported negativeMatrixIndexedArrayPushesIntoSource line 77: Indexed for loop cannot push into its source array
-case negative indexed cursor update before push surface: interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
+case negative indexed cursor update before push surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
   return: unknown (Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
   unsupported negativeMatrixIndexedCursorUpdateBeforePush line 87: Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
-case negative indexed conditional else count surface: interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
+case negative indexed conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
   return: unknown (Indexed for loop conditional running sums do not support else branches)
   unsupported negativeMatrixIndexedConditionalElseCount line 96: Indexed for loop conditional running sums do not support else branches
-case negative indexed mixed extremum/cursor surface: interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
+case negative indexed mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
   return: unknown (Indexed for loop scalar extrema support extrema updates only)
   unsupported negativeMatrixIndexedMixedExtremumAndCursor line 108: Indexed for loop scalar extrema support extrema updates only
-case negative guarded unsafe reset surface: interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
+case negative guarded unsafe reset surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
   return: unknown (Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
       rows.push({height: rowHeight})
       rowHeight = -1
@@ -144,14 +144,14 @@ case negative guarded unsafe reset surface: interpreter-matrix-negative.ts:negat
       rows.push({height: rowHeight})
       rowHeight = -1
     }
-case negative forgettable impure read surface: interpreter-matrix-negative.ts:negativeMatrixForgettableLoopImpureRead
+case negative forgettable impure read surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixForgettableLoopImpureRead
   return: unknown (Unsupported for loop body: {
     scratch += negativeMatrixImpureLoopApi.touch()
   })
   unsupported negativeMatrixForgettableLoopImpureRead line 133: Unsupported for loop body: {
     scratch += negativeMatrixImpureLoopApi.touch()
   }
-case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
+case negative try/catch surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
   return: unknown (Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1
   } catch {
@@ -162,18 +162,18 @@ case negative try/catch surface: interpreter-matrix-negative.ts:negativeMatrixTr
   } catch {
     return 2
   }
-case negative switch broad string surface: interpreter-matrix-negative.ts:negativeMatrixSwitchBroadStringUnsupported
+case negative switch broad string surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixSwitchBroadStringUnsupported
   return: unknown (Switch expected a finite literal discriminant: kind)
   unsupported negativeMatrixSwitchBroadStringUnsupported line 148: Switch expected a finite literal discriminant: kind
-case negative switch fallthrough surface: interpreter-matrix-negative.ts:negativeMatrixSwitchFallthroughUnsupported
+case negative switch fallthrough surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixSwitchFallthroughUnsupported
   return: unknown (Switch fallthrough is not supported: kind)
   unsupported negativeMatrixSwitchFallthroughUnsupported line 157: Switch fallthrough is not supported: kind
-case negative array at dynamic surface: interpreter-matrix-negative.ts:negativeMatrixArrayAtDynamicUnsupported
+case negative array at dynamic surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixArrayAtDynamicUnsupported
   return: unknown (Array.at only supports constant negative indexes)
   unsupported negativeMatrixArrayAtDynamicUnsupported line 166: Array.at only supports constant negative indexes
-case negative nullish fallback string surface: interpreter-matrix-negative.ts:negativeMatrixNullishFallbackString
+case negative nullish fallback string surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixNullishFallbackString
   return: unknown (Math.max expected number arguments)
   unsupported negativeMatrixNullishFallbackString line 171: Math.max expected number arguments
-case negative mutable alias surface: interpreter-matrix-negative.ts:negativeMatrixMutableAliasUnsupported
+case negative mutable alias surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMutableAliasUnsupported
   return: unknown (negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases)
   unsupported negativeMatrixMutableAliasUnsupported line 177: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases

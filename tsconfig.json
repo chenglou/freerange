@@ -10,7 +10,7 @@
     "paths": {
       "@fit-fixtures/import-pattern-declared-package": ["./import-pattern-declared-package"],
       "@fit-fixtures/import-pattern-declared-package-no-map": ["./import-pattern-declared-package-no-map"],
-      "@fit-fixtures/*": ["./*"]
+      "@fit-fixtures/*": ["./tests/imports/*"]
     },
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
@@ -28,5 +28,5 @@
     "noPropertyAccessFromIndexSignature": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "*.ts", "*.tsx", "research/focused-tests/**/*.ts"]
+  "include": ["src/**/*.ts", "*.ts", "*.tsx", "tests/**/*.ts", "tests/**/*.tsx"]
 }

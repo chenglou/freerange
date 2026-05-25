@@ -12,14 +12,14 @@ const config: KnipConfig = {
     'corpus-probes.ts',
     'snapshot.ts',
     // Fixture files loaded by file path inside test.ts and the verify scripts
-    'patterns.ts',
-    'negative-patterns.ts',
-    'import-patterns.ts',
-    'import-pattern-*.{ts,tsx}',
-    'negative-import-*.ts',
-    'interpreter-matrix-*.ts',
+    'tests/patterns/patterns.ts',
+    'tests/patterns/negative-patterns.ts',
+    'tests/imports/import-patterns.ts',
+    'tests/imports/import-pattern-*.{ts,tsx}',
+    'tests/imports/negative-import-*.ts',
+    'tests/interpreter-matrix/interpreter-matrix-*.ts',
     'photo-gallery/index.ts',
-    'research/focused-tests/*.ts',
+    'tests/vocab/*.ts',
   ],
   ignoreDependencies: [
     // Workspace-package fixtures resolved via tsconfig paths
