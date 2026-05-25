@@ -165,6 +165,143 @@ if (
   console.log('range contracts: numeric union propagation')
 }
 
+const unannotatedHelperBoundChecks = verifyFitSource('unannotated-helper-range-bounds.ts', `function limit(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given width: 0..20
+ * return: 0..limit(width)
+ */
+function inside(width: number) {
+  return width + width
+}
+
+/** @fit
+ * given width: 0..20
+ * return: 0..limit(width)
+ */
+function outside(width: number) {
+  return 50
+}
+`)
+const insideHelperBoundCheck = unannotatedHelperBoundChecks.find(check => check.functionName === 'inside' && check.text === 'return: 0..limit(width)')
+const outsideHelperBoundCheck = unannotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(width)')
+if (
+  insideHelperBoundCheck?.status !== 'pass'
+  || outsideHelperBoundCheck?.status !== 'fail'
+  || outsideHelperBoundCheck.reason?.includes('50 <= (width * 2)') !== true
+) {
+  console.error('expected pure unannotated helpers to work as dynamic range bounds')
+  console.error(JSON.stringify(unannotatedHelperBoundChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: unannotated helper bound')
+}
+
+const annotatedHelperBoundChecks = verifyFitSource('annotated-helper-range-bounds.ts', `/** @fit
+ * return: 5 | 10..20
+ */
+function rawLimit(flag: boolean) {
+  return flag ? 5 : 20
+}
+
+/** @fit
+ * return: 5 | 10..20
+ */
+function limit(flag: boolean) {
+  return rawLimit(flag)
+}
+
+/** @fit
+ * return: 0..limit(flag)
+ */
+function inside(flag: boolean) {
+  return flag ? 4 : 20
+}
+
+/** @fit
+ * return: 0..limit(flag)
+ */
+function outside(flag: boolean) {
+  return 21
+}
+`)
+const insideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'inside' && check.text === 'return: 0..limit(flag)')
+const outsideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(flag)')
+if (
+  insideAnnotatedHelperBoundCheck?.status !== 'pass'
+  || outsideAnnotatedHelperBoundCheck?.status !== 'fail'
+  || outsideAnnotatedHelperBoundCheck.reason?.includes('21 in 0..limit(flag)') !== true
+) {
+  console.error('expected annotated helper range alternatives to work as dynamic range bounds')
+  console.error(JSON.stringify(annotatedHelperBoundChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: annotated helper alternative bound')
+}
+
+const twoSidedHelperBoundChecks = verifyFitSource('two-sided-helper-range-bounds.ts', `/** @fit
+ * return: 10 | 30
+ */
+function lower(flag: boolean) {
+  return flag ? 10 : 30
+}
+
+/** @fit
+ * return: 20 | 25
+ */
+function upper(flag: boolean) {
+  return flag ? 20 : 25
+}
+
+/** @fit
+ * return: lower(flag)..upper(flag)
+ */
+function insideLow(flag: boolean) {
+  return 15
+}
+
+/** @fit
+ * return: lower(flag)..upper(flag)
+ */
+function insideHigh(flag: boolean) {
+  return 24
+}
+
+/** @fit
+ * return: lower(flag)..upper(flag)
+ */
+function outsideLow(flag: boolean) {
+  return 5
+}
+
+/** @fit
+ * return: lower(flag)..upper(flag)
+ */
+function outsideHigh(flag: boolean) {
+  return 26
+}
+`)
+const insideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'insideLow' && check.text === 'return: lower(flag)..upper(flag)')
+const insideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'insideHigh' && check.text === 'return: lower(flag)..upper(flag)')
+const outsideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideLow' && check.text === 'return: lower(flag)..upper(flag)')
+const outsideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideHigh' && check.text === 'return: lower(flag)..upper(flag)')
+if (
+  insideLowTwoSidedBoundCheck?.status !== 'pass'
+  || insideHighTwoSidedBoundCheck?.status !== 'pass'
+  || outsideLowTwoSidedBoundCheck?.status !== 'fail'
+  || outsideHighTwoSidedBoundCheck?.status !== 'fail'
+  || outsideLowTwoSidedBoundCheck.reason?.includes('5 in lower(flag)..upper(flag)') !== true
+  || outsideHighTwoSidedBoundCheck.reason?.includes('26 in lower(flag)..upper(flag)') !== true
+) {
+  console.error('expected two-sided helper range alternatives to work as dynamic range bounds')
+  console.error(JSON.stringify(twoSidedHelperBoundChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: two-sided helper alternative bounds')
+}
+
 const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}
 
 function bump() {

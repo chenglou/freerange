@@ -235,7 +235,7 @@ export function proveRangeSpec(value: Value, range: FitRange, context: EvalConte
   if (value.kind !== 'number') return {status: 'unknown', reason: expectedNumberReason(value)}
   const expected = evaluateRangeCases(range, context, hooks)
   if (expected.kind === 'invalid') return {status: 'unknown', reason: rangeBoundNumberReason(expected.bound, expected.value, expected.text)}
-  return proveNumberInsideRangeCases(value, range, expected.cases, context.assumptions)
+  return proveNumberInsideRangeCases(value, range, expandedEvaluatedRangeCases(expected.cases), context.assumptions)
 }
 
 type ValueSpecProof = {
@@ -405,6 +405,7 @@ type EvaluatedRangeCase = {
   source: FitRangeCase
   lower: NumberValue
   upper: NumberValue
+  assumptions: LinearConstraint[]
 }
 
 type EvaluatedRangeCases =
@@ -435,9 +436,38 @@ function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckS
     if (lower.kind !== 'number') return {kind: 'invalid', bound: 'lower', value: lower, text: rangeCase.lower.text}
     const upper = evaluateRangeBound(rangeCase.upper, context, hooks)
     if (upper.kind !== 'number') return {kind: 'invalid', bound: 'upper', value: upper, text: rangeCase.upper.text}
-    cases.push({source: rangeCase, lower, upper})
+    cases.push({source: rangeCase, lower, upper, assumptions: []})
   }
   return {kind: 'cases', cases}
+}
+
+function expandedEvaluatedRangeCases(cases: EvaluatedRangeCase[]): EvaluatedRangeCase[] {
+  return cases.flatMap(expandedEvaluatedRangeCase)
+}
+
+function expandedEvaluatedRangeCase(rangeCase: EvaluatedRangeCase): EvaluatedRangeCase[] {
+  const exactSameExpression = rangeCase.source.lowerInclusive
+    && rangeCase.source.upperInclusive
+    && rangeCase.source.lower.text === rangeCase.source.upper.text
+  if (exactSameExpression) {
+    return numberBranches(rangeCase.lower).map(branch => ({
+      source: rangeCase.source,
+      lower: branch.value,
+      upper: branch.value,
+      assumptions: mergeAssumptions(rangeCase.assumptions, branch.assumptions),
+    }))
+  }
+
+  const cases: EvaluatedRangeCase[] = []
+  for (const lower of numberBranches(rangeCase.lower)) {
+    for (const upper of numberBranches(rangeCase.upper)) {
+      if (lower.value.min > upper.value.max) continue
+      const assumptions = mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
+      if (!assumptionsAreReachable(assumptions)) continue
+      cases.push({source: rangeCase.source, lower: lower.value, upper: upper.value, assumptions})
+    }
+  }
+  return cases
 }
 
 function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, origin: string[]): NumberCase[] {
@@ -456,14 +486,14 @@ function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase
         null,
         mergeRangeOrigin(branch.value, origin),
       ),
-      assumptions: branch.assumptions,
+      assumptions: mergeAssumptions(rangeCase.assumptions, branch.assumptions),
     }))
   }
   const cases: NumberCase[] = []
   for (const lower of numberBranches(rangeCase.lower)) {
     for (const upper of numberBranches(rangeCase.upper)) {
       if (lower.value.min > upper.value.max) continue
-      const assumptions = mergeAssumptions(lower.assumptions, upper.assumptions)
+      const assumptions = mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
       if (!assumptionsAreReachable(assumptions)) continue
       cases.push({
         value: numberValue(
@@ -552,12 +582,13 @@ function proveNumberInsideRangeCase(
   rangeCase: EvaluatedRangeCase,
   assumptions: LinearConstraint[],
 ): RangeCaseStatus {
+  const proofAssumptions = mergeAssumptions(assumptions, rangeCase.assumptions)
   const lower = rangeBoundProofStatus(
-    proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, assumptions),
+    proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, proofAssumptions),
     staticLowerBoundExceeded(value, rangeCase.source),
   )
   const upper = rangeBoundProofStatus(
-    proveComparison(value, rangeCase.source.upperInclusive ? '<=' : '<', rangeCase.upper, assumptions),
+    proveComparison(value, rangeCase.source.upperInclusive ? '<=' : '<', rangeCase.upper, proofAssumptions),
     staticUpperBoundExceeded(value, rangeCase.source),
   )
   const integer: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
@@ -596,7 +627,7 @@ function rangeSpecFailureReasonForCases(
   rangeCase: EvaluatedRangeCase,
 ) {
   if (cases.length === 1) {
-    return rangeSpecFailureReason(value, range, rangeCase.lower, rangeCase.upper, assumptions, {
+    return rangeSpecFailureReason(value, range, rangeCase.lower, rangeCase.upper, mergeAssumptions(assumptions, rangeCase.assumptions), {
       lower: status.lower.status !== 'pass',
       upper: status.upper.status !== 'pass',
       integer: status.integer.status !== 'pass',
