@@ -1,7 +1,8 @@
-import {inferFitFiles} from './src/check-core.ts'
+import {createFunctionContractCache, inferFitFiles, readTopLevelGlobal, verifyFitProgramWithCallsites} from './src/check-core.ts'
 import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from './src/domain.ts'
 import {runningSumNumber} from './src/loop-summary.ts'
 import {uniqueUnsupported} from './src/infer-report.ts'
+import {buildFitSourceFile} from './src/modules.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from './src/reports.ts'
 
 const positiveFiles = ['patterns.ts', 'import-patterns.ts', 'interpreter-matrix-patterns.ts']
@@ -10,6 +11,11 @@ const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('.', import.meta.url).pathname
 const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
+
+function verifyFitSourceWithCallsites(file: string, sourceText: string) {
+  const program = buildFitSourceFile(file, sourceText, readTopLevelGlobal)
+  return verifyFitProgramWithCallsites(program, createFunctionContractCache())
+}
 
 const positiveReport = await verifyFitFiles(positiveFiles)
 if (positiveReport.phase !== 'ready') {
@@ -223,6 +229,82 @@ if (
   process.exitCode = 1
 } else {
   console.log('contract expressions: bare boolean helper call')
+}
+
+const booleanGivenContractResult = verifyFitSourceWithCallsites('boolean-given-contracts.ts', `function isValidLayout(layout: {width: number}) {
+  return layout.width > 0
+}
+
+/** @fit
+ * given isValidLayout(layout)
+ * isValidLayout(layout)
+ */
+function assumesValidLayout(layout: {width: number}) {
+  return layout
+}
+
+function validCaller() {
+  return assumesValidLayout({width: 5})
+}
+
+function invalidCaller() {
+  return assumesValidLayout({width: 0})
+}
+
+function unknownCaller(width: number) {
+  return assumesValidLayout({width})
+}
+
+/** @fit
+ * given layout.width: 0
+ * given isValidLayout(layout)
+ */
+function impossibleLayout(layout: {width: number}) {
+  return layout
+}
+
+/** @fit
+ * given isValidLayout(layout)
+ * given !isValidLayout(layout)
+ */
+function conflictingLayout(layout: {width: number}) {
+  return layout
+}
+
+/** @fit
+ * given !isValidLayout(layout)
+ * !isValidLayout(layout)
+ */
+function assumesInvalidLayout(layout: {width: number}) {
+  return layout
+}
+`)
+const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout(layout)')
+const impossibleBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'impossibleLayout' && check.text === 'given isValidLayout(layout)')
+const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout(layout)')
+const assumedNegativeBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesInvalidLayout' && check.text === '!isValidLayout(layout)')
+const validBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'validCaller' && check.text === 'assumesValidLayout({width: 5}): requires isValidLayout(layout)')
+const invalidBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'invalidCaller' && check.text === 'assumesValidLayout({width: 0}): requires isValidLayout(layout)')
+const unknownBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'unknownCaller' && check.text === 'assumesValidLayout({width}): requires isValidLayout(layout)')
+if (
+  assumedBooleanGivenCheck?.status !== 'pass'
+  || assumedBooleanGivenCheck.trace?.steps.some(step => step.rule === 'assumption') !== true
+  || impossibleBooleanGivenCheck?.status !== 'fail'
+  || impossibleBooleanGivenCheck.reason?.includes('no input can satisfy this with the earlier given lines') !== true
+  || conflictingBooleanGivenCheck?.status !== 'fail'
+  || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout(layout) and given !isValidLayout(layout)') !== true
+  || assumedNegativeBooleanGivenCheck?.status !== 'pass'
+  || validBooleanGivenCall?.status !== 'pass'
+  || invalidBooleanGivenCall?.status !== 'fail'
+  || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
+  || unknownBooleanGivenCall?.status !== 'requires'
+  || unknownBooleanGivenCall.reason?.includes('given isValidLayout(layout) was not proven true') !== true
+) {
+  console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
+  console.error(JSON.stringify(booleanGivenContractResult, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: boolean predicate call')
 }
 
 const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
@@ -731,6 +813,15 @@ function double(value: number) {
   return value * 2
 }
 
+function booleanImpure(value: number) {
+  box.limit += value
+  return true
+}
+
+function alwaysTrue() {
+  return true
+}
+
 /** @fit
  * given max >= bump(min)
  */
@@ -751,10 +842,26 @@ function noInput(value: number) {
 function derivedRangeTarget(value: number) {
   return value
 }
+
+/** @fit
+ * given booleanImpure(value)
+ */
+function impureBoolean(value: number) {
+  return value
+}
+
+/** @fit
+ * given alwaysTrue()
+ */
+function noInputBoolean(value: number) {
+  return value
+}
 `)
 const impureGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impure' && check.text === 'given max >= bump(min)')
 const noInputGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInput' && check.text === 'given double(10) > 0')
 const derivedRangeTargetCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'derivedRangeTarget' && check.text === 'given double(value): 0..10')
+const impureBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impureBoolean' && check.text === 'given booleanImpure(value)')
+const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInputBoolean' && check.text === 'given alwaysTrue()')
 if (
   impureGivenCheck?.status !== 'unknown'
   || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
@@ -763,6 +870,11 @@ if (
   || noInputGivenCheck.reason !== 'given must mention an input'
   || derivedRangeTargetCheck?.status !== 'unknown'
   || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
+  || impureBooleanGivenCheck?.status !== 'unknown'
+  || impureBooleanGivenCheck.reason?.includes('Unsupported @fit contract expression: booleanImpure(value)') !== true
+  || impureBooleanGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || noInputBooleanGivenCheck?.status !== 'unknown'
+  || noInputBooleanGivenCheck.reason !== 'given must mention an input'
 ) {
   console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
   console.error(JSON.stringify(unsupportedGivenExpressionChecks, null, 2))

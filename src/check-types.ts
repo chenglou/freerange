@@ -183,6 +183,7 @@ export type EvalContext = {
   stack: string[]
   checks: FitCheck[]
   assumptions: LinearConstraint[]
+  booleanAssumptions?: Map<string, boolean>
   contractCache: Map<string, FunctionContractProof>
   callObligations?: 'record' | 'silent'
   contractExpression?: true

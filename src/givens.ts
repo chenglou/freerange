@@ -3,9 +3,15 @@ import type {
   AssumedGivenSpec,
   EvalContext,
   FitCheck,
+  FitCheckStatus,
   FunctionContractProof,
   Program,
 } from './check-types.ts'
+import {
+  assumeBooleanExpression,
+  conflictingBooleanExpressionAssumption,
+  proveBooleanTrue,
+} from './boolean-claims.ts'
 import {
   finiteNumberValue,
   linearNameForExpression,
@@ -83,6 +89,11 @@ export function validateGivenSpecs(
   for (const spec of specs) {
     if (!fitSpecIsAssumption(spec)) continue
     if (spec.kind === 'expression') {
+      const badRoot = givenExpressionBadRoot(spec.expression, allowedRoots)
+      if (badRoot != null) {
+        checks.push(invalidGivenCheck(file, functionName, spec, invalidGivenRootReason(badRoot, allowedRoots)))
+        continue
+      }
       assumedGivens.push({kind: 'expression', spec, source})
       continue
     }
@@ -163,6 +174,13 @@ function editDistance(left: string, right: string) {
 
 function givenBadRoot(spec: FitRangeGivenSpec | FitComparisonGivenSpec, allowedRoots: string[]): string | null {
   for (const root of givenRootNames(spec)) {
+    if (!allowedRoots.includes(root)) return root
+  }
+  return null
+}
+
+function givenExpressionBadRoot(expression: FitExpressionLike, allowedRoots: string[]): string | null {
+  for (const root of givenExpressionRootNamesFromText(expression)) {
     if (!allowedRoots.includes(root)) return root
   }
   return null
@@ -289,10 +307,11 @@ export function collectGivenAssumptions(
   givens: AssumedGivenSpec[],
   contractCache: Map<string, FunctionContractProof>,
   evaluators: GivenEvaluators,
-): {assumptions: LinearConstraint[]; checks: FitCheck[]} {
+): {assumptions: LinearConstraint[]; booleanAssumptions: Map<string, boolean>; checks: FitCheck[]} {
   const assumptions: LinearConstraint[] = []
+  const booleanAssumptions = new Map<string, boolean>()
   const checks: FitCheck[] = []
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, contractCache}
+  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, booleanAssumptions, contractCache}
   for (const given of givens) {
     if (given.kind === 'range') {
       const spec = given.spec
@@ -348,15 +367,15 @@ export function collectGivenAssumptions(
     }
 
     if (given.kind === 'expression') {
-      const reason = projectGivenExpression(env, given.spec)
-      if (reason != null) {
+      const result = collectGivenExpressionAssumption(given.spec, context, evaluators)
+      if (result.kind === 'invalid') {
         checks.push({
           file,
           ...(given.spec.line == null ? {} : {line: given.spec.line}),
           functionName,
           text: given.spec.text,
-          status: 'unknown',
-          reason,
+          status: result.status,
+          reason: result.reason,
         })
       }
       continue
@@ -402,7 +421,49 @@ export function collectGivenAssumptions(
       assumptions.push(fact)
     }
   }
-  return {assumptions, checks}
+  return {assumptions, booleanAssumptions, checks}
+}
+
+type GivenExpressionResult =
+  | {kind: 'valid'}
+  | {kind: 'invalid'; status: FitCheckStatus; reason: string}
+
+function collectGivenExpressionAssumption(
+  spec: FitExpressionGivenSpec,
+  context: EvalContext,
+  evaluators: GivenEvaluators,
+): GivenExpressionResult {
+  if (!givenExpressionMentionsInput(spec.expression, context.inputRoots)) {
+    return {kind: 'invalid', status: 'unknown', reason: 'given must mention an input'}
+  }
+  const conflict = conflictingBooleanExpressionAssumption(context, spec.expression)
+  if (conflict != null) {
+    return {kind: 'invalid', status: 'fail', reason: `no input can satisfy both ${conflict}`}
+  }
+  const projectReason = projectGivenExpression(context.env, spec)
+  if (projectReason == null) {
+    assumeBooleanExpression(context, spec.expression)
+    return {kind: 'valid'}
+  }
+
+  const value = evaluators.evaluateSpecExpression(spec.expression, context)
+  const status = proveBooleanTrue(spec.text, value)
+  if (status.status === 'pass' || (status.status === 'unknown' && status.reason === `${spec.text} was not proven true`)) {
+    assumeBooleanExpression(context, spec.expression)
+    return {kind: 'valid'}
+  }
+  if (status.status === 'fail') {
+    return {
+      kind: 'invalid',
+      status: 'fail',
+      reason: `no input can satisfy this with the earlier given lines\n${status.reason ?? ''}`.trimEnd(),
+    }
+  }
+  return {kind: 'invalid', status: 'unknown', reason: status.reason ?? projectReason}
+}
+
+function givenExpressionMentionsInput(expression: FitExpressionLike, inputRoots: string[]) {
+  return givenExpressionRootNamesFromText(expression).some(root => inputRoots.includes(root))
 }
 
 type EvaluatedGivenNumber =

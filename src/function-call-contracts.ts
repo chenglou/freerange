@@ -51,6 +51,7 @@ import {
   type FitComparisonCheckSpec,
   type FitComparisonGivenSpec,
   type FitExpressionCheckSpec,
+  type FitExpressionGivenSpec,
   fitValueSpecNumberLiteralValue,
   fitRangeCases,
   fitValueSpecPropertyName,
@@ -84,6 +85,7 @@ import {
   proveObligation,
 } from './proof.ts'
 import {proofFactsFromValues} from './proof-facts.ts'
+import {proveBooleanTrue} from './boolean-claims.ts'
 import {
   comparisonNeed,
   formatExpectedRange,
@@ -138,6 +140,12 @@ export function verifyCallGivenSpecs(
       usedFacts = proofFactsFromValues([left, right], calleeContext.assumptions)
       status = proveComparison(left, spec.op, right, calleeContext.assumptions)
       status = withCallComparisonDetail(status, callText, left, right, spec, options.callSiteBindings)
+    }
+    if (spec.kind === 'expression') {
+      const value = evaluators.evaluateSpecExpression(spec.expression, calleeContext)
+      usedFacts = proofFactsFromValues([value], calleeContext.assumptions)
+      status = proveBooleanTrue(spec.text, value)
+      status = withCallExpressionDetail(status, callText, value, spec, options.callSiteBindings)
     }
     if (status == null) continue
     if (options.record) {
@@ -245,6 +253,26 @@ function withCallComparisonDetail(
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(left) != null && exactNumber(right) != null,
     unsupported: false,
+  })
+}
+
+function withCallExpressionDetail(
+  status: CallPreconditionStatus,
+  callText: string,
+  value: Value,
+  spec: FitExpressionGivenSpec,
+  callSiteBindings: CallSiteBindings | undefined,
+): CallPreconditionStatus {
+  const expression = callSiteText(spec.expression.text, callSiteBindings)
+  const missing = status.status === 'pass' ? [] : [status.reason ?? `${expression} must be true`]
+  return withCallDetail(status, {
+    kind: 'call-precondition',
+    callText,
+    requirement: callRequirementText(spec),
+    callerPassed: formatCallBinding(spec.expression.text, value),
+    missing,
+    definiteFailure: status.status === 'fail',
+    unsupported: value.kind === 'unknown',
   })
 }
 

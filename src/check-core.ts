@@ -305,7 +305,7 @@ function reachableProgramHasCallPreconditions(program: Program, seen = new Set<s
 }
 
 function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
-  return functionContractSpecs(program, fn).some(spec => fitSpecIsAssumption(spec) && (spec.kind === 'range' || spec.kind === 'comparison'))
+  return functionContractSpecs(program, fn).some(fitSpecIsAssumption)
 }
 
 
@@ -477,7 +477,7 @@ function verifyFunctionSpecsDetailed(
 
   for (const spec of contractSpecs) {
     if (!fitSpecIsProof(spec)) continue
-    checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, contractCache))
+    checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, context.booleanAssumptions, contractCache))
   }
 
   return {
@@ -518,6 +518,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     spec,
     [...backgroundChecks],
     state.assumptions,
+    context.booleanAssumptions,
     contractCache,
   ))
   const unsupported = [
@@ -711,12 +712,13 @@ function verifyCheckSpec(
   spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
+  booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
   boundary?: CheckBoundary,
   obligationBoundary: FitObligationBoundary = 'function-contract',
 ): FitCheck {
   const obligation = obligationForSpec(file, functionName, spec, obligationBoundary, boundary)
-  const proof = verifyParsedCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache, checkSpecHooks)
+  const proof = verifyParsedCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache, checkSpecHooks)
   const check = boundary == null ? proof.check : {...proof.check, ...boundary}
   return proveObligation({
     obligation,
@@ -736,13 +738,14 @@ function verifyCheckSpecForResultCases(
   spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: LinearConstraint[],
+  booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck {
   if (returnCases == null || returnCases.length <= 1) {
-    return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache)
+    return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache)
   }
 
-  const joinedCheck = verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, contractCache)
+  const joinedCheck = verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache)
   if (joinedCheck.status === 'pass') return joinedCheck
 
   const caseChecks = returnCases.map(returnCase => verifyCheckSpec(
@@ -754,6 +757,7 @@ function verifyCheckSpecForResultCases(
     spec,
     checks,
     mergeAssumptions(assumptions, returnCase.assumptions),
+    booleanAssumptions,
     contractCache,
   ))
   if (caseChecks.every(check => check.status === 'pass')) return {...caseChecks[0]!, status: 'pass'}
@@ -1042,6 +1046,7 @@ function verifyCheckSpecsWithResult(
       spec,
       [...context.checks],
       context.assumptions,
+      context.booleanAssumptions,
       context.contractCache,
       boundary,
       obligationBoundary,
@@ -1209,7 +1214,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
     if (given.kind !== 'range') continue
     applyGivenRangeSpec(context.env, given.spec)
   }
-  const {assumptions, checks: impossibleChecks} = collectGivenAssumptions(
+  const {assumptions, booleanAssumptions, checks: impossibleChecks} = collectGivenAssumptions(
     context.file,
     context.program,
     functionName,
@@ -1221,6 +1226,8 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
   )
   context.checks.push(...impossibleChecks)
   context.assumptions = mergeAssumptions(context.assumptions, assumptions)
+  context.booleanAssumptions ??= new Map()
+  for (const [key, expected] of booleanAssumptions) context.booleanAssumptions.set(key, expected)
 }
 
 function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
@@ -1238,6 +1245,7 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
       spec,
       context.checks,
       context.assumptions,
+      context.booleanAssumptions,
       context.contractCache,
       undefined,
       'loop-contract',
@@ -1278,6 +1286,7 @@ function evaluateLocalFunctionCall(
     stack: [...context.stack, functionName],
     checks: shouldRecordCallObligations(context) ? context.checks : [],
     assumptions: context.assumptions,
+    ...(context.booleanAssumptions == null ? {} : {booleanAssumptions: context.booleanAssumptions}),
     contractCache: context.contractCache,
     ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
     ...(context.contractExpression == null ? {} : {contractExpression: context.contractExpression}),
@@ -1356,6 +1365,7 @@ function evaluateDefaultArgument(
     stack: [...callerContext.stack, `${fn.name} default`],
     checks: shouldRecordCallObligations(callerContext) ? callerContext.checks : [],
     assumptions: callerContext.assumptions,
+    ...(callerContext.booleanAssumptions == null ? {} : {booleanAssumptions: callerContext.booleanAssumptions}),
     contractCache: callerContext.contractCache,
     ...(callerContext.callObligations == null ? {} : {callObligations: callerContext.callObligations}),
     ...(callerContext.contractExpression == null ? {} : {contractExpression: callerContext.contractExpression}),

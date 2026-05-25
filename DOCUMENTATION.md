@@ -95,6 +95,7 @@ Block comments need to be above the function, type, and loop scope.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected). They also work for the special range expression: `given myInputA: 0..calcConstant(myInputB)`.
 An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
+You can also put a pure boolean call after `given`, e.g. `given isValidLayout(input)`. Inside the function, Freerange treats that call as true. At call sites, it checks that callers satisfy it. Built-ins like `given spaced(rows, gap)` and `given nondecreasing(rows.top)` also expose their documented row/order facts to later checks.
 
 Syntax Glossary's at the end of the docs.
 
@@ -192,7 +193,7 @@ redundant:
 ### Inference Mental Model
 
 Freerange inferred lots of facts! Here's what we infer:
-- Input facts, aka `given`s, are _not_ touched. They're treated as truths. We also don't infer extra inputs-related facts.
+- Input facts, aka `given`s, are not proven from the function body. Freerange trusts them in the function, then checks them at visible call sites. Boolean givens like `given isValidLayout(input)` are kept as that exact fact. A few known built-ins, e.g. `given spaced(rows, gap)`, also add their documented row/order facts.
 - Every returned field that's a number, be it array of numbers or object with nested number fields, gets their inferred range and number type, e.g. `0..<10` or `int 5..20`, and disjoint union values if applicable, e.g. `1 | 3 | 5` if the returned value is one of those 3 numbers inferred from some if-else in the function body.
 - In the future, we can and might infer more convenience facts, such as `return.array1.length == return.array2.length`. But for now, to preserve a simple mental model and avoid bad surprises during code changes, we ask the user/agent to write those out explicitly in the function's `@fit` contracts.
 
@@ -270,6 +271,7 @@ Freerange currently keeps up to 8 reachable branch states from code. If code nee
 given width: 0..1000 // input assumption. Think precondition, not proof.
 given this.width: 0..1000 // input assumption for an instance method/getter.
 given min <= max // input relation. Supported comparisons are `==`, `>=`, `<=`, `>`, and `<`.
+given isValidLayout(input) // input boolean assumption. Freerange trusts it inside and checks callers.
 return.width: 0..320 // check fact. Freerange must prove this from source.
 bottom >= top // bare check relation. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.

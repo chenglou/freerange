@@ -47,6 +47,10 @@ import {
 } from './value-specs.ts'
 import {proveComparison, proveComparisonWithStep} from './proof.ts'
 import {
+  booleanExpressionIsAssumed,
+  proveBooleanTrue,
+} from './boolean-claims.ts'
+import {
   finiteRangeSpecFailureReason,
   formatArraySummary,
   formatRange,
@@ -96,13 +100,24 @@ export function verifyCheckSpecWithProof(
   spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
+  booleanAssumptions: EvalContext['booleanAssumptions'],
   contractCache: Map<string, FunctionContractProof>,
   hooks: CheckSpecHooks,
 ): CheckSpecProof {
   const env = new Map(baseEnv)
   env.set(fitReturnInternalRoot, result)
   const inputRoots = [...baseEnv.keys(), fitReturnInternalRoot]
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
+  const context: EvalContext = {
+    program,
+    file,
+    env,
+    inputRoots,
+    stack: [functionName],
+    checks,
+    assumptions,
+    ...(booleanAssumptions == null ? {} : {booleanAssumptions}),
+    contractCache,
+  }
   const boundIndexContext = specBoundIndexContext(context, hooks)
 
   if (spec.kind === 'range') {
@@ -683,6 +698,15 @@ function verifyBooleanExpressionSpec(
   context: EvalContext,
   hooks: CheckSpecHooks,
 ): CheckSpecProof {
+  if (booleanExpressionIsAssumed(context, spec.expression)) {
+    return checkProof({
+      file,
+      ...(spec.line == null ? {} : {line: spec.line}),
+      functionName,
+      text: spec.text,
+      status: 'pass',
+    }, 'boolean', 'assumption', 'checked assumed boolean expression', [], context.assumptions)
+  }
   const value = evaluateSpecExpression(spec.expression, context, hooks)
   const status = proveBooleanTrue(spec.text, value)
   return checkProof({
@@ -693,16 +717,6 @@ function verifyBooleanExpressionSpec(
     status: status.status,
     ...(status.reason == null ? {} : {reason: status.reason}),
   }, 'boolean', 'expression', 'checked boolean expression', [value], context.assumptions)
-}
-
-function proveBooleanTrue(text: string, value: Value): {status: FitCheckStatus; reason?: string} {
-  if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason}
-  if (value.kind !== 'literal') return {status: 'unknown', reason: `${text} expected a boolean result`}
-  const booleans = value.values.filter(item => typeof item === 'boolean')
-  if (booleans.length !== value.values.length) return {status: 'unknown', reason: `${text} expected a boolean result`}
-  if (booleans.every(item => item === true)) return {status: 'pass'}
-  if (booleans.every(item => item === false)) return {status: 'fail', reason: `${text} returned false`}
-  return {status: 'unknown', reason: `${text} was not proven true`}
 }
 
 function adjacentComparisonFailureReason(text: string, collectionText: string, rows: ArrayValue) {

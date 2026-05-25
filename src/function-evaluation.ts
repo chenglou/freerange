@@ -29,6 +29,7 @@ export type FunctionEvaluationSetup = {
   givenChecks: FitCheck[]
   assumptionChecks: FitCheck[]
   assumptions: LinearConstraint[]
+  booleanAssumptions: Map<string, boolean>
 }
 
 export function prepareFunctionEvaluation(
@@ -49,7 +50,7 @@ export function prepareFunctionEvaluation(
     if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
   }
 
-  const {assumptions, checks: assumptionChecks} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, evaluators)
+  const {assumptions, booleanAssumptions, checks: assumptionChecks} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, evaluators)
   return {
     inputSpecs,
     contractSpecs,
@@ -58,6 +59,7 @@ export function prepareFunctionEvaluation(
     givenChecks,
     assumptionChecks,
     assumptions,
+    booleanAssumptions,
   }
 }
 
@@ -81,6 +83,7 @@ export function functionEvalContext(
     stack: [fn.name],
     checks: options.checks ?? [],
     assumptions: setup.assumptions,
+    booleanAssumptions: setup.booleanAssumptions,
     contractCache,
     ...(options.callObligations == null ? {} : {callObligations: options.callObligations}),
     ...(options.inferLoops == null ? {} : {inferLoops: options.inferLoops}),
