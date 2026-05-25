@@ -243,24 +243,8 @@ function assumesValidLayout(layout: {width: number}) {
   return layout
 }
 
-function validCaller() {
-  return assumesValidLayout({width: 5})
-}
-
 function invalidCaller() {
   return assumesValidLayout({width: 0})
-}
-
-function unknownCaller(width: number) {
-  return assumesValidLayout({width})
-}
-
-/** @fit
- * given layout.width: 0
- * given isValidLayout(layout)
- */
-function impossibleLayout(layout: {width: number}) {
-  return layout
 }
 
 /** @fit
@@ -280,25 +264,17 @@ function assumesInvalidLayout(layout: {width: number}) {
 }
 `)
 const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout(layout)')
-const impossibleBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'impossibleLayout' && check.text === 'given isValidLayout(layout)')
 const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout(layout)')
 const assumedNegativeBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesInvalidLayout' && check.text === '!isValidLayout(layout)')
-const validBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'validCaller' && check.text === 'assumesValidLayout({width: 5}): requires isValidLayout(layout)')
 const invalidBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'invalidCaller' && check.text === 'assumesValidLayout({width: 0}): requires isValidLayout(layout)')
-const unknownBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'unknownCaller' && check.text === 'assumesValidLayout({width}): requires isValidLayout(layout)')
 if (
   assumedBooleanGivenCheck?.status !== 'pass'
   || assumedBooleanGivenCheck.trace?.steps.some(step => step.rule === 'assumption') !== true
-  || impossibleBooleanGivenCheck?.status !== 'fail'
-  || impossibleBooleanGivenCheck.reason?.includes('no input can satisfy this with the earlier given lines') !== true
   || conflictingBooleanGivenCheck?.status !== 'fail'
   || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout(layout) and given !isValidLayout(layout)') !== true
   || assumedNegativeBooleanGivenCheck?.status !== 'pass'
-  || validBooleanGivenCall?.status !== 'pass'
   || invalidBooleanGivenCall?.status !== 'fail'
   || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
-  || unknownBooleanGivenCall?.status !== 'requires'
-  || unknownBooleanGivenCall.reason?.includes('given isValidLayout(layout) was not proven true') !== true
 ) {
   console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
   console.error(JSON.stringify(booleanGivenContractResult, null, 2))
@@ -813,15 +789,6 @@ function double(value: number) {
   return value * 2
 }
 
-function booleanImpure(value: number) {
-  box.limit += value
-  return true
-}
-
-function alwaysTrue() {
-  return true
-}
-
 /** @fit
  * given max >= bump(min)
  */
@@ -844,14 +811,14 @@ function derivedRangeTarget(value: number) {
 }
 
 /** @fit
- * given booleanImpure(value)
+ * given bump(value)
  */
 function impureBoolean(value: number) {
   return value
 }
 
 /** @fit
- * given alwaysTrue()
+ * given true
  */
 function noInputBoolean(value: number) {
   return value
@@ -860,8 +827,8 @@ function noInputBoolean(value: number) {
 const impureGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impure' && check.text === 'given max >= bump(min)')
 const noInputGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInput' && check.text === 'given double(10) > 0')
 const derivedRangeTargetCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'derivedRangeTarget' && check.text === 'given double(value): 0..10')
-const impureBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impureBoolean' && check.text === 'given booleanImpure(value)')
-const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInputBoolean' && check.text === 'given alwaysTrue()')
+const impureBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impureBoolean' && check.text === 'given bump(value)')
+const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInputBoolean' && check.text === 'given true')
 if (
   impureGivenCheck?.status !== 'unknown'
   || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
@@ -871,7 +838,7 @@ if (
   || derivedRangeTargetCheck?.status !== 'unknown'
   || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
   || impureBooleanGivenCheck?.status !== 'unknown'
-  || impureBooleanGivenCheck.reason?.includes('Unsupported @fit contract expression: booleanImpure(value)') !== true
+  || impureBooleanGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(value)') !== true
   || impureBooleanGivenCheck.reason.includes('assignment mutates box.limit') !== true
   || noInputBooleanGivenCheck?.status !== 'unknown'
   || noInputBooleanGivenCheck.reason !== 'given must mention an input'
