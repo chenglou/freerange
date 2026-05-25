@@ -45,61 +45,67 @@ export type FitValueSpec = {
   typeNode: ts.TypeNode
 }
 
+export type FitSpecRole = 'assume' | 'prove'
+
+type FitSpecBase<R extends FitSpecRole, K extends string> = {
+  role: R
+  kind: K
+  text: string
+  line?: number
+}
+
+export type FitRangeSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'range'> & {
+  expression: FitExpression
+  range: FitRange
+}
+
+export type FitComparisonSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'comparison'> & {
+  left: FitExpression
+  op: ComparisonOperator
+  right: FitExpression
+}
+
+export type FitExpressionSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'expression'> & {
+  expression: FitExpression
+}
+
+export type FitValueCheckSpec = FitSpecBase<'prove', 'value'> & {
+  expression: FitExpression
+  value: FitValueSpec
+}
+
+export type FitRangeGivenSpec = FitRangeSpec<'assume'>
+export type FitComparisonGivenSpec = FitComparisonSpec<'assume'>
+export type FitExpressionGivenSpec = FitExpressionSpec<'assume'>
+export type FitRangeCheckSpec = FitRangeSpec<'prove'>
+export type FitComparisonCheckSpec = FitComparisonSpec<'prove'>
+export type FitExpressionCheckSpec = FitExpressionSpec<'prove'>
+
 export type FitSpec =
-  | {
-      kind: 'given-range'
-      expression: FitExpression
-      range: FitRange
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'given-comparison'
-      left: FitExpression
-      op: ComparisonOperator
-      right: FitExpression
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'given-expression'
-      expression: FitExpression
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'check-range'
-      expression: FitExpression
-      range: FitRange
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'check-value'
-      expression: FitExpression
-      value: FitValueSpec
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'check-comparison'
-      left: FitExpression
-      op: ComparisonOperator
-      right: FitExpression
-      text: string
-      line?: number
-    }
-  | {
-      kind: 'check-expression'
-      expression: FitExpression
-      text: string
-      line?: number
-    }
+  | FitRangeGivenSpec
+  | FitComparisonGivenSpec
+  | FitExpressionGivenSpec
+  | FitRangeCheckSpec
+  | FitValueCheckSpec
+  | FitComparisonCheckSpec
+  | FitExpressionCheckSpec
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
-export type FitCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>
-export type FitInlineCheckSpec = Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>
-export type FitGivenSpec = Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'} | {kind: 'given-expression'}>
+export type FitCheckSpec = FitRangeCheckSpec | FitValueCheckSpec | FitComparisonCheckSpec | FitExpressionCheckSpec
+export type FitInlineCheckSpec = FitRangeCheckSpec | FitComparisonCheckSpec
+export type FitGivenSpec = FitRangeGivenSpec | FitComparisonGivenSpec | FitExpressionGivenSpec
+
+export function fitSpecIsAssumption(spec: FitSpec): spec is FitGivenSpec {
+  return spec.role === 'assume'
+}
+
+export function fitSpecIsProof(spec: FitSpec): spec is FitCheckSpec {
+  return spec.role === 'prove'
+}
+
+export function fitSpecTextForRole(role: FitSpecRole, text: string) {
+  return role === 'assume' ? `given ${text}` : text
+}
 
 export type FitInlineSpecTemplate =
   | {
@@ -264,7 +270,7 @@ export function parseParamFitSpecs(sourceText: string, param: ts.ParameterDeclar
   if (lines.length === 0) return []
   if (!ts.isIdentifier(param.name)) throw new Error('Param @fit comments support simple identifier parameters')
   const paramName = param.name.text
-  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), paramName, 'given')
+  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), paramName, 'assume')
 }
 
 export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableStatement): FitInlineCheckSpec[] {
@@ -276,12 +282,12 @@ export function parseLocalFitSpecs(sourceText: string, statement: ts.VariableSta
     throw new Error('Inline @fit comments support one simple variable declaration')
   }
   const expression = declarations[0]!.name.text
-  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), expression, 'check')
+  return instantiateInlineFitTemplates(lines.map(parseInlineFitTemplate), expression, 'prove')
 }
 
 export function parseInlineFitSpecsForExpression(sourceText: string, node: ts.Node, expression: string): FitInlineCheckSpec[] {
   rejectInlineBlockFitComments(sourceText, node)
-  return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'check')
+  return instantiateInlineFitTemplates(parseInlineFitTemplatesForNode(sourceText, node), expression, 'prove')
 }
 
 export function inlineFitCommentLinesForNode(sourceText: string, node: ts.Node): FitCommentLine[] {
@@ -293,12 +299,12 @@ export function parseInlineFitTemplatesForNode(sourceText: string, node: ts.Node
   return inlineFitCommentLines(sourceText, node).map(parseInlineFitTemplate)
 }
 
-export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'check'): FitInlineCheckSpec[]
-export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, mode: 'given'): FitGivenSpec[]
+export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, role: 'prove'): FitInlineCheckSpec[]
+export function instantiateInlineFitTemplates(templates: FitInlineSpecTemplate[], expression: string, role: 'assume'): FitGivenSpec[]
 export function instantiateInlineFitTemplates(
   templates: FitInlineSpecTemplate[],
   expression: string,
-  mode: 'check' | 'given',
+  role: 'prove' | 'assume',
 ): FitInlineCheckSpec[] | FitGivenSpec[] {
   const parsedExpression = parseFitExpressionText(expression)
   const publicExpression = publicFitText(expression)
@@ -306,48 +312,33 @@ export function instantiateInlineFitTemplates(
   for (const template of templates) {
     switch (template.kind) {
       case 'comparison': {
-        const text = `${publicExpression} ${template.op} ${publicFitText(template.right.text)}`
-        specs.push(mode === 'given'
-          ? {
-            kind: 'given-comparison',
-            left: parsedExpression,
-            op: template.op,
-            right: template.right,
-            text: `given ${text}`,
-            ...(template.line == null ? {} : {line: template.line}),
-          }
-          : {
-            kind: 'check-comparison',
-            left: parsedExpression,
-            op: template.op,
-            right: template.right,
-            text,
-            ...(template.line == null ? {} : {line: template.line}),
-          })
+        const text = fitSpecTextForRole(role, `${publicExpression} ${template.op} ${publicFitText(template.right.text)}`)
+        specs.push({
+          role,
+          kind: 'comparison',
+          left: parsedExpression,
+          op: template.op,
+          right: template.right,
+          text,
+          ...(template.line == null ? {} : {line: template.line}),
+        })
         break
       }
       case 'range': {
-        const text = `${publicExpression}: ${publicFitText(template.range.text)}`
-        specs.push(mode === 'given'
-          ? {
-            kind: 'given-range',
-            expression: parsedExpression,
-            range: template.range,
-            text: `given ${text}`,
-            ...(template.line == null ? {} : {line: template.line}),
-          }
-          : {
-            kind: 'check-range',
-            expression: parsedExpression,
-            range: template.range,
-            text,
-            ...(template.line == null ? {} : {line: template.line}),
-          })
+        const text = fitSpecTextForRole(role, `${publicExpression}: ${publicFitText(template.range.text)}`)
+        specs.push({
+          role,
+          kind: 'range',
+          expression: parsedExpression,
+          range: template.range,
+          text,
+          ...(template.line == null ? {} : {line: template.line}),
+        })
         break
       }
     }
   }
-  return mode === 'given' ? specs as FitGivenSpec[] : specs as FitInlineCheckSpec[]
+  return role === 'assume' ? specs as FitGivenSpec[] : specs as FitInlineCheckSpec[]
 }
 
 export function emptyFitBodySpecIndex(): FitBodySpecIndex {
@@ -558,32 +549,31 @@ const rangeNumberPattern = new RegExp(`^(?:${numberPattern}|-?Infinity)$`)
 export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const givenMatch = /^given\s+([\s\S]+)$/.exec(line)
   const body = givenMatch?.[1] ?? line
-  const isGiven = givenMatch != null
+  const role: FitSpecRole = givenMatch == null ? 'prove' : 'assume'
   const lineFields = lineNumber == null ? {} : {line: lineNumber}
 
   const colonSplit = findTopLevelColon(body)
   if (colonSplit != null) {
     const expression = parseFitExpressionText(colonSplit.left)
     const rangeBody = colonSplit.right
-    if (!isGiven && shouldParseFitValueSpec(rangeBody)) {
+    if (role === 'prove' && shouldParseFitValueSpec(rangeBody)) {
       const value = parseFitValueSpecText(rangeBody)
       if (value == null) throw new Error(`Unsupported @fit value spec: ${line}`)
-      return {kind: 'check-value', expression, value, text: line, ...lineFields}
+      return {role, kind: 'value', expression, value, text: line, ...lineFields}
     }
     const range = parseFitRangeText(rangeBody)
     if (range == null) throw new Error(`Unsupported @fit range: ${line}`)
-    return {kind: isGiven ? 'given-range' : 'check-range', expression, range, text: line, ...lineFields}
+    return {role, kind: 'range', expression, range, text: line, ...lineFields}
   }
 
   const comparison = findTopLevelComparison(body)
   if (comparison != null) {
     const left = parseFitExpressionText(comparison.left)
     const right = parseFitExpressionText(comparison.right)
-    return {kind: isGiven ? 'given-comparison' : 'check-comparison', left, op: comparison.op, right, text: line, ...lineFields}
+    return {role, kind: 'comparison', left, op: comparison.op, right, text: line, ...lineFields}
   }
 
-  if (isGiven) return {kind: 'given-expression', expression: parseFitExpressionText(body), text: line, ...lineFields}
-  return {kind: 'check-expression', expression: parseFitExpressionText(line), text: line, ...lineFields}
+  return {role, kind: 'expression', expression: parseFitExpressionText(body), text: line, ...lineFields}
 }
 
 export function parseFitRangeText(text: string, parseExpression: FitExpressionParser = parseFitExpressionText): FitRange | null {

@@ -3,9 +3,10 @@ import {
   fitExpressionParsed,
   fitRangeCases,
   publicFitText,
+  type FitComparisonCheckSpec,
   type FitDomainPath,
   type FitExpressionLike,
-  type FitSpec,
+  type FitRangeCheckSpec,
 } from './parser.ts'
 import {
   type ArrayValue,
@@ -40,7 +41,7 @@ export type BoundIndexContext = {
 }
 
 export function proveBoundIndexRangeSpec(
-  spec: Extract<FitSpec, {kind: 'check-range'}>,
+  spec: FitRangeCheckSpec,
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} | null {
   const uses = [
@@ -63,7 +64,7 @@ export function proveBoundIndexRangeSpec(
 }
 
 export function proveBoundIndexComparisonSpec(
-  spec: Extract<FitSpec, {kind: 'check-comparison'}>,
+  spec: FitComparisonCheckSpec,
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} | null {
   const uses = [...boundIndexUses(spec.left), ...boundIndexUses(spec.right)]
@@ -97,7 +98,7 @@ export function proveBoundIndexComparisonSpec(
 }
 
 function proveAdjacentBoundIndexComparison(
-  spec: Extract<FitSpec, {kind: 'check-comparison'}>,
+  spec: FitComparisonCheckSpec,
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} | null {
   const left = singleBoundPathExpression(spec.left)
@@ -138,7 +139,7 @@ type BoundSequenceTerm = {
   term: SequenceTerm
 }
 
-function adjacentComparisonFromSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>): AdjacentComparisonParse | null {
+function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentComparisonParse | null {
   const left = sequenceSideFromText(spec.left)
   const right = sequenceSideFromText(spec.right)
   if (left == null || right == null) return null

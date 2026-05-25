@@ -5,11 +5,14 @@ import {
 } from './check-types.ts'
 import {type FitInferFact} from './facts.ts'
 import {
+  fitSpecIsAssumption,
   fitRangeCases,
   fitExpressionText,
   parseFitSpecLine,
+  type FitComparisonCheckSpec,
   type FitExpressionLike,
   type FitCheckSpec,
+  type FitRangeCheckSpec,
   type FitRange,
   type FitRangeCase,
   type FitSpec,
@@ -30,7 +33,7 @@ export function inferFunctionSpecReports(
   }
 
   return specs.map(spec => {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') {
+    if (fitSpecIsAssumption(spec)) {
       const check = checkByText.get(spec.text)
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
@@ -195,10 +198,10 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
   if (exactFact != null) return exactFact.text
 
   const spec = parseFitSpecLineForInference(specText)
-  if (spec == null || spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') return null
-  if (spec.kind === 'check-expression') return null
-  if (spec.kind === 'check-value') return null
-  if (spec.kind === 'check-range') return rangeFactReasonForSpec(spec, facts)
+  if (spec == null || fitSpecIsAssumption(spec)) return null
+  if (spec.kind === 'expression') return null
+  if (spec.kind === 'value') return null
+  if (spec.kind === 'range') return rangeFactReasonForSpec(spec, facts)
   return comparisonFactReasonForSpec(spec, facts)
 }
 
@@ -210,7 +213,7 @@ function parseFitSpecLineForInference(text: string): FitSpec | null {
   }
 }
 
-function rangeFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-range'}>, facts: FitInferFact[]) {
+function rangeFactReasonForSpec(spec: FitRangeCheckSpec, facts: FitInferFact[]) {
   const range = inferredRangeFactForExpression(facts, spec.expression)
   if (range == null) return null
   return inferredRangeInsideSpec(range, spec.range)
@@ -251,7 +254,7 @@ function rangeCaseContainsInferredRange(
   }
 }
 
-function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
+function comparisonFactReasonForSpec(spec: FitComparisonCheckSpec, facts: FitInferFact[]) {
   const leftRange = inferredRangeFactForExpression(facts, spec.left)
   const rightRange = inferredRangeFactForExpression(facts, spec.right)
   const leftNumber = numberText(spec.left)
@@ -279,10 +282,10 @@ function comparisonFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-compar
   }
 }
 
-function equalityFactReasonForSpec(spec: Extract<FitSpec, {kind: 'check-comparison'}>, facts: FitInferFact[]) {
+function equalityFactReasonForSpec(spec: FitComparisonCheckSpec, facts: FitInferFact[]) {
   for (const fact of facts) {
     const inferred = parseFitSpecLineForInference(fact.text)
-    if (inferred?.kind !== 'check-comparison' || inferred.op !== '==') continue
+    if (inferred?.role !== 'prove' || inferred.kind !== 'comparison' || inferred.op !== '==') continue
     const sameOrder = sameExpressionText(spec.left, inferred.left) && sameExpressionText(spec.right, inferred.right)
     const flipped = sameExpressionText(spec.left, inferred.right) && sameExpressionText(spec.right, inferred.left)
     if (sameOrder || flipped) return fact.text

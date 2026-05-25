@@ -121,11 +121,11 @@ function createObligation(input: Omit<FitObligation, 'id'>): FitObligation {
 
 function goalForSpec(spec: FitCheckSpec): FitObligationGoal {
   switch (spec.kind) {
-    case 'check-range':
+    case 'range':
       return {kind: 'range', text: spec.text, target: publicFitText(fitExpressionText(spec.expression)), range: publicFitText(spec.range.text)}
-    case 'check-value':
+    case 'value':
       return {kind: 'expression', text: spec.text, expression: publicFitText(fitExpressionText(spec.expression))}
-    case 'check-comparison':
+    case 'comparison':
       return {
         kind: 'comparison',
         text: spec.text,
@@ -133,7 +133,7 @@ function goalForSpec(spec: FitCheckSpec): FitObligationGoal {
         op: spec.op,
         right: publicFitText(fitExpressionText(spec.right)),
       }
-    case 'check-expression':
+    case 'expression':
       return {kind: 'expression', text: spec.text, expression: publicFitText(fitExpressionText(spec.expression))}
   }
 }

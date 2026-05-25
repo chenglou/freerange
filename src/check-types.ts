@@ -13,7 +13,11 @@ import type {
   FitObligation,
   FitProofTrace,
 } from './obligations.ts'
-import type {FitSpec} from './parser.ts'
+import type {
+  FitComparisonGivenSpec,
+  FitExpressionGivenSpec,
+  FitRangeGivenSpec,
+} from './parser.ts'
 
 export type FitCheckStatus = 'pass' | 'fail' | 'requires' | 'unknown'
 export type FitProofStatus = Exclude<FitCheckStatus, 'requires'>
@@ -196,9 +200,9 @@ export type LocalizeOptions = {
 }
 
 export type AssumedGivenSpec =
-  | {kind: 'range'; spec: Extract<FitSpec, {kind: 'given-range'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
-  | {kind: 'comparison'; spec: Extract<FitSpec, {kind: 'given-comparison'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
-  | {kind: 'expression'; spec: Extract<FitSpec, {kind: 'given-expression'}>; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
+  | {kind: 'range'; spec: FitRangeGivenSpec; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
+  | {kind: 'comparison'; spec: FitComparisonGivenSpec; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
+  | {kind: 'expression'; spec: FitExpressionGivenSpec; source: Extract<ConstraintSource, 'function-given' | 'loop-given'>}
 
 export type ImportedContractSource = {
   sourceFile: string

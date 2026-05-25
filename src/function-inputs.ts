@@ -152,25 +152,7 @@ export function unknownResultValue(specs: FitSpec[], program: Program): Value {
 function specParamShape(name: string, specs: FitSpec[]): 'array' | 'object' | 'number' {
   let shape: 'object' | 'number' = 'number'
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'check-range') {
-      const next = specExpressionParamShape(spec.expression, name)
-      if (next === 'array') return 'array'
-      if (next === 'object') shape = 'object'
-      continue
-    }
-    if (spec.kind === 'check-expression') {
-      const next = specExpressionParamShape(spec.expression, name)
-      if (next === 'array') return 'array'
-      if (next === 'object') shape = 'object'
-      continue
-    }
-    if (spec.kind === 'check-value') {
-      const next = specExpressionParamShape(spec.expression, name)
-      if (next === 'array') return 'array'
-      if (next === 'object') shape = 'object'
-      continue
-    }
-    if (spec.kind === 'given-expression') {
+    if (spec.kind === 'range' || spec.kind === 'expression' || spec.kind === 'value') {
       const next = specExpressionParamShape(spec.expression, name)
       if (next === 'array') return 'array'
       if (next === 'object') shape = 'object'

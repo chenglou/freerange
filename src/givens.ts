@@ -36,14 +36,18 @@ import {
   type LinearExpr,
 } from './linear.ts'
 import {
+  fitSpecIsAssumption,
   fitExpressionParsed,
   fitExpressionText,
   fitRangeCases,
   parseDomainPathText,
   publicFitText,
   type FitExpressionLike,
+  type FitComparisonGivenSpec,
+  type FitExpressionGivenSpec,
   type FitRange,
   type FitRangeCase,
+  type FitRangeGivenSpec,
   type FitSpec,
 } from './parser.ts'
 import {
@@ -74,14 +78,14 @@ export function validateGivenSpecs(
 ): {assumedGivens: AssumedGivenSpec[]; checks: FitCheck[]} {
   const assumedGivens: AssumedGivenSpec[] = []
   const checks: FitCheck[] = []
-  const ranges: Extract<FitSpec, {kind: 'given-range'}>[] = []
+  const ranges: FitRangeGivenSpec[] = []
 
   for (const spec of specs) {
-    if (spec.kind === 'given-expression') {
+    if (!fitSpecIsAssumption(spec)) continue
+    if (spec.kind === 'expression') {
       assumedGivens.push({kind: 'expression', spec, source})
       continue
     }
-    if (spec.kind !== 'given-range' && spec.kind !== 'given-comparison') continue
     const badRoot = givenBadRoot(spec, allowedRoots)
     if (badRoot != null) {
       checks.push(invalidGivenCheck(file, functionName, spec, invalidGivenRootReason(badRoot, allowedRoots)))
@@ -93,7 +97,7 @@ export function validateGivenSpecs(
       continue
     }
 
-    if (spec.kind === 'given-range') {
+    if (spec.kind === 'range') {
       const rangeProblem = givenRangeProblem(spec, ranges)
       if (rangeProblem != null) {
         checks.push({file, functionName, ...(spec.line == null ? {} : {line: spec.line}), text: spec.text, status: 'fail', reason: rangeProblem})
@@ -157,16 +161,16 @@ function editDistance(left: string, right: string) {
   return previous[right.length]!
 }
 
-function givenBadRoot(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>, allowedRoots: string[]): string | null {
+function givenBadRoot(spec: FitRangeGivenSpec | FitComparisonGivenSpec, allowedRoots: string[]): string | null {
   for (const root of givenRootNames(spec)) {
     if (!allowedRoots.includes(root)) return root
   }
   return null
 }
 
-function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string[] {
+function givenRootNames(spec: FitRangeGivenSpec | FitComparisonGivenSpec): string[] {
   switch (spec.kind) {
-    case 'given-range':
+    case 'range':
       return [...new Set([
         ...givenExpressionRootNamesFromText(spec.expression),
         ...fitRangeCases(spec.range).flatMap(rangeCase => [
@@ -174,7 +178,7 @@ function givenRootNames(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'g
           ...rangeBoundRootNames(rangeCase.upper),
         ]),
       ])]
-    case 'given-comparison':
+    case 'comparison':
       return [...new Set([...givenExpressionRootNamesFromText(spec.left), ...givenExpressionRootNamesFromText(spec.right)])]
   }
 }
@@ -214,7 +218,10 @@ function givenExpressionRootNames(expression: ts.Expression, ignored: string[]):
   return roots
 }
 
-function givenRangeProblem(spec: Extract<FitSpec, {kind: 'given-range'}>, ranges: Extract<FitSpec, {kind: 'given-range'}>[]): string | null {
+function givenRangeProblem(
+  spec: FitRangeGivenSpec,
+  ranges: FitRangeGivenSpec[],
+): string | null {
   const closed = closedRangeCases(spec.range)
   if (closed != null && closed.every(range => range.min > range.max)) return `no input can satisfy this: empty range ${formatRangeSpec(spec.range)}`
   for (const range of ranges) {
@@ -253,8 +260,8 @@ function rangeCaseSetsOverlap(left: {min: number; max: number}[], right: {min: n
   return false
 }
 
-function givenShapeProblem(spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>): string | null {
-  if (spec.kind === 'given-range') {
+function givenShapeProblem(spec: FitRangeGivenSpec | FitComparisonGivenSpec): string | null {
+  if (spec.kind === 'range') {
     if (parseDomainPathText(spec.expression.text) == null) {
       const expression = fitExpressionParsed(spec.expression).expression
       if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
@@ -407,7 +414,7 @@ type GivenNumberRole = 'expression' | 'range lower bound' | 'range upper bound'
 function evaluateGivenComparison(
   file: string,
   functionName: string,
-  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
+  spec: FitComparisonGivenSpec,
   context: EvalContext,
   evaluators: GivenEvaluators,
 ): {kind: 'comparison'; left: NumberValue; right: NumberValue} | {kind: 'invalid'; check: FitCheck} {
@@ -421,7 +428,7 @@ function evaluateGivenComparison(
 function evaluateGivenNumber(
   file: string,
   functionName: string,
-  spec: Extract<FitSpec, {kind: 'given-range'} | {kind: 'given-comparison'}>,
+  spec: FitRangeGivenSpec | FitComparisonGivenSpec,
   expression: FitExpressionLike,
   context: EvalContext,
   evaluators: GivenEvaluators,
@@ -529,7 +536,7 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
   return scale
 }
 
-function projectGivenExpression(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-expression'}>): string | null {
+function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGivenSpec): string | null {
   const parsed = fitExpressionParsed(spec.expression)
   if (!ts.isCallExpression(parsed.expression)) return `Unsupported given expression shape: ${publicFitText(spec.text)}`
   const target = parsed.expression.expression
@@ -610,7 +617,7 @@ function appendRelation(summary: ArraySummary | null, relation: SequenceRelation
   return {...base, relations: [...base.relations, relation]}
 }
 
-export function applyGivenRangeSpec(env: Map<string, Value>, spec: Extract<FitSpec, {kind: 'given-range'}>) {
+export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGivenSpec) {
   const expressionText = spec.expression.text
   const value = staticRangeValue(spec.range, expressionText)
   if (value == null) return

@@ -44,8 +44,13 @@ import {
 } from './linear.ts'
 import type {FitFunction} from './modules.ts'
 import {
+  fitSpecIsAssumption,
+  fitSpecIsProof,
   fitExpressionParsed,
   fitExpressionText,
+  type FitComparisonCheckSpec,
+  type FitComparisonGivenSpec,
+  type FitExpressionCheckSpec,
   fitValueSpecNumberLiteralValue,
   fitRangeCases,
   fitValueSpecPropertyName,
@@ -57,6 +62,8 @@ import {
   type ComparisonOperator,
   type FitExpressionLike,
   type FitRange,
+  type FitRangeCheckSpec,
+  type FitRangeGivenSpec,
   type FitSpec,
   type FitValueSpec,
 } from './parser.ts'
@@ -118,13 +125,14 @@ export function verifyCallGivenSpecs(
   for (const spec of contractSpecs) {
     let status: CallPreconditionStatus | null = null
     let usedFacts: string[] = []
-    if (spec.kind === 'given-range') {
+    if (!fitSpecIsAssumption(spec)) continue
+    if (spec.kind === 'range') {
       const value = evaluators.evaluateSpecExpression(spec.expression, calleeContext)
       usedFacts = proofFactsFromValues([value], calleeContext.assumptions)
       status = evaluators.proveRangeSpec(value, spec.range, calleeContext)
       status = withCallRangeDetail(status, callText, value, spec, options.callSiteBindings)
     }
-    if (spec.kind === 'given-comparison') {
+    if (spec.kind === 'comparison') {
       const left = evaluators.evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluators.evaluateSpecExpression(spec.right, calleeContext)
       usedFacts = proofFactsFromValues([left, right], calleeContext.assumptions)
@@ -174,7 +182,7 @@ function withCallRangeDetail(
   status: CallPreconditionStatus,
   callText: string,
   value: Value,
-  spec: Extract<FitSpec, {kind: 'given-range'}>,
+  spec: FitRangeGivenSpec,
   callSiteBindings: CallSiteBindings | undefined,
 ): CallPreconditionStatus {
   if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallBinding(spec.expression.text, value), [
@@ -220,7 +228,7 @@ function withCallComparisonDetail(
   callText: string,
   left: Value,
   right: Value,
-  spec: Extract<FitSpec, {kind: 'given-comparison'}>,
+  spec: FitComparisonGivenSpec,
   callSiteBindings: CallSiteBindings | undefined,
 ): CallPreconditionStatus {
   if (left.kind !== 'number' || right.kind !== 'number') {
@@ -288,7 +296,7 @@ function formatCallValue(value: Value) {
   return value.kind
 }
 
-function formatCallComparisonBinding(spec: Extract<FitSpec, {kind: 'given-comparison'}>, left: Value, right: Value) {
+function formatCallComparisonBinding(spec: FitComparisonGivenSpec, left: Value, right: Value) {
   const leftText = formatCallBinding(spec.left.text, left)
   const rightText = formatCallBinding(spec.right.text, right)
   if (parsePrintedNumber(spec.left.text) != null) return rightText
@@ -363,12 +371,14 @@ export function valueWithFunctionContractSummary(
   }
 
   for (const spec of specs) {
-    if (spec.kind === 'check-range') applySummaryRangeSpec(env, spec, context, source, evaluators)
-    if (spec.kind === 'check-value') applySummaryValueSpec(env, spec.value, spec.expression, spec.text, context, source, evaluators)
+    if (!fitSpecIsProof(spec)) continue
+    if (spec.kind === 'range') applySummaryRangeSpec(env, spec, context, source, evaluators)
+    if (spec.kind === 'value') applySummaryValueSpec(env, spec.value, spec.expression, spec.text, context, source, evaluators)
   }
   for (const spec of specs) {
-    if (spec.kind === 'check-comparison') applySummaryComparisonSpec(env, spec, context, source, evaluators)
-    if (spec.kind === 'check-expression') applySummaryExpressionSpec(env, spec, source)
+    if (!fitSpecIsProof(spec)) continue
+    if (spec.kind === 'comparison') applySummaryComparisonSpec(env, spec, context, source, evaluators)
+    if (spec.kind === 'expression') applySummaryExpressionSpec(env, spec, source)
   }
 
   const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
@@ -512,7 +522,7 @@ function summaryIntersectionValue(left: Value, right: Value): Value {
 
 function applySummaryRangeSpec(
   env: Map<string, Value>,
-  spec: Extract<FitSpec, {kind: 'check-range'}>,
+  spec: FitRangeCheckSpec,
   context: EvalContext,
   source: FunctionContractSource,
   evaluators: CallContractEvaluators,
@@ -577,7 +587,7 @@ function summaryRangeValue(
 
 function applySummaryComparisonSpec(
   env: Map<string, Value>,
-  spec: Extract<FitSpec, {kind: 'check-comparison'}>,
+  spec: FitComparisonCheckSpec,
   context: EvalContext,
   source: FunctionContractSource,
   evaluators: CallContractEvaluators,
@@ -620,7 +630,7 @@ function applySummaryLiteralEqualityToPath(
 
 function applySummaryExpressionSpec(
   env: Map<string, Value>,
-  spec: Extract<FitSpec, {kind: 'check-expression'}>,
+  spec: FitExpressionCheckSpec,
   source: FunctionContractSource,
 ) {
   const path = simpleResultPathText(spec.expression)

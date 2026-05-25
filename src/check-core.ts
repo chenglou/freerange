@@ -8,6 +8,8 @@ import {
 import {readTopLevelGlobal} from './module-values.ts'
 export {readTopLevelGlobal} from './module-values.ts'
 import {
+  fitSpecIsAssumption,
+  fitSpecIsProof,
   fitExpressionScopeSourceId,
   fitExpressionParsed,
   fitValueSpecExpressions,
@@ -15,8 +17,10 @@ import {
   fitReturnPublicRoot,
   instantiateInlineFitTemplates,
   publicFitText,
+  type FitComparisonCheckSpec,
   type FitCheckSpec,
   type FitExpressionLike,
+  type FitInlineCheckSpec,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
@@ -301,7 +305,7 @@ function reachableProgramHasCallPreconditions(program: Program, seen = new Set<s
 }
 
 function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
-  return functionContractSpecs(program, fn).some(spec => spec.kind === 'given-range' || spec.kind === 'given-comparison')
+  return functionContractSpecs(program, fn).some(spec => fitSpecIsAssumption(spec) && (spec.kind === 'range' || spec.kind === 'comparison'))
 }
 
 
@@ -472,7 +476,7 @@ function verifyFunctionSpecsDetailed(
   if (hasBodyClaims) checks.push(...context.checks)
 
   for (const spec of contractSpecs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') continue
+    if (!fitSpecIsProof(spec)) continue
     checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, contractCache))
   }
 
@@ -484,7 +488,7 @@ function verifyFunctionSpecsDetailed(
 }
 
 function functionHasBodyClaims(specs: FitSpec[]) {
-  return specs.some(spec => spec.kind !== 'given-range' && spec.kind !== 'given-comparison' && spec.kind !== 'given-expression')
+  return specs.some(fitSpecIsProof)
 }
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
@@ -886,7 +890,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
   }
 
   const templates = bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []
-  const specs = instantiateInlineFitTemplates(templates, objectPathText(claim.path), 'check')
+  const specs = instantiateInlineFitTemplates(templates, objectPathText(claim.path), 'prove')
   verifyInlineSpecsForValue(specs, value, context)
 }
 
@@ -1124,7 +1128,7 @@ function inferLoopSpecReports(specs: FitSpec[], checks: FitCheck[]): FitInferLoo
 
   return specs.map(spec => {
     const check = checkByText.get(spec.text)
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison') {
+    if (fitSpecIsAssumption(spec)) {
       if (check == null || check.status === 'pass') return {text: spec.text, status: 'assumed'}
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
@@ -1171,16 +1175,13 @@ function specMentionsRoot(spec: FitSpec, root: string) {
 
 function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
   switch (spec.kind) {
-    case 'given-range':
-    case 'check-range':
+    case 'range':
       return [spec.expression]
-    case 'check-value':
+    case 'value':
       return [spec.expression, ...fitValueSpecExpressions(spec.value)]
-    case 'given-comparison':
-    case 'check-comparison':
+    case 'comparison':
       return [spec.left, spec.right]
-    case 'check-expression':
-    case 'given-expression':
+    case 'expression':
       return [spec.expression]
   }
 }
@@ -1227,7 +1228,7 @@ function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
   const loopResult = unknown('Loop annotations do not have return; name local values directly')
   for (const spec of specs) {
-    if (spec.kind === 'given-range' || spec.kind === 'given-comparison' || spec.kind === 'given-expression') continue
+    if (!fitSpecIsProof(spec)) continue
     context.checks.push(verifyCheckSpec(
       context.file,
       context.program,
@@ -1500,10 +1501,10 @@ function objectPathText(path: string[] | undefined) {
   return path == null || path.length === 0 ? '<property>' : path.join('.')
 }
 
-function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-comparison'}>[], value: Value, context: EvalContext) {
+function verifyInlineSpecsForValue(specs: FitInlineCheckSpec[], value: Value, context: EvalContext) {
   if (specs.length === 0) return
   for (const spec of specs) {
-    const status = spec.kind === 'check-range'
+    const status = spec.kind === 'range'
       ? proveRangeSpec(value, spec.range, context)
       : proveInlineComparisonSpec(value, spec, context)
     context.checks.push({
@@ -1517,7 +1518,7 @@ function verifyInlineSpecsForValue(specs: Extract<FitSpec, {kind: 'check-range'}
   }
 }
 
-function proveInlineComparisonSpec(value: Value, spec: Extract<FitSpec, {kind: 'check-comparison'}>, context: EvalContext): {status: FitCheckStatus; reason?: string} {
+function proveInlineComparisonSpec(value: Value, spec: FitComparisonCheckSpec, context: EvalContext): {status: FitCheckStatus; reason?: string} {
   const right = evaluateSpecExpression(spec.right, context)
   return proveComparison(value, spec.op, right, context.assumptions)
 }

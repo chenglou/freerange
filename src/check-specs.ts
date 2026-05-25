@@ -31,11 +31,12 @@ import {
   fitReturnInternalRoot,
   parseFitRangeText,
   publicFitText,
+  type FitCheckSpec,
   type FitDomainPath,
+  type FitExpressionCheckSpec,
   type FitExpressionLike,
   type FitRange,
   type FitRangeCase,
-  type FitSpec,
   type FitValueSpec,
 } from './parser.ts'
 import {
@@ -92,7 +93,7 @@ export function verifyCheckSpecWithProof(
   functionName: string,
   baseEnv: Map<string, Value>,
   result: Value,
-  spec: Extract<FitSpec, {kind: 'check-range'} | {kind: 'check-value'} | {kind: 'check-comparison'} | {kind: 'check-expression'}>,
+  spec: FitCheckSpec,
   checks: FitCheck[],
   assumptions: EvalContext['assumptions'],
   contractCache: Map<string, FunctionContractProof>,
@@ -104,7 +105,7 @@ export function verifyCheckSpecWithProof(
   const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks, assumptions, contractCache}
   const boundIndexContext = specBoundIndexContext(context, hooks)
 
-  if (spec.kind === 'check-range') {
+  if (spec.kind === 'range') {
     const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
     if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
       return checkProof({
@@ -128,7 +129,7 @@ export function verifyCheckSpecWithProof(
     }, 'numeric', 'range', 'checked numeric range claim', [value], context.assumptions)
   }
 
-  if (spec.kind === 'check-value') {
+  if (spec.kind === 'value') {
     const value = evaluateSpecExpression(spec.expression, context, hooks)
     const status = proveValueSpec(value, spec.value, context, hooks, publicFitText(fitExpressionText(spec.expression)))
     return checkProof({
@@ -141,7 +142,7 @@ export function verifyCheckSpecWithProof(
     }, 'value', 'shape', 'checked value shape claim', status.values, context.assumptions)
   }
 
-  if (spec.kind === 'check-expression') return verifyBooleanExpressionSpec(file, functionName, spec, context, hooks)
+  if (spec.kind === 'expression') return verifyBooleanExpressionSpec(file, functionName, spec, context, hooks)
 
   const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
   if (boundIndexCheck != null) {
@@ -678,7 +679,7 @@ export function evaluateSpecExpression(text: FitExpressionLike, context: EvalCon
 function verifyBooleanExpressionSpec(
   file: string,
   functionName: string,
-  spec: Extract<FitSpec, {kind: 'check-expression'}>,
+  spec: FitExpressionCheckSpec,
   context: EvalContext,
   hooks: CheckSpecHooks,
 ): CheckSpecProof {

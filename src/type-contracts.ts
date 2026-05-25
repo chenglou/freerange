@@ -4,6 +4,7 @@ import {
   findTopLevelColon,
   findTopLevelComparison,
   fitBlockSpecCommentLines,
+  fitSpecTextForRole,
   fitReturnPublicRoot,
   inlineFitCommentLinesForNode,
   normalizeFitText,
@@ -19,11 +20,11 @@ import {
   type FitExpression,
   type FitGivenSpec,
   type FitRange,
+  type FitSpecRole,
 } from './parser.ts'
 import {type FitFunction} from './modules.ts'
 import {type Program} from './check-types.ts'
 
-type ContractKind = 'check' | 'given'
 type TypeContractSpec = FitCheckSpec | FitGivenSpec
 
 const typeContractTemplateRoot = '__fit_type_root'
@@ -202,32 +203,32 @@ export function typeReturnCheckContractForFunction(program: Program, fn: FitFunc
 }
 
 export function typeCheckContractForTypeNode(program: Program, type: ts.TypeNode | undefined, root: string): TypeContractResult<FitCheckSpec> {
-  return dedupeResult(collectTypeContractSpecs(program, type, root, 'check', new Set()) as TypeContractResult<FitCheckSpec>)
+  return dedupeResult(collectTypeContractSpecs(program, type, root, 'prove', new Set()) as TypeContractResult<FitCheckSpec>)
 }
 
 function typeGivenContractForTypeNode(program: Program, type: ts.TypeNode | undefined, root: string): TypeContractResult<FitGivenSpec> {
-  return dedupeResult(collectTypeContractSpecs(program, type, root, 'given', new Set()) as TypeContractResult<FitGivenSpec>)
+  return dedupeResult(collectTypeContractSpecs(program, type, root, 'assume', new Set()) as TypeContractResult<FitGivenSpec>)
 }
 
 function collectTypeContractSpecs(
   program: Program,
   type: ts.TypeNode | undefined,
   root: string,
-  kind: ContractKind,
+  role: FitSpecRole,
   seen: Set<string>,
 ): TypeContractResult<TypeContractSpec> {
   if (type == null) return emptyResult()
 
-  if (ts.isParenthesizedTypeNode(type)) return collectTypeContractSpecs(program, type.type, root, kind, seen)
+  if (ts.isParenthesizedTypeNode(type)) return collectTypeContractSpecs(program, type.type, root, role, seen)
   if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) {
-    return collectTypeContractSpecs(program, type.type, root, kind, seen)
+    return collectTypeContractSpecs(program, type.type, root, role, seen)
   }
-  if (ts.isArrayTypeNode(type)) return collectTypeContractSpecs(program, type.elementType, `${root}[]`, kind, seen)
+  if (ts.isArrayTypeNode(type)) return collectTypeContractSpecs(program, type.elementType, `${root}[]`, role, seen)
   if (ts.isIntersectionTypeNode(type)) {
-    return mergeResults(type.types.map(member => collectTypeContractSpecs(program, member, root, kind, seen)))
+    return mergeResults(type.types.map(member => collectTypeContractSpecs(program, member, root, role, seen)))
   }
-  if (ts.isTypeLiteralNode(type)) return collectObjectMemberContractSpecs(program, type.members, root, kind, seen, [type])
-  if (ts.isTypeReferenceNode(type)) return collectTypeReferenceContractSpecs(program, type, root, kind, seen)
+  if (ts.isTypeLiteralNode(type)) return collectObjectMemberContractSpecs(program, type.members, root, role, seen, [type])
+  if (ts.isTypeReferenceNode(type)) return collectTypeReferenceContractSpecs(program, type, root, role, seen)
   return emptyResult()
 }
 
@@ -235,24 +236,24 @@ function collectTypeReferenceContractSpecs(
   program: Program,
   type: ts.TypeReferenceNode,
   root: string,
-  kind: ContractKind,
+  role: FitSpecRole,
   seen: Set<string>,
 ): TypeContractResult<TypeContractSpec> {
   const name = ts.isIdentifier(type.typeName) ? type.typeName.text : null
   const typeArgument = type.typeArguments?.[0]
   if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
-    return collectTypeContractSpecs(program, typeArgument, `${root}[]`, kind, seen)
+    return collectTypeContractSpecs(program, typeArgument, `${root}[]`, role, seen)
   }
 
   const declaration = localTypeDeclarationForReference(program, type)
-  if (declaration == null) return instantiateTypeContractTemplates(parseUnsupportedAttachedTemplates(type.getSourceFile().text, type, 'type @fit supports source-backed type references'), root, kind)
+  if (declaration == null) return instantiateTypeContractTemplates(parseUnsupportedAttachedTemplates(type.getSourceFile().text, type, 'type @fit supports source-backed type references'), root, role)
   const key = `${declaration.getSourceFile().fileName}#${declaration.name?.text ?? declaration.pos}`
   if (seen.has(key)) return emptyResult()
   seen.add(key)
 
   const specs = ts.isInterfaceDeclaration(declaration)
-    ? collectObjectMemberContractSpecs(program, declaration.members, root, kind, seen, [declaration])
-    : collectTypeAliasContractSpecs(program, declaration, root, kind, seen)
+    ? collectObjectMemberContractSpecs(program, declaration.members, root, role, seen, [declaration])
+    : collectTypeAliasContractSpecs(program, declaration, root, role, seen)
   seen.delete(key)
   return declaration.getSourceFile() === program.sourceFile ? specs : relocateTypeContractLocations(specs, lineNumberForNode(type))
 }
@@ -261,15 +262,15 @@ function collectTypeAliasContractSpecs(
   program: Program,
   declaration: ts.TypeAliasDeclaration,
   root: string,
-  kind: ContractKind,
+  role: FitSpecRole,
   seen: Set<string>,
 ): TypeContractResult<TypeContractSpec> {
   if (ts.isTypeLiteralNode(declaration.type)) {
-    return collectObjectMemberContractSpecs(program, declaration.type.members, root, kind, seen, [declaration, declaration.type])
+    return collectObjectMemberContractSpecs(program, declaration.type.members, root, role, seen, [declaration, declaration.type])
   }
   return mergeResults([
-    instantiateTypeContractTemplates(typeTemplatesForNode(program, declaration), root, kind),
-    collectTypeContractSpecs(program, declaration.type, root, kind, seen),
+    instantiateTypeContractTemplates(typeTemplatesForNode(program, declaration), root, role),
+    collectTypeContractSpecs(program, declaration.type, root, role, seen),
   ])
 }
 
@@ -277,32 +278,32 @@ function collectObjectMemberContractSpecs(
   program: Program,
   members: ts.NodeArray<ts.TypeElement>,
   root: string,
-  kind: ContractKind,
+  role: FitSpecRole,
   seen: Set<string>,
   scopeNodes: ts.Node[],
 ): TypeContractResult<TypeContractSpec> {
-  const results = scopeNodes.map(node => instantiateTypeContractTemplates(typeTemplatesForNode(program, node), root, kind))
+  const results = scopeNodes.map(node => instantiateTypeContractTemplates(typeTemplatesForNode(program, node), root, role))
 
   for (const member of members) {
     if (!ts.isPropertySignature(member)) {
-      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, kind))
+      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, role))
       continue
     }
 
     const name = propertyNameText(member.name)
     if (name == null) {
-      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, kind))
+      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, role))
       continue
     }
 
     if (member.questionToken != null) {
-      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, kind))
+      results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, role))
       continue
     }
 
     const propRoot = `${root}.${name}`
-    results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, kind))
-    results.push(collectTypeContractSpecs(program, member.type, propRoot, kind, seen))
+    results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, role))
+    results.push(collectTypeContractSpecs(program, member.type, propRoot, role, seen))
   }
   return mergeResults(results)
 }
@@ -325,59 +326,44 @@ function emptyTemplateResult(): TypeContractTemplateResult {
 function instantiateTypeContractTemplates(
   result: TypeContractTemplateResult,
   root: string,
-  kind: ContractKind,
+  role: FitSpecRole,
 ): TypeContractResult<TypeContractSpec> {
   const specs: TypeContractSpec[] = []
   const unsupported = [...result.unsupported]
   for (const template of result.templates) {
-    specs.push(instantiateTypeContractTemplate(template, root, kind))
+    specs.push(instantiateTypeContractTemplate(template, root, role))
   }
   return {specs, unsupported}
 }
 
-function instantiateTypeContractTemplate(template: TypeContractTemplate, root: string, kind: ContractKind): TypeContractSpec {
+function instantiateTypeContractTemplate(template: TypeContractTemplate, root: string, role: FitSpecRole): TypeContractSpec {
   switch (template.kind) {
     case 'range': {
       const expression = instantiateTypeTemplateExpression(template.expression, root, template.scopeSourceId)
       const range = instantiateTypeTemplateRange(template.range, root, template.scopeSourceId)
-      const text = `${publicFitText(expression.text)}: ${range.text}`
-      return kind === 'given'
-        ? {
-          kind: 'given-range',
-          expression,
-          range,
-          text: `given ${text}`,
-          ...(template.line == null ? {} : {line: template.line}),
-        }
-        : {
-          kind: 'check-range',
-          expression,
-          range,
-          text,
-          ...(template.line == null ? {} : {line: template.line}),
-        }
+      const text = fitSpecTextForRole(role, `${publicFitText(expression.text)}: ${range.text}`)
+      return {
+        role,
+        kind: 'range',
+        expression,
+        range,
+        text,
+        ...(template.line == null ? {} : {line: template.line}),
+      }
     }
     case 'comparison': {
       const left = instantiateTypeTemplateExpression(template.left, root, template.scopeSourceId)
       const right = instantiateTypeTemplateExpression(template.right, root, template.scopeSourceId)
-      const text = `${publicFitText(left.text)} ${template.op} ${publicFitText(right.text)}`
-      return kind === 'given'
-        ? {
-          kind: 'given-comparison',
-          left,
-          op: template.op,
-          right,
-          text: `given ${text}`,
-          ...(template.line == null ? {} : {line: template.line}),
-        }
-        : {
-          kind: 'check-comparison',
-          left,
-          op: template.op,
-          right,
-          text,
-          ...(template.line == null ? {} : {line: template.line}),
-        }
+      const text = fitSpecTextForRole(role, `${publicFitText(left.text)} ${template.op} ${publicFitText(right.text)}`)
+      return {
+        role,
+        kind: 'comparison',
+        left,
+        op: template.op,
+        right,
+        text,
+        ...(template.line == null ? {} : {line: template.line}),
+      }
     }
   }
 }
@@ -739,7 +725,7 @@ function dedupeSpecs<T extends TypeContractSpec>(specs: T[]): T[] {
   const seen = new Set<string>()
   const result: T[] = []
   for (const spec of specs) {
-    const key = `${spec.kind}\0${spec.text}\0${spec.line ?? ''}`
+    const key = `${spec.role}\0${spec.kind}\0${spec.text}\0${spec.line ?? ''}`
     if (seen.has(key)) continue
     seen.add(key)
     result.push(spec)
