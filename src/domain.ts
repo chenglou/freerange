@@ -34,7 +34,6 @@ export {
   mergeNullishKind,
   nullableValue,
   nullValue,
-  tupleArray,
   tupleElements,
   unknown,
   unknownArray,

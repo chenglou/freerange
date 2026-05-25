@@ -71,14 +71,14 @@ export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame
 }
 
 export function readPropertyValue(target: Value, name: string, expr: string): Value {
-  if (target.kind === 'object') return target.props.get(name) ?? unknownNumber(expr)
+  if (target.kind === 'object') return target.props.get(name) ?? unknown(`${expr} was not inferred`)
   if (target.kind === 'array' && name === 'length') return target.length
   if (target.kind === 'nullable') return readPropertyValue(target.present, name, expr)
   return unknown(`${expr} expected an object`)
 }
 
 export function readArrayIndexValue(target: Value, index: number, expr: string): Value {
-  if (target.kind === 'array') return tupleElements(target)?.[index] ?? target.element ?? unknownNumber(expr)
+  if (target.kind === 'array') return tupleElements(target)?.[index] ?? target.element ?? unknown(`${expr} was not inferred`)
   if (target.kind === 'nullable') return readArrayIndexValue(target.present, index, expr)
   return unknown(`${expr} expected an array`)
 }

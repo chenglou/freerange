@@ -13,7 +13,6 @@ import {
   withNumberCases,
 } from './number-domain.ts'
 import type {
-  ArraySummary,
   ArrayValue,
   LinearConstraint,
   LiteralPrimitive,
@@ -72,24 +71,6 @@ export function unknownArray(name: string, length: NumberValue = unknownArrayLen
     element,
     expr: name,
     summary: null,
-  }
-}
-
-export function tupleArray(
-  expr: string | null,
-  length: NumberValue,
-  elements: Value[] | null,
-  element: Value | null,
-  summary: ArraySummary | null = null,
-): ArrayValue {
-  return {
-    kind: 'array',
-    layout: 'tuple',
-    length,
-    elements,
-    element,
-    expr,
-    summary,
   }
 }
 

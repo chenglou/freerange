@@ -2,34 +2,22 @@ tests/patterns/patterns.ts:typedObjectParamArrayShape
 return:
   return.rows.length == params.items.length
   return.rows.length: int 0..Infinity
-  return.rows[].height == params.items[].height
+  return.rows[].height == item.height
   return.rows follows params.items by index
 locals:
   rows.length == params.items.length
   rows.length: int 0..Infinity
-  rows[].height == params.items[].height
+  rows[].height == item.height
   rows follows params.items by index
 tests/patterns/patterns.ts:propertyAccessCallShape
-return:
-  return.rows.length == structuralShapeApi.wrapRows(items).rows.length
-  return.rows.length: int 0..Infinity
-  return.rows[].height == structuralShapeApi.wrapRows(items).rows[].height
 tests/patterns/patterns.ts:mapCallbackReturnShape
 return:
   return.rows.length == items.length
   return.rows.length: int 0..Infinity
-  return.rows[].cells.length == structuralShapeApi.row(item).cells.length
-  return.rows[].cells.length: int 0..Infinity
-  return.rows[].cells[].width == structuralShapeApi.row(item).cells[].width
-  return.rows[].height == structuralShapeApi.row(item).height
   return.rows follows items by index
 locals:
   rows.length == items.length
   rows.length: int 0..Infinity
-  rows[].cells.length == structuralShapeApi.row(item).cells.length
-  rows[].cells.length: int 0..Infinity
-  rows[].cells[].width == structuralShapeApi.row(item).cells[].width
-  rows[].height == structuralShapeApi.row(item).height
   rows follows items by index
 tests/patterns/patterns.ts:scalarPushLoop
 return:
@@ -48,11 +36,9 @@ tests/imports/import-patterns.ts:namespaceImportedStructuralShape
 return:
   return.rows.length == items.length
   return.rows.length: int 0..Infinity
-  return.rows[].height == items[].height
 locals:
   boxed.value.length == items.length
   boxed.value.length: int 0..Infinity
-  boxed.value[].height == items[].height
 tests/patterns/patterns.ts:mapBlockRowsWithDestructure
 return:
   return.rows.length == items.length
@@ -129,9 +115,9 @@ return:
   return.items.length == layoutSources.length
   return.items[].imageBox.sizeX: 0..1952
   return.items[].layoutBox.sizeX: 0..1952
-  return.items[].prompt.box.sizeX == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
-  return.items[].prompt.box.sizeY == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
-  return.items[].prompt.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
+  return.items[].prompt.box.sizeX == promptLayout.width
+  return.items[].prompt.box.sizeY == promptLayout.visibleHeight
+  return.items[].prompt.lines.length == promptLayout.lines.length
   return.items[].prompt.lines.length: int 0..Infinity
   return.rows.length == rows.length
   return.rows[].bottom == (rows[].top + rows[].height)
@@ -153,20 +139,10 @@ locals:
   spaced(rows, boxesGapY)
   measurements.length == layoutSources.length
   measurements[].imageSizeX: 0..1952
-  measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
-  measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
-  measurements[].promptLayout.lines.length: int 0..Infinity
-  measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
-  measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
 loop 186: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
     measurements[].imageSizeX: 0..1952
-    measurements[].promptLayout.lineCount == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lineCount
-    measurements[].promptLayout.lines.length == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).lines.length
-    measurements[].promptLayout.lines.length: int 0..Infinity
-    measurements[].promptLayout.visibleHeight == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).visibleHeight
-    measurements[].promptLayout.width == measurePromptLayout(source.preparedPrompt, imageSizeX, prompt2DMaxLines, prompt2DLineHeight).width
     rows[].bottom == (rows[].top + rows[].height)
     rows[].bottom: 40..Infinity
     rows[].height: 0..Infinity
@@ -182,16 +158,14 @@ loop 186: for (let i = 0; i < layoutSources.length; i++)
 return:
   return.items.length == layoutSources.length
   return.items.length: int 0..Infinity
-  return.items[].prompt.box.sizeX == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.width
-  return.items[].prompt.box.sizeY == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.visibleHeight
-  return.items[].prompt.lines.length == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.lines.length
+  return.items[].prompt.box.sizeX == promptLayout.width
+  return.items[].prompt.box.sizeY == promptLayout.visibleHeight
+  return.items[].prompt.lines.length == promptLayout.lines.length
   return.items[].prompt.lines.length: int 0..Infinity
-  return.items[].prompt.lines[].width == get1DItemSize(source, box1DMaxSizeX, box1DMaxSizeY, i === focused ? 1 : 0.7).promptLayout.lines[].width
 locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
   measurements.length: int 0..Infinity
-  measurements[].promptLayout.lines.length: int 0..Infinity
   items.length == layoutSources.length
   items.length: int 0..Infinity

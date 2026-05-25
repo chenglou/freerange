@@ -43,7 +43,7 @@ export function prepareFunctionEvaluation(
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
-  bindFunctionInputParameters(fn, inputSpecs, program, env)
+  bindFunctionInputParameters(fn, program, env)
 
   const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
   for (const given of assumedGivens) {

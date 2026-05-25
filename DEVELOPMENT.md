@@ -14,7 +14,7 @@ bun install
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
 - `bun run fr check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
 - `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
-- `bun run shape-diff path/to/file.ts --function name` — dev-only comparison of evaluated Freerange shape and TypeScript-only shape; add `--calls` when raw call-return types matter
+- `bun run shape-diff path/to/file.ts --function name` — retired dev-only smoke for the old TypeScript shape comparison; it should normally report no TypeScript-only structural facts
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
@@ -51,7 +51,7 @@ Contracts and source evaluation:
 
 - [src/parser.ts](./src/parser.ts), [src/value-specs.ts](./src/value-specs.ts), [src/check-specs.ts](./src/check-specs.ts), [src/givens.ts](./src/givens.ts), [src/function-contracts.ts](./src/function-contracts.ts), and [src/function-call-contracts.ts](./src/function-call-contracts.ts) — parsing, whole-value type syntax, input assumptions, contract collection, and helper-call requirements
 - [src/interpreter/](./src/interpreter), [src/function-evaluation.ts](./src/function-evaluation.ts), [src/function-inputs.ts](./src/function-inputs.ts), [src/interpreter-state.ts](./src/interpreter-state.ts), and [src/function-shape.ts](./src/function-shape.ts) — source evaluation, function setup, `this`, nested functions, and helper-call recording
-- [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, imports, top-level constants, and structural shape fallback
+- [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, imports, top-level constants, and exact TypeScript type queries
 
 Facts, values, and proof:
 
@@ -61,7 +61,7 @@ Facts, values, and proof:
 
 Dev tools and harnesses:
 
-- [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
+- [shape-diff.ts](./shape-diff.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — retired shape comparison plus dev-only timing tools
 - [test.ts](./test.ts) — small orchestrator for focused checker suites
 - [tests/check](./tests/check), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), and [tests/cli](./tests/cli) — focused checker, range-reduction, type-contract, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
@@ -73,16 +73,16 @@ Dev tools and harnesses:
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
-Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, shape fallbacks, and unsupported stops.
+Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, exact TypeScript path fallbacks, and unsupported stops.
 
-`infer` must stay total. Recursive helper cycles should report an unsupported recursion stop and fall back to TypeScript shape when available; TypeScript shape reading is also depth/width/node bounded.
+`infer` must stay total. Recursive helper cycles should report an unsupported recursion stop. Do not recursively copy TypeScript object or array structure just to make `infer` prettier; ask TypeScript only for the exact node or path the checker is using.
 
 Treat `infer`, `check --audit`, `audit:demos`, and normal reports as one
 adoption loop: inspect what source proves, keep the human-important `@fit`
 comments, then classify any remaining failure as missing input fact, unsupported
 source shape, helper boundary, or real proof gap.
 
-Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep `src/shapes.ts` as a small, bounded structural adapter over the TypeScript checker; do not recreate TypeScript's type system inside Freerange. Whole-value contract syntax is the narrow exception: `src/parser.ts` lowers Freerange range leaves, then `src/value-specs.ts` resolves the surrounding TypeScript type syntax just far enough to check the written contract.
+Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep [src/shapes.ts](./src/shapes.ts) as a small query layer over the TypeScript checker: ask for `return.rows[].height`, `input[0].height`, or the exact expression being read; do not walk a whole return type and copy every property into Freerange. Whole-value contract syntax is the narrow exception: [src/parser.ts](./src/parser.ts) lowers Freerange range leaves, then [src/value-specs.ts](./src/value-specs.ts) resolves the surrounding TypeScript type syntax just far enough to check the written contract.
 
 ## Selector Audit
 
@@ -105,11 +105,9 @@ Do not leave comments in corpus branches just to make a repo look covered. If a 
 
 ## Shape Diff Tool
 
-`bun run shape-diff path/to/file.ts --function name` compares object/array structure Freerange kept with structure TypeScript can see. It answers a narrower question than `infer`: did Freerange lose because it did not know a shape TypeScript already knew?
+`bun run shape-diff path/to/file.ts --function name` is kept as a retired smoke command for now. It should normally say there are no TypeScript-only structural facts.
 
-Raw call-return probing is opt-in with `--calls`, because calls are often consumed by a later local or return value. These facts are about shape, not proof. Seeing `shape.rows[].height: number` means the field exists as a number; it does not mean the checker knows `height: 0..40`.
-
-Use this when a report says a property or array path is unknown. If `shape-diff` sees the structure, the blocker is likely proof logic or missing input facts. If `shape-diff` does not see it, the blocker is still shape reading. The TypeScript walk has depth/width limits on purpose, so huge parser/library types are declined instead of turning the tool into a second checker.
+The old version recursively walked TypeScript object and array types, then compared that copied structure with Freerange's values. Do not bring that back. When a report says a property or array path is unknown, add an exact query for the written path, e.g. `return.rows[].height`, or improve the source evaluator so the real computed value carries the fact.
 
 ## Adding Support
 

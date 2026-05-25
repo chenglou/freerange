@@ -61,7 +61,7 @@ function evaluateDomainPathSegments(current: Value, expr: string, segments: FitD
 
   if (segment.kind === 'item') {
     if (current.kind !== 'array') return unknown(`${expr} expected an array`)
-    const item = current.element ?? (segments[1]?.kind === 'prop' ? unknownObject(`${expr}[]`) : unknownNumber(`${expr}[]`))
+    const item = current.element ?? unknown(`${expr}[] was not inferred`)
     return evaluateDomainPathSegments(item, `${expr}[]`, segments.slice(1))
   }
 
@@ -69,7 +69,7 @@ function evaluateDomainPathSegments(current: Value, expr: string, segments: FitD
     return evaluateDomainPathSegments(current.length, `${expr}.length`, segments.slice(1))
   }
   if (current.kind === 'object') {
-    const prop = current.props.get(segment.name) ?? (current.expr == null ? unknown(`Unknown property ${segment.name}`) : unknownNumber(`${current.expr}.${segment.name}`))
+    const prop = current.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
     return evaluateDomainPathSegments(prop, `${expr}.${segment.name}`, segments.slice(1))
   }
   return unknown(`${publicFitText(`${expr}.${segment.name}`)} expected an object`)

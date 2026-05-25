@@ -815,7 +815,7 @@ const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text
 const expectedInferFacts = [
   'return.rows.length == params.items.length',
   'return.rows.length: int 0..Infinity',
-  'return.rows[].height == params.items[].height',
+  'return.rows[].height == item.height',
   'return.rows follows params.items by index',
 ]
 const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))

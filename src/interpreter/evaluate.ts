@@ -76,11 +76,11 @@ import {
 import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import {
-  valueFromClassInstanceShape,
-  valueFromFunctionReturnShape,
-  valueFromProjectCallReturnShape,
-  valueFromTypeNodeShape,
-  valueWithStructuralFallback,
+  valueFromClassInstanceType,
+  valueFromFunctionReturnType,
+  valueFromNodeType,
+  valueFromProjectCallReturnType,
+  valueFromTypeNode,
 } from '../shapes.ts'
 import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
 import {
@@ -365,15 +365,15 @@ function bindInstanceThis(fn: FitFunction, program: Program, env: Map<string, Va
   if (!functionHasInstanceThisInput(fn)) return
   const fallback = classInstanceThisValue(fn, program) ?? unknownObject('this')
   const value = thisValue == null
-    ? valueWithStructuralFallback(env.get('this') ?? fallback, fallback)
-    : valueWithStructuralFallback(localizeValue(thisValue, 'this', {preserveLinear: true}), fallback)
+    ? env.get('this') ?? fallback
+    : valueWithTypeFallback(localizeValue(thisValue, 'this', {preserveLinear: true}), fallback)
   env.set('this', value)
 }
 
 function classInstanceThisValue(fn: FitFunction, program: Program): Value | null {
   const classNode = ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node) ? fn.node.parent : null
   if (classNode == null || !ts.isClassDeclaration(classNode)) return null
-  return valueFromClassInstanceShape('this', classNode, program)
+  return valueFromClassInstanceType('this', classNode, program)
 }
 
 function invokeInlineFunction(
@@ -441,12 +441,12 @@ function parameterDefaultValue(argument: Value | null, param: ts.ParameterDeclar
 
 function parameterValue(param: ts.ParameterDeclaration, value: Value, frame: InterpreterFrame): Value {
   const expr = ts.isIdentifier(param.name) ? param.name.text : param.name.getText(frame.program.sourceFile)
-  return valueWithStructuralFallback(value, valueFromTypeNodeShape(expr, param.type, frame.program))
+  return valueWithTypeFallback(value, valueFromTypeNode(expr, param.type, frame.program))
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
   const shape = ts.isIdentifier(param.name)
-    ? valueFromTypeNodeShape(param.name.text, param.type, frame.program)
+    ? valueFromTypeNode(param.name.text, param.type, frame.program)
     : null
   if (shape != null) return shape
   const name = param.name
@@ -468,9 +468,10 @@ function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame
         continue
       }
       const propertyName = bindingElementPropertyName(element)
+      const typed = valueFromNodeType(element.name.getText(frame.program.sourceFile), element.name, frame.program)
       const prop = propertyName == null
         ? unknown(`Unsupported binding property ${element.getText(frame.program.sourceFile)}`)
-        : readPropertyValue(value, propertyName, `${valueExpr(value) ?? 'param'}.${propertyName}`)
+        : patternPropertyValue(value, propertyName, typed)
       bindPattern(element.name, prop, frame)
     }
     return
@@ -481,7 +482,8 @@ function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame
       bindPattern(elementName, unknownArray('rest'), frame)
       return
     }
-    bindPattern(elementName, readArrayIndexValue(value, index, `${valueExpr(value) ?? 'param'}[${index}]`), frame)
+    const typed = valueFromNodeType(elementName.getText(frame.program.sourceFile), elementName, frame.program)
+    bindPattern(elementName, valueWithTypeFallback(readArrayIndexValue(value, index, `${valueExpr(value) ?? 'param'}[${index}]`), typed), frame)
   })
 }
 
@@ -580,7 +582,7 @@ function evaluateVariableDeclaration(statement: ts.VariableStatement, declaratio
 
 function declarationValue(declaration: ts.VariableDeclaration, value: Value, frame: InterpreterFrame): Value {
   const expr = ts.isIdentifier(declaration.name) ? declaration.name.text : declaration.name.getText(frame.program.sourceFile)
-  const shaped = valueWithStructuralFallback(value, valueFromTypeNodeShape(expr, declaration.type, frame.program))
+  const shaped = valueWithTypeFallback(value, valueFromTypeNode(expr, declaration.type, frame.program) ?? valueFromNodeType(expr, declaration.name, frame.program))
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return shaped
   return isContainerLiteralInitializer(declaration.initializer) ? localizeContainerLiteralValue(shaped, declaration.name.text, {preserveLinear: true}) : shaped
 }
@@ -597,7 +599,7 @@ function variableObjectPath(declaration: ts.VariableDeclaration): string[] | und
 function evaluateReturnExpression(expression: ts.Expression, node: ts.Node, frame: InterpreterFrame): Value {
   const claim: InterpreterClaim = {kind: 'return', node, expression}
   const value = evaluateClaim(claim, frame, () => evaluateWithObjectPath(frame, ['return'], () => evaluateExpression(expression, frame)))
-  const shaped = valueWithStructuralFallback(value, returnTypeShape(node, frame))
+  const shaped = valueWithTypeFallback(value, returnTypeValue(node, frame))
   afterClaim(claim, shaped, frame)
   return shaped
 }
@@ -613,9 +615,9 @@ function returnFlow(value: Value, frame: InterpreterFrame): InterpreterFlow {
   }
 }
 
-function returnTypeShape(node: ts.Node, frame: InterpreterFrame): Value | null {
+function returnTypeValue(node: ts.Node, frame: InterpreterFrame): Value | null {
   const fn = ts.isFunctionLike(node) ? node : nearestFunctionLike(node)
-  return fn == null ? null : valueFromFunctionReturnShape('return', fn, frame.program)
+  return fn == null ? null : valueFromFunctionReturnType('return', fn, frame.program)
 }
 
 function nearestFunctionLike(node: ts.Node): ts.SignatureDeclaration | null {
@@ -1469,6 +1471,9 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
     return evaluateExpression(expression.expression, frame)
   }
 
+  const path = frame.hooks?.evaluatePath?.(expression, frame)
+  if (path != null) return path
+
   const numeric = numericLiteralValue(expression)
   if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), nodeText(expression, frame), linearConstant(numeric))
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], nodeText(expression, frame))
@@ -1556,7 +1561,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   const getter = classMemberFunctionForPropertyAccess(expression, frame)
   if (getter != null && ts.isGetAccessorDeclaration(getter.fn.node)) {
     const receiver = evaluateExpression(expression.expression, frame)
-    const fallback = valueFromFunctionReturnShape(expression.getText(frame.program.sourceFile), getter.fn.node, getter.program)
+    const fallback = valueFromFunctionReturnType(expression.getText(frame.program.sourceFile), getter.fn.node, getter.program)
     const hooked = evaluateHookedCall({
       expression,
       callName: expression.getText(frame.program.sourceFile),
@@ -1569,7 +1574,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
       thisValue: receiver,
     }, frame)
     if (hooked != null) return hooked
-    return valueWithStructuralFallback(
+    return valueWithTypeFallback(
       invokeFitFunction(getter.fn, [], frame, getter.program, rootFrame(getter.program).env, receiver),
       fallback,
     )
@@ -1577,15 +1582,20 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   const target = evaluateExpression(expression.expression, frame)
   const optional = hasQuestionDotToken(expression)
   if (target.kind === 'nullable' && optional) {
+    const typed = valueFromNodeType(expression.getText(frame.program.sourceFile), expression, frame.program)
+    if (typed != null) return typed
     const present = readPropertyValue(target.present, expression.name.text, expression.getText(frame.program.sourceFile))
     return nullableValue(present, expression.getText(frame.program.sourceFile), 'undefined')
   }
   if (target.kind === 'null' && optional) return nullValue('undefined')
   if (target.kind === 'nullable') return noteUnsupported(frame, `Nullable value ${target.expr ?? expression.expression.getText(frame.program.sourceFile)} was not proven present`, expression.expression)
+  const text = expression.getText(frame.program.sourceFile)
+  const typed = valueFromNodeType(text, expression, frame.program)
   if (!canReadProperty(target, expression.name.text)) {
+    if (typed != null) return typed
     return noteUnsupported(frame, `Property access expected an object path${expression.name.text === 'length' ? ' or array length' : ''}: ${expression.getText(frame.program.sourceFile)}`, expression.expression)
   }
-  return readPropertyValue(target, expression.name.text, expression.getText(frame.program.sourceFile))
+  return valueWithTypeFallback(readPropertyValue(target, expression.name.text, text), typed)
 }
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
@@ -1603,6 +1613,8 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: In
 function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported', expression)
   if (target.kind !== 'array' && target.kind !== 'nullable') {
+    const typed = valueFromNodeType(expression.getText(frame.program.sourceFile), expression, frame.program)
+    if (typed != null) return typed
     return noteUnsupported(frame, `Element access expected an array path: ${expression.expression.getText(frame.program.sourceFile)}`, expression.expression)
   }
   const targetPath = pathFromExpression(expression.expression, frame)
@@ -1620,7 +1632,8 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
   if (finiteCase != null) return finiteCase
   const exactIndex = exactInteger(index)
   if (exactIndex == null) return symbolicArrayElementAccess(target, index, expression, frame)
-  return readArrayIndexValue(target, exactIndex, expression.getText(frame.program.sourceFile))
+  const text = expression.getText(frame.program.sourceFile)
+  return valueWithTypeFallback(readArrayIndexValue(target, exactIndex, text), valueFromNodeType(text, expression, frame.program))
 }
 
 function expressionMentionsArrayLength(expression: ts.Expression | undefined, root: string): boolean {
@@ -1641,6 +1654,25 @@ function canReadProperty(target: Value, name: string) {
   if (target.kind === 'array' && name === 'length') return true
   if (target.kind === 'nullable') return canReadProperty(target.present, name)
   return false
+}
+
+function valueWithTypeFallback(value: Value, typed: Value | null): Value {
+  return value.kind === 'unknown' && typed != null && unknownCanUseTypeFallback(value.reason) ? typed : value
+}
+
+function patternPropertyValue(value: Value, propertyName: string, typed: Value | null): Value {
+  if (value.kind === 'object') {
+    const prop = value.props.get(propertyName)
+    if (prop != null) return prop
+    if (typed != null && value.expr != null) return localizeValue(typed, `${value.expr}.${propertyName}`)
+  }
+  return valueWithTypeFallback(readPropertyValue(value, propertyName, `${valueExpr(value) ?? 'param'}.${propertyName}`), typed)
+}
+
+function unknownCanUseTypeFallback(reason: string) {
+  return reason.includes(' was not inferred')
+    || reason.startsWith('Property ')
+    || reason.startsWith('Parameter ')
 }
 
 function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
@@ -1776,7 +1808,7 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
   }
   return {
     kind: 'array',
-    layout: 'collection',
+    layout: elements == null ? 'collection' : 'tuple',
     length,
     elements,
     element,
@@ -2104,10 +2136,10 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     expressionText: current => nodeText(current, frame),
   })
   if (ambient != null) return ambient
-  let structuralFallback: Value | null | undefined
+  let returnTypeFallback: Value | null | undefined
   const fallback = () => {
-    structuralFallback ??= valueFromProjectCallReturnShape(expression.getText(frame.program.sourceFile), expression, frame.program)
-    return structuralFallback
+    returnTypeFallback ??= valueFromProjectCallReturnType(expression.getText(frame.program.sourceFile), expression, frame.program)
+    return returnTypeFallback
   }
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression) && target.expression.text === 'Math') {
     return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression)
@@ -2189,7 +2221,7 @@ function evaluateResolvedFunctionCall(
     const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.functionName}`, expression)
     return fallback ?? unsupported
   }
-  return valueWithStructuralFallback(
+  return valueWithTypeFallback(
     invokeFitFunction(target.fn, argumentValues, frameWithActiveCall(frame, callKey), target.program, rootFrame(target.program, frame.hooks).env, thisValue),
     fallback,
   )

@@ -62,6 +62,7 @@ export type InterpreterReturnCase = InterpreterStateCase & {
 
 export type InterpreterHooks = {
   evaluateCall?: (call: InterpreterCall, frame: InterpreterFrame) => Value | null
+  evaluatePath?: (expression: ts.Expression, frame: InterpreterFrame) => Value | null
   evaluateClaim?: (claim: InterpreterClaim, frame: InterpreterFrame, evaluate: () => Value) => Value
   afterClaim?: (claim: InterpreterClaim, value: Value, frame: InterpreterFrame) => void
   evaluateLoop?: (claim: InterpreterLoopClaim, frame: InterpreterFrame, evaluate: () => InterpreterFlow) => InterpreterFlow

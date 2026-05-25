@@ -28,7 +28,6 @@ import {
 } from './linear.ts'
 import {parseExpression} from './parser.ts'
 import {proveComparison} from './proof.ts'
-import {valueWithStructuralFallback} from './shapes.ts'
 
 export type LoopScalarUpdate = {
   start: NumberValue
@@ -198,7 +197,7 @@ export function segmentedStackElement(push: GuardedLoopPush, element: Value | nu
 
 export function pushedElementValue(target: ArrayValue, element: Value | null): Value | null {
   if (target.length.min === 0 && target.length.max === 0) {
-    return element == null ? target.element : valueWithStructuralFallback(element, target.element)
+    return mergeElementValue(element, target.element)
   }
   return mergeElementValue(target.element, element)
 }

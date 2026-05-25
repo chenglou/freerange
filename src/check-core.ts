@@ -16,9 +16,11 @@ import {
   fitReturnInternalRoot,
   fitReturnPublicRoot,
   instantiateInlineFitTemplates,
+  parseExpression,
   publicFitText,
   type FitComparisonCheckSpec,
   type FitCheckSpec,
+  type FitDomainPath,
   type FitExpressionLike,
   type FitInlineCheckSpec,
   type FitRange,
@@ -42,7 +44,6 @@ import {
   type FitInferLoopSpec,
   type FitInferReport,
   type FitInferSummary,
-  type FitShapeInsight,
   type FitShapeOptions,
   type FitShapeReport,
   type FunctionContractProof,
@@ -60,10 +61,13 @@ import {
 import {mergeAssumptions} from './assumptions.ts'
 import {proveComparison, proveObligation} from './proof.ts'
 import {
-  structuralShape,
-  valueFromFunctionReturnShape,
-  valueFromTypeNodeShape,
-  valueWithStructuralFallback,
+  valueFromFunctionReturnPath,
+  valueFromFunctionReturnType,
+  valueFromNodePath,
+  valueFromTypeNodePath,
+  valueFromTypeNode,
+  valueFromTypePath,
+  type ShapePathSegment,
 } from './shapes.ts'
 import {
   factInventoryFromValue,
@@ -123,7 +127,7 @@ import {
   bindPatternFromValue,
   parameterArgumentValue,
   unknownResultValue,
-  valueWithBindingShapeFallback,
+  valueWithBindingTypeFallback,
 } from './function-inputs.ts'
 import {
   functionEvalContext,
@@ -139,9 +143,9 @@ import {
   parsePrintedNumber,
 } from './domain-paths.ts'
 import {
-  inspectFunctionShapeInsights,
-  type ShapeInspectState,
-} from './shape-inspect.ts'
+  numericLiteralValue,
+  unwrapExpression,
+} from './linear.ts'
 import {
   evaluateInterpreterExpression,
   evaluateInterpreterFunctionBody,
@@ -228,21 +232,9 @@ export function summarizeFitFiles(paths: string[]): FitInferSummary {
   return finishInferSummary(summary)
 }
 
-export function inspectFitShapes(paths: string[], options: FitShapeOptions = {}): FitShapeReport {
-  const project = loadFitProject(paths, readTopLevelGlobal)
-  const contractCache = new Map<string, FunctionContractProof>()
-  const insights: FitShapeInsight[] = []
-  for (const program of project.entries) {
-    for (const [functionName, fn] of program.functions) {
-      if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
-      const state = options.functionName != null || functionHasExplicitSpecs(fn) || functionHasBodyFitComment(fn) || functionHasTypeContracts(program, fn)
-        ? evaluateFunctionShapeState(program, fn, contractCache)
-        : null
-      insights.push(...inspectFunctionShapeInsights(program, fn, state, options))
-    }
-  }
-  return {files: paths, insights}
+export function inspectFitShapes(paths: string[], _options: FitShapeOptions = {}): FitShapeReport {
+  loadFitProject(paths, readTopLevelGlobal)
+  return {files: paths, insights: []}
 }
 
 export function createFunctionContractCache(): Map<string, FunctionContractProof> {
@@ -541,15 +533,6 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   }
 }
 
-function evaluateFunctionShapeState(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): ShapeInspectState {
-  const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
-  const context = functionEvalContext(program, fn, setup, contractCache)
-  const env = setup.env
-  const baseEnv = new Map(env)
-  const state = evaluateFunctionBodyState(fn, context)
-  return {baseEnv, env: state.env, result: state.result}
-}
-
 function typeUnsupportedChecks(file: string, functionName: string, unsupported: TypeContractUnsupported[], boundary?: CheckBoundary): FitCheck[] {
   return unsupported.map(problem => ({
     file,
@@ -568,9 +551,91 @@ function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContra
 
 const checkSpecHooks: CheckSpecHooks = {
   evaluateExpression: (expression, context) => evaluateContractExpression(expression, context),
-  evaluateDomainPath: (domainPath, context) => evaluateDomainPathValue(domainPath, context.env),
+  evaluateDomainPath: (domainPath, context) => evaluateDomainPathForContext(domainPath, context),
   contextForExpression: (expression, context) => contextForScopedFitExpression(expression, context),
   parsePrintedNumber,
+}
+
+function evaluateDomainPathForContext(domainPath: FitDomainPath, context: EvalContext): Value {
+  const value = evaluateDomainPathValue(domainPath, context.env)
+  if (value.kind !== 'unknown') return value
+  return domainPathTypeValue(domainPath, context) ?? value
+}
+
+function domainPathTypeValue(domainPath: FitDomainPath, context: EvalContext): Value | null {
+  return pathTypeValue(domainPath.root, domainPath.segments, context)
+}
+
+function pathTypeValue(root: string, segments: readonly ShapePathSegment[], context: EvalContext): Value | null {
+  const fn = currentContextFunction(context)
+  if (root === fitReturnInternalRoot && fn != null) {
+    return valueFromFunctionReturnPath(fitReturnPublicRoot, fn.node, segments, context.program)
+  }
+
+  if (fn != null) {
+    if (root === 'this') {
+      const value = classInstancePathValue(fn, segments, context.program)
+      if (value != null) return value
+    }
+    const param = fn.node.parameters.find(current => ts.isIdentifier(current.name) && current.name.text === root)
+    if (param != null) {
+      return valueFromTypeNodePath(root, param.type, segments, context.program)
+        ?? valueFromNodePath(root, param.name, segments, context.program)
+    }
+    const local = findVariableDeclaration(fn.node.body, root)
+    if (local != null) {
+      return valueFromTypeNodePath(root, local.type, segments, context.program)
+        ?? valueFromNodePath(root, local.name, segments, context.program)
+    }
+  }
+
+  const topLevel = findVariableDeclaration(context.program.sourceFile, root)
+  return topLevel == null
+    ? null
+    : valueFromTypeNodePath(root, topLevel.type, segments, context.program)
+      ?? valueFromNodePath(root, topLevel.name, segments, context.program)
+}
+
+function currentContextFunction(context: EvalContext): FitFunction | null {
+  for (let index = context.stack.length - 1; index >= 0; index--) {
+    const fn = context.program.functions.get(context.stack[index]!)
+    if (fn != null) return fn
+  }
+  return null
+}
+
+function classInstancePathValue(fn: FitFunction, segments: readonly ShapePathSegment[], program: Program): Value | null {
+  const classNode = ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node) ? fn.node.parent : null
+  if (classNode == null || !ts.isClassDeclaration(classNode) || classNode.name == null || program.typeChecker == null) return null
+  const symbol = program.typeChecker.getSymbolAtLocation(classNode.name)
+  return symbol == null
+    ? null
+    : valueFromTypePath('this', program.typeChecker.getDeclaredTypeOfSymbol(symbol), segments, program.typeChecker, classNode)
+}
+
+function findVariableDeclaration(node: ts.Node | undefined, name: string): ts.VariableDeclaration | null {
+  if (node == null) return null
+  let found: ts.VariableDeclaration | null = null
+  const visit = (current: ts.Node) => {
+    if (found != null) return
+    if (current !== node && isFunctionLike(current)) return
+    if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.name.text === name) {
+      found = current
+      return
+    }
+    ts.forEachChild(current, visit)
+  }
+  visit(node)
+  return found
+}
+
+function isFunctionLike(node: ts.Node) {
+  return ts.isFunctionDeclaration(node)
+    || ts.isFunctionExpression(node)
+    || ts.isArrowFunction(node)
+    || ts.isMethodDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
+    || ts.isConstructorDeclaration(node)
 }
 
 function contextForScopedFitExpression(expression: FitExpressionLike, context: EvalContext): EvalContext {
@@ -819,10 +884,109 @@ function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {resu
 function interpreterHooks(context: EvalContext): InterpreterHooks {
   return {
     evaluateCall: (call, frame) => evaluateInterpreterCall(call, frame, context),
+    evaluatePath: (expression, frame) => evaluateInterpreterPathExpression(expression, frame, context),
     evaluateClaim: (claim, frame, evaluate) => evaluateInterpreterClaim(claim, frame, context, evaluate),
     afterClaim: (claim, value, frame) => afterInterpreterClaim(claim, value, frame, context),
     evaluateLoop: (claim, frame, evaluate) => evaluateInterpreterLoop(claim, frame, context, evaluate),
   }
+}
+
+type StaticPath = {
+  root: string
+  segments: ShapePathSegment[]
+}
+
+function evaluateInterpreterPathExpression(expression: ts.Expression, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
+  if (rootContext.contractExpression !== true) return null
+  const path = staticPathFromExpression(expression)
+  if (path == null || !frame.env.has(path.root)) return null
+  const rootValue = frame.env.get(path.root)!
+  const envValue = evaluateStaticPathValue(rootValue, path)
+  if (envValue.kind !== 'unknown') return envValue
+  if (path.segments.length === 0) return envValue
+  const context = contextForInterpreterFrame(frame, rootContext)
+  const aliasPath = staticAliasPath(rootValue, path.segments)
+  if (aliasPath != null) {
+    const aliasValue = pathTypeValue(aliasPath.root, aliasPath.segments, context)
+    if (aliasValue != null) return aliasValue
+  }
+  return pathTypeValue(path.root, path.segments, context) ?? envValue
+}
+
+function staticAliasPath(value: Value, segments: ShapePathSegment[]): StaticPath | null {
+  const expr = valueExpressionText(value)
+  if (expr == null) return null
+  try {
+    const rootPath = staticPathFromExpression(parseExpression(expr))
+    return rootPath == null ? null : {...rootPath, segments: [...rootPath.segments, ...segments]}
+  } catch {
+    return null
+  }
+}
+
+function valueExpressionText(value: Value): string | null {
+  switch (value.kind) {
+    case 'number':
+    case 'literal':
+    case 'object':
+    case 'array':
+    case 'null':
+    case 'nullable':
+      return value.expr
+    case 'unknown':
+      return null
+  }
+}
+
+function staticPathFromExpression(expression: ts.Expression): StaticPath | null {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current)) return {root: current.text, segments: []}
+  if (current.kind === ts.SyntaxKind.ThisKeyword) return {root: 'this', segments: []}
+  if (ts.isPropertyAccessExpression(current)) {
+    const parent = staticPathFromExpression(current.expression)
+    return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: current.name.text}]}
+  }
+  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+    const parent = staticPathFromExpression(current.expression)
+    const index = numericLiteralValue(current.argumentExpression)
+    return parent == null || index == null || !Number.isInteger(index) || index < 0
+      ? null
+      : {...parent, segments: [...parent.segments, {kind: 'index', index}]}
+  }
+  return null
+}
+
+function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
+  let value = envValue
+  let expr = path.root
+  for (const segment of path.segments) {
+    if (segment.kind === 'prop') {
+      if (value.kind === 'array' && segment.name === 'length') {
+        value = value.length
+      } else if (value.kind === 'object') {
+        value = value.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
+      } else if (value.kind === 'nullable') {
+        value = value.present
+        if (value.kind === 'object') value = value.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
+        else if (value.kind === 'array' && segment.name === 'length') value = value.length
+        else return unknown(`${expr}.${segment.name} expected an object`)
+      } else {
+        return unknown(`${expr}.${segment.name} expected an object`)
+      }
+      expr += `.${segment.name}`
+      continue
+    }
+    if (segment.kind === 'index') {
+      if (value.kind !== 'array') return unknown(`${expr}[${segment.index}] expected an array`)
+      value = value.elements?.[segment.index] ?? value.element ?? unknown(`${expr}[${segment.index}] was not inferred`)
+      expr += `[${segment.index}]`
+      continue
+    }
+    if (value.kind !== 'array') return unknown(`${expr}[] expected an array`)
+    value = value.element ?? unknown(`${expr}[] was not inferred`)
+    expr += '[]'
+  }
+  return value
 }
 
 function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
@@ -1011,7 +1175,7 @@ function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: E
     ? evaluateInterpreterExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
     : evaluateCheckedExpression(declaration.initializer!, context)
   const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
-  bindName(declaration.name, valueWithBindingShapeFallback(declaration.name, value, declaration.type, context.program), context)
+  bindName(declaration.name, valueWithBindingTypeFallback(declaration.name, value, declaration.type, context.program), context)
   const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
   pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
   verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
@@ -1292,12 +1456,12 @@ function evaluateLocalFunctionCall(
     ...(context.contractExpression == null ? {} : {contractExpression: context.contractExpression}),
     ...(context.contractExpressionProblems == null ? {} : {contractExpressionProblems: context.contractExpressionProblems}),
   })
-  const fallbackShape = valueFromFunctionReturnShape(`${functionName}Result`, fn.node, context.program)
-    ?? valueFromTypeNodeShape(`${functionName}Result`, fn.node.type, context.program)
+  const returnTypeFallback = valueFromFunctionReturnType(`${functionName}Result`, fn.node, context.program)
+    ?? valueFromTypeNode(`${functionName}Result`, fn.node.type, context.program)
     ?? options.fallback
   const fallbackResult = result.kind === 'unknown'
-    ? fallbackShape ?? result
-    : valueWithStructuralFallback(result, fallbackShape)
+    ? returnTypeFallback ?? result
+    : result
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
   const contractSpecs = functionContractSpecs(context.program, fn)
   if (contractSpecs.length === 0) return callSiteFallbackResult
@@ -1344,7 +1508,7 @@ function evaluateFunctionCallArguments(
       : valueWithDefaultedUndefined(value, evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram))
     values.push(defaultedValue)
     texts.push(argument == null ? param.initializer!.getText(calleeProgram.sourceFile) : argument.getText(callerContext.program.sourceFile))
-    bindPatternFromValue(param.name, parameterArgumentValue(param, defaultedValue, calleeProgram), env, {preserveLinear: true})
+    bindPatternFromValue(param.name, parameterArgumentValue(param, defaultedValue, calleeProgram), env, {preserveLinear: true}, calleeProgram)
   }
 
   return {kind: 'valid', values, texts, env}
@@ -1387,22 +1551,22 @@ function evaluateImportedFunctionCall(
   callText: string,
   callLine: number,
   context: EvalContext,
-  structuralFallback: Value | null,
+  returnTypeFallback: Value | null,
   callSiteBindings: CallSiteBindings,
   thisValue?: Value,
 ): Value {
   const contractSpecs = functionContractSpecs(target.program, fn)
-  const resolvedStructuralFallback = structuralFallback ?? structuralShape(valueFromFunctionReturnShape(`${target.functionName}Result`, fn.node, target.program))
-  if (target.imported == null) return resolvedStructuralFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
+  const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${target.functionName}Result`, fn.node, target.program)
+  if (target.imported == null) return resolvedReturnTypeFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
   if (contractSpecs.length === 0) {
-    return resolvedStructuralFallback ?? unknown(importedContractUnavailableReason(
+    return resolvedReturnTypeFallback ?? unknown(importedContractUnavailableReason(
       callName,
       target.imported.binding,
       `resolved to ${target.program.file}#${target.functionName}, but that function has no @fit contract`,
     ))
   }
   if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for imported function ${target.functionName}`)
-  if (!shouldRecordCallObligations(context)) return resolvedStructuralFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
+  if (!shouldRecordCallObligations(context)) return resolvedReturnTypeFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
 
   const proof = verifyFunctionContract(target.program, target.functionName, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(callName, target.imported.binding, proof))
@@ -1422,7 +1586,7 @@ function evaluateImportedFunctionCall(
     kind: 'imported',
     sourceFile: target.program.file,
     sourceFunctionName: fn.name,
-  }, resolvedStructuralFallback ?? unknownResultValue(contractSpecs, target.program), thisValue, callSiteBindings, callContractEvaluators)
+  }, resolvedReturnTypeFallback ?? unknownResultValue(), thisValue, callSiteBindings, callContractEvaluators)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {

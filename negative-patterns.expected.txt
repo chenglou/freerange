@@ -224,8 +224,8 @@ UNKNOWN tests/patterns/negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bo
     assumed from input: given this.top: 0..1000
     assumed from input: given this.height: -100..1000
   missing fact: (this.top + this.height) >= this.top
-FAIL tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: box.bottom: requires this.height: -100..1000
-  caller passed: this.height: any number
+UNKNOWN tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: box.bottom: requires this.height: -100..1000
+  caller passed: this.height: unknown (this.height was not inferred)
   missing: box.height: -100..1000
 FAIL tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
   range was any number as (box.top + box.height), expected inside 0..2000
@@ -243,10 +243,32 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSpacedNeedsMatchingGap: spac
   missing: given gap == otherGap
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: return.rows[].bottom == return.rows[].top + return.rows[].height
   applies to: every item in return.rows
-  return.rows expected an object
+  known:
+    return.rows[].bottom: any number
+    (return.rows[].top + return.rows[].height): any number
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    assumed from input: given top: 0..1000
+    assumed from input: given gap: 0..10
+    inferred from code: i >= 0
+    inferred from code: i - items.length < 0
+    inferred from code: items[i].height >= 0
+    inferred from code: items[i].height <= 40
+  missing fact: return.rows[].bottom == (return.rows[].top + return.rows[].height)
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsInlineBottomNeedsMatchingBottom: return.rows[].bottom == return.rows[].top + return.rows[].height
   applies to: every item in return.rows
-  return.rows expected an object
+  known:
+    return.rows[].bottom: any number
+    (return.rows[].top + return.rows[].height): any number
+    assumed from input: given items.length: int 0..50
+    assumed from input: given items[].height: 0..40
+    assumed from input: given top: 0..1000
+    assumed from input: given gap: 0..10
+    inferred from code: i >= 0
+    inferred from code: i - items.length < 0
+    inferred from code: items[i].height >= 0
+    inferred from code: items[i].height <= 40
+  missing fact: return.rows[].bottom == (return.rows[].top + return.rows[].height)
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: return.rows[$i + 1].top == return.rows[$i].bottom + gap
   return.rows[$i + 1].top == return.rows[$i].bottom + gap was not inferred
   need: a matching adjacent sequence relation
@@ -263,7 +285,11 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchi
     sequence facts: nondecreasing(.top), spaced(otherGap)
   missing: given otherGap == gap
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGuardedFlushCannotMixSameArrayAppend: spaced(return.rows, gap)
-  spaced expected an array
+  spaced(return.rows, gap) was not inferred
+  need: every next row top == previous top + previous height + gap
+  known:
+    sequence facts: no sequence facts
+  missing: recognized adjacent row spacing
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(return.rows) == return.bottom
   lastEnd(return.rows) was not inferred
   need: a non-empty append-only row loop that pushes height
@@ -285,17 +311,15 @@ FAIL tests/patterns/negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: r
   missing: base.x >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows == other.rows
   Non-number equality is only proven for the same source expression
-UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
-  Nullable value optionalStructuralShapeApi.wrapRows(items).rows was not proven present
 FAIL tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
-  range was any number as items[index].height, expected inside 0..40
+  range was any number as items[index]!.height, expected inside 0..40
   known:
-    items[index].height: any number
+    items[index]!.height: any number
     assumed from input: given items.length: int 1..50
     assumed from input: given index: int 0..49
     assumed from input: given index < items.length
-  missing: items[index].height >= 0
-  missing: items[index].height <= 40
+  missing: items[index]!.height >= 0
+  missing: items[index]!.height <= 40
 UNKNOWN tests/patterns/negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
@@ -828,9 +852,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeTypedArrayConstructorKeepsEx
     assumed from input: given count: int 0..100
   missing fact: count == (count + 1)
 FAIL tests/patterns/negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
-  value was 10 | 20 | 30, expected one of 20 | 40
-  branches produced 10, 20, 30
-  missing: 10 | 20 | 30 in {20, 40}
+  value was 10 | 30, expected one of 20 | 40
+  branches produced 10, 30
+  missing: 10 | 30 in {20, 40}
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
   Array length-derived index on local arrays inside loops is not supported
 UNKNOWN tests/patterns/negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
@@ -1028,8 +1052,8 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNee
     assumed from input: given this.top: 0..1000
     assumed from input: given this.height: -100..1000
   missing fact: (this.top + this.height) >= this.top
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: box.bottom: requires this.height: 0..1000
-  caller passed: this.height: any number
+UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: box.bottom: requires this.height: 0..1000
+  caller passed: this.height: unknown (this.height was not inferred)
   missing: box.height: 0..1000
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: return >= box.top
   Imported call NegativeImportedClassBoxNeedsHeight.bottom precondition was not proven
@@ -1053,8 +1077,6 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedNumericConstan
     ((width + importedChromeX) + 1): 17..1017
     assumed from input: given width: 0..1000
   missing fact: (width + importedChromeX) == ((width + importedChromeX) + 1)
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
-  Nullable value input.rows was not proven present
 FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldReturnCheck: return.k > 0
   result: is false
   missing fact: -1 > 0
@@ -1062,7 +1084,7 @@ FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldArrayEle
   range was 100, expected inside 0..40
   missing: 100 <= 40
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
-  Branches returned incompatible value shapes
+  Nullable value offsetY was not proven present
 FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: matrixNegativeDefault(): requires value >= 0
   caller passed: value: -1
   missing: -1 >= 0
