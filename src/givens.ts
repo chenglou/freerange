@@ -16,7 +16,6 @@ import {
   finiteNumberValue,
   linearNameForExpression,
   numberValue,
-  unknownArray,
   withNumberCases,
   type ArraySummary,
   type ArrayValue,
@@ -28,7 +27,7 @@ import {
 } from './domain.ts'
 import {
   parsePrintedNumber,
-  setDomainPathValue,
+  setCheckedDomainPathValue,
 } from './domain-paths.ts'
 import {
   cleanLinear,
@@ -307,11 +306,12 @@ export function collectGivenAssumptions(
   givens: AssumedGivenSpec[],
   contractCache: Map<string, FunctionContractProof>,
   evaluators: GivenEvaluators,
+  stack: string[] = [functionName],
 ): {assumptions: LinearConstraint[]; booleanAssumptions: Map<string, boolean>; checks: FitCheck[]} {
   const assumptions: LinearConstraint[] = []
   const booleanAssumptions = new Map<string, boolean>()
   const checks: FitCheck[] = []
-  const context: EvalContext = {program, file, env, inputRoots, stack: [functionName], checks: [], assumptions, booleanAssumptions, contractCache}
+  const context: EvalContext = {program, file, env, inputRoots, stack, checks: [], assumptions, booleanAssumptions, contractCache}
   for (const given of givens) {
     if (given.kind === 'range') {
       const spec = given.spec
@@ -322,20 +322,22 @@ export function collectGivenAssumptions(
       }
       const rangeCases = fitRangeCases(spec.range)
       if (rangeCases.length !== 1) {
-        let invalid = false
+        const evaluatedCases: EvaluatedRangeCase[] = []
         for (const rangeCase of rangeCases) {
           const lower = evaluateGivenNumber(file, functionName, spec, rangeCase.lower, context, evaluators, 'range lower bound')
           const upper = evaluateGivenNumber(file, functionName, spec, rangeCase.upper, context, evaluators, 'range upper bound')
           if (lower.kind === 'invalid') {
             checks.push(lower.check)
-            invalid = true
+            continue
           }
           if (upper.kind === 'invalid') {
             checks.push(upper.check)
-            invalid = true
+            continue
           }
+          evaluatedCases.push({rangeCase, lower: lower.value, upper: upper.value})
         }
-        if (invalid) continue
+        if (evaluatedCases.length !== rangeCases.length) continue
+        applyGivenRangeSpec(env, spec, evaluatedRangeValue(spec.range, spec.expression.text, evaluatedCases))
         continue
       }
       const rangeCase = rangeCases[0]!
@@ -363,6 +365,7 @@ export function collectGivenAssumptions(
         continue
       }
       assumptions.push(...facts)
+      applyGivenRangeSpec(env, spec, evaluatedRangeValue(spec.range, spec.expression.text, [{rangeCase, lower: lower.value, upper: upper.value}]))
       continue
     }
 
@@ -472,6 +475,12 @@ type EvaluatedGivenNumber =
 
 type GivenNumberRole = 'expression' | 'range lower bound' | 'range upper bound'
 
+type EvaluatedRangeCase = {
+  rangeCase: FitRangeCase
+  lower: NumberValue
+  upper: NumberValue
+}
+
 function evaluateGivenComparison(
   file: string,
   functionName: string,
@@ -499,6 +508,7 @@ function evaluateGivenNumber(
     ? evaluators.evaluateSpecExpression(expression, context)
     : evaluators.evaluateRangeBound(expression, context)
   if (value.kind === 'number') return {kind: 'number', value}
+  if (value.kind === 'nullable' && value.present.kind === 'number') return {kind: 'number', value: value.present}
   const text = publicFitText(fitExpressionText(expression))
   return {kind: 'invalid', check: invalidGivenCheck(file, functionName, spec, givenNonNumberReason(role, text, value))}
 }
@@ -678,14 +688,13 @@ function appendRelation(summary: ArraySummary | null, relation: SequenceRelation
   return {...base, relations: [...base.relations, relation]}
 }
 
-export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGivenSpec) {
+export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGivenSpec, value = staticRangeValue(spec.range, spec.expression.text)) {
   const expressionText = spec.expression.text
-  const value = staticRangeValue(spec.range, expressionText)
   if (value == null) return
   if (expressionText.includes('[]')) {
     const domainPath = parseDomainPathText(expressionText)
     if (domainPath != null && domainPath.segments.length > 0) {
-      env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+      env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
     }
     return
   }
@@ -699,13 +708,15 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   const lengthRoot = arrayLengthRoot(expression)
   if (lengthRoot != null) {
     const target = env.get(lengthRoot)
-    env.set(lengthRoot, target?.kind === 'array' ? {...target, length: value} : unknownArray(lengthRoot, value))
-    return
+    if (target?.kind === 'array') {
+      env.set(lengthRoot, {...target, length: value})
+      return
+    }
   }
 
   const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
-  env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+  env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }
 
 function staticRangeValue(range: FitRange, expressionText: string): NumberValue | null {
@@ -714,6 +725,21 @@ function staticRangeValue(range: FitRange, expressionText: string): NumberValue 
   if (cases.every(rangeCase => rangeCase == null)) return null
   const approximatedCases = cases.map(rangeCase => rangeCase ?? {min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY})
   return rangeCasesValue(range, expressionText, approximatedCases)
+}
+
+function evaluatedRangeValue(range: FitRange, expressionText: string, cases: EvaluatedRangeCase[]): NumberValue {
+  if (range.finiteValues != null) return finiteNumberValue(range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)))
+  return rangeCasesValue(range, expressionText, cases.map(({rangeCase, lower, upper}) => evaluatedRangeCaseApprox(range, rangeCase, lower, upper)))
+}
+
+function evaluatedRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase, lower: NumberValue, upper: NumberValue): {min: number; max: number} {
+  const min = range.valueKind === 'int' && !rangeCase.lowerInclusive
+    ? Math.floor(lower.min) + 1
+    : lower.min
+  const max = range.valueKind === 'int' && !rangeCase.upperInclusive
+    ? Math.ceil(upper.max) - 1
+    : upper.max
+  return {min, max}
 }
 
 function staticRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase): {min: number; max: number} | null {

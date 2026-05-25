@@ -53,7 +53,6 @@ import {
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
   unknown,
-  unknownNumber,
   valueWithDefaultedUndefined,
   type LinearConstraint,
   type Value,
@@ -64,6 +63,7 @@ import {
   valueFromFunctionReturnPath,
   valueFromFunctionReturnType,
   valueFromNodePath,
+  valueFromNodeType,
   valueFromTypeNodePath,
   valueFromTypeNode,
   valueFromTypePath,
@@ -134,7 +134,6 @@ import {
   prepareFunctionEvaluation,
 } from './function-evaluation.ts'
 import {
-  applyGivenRangeSpec,
   collectGivenAssumptions,
   validateGivenSpecs,
 } from './givens.ts'
@@ -899,18 +898,21 @@ type StaticPath = {
 function evaluateInterpreterPathExpression(expression: ts.Expression, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
   if (rootContext.contractExpression !== true) return null
   const path = staticPathFromExpression(expression)
-  if (path == null || !frame.env.has(path.root)) return null
-  const rootValue = frame.env.get(path.root)!
-  const envValue = evaluateStaticPathValue(rootValue, path)
-  if (envValue.kind !== 'unknown') return envValue
-  if (path.segments.length === 0) return envValue
   const context = contextForInterpreterFrame(frame, rootContext)
-  const aliasPath = staticAliasPath(rootValue, path.segments)
-  if (aliasPath != null) {
-    const aliasValue = pathTypeValue(aliasPath.root, aliasPath.segments, context)
-    if (aliasValue != null) return aliasValue
+  if (path == null) return null
+  if (frame.env.has(path.root)) {
+    const rootValue = frame.env.get(path.root)!
+    const envValue = evaluateStaticPathValue(rootValue, path)
+    if (envValue.kind !== 'unknown') return envValue
+    if (path.segments.length === 0) return envValue
+    const aliasPath = staticAliasPath(rootValue, path.segments)
+    if (aliasPath != null) {
+      const aliasValue = pathTypeValue(aliasPath.root, aliasPath.segments, context)
+      if (aliasValue != null) return aliasValue
+    }
+    return pathTypeValue(path.root, path.segments, context) ?? envValue
   }
-  return pathTypeValue(path.root, path.segments, context) ?? envValue
+  return path.segments.length === 0 ? null : pathTypeValue(path.root, path.segments, context)
 }
 
 function staticAliasPath(value: Value, segments: ShapePathSegment[]): StaticPath | null {
@@ -960,6 +962,7 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
   let value = envValue
   let expr = path.root
   for (const segment of path.segments) {
+    if (value.kind === 'unknown') return value
     if (segment.kind === 'prop') {
       if (value.kind === 'array' && segment.name === 'length') {
         value = value.length
@@ -1245,8 +1248,9 @@ function bindObjectPattern(pattern: ts.ObjectBindingPattern, value: Value, conte
       bindUninitializedName(element.name, context)
       continue
     }
+    const typed = valueFromNodeType(element.name.getText(context.program.sourceFile), element.name, context.program)
     const prop = value.kind === 'object'
-      ? value.props.get(propertyName) ?? (value.expr == null ? unknown(`Unknown property ${propertyName}`) : unknownNumber(`${value.expr}.${propertyName}`))
+      ? value.props.get(propertyName) ?? typed ?? unknown(`Property ${propertyName} was not inferred`)
       : unknown(`Destructuring property ${propertyName} expected an object`)
     bindName(element.name, prop, context)
   }
@@ -1258,7 +1262,9 @@ function bindArrayPattern(pattern: ts.ArrayBindingPattern, value: Value, context
       bindUninitializedName(elementName, context)
       return
     }
-    bindName(elementName, arrayPatternElementValue(value, index), context)
+    const typed = valueFromNodeType(elementName.getText(context.program.sourceFile), elementName, context.program)
+    const item = arrayPatternElementValue(value, index)
+    bindName(elementName, item.kind === 'unknown' && typed != null ? typed : item, context)
   })
 }
 
@@ -1374,10 +1380,6 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
   const {assumedGivens, checks} = validateGivenSpecs(context.file, functionName, specs, context.inputRoots, 'loop-given')
   context.checks.push(...checks)
 
-  for (const given of assumedGivens) {
-    if (given.kind !== 'range') continue
-    applyGivenRangeSpec(context.env, given.spec)
-  }
   const {assumptions, booleanAssumptions, checks: impossibleChecks} = collectGivenAssumptions(
     context.file,
     context.program,
@@ -1387,6 +1389,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
     assumedGivens,
     context.contractCache,
     givenEvaluators,
+    [...context.stack, 'loop'],
   )
   context.checks.push(...impossibleChecks)
   context.assumptions = mergeAssumptions(context.assumptions, assumptions)

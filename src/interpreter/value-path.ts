@@ -4,9 +4,6 @@ import {
   numberValue,
   tupleElements,
   unknown,
-  unknownArray,
-  unknownNumber,
-  unknownObject,
   type Value,
 } from '../domain.ts'
 import {linearConstant} from '../linear.ts'
@@ -53,14 +50,18 @@ export function readPath(path: ValuePath, frame: InterpreterFrame, node?: ts.Nod
 }
 
 export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame) {
-  const current = frame.env.get(path.root) ?? unknownObject(path.root)
   if (path.segments.length === 0) {
     frame.env.set(path.root, value)
     return
   }
+  const current = frame.env.get(path.root)
+  if (current == null) {
+    frame.env.set(path.root, unknown(`Unknown assignment root ${path.root}`))
+    return
+  }
   const containerPath = path.segments.slice(0, -1)
   const oldContainer = readPathSegments(current, containerPath)
-  const updated = setPathSegments(current, path.segments, value)
+  const updated = setPathSegments(current, path.segments, value, path.root)
   const newContainer = readPathSegments(updated, containerPath)
   if (oldContainer.kind === 'object' || oldContainer.kind === 'array') {
     for (const [name, envValue] of frame.env) {
@@ -108,28 +109,35 @@ function readPathSegments(value: Value, segments: PathSegment[]): Value {
   return readPathSegments(readArrayIndexValue(value, segment.index, `${valueExpr(value) ?? 'value'}[${segment.index}]`), segments.slice(1))
 }
 
-function setPathSegments(current: Value, segments: PathSegment[], value: Value): Value {
+function setPathSegments(current: Value, segments: PathSegment[], value: Value, expr: string): Value {
   const segment = segments[0]
   if (segment == null) return value
   if (segment.kind === 'prop') {
     if (current.kind === 'array' && segment.name === 'length' && value.kind === 'number') return {...current, length: value}
-    const base = current.kind === 'object' ? current : unknownObject(valueExpr(current) ?? 'object')
-    const props = new Map(base.props)
-    props.set(segment.name, setPathSegments(props.get(segment.name) ?? unknownObject(segment.name), segments.slice(1), value))
-    return {...base, props}
+    if (current.kind !== 'object') return unknown(`${expr}.${segment.name} expected an object`)
+    const props = new Map(current.props)
+    const nextExpr = `${expr}.${segment.name}`
+    const existing = props.get(segment.name)
+    props.set(segment.name, existing == null && segments.length > 1
+      ? unknown(`${nextExpr} was not inferred before nested assignment`)
+      : setPathSegments(existing ?? value, segments.slice(1), value, nextExpr))
+    return {...current, props}
   }
-  const base = current.kind === 'array' ? current : unknownArray(valueExpr(current) ?? 'array')
-  const elements = base.elements == null ? [] : [...base.elements]
-  while (elements.length <= segment.index) elements.push(unknownNumber(`${base.expr ?? 'array'}[${elements.length}]`))
-  elements[segment.index] = setPathSegments(elements[segment.index]!, segments.slice(1), value)
+  if (current.kind !== 'array') return unknown(`${expr}[${segment.index}] expected an array`)
+  const elements = current.elements == null ? [] : [...current.elements]
+  while (elements.length <= segment.index) elements.push(unknown(`${expr}[${elements.length}] was not inferred`))
+  const nextExpr = `${expr}[${segment.index}]`
+  elements[segment.index] = elements[segment.index]!.kind === 'unknown' && segments.length > 1
+    ? unknown(`${nextExpr} was not inferred before nested assignment`)
+    : setPathSegments(elements[segment.index]!, segments.slice(1), value, nextExpr)
   let element: Value | null = null
   for (const item of elements) element = mergeElementValue(element, item)
   return {
-    ...base,
+    ...current,
     layout: 'tuple',
     elements,
     element,
-    length: numberValue(elements.length, elements.length, true, `${base.expr ?? 'array'}.length`, linearConstant(elements.length)),
+    length: numberValue(elements.length, elements.length, true, `${expr}.length`, linearConstant(elements.length)),
   }
 }
 

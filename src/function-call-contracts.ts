@@ -32,8 +32,8 @@ import {assumptionsAreReachable} from './constraint-reachability.ts'
 import {
   finiteElementAccessRoot,
   parsePrintedNumber,
-  setDomainPathValue,
-  setFiniteArrayElementValue,
+  setCheckedDomainPathValue,
+  setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
 import {
   bindFunctionCallInputs,
@@ -770,7 +770,7 @@ function simpleResultPathText(text: FitExpressionLike): string | null {
 function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value) {
   const domainPath = parseDomainPathText(path)
   if (domainPath != null && domainPath.segments.length > 0) {
-    env.set(domainPath.root, setDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+    env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
     return
   }
 
@@ -782,6 +782,6 @@ function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value
 
   const finiteElement = finiteElementAccessRoot(expression)
   if (finiteElement != null) {
-    env.set(finiteElement.root, setFiniteArrayElementValue(env.get(finiteElement.root), finiteElement.root, finiteElement.index, value))
+    env.set(finiteElement.root, setCheckedFiniteArrayElementValue(env.get(finiteElement.root), finiteElement.root, finiteElement.index, value))
   }
 }

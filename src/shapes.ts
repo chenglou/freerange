@@ -38,7 +38,8 @@ export function valueFromNodeType(expr: string, node: ts.Node, program: ShapePro
 
 export function valueFromTypeNode(expr: string, node: ts.TypeNode | undefined, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
-  return checker == null || node == null ? null : valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node)
+  if (node == null) return null
+  return checker == null ? valueFromTypeNodeSyntax(expr, node) : valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node)
 }
 
 export function valueFromFunctionReturnType(expr: string, fn: ts.SignatureDeclaration, program: ShapeProgram): Value | null {
@@ -197,7 +198,56 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
   if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
   if (isArrayLikeType(type, checker)) return unknownArray(expr, arrayLengthValue(expr, type))
+  if ((type.flags & ts.TypeFlags.Object) !== 0) return unknownObject(expr)
   return type.getProperties().length === 0 ? null : unknownObject(expr)
+}
+
+function valueFromTypeNodeSyntax(expr: string, node: ts.TypeNode): Value | null {
+  if (ts.isParenthesizedTypeNode(node)) return valueFromTypeNodeSyntax(expr, node.type)
+  if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.ReadonlyKeyword) return valueFromTypeNodeSyntax(expr, node.type)
+  if (ts.isUnionTypeNode(node)) {
+    let value: Value | null = null
+    let nullish: NullishKind | null = null
+    for (const member of node.types) {
+      const kind = typeNodeNullishKind(member)
+      if (kind != null) {
+        nullish = nullish == null ? kind : mergeNullishKind(nullish, kind)
+        continue
+      }
+      const next = valueFromTypeNodeSyntax(expr, member)
+      if (next == null) return null
+      value = value == null ? next : joinValues(value, next)
+    }
+    if (value == null) return nullish == null ? null : unknown(`Nullish value is not in the static layout subset: ${expr}`)
+    return nullish == null ? value : nullableValue(value, expr, nullish)
+  }
+  if (ts.isLiteralTypeNode(node)) return literalValueFromTypeNode(expr, node)
+  if (ts.isArrayTypeNode(node) || ts.isTupleTypeNode(node)) return unknownArray(expr)
+  switch (node.kind) {
+    case ts.SyntaxKind.NumberKeyword:
+      return unknownNumber(expr)
+    case ts.SyntaxKind.BooleanKeyword:
+      return literalValue([false, true], expr)
+    case ts.SyntaxKind.StringKeyword:
+      return unknown(`String values are not in the static layout subset: ${expr}`)
+    default:
+      return null
+  }
+}
+
+function literalValueFromTypeNode(expr: string, node: ts.LiteralTypeNode): Value | null {
+  const literal = node.literal
+  if (ts.isNumericLiteral(literal)) return finiteNumberValue([Number(literal.text)], expr)
+  if (ts.isStringLiteral(literal)) return literalValue([literal.text], expr)
+  if (literal.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
+  if (literal.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
+  return null
+}
+
+function typeNodeNullishKind(node: ts.TypeNode): NullishKind | null {
+  if (node.kind === ts.SyntaxKind.NullKeyword) return 'null'
+  if (node.kind === ts.SyntaxKind.UndefinedKeyword || node.kind === ts.SyntaxKind.VoidKeyword) return 'undefined'
+  return null
 }
 
 function valueFromUnionType(expr: string, types: readonly ts.Type[], checker: ts.TypeChecker, location: ts.Node): Value | null {

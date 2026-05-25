@@ -2,7 +2,6 @@ import {
   linearNameForExpression,
   numberValue,
   unknownNumber,
-  unknownObject,
   type LinearConstraint,
   type NumberValue,
   type Value,
@@ -86,7 +85,9 @@ function setLoopElementPathValue(value: Value, path: string[], replacement: Valu
   }
   if (value.kind !== 'object') return value
   const props = new Map(value.props)
-  props.set(head, setLoopElementPathValue(props.get(head) ?? unknownObject(head), tail, replacement))
+  const current = props.get(head)
+  if (tail.length === 0) props.set(head, replacement)
+  else if (current != null) props.set(head, setLoopElementPathValue(current, tail, replacement))
   return {...value, props}
 }
 

@@ -36,7 +36,6 @@ import {
   tupleElements,
   unknown,
   unknownArray,
-  unknownNumber,
   unknownObject,
   valueWithAssumptions,
   valueWithDefaultedUndefined,
@@ -441,18 +440,14 @@ function parameterDefaultValue(argument: Value | null, param: ts.ParameterDeclar
 
 function parameterValue(param: ts.ParameterDeclaration, value: Value, frame: InterpreterFrame): Value {
   const expr = ts.isIdentifier(param.name) ? param.name.text : param.name.getText(frame.program.sourceFile)
-  return valueWithTypeFallback(value, valueFromTypeNode(expr, param.type, frame.program))
+  return valueWithTypeFallback(value, valueFromTypeNode(expr, param.type, frame.program) ?? valueFromNodeType(expr, param.name, frame.program))
 }
 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
-  const shape = ts.isIdentifier(param.name)
-    ? valueFromTypeNode(param.name.text, param.type, frame.program)
-    : null
+  const expr = ts.isIdentifier(param.name) ? param.name.text : param.name.getText(frame.program.sourceFile)
+  const shape = valueFromTypeNode(expr, param.type, frame.program) ?? valueFromNodeType(expr, param.name, frame.program)
   if (shape != null) return shape
-  const name = param.name
-  if (ts.isIdentifier(name)) return unknownNumber(name.text)
-  if (ts.isArrayBindingPattern(name)) return unknownArray('param')
-  return unknownObject('param')
+  return unknown(`Parameter ${expr} needs a TypeScript type or an explicit @fit range`)
 }
 
 function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame) {
@@ -479,7 +474,7 @@ function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame
   forEachArrayBindingElement(name, (elementName, index, isRest) => {
     if (isRest) {
       noteUnsupported(frame, 'Array rest binding is unsupported', elementName)
-      bindPattern(elementName, unknownArray('rest'), frame)
+      bindPattern(elementName, unknown('Array rest binding is unsupported'), frame)
       return
     }
     const typed = valueFromNodeType(elementName.getText(frame.program.sourceFile), elementName, frame.program)
@@ -967,7 +962,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
   const scopedNames = [...forOfScopedNames(statement.initializer), ...blockScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
-  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const loop: LoopFrame = {source, sourceExpr, mode: 'symbolic', statementIndex: 0, appends: []}
   const effects = pendingLoopEffects()
   const guardedPushes: GuardedLoopPush[] = []
@@ -1453,7 +1448,8 @@ function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, fram
       noteUnsupported(frame, 'for..of supports one loop binding', initializer)
       return
     }
-    bindPattern(declaration.name, value, frame)
+    const typed = valueFromNodeType(declaration.name.getText(frame.program.sourceFile), declaration.name, frame.program)
+    bindPattern(declaration.name, valueWithTypeFallback(value, typed), frame)
     return
   }
   const path = pathFromExpression(initializer, frame)
@@ -1466,7 +1462,7 @@ function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, fram
 
 function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame): Value {
   if (ts.isParenthesizedExpression(expression)) return evaluateExpression(expression.expression, frame)
-  if (ts.isNonNullExpression(expression)) return evaluateExpression(expression.expression, frame)
+  if (ts.isNonNullExpression(expression)) return evaluateNonNullExpression(expression, frame)
   if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
     return evaluateExpression(expression.expression, frame)
   }
@@ -1496,6 +1492,13 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isNewExpression(expression)) return evaluateNewExpression(expression, frame)
   if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet', expression)
   return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`, expression)
+}
+
+function evaluateNonNullExpression(expression: ts.NonNullExpression, frame: InterpreterFrame): Value {
+  const value = evaluateExpression(expression.expression, frame)
+  if (value.kind === 'nullable') return value.present
+  if (value.kind === 'null') return noteUnsupported(frame, `Non-null assertion did not prove ${expression.expression.getText(frame.program.sourceFile)} present`, expression)
+  return value
 }
 
 function evaluateNewExpression(expression: ts.NewExpression, frame: InterpreterFrame): Value {
@@ -1533,7 +1536,7 @@ function evaluateLengthBearingNewExpression(expression: ts.NewExpression, constr
   const length = evaluateExpression(expression.arguments[0]!, frame)
   if (length.kind !== 'number') return noteUnsupported(frame, `${constructorName} length expected a number`, expression.arguments[0])
   const expr = expression.getText(frame.program.sourceFile)
-  return unknownArray(expr, length, unknownNumber(`${expr}[]`))
+  return unknownArray(expr, length)
 }
 
 function evaluateVoidExpression(expression: ts.VoidExpression, frame: InterpreterFrame): Value {
@@ -1684,14 +1687,14 @@ function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.
   if (lower.status !== 'pass' || upper.status !== 'pass') {
     return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}; prove 0 <= index < length or use a finite literal index`, expression.argumentExpression ?? expression)
   }
-  if (expression.argumentExpression == null) return unknownNumber(expression.getText(frame.program.sourceFile))
+  if (expression.argumentExpression == null) return unknown('Element access without an index is unsupported')
   const sourceName = target.expr ?? expression.expression.getText(frame.program.sourceFile)
   const indexText = expression.argumentExpression.getText(frame.program.sourceFile)
   const accessExpr = `${sourceName}[${indexText}]`
   const adjacentFacts = adjacentElementAccessFacts(target, index, sourceName, indexText, accessExpr, frame.assumptions)
   if (adjacentFacts.length > 0) frame.assumptions = mergeAssumptions(frame.assumptions, adjacentFacts)
   const element = target.element == null
-    ? unknownNumber(expression.getText(frame.program.sourceFile))
+    ? valueFromNodeType(expression.getText(frame.program.sourceFile), expression, frame.program) ?? unknown(`${sourceName}[] was not inferred`)
     : valueWithRebasedElementPath(target.element, `${sourceName}[]`, accessExpr)
   addValueRangeAssumptions(element, frame)
   return element
@@ -2188,7 +2191,7 @@ function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.Pro
   noteEffect(frame, `${target.name.text} mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {
     forgetRoot(frame.env, path.root)
-    return frame.env.get(path.root) ?? unknownArray(valuePathExpression(path))
+    return unknownArray(expression.getText(frame.program.sourceFile))
   }
   const next = {...current, elements: null, summary: null}
   writePath(path, next, frame)
@@ -2318,7 +2321,7 @@ function evaluateEverySomeCall(
   const text = expression.getText(frame.program.sourceFile)
   if (source.length.max === 0) return literalValue([kind === 'every'], text)
   const sourceExpr = sourceExpression(source, target.expression, frame)
-  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, source.length)
   const raw = invokeInlineFunction(`<${kind}-predicate>`, callbackFn, [item, index, source], frame)
   const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, source.length))
@@ -2357,7 +2360,7 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
 }
 
 function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
-  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`mapIndex(${sourceExpr})`, source.length)
   const value = invokeInlineFunction(
     '<map-element>',
@@ -2399,7 +2402,7 @@ function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, f
   const fallback = numberValue(0, source.length.max, true, `${text}.length`)
   if (source.length.max === 0) return numberValue(0, 0, true, `${text}.length`)
   const sourceExpr = source.expr ?? text
-  const item = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`filterIndex(${sourceExpr})`, source.length)
   const raw = invokeInlineFunction('<filter-predicate>', callbackFn, [item, index, source], frame)
   const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, source.length))
@@ -2417,7 +2420,7 @@ function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, f
 function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
   const predicate = callbackPredicateExpression(callbackFn)
   if (predicate == null || !isSideEffectFreeExpression(predicate)) return source.element
-  const element = source.element ?? unknownObject(`${sourceExpr}[]`)
+  const element = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
   bindParameters(callbackFn.parameters, [element, undefined, source], callbackFrame)
   const itemName = firstIdentifierParameterName(callbackFn)

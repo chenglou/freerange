@@ -7,7 +7,6 @@ import {
   tupleElements,
   nullableValue,
   unknown,
-  unknownNumber,
   unknownObject,
   type Value,
 } from './domain.ts'
@@ -60,7 +59,7 @@ export function bindFunctionThisInput(fn: FitFunction, env: Map<string, Value>, 
 function unknownParamPatternValue(param: ts.ParameterDeclaration, program: Program): Value {
   return valueFromNodeType('param', param.name, program)
     ?? valueFromTypeNode('param', param.type, program)
-    ?? unknownObject('param')
+    ?? unknown(`Parameter ${param.name.getText(program.sourceFile)} needs a TypeScript type or an explicit @fit range`)
 }
 
 export function bindPatternFromValue(name: ts.BindingName, value: Value, env: Map<string, Value>, options: LocalizeOptions = {}, program?: Program) {
@@ -105,7 +104,7 @@ function bindArrayPatternFromValue(name: ts.ArrayBindingPattern, value: Value, e
 
 function bindUnknownPattern(name: ts.BindingName, env: Map<string, Value>) {
   if (ts.isIdentifier(name)) {
-    env.set(name.text, unknownNumber(name.text))
+    env.set(name.text, unknown(`${name.text} was not inferred from binding pattern`))
     return
   }
   if (ts.isObjectBindingPattern(name)) {

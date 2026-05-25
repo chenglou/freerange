@@ -4,7 +4,7 @@ import {
   discoverCorpusSweeps,
   type CorpusSweep,
 } from './corpus-probes.ts'
-import {verifyFitFiles} from './src/reports.ts'
+import {type FitCheck, verifyFitFiles} from './src/reports.ts'
 import {verifySnapshot} from './snapshot.ts'
 
 const expectedPath = 'corpus-probes.expected.txt'
@@ -39,10 +39,10 @@ async function addSweep(lines: string[], sweep: CorpusSweep) {
 
   const checkReport = await verifyFitFiles(sweep.paths, {failOnRequires: false})
   lines.push(`  check: ${checkReport.summary.pass} pass, ${checkReport.summary.fail} fail, ${checkReport.summary.requires} requires, ${checkReport.summary.unknown} unknown`)
+  lines.push(...formatNonPassChecks(checkReport.checks))
 
   return {
-    clean: checkReport.summary.fail === 0
-      && checkReport.summary.unknown === 0,
+    clean: checkReport.summary.fail === 0,
     totals: {
       files: sweep.paths.length,
       checkPass: checkReport.summary.pass,
@@ -83,4 +83,16 @@ function formatTotals(groups: number, totals: CorpusTotals) {
 function displayFile(file: string) {
   const prefix = `${corpusRoot}/`
   return file.startsWith(prefix) ? file.slice(prefix.length) : file
+}
+
+function formatNonPassChecks(checks: FitCheck[]) {
+  const lines: string[] = []
+  for (const check of checks) {
+    if (check.status === 'pass') continue
+    const location = `${displayFile(check.file)}${check.line == null ? '' : `:${check.line}`}`
+    lines.push(`    ${check.status.toUpperCase()} ${location}:${check.functionName}: ${check.text}`)
+    const firstReasonLine = check.reason?.split('\n')[0]
+    if (firstReasonLine != null && firstReasonLine !== '') lines.push(`      ${firstReasonLine}`)
+  }
+  return lines
 }

@@ -666,9 +666,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeStaleGapAfterRefactor: space
     sequence facts: nondecreasing(.top), spaced((gap + 1))
   missing: given (gap + 1) == gap
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
-  range was int 1..Infinity as (focused + 1), expected inside int 0..<items.length
+  range was int 1..50 as (focused + 1), expected inside int 0..<items.length
   known:
-    (focused + 1): int 1..Infinity
+    (focused + 1): int 1..50
     items.length: int 1..50
     assumed from input: given items.length: int 1..50
     assumed from input: given focused: int 0..<items.length
@@ -770,13 +770,13 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeReverseKillsRowOrder: nondec
     sequence facts: no sequence facts
   missing: sequence facts for .top
 FAIL tests/patterns/negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[].height: 0..40
-  range was any number as height, expected inside 0..40
+  range was any number as return.rows[].height, expected inside 0..40
   known:
-    height: any number
+    return.rows[].height: any number
     assumed from input: given items.length: int 1..50
     assumed from input: given items[].height: 0..40
-  missing: height >= 0
-  missing: height <= 40
+  missing: return.rows[].height >= 0
+  missing: return.rows[].height <= 40
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFunctionGivenCannotNameReturn: given return: 0..10
   return not found in this contract scope
 FAIL tests/patterns/negative-patterns.ts:negativeGivenRangeCannotBeEmpty: given width: 500..400
@@ -830,14 +830,8 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayDestructuredLocalClaim:
     value: 0..10
     assumed from input: given value: 0..10
   missing fact: (value - 1) >= value
-FAIL tests/patterns/negative-patterns.ts:negativeInlineParamComparison: given value > max
-  no input can satisfy this with the earlier given lines
-  result: is false
-  known:
-    value: 0..50
-    max: 100..200
-    assumed from input: given value: 0..50
-  missing fact: value > max
+FAIL tests/patterns/negative-patterns.ts:negativeInlineParamComparison: given max: 100..200
+  no input can satisfy this with the earlier given lines; they already rule out max: 100..200
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
   Unsupported @fit contract expression: max.toString()
     unsupported negativeGivenRangeBoundCannotCallInputMethod line 1: Unsupported call max.toString
@@ -858,7 +852,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotR
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
   Array length-derived index on local arrays inside loops is not supported
 UNKNOWN tests/patterns/negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
-  Array index int -1..Infinity as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index
+  Array index int -1..48 as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index
 UNKNOWN tests/patterns/negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: return.current == return.previous
   known:
     items[focused].top: 0..1000

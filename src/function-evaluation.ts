@@ -6,7 +6,6 @@ import type {
 } from './check-types.ts'
 import type {LinearConstraint, Value} from './domain.ts'
 import {
-  applyGivenRangeSpec,
   collectGivenAssumptions,
   type GivenEvaluators,
   validateGivenSpecs,
@@ -46,10 +45,6 @@ export function prepareFunctionEvaluation(
   bindFunctionInputParameters(fn, program, env)
 
   const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
-  for (const given of assumedGivens) {
-    if (given.kind === 'range') applyGivenRangeSpec(env, given.spec)
-  }
-
   const {assumptions, booleanAssumptions, checks: assumptionChecks} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, evaluators)
   return {
     inputSpecs,

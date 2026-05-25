@@ -167,6 +167,112 @@ if (pureGivenHelperFailures.length > 0) {
   console.log('given contract expressions: pure helper call')
 }
 
+const shortcutCleanupChecks = verifyFitSource('shortcut-cleanup.ts', `type AliasRect = {left: number}
+
+/** @fit
+ * given input.width: 0..10
+ * return: 0..10
+ */
+function typedGivenPath(input: {width: number}) {
+  return input.width
+}
+
+/** @fit
+ * given rect.left: 0..10
+ * return: 0..10
+ */
+function typedAliasPath(rect: AliasRect) {
+  return rect.left
+}
+
+/** @fit
+ * given input.width: 0..10
+ * return: 0..10
+ */
+function optionalGivenField(input: Partial<{width: number}>) {
+  return input.width ?? 0
+}
+
+/** @fit
+ * given input.width: 0..10
+ * return: 0..10
+ */
+function missingGivenField(input: {}) {
+  return 0
+}
+
+/** @fit
+ * given input.width: 0..10
+ * return: 0..10
+ */
+function stringGivenField(input: {width: string}) {
+  return 0
+}
+
+/** @fit
+ * given rows[].height: 0..10
+ * return: 0..10
+ */
+function nonArrayGivenPath(rows: {height: number}) {
+  return 0
+}
+
+/** @fit
+ * given input: 0..10
+ * return: 1..11
+ */
+function untypedParamGiven(input) {
+  return input + 1
+}
+
+/** @fit
+ * given items[].width: 0..10
+ * return: 0..10
+ */
+function typedCallbackItem(items: {width: number}[]) {
+  return items.map(item => item.width)[0] ?? 0
+}
+
+/** @fit
+ * given items[].width: 0..10
+ * return: 0..10
+ */
+function missingCallbackItemField(items: {}[]) {
+  return items.map(item => item.width)[0] ?? 0
+}
+`)
+const typedGivenPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedGivenPath' && check.status !== 'pass')
+const typedAliasPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedAliasPath' && check.status !== 'pass')
+const optionalGivenFieldFailures = shortcutCleanupChecks.filter(check => check.functionName === 'optionalGivenField' && check.status !== 'pass')
+const missingGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingGivenField' && check.text === 'given input.width: 0..10')
+const stringGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'stringGivenField' && check.text === 'given input.width: 0..10')
+const nonArrayGivenPathCheck = shortcutCleanupChecks.find(check => check.functionName === 'nonArrayGivenPath' && check.text === 'given rows[].height: 0..10')
+const untypedParamGivenCheck = shortcutCleanupChecks.find(check => check.functionName === 'untypedParamGiven' && check.text === 'given input: 0..10')
+const typedCallbackItemFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedCallbackItem' && check.status !== 'pass')
+const missingCallbackItemFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingCallbackItemField' && check.text === 'given items[].width: 0..10')
+if (
+  typedGivenPathFailures.length > 0
+  || typedAliasPathFailures.length > 0
+  || optionalGivenFieldFailures.length > 0
+  || missingGivenFieldCheck?.status !== 'unknown'
+  || missingGivenFieldCheck.reason?.includes('input.width was not inferred') !== true
+  || stringGivenFieldCheck?.status !== 'unknown'
+  || stringGivenFieldCheck.reason?.includes('String values are not in the static layout subset') !== true
+  || nonArrayGivenPathCheck?.status !== 'unknown'
+  || nonArrayGivenPathCheck.reason?.includes('rows expected an array') !== true
+  || untypedParamGivenCheck?.status !== 'unknown'
+  || untypedParamGivenCheck.reason?.includes('Parameter input needs a TypeScript type') !== true
+  || typedCallbackItemFailures.length > 0
+  || missingCallbackItemFieldCheck?.status !== 'unknown'
+  || missingCallbackItemFieldCheck.reason?.includes('items[].width expected an object') !== true
+) {
+  console.error('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape')
+  console.error(JSON.stringify(shortcutCleanupChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('shortcut cleanup: no invented spec or callback paths')
+}
+
 const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
   return layout.width > 0
 }

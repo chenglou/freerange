@@ -1184,7 +1184,8 @@ export function negativeNullablePropertyNeedsPresentGuard(focused: number) {
   const state = {
     previous: focused > 0 ? {targetIndex: focused - 1} : null,
   }
-  return state.previous!.targetIndex
+  // @ts-expect-error This case intentionally checks the missing present guard.
+  return state.previous.targetIndex
 }
 
 export function negativeOptionalNumberNeedsPresentGuard(max?: number) {

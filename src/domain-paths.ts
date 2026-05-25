@@ -7,7 +7,6 @@ import {
 import {
   unknown,
   unknownArray,
-  unknownNumber,
   unknownObject,
   type Value,
 } from './domain.ts'
@@ -24,19 +23,20 @@ export function parsePrintedNumber(text: string): number | null {
   return Number.isFinite(value) ? value : null
 }
 
-export function setDomainPathValue(current: Value | undefined, expr: string, segments: FitDomainPathSegment[], value: Value): Value {
+// Caller must already have checked the path with TypeScript or a proven helper contract.
+export function setCheckedDomainPathValue(current: Value | undefined, expr: string, segments: FitDomainPathSegment[], value: Value): Value {
   const segment = segments[0]
   if (segment == null) return value
 
   if (segment.kind === 'prop') {
     if (current?.kind === 'array' && segment.name === 'length') {
-      const length = setDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
+      const length = setCheckedDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
       return length.kind === 'number' ? {...current, length} : current
     }
     const base = current?.kind === 'object' ? current : unknownObject(expr)
     const props = new Map(base.props)
     const propExpr = `${expr}.${segment.name}`
-    props.set(segment.name, setDomainPathValue(props.get(segment.name), propExpr, segments.slice(1), value))
+    props.set(segment.name, setCheckedDomainPathValue(props.get(segment.name), propExpr, segments.slice(1), value))
     return {...base, props}
   }
 
@@ -46,7 +46,7 @@ export function setDomainPathValue(current: Value | undefined, expr: string, seg
     : unknownArray(expr, objectLength?.kind === 'number' ? objectLength : undefined)
   return {
     ...base,
-    element: setDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value),
+    element: setCheckedDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value),
   }
 }
 
@@ -84,11 +84,12 @@ export function finiteElementAccessRoot(expression: ts.Expression): {root: strin
   return root == null ? null : {root, index}
 }
 
-export function setFiniteArrayElementValue(current: Value | undefined, expr: string, index: number, value: Value): Value {
+// Caller must already have checked the finite element path with TypeScript or a proven helper contract.
+export function setCheckedFiniteArrayElementValue(current: Value | undefined, expr: string, index: number, value: Value): Value {
   const base = current?.kind === 'array' ? current : unknownArray(expr)
   const elements = base.elements == null ? [] : [...base.elements]
   while (elements.length <= index) {
-    elements.push(base.element ?? unknownNumber(`${expr}[${elements.length}]`))
+    elements.push(base.element ?? unknown(`${expr}[${elements.length}] was not inferred`))
   }
   elements[index] = value
   return {...base, layout: 'tuple', elements}

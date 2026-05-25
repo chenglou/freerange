@@ -84,6 +84,8 @@ source shape, helper boundary, or real proof gap.
 
 Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep [src/shapes.ts](./src/shapes.ts) as a small query layer over the TypeScript checker: ask for `return.rows[].height`, `input[0].height`, or the exact expression being read; do not walk a whole return type and copy every property into Freerange. Whole-value contract syntax is the narrow exception: [src/parser.ts](./src/parser.ts) lowers Freerange range leaves, then [src/value-specs.ts](./src/value-specs.ts) resolves the surrounding TypeScript type syntax just far enough to check the written contract.
 
+Do not invent containers from a written path. `given input.width: 0..10` may attach a range only after `input.width` is already a numeric path according to TypeScript or real source evaluation. If `input` is `{}`, `input.width` is a string, or `items` is not an array, report the given as unknown instead of creating `input`, `width`, or `items[]`. Source-created values are different: `{width: 10}`, `rows.push(...)`, `items.map(...)`, and `row.width = 10` can still create facts because the JavaScript did that work.
+
 ## Selector Audit
 
 `bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks. This is separate from `audit:demos`, which summarizes redundant demo annotations.

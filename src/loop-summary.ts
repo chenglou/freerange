@@ -8,7 +8,6 @@ import {
   numberValue,
   subtractNumbers,
   unknownNumber,
-  unknownObject,
   linearNameForExpression,
   type ArraySummary,
   type ArrayValue,
@@ -392,7 +391,8 @@ function setObjectPathValue(value: Value, path: string[], replacement: Value): V
   if (value.kind !== 'object') return value
   const props = new Map(value.props)
   const current = props.get(head)
-  props.set(head, setObjectPathValue(current ?? unknownObject(head), tail, replacement))
+  if (tail.length === 0) props.set(head, replacement)
+  else if (current != null) props.set(head, setObjectPathValue(current, tail, replacement))
   return {...value, props}
 }
 

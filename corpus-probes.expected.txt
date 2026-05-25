@@ -1,4 +1,4 @@
-summary: 16 groups, 38 files; check: 143 pass, 0 fail, 2 requires, 0 unknown
+summary: 16 groups, 38 files; check: 139 pass, 0 fail, 2 requires, 10 unknown
 
 2d-geometry: 9 files
   2d-geometry/src/algorithms/distance.ts
@@ -14,13 +14,25 @@ summary: 16 groups, 38 files; check: 143 pass, 0 fail, 2 requires, 0 unknown
 angular-grid-layout: 1 files
   angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts
   check: 2 pass, 0 fail, 2 requires, 0 unknown
+    REQUIRES angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts:319:ktdGridItemResizing: limitNumberWithinRange(layoutItem.w, gridItem.minW ?? layoutItem.minW, gridItem.maxW ?? layoutItem.maxW): requires max: 1..Infinity
+      caller passed: max: any number
+    REQUIRES angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts:320:ktdGridItemResizing: limitNumberWithinRange(layoutItem.h, gridItem.minH ?? layoutItem.minH, gridItem.maxH ?? layoutItem.maxH): requires max: 1..Infinity
+      caller passed: max: any number
 Chart.js: 2 files
   Chart.js/src/helpers/helpers.curve.ts
   Chart.js/src/helpers/helpers.math.ts
   check: 5 pass, 0 fail, 0 requires, 0 unknown
 d3-scale: 1 files
   d3-scale/src/radial.js
-  check: 2 pass, 0 fail, 0 requires, 0 unknown
+  check: 0 pass, 0 fail, 0 requires, 4 unknown
+    UNKNOWN d3-scale/src/radial.js:7:square: given x: -100..100
+      Parameter x needs a TypeScript type or an explicit @fit range
+    UNKNOWN d3-scale/src/radial.js:8:square: return: -10000..10000
+      Binary expression Math.sign(x) * x * x expected numbers
+    UNKNOWN d3-scale/src/radial.js:15:unsquare: given x: 0..10000
+      Parameter x needs a TypeScript type or an explicit @fit range
+    UNKNOWN d3-scale/src/radial.js:16:unsquare: return: 0..100
+      Binary expression Math.sign(x) * Math.sqrt(Math.abs(x)) expected numbers
 dagre: 1 files
   dagre/lib/greedy-fas.ts
   check: 4 pass, 0 fail, 0 requires, 0 unknown
@@ -38,7 +50,19 @@ gridstack.js: 1 files
   check: 1 pass, 0 fail, 0 requires, 0 unknown
 interact.js: 1 files
   interact.js/packages/@interactjs/utils/center.ts
-  check: 2 pass, 0 fail, 0 requires, 0 unknown
+  check: 0 pass, 0 fail, 0 requires, 6 unknown
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:4:default: given rect.left: -1000..1000
+      Parameter rect needs a TypeScript type or an explicit @fit range
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:5:default: given rect.right: -1000..1000
+      Parameter rect needs a TypeScript type or an explicit @fit range
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:6:default: given rect.top: -1000..1000
+      Parameter rect needs a TypeScript type or an explicit @fit range
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:7:default: given rect.bottom: -1000..1000
+      Parameter rect needs a TypeScript type or an explicit @fit range
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:8:default: return.x: -1000..1000
+      Binary expression rect.left + (rect.right - rect.left) / 2 expected numbers
+    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:9:default: return.y: -1000..1000
+      Binary expression rect.top + (rect.bottom - rect.top) / 2 expected numbers
 litegraph.js: 6 files
   litegraph.js/src/infrastructure/ConstrainedSize.ts
   litegraph.js/src/infrastructure/Rectangle.ts
