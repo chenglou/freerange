@@ -5,6 +5,28 @@ import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 const expectedPath = 'eval-snapshots.expected.txt'
 
 const lines: string[] = []
+const matrixPaths = ['tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const importPaths = ['tests/imports/import-patterns.ts']
+const matrixFunctions = inferFitFiles(matrixPaths, {all: true}).functions
+const importFunctions = inferFitFiles(importPaths, {all: true}).functions
+const matrixInferCases = [
+  ['matrix nested iife/map/defaults', 'matrixNestedIifeMapDefaults'],
+  ['matrix default param order', 'matrixDefaultParamOrder'],
+  ['matrix explicit undefined defaults', 'matrixExplicitUndefinedDefaults'],
+  ['matrix for-of push visible rows', 'matrixForOfPushVisibleRows'],
+  ['matrix abstract for-of param rows', 'matrixForOfParamRows'],
+  ['matrix abstract guarded for-of rows', 'matrixForOfParamVisibleRows'],
+  ['matrix abstract for-of cursor values', 'matrixForOfParamCursorValues'],
+  ['matrix abstract conditional count', 'matrixForOfParamConditionalCount'],
+  ['matrix abstract running max', 'matrixForOfParamRunningMax'],
+  ['matrix indexed conditional count', 'matrixIndexedArrayConditionalCount'],
+  ['matrix indexed running max', 'matrixIndexedArrayRunningMax'],
+  ['matrix indexed limit range', 'matrixIndexedLimitRange'],
+  ['matrix indexed array param rows', 'matrixIndexedArrayParamRows'],
+  ['matrix indexed array guarded rows', 'matrixIndexedArrayGuardedRows'],
+  ['matrix indexed array guarded cursor values', 'matrixIndexedArrayGuardedCursorValues'],
+  ['matrix indexed array cursor values', 'matrixIndexedArrayCursorValues'],
+] as const
 
 await addCheckCase(
   'photo-gallery spring defaults through imported data',
@@ -15,24 +37,9 @@ await addCheckCase(
     || text.includes('data[].fxFactor.b > 0'),
 )
 
-addInferCase('matrix nested iife/map/defaults', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
-addInferCase('matrix default param order', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixDefaultParamOrder')
-addInferCase('matrix explicit undefined defaults', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixExplicitUndefinedDefaults')
-addInferCase('matrix for-of push visible rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfPushVisibleRows')
-addInferCase('matrix abstract for-of param rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamRows')
-addInferCase('matrix abstract guarded for-of rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamVisibleRows')
-addInferCase('matrix abstract for-of cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
-addInferCase('matrix abstract conditional count', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
-addInferCase('matrix abstract running max', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamRunningMax')
-addInferCase('matrix indexed conditional count', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayConditionalCount')
-addInferCase('matrix indexed running max', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayRunningMax')
-addInferCase('matrix indexed limit range', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedLimitRange')
-addInferCase('matrix indexed array param rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayParamRows')
-addInferCase('matrix indexed array guarded rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedRows')
-addInferCase('matrix indexed array guarded cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedCursorValues')
-addInferCase('matrix indexed array cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayCursorValues')
-addInferCase('imported literal nested map/defaults', ['tests/imports/import-patterns.ts'], 'importedNestedLiteralArrayMapDefaultFields')
-addShapeCase('imported literal nested map/defaults shape', ['tests/imports/import-patterns.ts'], 'importedNestedLiteralArrayMapDefaultFields')
+for (const [label, functionName] of matrixInferCases) addInferCase(label, matrixFunctions, functionName)
+addInferCase('imported literal nested map/defaults', importFunctions, 'importedNestedLiteralArrayMapDefaultFields')
+addShapeCase('imported literal nested map/defaults shape', importPaths, 'importedNestedLiteralArrayMapDefaultFields')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'eval snapshots')) process.exitCode = 1
 
@@ -47,8 +54,8 @@ async function addCheckCase(label: string, paths: string[], keep: (text: string)
   }
 }
 
-function addInferCase(label: string, paths: string[], functionName: string) {
-  const fn = inferFitFiles(paths, {functionName}).functions[0]
+function addInferCase(label: string, functions: ReturnType<typeof inferFitFiles>['functions'], functionName: string) {
+  const fn = functions.find(fn => fn.functionName === functionName)
   lines.push(`infer ${label}`)
   if (fn == null) {
     lines.push(`  missing ${functionName}`)

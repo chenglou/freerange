@@ -11,62 +11,72 @@ import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 const expectedPath = 'interpreter-snapshots.expected.txt'
 const lines: string[] = []
 
-addCase('matrix nested iife/map/defaults', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixNestedIifeMapDefaults')
-addCase('matrix default param order', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixDefaultParamOrder')
-addCase('matrix explicit undefined defaults', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixExplicitUndefinedDefaults')
-addCase('matrix if refines nonnegative', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIfRefinesNonnegative')
-addCase('matrix ternary literal join', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixTernaryLiteralJoin')
-addCase('matrix filter/map literal booleans', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixFilterMapLiteralBooleans')
-addCase('matrix for-of push visible rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfPushVisibleRows')
-addCase('matrix abstract for-of cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamCursorValues')
-addCase('matrix abstract conditional count', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamConditionalCount')
-addCase('matrix abstract running max', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixForOfParamRunningMax')
-addCase('matrix indexed conditional count', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayConditionalCount')
-addCase('matrix indexed running max', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayRunningMax')
-addCase('matrix indexed limit range', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedLimitRange')
-addCase('matrix indexed array param rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayParamRows')
-addCase('matrix indexed array guarded rows', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedRows')
-addCase('matrix indexed array guarded cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayGuardedCursorValues')
-addCase('matrix indexed array cursor values', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixIndexedArrayCursorValues')
-addCase('matrix Math clamp columns', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixMathClampColumns')
-addCase('matrix else-if continuation', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixElseIfContinuation')
-addCase('matrix throw guard narrows positive', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixThrowGuardNarrowsPositive')
-addCase('matrix switch finite literal', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixSwitchFiniteLiteral')
-addCase('matrix switch continuation', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixSwitchContinuation')
-addCase('matrix switch grouped cases', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixSwitchGroupedCases')
-addCase('matrix switch narrows discriminant path', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixSwitchNarrowsDiscriminantPath')
-addCase('matrix array at last', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixArrayAtLast')
-addCase('matrix stringish mutation preserves tuple', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixStringishMutationPreservesTuple')
-addCase('matrix typeof undefined guard', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixTypeofUndefinedGuard')
-addCase('matrix optional property nullish fallback', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixOptionalPropertyNullishFallback')
-addCase('matrix nullable object optional fallback', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixNullableObjectOptionalFallback')
-addCase('matrix local Math alias', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixLocalMathAlias')
-addCase('matrix property access call shape', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixPropertyAccessCallShape')
-addCase('matrix class method this', ['tests/interpreter-matrix/interpreter-matrix-patterns.ts'], 'matrixClassMethodThis')
-addCase('negative default value surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixDefaultViolatesType')
-addCase('negative alias mutation surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixMapMutationForgetsAlias')
-addCase('negative cursor update before push surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixCursorUpdateBeforePush')
-addCase('negative conditional else count surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixConditionalElseCount')
-addCase('negative mixed extremum/cursor surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixMixedExtremumAndCursor')
-addCase('negative indexed loop starts at one surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedLoopStartsAtOne')
-addCase('negative indexed array guarded else surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedArrayGuardedElse')
-addCase('negative indexed array pushes into source surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedArrayPushesIntoSource')
-addCase('negative indexed cursor update before push surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedCursorUpdateBeforePush')
-addCase('negative indexed conditional else count surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedConditionalElseCount')
-addCase('negative indexed mixed extremum/cursor surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixIndexedMixedExtremumAndCursor')
-addCase('negative guarded unsafe reset surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixGuardedExtremumUnsafeReset')
-addCase('negative forgettable impure read surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixForgettableLoopImpureRead')
-addCase('negative try/catch surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixTryCatchUnsupported')
-addCase('negative switch broad string surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixSwitchBroadStringUnsupported')
-addCase('negative switch fallthrough surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixSwitchFallthroughUnsupported')
-addCase('negative array at dynamic surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixArrayAtDynamicUnsupported')
-addCase('negative nullish fallback string surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixNullishFallbackString')
-addCase('negative mutable alias surface', ['tests/interpreter-matrix/interpreter-matrix-negative.ts'], 'negativeMatrixMutableAliasUnsupported')
+const matrixPaths = ['tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const negativePaths = ['tests/interpreter-matrix/interpreter-matrix-negative.ts']
+const matrixProject = loadInterpreterProject(matrixPaths)
+const negativeProject = loadInterpreterProject(negativePaths)
+const matrixCases = [
+  ['matrix nested iife/map/defaults', 'matrixNestedIifeMapDefaults'],
+  ['matrix default param order', 'matrixDefaultParamOrder'],
+  ['matrix explicit undefined defaults', 'matrixExplicitUndefinedDefaults'],
+  ['matrix if refines nonnegative', 'matrixIfRefinesNonnegative'],
+  ['matrix ternary literal join', 'matrixTernaryLiteralJoin'],
+  ['matrix filter/map literal booleans', 'matrixFilterMapLiteralBooleans'],
+  ['matrix for-of push visible rows', 'matrixForOfPushVisibleRows'],
+  ['matrix abstract for-of cursor values', 'matrixForOfParamCursorValues'],
+  ['matrix abstract conditional count', 'matrixForOfParamConditionalCount'],
+  ['matrix abstract running max', 'matrixForOfParamRunningMax'],
+  ['matrix indexed conditional count', 'matrixIndexedArrayConditionalCount'],
+  ['matrix indexed running max', 'matrixIndexedArrayRunningMax'],
+  ['matrix indexed limit range', 'matrixIndexedLimitRange'],
+  ['matrix indexed array param rows', 'matrixIndexedArrayParamRows'],
+  ['matrix indexed array guarded rows', 'matrixIndexedArrayGuardedRows'],
+  ['matrix indexed array guarded cursor values', 'matrixIndexedArrayGuardedCursorValues'],
+  ['matrix indexed array cursor values', 'matrixIndexedArrayCursorValues'],
+  ['matrix Math clamp columns', 'matrixMathClampColumns'],
+  ['matrix else-if continuation', 'matrixElseIfContinuation'],
+  ['matrix throw guard narrows positive', 'matrixThrowGuardNarrowsPositive'],
+  ['matrix switch finite literal', 'matrixSwitchFiniteLiteral'],
+  ['matrix switch continuation', 'matrixSwitchContinuation'],
+  ['matrix switch grouped cases', 'matrixSwitchGroupedCases'],
+  ['matrix switch narrows discriminant path', 'matrixSwitchNarrowsDiscriminantPath'],
+  ['matrix array at last', 'matrixArrayAtLast'],
+  ['matrix stringish mutation preserves tuple', 'matrixStringishMutationPreservesTuple'],
+  ['matrix typeof undefined guard', 'matrixTypeofUndefinedGuard'],
+  ['matrix optional property nullish fallback', 'matrixOptionalPropertyNullishFallback'],
+  ['matrix nullable object optional fallback', 'matrixNullableObjectOptionalFallback'],
+  ['matrix local Math alias', 'matrixLocalMathAlias'],
+  ['matrix property access call shape', 'matrixPropertyAccessCallShape'],
+  ['matrix class method this', 'matrixClassMethodThis'],
+] as const
+const negativeCases = [
+  ['negative default value surface', 'negativeMatrixDefaultViolatesType'],
+  ['negative alias mutation surface', 'negativeMatrixMapMutationForgetsAlias'],
+  ['negative cursor update before push surface', 'negativeMatrixCursorUpdateBeforePush'],
+  ['negative conditional else count surface', 'negativeMatrixConditionalElseCount'],
+  ['negative mixed extremum/cursor surface', 'negativeMatrixMixedExtremumAndCursor'],
+  ['negative indexed loop starts at one surface', 'negativeMatrixIndexedLoopStartsAtOne'],
+  ['negative indexed array guarded else surface', 'negativeMatrixIndexedArrayGuardedElse'],
+  ['negative indexed array pushes into source surface', 'negativeMatrixIndexedArrayPushesIntoSource'],
+  ['negative indexed cursor update before push surface', 'negativeMatrixIndexedCursorUpdateBeforePush'],
+  ['negative indexed conditional else count surface', 'negativeMatrixIndexedConditionalElseCount'],
+  ['negative indexed mixed extremum/cursor surface', 'negativeMatrixIndexedMixedExtremumAndCursor'],
+  ['negative guarded unsafe reset surface', 'negativeMatrixGuardedExtremumUnsafeReset'],
+  ['negative forgettable impure read surface', 'negativeMatrixForgettableLoopImpureRead'],
+  ['negative try/catch surface', 'negativeMatrixTryCatchUnsupported'],
+  ['negative switch broad string surface', 'negativeMatrixSwitchBroadStringUnsupported'],
+  ['negative switch fallthrough surface', 'negativeMatrixSwitchFallthroughUnsupported'],
+  ['negative array at dynamic surface', 'negativeMatrixArrayAtDynamicUnsupported'],
+  ['negative nullish fallback string surface', 'negativeMatrixNullishFallbackString'],
+  ['negative mutable alias surface', 'negativeMatrixMutableAliasUnsupported'],
+] as const
+
+for (const [label, functionName] of matrixCases) addCase(label, matrixPaths, matrixProject, functionName)
+for (const [label, functionName] of negativeCases) addCase(label, negativePaths, negativeProject, functionName)
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'interpreter snapshots')) process.exitCode = 1
 
-function addCase(label: string, paths: string[], functionName: string) {
-  const project = loadFitProject(paths, readTopLevelGlobal)
+function addCase(label: string, paths: string[], project: ReturnType<typeof loadInterpreterProject>, functionName: string) {
   const program = project.entries[0]
   lines.push(`case ${label}: ${displayWorkspaceFile(paths[0]!)}:${functionName}`)
   if (program == null) {
@@ -77,4 +87,8 @@ function addCase(label: string, paths: string[], functionName: string) {
   for (const line of formatInterpreterValue(result.value)) lines.push(`  ${line}`)
   for (const line of formatInterpreterFacts(result.value)) lines.push(`  ${line}`)
   for (const line of formatInterpreterIssues(result.issues)) lines.push(`  ${line}`)
+}
+
+function loadInterpreterProject(paths: string[]) {
+  return loadFitProject(paths, readTopLevelGlobal)
 }
