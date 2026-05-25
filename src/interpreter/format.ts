@@ -5,7 +5,7 @@ import {
   type Value,
 } from '../domain.ts'
 import {factsFromValue, type FitInferFact} from '../facts.ts'
-import {formatExpectedRange} from '../reporting.ts'
+import {formatRange} from '../reporting.ts'
 import type {InterpreterEffect, InterpreterIssue} from './context.ts'
 
 export function formatInterpreterValue(value: Value, root = 'return'): string[] {
@@ -37,7 +37,7 @@ export function formatInterpreterEffects(effects: InterpreterEffect[]): string[]
 function formatValue(value: Value, path: string): string[] {
   switch (value.kind) {
     case 'number':
-      return [`${path}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`]
+      return [`${path}: ${formatRange({...value, expr: null})}`]
     case 'literal':
       return [`${path}: ${value.values.map(value => JSON.stringify(value)).join(' | ')}`]
     case 'null':

@@ -15,9 +15,12 @@ import {
   type ArrayValue,
   type LinearConstraint,
   type LiteralPrimitive,
+  type NumberCase,
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {mergeAssumptions} from './assumptions.ts'
+import {assumptionsAreReachable} from './constraint-reachability.ts'
 import {linearConstant} from './linear.ts'
 import {
   fitExpressionScopeSourceId,
@@ -417,11 +420,12 @@ export function evaluateRangeValue(
 ): Value {
   const evaluated = evaluateRangeCases(range, context, hooks)
   if (evaluated.kind === 'invalid') return {kind: 'unknown', reason: rangeBoundNumberReason(evaluated.bound, evaluated.value, evaluated.text)}
-  const cases = evaluated.cases.map(rangeCase => evaluatedRangeCaseValue(range, rangeCase, expr, origin))
-  const min = Math.min(...cases.map(item => item.min))
-  const max = Math.max(...cases.map(item => item.max))
-  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.isInteger), expr, null, null, origin)
-  return withNumberCases(value, cases.map(item => ({value: item, assumptions: []})))
+  const cases = evaluated.cases.flatMap(rangeCase => evaluatedRangeCaseValues(range, rangeCase, expr, origin))
+  if (cases.length === 0) return {kind: 'unknown', reason: `Range ${formatRangeSpec(range)} had no possible values`}
+  const min = Math.min(...cases.map(item => item.value.min))
+  const max = Math.max(...cases.map(item => item.value.max))
+  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.value.isInteger), expr, null, null, origin)
+  return withNumberCases(value, cases)
 }
 
 function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckSpecHooks): EvaluatedRangeCases {
@@ -436,23 +440,46 @@ function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckS
   return {kind: 'cases', cases}
 }
 
-function evaluatedRangeCaseValue(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, origin: string[]): NumberValue {
+function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase, expr: string | null, origin: string[]): NumberCase[] {
   const exactSameExpression = rangeCase.source.lowerInclusive
     && rangeCase.source.upperInclusive
     && rangeCase.source.lower.text === rangeCase.source.upper.text
   if (exactSameExpression) {
     const value = rangeCase.lower
-    return numberValue(value.min, value.max, range.valueKind === 'int' || value.isInteger, expr ?? value.expr, value.linear, value.cases, mergeRangeOrigin(value, origin))
+    return numberBranches(value).map(branch => ({
+      value: numberValue(
+        branch.value.min,
+        branch.value.max,
+        range.valueKind === 'int' || branch.value.isInteger,
+        expr ?? branch.value.expr,
+        branch.value.linear,
+        null,
+        mergeRangeOrigin(branch.value, origin),
+      ),
+      assumptions: branch.assumptions,
+    }))
   }
-  return numberValue(
-    rangeCase.lower.min,
-    rangeCase.upper.max,
-    range.valueKind === 'int',
-    expr,
-    null,
-    null,
-    mergeRangeOrigin(rangeCase.lower, rangeCase.upper, origin),
-  )
+  const cases: NumberCase[] = []
+  for (const lower of numberBranches(rangeCase.lower)) {
+    for (const upper of numberBranches(rangeCase.upper)) {
+      if (lower.value.min > upper.value.max) continue
+      const assumptions = mergeAssumptions(lower.assumptions, upper.assumptions)
+      if (!assumptionsAreReachable(assumptions)) continue
+      cases.push({
+        value: numberValue(
+          lower.value.min,
+          upper.value.max,
+          range.valueKind === 'int',
+          expr,
+          null,
+          null,
+          mergeRangeOrigin(lower.value, upper.value, origin),
+        ),
+        assumptions,
+      })
+    }
+  }
+  return cases
 }
 
 function mergeRangeOrigin(...items: (NumberValue | string[])[]) {

@@ -280,7 +280,7 @@ a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
 int a..<b // integer from a up to, but not including, b.
 0 | 40 | 200 // exact finite numeric set.
-0..10 | 20..30 // numeric alternatives. The value must fit one alternative.
+0..10 | 20..30 // numeric alternatives. The value must fit one alternative. Redundant alternatives collapse like set union.
 low() | high() // pure expression alternatives. Equivalent to low()..low() | high()..high().
 return: {left: 0, width: 100} | {left: 20, width: 80} // whole returned object alternatives. The pairing is checked case by case.
 return: {left: 0..10} & {width: int 1..5} // whole-value specs use TypeScript type syntax plus Freerange numeric ranges.

@@ -1,12 +1,6 @@
 // Sequence vocabulary: adjacent-pair claims on loop-built arrays.
 // spaced, nondecreasing, lastEnd, extentEnd, and the noOverlap catalog lift.
 
-declare function spaced<T>(rows: T[], gap: number): boolean
-declare function nondecreasing<T>(items: T): boolean
-declare function lastEnd<T>(rows: T[]): number
-declare function extentEnd<T>(rows: T[], fallback: number): number
-declare function noOverlap<T>(rows: T[]): boolean
-
 type Row = {top: number; height: number}
 
 /** @fit

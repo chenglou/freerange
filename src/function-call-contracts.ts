@@ -23,10 +23,12 @@ import {
   unknown,
   withNumberCases,
   type LiteralValue,
+  type NumberCase,
   type NumberValue,
   type Value,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
+import {assumptionsAreReachable} from './constraint-reachability.ts'
 import {
   finiteElementAccessRoot,
   parsePrintedNumber,
@@ -41,6 +43,7 @@ import {functionInputRoots} from './function-shape.ts'
 import {
   linearVariable,
   unwrapExpression,
+  type LinearExpr,
 } from './linear.ts'
 import type {FitFunction} from './modules.ts'
 import {
@@ -88,7 +91,6 @@ import {proofFactsFromValues} from './proof-facts.ts'
 import {proveBooleanTrue} from './boolean-claims.ts'
 import {
   comparisonNeed,
-  formatExpectedRange,
   formatNumber,
   formatRange,
   formatRangeSpec,
@@ -317,7 +319,7 @@ function formatCallValue(value: Value) {
   if (value.kind === 'number') {
     const exact = exactNumber(value)
     if (exact != null) return formatNumber(exact)
-    return formatExpectedRange(value.min, value.max, value.isInteger)
+    return formatRange({...value, expr: null})
   }
   if (value.kind === 'literal') return value.values.map(String).join(' | ')
   if (value.kind === 'unknown') return `unknown (${value.reason})`
@@ -577,29 +579,19 @@ function summaryRangeValue(
 
   const expr = current.expr ?? rangeValue.expr
   const linear = current.linear ?? (expr == null ? rangeValue.linear : linearVariable(linearNameForExpression(expr)))
-  if (rangeValue.cases != null) {
+  if (current.cases != null || rangeValue.cases != null) {
+    const envelope = numberValue(
+      Math.max(current.min, rangeValue.min),
+      Math.min(current.max, rangeValue.max),
+      current.isInteger || rangeValue.isInteger,
+      expr,
+      linear,
+      null,
+      mergeOrigin(current, rangeValue, origin),
+    )
     return withNumberCases(
-      numberValue(
-        Math.max(current.min, rangeValue.min),
-        Math.min(current.max, rangeValue.max),
-        current.isInteger || rangeValue.isInteger,
-        expr,
-        linear,
-        null,
-        mergeOrigin(current, rangeValue, origin),
-      ),
-      numberBranches(rangeValue).map(branch => ({
-        value: numberValue(
-          Math.max(current.min, branch.value.min),
-          Math.min(current.max, branch.value.max),
-          current.isInteger || branch.value.isInteger,
-          expr,
-          linear,
-          null,
-          mergeOrigin(current, branch.value, origin),
-        ),
-        assumptions: branch.assumptions,
-      })),
+      envelope,
+      summaryRangeCases(current, rangeValue, expr, linear, origin),
     )
   }
   return numberValue(
@@ -611,6 +603,38 @@ function summaryRangeValue(
     null,
     mergeOrigin(current, rangeValue, origin),
   )
+}
+
+function summaryRangeCases(
+  current: NumberValue,
+  rangeValue: NumberValue,
+  expr: string | null,
+  linear: LinearExpr | null,
+  origin: string[],
+) {
+  const cases: NumberCase[] = []
+  for (const currentBranch of numberBranches(current)) {
+    for (const rangeBranch of numberBranches(rangeValue)) {
+      const min = Math.max(currentBranch.value.min, rangeBranch.value.min)
+      const max = Math.min(currentBranch.value.max, rangeBranch.value.max)
+      if (min > max) continue
+      const assumptions = mergeAssumptions(currentBranch.assumptions, rangeBranch.assumptions)
+      if (!assumptionsAreReachable(assumptions)) continue
+      cases.push({
+        value: numberValue(
+          min,
+          max,
+          currentBranch.value.isInteger || rangeBranch.value.isInteger,
+          expr,
+          linear,
+          null,
+          mergeOrigin(currentBranch.value, rangeBranch.value, origin),
+        ),
+        assumptions,
+      })
+    }
+  }
+  return cases
 }
 
 function applySummaryComparisonSpec(

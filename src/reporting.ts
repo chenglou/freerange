@@ -6,6 +6,7 @@ export type ReportNumberValue = {
   isInteger: boolean
   expr: string | null
   linear: ReportLinearExpr | null
+  cases?: {value: ReportNumberValue; assumptions: unknown[]}[] | null
   origin?: string[]
 }
 
@@ -169,7 +170,7 @@ function samePathParts(left: string[], right: string[]) {
 export function formatRange(value: ReportNumberValue) {
   const expr = value.expr == null ? null : publicFitText(value.expr)
   if (expr != null && value.min === value.max && Number.isFinite(value.min) && expr === formatNumber(value.min)) return expr
-  const range = formatExpectedRange(value.min, value.max, value.isInteger)
+  const range = formatNumberValueRange(value)
   return expr == null ? range : `${range} as ${expr}`
 }
 
@@ -181,6 +182,20 @@ export function formatExpectedRange(min: number, max: number, isInteger: boolean
   if (min === -Infinity && max === Infinity) return isInteger ? 'any integer' : 'any number'
   const prefix = isInteger ? 'int ' : ''
   return `${prefix}${formatNumber(min)}..${formatNumber(max)}`
+}
+
+function formatNumberValueRange(value: ReportNumberValue) {
+  const cases = value.cases?.filter(item => item.assumptions.length === 0) ?? []
+  if (cases.length > 1 && cases.length === value.cases?.length) {
+    return [...new Set(cases.map(item => formatNumberRangePart(item.value)))].join(' | ')
+  }
+  return formatExpectedRange(value.min, value.max, value.isInteger)
+}
+
+function formatNumberRangePart(value: ReportNumberValue) {
+  return value.min === value.max && Number.isFinite(value.min)
+    ? formatNumber(value.min)
+    : formatExpectedRange(value.min, value.max, value.isInteger)
 }
 
 export function formatRangeSpec(range: FitRange) {
@@ -239,7 +254,7 @@ function knownValueFact(value: ReportNumberValue) {
   const expr = value.expr == null ? null : publicFitText(value.expr)
   if (expr != null && value.min === value.max && Number.isFinite(value.min) && expr === formatNumber(value.min)) return null
   if (expr == null) return formatRange(value)
-  return `${expr}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`
+  return `${expr}: ${formatNumberValueRange(value)}`
 }
 
 function formatMissingComparison(missing: string) {

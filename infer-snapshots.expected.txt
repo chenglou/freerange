@@ -195,4 +195,3 @@ locals:
   measurements[].promptLayout.lines.length: int 0..Infinity
   items.length == layoutSources.length
   items.length: int 0..Infinity
-

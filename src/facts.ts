@@ -9,7 +9,7 @@ import {
   type Value,
 } from './domain.ts'
 import {sameExpressionText} from './linear.ts'
-import {formatExpectedRange} from './reporting.ts'
+import {formatRange} from './reporting.ts'
 import {
   nondecreasingPropsFromRelations,
   sequenceRelationText,
@@ -251,7 +251,7 @@ export function numberFacts(path: string, value: NumberValue): FitInferFact[] {
     facts.push({
       kind: 'range',
       source: 'range',
-      text: publicFitText(`${path}: ${formatExpectedRange(value.min, value.max, value.isInteger)}`),
+      text: publicFitText(`${path}: ${formatRange({...value, expr: null})}`),
       path: publicFitText(path),
       min: value.min,
       max: value.max,

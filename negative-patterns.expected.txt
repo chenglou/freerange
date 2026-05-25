@@ -828,9 +828,9 @@ UNKNOWN negative-patterns.ts:negativeTypedArrayConstructorKeepsExactLength: retu
     assumed from input: given count: int 0..100
   missing fact: count == (count + 1)
 FAIL negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
-  value was int 10..30, expected one of 20 | 40
+  value was 10 | 20 | 30, expected one of 20 | 40
   branches produced 10, 20, 30
-  missing: int 10..30 in {20, 40}
+  missing: 10 | 20 | 30 in {20, 40}
 UNKNOWN negative-patterns.ts:negativeLoopLengthDerivedIndexDoesNotUseInitialArray: last: 0
   Array length-derived index on local arrays inside loops is not supported
 UNKNOWN negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
@@ -898,13 +898,13 @@ UNKNOWN negative-patterns.ts:negativeRestTupleShapeIsNotExactLength: return.leng
     input.length: int 1..Infinity
   missing fact: input.length == 2
 FAIL negative-patterns.ts:negativeUnionReturnOutsideSet: return: 40 | 120
-  value was int 82..214 as navSizeX, expected one of 40 | 120
+  value was 82 | 214 as navSizeX, expected one of 40 | 120
   branches produced 82, 214
   missing: navSizeX in {40, 120}
 FAIL negative-patterns.ts:negativeUnionBranchInsideBoundsOutsideSet: return: 0 | 100
-  value was int 0..50, expected one of 0 | 100
+  value was 0 | 50, expected one of 0 | 100
   branches produced 0, 50
-  missing: int 0..50 in {0, 100}
+  missing: 0 | 50 in {0, 100}
 FAIL negative-patterns.ts:negativeUnionGivenCallerOutsideSet: negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
   caller passed: navSizeX: 150
   missing: 150 in {82, 214}

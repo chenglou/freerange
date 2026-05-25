@@ -26,6 +26,7 @@ import {
   mergeElementValue,
   moduloNumbers,
   multiplyNumbers,
+  negateNumber,
   numberBranches,
   nullValue,
   nullableValue,
@@ -1790,7 +1791,7 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
   if (value.kind !== 'number') return noteUnsupported(frame, `Unary ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (expression.operator === ts.SyntaxKind.PlusToken) return value
   if (expression.operator === ts.SyntaxKind.MinusToken) {
-    return numberValue(-value.max, -value.min, value.isInteger, `-${value.expr ?? expression.operand.getText(frame.program.sourceFile)}`)
+    return negateNumber(value, `-${value.expr ?? expression.operand.getText(frame.program.sourceFile)}`)
   }
   return noteUnsupported(frame, `Unsupported unary expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }

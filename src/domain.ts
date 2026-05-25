@@ -15,6 +15,7 @@ export {
   mergeOrigin,
   moduloNumbers,
   multiplyNumbers,
+  negateNumber,
   nonNanExtrema,
   numberBranches,
   numberValue,

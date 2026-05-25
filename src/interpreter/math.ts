@@ -22,6 +22,7 @@ import {
   comparisonConstraint,
   proveComparisonPlain,
 } from '../proof.ts'
+import {combineNumberCases} from './state-cases.ts'
 import {noteUnsupported, type InterpreterFrame} from './context.ts'
 import {auditMathSelector} from './audit.ts'
 
@@ -181,7 +182,9 @@ function evaluateUnaryMath(name: string, values: NumberValue[], evaluate: (value
 
 function evaluateBinaryMath(name: string, values: NumberValue[], evaluate: (left: NumberValue, right: NumberValue) => Value): Value {
   if (values.length !== 2) return unknown(`Math.${name} expected two arguments`)
-  return evaluate(values[0]!, values[1]!)
+  const plain = evaluate(values[0]!, values[1]!)
+  if (plain.kind !== 'number') return plain
+  return withNumberCases(plain, combineNumberCases(values[0]!, values[1]!, evaluate))
 }
 
 function evaluateNumberUnary(value: NumberValue, evaluate: (value: NumberValue) => Value): Value {

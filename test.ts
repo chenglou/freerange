@@ -372,6 +372,82 @@ if (
   console.log('range contracts: dynamic bounds and alternatives')
 }
 
+const numericUnionPropagationChecks = verifyFitSource('numeric-union-propagation.ts', `/** @fit
+ * return: 5 | 20
+ */
+function edge(flag: boolean): number {
+  return flag ? 5 : 20
+}
+
+/** @fit
+ * return: 0..30
+ */
+function broad(flag: boolean) {
+  return edge(flag)
+}
+
+/** @fit
+ * return: 0..30
+ */
+function shifted(flag: boolean) {
+  return edge(flag) + 1
+}
+
+/** @fit
+ * return: 5 | 20
+ */
+function broadCaller(flag: boolean) {
+  return broad(flag)
+}
+
+/** @fit
+ * return: 6 | 21
+ */
+function shiftedCaller(flag: boolean) {
+  return shifted(flag)
+}
+
+/** @fit
+ * return: 7..20
+ */
+function gapCaller(flag: boolean) {
+  return shifted(flag)
+}
+
+/** @fit
+ * return: 5..30 | 20..30
+ */
+function redundantAlternative(flag: boolean) {
+  return flag ? 5 : 30
+}
+
+/** @fit
+ * return: 20..30
+ */
+function redundantAlternativeCaller(flag: boolean) {
+  return redundantAlternative(flag)
+}
+`)
+const broadCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'broadCaller' && check.text === 'return: 5 | 20')
+const shiftedCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'shiftedCaller' && check.text === 'return: 6 | 21')
+const gapCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'gapCaller' && check.text === 'return: 7..20')
+const redundantAlternativeCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'redundantAlternativeCaller' && check.text === 'return: 20..30')
+if (
+  broadCallerCheck?.status !== 'pass'
+  || broadCallerCheck.trace?.usedFacts.includes('5 | 20') !== true
+  || shiftedCallerCheck?.status !== 'pass'
+  || shiftedCallerCheck.trace?.usedFacts.includes('6 | 21') !== true
+  || gapCallerCheck?.status !== 'fail'
+  || gapCallerCheck.reason?.includes('int 6..6') !== true
+  || redundantAlternativeCallerCheck?.status !== 'fail'
+) {
+  console.error('expected pure numeric range unions to propagate, normalize, and reject gaps')
+  console.error(JSON.stringify(numericUnionPropagationChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: numeric union propagation')
+}
+
 const wholeValueTypeSyntaxChecks = verifyFitSource('whole-value-type-syntax.ts', `type Box<T> = {
   value: T
 }

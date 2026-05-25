@@ -9,6 +9,7 @@ import {
   linearScale,
   linearSubtract,
   linearVariable,
+  sameLinear,
   type LinearExpr,
 } from './linear.ts'
 import type {
@@ -110,8 +111,62 @@ export function numberBranches(value: NumberValue): NumberCase[] {
 }
 
 export function withNumberCases(value: NumberValue, cases: NumberCase[] | null): NumberValue {
-  if (cases == null || cases.length === 0 || cases.length > maxNumberCases) return value
-  return {...value, cases: cases.map(choice => ({value: plainNumber(choice.value), assumptions: choice.assumptions}))}
+  if (cases == null || cases.length === 0) return value
+  const plainCases = cases.map(choice => ({value: plainNumber(choice.value), assumptions: choice.assumptions}))
+  const normalized = normalizeNumberCases(plainCases)
+  if (normalized.length === 1 && sameNumberShape(value, normalized[0]!.value) && normalized[0]!.assumptions.length === 0) return value
+  if (normalized.length > maxNumberCases) return value
+  return {...value, cases: normalized}
+}
+
+function normalizeNumberCases(cases: NumberCase[]): NumberCase[] {
+  if (cases.some(choice => choice.assumptions.length > 0)) return cases
+  const sorted = [...cases].sort((left, right) => left.value.min - right.value.min || left.value.max - right.value.max)
+  const result: NumberCase[] = []
+  for (const item of sorted) {
+    const previous = result.at(-1)
+    if (previous == null || !numberCasesCanMerge(previous.value, item.value)) {
+      result.push(item)
+      continue
+    }
+    result[result.length - 1] = {value: mergeNumberCaseValues(previous.value, item.value), assumptions: []}
+  }
+  return result
+}
+
+function numberCasesCanMerge(left: NumberValue, right: NumberValue) {
+  if (numberValueContains(left, right) || numberValueContains(right, left)) return true
+  if (left.isInteger !== right.isInteger) return false
+  return left.isInteger ? left.max + 1 >= right.min : left.max >= right.min
+}
+
+function numberValueContains(container: NumberValue, item: NumberValue) {
+  if (container.min > item.min || container.max < item.max) return false
+  return !container.isInteger || item.isInteger
+}
+
+function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberValue {
+  if (numberValueContains(left, right)) return left
+  if (numberValueContains(right, left)) return right
+  const expr = left.expr != null && left.expr === right.expr ? left.expr : null
+  const linear = left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null
+  return numberValue(
+    Math.min(left.min, right.min),
+    Math.max(left.max, right.max),
+    left.isInteger && right.isInteger,
+    expr,
+    linear,
+    null,
+    mergeOrigin(left, right),
+  )
+}
+
+function sameNumberShape(left: NumberValue, right: NumberValue) {
+  return left.min === right.min
+    && left.max === right.max
+    && left.isInteger === right.isInteger
+    && (left.expr ?? null) === (right.expr ?? null)
+    && ((left.linear == null && right.linear == null) || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)))
 }
 
 function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | null {
@@ -181,6 +236,23 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   const expr = binaryExpr(left, '%', right)
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
   return numberValue(0, max, left.isInteger && right.isInteger, expr, linear, null, mergeOrigin(left, right))
+}
+
+export function negateNumber(value: NumberValue, expr: string | null): NumberValue {
+  const plain = numberValue(-value.max, -value.min, value.isInteger, expr, null, null, value.origin)
+  if (value.cases == null) return plain
+  return withNumberCases(plain, value.cases.map(branch => ({
+    value: numberValue(
+      -branch.value.max,
+      -branch.value.min,
+      branch.value.isInteger,
+      expr,
+      null,
+      null,
+      branch.value.origin,
+    ),
+    assumptions: branch.assumptions,
+  })))
 }
 
 export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_INFINITY, fallbackMax = Number.POSITIVE_INFINITY) {

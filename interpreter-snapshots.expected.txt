@@ -70,15 +70,15 @@ case matrix else-if continuation: interpreter-matrix-patterns.ts:matrixElseIfCon
 case matrix throw guard narrows positive: interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
   return: 0..Infinity
 case matrix switch finite literal: interpreter-matrix-patterns.ts:matrixSwitchFiniteLiteral
-  return: int 0..4
+  return: int 0..1 | 4
 case matrix switch continuation: interpreter-matrix-patterns.ts:matrixSwitchContinuation
   return: int 0..1
 case matrix switch grouped cases: interpreter-matrix-patterns.ts:matrixSwitchGroupedCases
   return: "hidden" | "visible"
 case matrix switch narrows discriminant path: interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
-  return: int 0..4
+  return: int 0..1 | 4
 case matrix array at last: interpreter-matrix-patterns.ts:matrixArrayAtLast
-  return: int 10..30
+  return: 10 | 20 | 30
 case matrix stringish mutation preserves tuple: interpreter-matrix-patterns.ts:matrixStringishMutationPreservesTuple
   return.length: int 2..2
   return[0]: unknown (Stringish assignment changed path += `M ${items.length}`)
