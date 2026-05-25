@@ -60,6 +60,8 @@ check(hasPositiveArea(return) === true)
 
   - recursion analysis is bounded to 12 recursions
   - type `@fit` contracts are parsed but are inlined into usage sites differently than functions
+  - we don't carry extra case data for number unions
+  - we want to fully infer all linear operations (?) but don't try weird heuristics for non-linear parts. We'd expose more built-ins instead
 
 
 ```
