@@ -1,0 +1,1142 @@
+import {createFunctionContractCache, inferFitFiles, readTopLevelGlobal, verifyFitProgramWithCallsites} from '../../src/check-core.ts'
+import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from '../../src/domain.ts'
+import {runningSumNumber} from '../../src/loop-summary.ts'
+import {uniqueUnsupported} from '../../src/infer-report.ts'
+import {buildFitSourceFile} from '../../src/modules.ts'
+import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
+
+const positiveFiles = ['tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
+const negativeExpectedPath = 'negative-patterns.expected.txt'
+const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
+const repoDir = new URL('../..', import.meta.url).pathname
+const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
+
+function verifyFitSourceWithCallsites(file: string, sourceText: string) {
+  const program = buildFitSourceFile(file, sourceText, readTopLevelGlobal)
+  return verifyFitProgramWithCallsites(program, createFunctionContractCache())
+}
+
+const positiveReport = await verifyFitFiles(positiveFiles)
+if (positiveReport.phase !== 'ready') {
+  console.error(JSON.stringify(positiveReport, null, 2))
+  process.exitCode = 1
+} else {
+  console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 requires, 0 unknown`)
+}
+
+const photoGalleryReport = await verifyFitFiles(['photo-gallery/index.ts'])
+if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 38 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
+  console.error('expected photo-gallery literal data to stay summarized')
+  console.error(photoGalleryReport.phase === 'ready'
+    ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.requires} requires, ${photoGalleryReport.summary.unknown} unknown`
+    : JSON.stringify(photoGalleryReport, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('photo-gallery: summarized array data')
+}
+
+const unboundedNonnegativeProduct = multiplyNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedNonnegativeProduct.min !== 0 || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity product, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative product')
+}
+
+const unboundedNonnegativeQuotient = divideNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(1, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== 0 || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity quotient, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative quotient')
+}
+
+const unboundedNonnegativeRunningSum = runningSumNumber(
+  'y',
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'start'),
+  numberValue(0, Number.POSITIVE_INFINITY, true, 'count'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'increment'),
+)
+if (unboundedNonnegativeRunningSum.min !== 0 || unboundedNonnegativeRunningSum.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded nonnegative running sum')
+}
+
+const unboundedDifference = subtractNumbers(
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'left'),
+  numberValue(0, Number.POSITIVE_INFINITY, false, 'right'),
+)
+if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`)
+  process.exitCode = 1
+} else {
+  console.log('domain: unbounded difference')
+}
+
+const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
+ * return: 1
+ */
+function one() {
+  return 1
+}
+/** @fit
+ * given value: 1..1
+ * return: 1
+ */
+function identity(value: number) {
+  return value
+}
+function bounded(value: number /* intentionally not @fit syntax here */) {
+  return value
+}
+const x = one() // @fit 1
+`)
+const obligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'one')
+const tracedObligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'identity')
+const inlineObligationCheck = obligationChecks.find(check => check.text === 'x: 1')
+const sequenceObligationCheck = positiveReport.checks.find(check => check.functionName === 'runningSumLoop' && check.text === 'spaced(return.rows, gap)')
+if (
+  obligationCheck?.obligation?.boundary !== 'function-contract'
+  || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
+  || tracedObligationCheck?.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
+  || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
+  || sequenceObligationCheck?.obligation?.goal.kind !== 'expression'
+  || sequenceObligationCheck.trace?.steps.some(step => step.message === 'checked boolean expression') !== true
+  || sequenceObligationCheck?.trace?.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
+) {
+  console.error('expected checks to carry proof obligations and used facts')
+  console.error(JSON.stringify({obligationChecks, sequenceObligationCheck}, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('obligations: attached to checks with facts')
+}
+
+const pureContractHelperChecks = verifyFitSource('contract-purity.ts', `function safeLimit(value: number) {
+  let floor = 9
+  floor += 1
+  return Math.max(value, floor)
+}
+
+/** @fit
+ * given value: 0..10
+ * return <= safeLimit(value)
+ */
+function bounded(value: number) {
+  return value
+}
+`)
+const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
+if (pureContractHelperCheck?.status !== 'pass') {
+  console.error('expected pure unannotated helper calls to work in contracts')
+  console.error(JSON.stringify(pureContractHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: pure helper call')
+}
+
+const pureGivenHelperChecks = verifyFitSource('given-contract-purity.ts', `function double(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given max >= double(min)
+ * given width: double(min)..max
+ * return.scaled <= max
+ * return.width >= double(min)
+ * return.width <= max
+ */
+function bounded(min: number, width: number, max: number) {
+  return {scaled: double(min), width}
+}
+`)
+const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.status !== 'pass')
+if (pureGivenHelperFailures.length > 0) {
+  console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
+  console.error(JSON.stringify(pureGivenHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: pure helper call')
+}
+
+const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
+  return layout.width > 0
+}
+
+function randomLayoutCheck(layout: {width: number}) {
+  return Math.random() > layout.width
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function validLayout() {
+  return {width: 10}
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function invalidLayout() {
+  return {width: 0}
+}
+
+/** @fit
+ * isValidLayout(return)
+ */
+function unknownLayout(width: number) {
+  return {width}
+}
+
+/** @fit
+ * randomLayoutCheck(return)
+ */
+function unsupportedLayout() {
+  return {width: 10}
+}
+
+/** @fit
+ * 1 + 2
+ */
+function numericExpression() {
+  return {width: 10}
+}
+`)
+const validLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'validLayout' && check.text === 'isValidLayout(return)')
+const invalidLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'invalidLayout' && check.text === 'isValidLayout(return)')
+const unknownLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unknownLayout' && check.text === 'isValidLayout(return)')
+const unsupportedLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unsupportedLayout' && check.text === 'randomLayoutCheck(return)')
+const numericExpressionCheck = booleanCallContractChecks.find(check => check.functionName === 'numericExpression' && check.text === '1 + 2')
+if (
+  validLayoutCheck?.status !== 'pass'
+  || invalidLayoutCheck?.status !== 'fail'
+  || unknownLayoutCheck?.status !== 'unknown'
+  || unsupportedLayoutCheck?.status !== 'unknown'
+  || unsupportedLayoutCheck.reason?.includes('Unsupported Math.random call') !== true
+  || numericExpressionCheck?.status !== 'unknown'
+  || numericExpressionCheck.reason?.includes('expected a boolean result') !== true
+) {
+  console.error('expected bare pure boolean call contracts to be checked')
+  console.error(JSON.stringify(booleanCallContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: bare boolean helper call')
+}
+
+const booleanGivenContractResult = verifyFitSourceWithCallsites('boolean-given-contracts.ts', `function isValidLayout(layout: {width: number}) {
+  return layout.width > 0
+}
+
+/** @fit
+ * given isValidLayout(layout)
+ * isValidLayout(layout)
+ */
+function assumesValidLayout(layout: {width: number}) {
+  return layout
+}
+
+function invalidCaller() {
+  return assumesValidLayout({width: 0})
+}
+
+/** @fit
+ * given isValidLayout(layout)
+ * given !isValidLayout(layout)
+ */
+function conflictingLayout(layout: {width: number}) {
+  return layout
+}
+
+/** @fit
+ * given !isValidLayout(layout)
+ * !isValidLayout(layout)
+ */
+function assumesInvalidLayout(layout: {width: number}) {
+  return layout
+}
+`)
+const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout(layout)')
+const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout(layout)')
+const assumedNegativeBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesInvalidLayout' && check.text === '!isValidLayout(layout)')
+const invalidBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'invalidCaller' && check.text === 'assumesValidLayout({width: 0}): requires isValidLayout(layout)')
+if (
+  assumedBooleanGivenCheck?.status !== 'pass'
+  || assumedBooleanGivenCheck.trace?.steps.some(step => step.rule === 'assumption') !== true
+  || conflictingBooleanGivenCheck?.status !== 'fail'
+  || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout(layout) and given !isValidLayout(layout)') !== true
+  || assumedNegativeBooleanGivenCheck?.status !== 'pass'
+  || invalidBooleanGivenCall?.status !== 'fail'
+  || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
+) {
+  console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
+  console.error(JSON.stringify(booleanGivenContractResult, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: boolean predicate call')
+}
+
+const collectionExpressionChecks = verifyFitSource('collection-expression-contracts.ts', `function twice(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given items.length: int 1..10
+ * given items[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[$i].height == items[$i].height
+ * twice(return.rows[$i].height) == twice(items[$i].height)
+ * return.rows[$i + 1].height: 0..40
+ * return.rows[$i + 1].height >= 0
+ * twice(return.rows[].height) <= 80
+ */
+function copyRows(items: {height: number}[]) {
+  return {rows: items.map(item => ({height: item.height}))}
+}
+
+/** @fit
+ * given items.length: int 1..10
+ * given boxes.length: int 1..10
+ * given items[].height: 0..40
+ * given boxes[].height: 0..40
+ * return.rows.length == items.length
+ * return.rows[$i + 1].height == boxes[$i].height
+ */
+function offsetAcrossCollections(items: {height: number}[], boxes: {height: number}[]) {
+  return {rows: items.map(item => ({height: item.height})), boxes}
+}
+`)
+const collectionExpressionPasses = [
+  'twice(return.rows[$i].height) == twice(items[$i].height)',
+  'return.rows[$i + 1].height: 0..40',
+  'return.rows[$i + 1].height >= 0',
+  'twice(return.rows[].height) <= 80',
+].map(text => collectionExpressionChecks.find(check => check.functionName === 'copyRows' && check.text === text)?.status)
+const crossCollectionOffsetCheck = collectionExpressionChecks.find(check =>
+  check.functionName === 'offsetAcrossCollections'
+  && check.text === 'return.rows[$i + 1].height == boxes[$i].height')
+if (
+  collectionExpressionPasses.some(status => status !== 'pass')
+  || crossCollectionOffsetCheck?.status !== 'unknown'
+) {
+  console.error('expected indexed and wildcard checks to keep expression support where the index meaning is clear')
+  console.error(JSON.stringify(collectionExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('collection contracts: pure expressions with wildcards and indexed paths')
+}
+
+const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
+ * given width: int 320..2400
+ * given gap: int 1..32
+ * return.outer >= return.inner
+ */
+function frame(width: number, gap: number) {
+  const inner = Math.ceil(width / 2)
+  const outer = width + 2 * (gap + 8)
+  return {inner, outer}
+}
+
+/** @fit
+ * given width: int 0..100
+ * given gap: int 0..100
+ * return.outer >= return.inner
+ */
+function missingFrame(width: number, gap: number) {
+  const inner = Math.ceil(width / 2)
+  const outer = gap
+  return {inner, outer}
+}
+`)
+const simplifiedRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'frame' && check.text === 'return.outer >= return.inner')
+const missingRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'missingFrame' && check.text === 'return.outer >= return.inner')
+if (
+  simplifiedRoundingCheck?.status !== 'pass'
+  || missingRoundingCheck?.status !== 'unknown'
+  || missingRoundingCheck.reason?.includes('missing: (width / 2) <= gap') !== true
+) {
+  console.error('expected proof simplification to reduce rounding comparisons to smaller arithmetic')
+  console.error(JSON.stringify(simplifiedRoundingChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('proof simplification: rounded bound comparison')
+}
+
+const roundingFamilyChecks = verifyFitSource('rounding-family.ts', `/** @fit
+ * given value: -10..10
+ * return.floorValue <= value
+ * value < return.floorValue + 1
+ * value - 1 < return.floorValue
+ * value <= return.ceilValue
+ * return.ceilValue < value + 1
+ * return.ceilValue - 1 < value
+ * value - 0.5 <= return.roundValue
+ * return.roundValue <= value + 0.5
+ * return.roundValue - 0.5 <= value
+ * value < return.roundValue + 0.5
+ */
+function roundingLoss(value: number) {
+  return {
+    floorValue: Math.floor(value),
+    ceilValue: Math.ceil(value),
+    roundValue: Math.round(value),
+  }
+}
+
+/** @fit
+ * given positive: 0..10
+ * given negative: -10..0
+ * return.positiveTrunc >= 0
+ * return.positiveTrunc <= positive
+ * positive - 1 < return.positiveTrunc
+ * return.negativeTrunc >= negative
+ * return.negativeTrunc <= 0
+ * return.negativeTrunc < negative + 1
+ */
+function truncLoss(positive: number, negative: number) {
+  return {
+    positiveTrunc: Math.trunc(positive),
+    negativeTrunc: Math.trunc(negative),
+  }
+}
+
+/** @fit
+ * given left <= right
+ * return.floorLeft <= return.floorRight
+ * return.ceilLeft <= return.ceilRight
+ * return.roundLeft <= return.roundRight
+ * return.truncLeft <= return.truncRight
+ */
+function roundingMonotonicity(left: number, right: number) {
+  return {
+    floorLeft: Math.floor(left),
+    floorRight: Math.floor(right),
+    ceilLeft: Math.ceil(left),
+    ceilRight: Math.ceil(right),
+    roundLeft: Math.round(left),
+    roundRight: Math.round(right),
+    truncLeft: Math.trunc(left),
+    truncRight: Math.trunc(right),
+  }
+}
+
+/** @fit
+ * given value: -10..10
+ * return <= value
+ */
+function truncNeedsSign(value: number) {
+  return Math.trunc(value)
+}
+
+/** @fit
+ * given left < right
+ * return < Math.round(right)
+ */
+function roundMonotonicityIsNotStrict(left: number, right: number) {
+  return Math.round(left)
+}
+`)
+const roundingFamilyFailures = roundingFamilyChecks.filter(check => check.functionName !== 'truncNeedsSign' && check.functionName !== 'roundMonotonicityIsNotStrict' && check.status !== 'pass')
+const truncNeedsSignCheck = roundingFamilyChecks.find(check => check.functionName === 'truncNeedsSign' && check.text === 'return <= value')
+const roundStrictCheck = roundingFamilyChecks.find(check => check.functionName === 'roundMonotonicityIsNotStrict' && check.text === 'return < Math.round(right)')
+if (
+  roundingFamilyFailures.length > 0
+  || truncNeedsSignCheck?.status !== 'unknown'
+  || truncNeedsSignCheck.reason?.includes('missing fact: trunc(value) <= value') !== true
+  || roundStrictCheck?.status !== 'unknown'
+  || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
+) {
+  console.error('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases')
+  console.error(JSON.stringify(roundingFamilyChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('proof simplification: rounding family')
+}
+
+const expandedMathChecks = verifyFitSource('expanded-math.ts', `/** @fit
+ * return.pi: 3..4
+ * return.powValue: 8
+ * return.cbrtValue: 2
+ * return.froundValue: 1..2
+ * return.f16roundValue: 1..2
+ * return.clzValue: int 31..31
+ * return.imulValue: int 6..6
+ */
+function exactMath() {
+  return {
+    pi: Math.PI,
+    powValue: Math.pow(2, 3),
+    cbrtValue: Math.cbrt(8),
+    froundValue: Math.fround(1.25),
+    f16roundValue: Math.f16round(1.25),
+    clzValue: Math.clz32(1),
+    imulValue: Math.imul(2, 3),
+  }
+}
+
+/** @fit
+ * given value: 1..4
+ * given signed: -1..1
+ * given unit: -0.5..0.5
+ * return.expValue: 2..55
+ * return.expm1Value: 1..54
+ * return.logValue: 0..2
+ * return.log2Value: 0..2
+ * return.log10Value: 0..1
+ * return.log1pValue: 0..2
+ * return.asinValue: -1..1
+ * return.acosValue: 1..3
+ * return.atanValue: -1..1
+ * return.sinhValue: -2..2
+ * return.asinhValue: -1..1
+ * return.tanhValue: -1..1
+ * return.acoshValue: 0..3
+ * return.atanhValue: -1..1
+ */
+function monotoneMath(value: number, signed: number, unit: number) {
+  return {
+    expValue: Math.exp(value),
+    expm1Value: Math.expm1(value),
+    logValue: Math.log(value),
+    log2Value: Math.log2(value),
+    log10Value: Math.log10(value),
+    log1pValue: Math.log1p(value),
+    asinValue: Math.asin(unit),
+    acosValue: Math.acos(unit),
+    atanValue: Math.atan(signed),
+    sinhValue: Math.sinh(signed),
+    asinhValue: Math.asinh(signed),
+    tanhValue: Math.tanh(signed),
+    acoshValue: Math.acosh(value),
+    atanhValue: Math.atanh(unit),
+  }
+}
+
+/** @fit
+ * given value: -1..1
+ * return: -Infinity..Infinity
+ */
+function logNeedsPositive(value: number) {
+  return Math.log(value)
+}
+`)
+const expandedMathFailures = expandedMathChecks.filter(check => check.functionName !== 'logNeedsPositive' && check.status !== 'pass')
+const logNeedsPositiveCheck = expandedMathChecks.find(check => check.functionName === 'logNeedsPositive' && check.text === 'return: -Infinity..Infinity')
+if (
+  expandedMathFailures.length > 0
+  || logNeedsPositiveCheck?.status !== 'unknown'
+  || logNeedsPositiveCheck.reason?.includes('Math.log expected a non-negative number') !== true
+) {
+  console.error('expected expanded Math builtin families to infer ranges and reject unsafe domains')
+  console.error(JSON.stringify(expandedMathChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('math builtins: constants, integer/coarse, and monotone functions')
+}
+
+const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
+
+function bump() {
+  box.limit = box.limit + 1
+  return box.limit
+}
+
+/** @fit
+ * return <= bump()
+ */
+function bad() {
+  return 0
+}
+`)
+const impureContractHelperCheck = impureContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= bump()')
+if (
+  impureContractHelperCheck?.status !== 'unknown'
+  || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
+  || impureContractHelperCheck.reason.includes('effect bad > bump line 4: assignment mutates box.limit') !== true
+) {
+  console.error('expected impure helper calls in contracts to be rejected loudly')
+  console.error(JSON.stringify(impureContractHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: impure helper rejected')
+}
+
+const unsupportedContractExpressionChecks = verifyFitSource('contract-unsupported.ts', `function randomLimit() {
+  return Math.random() * 10
+}
+
+const method = "max"
+
+/** @fit
+ * return <= randomLimit()
+ * return <= Math[method](1, 2)
+ */
+function bad() {
+  return 0
+}
+`)
+const randomContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= randomLimit()')
+const dynamicContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= Math[method](1, 2)')
+if (
+  randomContractCheck?.status !== 'unknown'
+  || randomContractCheck.reason?.includes('Unsupported Math.random call') !== true
+  || dynamicContractCheck?.status !== 'unknown'
+  || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
+) {
+  console.error('expected unsupported contract expressions to explain the unsupported step')
+  console.error(JSON.stringify(unsupportedContractExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: unsupported calls rejected')
+}
+
+const mutableAliasContractChecks = verifyFitSource('contract-mutable-alias.ts', `let max = Math.max
+
+/** @fit
+ * return <= max(1, 2)
+ */
+function bad() {
+  return 0
+}
+`)
+const mutableAliasContractCheck = mutableAliasContractChecks.find(check => check.functionName === 'bad' && check.text === 'return <= max(1, 2)')
+if (
+  mutableAliasContractCheck?.status !== 'unknown'
+  || mutableAliasContractCheck.reason?.includes('max is a mutable helper alias') !== true
+) {
+  console.error('expected mutable helper aliases in contracts to be rejected loudly')
+  console.error(JSON.stringify(mutableAliasContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: mutable alias rejected')
+}
+
+const unsupportedGivenExpressionChecks = verifyFitSource('given-contract-unsupported.ts', `const box = {limit: 0}
+
+function bump(value: number) {
+  box.limit += value
+  return box.limit
+}
+
+function double(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given max >= bump(min)
+ */
+function impure(min: number, max: number) {
+  return max
+}
+
+/** @fit
+ * given double(10) > 0
+ */
+function noInput(value: number) {
+  return value
+}
+
+/** @fit
+ * given double(value): 0..10
+ */
+function derivedRangeTarget(value: number) {
+  return value
+}
+
+/** @fit
+ * given bump(value)
+ */
+function impureBoolean(value: number) {
+  return value
+}
+
+/** @fit
+ * given true
+ */
+function noInputBoolean(value: number) {
+  return value
+}
+`)
+const impureGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impure' && check.text === 'given max >= bump(min)')
+const noInputGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInput' && check.text === 'given double(10) > 0')
+const derivedRangeTargetCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'derivedRangeTarget' && check.text === 'given double(value): 0..10')
+const impureBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impureBoolean' && check.text === 'given bump(value)')
+const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInputBoolean' && check.text === 'given true')
+if (
+  impureGivenCheck?.status !== 'unknown'
+  || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
+  || impureGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || noInputGivenCheck?.status !== 'unknown'
+  || noInputGivenCheck.reason !== 'given must mention an input'
+  || derivedRangeTargetCheck?.status !== 'unknown'
+  || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
+  || impureBooleanGivenCheck?.status !== 'unknown'
+  || impureBooleanGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(value)') !== true
+  || impureBooleanGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || noInputBooleanGivenCheck?.status !== 'unknown'
+  || noInputBooleanGivenCheck.reason !== 'given must mention an input'
+) {
+  console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
+  console.error(JSON.stringify(unsupportedGivenExpressionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('given contract expressions: unsupported cases rejected')
+}
+
+const negativeReport = await verifyFitFiles(negativeFiles)
+const actualNegative = normalizeNegative(negativeReport.checks)
+if (Bun.argv.includes('--update')) {
+  await Bun.write(negativeExpectedPath, actualNegative)
+  console.log(`negative: updated ${negativeExpectedPath}`)
+} else {
+  const expectedNegative = normalizeText(await Bun.file(negativeExpectedPath).text())
+  if (actualNegative !== expectedNegative) {
+    console.error('expected negative messages changed')
+    console.error('\nExpected:\n' + expectedNegative)
+    console.error('Actual:\n' + actualNegative)
+    process.exitCode = 1
+  } else {
+    console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
+  }
+}
+
+const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+
+/** @fit
+ * given containerSizX >= 2 * boxesGapX
+ */
+function layout(containerSizeX: number) {
+  return containerSizeX
+}
+`).find(check => check.text === 'given containerSizX >= 2 * boxesGapX')?.reason
+if (suggestedGivenRootReason !== 'containerSizX not found in this contract scope\ndid you mean containerSizeX?') {
+  console.error('expected given typo suggestion')
+  console.error(suggestedGivenRootReason ?? '<missing>')
+  process.exitCode = 1
+} else {
+  console.log('given typo: suggested contract root')
+}
+
+const ambiguousGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+const boxesGapY = 24
+
+/** @fit
+ * given containerSizeX >= 2 * boxesGap
+ */
+function layout(containerSizeX: number) {
+  return containerSizeX
+}
+`).find(check => check.text === 'given containerSizeX >= 2 * boxesGap')?.reason
+if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
+  console.error('expected ambiguous given typo to avoid guessing')
+  console.error(ambiguousGivenRootReason ?? '<missing>')
+  process.exitCode = 1
+} else {
+  console.log('given typo: ambiguous root stays plain')
+}
+
+let duplicateFunctionError = ''
+try {
+  verifyFitSource('duplicate-function.ts', `function score() {
+  return 1
+}
+
+function score() {
+  return 2
+}
+`)
+} catch (error) {
+  duplicateFunctionError = error instanceof Error ? error.message : String(error)
+}
+if (duplicateFunctionError !== 'Unsupported duplicate function implementation score in duplicate-function.ts') {
+  console.error('expected duplicate function names to be rejected before they overwrite fit data')
+  console.error(duplicateFunctionError || '<no error>')
+  process.exitCode = 1
+} else {
+  console.log('function data: duplicate names rejected')
+}
+
+const collapsedUnsupported = uniqueUnsupported([
+  'unsupported render line 1: Unknown identifier events',
+  'unsupported render line 1: Property access expected an object path: events.click',
+  'unsupported render > <if-true>: Unknown assignment root events',
+  'unsupported render > <if-true>: Unknown identifier events',
+  'unsupported render line 2: Unknown assignment root debugTimestamp',
+  'unsupported render line 2: Compound assignment debugTimestamp += 1000 / 60 expected numbers',
+  'unsupported render line 3: Recursive helper inlining is unsupported at walk',
+  'unsupported other line 8: Recursive helper inlining is unsupported at walk',
+])
+const expectedCollapsedUnsupported = [
+  'unsupported render line 1: Unknown identifier events',
+  'unsupported render line 2: Unknown assignment root debugTimestamp',
+  'unsupported render line 3: Recursive helper inlining is unsupported at walk',
+]
+if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n')) {
+  console.error('expected unsupported root fallout to collapse')
+  console.error(collapsedUnsupported.join('\n'))
+  process.exitCode = 1
+} else {
+  console.log('diagnostics: collapsed unsupported root fallout')
+}
+
+const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `function danger() {
+  return missing.value
+}
+
+/** @fit
+ * return: 1
+ */
+function sample() {
+  if (externalPredicate()) return danger()
+  return 1
+}
+`)
+const unsupportedBranchConditionCheck = unsupportedBranchConditionChecks.find(check => check.functionName === 'sample' && check.text === 'return: 1')
+if (
+  unsupportedBranchConditionCheck?.status !== 'unknown'
+  || unsupportedBranchConditionCheck.reason !== 'Unsupported branch condition: externalPredicate()'
+) {
+  console.error('expected unsupported branch conditions to stop before speculating through branch bodies')
+  console.error(JSON.stringify(unsupportedBranchConditionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('control flow: unsupported branch condition stops')
+}
+
+const inferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
+const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedInferFacts = [
+  'return.rows.length == params.items.length',
+  'return.rows.length: int 0..Infinity',
+  'return.rows[].height == params.items[].height',
+  'return.rows follows params.items by index',
+]
+const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
+if (missingInferFacts.length > 0) {
+  console.error('expected inferred facts changed')
+  console.error(missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer: ${expectedInferFacts.length} expected facts`)
+}
+
+const filterInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
+const filterInferFacts = new Set(filterInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedFilterInferFacts = [
+  'return.rows is an order-preserving subset of items',
+]
+const missingFilterInferFacts = expectedFilterInferFacts.filter(fact => !filterInferFacts.has(fact))
+if (missingFilterInferFacts.length > 0) {
+  console.error('expected filter inferred facts changed')
+  console.error(missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
+}
+
+const filterMapInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
+const filterMapInferFacts = new Set(filterMapInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedFilterMapInferFacts = [
+  'return.rows is an order-preserving subset of items',
+]
+const missingFilterMapInferFacts = expectedFilterMapInferFacts.filter(fact => !filterMapInferFacts.has(fact))
+if (missingFilterMapInferFacts.length > 0) {
+  console.error('expected filter-map inferred facts changed')
+  console.error(missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
+}
+
+const loopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'localLoopAnnotation'})
+const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const loopReport = loopInferReport.functions[0]?.loops[0]
+const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
+const loopSpecStatuses = new Map(loopReport?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const loopRedundantSpecs = new Map(loopReport?.redundant.map(spec => [spec.text, spec.reason]) ?? [])
+const expectedLoopFacts = [
+  'rows.length == items.length',
+  'rows[].height: 0..40',
+  'nondecreasing(rows.top)',
+  'spaced(rows, gap)',
+]
+const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
+const expectedLoopSpecStatuses = [
+  ['given items[].height: 0..40', 'assumed'],
+  ['rows.length == items.length', 'checked'],
+  ['spaced(rows, gap)', 'checked'],
+] as const
+const expectedLoopFunctionSpecStatuses = [
+  ['given items.length: int 1..50', 'assumed'],
+  ['return.rows.length == items.length', 'checked'],
+] as const
+const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
+const expectedLoopRedundantSpecs = [
+  ['rows.length == items.length', 'rows.length == items.length'],
+  ['rows[].height: 0..40', 'rows[].height: 0..40'],
+] as const
+const missingLoopRedundantSpecs = expectedLoopRedundantSpecs.filter(([text, reason]) => loopRedundantSpecs.get(text) !== reason)
+const unexpectedlyRedundantLoopSpecs: string[] = []
+const badLoopFunctionSpecStatuses = expectedLoopFunctionSpecStatuses.filter(([text, status]) => loopFunctionSpecStatuses.get(text) !== status)
+if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoopRedundantSpecs.length > 0 || unexpectedlyRedundantLoopSpecs.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
+  console.error('expected loop inferred facts changed')
+  console.error(missingLoopFacts.map(fact => `missing: ${fact}`).join('\n'))
+  console.error(badLoopSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  console.error(missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`).join('\n'))
+  console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
+  console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
+}
+
+const segmentedLoopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
+const segmentedFunction = segmentedLoopInferReport.functions[0]
+const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
+const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const expectedSegmentedFacts = [
+  'return.rows.length: int 0..50',
+  'return.rows[].bottom == (rows[].top + rows[].height)',
+  'nondecreasing(return.rows.top)',
+  'spaced(return.rows, gap)',
+]
+const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
+const expectedSegmentedSpecStatuses = [
+  ['return.rows.length <= items.length', 'checked'],
+  ['return.rows[].bottom == return.rows[].top + return.rows[].height', 'checked'],
+  ['spaced(return.rows, gap)', 'checked'],
+] as const
+const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
+if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
+  console.error('expected segmented loop inferred facts changed')
+  console.error(missingSegmentedFacts.map(fact => `missing: ${fact}`).join('\n'))
+  console.error(badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
+}
+
+const redundantInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarPushLoop'})
+const redundantFunction = redundantInferReport.functions[0]
+const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
+const expectedRedundantFacts = [
+  ['return.length == items.length', 'return.length == items.length'],
+  ['return[]: 0..3000', 'return[]: 0..3000'],
+] as const
+const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => redundantFacts.get(fact) !== reason)
+const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
+const expectedRedundantSpecStatuses = [
+  ['given items.length: int 0..50', 'assumed'],
+  ['return.length == items.length', 'checked'],
+  ['return[]: 0..3000', 'checked'],
+] as const
+const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
+if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
+  console.error('expected function-level redundant facts changed')
+  console.error(missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
+  console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
+}
+
+const tupleInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
+const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+if (!tupleFacts.has('return.length == 2')) {
+  console.error('expected fixed tuple length inference to stay readable')
+  process.exitCode = 1
+} else {
+  console.log('infer tuple length: readable')
+}
+
+const equalityRedundantReport = inferFitFiles([
+  '../vibescript/demos/photo-gallery/layout.ts',
+  '../vibescript/demos/photo-gallery/prompt-layout.ts',
+], {functionName: 'getGridLayout'})
+const equalityRedundantLoop = equalityRedundantReport.functions[0]?.loops[0]
+const equalityRedundantFacts = new Map(equalityRedundantLoop?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
+const expectedEqualityRedundantFacts = [
+  ['rows[].bottom == rows[].top + rows[].height', 'rows[].bottom == (rows[].top + rows[].height)'],
+] as const
+const missingEqualityRedundantFacts = expectedEqualityRedundantFacts.filter(([fact, reason]) => equalityRedundantFacts.get(fact) !== reason)
+if (missingEqualityRedundantFacts.length > 0) {
+  console.error('expected equality redundant facts changed')
+  console.error(missingEqualityRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
+}
+
+const callSiteTextReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
+const callSiteTextFacts = new Set(callSiteTextReport.functions[0]?.facts.map(fact => fact.text) ?? [])
+const expectedCallSiteTextFacts = [
+  'return == max(0, min(value, (position.cols - w)))',
+]
+const missingCallSiteTextFacts = expectedCallSiteTextFacts.filter(fact => !callSiteTextFacts.has(fact))
+if (missingCallSiteTextFacts.length > 0) {
+  console.error('expected call-site inferred text changed')
+  console.error(missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
+  process.exitCode = 1
+} else {
+  console.log(`infer call-site text: ${expectedCallSiteTextFacts.length} expected facts`)
+}
+
+const actualInferSnapshot = normalizeText([
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'typedObjectParamArrayShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'propertyAccessCallShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapCallbackReturnShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'scalarPushLoop'),
+  formatInferSnapshot(['tests/imports/import-patterns.ts'], 'namespaceImportedStructuralShape'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapBlockRowsWithDestructure'),
+  formatInferSnapshot(['tests/patterns/patterns.ts'], 'localLoopAnnotation'),
+  formatInferSnapshot([
+    '../vibescript/demos/photo-gallery/layout.ts',
+    '../vibescript/demos/photo-gallery/prompt-layout.ts',
+  ], 'getGridLayout'),
+  formatInferSnapshot([
+    '../vibescript/demos/photo-gallery/layout.ts',
+    '../vibescript/demos/photo-gallery/prompt-layout.ts',
+  ], 'getLineLayout'),
+].join('\n'))
+if (Bun.argv.includes('--update')) {
+  await Bun.write(inferSnapshotExpectedPath, actualInferSnapshot)
+  console.log(`infer snapshot: updated ${inferSnapshotExpectedPath}`)
+} else {
+  const expectedInferSnapshot = normalizeText(await Bun.file(inferSnapshotExpectedPath).text())
+  if (actualInferSnapshot !== expectedInferSnapshot) {
+    console.error('expected infer snapshot changed')
+    console.error('\nExpected:\n' + expectedInferSnapshot)
+    console.error('Actual:\n' + actualInferSnapshot)
+    process.exitCode = 1
+  } else {
+    console.log('infer snapshot: matched')
+  }
+}
+
+
+function normalizeNegative(checks: FitCheck[]) {
+  const lines = checks
+    .filter(check => check.status !== 'pass')
+    .map(check => {
+      const head = `${check.status.toUpperCase()} ${check.file}:${check.functionName}: ${check.text}`
+      if (check.reason == null) return head
+      const reason = check.reason.split('\n').map(line => `  ${line}`).join('\n')
+      return `${head}\n${reason}`
+    })
+  return normalizeText(lines.join('\n'))
+}
+
+function normalizeText(text: string) {
+  return text.trimEnd() + '\n'
+}
+
+function formatInferSnapshot(paths: string[], functionName: string) {
+  const report = inferFitFiles(paths, {functionName})
+  const fn = report.functions[0]
+  if (fn == null) return `${functionName}\n  missing function`
+  const lines = [`${displayFile(fn.file)}:${fn.functionName}`]
+  addSection(lines, 'return', snapshotItems(functionName, 'return', fn.facts.map(fact => fact.text)))
+  addSection(lines, 'locals', snapshotItems(functionName, 'locals', fn.locals.map(fact => fact.text)))
+  for (const loop of fn.loops) {
+    lines.push(`loop ${loop.line}: ${loop.header}`)
+    addSection(lines, 'inferred', snapshotItems(functionName, 'loop', loop.facts.map(fact => fact.text)), '  ')
+    addSection(lines, 'checked', loop.specs.filter(spec => spec.status === 'checked').map(spec => spec.text), '  ')
+    addSection(lines, 'assumptions', loop.specs.filter(spec => spec.status === 'assumed').map(spec => spec.text), '  ')
+    addSection(lines, 'not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => spec.text), '  ')
+  }
+  addSection(lines, 'unsupported', fn.unsupported.filter(line => line.startsWith('Forgot unsupported')))
+  return lines.join('\n')
+}
+
+function snapshotItems(functionName: string, section: string, items: string[]) {
+  if (functionName === 'getGridLayout') return items.filter(item => keepGridLayoutSnapshotItem(section, item))
+  if (functionName === 'getLineLayout') return items.filter(item => keepLineLayoutSnapshotItem(section, item))
+  return items
+}
+
+function keepGridLayoutSnapshotItem(section: string, item: string) {
+  if (item.includes('.fragments')) return false
+  if (item === 'return.items.length == layoutSources.length') return true
+  if (item === 'return.contentHeight == nextRowTop') return true
+  if (item === 'return.contentHeight: 40..Infinity') return true
+  if (item === 'return.rows.length == rows.length') return true
+  if (item === 'return.rows[].bottom == (rows[].top + rows[].height)') return true
+  if (item === 'return.rows[].bottom: 40..Infinity') return true
+  if (item === 'return.rows[].height == rows[].height') return true
+  if (item === 'return.rows[].height: 0..Infinity') return true
+  if (item === 'return.rows[].top == rows[].top') return true
+  if (item === 'return.rows[].top: 40..Infinity') return true
+  if (item === 'nondecreasing(return.rows.top)') return true
+  if (item === 'spaced(return.rows, boxesGapY)') return true
+  if (section === 'return') {
+    return item === 'return.items[].imageBox.sizeX: 0..1952'
+      || item === 'return.items[].layoutBox.sizeX: 0..1952'
+      || item.includes('return.items[].prompt.box.sizeX ==')
+      || item.includes('return.items[].prompt.box.sizeY ==')
+      || item.includes('return.items[].prompt.lines.length ==')
+      || item === 'return.items[].prompt.lines.length: int 0..Infinity'
+  }
+  return item === 'cols: int 1..7'
+    || item === 'boxMaxSizeX: 18.285714285714285..1952'
+    || item === 'rows[].bottom == (rows[].top + rows[].height)'
+    || item === 'rows[].bottom: 40..Infinity'
+    || item === 'rows[].height: 0..Infinity'
+    || item === 'rows[].top: 40..Infinity'
+    || item === 'nondecreasing(rows.top)'
+    || item === 'spaced(rows, boxesGapY)'
+    || item === 'measurements.length == layoutSources.length'
+    || item === 'measurements[].imageSizeX: 0..1952'
+    || item.includes('measurements[].promptLayout.lineCount ==')
+    || item.includes('measurements[].promptLayout.lines.length ==')
+    || item === 'measurements[].promptLayout.lines.length: int 0..Infinity'
+    || item.includes('measurements[].promptLayout.visibleHeight ==')
+    || item.includes('measurements[].promptLayout.width ==')
+}
+
+function keepLineLayoutSnapshotItem(section: string, item: string) {
+  if (item.includes('.fragments')) return false
+  if (section === 'return') {
+    return item === 'return.items.length == layoutSources.length'
+      || item === 'return.items.length: int 0..Infinity'
+      || item === 'return.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX'
+      || item === 'return.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY'
+      || item.includes('return.items[].prompt.box.sizeX ==')
+      || item.includes('return.items[].prompt.box.sizeY ==')
+      || item.includes('return.items[].prompt.lines.length ==')
+      || item === 'return.items[].prompt.lines.length: int 0..Infinity'
+      || item.includes('return.items[].prompt.lines[].width ==')
+  }
+  return item === 'box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))'
+    || item === 'box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)'
+    || item === 'measurements.length == layoutSources.length'
+    || item === 'measurements.length: int 0..Infinity'
+    || item === 'items.length == layoutSources.length'
+    || item === 'items.length: int 0..Infinity'
+    || item === 'measurements[].imageSizeX == get1DItemSizeResult.imageSizeX'
+    || item === 'measurements[].imageSizeY == get1DItemSizeResult.imageSizeY'
+    || item === 'measurements[].layoutHeight == get1DItemSizeResult.layoutHeight'
+    || item === 'measurements[].promptLayout.lineCount == get1DItemSizeResult.promptLayout.lineCount'
+    || item === 'measurements[].promptLayout.lines.length == get1DItemSizeResult.promptLayout.lines.length'
+    || item === 'measurements[].promptLayout.lines.length: int 0..Infinity'
+    || item === 'measurements[].promptLayout.visibleHeight == get1DItemSizeResult.promptLayout.visibleHeight'
+    || item === 'measurements[].promptLayout.width == get1DItemSizeResult.promptLayout.width'
+}
+
+function addSection(lines: string[], name: string, items: string[], indent = '') {
+  if (items.length === 0) return
+  lines.push(`${indent}${name}:`)
+  for (const item of items) lines.push(`${indent}  ${item}`)
+}
+
+function displayFile(file: string) {
+  if (file.startsWith(repoDir)) return file.slice(repoDir.length)
+  if (file.startsWith(workspaceDir)) return `../${file.slice(workspaceDir.length)}`
+  return file
+}

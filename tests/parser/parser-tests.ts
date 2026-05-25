@@ -8,7 +8,7 @@ import {
   parseFunctionFitSpecs,
   type FitRange,
   type FitSpec,
-} from './src/parser.ts'
+} from '../../src/parser.ts'
 
 function expect(condition: boolean, message: string): asserts condition {
   if (condition) return

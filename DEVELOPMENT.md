@@ -6,8 +6,8 @@ bun install
 
 ## Day-To-Day
 
-- `bun run test` — positive patterns, stable negative messages, and curated inference snapshots
-- `bun run test:parser` — focused parser-layer checks for contract syntax classification and TS type lowering
+- `bun run test` — focused checker suites, positive patterns, stable negative messages, CLI regressions, and curated inference snapshots
+- `bun run test:parser` — focused parser-layer checks in [tests/parser](./tests/parser) for contract syntax classification and TS type lowering
 - `bun run fr --help` — print the CLI command shapes
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
@@ -62,7 +62,9 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [shape-diff.ts](./shape-diff.ts), [src/shape-inspect.ts](./src/shape-inspect.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — dev-only shape and timing tools
-- [test.ts](./test.ts), [parser-tests.ts](./parser-tests.ts), [tests/patterns/patterns.ts](./tests/patterns/patterns.ts), [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, and report coverage
+- [test.ts](./test.ts) — small orchestrator for focused checker suites
+- [tests/check](./tests/check), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), and [tests/cli](./tests/cli) — focused checker, range-reduction, type-contract, and CLI/project regressions
+- [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
 - `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
 
 ## Infer Tool
