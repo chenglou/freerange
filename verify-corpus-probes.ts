@@ -1,3 +1,4 @@
+import type * as ts from 'typescript'
 import {
   corpusRoot,
   corpusRootExists,
@@ -5,6 +6,8 @@ import {
   type CorpusSweep,
 } from './corpus-probes.ts'
 import {type FitCheck, verifyFitFiles} from './src/reports.ts'
+import {TypeScriptUserlandError} from './src/modules.ts'
+import {formatTypeScriptDiagnostics as formatTypeScriptDiagnosticsWithReporter} from './src/ts-diagnostics.ts'
 import {verifySnapshot} from './snapshot.ts'
 
 const expectedPath = 'corpus-probes.expected.txt'
@@ -37,19 +40,39 @@ async function addSweep(lines: string[], sweep: CorpusSweep) {
   lines.push(`${sweep.name}: ${sweep.paths.length} files`)
   for (const path of sweep.paths) lines.push(`  ${displayFile(path)}`)
 
-  const checkReport = await verifyFitFiles(sweep.paths, {failOnRequires: false})
-  lines.push(`  check: ${checkReport.summary.pass} pass, ${checkReport.summary.fail} fail, ${checkReport.summary.requires} requires, ${checkReport.summary.unknown} unknown`)
-  lines.push(...formatNonPassChecks(checkReport.checks))
+  try {
+    const checkReport = await verifyFitFiles(sweep.paths, {failOnRequires: false})
+    lines.push(`  check: ${checkReport.summary.pass} pass, ${checkReport.summary.fail} fail, ${checkReport.summary.requires} requires, ${checkReport.summary.unknown} unknown`)
+    lines.push(...formatNonPassChecks(checkReport.checks))
 
-  return {
-    clean: checkReport.summary.fail === 0,
-    totals: {
-      files: sweep.paths.length,
-      checkPass: checkReport.summary.pass,
-      checkFail: checkReport.summary.fail,
-      checkRequires: checkReport.summary.requires,
-      checkUnknown: checkReport.summary.unknown,
-    },
+    return {
+      clean: checkReport.summary.fail === 0,
+      totals: {
+        files: sweep.paths.length,
+        typeErrorGroups: 0,
+        typeErrors: 0,
+        checkPass: checkReport.summary.pass,
+        checkFail: checkReport.summary.fail,
+        checkRequires: checkReport.summary.requires,
+        checkUnknown: checkReport.summary.unknown,
+      },
+    }
+  } catch (error) {
+    if (!(error instanceof TypeScriptUserlandError)) throw error
+    lines.push(`  typecheck: ${error.diagnostics.length} errors`)
+    lines.push(...formatTypeScriptDiagnostics(error.diagnostics))
+    return {
+      clean: true,
+      totals: {
+        files: sweep.paths.length,
+        typeErrorGroups: 1,
+        typeErrors: error.diagnostics.length,
+        checkPass: 0,
+        checkFail: 0,
+        checkRequires: 0,
+        checkUnknown: 0,
+      },
+    }
   }
 }
 
@@ -58,6 +81,8 @@ type CorpusTotals = ReturnType<typeof emptyTotals>
 function emptyTotals() {
   return {
     files: 0,
+    typeErrorGroups: 0,
+    typeErrors: 0,
     checkPass: 0,
     checkFail: 0,
     checkRequires: 0,
@@ -67,6 +92,8 @@ function emptyTotals() {
 
 function addTotals(totals: CorpusTotals, addition: CorpusTotals) {
   totals.files += addition.files
+  totals.typeErrorGroups += addition.typeErrorGroups
+  totals.typeErrors += addition.typeErrors
   totals.checkPass += addition.checkPass
   totals.checkFail += addition.checkFail
   totals.checkRequires += addition.checkRequires
@@ -76,6 +103,7 @@ function addTotals(totals: CorpusTotals, addition: CorpusTotals) {
 function formatTotals(groups: number, totals: CorpusTotals) {
   return [
     `summary: ${groups} groups, ${totals.files} files`,
+    `typecheck: ${totals.typeErrorGroups} groups, ${totals.typeErrors} errors`,
     `check: ${totals.checkPass} pass, ${totals.checkFail} fail, ${totals.checkRequires} requires, ${totals.checkUnknown} unknown`,
   ].join('; ')
 }
@@ -94,5 +122,13 @@ function formatNonPassChecks(checks: FitCheck[]) {
     const firstReasonLine = check.reason?.split('\n')[0]
     if (firstReasonLine != null && firstReasonLine !== '') lines.push(`      ${firstReasonLine}`)
   }
+  return lines
+}
+
+function formatTypeScriptDiagnostics(diagnostics: readonly ts.Diagnostic[]) {
+  const limit = 8
+  const formatted = formatTypeScriptDiagnosticsWithReporter(diagnostics.slice(0, limit))
+  const lines = formatted.length === 0 ? [] : formatted.split('\n').map(line => `    ${line}`)
+  if (diagnostics.length > limit) lines.push(`    ... ${diagnostics.length - limit} more`)
   return lines
 }

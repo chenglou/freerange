@@ -8,9 +8,4 @@ export const demoContractPaths = [
   '../vibescript/demos/photo-gallery/prompt-layout.ts',
   '../vibescript/demos/predictive-keyframes/index.ts',
   '../vibescript/demos/scroll-anchor/anchor-layout.ts',
-  '../pretext/pages/demos/bubbles-shared.ts',
-  '../pretext/pages/demos/dynamic-layout.ts',
-  '../pretext/pages/demos/markdown-chat.model.ts',
-  '../pretext/pages/demos/rich-note.model.ts',
-  '../pretext/pages/demos/wrap-geometry.ts',
 ]

@@ -2,7 +2,7 @@ import {createFunctionContractCache, inferFitFiles, readTopLevelGlobal, verifyFi
 import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from '../../src/domain.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
-import {buildFitSourceFile} from '../../src/modules.ts'
+import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 
 const positiveFiles = ['tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
@@ -221,8 +221,9 @@ function nonArrayGivenPath(rows: {height: number}) {
  * given input: 0..10
  * return: 1..11
  */
-function untypedParamGiven(input) {
-  return input + 1
+function unknownParamGiven(input: unknown) {
+  void input
+  return 1
 }
 
 /** @fit
@@ -238,7 +239,8 @@ function typedCallbackItem(items: {width: number}[]) {
  * return: 0..10
  */
 function missingCallbackItemField(items: {}[]) {
-  return items.map(item => item.width)[0] ?? 0
+  void items
+  return 0
 }
 `)
 const typedGivenPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedGivenPath' && check.status !== 'pass')
@@ -248,7 +250,7 @@ const optionalGivenReturnCheck = shortcutCleanupChecks.find(check => check.funct
 const missingGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingGivenField' && check.text === 'given input.width: 0..10')
 const stringGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'stringGivenField' && check.text === 'given input.width: 0..10')
 const nonArrayGivenPathCheck = shortcutCleanupChecks.find(check => check.functionName === 'nonArrayGivenPath' && check.text === 'given rows[].height: 0..10')
-const untypedParamGivenCheck = shortcutCleanupChecks.find(check => check.functionName === 'untypedParamGiven' && check.text === 'given input: 0..10')
+const unknownParamGivenCheck = shortcutCleanupChecks.find(check => check.functionName === 'unknownParamGiven' && check.text === 'given input: 0..10')
 const typedCallbackItemFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedCallbackItem' && check.status !== 'pass')
 const missingCallbackItemFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingCallbackItemField' && check.text === 'given items[].width: 0..10')
 if (
@@ -263,8 +265,8 @@ if (
   || stringGivenFieldCheck.reason?.includes("TS2322: Type 'string' is not assignable to type 'number'") !== true
   || nonArrayGivenPathCheck?.status !== 'unknown'
   || nonArrayGivenPathCheck.reason?.includes("TS7053: Element implicitly has an 'any' type") !== true
-  || untypedParamGivenCheck?.status !== 'unknown'
-  || untypedParamGivenCheck.reason?.includes('Parameter input needs a TypeScript type') !== true
+  || unknownParamGivenCheck?.status !== 'unknown'
+  || unknownParamGivenCheck.reason?.includes("TS2322: Type 'unknown' is not assignable to type 'number'") !== true
   || typedCallbackItemFailures.length > 0
   || missingCallbackItemFieldCheck?.status !== 'unknown'
   || missingCallbackItemFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
@@ -321,7 +323,11 @@ const expectedTypeLayerErrors = [
 ] as const
 const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, text, reason]) => {
   const check = contractTypeLayerChecks.find(item => item.functionName === functionName && item.text === text)
-  return check?.status !== 'unknown' || check.reason?.includes(reason) !== true
+  return check?.status !== 'unknown'
+    || check.reason?.includes(reason) !== true
+    || check.reason.includes('contract-type-layer.ts(') !== true
+    || check.reason.includes(': error TS') !== true
+    || check.line == null
 })
 if (missingTypeLayerErrors.length > 0) {
   console.error('expected every contract surface to be TypeScript-checked before proving')
@@ -924,7 +930,7 @@ if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !=
   console.log('given typo: ambiguous root reported by TypeScript')
 }
 
-let duplicateFunctionError = ''
+let duplicateFunctionError: Error | null = null
 try {
   verifyFitSource('duplicate-function.ts', `function score() {
   return 1
@@ -935,11 +941,15 @@ function score() {
 }
 `)
 } catch (error) {
-  duplicateFunctionError = error instanceof Error ? error.message : String(error)
+  duplicateFunctionError = error instanceof Error ? error : new Error(String(error))
 }
-if (duplicateFunctionError !== 'Unsupported duplicate function implementation score in duplicate-function.ts') {
-  console.error('expected duplicate function names to be rejected before they overwrite fit data')
-  console.error(duplicateFunctionError || '<no error>')
+if (
+  !(duplicateFunctionError instanceof TypeScriptUserlandError)
+  || !duplicateFunctionError.message.includes('duplicate-function.ts(1,10): error TS2393: Duplicate function implementation.')
+  || !duplicateFunctionError.message.includes('duplicate-function.ts(5,10): error TS2393: Duplicate function implementation.')
+) {
+  console.error('expected duplicate function names to be rejected by TypeScript preflight')
+  console.error(duplicateFunctionError?.message ?? '<no error>')
   process.exitCode = 1
 } else {
   console.log('function data: duplicate names rejected')
@@ -968,8 +978,10 @@ if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n'))
   console.log('diagnostics: collapsed unsupported root fallout')
 }
 
-const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `function danger() {
-  return missing.value
+const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `declare function externalPredicate(): boolean
+
+function danger() {
+  return 2
 }
 
 /** @fit

@@ -90,7 +90,7 @@ Use `Infinity` for physically unbounded values: scroll offsets, cumulative layou
 
 ## TypeScript Owns Syntax And Identity; Freerange Owns Meaning
 
-TypeScript handles syntax diagnostics, project file resolution, and module identity. Freerange handles intervals, helper contracts, sequence summaries, and reports. The split keeps Freerange from re-implementing TS.
+TypeScript handles normal code diagnostics, project file resolution, and module identity. Freerange handles intervals, helper contracts, sequence summaries, and reports. The split keeps Freerange from re-implementing TS.
 
 `@fit` lines follow the same split. Freerange lowers the written contract to a small TypeScript check first: `given input.width: 0..10` reads `input.width` as a number, `items[].height` reads one array item, and `return: {width: 0..10}` uses TypeScript's object/type syntax around the numeric leaf. If TypeScript rejects that lowered code, Freerange reports the contract as unknown and does not use it as an assumption or proof.
 

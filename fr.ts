@@ -3,7 +3,7 @@
 import {inferFitFiles, summarizeFitFiles} from './src/check-core.ts'
 import {printInferReport, printInferSummary} from './src/infer-output.ts'
 import {type FitAudit, type FitCheck, verifyFitFiles} from './src/reports.ts'
-import {resolveFitProjectPaths} from './src/modules.ts'
+import {resolveFitProjectPaths, TypeScriptUserlandError} from './src/modules.ts'
 
 const [command, ...args] = Bun.argv.slice(2)
 
@@ -25,7 +25,7 @@ try {
       process.exitCode = 2
   }
 } catch (error) {
-  console.error(`fr: ${error instanceof Error ? error.message : String(error)}`)
+  console.error(error instanceof TypeScriptUserlandError ? error.message : `fr: ${error instanceof Error ? error.message : String(error)}`)
   process.exitCode = 2
 }
 

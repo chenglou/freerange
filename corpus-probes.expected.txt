@@ -1,4 +1,4 @@
-summary: 16 groups, 38 files; check: 131 pass, 0 fail, 6 requires, 18 unknown
+summary: 16 groups, 38 files; typecheck: 16 groups, 18356 errors; check: 0 pass, 0 fail, 0 requires, 0 unknown
 
 2d-geometry: 9 files
   2d-geometry/src/algorithms/distance.ts
@@ -10,59 +10,127 @@ summary: 16 groups, 38 files; check: 131 pass, 0 fail, 6 requires, 18 unknown
   2d-geometry/src/classes/Point.ts
   2d-geometry/src/classes/Quadratic.ts
   2d-geometry/src/classes/Segment.ts
-  check: 16 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 405 errors
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(64,7): error TS7034: Variable 'clip_shapes1' implicitly has type 'any[]' in some locations where its type cannot be determined.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(66,24): error TS7005: Variable 'clip_shapes1' implicitly has an 'any[]' type.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(68,7): error TS7034: Variable 'clip_shapes2' implicitly has type 'any[]' in some locations where its type cannot be determined.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(70,24): error TS7005: Variable 'clip_shapes2' implicitly has an 'any[]' type.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(72,11): error TS7005: Variable 'clip_shapes1' implicitly has an 'any[]' type.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(72,25): error TS7005: Variable 'clip_shapes2' implicitly has an 'any[]' type.
+    ../freerange-corpus/2d-geometry/src/algorithms/booleanOperations.ts(81,7): error TS7034: Variable 'clip_shapes1' implicitly has type 'any[]' in some locations where its type cannot be determined.
+    ... 397 more
 angular-grid-layout: 1 files
   angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts
-  check: 2 pass, 0 fail, 2 requires, 0 unknown
-    REQUIRES angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts:319:ktdGridItemResizing: limitNumberWithinRange(layoutItem.w, gridItem.minW ?? layoutItem.minW, gridItem.maxW ?? layoutItem.maxW): requires max: 1..Infinity
-      caller passed: max: any number
-    REQUIRES angular-grid-layout/projects/angular-grid-layout/src/lib/utils/grid.utils.ts:320:ktdGridItemResizing: limitNumberWithinRange(layoutItem.h, gridItem.minH ?? layoutItem.minH, gridItem.maxH ?? layoutItem.maxH): requires max: 1..Infinity
-      caller passed: max: any number
+  typecheck: 321 errors
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5101: Option 'downlevelIteration' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    ../freerange-corpus/angular-grid-layout/projects/angular-grid-layout/src/lib/directives/drag-handle.ts(1,55): error TS2307: Cannot find module '@angular/core' or its corresponding type declarations.
+    ../freerange-corpus/angular-grid-layout/projects/angular-grid-layout/src/lib/directives/drag-handle.ts(11,1): error TS2354: This syntax requires an imported helper but module 'tslib' cannot be found.
+    ../freerange-corpus/angular-grid-layout/projects/angular-grid-layout/src/lib/directives/placeholder.ts(1,63): error TS2307: Cannot find module '@angular/core' or its corresponding type declarations.
+    ../freerange-corpus/angular-grid-layout/projects/angular-grid-layout/src/lib/directives/placeholder.ts(11,1): error TS2354: This syntax requires an imported helper but module 'tslib' cannot be found.
+    ../freerange-corpus/angular-grid-layout/projects/angular-grid-layout/src/lib/directives/placeholder.ts(23,14): error TS2564: Property 'data' has no initializer and is not definitely assigned in the constructor.
+    ... 313 more
 Chart.js: 2 files
   Chart.js/src/helpers/helpers.curve.ts
   Chart.js/src/helpers/helpers.math.ts
-  check: 5 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 1853 errors
+    error TS2688: Cannot find type definition file for 'offscreencanvas'.
+      The file is in the program because:
+        Entry point of type library 'offscreencanvas' specified in compilerOptions
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5102: Option 'importsNotUsedAsValues' has been removed. Please remove it from your configuration.
+      Use 'verbatimModuleSyntax' instead.
+    error TS5110: Option 'module' must be set to 'NodeNext' when option 'moduleResolution' is set to 'NodeNext'.
+    ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(7,28): error TS7006: Parameter 'scale' implicitly has an 'any' type.
+    ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(7,35): error TS7006: Parameter 'type' implicitly has an 'any' type.
+    ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(10,9): error TS7034: Variable 'values' implicitly has type 'any[]' in some locations where its type cannot be determined.
+    ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(13,16): error TS7005: Variable 'values' implicitly has an 'any[]' type.
+    ... 1845 more
 d3-scale: 1 files
   d3-scale/src/radial.js
-  check: 0 pass, 0 fail, 0 requires, 4 unknown
-    UNKNOWN d3-scale/src/radial.js:7:square: given x: -100..100
-      Parameter x needs a TypeScript type or an explicit @fit range
-    UNKNOWN d3-scale/src/radial.js:8:square: return: -10000..10000
-      Binary expression Math.sign(x) * x * x expected numbers
-    UNKNOWN d3-scale/src/radial.js:15:unsquare: given x: 0..10000
-      Parameter x needs a TypeScript type or an explicit @fit range
-    UNKNOWN d3-scale/src/radial.js:16:unsquare: return: 0..100
-      Binary expression Math.sign(x) * Math.sqrt(Math.abs(x)) expected numbers
+  typecheck: 1 errors
+    error TS6504: File '/Users/chenglou/github/freerange-corpus/d3-scale/src/radial.js' is a JavaScript file. Did you mean to enable the 'allowJs' option?
+      The file is in the program because:
+        Root file specified for compilation
 dagre: 1 files
   dagre/lib/greedy-fas.ts
-  check: 4 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 94 errors
+    ../freerange-corpus/dagre/index.ts(25,27): error TS2307: Cannot find module '@dagrejs/graphlib' or its corresponding type declarations.
+    ../freerange-corpus/dagre/index.ts(33,21): error TS2307: Cannot find module '@dagrejs/graphlib' or its corresponding type declarations.
+    ../freerange-corpus/dagre/lib/acyclic.ts(1,21): error TS2307: Cannot find module '@dagrejs/graphlib' or its corresponding type declarations.
+    ../freerange-corpus/dagre/lib/acyclic.ts(38,36): error TS7006: Parameter 'e' implicitly has an 'any' type.
+    ../freerange-corpus/dagre/lib/acyclic.ts(53,27): error TS7006: Parameter 'e' implicitly has an 'any' type.
+    ../freerange-corpus/dagre/lib/coordinate-system.ts(23,27): error TS7006: Parameter 'node' implicitly has an 'any' type.
+    ../freerange-corpus/dagre/lib/coordinate-system.ts(24,27): error TS7006: Parameter 'edge' implicitly has an 'any' type.
+    ../freerange-corpus/dagre/lib/coordinate-system.ts(34,27): error TS7006: Parameter 'node' implicitly has an 'any' type.
+    ... 86 more
 dnd-kit:packages/geometry: 1 files
   dnd-kit/packages/geometry/src/shapes/Rectangle.ts
-  check: 1 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 9 errors
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(1,44): error TS2307: Cannot find module '@dnd-kit/state' or its corresponding type declarations.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(10,19): error TS7006: Parameter 'a' implicitly has an 'any' type.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(10,22): error TS7006: Parameter 'b' implicitly has an 'any' type.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(17,3): error TS2354: This syntax requires an imported helper but module 'tslib' cannot be found.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(19,43): error TS2339: Property 'initial' does not exist on type 'Position'.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(24,21): error TS2339: Property 'previous' does not exist on type 'Position'.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/position/position.ts(70,35): error TS2339: Property 'defaultValue' does not exist on type 'Position'.
+    ../freerange-corpus/dnd-kit/packages/geometry/src/types/axis.ts(6,28): error TS2550: Property 'values' does not exist on type 'ObjectConstructor'. Do you need to change your target library? Try changing the 'lib' compiler option to 'es2017' or later.
+    ... 1 more
 fabric.js: 1 files
   fabric.js/src/util/misc/capValue.ts
-  check: 2 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 61 errors
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '__objectSelectionMonitor' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_animate' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_applyPatternForTransformedGradient' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_applyPatternGradientTransform' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_calcCornerCoords' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_calculateCurrentDimensions' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_constrainScale' of exported anonymous class type may not be private or protected.
+    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_createCacheCanvas' of exported anonymous class type may not be private or protected.
+    ... 53 more
 floating-ui:packages/utils: 1 files
   floating-ui/packages/utils/src/index.ts
-  check: 12 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 1 errors
+    error TS6053: File 'config/tsconfig.base.json' not found.
 gridstack.js: 1 files
   gridstack.js/src/utils.ts
-  check: 1 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 1792 errors
+    error TS2688: Cannot find type definition file for '@testing-library/jest-dom'.
+      The file is in the program because:
+        Entry point of type library '@testing-library/jest-dom' specified in compilerOptions
+    error TS2688: Cannot find type definition file for 'node'.
+      The file is in the program because:
+        Entry point of type library 'node' specified in compilerOptions
+    error TS2688: Cannot find type definition file for 'vitest/globals'.
+      The file is in the program because:
+        Entry point of type library 'vitest/globals' specified in compilerOptions
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    ../freerange-corpus/gridstack.js/spec/dd-base-impl-spec.ts(3,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/gridstack.js/spec/dd-base-impl-spec.ts(6,3): error TS2593: Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/gridstack.js/spec/dd-base-impl-spec.ts(7,16): error TS2511: Cannot create an instance of an abstract class.
+    ../freerange-corpus/gridstack.js/spec/dd-base-impl-spec.ts(10,3): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ... 1784 more
 interact.js: 1 files
   interact.js/packages/@interactjs/utils/center.ts
-  check: 0 pass, 0 fail, 0 requires, 6 unknown
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:4:default: given rect.left: -1000..1000
-      Parameter rect needs a TypeScript type or an explicit @fit range
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:5:default: given rect.right: -1000..1000
-      Parameter rect needs a TypeScript type or an explicit @fit range
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:6:default: given rect.top: -1000..1000
-      Parameter rect needs a TypeScript type or an explicit @fit range
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:7:default: given rect.bottom: -1000..1000
-      Parameter rect needs a TypeScript type or an explicit @fit range
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:8:default: return.x: -1000..1000
-      Binary expression rect.left + (rect.right - rect.left) / 2 expected numbers
-    UNKNOWN interact.js/packages/@interactjs/utils/center.ts:9:default: return.y: -1000..1000
-      Binary expression rect.top + (rect.bottom - rect.top) / 2 expected numbers
+  typecheck: 1079 errors
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(1,28): error TS2307: Cannot find module '@interactjs/core/scope' or its corresponding type declarations.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(2,26): error TS2307: Cannot find module '@interactjs/core/tests/_helpers' or its corresponding type declarations.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(3,33): error TS2307: Cannot find module '@interactjs/core/types' or its corresponding type declarations.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(4,31): error TS2307: Cannot find module '@interactjs/utils/pointerUtils' or its corresponding type declarations.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(8,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/interact.js/packages/@interactjs/actions/actions.spec.ts(23,5): error TS2593: Cannot find name 'test'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ... 1071 more
 litegraph.js: 6 files
   litegraph.js/src/infrastructure/ConstrainedSize.ts
   litegraph.js/src/infrastructure/Rectangle.ts
@@ -70,21 +138,77 @@ litegraph.js: 6 files
   litegraph.js/src/node/NodeInputSlot.ts
   litegraph.js/src/node/NodeOutputSlot.ts
   litegraph.js/src/Reroute.ts
-  check: 8 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 3 errors
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5101: Option 'downlevelIteration' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
 moveable:packages/react-moveable: 1 files
   moveable/packages/react-moveable/src/utils.tsx
-  check: 2 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 2289 errors
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5101: Option 'downlevelIteration' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+    error TS5107: Option 'esModuleInterop=false' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+    error TS5107: Option 'moduleResolution=node10' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    error TS5107: Option 'target=ES5' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+    ../freerange-corpus/moveable/packages/helper/src/GroupManager.ts(2,35): error TS2307: Cannot find module '@daybrush/utils' or its corresponding type declarations.
+    ../freerange-corpus/moveable/packages/helper/src/GroupManager.ts(135,68): error TS2345: Argument of type 'HTMLElement | SVGElement | TargetGroupsType' is not assignable to parameter of type 'TargetGroupsType'.
+      Type 'HTMLElement' is missing the following properties from type '(HTMLElement | SVGElement | TargetGroupsType)[]': length, pop, push, concat, and 28 more.
+    ../freerange-corpus/moveable/packages/helper/src/GroupManager.ts(188,68): error TS2345: Argument of type 'HTMLElement | SVGElement | TargetGroupsType' is not assignable to parameter of type 'TargetGroupsType'.
+      Type 'HTMLElement' is missing the following properties from type '(HTMLElement | SVGElement | TargetGroupsType)[]': length, pop, push, concat, and 28 more.
+    ... 2281 more
 react-grid-layout: 3 files
   react-grid-layout/src/core/calculate.ts
   react-grid-layout/src/core/constraints.ts
   react-grid-layout/src/core/position.ts
-  check: 12 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 79 errors
+    error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0. Specify compilerOption '"ignoreDeprecations": "6.0"' to silence this error.
+      Visit https://aka.ms/ts6 for migration information.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(277,29): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(278,33): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(292,29): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(293,31): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(319,31): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/position.ts(320,35): error TS2503: Cannot find namespace 'React'.
+    ../freerange-corpus/react-grid-layout/src/core/types.ts(329,29): error TS2503: Cannot find namespace 'React'.
+    ... 71 more
 tldraw:packages/editor: 1 files
   tldraw/packages/editor/src/lib/primitives/utils.ts
-  check: 3 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 2744 errors
+    error TS2688: Cannot find type definition file for 'node'.
+      The file is in the program because:
+        Entry point of type library 'node' specified in compilerOptions
+    error TS2688: Cannot find type definition file for 'vitest'.
+      The file is in the program because:
+        Entry point of type library 'vitest' specified in compilerOptions
+    error TS2688: Cannot find type definition file for 'vitest/globals'.
+      The file is in the program because:
+        Entry point of type library 'vitest/globals' specified in compilerOptions
+    error TS5074: Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified.
+    ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(18,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(19,2): error TS2593: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(23,3): error TS2304: Cannot find name 'expect'.
+    ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(57,3): error TS2304: Cannot find name 'expect'.
+    ... 2736 more
 tldraw:packages/tldraw: 1 files
   tldraw/packages/tldraw/src/lib/shapes/arrow/elbow/range.tsx
-  check: 8 pass, 0 fail, 0 requires, 0 unknown
+  typecheck: 7602 errors
+    error TS2688: Cannot find type definition file for 'node'.
+      The file is in the program because:
+        Entry point of type library 'node' specified in compilerOptions
+    error TS2688: Cannot find type definition file for 'vitest/globals'.
+      The file is in the program because:
+        Entry point of type library 'vitest/globals' specified in compilerOptions
+    error TS5074: Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified.
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/assets/ImageAssetUtil.test.ts(9,1): error TS2593: Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/assets/ImageAssetUtil.test.ts(13,1): error TS2304: Cannot find name 'afterEach'.
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(34,1): error TS2593: Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(45,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(46,2): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ... 7594 more
 xyflow:packages/system: 7 files
   xyflow/packages/system/src/utils/edges/bezier-edge.ts
   xyflow/packages/system/src/utils/edges/general.ts
@@ -93,28 +217,13 @@ xyflow:packages/system: 7 files
   xyflow/packages/system/src/utils/general.ts
   xyflow/packages/system/src/xyresizer/utils.ts
   xyflow/packages/system/src/xyresizer/XYResizer.ts
-  check: 55 pass, 0 fail, 4 requires, 8 unknown
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:29:clampPosition: given dimensions.width: 0..Infinity
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:30:clampPosition: given dimensions.height: 0..Infinity
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:31:clampPosition: given dimensions.width <= extent[1][0] - extent[0][0]
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:32:clampPosition: given dimensions.height <= extent[1][1] - extent[0][1]
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:46:clampPositionToParent: given parent.measured.width: 0..Infinity
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:47:clampPositionToParent: given parent.measured.height: 0..Infinity
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:48:clampPositionToParent: given childDimensions.width <= parent.measured.width
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    UNKNOWN xyflow/packages/system/src/utils/general.ts:49:clampPositionToParent: given childDimensions.height <= parent.measured.height
-      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
-    REQUIRES xyflow/packages/system/src/utils/general.ts:39:clampPosition: clamp(position.x, extent[0][0], extent[1][0] - (dimensions?.width ?? 0)): requires min <= max
-      caller passed: min: any number, max: any number
-    REQUIRES xyflow/packages/system/src/utils/general.ts:40:clampPosition: clamp(position.y, extent[0][1], extent[1][1] - (dimensions?.height ?? 0)): requires min <= max
-      caller passed: min: any number, max: any number
-    REQUIRES xyflow/packages/system/src/utils/general.ts:39:clampPositionToParent > clampPosition: clamp(position.x, extent[0][0], extent[1][0] - (dimensions?.width ?? 0)): requires min <= max
-      caller passed: min: any number, max: any number
-    REQUIRES xyflow/packages/system/src/utils/general.ts:40:clampPositionToParent > clampPosition: clamp(position.y, extent[0][1], extent[1][1] - (dimensions?.height ?? 0)): requires min <= max
-      caller passed: min: any number, max: any number
+  typecheck: 23 errors
+    error TS6053: File '@xyflow/tsconfig/base.json' not found.
+    ../freerange-corpus/xyflow/packages/system/src/types/general.ts(2,47): error TS2307: Cannot find module 'd3-selection' or its corresponding type declarations.
+    ../freerange-corpus/xyflow/packages/system/src/types/general.ts(3,51): error TS2307: Cannot find module 'd3-drag' or its corresponding type declarations.
+    ../freerange-corpus/xyflow/packages/system/src/types/general.ts(4,35): error TS2307: Cannot find module 'd3-zoom' or its corresponding type declarations.
+    ../freerange-corpus/xyflow/packages/system/src/types/general.ts(6,33): error TS2307: Cannot find module 'd3-transition' or its corresponding type declarations.
+    ../freerange-corpus/xyflow/packages/system/src/types/panzoom.ts(1,36): error TS2307: Cannot find module 'd3-zoom' or its corresponding type declarations.
+    ../freerange-corpus/xyflow/packages/system/src/utils/general.ts(189,7): error TS2591: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+    ../freerange-corpus/xyflow/packages/system/src/utils/graph.ts(199,7): error TS2591: Cannot find name 'process'. Do you need to install type definitions for node? Try `npm i --save-dev @types/node` and then add 'node' to the types field in your tsconfig.
+    ... 15 more

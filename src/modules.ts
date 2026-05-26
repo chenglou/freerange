@@ -10,6 +10,7 @@ import {
   createTypeContractTemplateIndex,
   type TypeContractTemplateIndex,
 } from './type-contracts.ts'
+import {formatTypeScriptDiagnostics} from './ts-diagnostics.ts'
 
 export type FitFunctionNode =
   | ts.FunctionDeclaration
@@ -110,6 +111,13 @@ export type FitCallAlias =
 
 export type TopLevelGlobalReader<TGlobal> = (declaration: ts.VariableDeclaration) => {name: string; value: TGlobal} | null
 
+export class TypeScriptUserlandError extends Error {
+  constructor(readonly diagnostics: readonly ts.Diagnostic[]) {
+    super(formatTypeScriptDiagnostics(diagnostics))
+    this.name = 'TypeScriptUserlandError'
+  }
+}
+
 type LoadFitProjectOptions = {
   timing?: FitProjectLoadTiming
 }
@@ -117,6 +125,7 @@ type LoadFitProjectOptions = {
 type ResolutionContext = {
   compilerOptions: ts.CompilerOptions
   configFile: string | null
+  configDiagnostics: readonly ts.Diagnostic[]
   cache: ts.ModuleResolutionCache
   typeProgram: ts.Program
   typeChecker: ts.TypeChecker
@@ -133,6 +142,7 @@ export function loadFitProject<TGlobal>(
   options: LoadFitProjectOptions = {},
 ): FitProject<TGlobal> {
   const resolution = createResolutionContext(paths, options.timing)
+  throwOnUserlandTypeDiagnostics(resolution)
   const project: FitProject<TGlobal> = {
     entries: [],
     files: new Map(),
@@ -194,33 +204,30 @@ export function buildFitSourceFile<TGlobal>(
   const typeChecker = typeProgram.getTypeChecker()
   const sourceFile = typeProgram.getSourceFile(sourceId)
     ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
+  throwOnUserlandTypeDiagnostics({typeProgram, configDiagnostics: []})
   const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions, rootNames: [sourceId]}
-  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, undefined, project)
+  const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, typeProgram.getSyntacticDiagnostics(sourceFile), project)
   project.files.set(cacheKeyFor(sourceId), fitFile)
   project.filesBySourceFile.set(sourceFile, fitFile)
   return fitFile
 }
 
-function throwOnSyntaxDiagnostics(
-  file: string,
-  sourceFile: ts.SourceFile,
-  diagnostics: readonly ts.Diagnostic[] = sourceFileParseDiagnostics(sourceFile),
-) {
+function throwOnSyntaxDiagnostics(sourceFile: ts.SourceFile, diagnostics: readonly ts.Diagnostic[] = sourceFileParseDiagnostics(sourceFile)) {
   if (diagnostics.length === 0) return
-  const lines = diagnostics.map(diagnostic => formatSyntaxDiagnostic(file, sourceFile, diagnostic))
-  throw new Error(lines.length === 1 ? lines[0]! : [`Syntax errors in ${file}:`, ...lines.map(line => `  ${line}`)].join('\n'))
-}
-
-function formatSyntaxDiagnostic(file: string, sourceFile: ts.SourceFile, diagnostic: ts.Diagnostic) {
-  const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
-  const code = `TS${diagnostic.code}`
-  if (diagnostic.start == null) return `Syntax error in ${file} ${code}: ${message}`
-  const {line, character} = sourceFile.getLineAndCharacterOfPosition(diagnostic.start)
-  return `Syntax error in ${file}:${line + 1}:${character + 1} ${code}: ${message}`
+  throw new TypeScriptUserlandError(diagnostics.map(diagnostic => diagnostic.file == null && diagnostic.start != null ? {...diagnostic, file: sourceFile} : diagnostic))
 }
 
 function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diagnostic[] {
   return (sourceFile as ts.SourceFile & {parseDiagnostics?: readonly ts.Diagnostic[]}).parseDiagnostics ?? []
+}
+
+function throwOnUserlandTypeDiagnostics(source: Pick<ResolutionContext, 'typeProgram' | 'configDiagnostics'>) {
+  const diagnostics = [
+    ...source.configDiagnostics,
+    ...ts.getPreEmitDiagnostics(source.typeProgram),
+  ]
+  if (diagnostics.length === 0) return
+  throw new TypeScriptUserlandError(diagnostics)
 }
 
 function parseProjectSourceFile<TGlobal>(
@@ -307,7 +314,7 @@ function parseFitFile<TGlobal>(
   project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions: defaultCompilerOptions(), rootNames: [sourceId]},
   typeContracts: TypeContractTemplateIndex = createTypeContractTemplateIndex(sourceText, sourceFile),
 ): FitFile<TGlobal> {
-  throwOnSyntaxDiagnostics(file, sourceFile, syntaxDiagnostics)
+  throwOnSyntaxDiagnostics(sourceFile, syntaxDiagnostics)
 
   const globals = new Map<string, TGlobal>()
   const functions = new Map<string, FitFunction>()
@@ -680,6 +687,7 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
   return {
     compilerOptions,
     configFile,
+    configDiagnostics: parsedConfig?.errors ?? [],
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
     typeProgram,
     typeChecker,
@@ -724,6 +732,7 @@ function defaultCompilerOptions(): ts.CompilerOptions {
     module: ts.ModuleKind.ESNext,
     moduleResolution: ts.ModuleResolutionKind.Bundler,
     allowImportingTsExtensions: true,
+    noEmit: true,
     jsx: ts.JsxEmit.Preserve,
   }
 }

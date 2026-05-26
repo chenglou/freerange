@@ -12,6 +12,7 @@ import {
   type TypeContractTemplate,
 } from './type-contracts.ts'
 import type {FitFunction} from './modules.ts'
+import {formatTypeScriptDiagnostics} from './ts-diagnostics.ts'
 import {
   fitExpressionParsed,
   fitExpressionScopeSourceId,
@@ -31,6 +32,7 @@ import {
 
 type ContractTypeCheckEntry = {
   key?: string
+  sourceFile: ts.SourceFile
   file: string
   functionName: string
   text: string
@@ -291,7 +293,7 @@ class VirtualContractTypeCheckBuilder {
       end: statement.end,
       blocks: [{
         text: `\n{\nconst ${returnValueName} = ${contextualReturnExpression(expression, returnType)}; void ${returnValueName};\n`,
-        entry: {file: this.program.file, functionName, text: '<return value>', line, ignore: true},
+        entry: {sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line, ignore: true},
       }],
       replacementSuffix: `${originalReturn}\n}\n`,
     }
@@ -307,7 +309,7 @@ class VirtualContractTypeCheckBuilder {
       end: body.end,
       blocks: [{
         text: `{ const ${returnValueName} = ${contextualReturnExpression(expression, returnType)}; void ${returnValueName};\n`,
-        entry: {file: this.program.file, functionName, text: '<return value>', line: lineNumberForNode(this.program.sourceFile, body), ignore: true},
+        entry: {sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line: lineNumberForNode(this.program.sourceFile, body), ignore: true},
       }, ...blocks],
       replacementSuffix: `return ${returnValueName} }`,
     })
@@ -348,6 +350,7 @@ function declarationTypeCheckBlock(source: TypeCheckSource, template: TypeContra
   const statements = statementsForSpec(spec, lowerOptions(source))
   if (statements.length === 0) return []
   return [blockForEntry({
+    sourceFile: source.sourceFile,
     file: source.file,
     functionName: '<type>',
     text: `type @fit ${template.text}`,
@@ -431,6 +434,7 @@ function blocksForSpecs(program: Program, functionName: string, specs: FitSpec[]
     if (statements.length === 0) return []
     return [blockForEntry({
       key: specKey(spec),
+      sourceFile: program.sourceFile,
       file: program.file,
       functionName,
       text: spec.text,
@@ -465,6 +469,7 @@ function blocksForInlineTemplates(
     }
     return [blockForEntry({
       key: inlineTemplateKey(template),
+      sourceFile: program.sourceFile,
       file: program.file,
       functionName,
       text: `@fit ${inlineTemplateText(template)}`,
@@ -753,7 +758,7 @@ function checksFromDiagnostics(diagnostics: readonly ts.Diagnostic[], spans: Spa
   for (const [span, spanDiagnostics] of diagnosticsBySpan) {
     if (span.ignore === true) continue
     if (span.key != null) failedKeys.add(span.key)
-    const reason = typeCheckReason(spanDiagnostics)
+    const reason = typeCheckReason(spanDiagnostics, span)
     const key = `${span.functionName}\0${span.line ?? ''}\0${span.text}\0${reason}`
     if (seenChecks.has(key)) continue
     seenChecks.add(key)
@@ -769,14 +774,38 @@ function checksFromDiagnostics(diagnostics: readonly ts.Diagnostic[], spans: Spa
   return {checks, failedKeys}
 }
 
-function typeCheckReason(diagnostics: readonly ts.Diagnostic[]) {
-  const lines = diagnostics.map(diagnostic => {
-    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, ' ')
-    return `TS${diagnostic.code}: ${message}`
-  })
-  return lines.length === 1
-    ? `TypeScript rejected @fit contract: ${lines[0]}`
-    : ['TypeScript rejected @fit contract:', ...lines.map(line => `  ${line}`)].join('\n')
+function typeCheckReason(diagnostics: readonly ts.Diagnostic[], span: Span) {
+  const formatted = formatTypeScriptDiagnostics(diagnostics.map(diagnostic => contractDiagnosticForSpan(diagnostic, span)))
+  return formatted.length === 0 ? 'TypeScript rejected @fit contract' : `TypeScript rejected @fit contract:\n${formatted}`
+}
+
+function contractDiagnosticForSpan(diagnostic: ts.Diagnostic, span: Span): ts.Diagnostic {
+  const location = contractDiagnosticLocation(span)
+  if (location == null) return diagnostic
+  return {
+    file: span.sourceFile,
+    start: location.start,
+    length: location.length,
+    category: diagnostic.category,
+    code: diagnostic.code,
+    messageText: diagnostic.messageText,
+  }
+}
+
+function contractDiagnosticLocation(span: Span): {start: number; length: number} | null {
+  if (span.line == null) return null
+  const lineIndex = span.line - 1
+  const lineStarts = span.sourceFile.getLineStarts()
+  if (lineIndex < 0 || lineIndex >= lineStarts.length) return null
+  const lineStart = lineStarts[lineIndex]!
+  const lineEnd = span.sourceFile.getLineEndOfPosition(lineStart)
+  const lineText = span.sourceFile.text.slice(lineStart, lineEnd)
+  const exactIndex = lineText.indexOf(span.text)
+  if (exactIndex >= 0) return {start: lineStart + exactIndex, length: Math.max(1, span.text.length)}
+  const fitIndex = lineText.indexOf('@fit')
+  if (fitIndex >= 0) return {start: lineStart + fitIndex, length: Math.max(1, lineEnd - lineStart - fitIndex)}
+  const nonWhitespaceIndex = /\S/.exec(lineText)?.index ?? 0
+  return {start: lineStart + nonWhitespaceIndex, length: Math.max(1, lineEnd - lineStart - nonWhitespaceIndex)}
 }
 
 function returnStatementsIn(body: ts.Block): ts.ReturnStatement[] {

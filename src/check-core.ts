@@ -422,6 +422,7 @@ function dedupeCallsiteChecks(checks: FitCheck[]) {
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const context = topLevelEvalContext(program, contractCache)
   context.checks.push(...contractTypeChecksForTopLevel(program))
+  if (context.checks.some(check => check.status !== 'pass')) return context.checks
   for (const statement of program.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
     bindVariableStatement(statement, context, filterTypeCheckedSpecs(program, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? []))
@@ -448,6 +449,9 @@ function verifyFunctionSpecsDetailed(
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
   const checks = [...setup.typeChecks, ...setup.givenChecks]
+  if (setup.typeChecks.some(check => check.status !== 'pass')) {
+    return {checks, callsiteChecks: [], recordedCallsites: false}
+  }
   checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
 
   checks.push(...setup.assumptionChecks)

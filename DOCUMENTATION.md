@@ -35,7 +35,7 @@ Usage:
   fr infer --all
 ```
 
-`fr check` checks your project for `@fit` contract correctness. It reuses TypeScript's project resolution logic, so it understands `tsconfig.json`, path aliases, and local package layout. You can also pass it one or more files to check.
+`fr check` checks your project for `@fit` contract correctness (you can also pass it one or more files to check). It reuses your existing TypeScript, so it understands `tsconfig.json`. Normal TypeScript errors are printed in TypeScript's usual format before any contract proving. Everything in the comments are type checked as well; if a contract has a TypeScript error, Freerange reports it there and stops proving that function or top-level block.
 
 Use `fr check --annotations-only` to check annotated places and skip the broader scan of unannotated code that calls annotated functions. Use `--audit` for cleanup advice: redundant `Math.min/max` choices, `if` branches, `??` fallbacks, etc.
 
@@ -88,8 +88,7 @@ type PhotoGrid = {
 }
 ```
 
-Everything in `@fit` contracts are type checked through the same TypeScript your project uses. Freerange mostly piggybacks on TypeScript.
-`given` lines are starting assumptions Freerange treats as true. All other lines (aka lines without `given`) are for Freerange to verify to be true. `return` refers to the return value.
+`given` lines are input assumptions. All other lines are for Freerange to prove to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.

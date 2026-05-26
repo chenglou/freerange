@@ -50,7 +50,7 @@ Contracts and source evaluation:
 
 - [src/parser.ts](./src/parser.ts), [src/contract-typecheck.ts](./src/contract-typecheck.ts), [src/value-specs.ts](./src/value-specs.ts), [src/check-specs.ts](./src/check-specs.ts), [src/givens.ts](./src/givens.ts), [src/function-contracts.ts](./src/function-contracts.ts), and [src/function-call-contracts.ts](./src/function-call-contracts.ts) — parsing, TypeScript checking for written contracts, whole-value type syntax, input assumptions, contract collection, and helper-call requirements
 - [src/interpreter/](./src/interpreter), [src/function-evaluation.ts](./src/function-evaluation.ts), [src/function-inputs.ts](./src/function-inputs.ts), [src/interpreter-state.ts](./src/interpreter-state.ts), and [src/function-shape.ts](./src/function-shape.ts) — source evaluation, function setup, `this`, nested functions, and helper-call recording
-- [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, imports, top-level constants, and exact TypeScript type queries
+- [src/modules.ts](./src/modules.ts), [src/module-values.ts](./src/module-values.ts), [src/program-env.ts](./src/program-env.ts), and [src/shapes.ts](./src/shapes.ts) — TypeScript-backed file loading, user-code diagnostics, imports, top-level constants, and exact TypeScript type queries
 
 Facts, values, and proof:
 
@@ -95,7 +95,7 @@ Keep external repo experiments outside this checkout. The current scratch space
 is `/Users/chenglou/github/freerange-corpus`; use isolated branches there and
 bring only general Freerange fixes back into this repo.
 
-[corpus-probes.ts](./corpus-probes.ts) discovers every source file with an `@fit` comment under the corpus root, excluding dependency and build-output trees. It groups files by top-level project and nearest `tsconfig.json`, then [corpus-probes.expected.txt](./corpus-probes.expected.txt) snapshots the exact file list plus strict check summaries, including callsite `requires`. If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
+[corpus-probes.ts](./corpus-probes.ts) discovers every source file with an `@fit` comment under the corpus root, excluding dependency and build-output trees. It groups files by top-level project and nearest `tsconfig.json`, then [corpus-probes.expected.txt](./corpus-probes.expected.txt) snapshots the exact file list plus TypeScript preflight errors or strict check summaries, including callsite `requires`. If the corpus checkout is missing, `bun run verify:corpus` skips instead of making normal repo work depend on local scratch state.
 
 A good corpus iteration is one of two small loops:
 

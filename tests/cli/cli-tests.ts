@@ -272,9 +272,11 @@ function f(value: number) {
  * given width: 1..99
  * return: 1..100
  */
-function size(width: number) {
+export function size(width: number) {
   const lower = Math.max(1, width)
   const upper = Math.min(width, 100)
+  void lower
+  void upper
   return width < 100 ? width : 100
 }
 `,
@@ -544,6 +546,24 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
   })
 
   await withCliFixture({
+    'userland-error.ts': `/** @fit
+ * return: 0..10
+ */
+function plainSemanticError(value: number) {
+  const bad: string = value
+  void bad
+  return value
+}
+`,
+  }, dir => {
+    const check = runFr(['check', 'userland-error.ts'], dir)
+    expectCli(check.exitCode === 2, 'expected userland TypeScript errors to stop fr check', check.output)
+    expectCli(check.output.includes("userland-error.ts(5,9): error TS2322: Type 'number' is not assignable to type 'string'."), 'expected original TypeScript semantic diagnostic', check.output)
+    expectCli(!check.output.includes('FAIL return: 0..10'), 'expected Freerange proof not to run after userland TypeScript failure', check.output)
+    expectCli(!check.output.includes('fr check:'), 'expected no Freerange summary after userland TypeScript failure', check.output)
+  })
+
+  await withCliFixture({
     'syntax.ts': `function invalid(value: number.) {
   return value
 }
@@ -552,12 +572,13 @@ const =
   }, dir => {
     const check = runFr(['check', 'syntax.ts'], dir)
     expectCli(check.exitCode === 2, 'expected syntax errors to stop fr check', check.output)
-    expectCli(check.output.includes('fr: Syntax errors in syntax.ts:'), 'expected syntax error header', check.output)
-    expectCli(check.output.includes('Syntax error in syntax.ts:1:32 TS1003: Identifier expected.'), 'expected first TypeScript syntax diagnostic', check.output)
-    expectCli(check.output.includes('Syntax error in syntax.ts:4:7 TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
+    expectCli(check.output.includes("syntax.ts(1,25): error TS2693: 'number' only refers to a type, but is being used as a value here."), 'expected TypeScript semantic fallout diagnostic', check.output)
+    expectCli(check.output.includes('syntax.ts(1,32): error TS1003: Identifier expected.'), 'expected first TypeScript syntax diagnostic', check.output)
+    expectCli(check.output.includes('syntax.ts(4,7): error TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
+    expectCli(!check.output.includes('fr:'), 'expected syntax errors to use TypeScript diagnostic formatting directly', check.output)
   })
 
-  console.log('cli: 29 expected behaviors')
+  console.log('cli: 30 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

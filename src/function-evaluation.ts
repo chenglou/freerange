@@ -50,6 +50,20 @@ export function prepareFunctionEvaluation(
 
   bindFunctionInputParameters(fn, program, env)
 
+  if (typeChecks.some(check => check.status !== 'pass')) {
+    return {
+      inputSpecs,
+      contractSpecs,
+      env,
+      inputRoots,
+      givenChecks: [],
+      typeChecks,
+      assumptionChecks: [],
+      assumptions: [],
+      booleanAssumptions: new Map(),
+    }
+  }
+
   const {assumedGivens, checks: givenChecks} = validateGivenSpecs(program.file, fn.name, inputSpecs, inputRoots, 'function-given')
   const {assumptions, booleanAssumptions, checks: assumptionChecks} = collectGivenAssumptions(program.file, program, fn.name, env, inputRoots, assumedGivens, contractCache, evaluators)
   return {
