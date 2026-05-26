@@ -44,6 +44,8 @@ export type TypeContractTemplate =
   | {
       kind: 'range'
       scopeSourceId?: string
+      typeCheckKey?: string
+      text: string
       expression: FitExpression
       range: FitRange
       line?: number
@@ -51,6 +53,8 @@ export type TypeContractTemplate =
   | {
       kind: 'comparison'
       scopeSourceId?: string
+      typeCheckKey?: string
+      text: string
       left: FitExpression
       op: ComparisonOperator
       right: FitExpression
@@ -72,8 +76,14 @@ type TypeScope = {
   optionalFields: Set<string>
 }
 
+type ParsedTypeContractTemplate = TypeContractTemplate extends infer Template
+  ? Template extends TypeContractTemplate
+    ? Omit<Template, 'scopeSourceId' | 'typeCheckKey' | 'text'>
+    : never
+  : never
+
 type TypeLineResult = {
-  template: TypeContractTemplate
+  template: ParsedTypeContractTemplate
 } | {
   unsupported: string
 }
@@ -185,7 +195,10 @@ function setTypeContractTemplates(index: TypeContractTemplateIndex, node: ts.Nod
   const scopeSourceId = node.getSourceFile().fileName
   index.byNode.set(node, {
     unsupported: result.unsupported,
-    templates: result.templates.map(template => ({...template, scopeSourceId})),
+    templates: result.templates.map(template => {
+      const scoped = {...template, scopeSourceId}
+      return {...scoped, typeCheckKey: typeContractTemplateKey(scoped)}
+    }),
   })
 }
 
@@ -336,6 +349,10 @@ function instantiateTypeContractTemplates(
   return {specs, unsupported}
 }
 
+export function instantiateTypeContractTemplateForCheck(template: TypeContractTemplate, root: string): FitCheckSpec {
+  return instantiateTypeContractTemplate(template, root, 'prove') as FitCheckSpec
+}
+
 function instantiateTypeContractTemplate(template: TypeContractTemplate, root: string, role: FitSpecRole): TypeContractSpec {
   switch (template.kind) {
     case 'range': {
@@ -348,6 +365,8 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
         expression,
         range,
         text,
+        ...(template.typeCheckKey == null ? {} : {typeCheckKey: template.typeCheckKey}),
+        ...(template.scopeSourceId == null ? {} : {typeCheckSourceId: template.scopeSourceId}),
         ...(template.line == null ? {} : {line: template.line}),
       }
     }
@@ -362,6 +381,8 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
         op: template.op,
         right,
         text,
+        ...(template.typeCheckKey == null ? {} : {typeCheckKey: template.typeCheckKey}),
+        ...(template.scopeSourceId == null ? {} : {typeCheckSourceId: template.scopeSourceId}),
         ...(template.line == null ? {} : {line: template.line}),
       }
     }
@@ -452,7 +473,7 @@ function parseTypeCommentTemplateLines(
       unsupported.push({text: body, reason: parsed.unsupported, line: line.line})
       continue
     }
-    templates.push({...parsed.template, line: line.line})
+    templates.push({...parsed.template, text: body, line: line.line})
   }
   return {templates, unsupported}
 }
@@ -759,6 +780,10 @@ function uniqueLines(lines: FitCommentLine[]) {
 
 function commentLineKey(line: FitCommentLine) {
   return `${line.line}:${line.text}`
+}
+
+function typeContractTemplateKey(template: TypeContractTemplate) {
+  return `${template.scopeSourceId ?? ''}\0${template.line ?? ''}\0${template.kind}\0${template.text}`
 }
 
 function escapeRegExp(text: string) {

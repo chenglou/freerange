@@ -528,6 +528,7 @@ function proveNumberInsideRangeCases(
     const finite = proveFiniteRangeSpec(value, range)
     if (finite.status === 'pass' || cases.length === range.finiteValues.length) return finite
   }
+  if (cases.length === 0) return {status: 'fail', reason: emptyRangeSpecFailureReason(value, range)}
 
   const joined = proveNumberInsideAnyRangeCase(value, range, cases, assumptions)
   if (joined.kind === 'pass') return {status: 'pass'}
@@ -638,6 +639,13 @@ function rangeSpecFailureReasonForCases(
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
   lines.push(`missing: ${value.expr ?? formatRange(value)} in ${formatRangeSpec(range)}`)
   return lines.join('\n')
+}
+
+function emptyRangeSpecFailureReason(value: NumberValue, range: FitRange) {
+  return [
+    `range was ${formatRange(value)}, expected inside ${formatRangeSpec(range)}`,
+    `missing: ${formatRangeSpec(range)} had no possible value`,
+  ].join('\n')
 }
 
 function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {

@@ -91,6 +91,8 @@ type PhotoGrid = {
 `given` lines are starting assumptions Freerange treats as true. All other lines (aka lines without `given`) are for Freerange to verify to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
+Before Freerange tries to prove a line, it asks TypeScript whether the written names and paths make sense. `given input.width: 0..10` needs `input.width` to already be a number in TypeScript. `return.rows.length >= 0` is rejected if `rows` might be missing. A whole-value line like `return: {left: 0, width: 100} | {left: 20, width: 80}` uses normal TypeScript type syntax, so object literals may need a return annotation or `as const` when you want literal fields instead of `{left: number; width: number}`.
+Type annotations are checked where the type is declared. If `helper.ts` writes `width: number // @fit lowerBound(width)..Infinity`, `lowerBound` only needs to exist in `helper.ts`; files that use the type do not need to import it.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected). They also work for the special range expression: `given myInputA: 0..calcConstant(myInputB)`.

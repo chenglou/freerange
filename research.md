@@ -92,6 +92,8 @@ Use `Infinity` for physically unbounded values: scroll offsets, cumulative layou
 
 TypeScript handles syntax diagnostics, project file resolution, and module identity. Freerange handles intervals, helper contracts, sequence summaries, and reports. The split keeps Freerange from re-implementing TS.
 
+`@fit` lines follow the same split. Freerange lowers the written contract to a small TypeScript check first: `given input.width: 0..10` reads `input.width` as a number, `items[].height` reads one array item, and `return: {width: 0..10}` uses TypeScript's object/type syntax around the numeric leaf. If TypeScript rejects that lowered code, Freerange reports the contract as unknown and does not use it as an assumption or proof.
+
 ## Helper Aliasing Lives At The Boundary
 
 Resolve helper bindings at the call site and rebase parameter names to caller-side expressions there. Don't carry alias logic into every proof rule. Reports get to say `cols - w >= 0`, not a private helper parameter name.

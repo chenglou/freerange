@@ -141,8 +141,8 @@ export function negativeBroadStringDoesNotBecomeFinite(kind: string, panelX: num
  * return: {left: 0, width: 100} | {left: 20, width: 80}
  */
 export function negativePairedObjectReturnShape(pinned: boolean) {
-  if (pinned) return {left: 20, width: 81}
-  return {left: 0, width: 100}
+  if (pinned) return {left: 20, width: 81} as const
+  return {left: 0, width: 100} as const
 }
 
 /** @fit
@@ -1612,8 +1612,8 @@ export function negativeTypedArrayConstructorKeepsExactLength(count: number) {
  * given index: 0 | 2
  * return: 20 | 40
  */
-export function negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot(index: number) {
-  return [10, 20, 30][index]
+export function negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot(index: 0 | 2) {
+  return ([10, 20, 30] as const)[index]
 }
 
 /** @fit

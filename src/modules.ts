@@ -29,6 +29,8 @@ export type FitFunction = {
 export type FitProjectIndex<TGlobal> = {
   files: Map<string, FitProjectFile<TGlobal>>
   filesBySourceFile: Map<ts.SourceFile, FitProjectFile<TGlobal>>
+  compilerOptions: ts.CompilerOptions
+  rootNames: string[]
 }
 
 export type FitProjectFile<TGlobal> = {
@@ -118,6 +120,7 @@ type ResolutionContext = {
   cache: ts.ModuleResolutionCache
   typeProgram: ts.Program
   typeChecker: ts.TypeChecker
+  rootNames: string[]
 }
 
 type ResolvedImport =
@@ -134,6 +137,8 @@ export function loadFitProject<TGlobal>(
     entries: [],
     files: new Map(),
     filesBySourceFile: new Map(),
+    compilerOptions: resolution.compilerOptions,
+    rootNames: resolution.rootNames,
     configFile: resolution.configFile,
   }
 
@@ -189,7 +194,7 @@ export function buildFitSourceFile<TGlobal>(
   const typeChecker = typeProgram.getTypeChecker()
   const sourceFile = typeProgram.getSourceFile(sourceId)
     ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
-  const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map()}
+  const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions, rootNames: [sourceId]}
   const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, undefined, project)
   project.files.set(cacheKeyFor(sourceId), fitFile)
   project.filesBySourceFile.set(sourceFile, fitFile)
@@ -299,7 +304,7 @@ function parseFitFile<TGlobal>(
   typeChecker: ts.TypeChecker | null = null,
   sourceFile: ts.SourceFile = ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId)),
   syntaxDiagnostics?: readonly ts.Diagnostic[],
-  project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map()},
+  project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions: defaultCompilerOptions(), rootNames: [sourceId]},
   typeContracts: TypeContractTemplateIndex = createTypeContractTemplateIndex(sourceText, sourceFile),
 ): FitFile<TGlobal> {
   throwOnSyntaxDiagnostics(file, sourceFile, syntaxDiagnostics)
@@ -664,7 +669,8 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
   addTiming(timing, 'configMs', configStart)
 
   const typeProgramStart = performance.now()
-  const typeProgram = ts.createProgram(typeProgramRootNames(paths, parsedConfig), {...compilerOptions, noEmit: true})
+  const rootNames = typeProgramRootNames(paths, parsedConfig)
+  const typeProgram = ts.createProgram(rootNames, {...compilerOptions, noEmit: true})
   addTiming(timing, 'typeProgramMs', typeProgramStart)
 
   const typeCheckerStart = performance.now()
@@ -677,6 +683,7 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
     cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
     typeProgram,
     typeChecker,
+    rootNames,
   }
 }
 

@@ -52,6 +52,8 @@ type FitSpecBase<R extends FitSpecRole, K extends string> = {
   kind: K
   text: string
   line?: number
+  typeCheckKey?: string
+  typeCheckSourceId?: string
 }
 
 export type FitRangeSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'range'> & {

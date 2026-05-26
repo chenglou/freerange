@@ -243,7 +243,8 @@ function missingCallbackItemField(items: {}[]) {
 `)
 const typedGivenPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedGivenPath' && check.status !== 'pass')
 const typedAliasPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedAliasPath' && check.status !== 'pass')
-const optionalGivenFieldFailures = shortcutCleanupChecks.filter(check => check.functionName === 'optionalGivenField' && check.status !== 'pass')
+const optionalGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'optionalGivenField' && check.text === 'given input.width: 0..10')
+const optionalGivenReturnCheck = shortcutCleanupChecks.find(check => check.functionName === 'optionalGivenField' && check.text === 'return: 0..10')
 const missingGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingGivenField' && check.text === 'given input.width: 0..10')
 const stringGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'stringGivenField' && check.text === 'given input.width: 0..10')
 const nonArrayGivenPathCheck = shortcutCleanupChecks.find(check => check.functionName === 'nonArrayGivenPath' && check.text === 'given rows[].height: 0..10')
@@ -253,24 +254,97 @@ const missingCallbackItemFieldCheck = shortcutCleanupChecks.find(check => check.
 if (
   typedGivenPathFailures.length > 0
   || typedAliasPathFailures.length > 0
-  || optionalGivenFieldFailures.length > 0
+  || optionalGivenFieldCheck?.status !== 'unknown'
+  || optionalGivenFieldCheck.reason?.includes("TS2322: Type 'number | undefined' is not assignable to type 'number'") !== true
+  || optionalGivenReturnCheck?.status !== 'fail'
   || missingGivenFieldCheck?.status !== 'unknown'
-  || missingGivenFieldCheck.reason?.includes('input.width was not inferred') !== true
+  || missingGivenFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
   || stringGivenFieldCheck?.status !== 'unknown'
-  || stringGivenFieldCheck.reason?.includes('String values are not in the static layout subset') !== true
+  || stringGivenFieldCheck.reason?.includes("TS2322: Type 'string' is not assignable to type 'number'") !== true
   || nonArrayGivenPathCheck?.status !== 'unknown'
-  || nonArrayGivenPathCheck.reason?.includes('rows expected an array') !== true
+  || nonArrayGivenPathCheck.reason?.includes("TS7053: Element implicitly has an 'any' type") !== true
   || untypedParamGivenCheck?.status !== 'unknown'
   || untypedParamGivenCheck.reason?.includes('Parameter input needs a TypeScript type') !== true
   || typedCallbackItemFailures.length > 0
   || missingCallbackItemFieldCheck?.status !== 'unknown'
-  || missingCallbackItemFieldCheck.reason?.includes('items[].width expected an object') !== true
+  || missingCallbackItemFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
 ) {
   console.error('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape')
   console.error(JSON.stringify(shortcutCleanupChecks, null, 2))
   process.exitCode = 1
 } else {
   console.log('shortcut cleanup: no invented spec or callback paths')
+}
+
+const contractTypeLayerChecks = verifyFitSource('contract-type-layer.ts', `type Tile = {
+  width: number // @fit missingTypeMin..Infinity
+}
+
+/** @fit
+ * given input.width: 0..10
+ * return.width: 0..10
+ */
+function functionContracts(input: {width: string}) {
+  return {width: input.width}
+}
+
+function loopContracts(items: {height: string}[]) {
+  const rows = items
+  /** @fit
+   * rows[].height: 0..10
+   */
+  for (const item of items) {
+    void item
+  }
+  return rows.length
+}
+
+function typeContracts(tile: Tile) {
+  return tile.width
+}
+
+function inlineFieldContract() {
+  return {
+    width: 'wide', // @fit 0..10
+  }
+}
+
+const topWidth = 'wide' // @fit 0..10
+`)
+const expectedTypeLayerErrors = [
+  ['functionContracts', 'given input.width: 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
+  ['functionContracts', 'return.width: 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
+  ['loopContracts > loop', 'rows[].height: 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
+  ['<type>', 'type @fit missingTypeMin..Infinity', "TS2304: Cannot find name 'missingTypeMin'"],
+  ['inlineFieldContract', '@fit 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
+  ['<top-level>', 'topWidth: 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
+] as const
+const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, text, reason]) => {
+  const check = contractTypeLayerChecks.find(item => item.functionName === functionName && item.text === text)
+  return check?.status !== 'unknown' || check.reason?.includes(reason) !== true
+})
+if (missingTypeLayerErrors.length > 0) {
+  console.error('expected every contract surface to be TypeScript-checked before proving')
+  console.error(JSON.stringify({missingTypeLayerErrors, contractTypeLayerChecks}, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract type layer: all surfaces reject TypeScript mismatches')
+}
+
+const inlineNonNumberEqualityChecks = verifyFitSource('inline-non-number-equality.ts', `function keepLines(lines: string[]) {
+  return {
+    lines,
+    copy: lines, // @fit == lines
+  }
+}
+`)
+const inlineNonNumberEqualityFailures = inlineNonNumberEqualityChecks.filter(check => check.status !== 'pass')
+if (inlineNonNumberEqualityFailures.length > 0) {
+  console.error('expected inline equality to allow non-number values')
+  console.error(JSON.stringify(inlineNonNumberEqualityChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('inline contracts: non-number equality type-checks')
 }
 
 const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
@@ -328,7 +402,7 @@ if (
   || unsupportedLayoutCheck?.status !== 'unknown'
   || unsupportedLayoutCheck.reason?.includes('Unsupported Math.random call') !== true
   || numericExpressionCheck?.status !== 'unknown'
-  || numericExpressionCheck.reason?.includes('expected a boolean result') !== true
+  || numericExpressionCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
 ) {
   console.error('expected bare pure boolean call contracts to be checked')
   console.error(JSON.stringify(booleanCallContractChecks, null, 2))
@@ -784,8 +858,7 @@ if (
   || derivedRangeTargetCheck?.status !== 'unknown'
   || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
   || impureBooleanGivenCheck?.status !== 'unknown'
-  || impureBooleanGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(value)') !== true
-  || impureBooleanGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || impureBooleanGivenCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
   || noInputBooleanGivenCheck?.status !== 'unknown'
   || noInputBooleanGivenCheck.reason !== 'given must mention an input'
 ) {
@@ -822,7 +895,10 @@ function layout(containerSizeX: number) {
   return containerSizeX
 }
 `).find(check => check.text === 'given containerSizX >= 2 * boxesGapX')?.reason
-if (suggestedGivenRootReason !== 'containerSizX not found in this contract scope\ndid you mean containerSizeX?') {
+if (
+  suggestedGivenRootReason?.includes("TS2552: Cannot find name 'containerSizX'") !== true
+  || suggestedGivenRootReason.includes("Did you mean 'containerSizeX'?") !== true
+) {
   console.error('expected given typo suggestion')
   console.error(suggestedGivenRootReason ?? '<missing>')
   process.exitCode = 1
@@ -840,12 +916,12 @@ function layout(containerSizeX: number) {
   return containerSizeX
 }
 `).find(check => check.text === 'given containerSizeX >= 2 * boxesGap')?.reason
-if (ambiguousGivenRootReason !== 'boxesGap not found in this contract scope') {
-  console.error('expected ambiguous given typo to avoid guessing')
+if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !== true) {
+  console.error('expected ambiguous given typo to use TypeScript diagnostics')
   console.error(ambiguousGivenRootReason ?? '<missing>')
   process.exitCode = 1
 } else {
-  console.log('given typo: ambiguous root stays plain')
+  console.log('given typo: ambiguous root reported by TypeScript')
 }
 
 let duplicateFunctionError = ''

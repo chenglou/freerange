@@ -1,4 +1,22 @@
-import {verifyFitSource} from '../../src/reports.ts'
+import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
+
+async function verifyTempFitFiles(files: Record<string, string>) {
+  const dir = pathJoin('/tmp', `freerange-type-contract-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
+  const mkdir = Bun.spawnSync({cmd: ['mkdir', '-p', dir]})
+  if (mkdir.exitCode !== 0) throw new Error(`Could not create ${dir}`)
+  try {
+    for (const [name, source] of Object.entries(files)) await Bun.write(pathJoin(dir, name), source)
+    return (await verifyFitFiles([pathJoin(dir, 'user.ts')])).checks
+  } finally {
+    Bun.spawnSync({cmd: ['rm', '-rf', dir]})
+  }
+}
+
+function pathJoin(first: string, ...rest: string[]) {
+  let path = first.endsWith('/') ? first.slice(0, -1) : first
+  for (const part of rest) path += '/' + part.replace(/^\/+/, '')
+  return path
+}
 
 const wholeValueTypeSyntaxChecks = verifyFitSource('whole-value-type-syntax.ts', `type Box<T> = {
   value: T
@@ -228,16 +246,111 @@ function reportsMissingDeclarationName(tile: MissingScopedTile) {
 `)
 const scopedTypeReadCheck = typeContractScopeChecks.find(check => check.functionName === 'readsScopedType' && check.text === 'return >= 160')
 const usageLocalCaptureCheck = typeContractScopeChecks.find(check => check.functionName === 'rejectsUsageLocal' && check.text === 'tile.width: typeScopedDouble(typeScopedMin)..Infinity')
-const missingDeclarationNameCheck = typeContractScopeChecks.find(check => check.functionName === 'reportsMissingDeclarationName' && check.text === 'given tile.width: missingTypeMin..Infinity')
+const missingDeclarationNameCheck = typeContractScopeChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit missingTypeMin..Infinity')
 if (
   scopedTypeReadCheck?.status !== 'pass'
   || usageLocalCaptureCheck?.status !== 'fail'
   || missingDeclarationNameCheck?.status !== 'unknown'
-  || missingDeclarationNameCheck.reason?.includes('Unknown identifier missingTypeMin') !== true
+  || missingDeclarationNameCheck.reason?.includes("TS2304: Cannot find name 'missingTypeMin'") !== true
 ) {
   console.error('expected type @fit contracts to evaluate free names where the type is declared')
   console.error(JSON.stringify(typeContractScopeChecks, null, 2))
   process.exitCode = 1
 } else {
   console.log('type contracts: declaration scope')
+}
+
+const importedDeclarationScopeChecks = await verifyTempFitFiles({
+  'helper.ts': `export function lowerBound(value: number) {
+  void value
+  return 0
+}
+
+export type ImportedWidth = {
+  width: number // @fit lowerBound(width)..Infinity
+}
+`,
+  'user.ts': `import type {ImportedWidth} from './helper'
+
+export function goodReturn(): ImportedWidth {
+  return {width: 5}
+}
+
+export function badReturn(): ImportedWidth {
+  return {width: -1}
+}
+`,
+})
+const importedGoodCheck = importedDeclarationScopeChecks.find(check => check.functionName === 'goodReturn' && check.text === 'return.width: lowerBound(return.width)..Infinity')
+const importedBadCheck = importedDeclarationScopeChecks.find(check => check.functionName === 'badReturn' && check.text === 'return.width: lowerBound(return.width)..Infinity')
+const importedScopeLeak = importedDeclarationScopeChecks.find(check => check.reason?.includes("Cannot find name 'lowerBound'"))
+if (
+  importedGoodCheck?.status !== 'pass'
+  || importedBadCheck?.status !== 'fail'
+  || importedScopeLeak != null
+) {
+  console.error('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used')
+  console.error(JSON.stringify(importedDeclarationScopeChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: imported declaration scope')
+}
+
+const importedDeclarationTypeErrorChecks = await verifyTempFitFiles({
+  'helper.ts': `export function needsString(value: string) {
+  void value
+  return 0
+}
+
+export type ImportedWidth = {
+  width: number // @fit 0..needsString(width)
+}
+`,
+  'user.ts': `import type {ImportedWidth} from './helper'
+
+export function badReturn(): ImportedWidth {
+  return {width: -1}
+}
+`,
+})
+const importedTypeErrorCheck = importedDeclarationTypeErrorChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit 0..needsString(width)')
+const importedUseSiteNameError = importedDeclarationTypeErrorChecks.find(check => check.reason?.includes("Cannot find name 'needsString'"))
+const importedSkippedBadReturn = importedDeclarationTypeErrorChecks.find(check => check.functionName === 'badReturn')
+if (
+  importedTypeErrorCheck?.status !== 'unknown'
+  || importedTypeErrorCheck.reason?.includes("TS2345: Argument of type 'number' is not assignable to parameter of type 'string'") !== true
+  || importedUseSiteNameError != null
+  || importedSkippedBadReturn != null
+) {
+  console.error('expected imported type @fit helper parameter mistakes to be reported at the type declaration')
+  console.error(JSON.stringify(importedDeclarationTypeErrorChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: imported declaration type errors')
+}
+
+const typeFieldRelationChecks = verifyFitSource('type-field-relation.ts', `type Size = {
+  maxWidth: number
+  width: number // @fit <= maxWidth
+}
+
+function goodSize(): Size {
+  return {maxWidth: 10, width: 5}
+}
+
+function badSize(): Size {
+  return {maxWidth: 10, width: 15}
+}
+`)
+const typeFieldRelationGoodFailures = typeFieldRelationChecks.filter(check => check.functionName === 'goodSize' && check.status !== 'pass')
+const typeFieldRelationBadCheck = typeFieldRelationChecks.find(check => check.functionName === 'badSize' && check.text === 'return.width <= return.maxWidth')
+if (
+  typeFieldRelationGoodFailures.length > 0
+  || typeFieldRelationBadCheck?.status !== 'fail'
+) {
+  console.error('expected type @fit field relations to compare against the same object')
+  console.error(JSON.stringify(typeFieldRelationChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: field relation')
 }

@@ -1,4 +1,4 @@
-summary: 16 groups, 38 files; check: 139 pass, 0 fail, 2 requires, 10 unknown
+summary: 16 groups, 38 files; check: 131 pass, 0 fail, 6 requires, 18 unknown
 
 2d-geometry: 9 files
   2d-geometry/src/algorithms/distance.ts
@@ -93,4 +93,28 @@ xyflow:packages/system: 7 files
   xyflow/packages/system/src/utils/general.ts
   xyflow/packages/system/src/xyresizer/utils.ts
   xyflow/packages/system/src/xyresizer/XYResizer.ts
-  check: 63 pass, 0 fail, 0 requires, 0 unknown
+  check: 55 pass, 0 fail, 4 requires, 8 unknown
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:29:clampPosition: given dimensions.width: 0..Infinity
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:30:clampPosition: given dimensions.height: 0..Infinity
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:31:clampPosition: given dimensions.width <= extent[1][0] - extent[0][0]
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:32:clampPosition: given dimensions.height <= extent[1][1] - extent[0][1]
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:46:clampPositionToParent: given parent.measured.width: 0..Infinity
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:47:clampPositionToParent: given parent.measured.height: 0..Infinity
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:48:clampPositionToParent: given childDimensions.width <= parent.measured.width
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    UNKNOWN xyflow/packages/system/src/utils/general.ts:49:clampPositionToParent: given childDimensions.height <= parent.measured.height
+      TypeScript rejected @fit contract: TS2322: Type 'number | undefined' is not assignable to type 'number'.   Type 'undefined' is not assignable to type 'number'.
+    REQUIRES xyflow/packages/system/src/utils/general.ts:39:clampPosition: clamp(position.x, extent[0][0], extent[1][0] - (dimensions?.width ?? 0)): requires min <= max
+      caller passed: min: any number, max: any number
+    REQUIRES xyflow/packages/system/src/utils/general.ts:40:clampPosition: clamp(position.y, extent[0][1], extent[1][1] - (dimensions?.height ?? 0)): requires min <= max
+      caller passed: min: any number, max: any number
+    REQUIRES xyflow/packages/system/src/utils/general.ts:39:clampPositionToParent > clampPosition: clamp(position.x, extent[0][0], extent[1][0] - (dimensions?.width ?? 0)): requires min <= max
+      caller passed: min: any number, max: any number
+    REQUIRES xyflow/packages/system/src/utils/general.ts:40:clampPositionToParent > clampPosition: clamp(position.y, extent[0][1], extent[1][1] - (dimensions?.height ?? 0)): requires min <= max
+      caller passed: min: any number, max: any number

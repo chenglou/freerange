@@ -138,6 +138,11 @@ import {
   validateGivenSpecs,
 } from './givens.ts'
 import {
+  contractTypeChecksForTopLevel,
+  filterTypeCheckedInlineTemplates,
+  filterTypeCheckedSpecs,
+} from './contract-typecheck.ts'
+import {
   evaluateDomainPathValue,
   parsePrintedNumber,
 } from './domain-paths.ts'
@@ -296,7 +301,7 @@ function reachableProgramHasCallPreconditions(program: Program, seen = new Set<s
 }
 
 function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
-  return functionContractSpecs(program, fn).some(fitSpecIsAssumption)
+  return filterTypeCheckedSpecs(program, functionContractSpecs(program, fn)).some(fitSpecIsAssumption)
 }
 
 
@@ -426,9 +431,10 @@ function dedupeCallsiteChecks(checks: FitCheck[]) {
 
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const context = topLevelEvalContext(program, contractCache)
+  context.checks.push(...contractTypeChecksForTopLevel(program))
   for (const statement of program.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
-    bindVariableStatement(statement, context, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? [])
+    bindVariableStatement(statement, context, filterTypeCheckedSpecs(program, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? []))
   }
   return context.checks
 }
@@ -451,7 +457,7 @@ function verifyFunctionSpecsDetailed(
   const functionName = fn.name
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
-  const checks = [...setup.givenChecks]
+  const checks = [...setup.typeChecks, ...setup.givenChecks]
   checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
 
   checks.push(...setup.assumptionChecks)
@@ -494,6 +500,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const resultFacts = factInventoryFromValue(fitReturnInternalRoot, state.result).inferFacts()
   const localFacts = localFactsFromEnv(env, state.env)
   const backgroundChecks = [
+    ...setup.typeChecks,
     ...setup.givenChecks,
     ...typeContractChecks,
     ...setup.assumptionChecks,
@@ -513,6 +520,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     contractCache,
   ))
   const unsupported = [
+    ...setup.typeChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...setup.givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...typeContractChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...setup.assumptionChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
@@ -1035,7 +1043,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
   const bodySpecs = bodySpecsForStack(frame.program, frame.stack)
 
   if (claim.kind === 'variable') {
-    const localSpecs = bodySpecs?.localSpecsByStatement.get(claim.statement) ?? []
+    const localSpecs = filterTypeCheckedSpecs(frame.program, bodySpecs?.localSpecsByStatement.get(claim.statement) ?? [])
     verifyLocalFitSpecs(localSpecs, context)
     if (!ts.isIdentifier(claim.declaration.name)) return
     const typeContract = mergeTypeContracts([
@@ -1051,7 +1059,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
   }
 
   if (claim.kind === 'return') {
-    const specs = bodySpecs?.returnSpecsByNode.get(claim.node) ?? []
+    const specs = filterTypeCheckedSpecs(frame.program, bodySpecs?.returnSpecsByNode.get(claim.node) ?? [])
     const typeContract = typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot)
     verifyInlineSpecsForValue(specs, value, context)
     const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
@@ -1060,7 +1068,7 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
     return
   }
 
-  const templates = bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []
+  const templates = filterTypeCheckedInlineTemplates(frame.program, bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? [])
   const specs = instantiateInlineFitTemplates(templates, objectPathText(claim.path), 'prove')
   verifyInlineSpecsForValue(specs, value, context)
 }
@@ -1075,14 +1083,15 @@ function evaluateInterpreterLoop(
   const context = interpreterEvalContext(frame, rootContext)
   const checksStart = rootContext.checks.length
   const rawLocalSpecs = bodySpecsForStack(frame.program, frame.stack)?.loopSpecsByStatement.get(claim.statement) ?? []
-  const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(rawLocalSpecs)
+  const checkedRawLocalSpecs = filterTypeCheckedSpecs(frame.program, rawLocalSpecs)
+  const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(checkedRawLocalSpecs)
   reportLoopResultSpecs(resultSpecs, context)
   applyLocalGivenSpecs(localSpecs, context)
   frame.assumptions = context.assumptions
   const flow = withCallObligationRecordingWhen(rootContext, functionHasBodyClaims(localSpecs), evaluate)
   context.assumptions = frame.assumptions
   verifyLocalLoopSpecs(localSpecs, context)
-  recordInferLoop(claim.statement, claim.kind, rawLocalSpecs, context, checksStart, claim.factRoots)
+  recordInferLoop(claim.statement, claim.kind, checkedRawLocalSpecs, context, checksStart, claim.factRoots)
   frame.assumptions = context.assumptions
   return flow
 }
@@ -1104,7 +1113,7 @@ function interpreterClaimRecordsCalls(claim: InterpreterClaim, frame: Interprete
     return (bodySpecs?.returnSpecsByNode.get(claim.node) ?? []).length > 0
       || hasTypeContractWork(typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot))
   }
-  return (bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []).length > 0
+  return filterTypeCheckedInlineTemplates(frame.program, bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []).length > 0
 }
 
 function bodySpecsForStack(program: Program, stack: string[]) {
@@ -1188,7 +1197,7 @@ function bindVariableStatement(statement: ts.VariableStatement, context: EvalCon
   for (const declaration of statement.declarationList.declarations) {
     bindVariableDeclaration(declaration, context, {claim: specs.length > 0})
   }
-  verifyLocalFitSpecs(specs, context)
+  verifyLocalFitSpecs(filterTypeCheckedSpecs(context.program, specs), context)
 }
 
 function verifyLocalFitSpecs(specs: FitCheckSpec[], context: EvalContext) {
@@ -1202,8 +1211,9 @@ function verifyCheckSpecsWithResult(
   boundary?: CheckBoundary,
   obligationBoundary: FitObligationBoundary = 'inline-check',
 ) {
-  if (specs.length === 0) return
-  for (const spec of specs) {
+  const checkedSpecs = filterTypeCheckedSpecs(context.program, specs)
+  if (checkedSpecs.length === 0) return
+  for (const spec of checkedSpecs) {
     context.checks.push(verifyCheckSpec(
       context.file,
       context.program,
@@ -1466,7 +1476,7 @@ function evaluateLocalFunctionCall(
     ? returnTypeFallback ?? result
     : result
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
-  const contractSpecs = functionContractSpecs(context.program, fn)
+  const contractSpecs = filterTypeCheckedSpecs(context.program, functionContractSpecs(context.program, fn))
   if (contractSpecs.length === 0) return callSiteFallbackResult
   if (obligations !== 'pass') return callSiteFallbackResult
 
@@ -1558,7 +1568,7 @@ function evaluateImportedFunctionCall(
   callSiteBindings: CallSiteBindings,
   thisValue?: Value,
 ): Value {
-  const contractSpecs = functionContractSpecs(target.program, fn)
+  const contractSpecs = filterTypeCheckedSpecs(target.program, functionContractSpecs(target.program, fn))
   const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${target.functionName}Result`, fn.node, target.program)
   if (target.imported == null) return resolvedReturnTypeFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
   if (contractSpecs.length === 0) {
@@ -1648,7 +1658,7 @@ function verifyFunctionContract(program: Program, functionName: string, contract
     return proof
   }
 
-  const contractSpecs = functionContractSpecs(program, fn)
+  const contractSpecs = filterTypeCheckedSpecs(program, functionContractSpecs(program, fn))
   if (contractSpecs.length === 0) {
     const proof: FunctionContractProof = {
       status: 'unknown',

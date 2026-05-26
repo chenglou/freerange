@@ -237,8 +237,8 @@ export function booleanLiteralBranchesSpecialize(top: number) {
  * return: {left: 0, width: 100} | {left: 20, width: 80}
  */
 export function pairedObjectReturnShape(pinned: boolean) {
-  if (pinned) return {left: 20, width: 80}
-  return {left: 0, width: 100}
+  if (pinned) return {left: 20, width: 80} as const
+  return {left: 0, width: 100} as const
 }
 
 export function lowShapeBound() {
@@ -1858,14 +1858,14 @@ export function arrayLiteralLength() {
  * return: int 10..30
  */
 export function arrayLiteralIndex(index: number) {
-  return [10, 20, 30][index]
+  return [10, 20, 30][index]!
 }
 
 /** @fit
  * given index: 0 | 2
  * return: 10 | 30
  */
-export function arrayLiteralFiniteIndexCases(index: number) {
+export function arrayLiteralFiniteIndexCases(index: 0 | 2) {
   const values: [10, 20, 30] = [10, 20, 30]
   return values[index]
 }

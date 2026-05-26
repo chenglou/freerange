@@ -39,6 +39,7 @@ import {
   bindFunctionCallInputs,
 } from './function-inputs.ts'
 import {functionContractSpecs} from './function-contracts.ts'
+import {filterTypeCheckedSpecs} from './contract-typecheck.ts'
 import {functionInputRoots} from './function-shape.ts'
 import {
   linearVariable,
@@ -120,7 +121,7 @@ export function verifyCallGivenSpecs(
   options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
   evaluators: CallContractEvaluators,
 ) {
-  const contractSpecs = functionContractSpecs(calleeProgram, fn)
+  const contractSpecs = filterTypeCheckedSpecs(calleeProgram, functionContractSpecs(calleeProgram, fn))
   const env = programGlobalEnv(calleeProgram)
   let statusSummary: FitCheckStatus = 'pass'
   bindFunctionCallInputs(fn, argumentValues, env, calleeProgram, options.thisValue)
