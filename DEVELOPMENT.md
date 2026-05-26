@@ -121,14 +121,4 @@ bun run test
 bun run check
 ```
 
-Before adding a public name, write down:
-
-- what it means
-- what it does not imply
-- what source shape proves it
-- what the report should say when it fails
-- why the name is not demo-specific
-
-Prefer better source inference before more public syntax. If ordinary TypeScript already says the thing clearly, make Freerange understand that code instead of asking the user to write a cleverer comment.
-
 Snapshot harnesses accept `--update` when the current behavior is the new baseline, for example `bun verify-eval-snapshots.ts --update`. Update snapshots only after reading the diff and deciding the behavior is intentional.
