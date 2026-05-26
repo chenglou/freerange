@@ -44,8 +44,6 @@ import {
   type FitInferLoopSpec,
   type FitInferReport,
   type FitInferSummary,
-  type FitShapeOptions,
-  type FitShapeReport,
   type FunctionContractProof,
   type Program,
   type ResolvedCallTarget,
@@ -184,9 +182,6 @@ export type {
   FitInferLoopReport,
   FitInferLoopSpec,
   FitInferReport,
-  FitShapeInsight,
-  FitShapeOptions,
-  FitShapeReport,
   FunctionContractProof,
 } from './check-types.ts'
 
@@ -234,11 +229,6 @@ export function summarizeFitFiles(paths: string[]): FitInferSummary {
     }
   }
   return finishInferSummary(summary)
-}
-
-export function inspectFitShapes(paths: string[], _options: FitShapeOptions = {}): FitShapeReport {
-  loadFitProject(paths, readTopLevelGlobal)
-  return {files: paths, insights: []}
 }
 
 export function createFunctionContractCache(): Map<string, FunctionContractProof> {

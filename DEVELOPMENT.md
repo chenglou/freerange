@@ -14,7 +14,6 @@ bun install
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
 - `bun run fr check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
 - `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
-- `bun run shape-diff path/to/file.ts --function name` — retired dev-only smoke for the old TypeScript shape comparison; it should normally report no TypeScript-only structural facts
 - `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
 - `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
@@ -61,7 +60,7 @@ Facts, values, and proof:
 
 Dev tools and harnesses:
 
-- [shape-diff.ts](./shape-diff.ts), [bench.ts](./bench.ts), and [bench-core.ts](./bench-core.ts) — retired shape comparison plus dev-only timing tools
+- [bench.ts](./bench.ts) and [bench-core.ts](./bench-core.ts) — dev-only timing tools
 - [test.ts](./test.ts) — small orchestrator for focused checker suites
 - [tests/check](./tests/check), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), and [tests/cli](./tests/cli) — focused checker, range-reduction, type-contract, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
@@ -82,7 +81,7 @@ adoption loop: inspect what source proves, keep the human-important `@fit`
 comments, then classify any remaining failure as missing input fact, unsupported
 source shape, helper boundary, or real proof gap.
 
-Do not grow TypeScript type logic just to make `infer` or `shape-diff` prettier. Keep [src/shapes.ts](./src/shapes.ts) as a small query layer over the TypeScript checker: ask for `return.rows[].height`, `input[0].height`, or the exact expression being read; do not walk a whole return type and copy every property into Freerange. Whole-value contract syntax is the narrow exception: [src/parser.ts](./src/parser.ts) lowers Freerange range leaves, then [src/value-specs.ts](./src/value-specs.ts) resolves the surrounding TypeScript type syntax just far enough to check the written contract.
+Do not grow TypeScript type logic just to make `infer` prettier. Keep [src/shapes.ts](./src/shapes.ts) as a small query layer over the TypeScript checker: ask for `return.rows[].height`, `input[0].height`, or the exact expression being read; do not walk a whole return type and copy every property into Freerange. Whole-value contract syntax is the narrow exception: [src/parser.ts](./src/parser.ts) lowers Freerange range leaves, then [src/value-specs.ts](./src/value-specs.ts) resolves the surrounding TypeScript type syntax just far enough to check the written contract.
 
 Do not invent containers from a written path. `given input.width: 0..10` may attach a range only after `input.width` is already a numeric path according to TypeScript or real source evaluation. If `input` is `{}`, `input.width` is a string, or `items` is not an array, report the given as unknown instead of creating `input`, `width`, or `items[]`. Source-created values are different: `{width: 10}`, `rows.push(...)`, `items.map(...)`, and `row.width = 10` can still create facts because the JavaScript did that work.
 
@@ -104,12 +103,6 @@ A good corpus iteration is one of two small loops:
 - annotation: add one or two `@fit` comments to a small numeric/layout-heavy helper, run `bun run fr check file`, classify the first blocker, then add a local pattern test before changing checker behavior.
 
 Do not leave comments in corpus branches just to make a repo look covered. If a file is mostly async, dynamic graph mutation, or strings, the useful result may simply be "not a Freerange fit yet."
-
-## Shape Diff Tool
-
-`bun run shape-diff path/to/file.ts --function name` is kept as a retired smoke command for now. It should normally say there are no TypeScript-only structural facts.
-
-The old version recursively walked TypeScript object and array types, then compared that copied structure with Freerange's values. Do not bring that back. When a report says a property or array path is unknown, add an exact query for the written path, e.g. `return.rows[].height`, or improve the source evaluator so the real computed value carries the fact.
 
 ## Adding Support
 

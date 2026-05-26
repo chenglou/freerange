@@ -1,4 +1,4 @@
-import {inferFitFiles, inspectFitShapes} from './src/check-core.ts'
+import {inferFitFiles} from './src/check-core.ts'
 import {verifyFitFiles} from './src/reports.ts'
 import {displayWorkspaceFile, verifySnapshot} from './snapshot.ts'
 
@@ -39,7 +39,6 @@ await addCheckCase(
 
 for (const [label, functionName] of matrixInferCases) addInferCase(label, matrixFunctions, functionName)
 addInferCase('imported literal nested map/defaults', importFunctions, 'importedNestedLiteralArrayMapDefaultFields')
-addShapeCase('imported literal nested map/defaults shape', importPaths, 'importedNestedLiteralArrayMapDefaultFields')
 
 if (!await verifySnapshot(expectedPath, lines.join('\n'), 'eval snapshots')) process.exitCode = 1
 
@@ -64,14 +63,4 @@ function addInferCase(label: string, functions: ReturnType<typeof inferFitFiles>
   for (const fact of fn.facts.map(fact => fact.text)) lines.push(`  return ${fact}`)
   for (const fact of fn.locals.map(fact => fact.text)) lines.push(`  local ${fact}`)
   for (const unsupported of fn.unsupported) lines.push(`  unsupported ${unsupported}`)
-}
-
-function addShapeCase(label: string, paths: string[], functionName: string) {
-  const report = inspectFitShapes(paths, {functionName, calls: true})
-  lines.push(`shape ${label}`)
-  for (const insight of report.insights) {
-    lines.push(`  ${displayWorkspaceFile(insight.file)}:${insight.functionName}: ${insight.subject}`)
-    for (const fact of insight.freerange) lines.push(`    freerange ${fact}`)
-    for (const fact of insight.typescript) lines.push(`    typescript ${fact}`)
-  }
 }

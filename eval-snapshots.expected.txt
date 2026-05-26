@@ -164,4 +164,3 @@ infer imported literal nested map/defaults
   return return[].springs[].pos: int 4..8
   return return[].springs follows importedNestedLiteralSpringData.groups[].items by index
   return return follows importedNestedLiteralSpringData.groups by index
-shape imported literal nested map/defaults shape

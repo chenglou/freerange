@@ -129,25 +129,6 @@ export type FitInferSummaryReason = {
   count: number
 }
 
-export type FitShapeInsight = {
-  file: string
-  functionName: string
-  subject: string
-  freerange: string[]
-  typescript: string[]
-}
-
-export type FitShapeReport = {
-  files: string[]
-  insights: FitShapeInsight[]
-}
-
-export type FitShapeOptions = {
-  functionName?: string
-  all?: boolean
-  calls?: boolean
-}
-
 export type Program = FitFile<Value>
 
 export type ImportedBinding = FitImportBinding<Program>
