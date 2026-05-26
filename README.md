@@ -21,8 +21,6 @@ It then **statically** checks those numbers, just like TypeScript, to ensure you
 - your layout code can now guarantee e.g. min/max sizes, no overlap, proper occlusion (virtualization) without visual glitches. No more weird squashed mobile layouts!
 - refactors get clear red lines: if someone changes the math, Freerange tells you which contract stopped being true
 
-Under the hood, Freerange first asks TypeScript whether each `@fit` line names real values of the right shape. Then it abstract-interprets a small, boring TypeScript subset. Source, checked helper/type contracts, and explicit `given` facts can earn proofs; unsupported source becomes `unknown`, not a guessed pass.
-
 ## Run A File
 
 The command-line binary is `fr`:
@@ -33,16 +31,9 @@ fr check path/to/file.ts
 
 Run `fr --help` for the command shapes.
 Run `fr check` without file args to read the nearest `tsconfig.json`, like `tsc`.
-Use `fr check --annotations-only` when you want the quieter local pass that only
-proves the annotations where they are written.
-Use `fr check --audit` when you want advisory cleanup for redundant selector
-guards like `Math.min`, `Math.max`, exact min/max ternaries, always-known `if`
-conditions, and `??` fallbacks whose left side is already present.
-Use `fr infer path/to/file.ts` when you want inferred facts for every function in
-that file: what Freerange found, which explicit checks they cover, and where
-proof stopped. Add `--annotations-only` for the quieter annotated-function view,
-or `--function name` for one function. Use no-path `fr infer --all` when you
-want a project summary instead of a per-function dump.
+Use `fr check --annotations-only` when you want the quieter local pass that only proves the annotations where they are written.
+Use `fr check --audit` when you want advisory cleanup for redundant selector guards like `Math.min`, `Math.max`, exact min/max ternaries, always-known `if` conditions, and `??` fallbacks whose left side is already present.
+Use `fr infer path/to/file.ts` when you want inferred facts for every function in that file: what Freerange found, which explicit checks they cover, and where proof stopped. Add `--annotations-only` for the quieter annotated-function view, or `--function name` for one function. Use no-path `fr infer --all` when you want a project summary instead of a per-function dump.
 
 See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
 

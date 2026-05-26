@@ -88,16 +88,14 @@ type PhotoGrid = {
 }
 ```
 
+Everything in `@fit` contracts are type checked through the same TypeScript your project uses. Freerange mostly piggybacks on TypeScript.
 `given` lines are starting assumptions Freerange treats as true. All other lines (aka lines without `given`) are for Freerange to verify to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
-Before Freerange tries to prove a line, it asks TypeScript whether the written names and paths make sense. `given input.width: 0..10` needs `input.width` to already be a number in TypeScript. `return.rows.length >= 0` is rejected if `rows` might be missing. A whole-value line like `return: {left: 0, width: 100} | {left: 20, width: 80}` uses normal TypeScript type syntax, so object literals may need a return annotation or `as const` when you want literal fields instead of `{left: number; width: number}`.
-Type annotations are checked where the type is declared. If `helper.ts` writes `width: number // @fit lowerBound(width)..Infinity`, `lowerBound` only needs to exist in `helper.ts`; files that use the type do not need to import it.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected). They also work for the special range expression: `given myInputA: 0..calcConstant(myInputB)`.
+**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (a function reassigning a local `let` is fine; one that mutates an object/array or calls `Math.random()` gets rejected).
 An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
-You can also put a pure boolean call after `given`, e.g. `given isValidLayout(input)`. Inside the function, Freerange treats that call as true. At call sites, it checks that callers satisfy it. Built-ins like `given spaced(rows, gap)` and `given nondecreasing(rows.top)` also expose their documented row/order facts to later checks.
 
 Syntax Glossary's at the end of the docs.
 
@@ -220,41 +218,6 @@ function layout(pinned: boolean) {
 
 This infers as `{left: 0, width: 100} | {left: 20, width: 80}`
 
-Freerange only splits code branches after it can read the condition as a boolean. A typed boolean, numeric comparison, finite boolean value, or simple numeric truthiness is fine. An unresolved predicate, say `someLibrary.isVisible(row)`, stops there and reports that condition instead of guessing through both bodies.
-
-Today, written contracts can express the flattened numeric pieces:
-
-```ts
-/** @fit
- * return.left: 0 | 20
- * return.width: 80 | 100
- */
-```
-
-If the pairing matters, write the returned shape directly:
-
-```ts
-/** @fit
- * return: {left: 0, width: 100} | {left: 20, width: 80}
- * return: {x: 0..100} | {x: 200..300}
- */
-```
-
-This means every real return value must fit at least one whole case. The range syntax works anywhere that case shape expects a number.
-
-Whole-value shapes use normal TypeScript type syntax, with Freerange ranges where a numeric leaf would go:
-
-```ts
-type TileBox<T> = { value: T }
-
-/** @fit
- * return: TileBox<{width: 10..20}>
- * return: {left: 0..10} & {width: int 1..5}
- */
-```
-
-If a numeric leaf comes from a helper, put the helper call in a range endpoint, e.g. `{width: minWidth()..maxWidth()}`. A bare helper call like `{width: dynamicWidth()}` is not TypeScript type syntax, so Freerange rejects it there instead of guessing.
-
 Freerange currently keeps up to 8 reachable branch states from code. If code needs more than that, it keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`. That 8-case budget is for inferred code branches, which isn't necessarily the same as the number of alternations of output like `1 | 2 | 3`.
 
 (TypeScript avoids this problem by widening to `{left: number; width: number}`, which avoids needing to track branches, but this isn't good enough for Freerange)
@@ -282,10 +245,9 @@ a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
 int a..<b // integer from a up to, but not including, b.
 0 | 40 | 200 // exact finite numeric set.
-0..10 | 20..30 // numeric alternatives. The value must fit one alternative. Redundant alternatives collapse like set union.
-low() | high() // pure expression alternatives. Equivalent to low()..low() | high()..high().
-return: {left: 0, width: 100} | {left: 20, width: 80} // whole returned object alternatives. The pairing is checked case by case.
-return: {left: 0..10} & {width: int 1..5} // whole-value specs use TypeScript type syntax plus Freerange numeric ranges.
+0..10 | 20..30 // numeric alternatives. The value must fit one branch of the union.
+low() | high() // pure expression union.
+return: {left: 0, width: 20..100} | {left: 20, width: 80} // whole returned object union
 return: TileBox<{width: 10..20}> // type aliases, interfaces, generics, and type-only imports declared in your source can be used in whole-value specs.
 width: number, // @fit 0..1000 // param shorthand for `given width: 0..1000`.
 width: number, // @fit >= min // param shorthand for `given width >= min`.
