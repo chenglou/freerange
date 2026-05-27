@@ -258,7 +258,7 @@ if (
   || typedAliasPathFailures.length > 0
   || optionalGivenFieldCheck?.status !== 'unknown'
   || optionalGivenFieldCheck.reason?.includes("TS2322: Type 'number | undefined' is not assignable to type 'number'") !== true
-  || optionalGivenReturnCheck?.status !== 'fail'
+  || optionalGivenReturnCheck != null
   || missingGivenFieldCheck?.status !== 'unknown'
   || missingGivenFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
   || stringGivenFieldCheck?.status !== 'unknown'

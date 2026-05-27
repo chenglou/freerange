@@ -72,8 +72,6 @@ export type PublishedFact = FitInferFact & {
 
 export class FactInventory {
   readonly facts: PublishedFact[] = []
-  readonly byKind = new Map<FitInferFact['kind'], PublishedFact[]>()
-  readonly bySubject = new Map<string, PublishedFact[]>()
 
   add(fact: FitInferFact, origin: FitFactOrigin, subject?: string): PublishedFact {
     const published: PublishedFact = {
@@ -84,14 +82,6 @@ export class FactInventory {
     }
     if (this.facts.some(existing => existing.id === published.id)) return published
     this.facts.push(published)
-    const kindFacts = this.byKind.get(published.kind) ?? []
-    kindFacts.push(published)
-    this.byKind.set(published.kind, kindFacts)
-    if (subject != null) {
-      const subjectFacts = this.bySubject.get(subject) ?? []
-      subjectFacts.push(published)
-      this.bySubject.set(subject, subjectFacts)
-    }
     return published
   }
 

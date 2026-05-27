@@ -31,23 +31,28 @@ import {
 } from './loop-values.ts'
 import {writePath} from './value-path.ts'
 
-export type PendingLoopScalarAdd = {
+type PendingLoopScalarAddBase = {
   increment: NumberValue
   order: number
   node: ts.Node
 }
 
-type PendingConditionalLoopScalarAdd = PendingLoopScalarAdd
+export type PendingLoopScalarAdd = PendingLoopScalarAddBase & {
+  effectKind: 'scalar-add'
+}
+
+type PendingConditionalLoopScalarAdd = PendingLoopScalarAddBase & {
+  effectKind: 'conditional-scalar-add'
+}
 
 type PendingLoopExtremum = LoopExtremum & {
+  effectKind: 'extremum'
   candidateExpression: ts.Expression
 }
 
-export type PendingLoopEffects = {
-  scalarAdds: Map<string, PendingLoopScalarAdd>
-  conditionalScalarAdds: Map<string, PendingConditionalLoopScalarAdd>
-  extrema: Map<string, PendingLoopExtremum>
-}
+export type PendingLoopEffect = PendingLoopScalarAdd | PendingConditionalLoopScalarAdd | PendingLoopExtremum
+
+export type PendingLoopEffects = Map<string, PendingLoopEffect>
 
 export type LoopEffectCapture =
   | {kind: 'captured'}
@@ -63,11 +68,38 @@ type LoopScalarAdd = {
 export type EvaluateLoopExpression = (expression: ts.Expression, frame: InterpreterFrame) => Value
 
 export function pendingLoopEffects(): PendingLoopEffects {
-  return {
-    scalarAdds: new Map(),
-    conditionalScalarAdds: new Map(),
-    extrema: new Map(),
+  return new Map()
+}
+
+export function hasPendingLoopEffects(effects: PendingLoopEffects) {
+  return effects.size > 0
+}
+
+export function pendingLoopEffectsHaveScalarAdds(effects: PendingLoopEffects) {
+  for (const effect of effects.values()) {
+    if (effect.effectKind === 'scalar-add' || effect.effectKind === 'conditional-scalar-add') return true
   }
+  return false
+}
+
+export function pendingLoopEffectsAreOnlyExtrema(effects: PendingLoopEffects) {
+  if (effects.size === 0) return false
+  for (const effect of effects.values()) {
+    if (effect.effectKind !== 'extremum') return false
+  }
+  return true
+}
+
+export function pendingLoopEffectTargetNames(effects: PendingLoopEffects) {
+  return effects.keys()
+}
+
+export function pendingLoopExtrema(effects: PendingLoopEffects): Map<string, LoopExtremum> {
+  const extrema = new Map<string, LoopExtremum>()
+  for (const [targetName, effect] of effects) {
+    if (effect.effectKind === 'extremum') extrema.set(targetName, effect)
+  }
+  return extrema
 }
 
 export function captureLoopBodyEffect(
@@ -95,7 +127,7 @@ export function captureLoopBodyEffect(
   if (referencesAnyIdentifier(extremum.candidateExpression, loopEffectTargets(effects))) {
     return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar extrema candidates cannot depend on an earlier scalar update`, extremum.candidateExpression)}
   }
-  effects.extrema.set(extremum.targetName, extremum)
+  effects.set(extremum.targetName, extremum)
   return {kind: 'captured'}
 }
 
@@ -105,35 +137,38 @@ export function finalizeLoopEffects(
   loopLabel: string,
   frame: InterpreterFrame,
 ): Value | null {
-  if (effects.scalarAdds.size === 0 && effects.conditionalScalarAdds.size === 0 && effects.extrema.size === 0) return null
-  if (effects.conditionalScalarAdds.size > 0 && (effects.scalarAdds.size > 0 || effects.extrema.size > 0 || loop.appends.length > 0)) {
+  if (!hasPendingLoopEffects(effects)) return null
+  const counts = pendingLoopEffectCounts(effects)
+  if (counts.conditionalScalarAdds > 0 && (counts.scalarAdds > 0 || counts.extrema > 0 || loop.appends.length > 0)) {
     return noteUnsupported(frame, `${loopLabel} conditional running sums support guarded scalar updates only`, firstLoopEffectNode(effects))
   }
-  if (effects.extrema.size > 0 && (effects.scalarAdds.size > 0 || loop.appends.length > 0)) {
+  if (counts.extrema > 0 && (counts.scalarAdds > 0 || loop.appends.length > 0)) {
     return noteUnsupported(frame, `${loopLabel} scalar extrema support extrema updates only`, firstLoopEffectNode(effects))
   }
   const updates = new Map<string, LoopScalarUpdate>()
-  for (const [targetName, pending] of effects.scalarAdds) {
-    const start = frame.env.get(targetName)
-    if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, pending.node)
-    const end = runningSumNumber(targetName, start, loop.source.length, pending.increment)
-    updates.set(targetName, {start, increment: pending.increment, end})
-    frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, pending.increment))
-  }
-  for (const [targetName, pending] of effects.conditionalScalarAdds) {
-    const start = frame.env.get(targetName)
-    if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, pending.node)
-    const end = conditionalRunningSumNumber(targetName, start, loop.source.length, pending.increment)
-    updates.set(targetName, {start, increment: pending.increment, end})
-    frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, pending.increment))
-  }
-  for (const [targetName, extremum] of effects.extrema) {
-    const start = frame.env.get(targetName)
-    if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar extremum expected ${targetName} to be a number`, extremum.candidateExpression)
-    frame.env.set(targetName, runningExtremumNumber(extremum.kind, targetName, start, loop.source.length, extremum.candidate))
+  for (const [targetName, effect] of effects) {
+    switch (effect.effectKind) {
+      case 'scalar-add':
+      case 'conditional-scalar-add': {
+        const start = frame.env.get(targetName)
+        if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar cursor expected ${targetName} to be a number`, effect.node)
+        const end = effect.effectKind === 'conditional-scalar-add'
+          ? conditionalRunningSumNumber(targetName, start, loop.source.length, effect.increment)
+          : runningSumNumber(targetName, start, loop.source.length, effect.increment)
+        updates.set(targetName, {start, increment: effect.increment, end})
+        frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, effect.increment))
+        break
+      }
+      case 'extremum': {
+        const start = frame.env.get(targetName)
+        if (start?.kind !== 'number') return noteUnsupported(frame, `${loopLabel} scalar extremum expected ${targetName} to be a number`, effect.candidateExpression)
+        frame.env.set(targetName, runningExtremumNumber(effect.kind, targetName, start, loop.source.length, effect.candidate))
+        break
+      }
+    }
   }
 
-  const cursorError = applyLoopCursorFacts(loop, effects.scalarAdds, updates, loopLabel, frame)
+  const cursorError = applyLoopCursorFacts(loop, effects, updates, loopLabel, frame)
   if (cursorError != null) return cursorError
   for (const [targetName, update] of updates) frame.env.set(targetName, update.end)
   return null
@@ -153,9 +188,12 @@ function captureLoopScalarAdd(
   if (referencesAnyIdentifier(add.incrementExpression, loopEffectTargets(effects))) {
     return {kind: 'unsupported', value: noteUnsupported(frame, `${loopLabel} scalar cursor increments cannot depend on an earlier cursor update`, add.incrementExpression)}
   }
-  const target = {increment: add.increment, order, node: add.incrementExpression}
-  if (conditional) effects.conditionalScalarAdds.set(add.targetName, target)
-  else effects.scalarAdds.set(add.targetName, target)
+  effects.set(add.targetName, {
+    effectKind: conditional ? 'conditional-scalar-add' : 'scalar-add',
+    increment: add.increment,
+    order,
+    node: add.incrementExpression,
+  })
   return {kind: 'captured'}
 }
 
@@ -197,7 +235,7 @@ function readLoopExtremumAssignment(statement: ts.Statement, frame: InterpreterF
   if (candidateExpression == null || referencesIdentifier(candidateExpression, targetName)) return null
   const candidate = evaluateExpression(candidateExpression, frame)
   return candidate.kind === 'number'
-    ? {targetName, kind: target.name.text, candidate, candidateExpression}
+    ? {targetName, effectKind: 'extremum', kind: target.name.text, candidate, candidateExpression}
     : null
 }
 
@@ -213,22 +251,47 @@ function singleStatement(statement: ts.Statement): ts.Statement {
 }
 
 function firstLoopEffectNode(effects: PendingLoopEffects): ts.Node | undefined {
-  return effects.scalarAdds.values().next().value?.node
-    ?? effects.conditionalScalarAdds.values().next().value?.node
-    ?? effects.extrema.values().next().value?.candidateExpression
+  for (const effect of effects.values()) {
+    if (effect.effectKind === 'scalar-add') return effect.node
+  }
+  for (const effect of effects.values()) {
+    if (effect.effectKind === 'conditional-scalar-add') return effect.node
+  }
+  for (const effect of effects.values()) {
+    if (effect.effectKind === 'extremum') return effect.candidateExpression
+  }
+  return undefined
 }
 
 function loopEffectTargets(effects: PendingLoopEffects): Set<string> {
-  return new Set([...effects.scalarAdds.keys(), ...effects.conditionalScalarAdds.keys(), ...effects.extrema.keys()])
+  return new Set(effects.keys())
 }
 
 function loopEffectTargetAlreadyUpdated(targetName: string, effects: PendingLoopEffects): boolean {
-  return effects.scalarAdds.has(targetName) || effects.conditionalScalarAdds.has(targetName) || effects.extrema.has(targetName)
+  return effects.has(targetName)
+}
+
+function pendingLoopEffectCounts(effects: PendingLoopEffects) {
+  const counts = {scalarAdds: 0, conditionalScalarAdds: 0, extrema: 0}
+  for (const effect of effects.values()) {
+    switch (effect.effectKind) {
+      case 'scalar-add':
+        counts.scalarAdds++
+        break
+      case 'conditional-scalar-add':
+        counts.conditionalScalarAdds++
+        break
+      case 'extremum':
+        counts.extrema++
+        break
+    }
+  }
+  return counts
 }
 
 function applyLoopCursorFacts(
   loop: LoopFrame,
-  pendingAdds: Map<string, PendingLoopScalarAdd>,
+  effects: PendingLoopEffects,
   updates: Map<string, LoopScalarUpdate>,
   loopLabel: string,
   frame: InterpreterFrame,
@@ -243,7 +306,7 @@ function applyLoopCursorFacts(
     for (const append of appends) {
       const loopPush = loopAppendShapeWithCursorUpdates(append, updates)
       for (const cursorPath of loopPush.cursorPaths) {
-        const pending = pendingAdds.get(cursorPath.targetName)
+        const pending = pendingScalarAdd(effects, cursorPath.targetName)
         if (pending != null && pending.order <= append.order) {
           return noteUnsupported(frame, `${loopLabel} scalar cursor ${cursorPath.targetName} must be pushed before it is updated`, pending.node)
         }
@@ -264,6 +327,11 @@ function applyLoopCursorFacts(
     }, frame)
   }
   return null
+}
+
+function pendingScalarAdd(effects: PendingLoopEffects, targetName: string): PendingLoopScalarAdd | null {
+  const effect = effects.get(targetName)
+  return effect?.effectKind === 'scalar-add' ? effect : null
 }
 
 function resolveNumberFromEnv(expr: string, frame: InterpreterFrame): NumberValue | null {

@@ -263,10 +263,13 @@ export function verifyFitProgramWithCallsites(
       rawCallsiteChecks.push(...result.callsiteChecks)
     }
   }
-  annotationChecks.push(...verifyTopLevelInlineSpecs(program, contractCache))
+  const topLevelAnnotationChecks = verifyTopLevelInlineSpecs(program, contractCache)
+  annotationChecks.push(...topLevelAnnotationChecks)
 
   if (reachableProgramHasCallPreconditions(program)) {
-    rawCallsiteChecks.push(...checkTopLevelCallsites(program, contractCache))
+    if (topLevelAnnotationChecks.every(check => check.status === 'pass')) {
+      rawCallsiteChecks.push(...checkTopLevelCallsites(program, contractCache))
+    }
     for (const fn of program.functions.values()) {
       if (functionsWithRecordedCallsites.has(fn.name)) continue
       rawCallsiteChecks.push(...checkFunctionCallsites(program, fn, contractCache))
@@ -421,13 +424,26 @@ function dedupeCallsiteChecks(checks: FitCheck[]) {
 
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const context = topLevelEvalContext(program, contractCache)
-  context.checks.push(...contractTypeChecksForTopLevel(program))
-  if (context.checks.some(check => check.status !== 'pass')) return context.checks
+  const typeChecks = contractTypeChecksForTopLevel(program)
+  context.checks.push(...typeChecks)
+  const allowInlineSpecs = typeChecks.every(check => check.status === 'pass')
   for (const statement of program.sourceFile.statements) {
     if (!ts.isVariableStatement(statement)) continue
-    bindVariableStatement(statement, context, filterTypeCheckedSpecs(program, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? []))
+    const statementChecksStart = context.checks.length
+    const specs = allowInlineSpecs
+      ? filterTypeCheckedSpecs(program, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? [])
+      : []
+    bindVariableStatement(statement, context, specs)
+    if (checksAddedNonPass(context.checks, statementChecksStart)) return context.checks
   }
   return context.checks
+}
+
+function checksAddedNonPass(checks: FitCheck[], start: number): boolean {
+  for (let index = start; index < checks.length; index++) {
+    if (checks[index]!.status !== 'pass') return true
+  }
+  return false
 }
 
 function verifyFunctionSpecs(

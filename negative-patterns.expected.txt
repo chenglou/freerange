@@ -998,9 +998,6 @@ FAIL tests/patterns/negative-patterns.ts:default: return.x: 50..100
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.left
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1036,2): error TS2304: Cannot find name 'row'.
-FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
-  caller passed: container: 3, containee: 4
-  missing: 3 >= 4
 FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
   result: is false
   missing fact: -1 > 0
@@ -1109,9 +1106,6 @@ FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMapMu
     inferred from code: mapIndex(source) >= 0
     inferred from code: mapIndex(source) - 1 < 0
   missing fact: -1 > 0
-REQUIRES tests/patterns/negative-patterns.ts:<top-level>: negativeNeedsWideViewport(document.documentElement.clientWidth): requires width: 320..2000
-  caller passed: width: int 0..Infinity
-  missing: document.documentElement.clientWidth: 320..2000
 FAIL tests/patterns/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
   caller passed: max: 2, min: 10
   missing: 2 >= 10

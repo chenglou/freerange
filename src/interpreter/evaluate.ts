@@ -61,7 +61,6 @@ import {
   segmentedStackElement,
   segmentedStackSummary,
   type GuardedLoopPush,
-  type LoopExtremum,
 } from '../loop-summary.ts'
 import {readGuardedLoopPushes, type LoopSourceContext} from '../loop-source.ts'
 import {
@@ -135,7 +134,12 @@ import {
 import {
   captureLoopBodyEffect,
   finalizeLoopEffects,
+  hasPendingLoopEffects,
   pendingLoopEffects,
+  pendingLoopEffectsAreOnlyExtrema,
+  pendingLoopEffectsHaveScalarAdds,
+  pendingLoopEffectTargetNames,
+  pendingLoopExtrema,
   type PendingLoopEffects,
 } from './loop-effects.ts'
 import {
@@ -1270,18 +1274,14 @@ function readGuardedPushAfterExtrema(
   frame: InterpreterFrame,
 ): GuardedLoopPush[] | null {
   if (!hasPendingLoopEffects(effects)) return null
-  if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size === 0) return null
-  const pushes = readGuardedLoopPushes(statement, loopSourceContext(frame), loop.source.length, loopExtrema(effects))
+  if (!pendingLoopEffectsAreOnlyExtrema(effects)) return null
+  const pushes = readGuardedLoopPushes(statement, loopSourceContext(frame), loop.source.length, pendingLoopExtrema(effects))
   if (pushes == null) return null
   if (pushes.length > 1) {
     noteUnsupported(frame, `${loopLabel} guarded scalar flushes support one pushed array`, statement)
     return null
   }
   return pushes
-}
-
-function hasPendingLoopEffects(effects: PendingLoopEffects) {
-  return effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0 || effects.extrema.size > 0
 }
 
 function addLoopFactRoots(
@@ -1292,15 +1292,7 @@ function addLoopFactRoots(
 ) {
   for (const append of loop.appends) claim.factRoots.add(append.arrayName)
   for (const push of guardedPushes) claim.factRoots.add(push.arrayName)
-  for (const targetName of effects.scalarAdds.keys()) claim.factRoots.add(targetName)
-  for (const targetName of effects.conditionalScalarAdds.keys()) claim.factRoots.add(targetName)
-  for (const targetName of effects.extrema.keys()) claim.factRoots.add(targetName)
-}
-
-function loopExtrema(effects: PendingLoopEffects): Map<string, LoopExtremum> {
-  const extrema = new Map<string, LoopExtremum>()
-  for (const [targetName, extremum] of effects.extrema) extrema.set(targetName, extremum)
-  return extrema
+  for (const targetName of pendingLoopEffectTargetNames(effects)) claim.factRoots.add(targetName)
 }
 
 function loopSourceContext(frame: InterpreterFrame): LoopSourceContext {
@@ -1339,10 +1331,10 @@ function finalizeGuardedLoopPushes(
   if (loop.appends.some(append => guardedArrays.has(append.arrayName))) {
     return noteUnsupported(frame, `${loopLabel} guarded scalar flushes cannot mix with unguarded pushes to the same array`)
   }
-  if (effects.scalarAdds.size > 0 || effects.conditionalScalarAdds.size > 0) {
+  if (pendingLoopEffectsHaveScalarAdds(effects)) {
     return noteUnsupported(frame, `${loopLabel} guarded scalar flushes support scalar extrema only`)
   }
-  const extrema = loopExtrema(effects)
+  const extrema = pendingLoopExtrema(effects)
   for (const push of pushes) {
     const target = frame.env.get(push.arrayName)
     if (target?.kind !== 'array') return noteUnsupported(frame, `${loopLabel} guarded push expected ${push.arrayName} to be an array`)
