@@ -8,6 +8,7 @@ import {
 } from '../domain.ts'
 import {expressionRootName, expressionRootNames} from '../source-expressions.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
+import {replaceRootValueEverywhere} from './value-path.ts'
 
 export function isForgettableForStatement(statement: ts.ForStatement) {
   const indexName = forgettableForIndexName(statement.initializer)
@@ -149,11 +150,11 @@ function referenceRootName(value: Value | undefined): string | null {
 export function forgetRoot(env: Map<string, Value>, root: string) {
   const current = env.get(root)
   if (current?.kind === 'array') {
-    env.set(root, {...current, length: unknownArrayLength(current.expr ?? root), elements: null, element: null, summary: null})
+    replaceRootValueEverywhere(env, root, {...current, length: unknownArrayLength(current.expr ?? root), elements: null, element: null, summary: null})
     return
   }
   if (current?.kind === 'object') {
-    env.set(root, unknownObject(root))
+    replaceRootValueEverywhere(env, root, unknownObject(root))
     return
   }
   if (current?.kind === 'number') {

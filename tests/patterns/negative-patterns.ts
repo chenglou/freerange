@@ -691,6 +691,52 @@ export function negativePrefixIncrementWrites() {
   return value
 }
 
+function negativeGrowBox(box: {size: number}): void {
+  box.size = 100
+}
+
+/** @fit
+ * return == 1
+ */
+export function negativeCalleeMutatesArgument() {
+  const box = {size: 1}
+  negativeGrowBox(box)
+  return box.size
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * return == 0
+ */
+export function negativeMapCallbackMutatesCaptured(items: number[]) {
+  let total = 0
+  items.map(item => {
+    total += 1
+    return item
+  })
+  return total
+}
+
+/** @fit
+ * return == 3
+ */
+export function negativeArrayAliasPush() {
+  const xs = [1, 2, 3]
+  const ys = xs
+  ys.push(4)
+  return xs.length
+}
+
+/** @fit
+ * given i: int 0..2
+ * return == 1
+ */
+export function negativeDynamicIndexWrite(i: number) {
+  const slots = [1, 1, 1]
+  slots[i] = 999
+  return slots[0]!
+}
+
 /** @fit
  * given items.length: int 1..10
  * given items[].height: 0..5

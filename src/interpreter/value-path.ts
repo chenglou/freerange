@@ -71,6 +71,28 @@ export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame
   frame.env.set(path.root, updated)
 }
 
+// Mutating a value in place (push, sort, a forgotten root) must show through
+// every alias of that value; rebinding a name must not. writePath covers
+// nested writes by repairing the shared container; this covers writes that
+// replace the root's own value.
+export function writeMutationPath(path: ValuePath, value: Value, frame: InterpreterFrame) {
+  if (path.segments.length > 0) {
+    writePath(path, value, frame)
+    return
+  }
+  replaceRootValueEverywhere(frame.env, path.root, value)
+}
+
+export function replaceRootValueEverywhere(env: Map<string, Value>, root: string, next: Value) {
+  const current = env.get(root)
+  if (current != null && (current.kind === 'object' || current.kind === 'array')) {
+    for (const [name, envValue] of env) {
+      env.set(name, replaceSharedValue(envValue, current, next))
+    }
+  }
+  env.set(root, next)
+}
+
 export function readPropertyValue(target: Value, name: string, expr: string): Value {
   if (target.kind === 'object') return target.props.get(name) ?? unknown(`${expr} was not inferred`)
   if (target.kind === 'array' && name === 'length') return target.length

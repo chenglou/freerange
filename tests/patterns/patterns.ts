@@ -1001,6 +1001,21 @@ export function compoundAssignmentsComputeExactly() {
   return value
 }
 
+function sumPair(left: number, right: number) {
+  let total = left
+  total += right
+  return total
+}
+
+/** @fit
+ * given width: 0..100
+ * return: 0..300
+ */
+export function helperLocalMutationKeepsCallerFacts(width: number) {
+  const padded = sumPair(width, 100)
+  return padded + width
+}
+
 /** @fit
  * given items.length: int 0..50
  * given top: 0..1000

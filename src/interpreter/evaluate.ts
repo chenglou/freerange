@@ -111,6 +111,7 @@ import {
   readPropertyValue,
   valueExpr,
   valuePathExpression,
+  writeMutationPath,
   writePath,
   type ValuePath,
 } from './value-path.ts'
@@ -128,6 +129,14 @@ import {
   type IndexedForLoopShape,
 } from './source-syntax.ts'
 import {expressionRootNames} from '../source-expressions.ts'
+import {
+  functionEffects,
+  isPureGlobalMemberCall,
+  lengthBearingConstructorNames,
+  outerWriteRoot,
+  type FunctionEffects,
+  type FunctionLikeNode,
+} from './function-effects.ts'
 import {
   indexedElementAssumptions,
   indexedLoopValue,
@@ -1515,21 +1524,6 @@ function evaluateNewExpression(expression: ts.NewExpression, frame: InterpreterF
   return noteUnsupported(frame, `Unsupported new expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }
 
-const lengthBearingConstructorNames = new Set([
-  'Array',
-  'Int8Array',
-  'Uint8Array',
-  'Uint8ClampedArray',
-  'Int16Array',
-  'Uint16Array',
-  'Int32Array',
-  'Uint32Array',
-  'Float32Array',
-  'Float64Array',
-  'BigInt64Array',
-  'BigUint64Array',
-])
-
 function newExpressionConstructorName(expression: ts.NewExpression): string | null {
   if (ts.isIdentifier(expression.expression)) return expression.expression.text
   return null
@@ -1582,11 +1576,16 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
       ...(getter.imported == null ? {} : {imported: getter.imported}),
       thisValue: receiver,
     }, frame)
-    if (hooked != null) return hooked
-    return valueWithTypeFallback(
+    if (hooked != null) {
+      applyFunctionCallEffects(functionEffects(getter.fn.node, getter.program), [], [], expression.expression, frame)
+      return hooked
+    }
+    const value = valueWithTypeFallback(
       invokeFitFunction(getter.fn, [], frame, getter.program, rootFrame(getter.program).env, receiver),
       fallback,
     )
+    applyFunctionCallEffects(functionEffects(getter.fn.node, getter.program), [], [], expression.expression, frame)
+    return value
   }
   const target = evaluateExpression(expression.expression, frame)
   const optional = hasQuestionDotToken(expression)
@@ -1768,6 +1767,12 @@ function evaluateObjectLiteral(expression: ts.ObjectLiteralExpression, frame: In
       props.set(property.name.text, value)
       afterClaim(claim, value, frame)
       continue
+    }
+    // Accessors replace plain read/write semantics for the whole object: a later
+    // property write would silently bypass the setter in the model, so the
+    // object as a whole is not tracked.
+    if (ts.isGetAccessorDeclaration(property) || ts.isSetAccessorDeclaration(property)) {
+      return noteUnsupported(frame, `Unsupported object property ${property.getText(frame.program.sourceFile)}`, property)
     }
     if (!ts.isPropertyAssignment(property)) {
       noteUnsupported(frame, `Unsupported object property ${property.getText(frame.program.sourceFile)}`, property)
@@ -2035,6 +2040,104 @@ function havocRoots(frame: InterpreterFrame, names: string[]) {
   }
 }
 
+// Callee bodies evaluate in their own environment; what they change in the
+// caller's world arrives through their effect summary: forget the receiver
+// when the callee writes through this, forget each argument the callee mutates
+// or retains, and forget the same-module roots it writes.
+function applyFunctionCallEffects(
+  effects: FunctionEffects,
+  argumentExpressions: readonly ts.Expression[],
+  parameters: readonly ts.ParameterDeclaration[],
+  receiverExpression: ts.Expression | null,
+  frame: InterpreterFrame,
+) {
+  if (effects.mutatesThis) {
+    if (receiverExpression != null) havocRoots(frame, expressionRootNames(receiverExpression, []))
+    else havocRoots(frame, ['this'])
+  }
+  const hasSpread = argumentExpressions.some(argument => ts.isSpreadElement(argument))
+  for (const index of effects.mutatesParams) {
+    const rest = parameters[index]?.dotDotDotToken != null
+    const targets = hasSpread
+      ? argumentExpressions
+      : rest
+        ? argumentExpressions.slice(index)
+        : argumentExpressions[index] == null ? [] : [argumentExpressions[index]]
+    for (const argument of targets) {
+      havocRoots(frame, expressionRootNames(ts.isSpreadElement(argument) ? argument.expression : argument, []))
+    }
+  }
+  for (const key of effects.writesOuter) {
+    const root = outerWriteRoot(key, frame.program.sourceId)
+    if (root != null) havocRoots(frame, [root])
+  }
+}
+
+// Inline callbacks run per element on a copy of the caller's environment, so
+// reads stay precise; writes to captured locals and mutations of the elements
+// fed through the callback's parameters are applied here instead.
+function applyInlineCallbackEffects(callbackFn: FunctionLikeNode, receiverExpression: ts.Expression | null, frame: InterpreterFrame): FunctionEffects {
+  const effects = functionEffects(callbackFn, frame.program)
+  applyFunctionCallEffects(effects, [], callbackFn.parameters, null, frame)
+  if (effects.mutatesParams.size > 0 && receiverExpression != null) {
+    havocRoots(frame, expressionRootNames(receiverExpression, []))
+  }
+  return effects
+}
+
+// The array value read before the callback ran: its length is still exact
+// (element mutation cannot change it), but element facts belong to the first
+// iteration only once the callback mutates its parameters.
+function sourceAfterCallback(source: ArrayValue, effects: FunctionEffects): ArrayValue {
+  if (effects.mutatesParams.size === 0) return source
+  return {...source, elements: null, element: null, summary: null}
+}
+
+function valueCanBeMutated(value: Value | undefined): boolean {
+  if (value == null) return true
+  if (value.kind === 'object' || value.kind === 'array' || value.kind === 'unknown') return true
+  if (value.kind === 'nullable') return valueCanBeMutated(value.present)
+  return false
+}
+
+// A call to something the interpreter cannot see may write through or retain
+// any reference handed to it: the receiver, every mutable argument, and
+// whatever a passed callback touches. Numbers, strings, and booleans carry no
+// reference back, so their roots keep their facts.
+function applyUnknownCallEffects(
+  expression: ts.CallExpression,
+  target: ts.Expression,
+  argumentValues: (Value | undefined)[],
+  frame: InterpreterFrame,
+) {
+  const havocAllInputs = () => {
+    if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+      havocRoots(frame, expressionRootNames(target.expression, []))
+    }
+    expression.arguments.forEach((argument, index) => {
+      const argumentExpression = ts.isSpreadElement(argument) ? argument.expression : argument
+      if (isInlineFunction(unwrapExpression(argumentExpression))) return
+      if (valueCanBeMutated(argumentValues[index])) havocRoots(frame, expressionRootNames(argumentExpression, []))
+    })
+  }
+  havocAllInputs()
+  for (const argument of expression.arguments) {
+    const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
+    const callback = passedFunctionNode(argumentExpression, frame)
+    if (callback == null) continue
+    const callbackEffects = functionEffects(callback, frame.program)
+    applyFunctionCallEffects(callbackEffects, [], callback.parameters, null, frame)
+    if (callbackEffects.mutatesParams.size > 0) havocAllInputs()
+  }
+}
+
+function passedFunctionNode(expression: ts.Expression, frame: InterpreterFrame): FunctionLikeNode | null {
+  if (isInlineFunction(expression)) return expression
+  if (!ts.isIdentifier(expression)) return null
+  const resolved = resolveCallTarget(expression, frame.program)
+  return resolved.kind === 'function' ? resolved.fn.node : null
+}
+
 function assignmentHasExternalEffect(path: ValuePath, frame: InterpreterFrame) {
   return path.segments.length > 0 || !frame.localBindings.has(path.root)
 }
@@ -2212,7 +2315,11 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'every') return evaluateEverySomeCall(expression, target, 'every', frame)
   if (ts.isPropertyAccessExpression(target) && target.name.text === 'some') return evaluateEverySomeCall(expression, target, 'some', frame)
-  if (isInlineFunction(target)) return invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
+  if (isInlineFunction(target)) {
+    const result = invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
+    applyFunctionCallEffects(functionEffects(target, frame.program), expression.arguments, target.parameters, null, frame)
+    return result
+  }
   if (ts.isPropertyAccessExpression(target)) {
     const member = classMemberFunctionForPropertyAccess(target, frame)
     if (member != null && ts.isMethodDeclaration(member.fn.node)) {
@@ -2223,7 +2330,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
         functionName: member.functionName,
         fn: member.fn,
         ...(member.imported == null ? {} : {imported: member.imported}),
-      }, fallback(), frame, receiver)
+      }, fallback(), frame, receiver, target.expression)
     }
   }
   const resolved = resolveCallTarget(target, frame.program)
@@ -2231,6 +2338,14 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     return evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
   if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback(), frame)
+  // Calls into real platform globals (console.log, JSON.stringify, ...) read
+  // but never write caller state; everything else unseen gets the unknown-call
+  // treatment.
+  const pureGlobal = ts.isPropertyAccessExpression(target)
+    && ts.isIdentifier(target.expression)
+    && isPureGlobalMemberCall(target.expression.text, target.name.text)
+  const argumentValues = evaluatedArguments(expression.arguments, frame)
+  if (!pureGlobal) applyUnknownCallEffects(expression, target, argumentValues, frame)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
   return noteUnsupported(frame, resolved.reason, expression)
@@ -2238,22 +2353,54 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
 
 function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value | null {
   if (target.name.text !== 'reverse' && target.name.text !== 'sort' && target.name.text !== 'splice') return null
-  if (!expression.arguments.every(isSideEffectFreeExpression)) return noteUnsupported(frame, `Unsupported array mutation arguments: ${expression.getText(frame.program.sourceFile)}`, expression)
+  if (!expression.arguments.every(isSideEffectFreeExpression)) {
+    // The mutation still happens at runtime; forget the receiver before giving up.
+    havocRoots(frame, expressionRootNames(target.expression, []))
+    return noteUnsupported(frame, `Unsupported array mutation arguments: ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
   const path = pathFromExpression(target.expression, frame)
-  if (path == null) return noteUnsupported(frame, `Unsupported array mutation target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  if (path == null) {
+    havocRoots(frame, expressionRootNames(target.expression, []))
+    return noteUnsupported(frame, `Unsupported array mutation target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  }
   const current = readPath(path, frame, target.expression)
-  if (current.kind !== 'array') return noteUnsupported(frame, `${target.name.text} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  if (current.kind !== 'array') {
+    havocRoots(frame, expressionRootNames(target.expression, []))
+    return noteUnsupported(frame, `${target.name.text} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  }
   noteEffect(frame, `${target.name.text} mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {
     forgetRoot(frame.env, path.root)
     return unknownArray(expression.getText(frame.program.sourceFile))
   }
   const next = {...current, elements: null, summary: null}
-  writePath(path, next, frame)
+  writeMutationPath(path, next, frame)
   return next
 }
 
 function evaluateResolvedFunctionCall(
+  expression: ts.CallExpression,
+  callName: string,
+  target: Extract<InterpreterCallTarget, {kind: 'function'}>,
+  fallback: Value | null,
+  frame: InterpreterFrame,
+  thisValue?: Value,
+  receiverExpression?: ts.Expression,
+): Value {
+  const result = evaluateResolvedFunctionCallResult(expression, callName, target, fallback, frame, thisValue)
+  // The call happened in every outcome above (including the recursion cut), so
+  // its effects on the caller's world apply unconditionally.
+  applyFunctionCallEffects(
+    functionEffects(target.fn.node, target.program),
+    expression.arguments,
+    target.fn.node.parameters,
+    receiverExpression ?? null,
+    frame,
+  )
+  return result
+}
+
+function evaluateResolvedFunctionCallResult(
   expression: ts.CallExpression,
   callName: string,
   target: Extract<InterpreterCallTarget, {kind: 'function'}>,
@@ -2340,7 +2487,7 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
     element,
     summary: mergeArraySummary(current.summary, currentLoopPushSummary(frame)),
   }
-  writePath(path, next, frame)
+  writeMutationPath(path, next, frame)
   return next.length
 }
 
@@ -2375,21 +2522,23 @@ function evaluateEverySomeCall(
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, `${kind} callback must be an inline function`, callback ?? expression)
   const text = expression.getText(frame.program.sourceFile)
   if (source.length.max === 0) return literalValue([kind === 'every'], text)
-  const sourceExpr = sourceExpression(source, target.expression, frame)
-  const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
-  const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, source.length)
-  const raw = invokeInlineFunction(`<${kind}-predicate>`, callbackFn, [item, index, source], frame)
-  const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, source.length))
+  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
+  const item = effectiveSource.element ?? unknown(`${sourceExpr}[] was not inferred`)
+  const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, effectiveSource.length)
+  const raw = invokeInlineFunction(`<${kind}-predicate>`, callbackFn, [item, index, effectiveSource], frame)
+  const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, effectiveSource.length))
   const truth = truthinessValues(refined)
   if (truth == null) return literalValue([true, false], text)
   if (truth.every(value => value === true)) {
     if (kind === 'every') return literalValue([true], text)
-    if (source.length.min >= 1) return literalValue([true], text)
+    if (effectiveSource.length.min >= 1) return literalValue([true], text)
     return literalValue([true, false], text)
   }
   if (truth.every(value => value === false)) {
     if (kind === 'some') return literalValue([false], text)
-    if (source.length.min >= 1) return literalValue([false], text)
+    if (effectiveSource.length.min >= 1) return literalValue([false], text)
     return literalValue([true, false], text)
   }
   return literalValue([true, false], text)
@@ -2401,16 +2550,21 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'map callback must be an inline function', callback ?? expression)
-  const sourceExpr = sourceExpression(source, target.expression, frame)
-  const abstractElement = evaluateMapElement(source, sourceExpr, callbackFn, frame)
+  // Apply captured-write effects before the representative element run: later
+  // iterations observe earlier mutations, so the representative must read the
+  // already-forgotten state.
+  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
+  const abstractElement = evaluateMapElement(effectiveSource, sourceExpr, callbackFn, frame)
   return {
     kind: 'array',
     layout: 'collection',
-    length: source.length,
+    length: effectiveSource.length,
     elements: null,
     element: abstractElement,
     expr: expression.getText(frame.program.sourceFile),
-    summary: emptyArraySummary(mapOrigin(source, sourceExpr)),
+    summary: emptyArraySummary(mapOrigin(effectiveSource, sourceExpr)),
   }
 }
 
@@ -2436,12 +2590,14 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
   if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
-  const sourceExpr = sourceExpression(source, target.expression, frame)
-  const element = filteredElement(source, sourceExpr, callbackFn, frame)
-  const summary = emptyArraySummary(filterOrigin(source, sourceExpr))
+  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
+  const element = filteredElement(effectiveSource, sourceExpr, callbackFn, frame)
+  const summary = emptyArraySummary(filterOrigin(effectiveSource, sourceExpr))
   const text = expression.getText(frame.program.sourceFile)
-  const length = filteredLength(source, callbackFn, frame, text)
-  addLengthAtMostSourceFact(length, source.length, frame)
+  const length = filteredLength(effectiveSource, callbackFn, frame, text)
+  addLengthAtMostSourceFact(length, effectiveSource.length, frame)
   return {
     kind: 'array',
     layout: 'collection',
