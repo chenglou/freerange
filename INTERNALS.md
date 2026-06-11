@@ -1,3 +1,5 @@
+**DO NOT EDIT THIS DOC UNLESS THE USER SAYS SO**
+
 # INTERNALS
 
 Flow of program for `fr check`:

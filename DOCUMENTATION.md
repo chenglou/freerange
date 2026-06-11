@@ -1,3 +1,5 @@
+**DO NOT EDIT THIS DOC UNLESS THE USER SAYS SO**
+
 Freerange seamlessly augments existing TypeScript types with extra info, for much more verifiability.
 
 Among its use-cases, the biggest focus is to verify TS layout code through carrying proper ranges for numbers. This allows e.g. AI agents to easily verify that their layout rectangles don't overlap (or do overlap), is of certain min/max sizes, is, say, properly stack in a monotonically increasing fashion, etc.
