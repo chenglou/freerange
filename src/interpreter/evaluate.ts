@@ -115,6 +115,7 @@ import {
   type ValuePath,
 } from './value-path.ts'
 import {
+  compoundAssignmentOperator,
   expressionCursorPaths,
   expressionIndexPaths,
   indexedForLoopShape,
@@ -126,6 +127,7 @@ import {
   unwrapExpression,
   type IndexedForLoopShape,
 } from './source-syntax.ts'
+import {expressionRootNames} from '../source-expressions.ts'
 import {
   indexedElementAssumptions,
   indexedLoopValue,
@@ -1465,7 +1467,10 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   const numeric = numericLiteralValue(expression)
   if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), nodeText(expression, frame), linearConstant(numeric))
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], nodeText(expression, frame))
-  if (ts.isTemplateExpression(expression)) return noteUnsupported(frame, `Template string ${nodeText(expression, frame)}`, expression)
+  if (ts.isTemplateExpression(expression)) {
+    for (const span of expression.templateSpans) evaluateExpression(span.expression, frame)
+    return noteUnsupported(frame, `Template string ${nodeText(expression, frame)}`, expression)
+  }
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], 'true')
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], 'false')
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue('null')
@@ -1477,12 +1482,21 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (ts.isArrayLiteralExpression(expression)) return evaluateArrayLiteral(expression, frame)
   if (ts.isVoidExpression(expression)) return evaluateVoidExpression(expression, frame)
   if (ts.isPrefixUnaryExpression(expression)) return evaluatePrefixUnary(expression, frame)
+  if (ts.isPostfixUnaryExpression(expression)) return evaluateIncrementDecrement(expression, frame)
+  if (ts.isDeleteExpression(expression)) {
+    havocRoots(frame, expressionRootNames(expression.expression, []))
+    return noteUnsupported(frame, `Unsupported delete ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
   if (ts.isTypeOfExpression(expression)) return evaluateTypeOfExpression(expression, frame)
   if (ts.isBinaryExpression(expression)) return evaluateBinaryExpression(expression, frame)
   if (ts.isConditionalExpression(expression)) return evaluateConditionalExpression(expression, frame)
   if (ts.isCallExpression(expression)) return evaluateCallExpression(expression, frame)
   if (ts.isNewExpression(expression)) return evaluateNewExpression(expression, frame)
   if (ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)) return noteUnsupported(frame, 'Function value cannot be materialized yet', expression)
+  // An expression form the interpreter does not read may still contain writes
+  // (e.g. an assignment nested in an unsupported construct): forget every root
+  // it mentions before reporting it, so no stale fact survives.
+  havocRoots(frame, expressionRootNames(expression, []))
   return noteUnsupported(frame, `Unsupported expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }
 
@@ -1814,6 +1828,9 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
 
 function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: InterpreterFrame): Value {
   if (expression.operator === ts.SyntaxKind.ExclamationToken) return evaluateLogicalNot(expression, frame)
+  if (expression.operator === ts.SyntaxKind.PlusPlusToken || expression.operator === ts.SyntaxKind.MinusMinusToken) {
+    return evaluateIncrementDecrement(expression, frame)
+  }
   const value = evaluateExpression(expression.operand, frame)
   if (value.kind !== 'number') return noteUnsupported(frame, `Unary ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (expression.operator === ts.SyntaxKind.PlusToken) return value
@@ -1821,6 +1838,27 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
     return negateNumber(value, `-${value.expr ?? expression.operand.getText(frame.program.sourceFile)}`)
   }
   return noteUnsupported(frame, `Unsupported unary expression ${expression.getText(frame.program.sourceFile)}`, expression)
+}
+
+// ++x / x++ / --x / x-- are assignments: the write must land even when the old
+// value is not numeric. Prefix forms evaluate to the new value, postfix to the old.
+function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression, frame: InterpreterFrame): Value {
+  const path = pathFromExpression(expression.operand, frame)
+  if (path == null) {
+    const value = noteUnsupported(frame, `Unsupported update target ${expression.operand.getText(frame.program.sourceFile)}`, expression)
+    havocRoots(frame, expressionRootNames(expression.operand, []))
+    return value
+  }
+  const old = readPath(path, frame, expression)
+  const one = numberValue(1, 1, true, '1', linearConstant(1))
+  const next = old.kind === 'number'
+    ? expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one)
+    : noteUnsupported(frame, `Update ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
+  if (assignmentHasExternalEffect(path, frame)) {
+    noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
+  }
+  writePath(path, next, frame)
+  return ts.isPrefixUnaryExpression(expression) ? next : old
 }
 
 function evaluateTypeOfExpression(expression: ts.TypeOfExpression, frame: InterpreterFrame): Value {
@@ -1960,16 +1998,41 @@ function evaluatePlainNumberBinary(
 
 function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
   const path = pathFromExpression(expression.left, frame)
-  if (path == null) return noteUnsupported(frame, `Unsupported assignment target ${expression.left.getText(frame.program.sourceFile)}`, expression.left)
+  if (path == null) {
+    const value = noteUnsupported(frame, `Unsupported assignment target ${expression.left.getText(frame.program.sourceFile)}`, expression.left)
+    evaluateExpression(expression.right, frame)
+    havocRoots(frame, expressionRootNames(expression.left, []))
+    return value
+  }
   const right = evaluateExpression(expression.right, frame)
-  const value = expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken
-    ? evaluateCompoundPlus(path, right, frame, expression)
-    : right
+  const value = assignedValue(expression.operatorToken.kind, path, right, frame, expression)
   if (assignmentHasExternalEffect(path, frame)) {
     noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   }
   writePath(path, value, frame)
   return value
+}
+
+function assignedValue(kind: ts.SyntaxKind, path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.BinaryExpression): Value {
+  if (kind === ts.SyntaxKind.EqualsToken) return right
+  if (kind === ts.SyntaxKind.PlusEqualsToken) return evaluateCompoundPlus(path, right, frame, expression)
+  const operator = compoundAssignmentOperator(kind)
+  if (operator == null) return noteUnsupported(frame, `Unsupported assignment operator ${expression.getText(frame.program.sourceFile)}`, expression)
+  const left = readPath(path, frame, expression)
+  if (operator === 'conditional') return joinValues(left, right)
+  if (left.kind !== 'number' || right.kind !== 'number') {
+    return noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
+  }
+  return evaluateNumberBinary(operator, left, right, frame, expression)
+}
+
+// Writes through targets the interpreter cannot resolve must still land somewhere:
+// forget every root the target expression mentions, so no stale value survives a
+// write we could not model. Roots not bound in this frame have no facts to forget.
+function havocRoots(frame: InterpreterFrame, names: string[]) {
+  for (const name of new Set(names)) {
+    if (frame.env.has(name)) forgetRoot(frame.env, name)
+  }
 }
 
 function assignmentHasExternalEffect(path: ValuePath, frame: InterpreterFrame) {

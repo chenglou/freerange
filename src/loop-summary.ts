@@ -85,15 +85,6 @@ export function runningSumNumber(targetName: string, start: NumberValue, count: 
     ? null
     : linearAdd(start.linear, linearScale(count.linear, exactIncrement))
   const linear = exactLinear ?? linearVariable(linearNameForExpression(targetName))
-  if (count.min < 0 || increment.min < 0) return numberValue(
-    Number.NEGATIVE_INFINITY,
-    Number.POSITIVE_INFINITY,
-    false,
-    targetName,
-    linear,
-    null,
-    mergeOrigin(start, count, increment),
-  )
   const delta = multiplyNumbers(count, increment)
   const result = addNumbers(start, delta)
   return numberValue(
@@ -397,18 +388,21 @@ function setObjectPathValue(value: Value, path: string[], replacement: Value): V
 }
 
 
+// The cursor's value at any push site lies in the hull of its start and end values,
+// whatever the increment's sign. A proven non-negative start tightens the lower bound.
 function loopCursorElementValue(
   update: LoopScalarUpdate,
   expr: string,
   assumptions: LinearConstraint[],
 ): NumberValue {
-  if (update.increment.min < 0) return unknownNumber(expr)
   const startMin = proveComparison(update.start, '>=', numberValue(0, 0, true, '0', linearConstant(0)), assumptions).status === 'pass'
     ? Math.max(0, update.start.min)
     : update.start.min
+  const lower = update.increment.min >= 0 ? startMin : Math.min(startMin, update.end.min)
+  const upper = update.increment.max <= 0 ? update.start.max : Math.max(update.start.max, update.end.max)
   return numberValue(
-    startMin,
-    update.end.max,
+    lower,
+    upper,
     update.start.isInteger && update.increment.isInteger,
     expr,
     linearVariable(linearNameForExpression(expr)),

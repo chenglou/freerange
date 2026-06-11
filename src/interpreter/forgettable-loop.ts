@@ -7,7 +7,7 @@ import {
   type Value,
 } from '../domain.ts'
 import {expressionRootName, expressionRootNames} from '../source-expressions.ts'
-import {unwrapExpression} from './source-syntax.ts'
+import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 
 export function isForgettableForStatement(statement: ts.ForStatement) {
   const indexName = forgettableForIndexName(statement.initializer)
@@ -33,7 +33,7 @@ export function isForgettableReadExpression(expression: ts.Expression): boolean 
       && isForgettableReadExpression(current.operand)
   }
   if (ts.isPostfixUnaryExpression(current)) return false
-  if (ts.isBinaryExpression(current)) return !isAnyAssignmentOperator(current.operatorToken.kind)
+  if (ts.isBinaryExpression(current)) return !isAssignmentOperator(current.operatorToken.kind)
     && isForgettableReadExpression(current.left)
     && isForgettableReadExpression(current.right)
   if (ts.isConditionalExpression(current)) return isForgettableReadExpression(current.condition)
@@ -163,10 +163,10 @@ export function forgetRoot(env: Map<string, Value>, root: string) {
   env.set(root, unknown(`Unsupported mutation changed ${root}`))
 }
 
+// Any assignment whose target root is known and whose right side is a pure read
+// is coverable by forgetting the target root, regardless of the operator.
 function isForgettableAssignmentOperator(kind: ts.SyntaxKind) {
-  return kind === ts.SyntaxKind.EqualsToken
-    || kind === ts.SyntaxKind.PlusEqualsToken
-    || kind === ts.SyntaxKind.MinusEqualsToken
+  return isAssignmentOperator(kind)
 }
 
 function isKnownPureReadCall(expression: ts.CallExpression): boolean {
@@ -178,6 +178,3 @@ function isKnownPureReadCall(expression: ts.CallExpression): boolean {
   return target.name.text === 'at' && isForgettableReadExpression(target.expression)
 }
 
-function isAnyAssignmentOperator(kind: ts.SyntaxKind) {
-  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
-}

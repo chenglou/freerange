@@ -922,6 +922,87 @@ export function indexedRunningTotalAssignmentPerItemHeight(items: {height: numbe
 
 /** @fit
  * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * return: 0..2500
+ * return >= 0
+ */
+export function runningTotalChainedAssignmentPerItemHeight(items: {height: number}[], gap: number) {
+  let total = 0
+  for (const item of items) {
+    total = total + item.height + gap
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].cost: 0..40
+ * given budget: 0..1000
+ * return <= budget
+ * return: -2000..1000
+ */
+export function remainingBudgetPerItemCost(items: {cost: number}[], budget: number) {
+  let remaining = budget
+  for (const item of items) {
+    remaining -= item.cost
+  }
+  return remaining
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * return: int 0..50
+ * return >= 0
+ */
+export function countedPositiveItemsWithPostfixIncrement(items: number[]) {
+  let count = 0
+  for (const item of items) {
+    if (item > 0) count++
+  }
+  return count
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given items[].width: 0..60
+ * return: 0..60
+ */
+export function widestEdgeAcrossItems(items: {height: number; width: number}[]) {
+  let widest = 0
+  for (const item of items) {
+    widest = Math.max(widest, item.height, item.width)
+  }
+  return widest
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * return: 0..2000
+ * return >= 0
+ */
+export function indexedRunningTotalLonghandIncrement(items: {height: number}[]) {
+  let total = 0
+  for (let i = 0; i < items.length; i = i + 1) {
+    total = total + items[i]!.height
+  }
+  return total
+}
+
+/** @fit
+ * return == 16
+ */
+export function compoundAssignmentsComputeExactly() {
+  let value = 10
+  value -= 2
+  value *= 2
+  return value
+}
+
+/** @fit
+ * given items.length: int 0..50
  * given top: 0..1000
  * given step: 0..40
  * return.length == items.length

@@ -82,14 +82,71 @@ export function expressionCursorPaths(expression: ts.Expression | undefined, pat
   return []
 }
 
-export function scalarIncrementExpression(expression: ts.BinaryExpression, targetName: string): ts.Expression | null {
-  if (expression.operatorToken.kind === ts.SyntaxKind.PlusEqualsToken) return expression.right
-  if (expression.operatorToken.kind !== ts.SyntaxKind.EqualsToken) return null
-  const right = unwrapExpression(expression.right)
-  if (!ts.isBinaryExpression(right) || right.operatorToken.kind !== ts.SyntaxKind.PlusToken) return null
-  if (isIdentifierNamed(right.left, targetName)) return right.right
-  if (isIdentifierNamed(right.right, targetName)) return right.left
-  return null
+// One signed addend of a scalar update. `{constant}` covers the implicit 1 of `++`/`--`.
+export type ScalarUpdateTerm =
+  | {expression: ts.Expression; negate: boolean}
+  | {constant: number}
+
+export type ScalarUpdate = {
+  targetName: string
+  terms: ScalarUpdateTerm[]
+  node: ts.Expression
+}
+
+// Recognizes every statement whose effect is "add a target-free amount to a scalar local":
+// `x += e`, `x -= e`, `x++`, `--x`, and `x = <sum>` where the sum mentions x exactly once,
+// positively, at the top level of a +/- chain (`x = a + x - b` included). The target may not
+// appear inside any other addend; updates that scale or replace the target are not additions.
+export function scalarUpdateFromStatement(statement: ts.Statement): ScalarUpdate | null {
+  if (!ts.isExpressionStatement(statement)) return null
+  return scalarUpdateFromExpression(statement.expression)
+}
+
+export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpdate | null {
+  const current = unwrapExpression(expression)
+  if (ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current)) {
+    if (current.operator !== ts.SyntaxKind.PlusPlusToken && current.operator !== ts.SyntaxKind.MinusMinusToken) return null
+    const targetName = identifierTargetName(current.operand)
+    if (targetName == null) return null
+    return {targetName, terms: [{constant: current.operator === ts.SyntaxKind.PlusPlusToken ? 1 : -1}], node: current}
+  }
+  if (!ts.isBinaryExpression(current)) return null
+  const targetName = identifierTargetName(current.left)
+  if (targetName == null) return null
+  switch (current.operatorToken.kind) {
+    case ts.SyntaxKind.PlusEqualsToken:
+    case ts.SyntaxKind.MinusEqualsToken: {
+      if (referencesIdentifier(current.right, targetName)) return null
+      const negate = current.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken
+      return {targetName, terms: [{expression: current.right, negate}], node: current.right}
+    }
+    case ts.SyntaxKind.EqualsToken: {
+      const leaves: {expression: ts.Expression; negate: boolean}[] = []
+      flattenSignedSum(current.right, false, leaves)
+      const targetLeaves = leaves.filter(leaf => isIdentifierNamed(leaf.expression, targetName))
+      if (targetLeaves.length !== 1 || targetLeaves[0]!.negate) return null
+      const terms = leaves.filter(leaf => leaf !== targetLeaves[0])
+      if (terms.some(term => referencesIdentifier(term.expression, targetName))) return null
+      return {targetName, terms, node: current.right}
+    }
+    default:
+      return null
+  }
+}
+
+function flattenSignedSum(expression: ts.Expression, negate: boolean, out: {expression: ts.Expression; negate: boolean}[]) {
+  const current = unwrapExpression(expression)
+  if (ts.isBinaryExpression(current)
+    && (current.operatorToken.kind === ts.SyntaxKind.PlusToken || current.operatorToken.kind === ts.SyntaxKind.MinusToken)) {
+    flattenSignedSum(current.left, negate, out)
+    flattenSignedSum(current.right, current.operatorToken.kind === ts.SyntaxKind.MinusToken ? !negate : negate, out)
+    return
+  }
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
+    flattenSignedSum(current.operand, !negate, out)
+    return
+  }
+  out.push({expression: current, negate})
 }
 
 export function identifierTargetName(expression: ts.Expression): string | null {
@@ -132,7 +189,9 @@ export function isSideEffectFreeExpression(expression: ts.Expression): boolean {
     && isSideEffectFreeExpression(current.expression)
     && isSideEffectFreeExpression(current.argumentExpression)
   if (ts.isNumericLiteral(current) || ts.isStringLiteral(current) || current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) return true
-  if (ts.isPrefixUnaryExpression(current)) return isSideEffectFreeExpression(current.operand)
+  if (ts.isPrefixUnaryExpression(current)) {
+    return readOnlyPrefixOperators.has(current.operator) && isSideEffectFreeExpression(current.operand)
+  }
   if (ts.isBinaryExpression(current)) return !isAssignmentOperator(current.operatorToken.kind)
     && isSideEffectFreeExpression(current.left)
     && isSideEffectFreeExpression(current.right)
@@ -169,8 +228,55 @@ export function unwrapExpression(expression: ts.Expression): ts.Expression {
   return expression
 }
 
+const readOnlyPrefixOperators = new Set<ts.SyntaxKind>([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.ExclamationToken,
+  ts.SyntaxKind.TildeToken,
+])
+
+// All assignment operators, by TypeScript's own enumeration: =, the arithmetic/bitwise
+// compounds, and the logical compounds (&&=, ||=, ??=).
 export function isAssignmentOperator(kind: ts.SyntaxKind): boolean {
-  return kind === ts.SyntaxKind.EqualsToken || kind === ts.SyntaxKind.PlusEqualsToken
+  return kind >= ts.SyntaxKind.FirstAssignment && kind <= ts.SyntaxKind.LastAssignment
+}
+
+// The binary operator a compound assignment desugars to: `a op= b` writes `a op b`.
+// Logical compounds assign conditionally, so they map to 'conditional' and callers
+// must join the old and new values instead of computing one result.
+export function compoundAssignmentOperator(kind: ts.SyntaxKind): ts.SyntaxKind | 'conditional' | null {
+  switch (kind) {
+    case ts.SyntaxKind.PlusEqualsToken:
+      return ts.SyntaxKind.PlusToken
+    case ts.SyntaxKind.MinusEqualsToken:
+      return ts.SyntaxKind.MinusToken
+    case ts.SyntaxKind.AsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskToken
+    case ts.SyntaxKind.AsteriskAsteriskEqualsToken:
+      return ts.SyntaxKind.AsteriskAsteriskToken
+    case ts.SyntaxKind.SlashEqualsToken:
+      return ts.SyntaxKind.SlashToken
+    case ts.SyntaxKind.PercentEqualsToken:
+      return ts.SyntaxKind.PercentToken
+    case ts.SyntaxKind.LessThanLessThanEqualsToken:
+      return ts.SyntaxKind.LessThanLessThanToken
+    case ts.SyntaxKind.GreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanToken
+    case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken:
+      return ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken
+    case ts.SyntaxKind.AmpersandEqualsToken:
+      return ts.SyntaxKind.AmpersandToken
+    case ts.SyntaxKind.BarEqualsToken:
+      return ts.SyntaxKind.BarToken
+    case ts.SyntaxKind.CaretEqualsToken:
+      return ts.SyntaxKind.CaretToken
+    case ts.SyntaxKind.AmpersandAmpersandEqualsToken:
+    case ts.SyntaxKind.BarBarEqualsToken:
+    case ts.SyntaxKind.QuestionQuestionEqualsToken:
+      return 'conditional'
+    default:
+      return null
+  }
 }
 
 function indexedForLoopSource(expression: ts.Expression): IndexedForLoopSource {
@@ -180,14 +286,26 @@ function indexedForLoopSource(expression: ts.Expression): IndexedForLoopSource {
     : {kind: 'limit', expression}
 }
 
+// Accepts every spelling whose effect is "add exactly 1 to the index":
+// i++, ++i, i += 1, i = i + 1, i = 1 + i, ...
 function indexedLoopIncrements(expression: ts.Expression, indexName: string): boolean {
-  const current = unwrapExpression(expression)
-  if ((ts.isPostfixUnaryExpression(current) || ts.isPrefixUnaryExpression(current))
-    && current.operator === ts.SyntaxKind.PlusPlusToken
-    && ts.isIdentifier(current.operand)
-    && current.operand.text === indexName) return true
-  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.PlusEqualsToken) return false
-  return isIdentifierNamed(current.left, indexName) && numericLiteralValue(current.right) === 1
+  const update = scalarUpdateFromExpression(expression)
+  if (update == null || update.targetName !== indexName) return false
+  return scalarUpdateLiteralTotal(update) === 1
+}
+
+function scalarUpdateLiteralTotal(update: ScalarUpdate): number | null {
+  let total = 0
+  for (const term of update.terms) {
+    if ('constant' in term) {
+      total += term.constant
+      continue
+    }
+    const literal = numericLiteralValue(term.expression)
+    if (literal == null) return null
+    total += term.negate ? -literal : literal
+  }
+  return total
 }
 
 function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclaration {

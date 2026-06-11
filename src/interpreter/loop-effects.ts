@@ -1,10 +1,14 @@
 import * as ts from 'typescript'
 import {
+  addNumbers,
   mergeArraySummary,
   mergeElementValue,
+  negateNumber,
+  numberValue,
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {linearConstant} from '../linear.ts'
 import {mergeAssumptions} from '../assumptions.ts'
 import {
   conditionalRunningSumNumber,
@@ -21,8 +25,9 @@ import {
   isSideEffectFreeExpression,
   referencesAnyIdentifier,
   referencesIdentifier,
-  scalarIncrementExpression,
+  scalarUpdateFromStatement,
   unwrapExpression,
+  type ScalarUpdateTerm,
 } from './source-syntax.ts'
 import {noteUnsupported, type InterpreterFrame, type LoopFrame} from './context.ts'
 import {
@@ -198,15 +203,26 @@ function captureLoopScalarAdd(
 }
 
 function readLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame, evaluateExpression: EvaluateLoopExpression): LoopScalarAdd | null {
-  if (!ts.isExpressionStatement(statement)) return null
-  const expression = unwrapExpression(statement.expression)
-  if (!ts.isBinaryExpression(expression)) return null
-  const targetName = identifierTargetName(expression.left)
-  if (targetName == null) return null
-  const incrementExpression = scalarIncrementExpression(expression, targetName)
-  if (incrementExpression == null || referencesIdentifier(incrementExpression, targetName)) return null
-  const increment = evaluateExpression(incrementExpression, frame)
-  return increment.kind === 'number' ? {targetName, increment, incrementExpression} : null
+  const update = scalarUpdateFromStatement(statement)
+  if (update == null) return null
+  let increment: NumberValue | null = null
+  for (const term of update.terms) {
+    const value = scalarUpdateTermNumber(term, frame, evaluateExpression)
+    if (value == null) return null
+    increment = increment == null ? value : addNumbers(increment, value)
+  }
+  return {
+    targetName: update.targetName,
+    increment: increment ?? numberValue(0, 0, true, '0', linearConstant(0)),
+    incrementExpression: update.node,
+  }
+}
+
+function scalarUpdateTermNumber(term: ScalarUpdateTerm, frame: InterpreterFrame, evaluateExpression: EvaluateLoopExpression): NumberValue | null {
+  if ('constant' in term) return numberValue(term.constant, term.constant, true, `${term.constant}`, linearConstant(term.constant))
+  const value = evaluateExpression(term.expression, frame)
+  if (value.kind !== 'number') return null
+  return term.negate ? negateNumber(value, `-(${value.expr ?? term.expression.getText()})`) : value
 }
 
 function readConditionalLoopScalarAdd(statement: ts.Statement, frame: InterpreterFrame, evaluateExpression: EvaluateLoopExpression): LoopScalarAdd | null {
@@ -214,6 +230,9 @@ function readConditionalLoopScalarAdd(statement: ts.Statement, frame: Interprete
   return readLoopScalarAdd(singleStatement(statement.thenStatement), frame, evaluateExpression)
 }
 
+// `best = Math.min(best, ...candidates)` / `Math.max(...)` with the target appearing
+// exactly once among any number of arguments. The per-iteration candidate is the
+// min/max of the remaining arguments, folded pairwise.
 function readLoopExtremumAssignment(statement: ts.Statement, frame: InterpreterFrame, evaluateExpression: EvaluateLoopExpression): PendingLoopExtremum | null {
   if (!ts.isExpressionStatement(statement)) return null
   const expression = unwrapExpression(statement.expression)
@@ -225,18 +244,26 @@ function readLoopExtremumAssignment(statement: ts.Statement, frame: InterpreterF
   const target = unwrapExpression(call.expression)
   if (!ts.isPropertyAccessExpression(target) || !ts.isIdentifier(target.expression) || target.expression.text !== 'Math') return null
   if (target.name.text !== 'min' && target.name.text !== 'max') return null
-  if (call.arguments.length !== 2) return null
-  const left = call.arguments[0]!
-  const right = call.arguments[1]!
-  const candidateExpression =
-    isIdentifierNamed(left, targetName) ? right
-      : isIdentifierNamed(right, targetName) ? left
-        : null
-  if (candidateExpression == null || referencesIdentifier(candidateExpression, targetName)) return null
-  const candidate = evaluateExpression(candidateExpression, frame)
-  return candidate.kind === 'number'
-    ? {targetName, effectKind: 'extremum', kind: target.name.text, candidate, candidateExpression}
-    : null
+  if (call.arguments.some(argument => ts.isSpreadElement(argument))) return null
+  const targetArguments = call.arguments.filter(argument => isIdentifierNamed(argument, targetName))
+  const candidateExpressions = call.arguments.filter(argument => !isIdentifierNamed(argument, targetName))
+  if (targetArguments.length !== 1 || candidateExpressions.length === 0) return null
+  if (candidateExpressions.some(argument => referencesIdentifier(argument, targetName))) return null
+  let candidate: NumberValue | null = null
+  for (const candidateExpression of candidateExpressions) {
+    const value = evaluateExpression(candidateExpression, frame)
+    if (value.kind !== 'number') return null
+    candidate = candidate == null ? value : extremumNumberPair(target.name.text, candidate, value)
+  }
+  return candidate == null
+    ? null
+    : {targetName, effectKind: 'extremum', kind: target.name.text, candidate, candidateExpression: candidateExpressions[0]!}
+}
+
+function extremumNumberPair(kind: 'min' | 'max', left: NumberValue, right: NumberValue): NumberValue {
+  return kind === 'min'
+    ? numberValue(Math.min(left.min, right.min), Math.min(left.max, right.max), left.isInteger && right.isInteger, null)
+    : numberValue(Math.max(left.min, right.min), Math.max(left.max, right.max), left.isInteger && right.isInteger, null)
 }
 
 function isUnsupportedConditionalLoopScalarElse(statement: ts.Statement, frame: InterpreterFrame, evaluateExpression: EvaluateLoopExpression): boolean {

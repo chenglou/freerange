@@ -662,6 +662,36 @@ export function negativeSelfReferentialAccumulatorRhs(items: number[]) {
 }
 
 /** @fit
+ * return == 10
+ */
+export function negativeLoopGuardMutationIsNotPure(items: number[]) {
+  let cap = 10
+  let total = 0
+  for (const item of items) {
+    if (--cap > 0) total += item
+  }
+  return cap
+}
+
+/** @fit
+ * return == 10
+ */
+export function negativeCompoundAssignmentWrites() {
+  let value = 10
+  value -= 2
+  return value
+}
+
+/** @fit
+ * return == 10
+ */
+export function negativePrefixIncrementWrites() {
+  let value = 10
+  ++value
+  return value
+}
+
+/** @fit
  * given items.length: int 1..10
  * given items[].height: 0..5
  * given minHeight: 0..5
