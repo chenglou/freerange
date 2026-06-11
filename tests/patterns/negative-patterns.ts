@@ -766,6 +766,21 @@ export function negativeConditionalSumGuardMayNeverFire(rows: {height: number}[]
 }
 
 /** @fit
+ * given x: -1000000000000..1000000000000
+ * return == 0
+ */
+export function negativeTinyCoefficientIsNotZero(x: number) {
+  return 1e-10 * x
+}
+
+/** @fit
+ * return == 0.3
+ */
+export function negativeFloatSumIsNotItsDecimalLook() {
+  return 0.1 + 0.2
+}
+
+/** @fit
  * given items.length: int 0..200
  * given items[].height: 1..100
  * given gap: 0..5

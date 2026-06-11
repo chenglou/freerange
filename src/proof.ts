@@ -34,15 +34,21 @@ import {
   linearAdd,
   linearConstant,
   linearFromExpressionText,
-  linearKey,
   linearScaleExact,
   linearSubtract,
-  positiveScaleMultiple,
-  reductionScales,
   sameExpressionText,
   sameLinear,
   type LinearExpr,
 } from './linear.ts'
+import {farkasProvesNonNegative} from './farkas.ts'
+import {
+  rationalDivide,
+  rationalIsPositive,
+  rationalIsZero,
+  rationalNegate,
+  rationalOne,
+  type Rational,
+} from './rational.ts'
 
 export type Truth = 'true' | 'false' | 'maybe'
 
@@ -63,8 +69,6 @@ export type ComparisonProof = {
   reason?: string
   step: ComparisonProofStep
 }
-
-const maxLinearReductionDepth = 4
 
 export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
   return proofStatus(proveComparisonWithStep(left, op, right, assumptions))
@@ -307,7 +311,7 @@ function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: Num
   if (diff == null) return null
   const target = cleanLinear(diff)
   for (const fact of assumptions.filter(assumption => assumption.fromRange !== true).flatMap(nonNegativeConstraints)) {
-    for (const scale of reductionScales(target, fact.diff)) {
+    for (const scale of singleFactScales(target, fact.diff)) {
       const scaledFact = linearScaleExact(fact.diff, scale)
       const remainder = linearSubtract(target, scaledFact)
       if (remainder == null || sameLinear(remainder, target)) continue
@@ -316,6 +320,25 @@ function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: Num
     }
   }
   return null
+}
+
+// Candidate positive multiples that align one coefficient of the fact with the
+// target — only used to suggest the smaller missing fact in reports; the
+// prover itself decides by Farkas combination.
+function singleFactScales(target: LinearExpr, fact: LinearExpr): Rational[] {
+  const scales: Rational[] = []
+  for (const [name, targetCoefficient] of target.terms) {
+    const factCoefficient = fact.terms.get(name)
+    if (factCoefficient == null || rationalIsZero(factCoefficient)) continue
+    const scale = rationalDivide(targetCoefficient, factCoefficient)
+    if (scale == null || !rationalIsPositive(scale)) continue
+    if (!scales.some(existing => rationalIsZero(rationalSubtractLocal(existing, scale)))) scales.push(scale)
+  }
+  return scales
+}
+
+function rationalSubtractLocal(left: Rational, right: Rational): Rational {
+  return {num: left.num * right.den - right.num * left.den, den: left.den * right.den}
 }
 
 function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: NumberValue): LinearExpr | null {
@@ -333,12 +356,12 @@ function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: Number
 
 function singleLinearBound(linear: LinearExpr) {
   const clean = cleanLinear(linear)
-  if (clean.constant !== 0 || clean.terms.size !== 1) return null
+  if (!rationalIsZero(clean.constant) || clean.terms.size !== 1) return null
   const first = [...clean.terms.entries()][0]
   if (first == null) return null
   const [name, coefficient] = first
-  if (coefficient === 0) return null
-  return coefficient > 0 ? `${name} >= 0` : `${name} <= 0`
+  if (rationalIsZero(coefficient)) return null
+  return rationalIsPositive(coefficient) ? `${name} >= 0` : `${name} <= 0`
 }
 
 export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: ConstraintSource = 'code'): LinearConstraint | null {
@@ -401,17 +424,17 @@ function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberV
   switch (op) {
     case '==':
       if (isZeroLinear(diff)) return 'true'
-      return provesNonNegative(diff, false, assumptions) && provesNonNegative(linearScaleExact(diff, -1), false, assumptions) ? 'true' : 'maybe'
+      return provesNonNegative(diff, false, assumptions) && provesNonNegative(linearScaleExact(diff, rationalNegate(rationalOne)), false, assumptions) ? 'true' : 'maybe'
     case '>=':
       return provesNonNegative(diff, false, assumptions) ? 'true' : 'maybe'
     case '<=':
-      return provesNonNegative(linearScaleExact(diff, -1), false, assumptions) ? 'true' : 'maybe'
+      return provesNonNegative(linearScaleExact(diff, rationalNegate(rationalOne)), false, assumptions) ? 'true' : 'maybe'
     case '>':
       if (isZeroLinear(diff)) return 'false'
       return provesNonNegative(diff, true, assumptions) ? 'true' : 'maybe'
     case '<':
       if (isZeroLinear(diff)) return 'false'
-      return provesNonNegative(linearScaleExact(diff, -1), true, assumptions) ? 'true' : 'maybe'
+      return provesNonNegative(linearScaleExact(diff, rationalNegate(rationalOne)), true, assumptions) ? 'true' : 'maybe'
   }
 }
 
@@ -420,38 +443,13 @@ function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: Linea
   return proveNonNegativeFromConstraints(diff, strict, facts)
 }
 
+// Complete for linear consequences over the rationals: a nonnegative
+// combination exists if and only if the claim follows (Farkas), so there is no
+// depth cap to tune and no restatement that flips the verdict.
 export function proveNonNegativeFromConstraints(diff: LinearExpr, strict: boolean, facts: NonNegativeConstraint[]) {
-  return reduceToNonNegative(diff, strict, facts, maxLinearReductionDepth, new Set())
-}
-
-function reduceToNonNegative(
-  diff: LinearExpr,
-  strict: boolean,
-  facts: NonNegativeConstraint[],
-  depth: number,
-  seen: Set<string>,
-): boolean {
   const cleanDiff = cleanLinear(diff)
   if (linearConstantStatus(cleanDiff, strict)) return true
-  for (const fact of facts) {
-    const scale = positiveScaleMultiple(cleanDiff, fact.diff)
-    if (scale != null && (!strict || fact.strict)) return true
-  }
-  if (depth === 0) return false
-
-  const key = `${strict ? 'strict' : 'loose'}:${linearKey(cleanDiff)}`
-  if (seen.has(key)) return false
-  seen.add(key)
-
-  for (const fact of facts) {
-    for (const scale of reductionScales(cleanDiff, fact.diff)) {
-      const scaledFact = linearScaleExact(fact.diff, scale)
-      const remainder = linearSubtract(cleanDiff, scaledFact)
-      if (remainder == null || sameLinear(remainder, cleanDiff)) continue
-      if (reduceToNonNegative(remainder, strict && !fact.strict, facts, depth - 1, new Set(seen))) return true
-    }
-  }
-  return false
+  return farkasProvesNonNegative(cleanDiff, strict, facts)
 }
 
 export function nonNegativeConstraints(assumption: LinearConstraint): NonNegativeConstraint[] {
@@ -460,16 +458,16 @@ export function nonNegativeConstraints(assumption: LinearConstraint): NonNegativ
     case '==':
       return [
         nonNegativeConstraint(assumption.diff, false, assumption.text),
-        nonNegativeConstraint(linearScaleExact(assumption.diff, -1), false, assumption.text == null ? undefined : `${assumption.text} reversed`),
+        nonNegativeConstraint(linearScaleExact(assumption.diff, rationalNegate(rationalOne)), false, assumption.text == null ? undefined : `${assumption.text} reversed`),
       ]
     case '>=':
       return [nonNegativeConstraint(assumption.diff, false, assumption.text)]
     case '<=':
-      return [nonNegativeConstraint(linearScaleExact(assumption.diff, -1), false, assumption.text)]
+      return [nonNegativeConstraint(linearScaleExact(assumption.diff, rationalNegate(rationalOne)), false, assumption.text)]
     case '>':
       return strictNonNegativeConstraints(assumption.diff, assumption)
     case '<':
-      return strictNonNegativeConstraints(linearScaleExact(assumption.diff, -1), assumption)
+      return strictNonNegativeConstraints(linearScaleExact(assumption.diff, rationalNegate(rationalOne)), assumption)
   }
 }
 

@@ -1,3 +1,4 @@
+import {rationalEquals, rationalOne} from './rational.ts'
 import {
   addNumbers,
   numberValue,
@@ -70,11 +71,11 @@ function shiftedLinearIndexText(linear: LinearExpr | null, offset: -1 | 1): stri
   const term = [...linear.terms.entries()][0]
   if (term == null) return null
   const [name, coefficient] = term
-  if (coefficient !== 1) return null
-  const constant = linear.constant + offset
-  if (!Number.isInteger(constant)) return null
-  if (constant === 0) return name
-  return constant > 0 ? `${name} + ${constant}` : `${name} - ${Math.abs(constant)}`
+  if (!rationalEquals(coefficient, rationalOne)) return null
+  if (linear.constant.den !== 1n) return null
+  const constant = linear.constant.num + BigInt(offset)
+  if (constant === 0n) return name
+  return constant > 0n ? `${name} + ${constant}` : `${name} - ${-constant}`
 }
 
 function dedupeFacts(facts: LinearConstraint[]): LinearConstraint[] {

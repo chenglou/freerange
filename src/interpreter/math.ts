@@ -16,7 +16,7 @@ import {
   type Value,
 } from '../domain.ts'
 import {mergeAssumptions} from '../assumptions.ts'
-import {linearConstant, linearScale, linearVariable} from '../linear.ts'
+import {linearAdd, linearConstant, linearScale, linearVariable} from '../linear.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {
   comparisonConstraint,
@@ -65,7 +65,7 @@ function isRoundingFunctionName(name: string): name is RoundingName {
 
 function roundingFacts(name: RoundingName, result: NumberValue, input: NumberValue): LinearConstraint[] {
   if (result.linear == null || input.linear == null || result.expr == null || input.expr == null) return []
-  const inputPlus = (offset: number) => numberValue(input.min + offset, input.max + offset, input.isInteger, null, {constant: input.linear!.constant + offset, terms: input.linear!.terms})
+  const inputPlus = (offset: number) => numberValue(input.min + offset, input.max + offset, input.isInteger, null, linearAdd(input.linear, linearConstant(offset)))
   const facts: LinearConstraint[] = []
   const floorStyle = () => {
     const upper = comparisonConstraint(result, '<=', input, `${result.expr} <= ${input.expr}`)

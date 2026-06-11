@@ -6,7 +6,8 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
-import {linearConstant, linearEpsilon, linearSubtract, linearVariable, sameExpressionText} from '../linear.ts'
+import {linearConstant, linearSubtract, linearVariable, sameExpressionText} from '../linear.ts'
+import {rationalIsNegative} from '../rational.ts'
 import {
   indexedElementPathValue,
   type LoopPush as LoopSummaryPush,
@@ -109,8 +110,8 @@ function incrementSizeMatch(increment: NumberValue, size: NumberValue): boolean 
   if (increment.linear != null && size.linear != null) {
     const remainder = linearSubtract(increment.linear, size.linear)
     if (remainder == null) return false
-    if (remainder.constant < -linearEpsilon) return false
-    for (const coef of remainder.terms.values()) if (coef < -linearEpsilon) return false
+    if (rationalIsNegative(remainder.constant)) return false
+    for (const coef of remainder.terms.values()) if (rationalIsNegative(coef)) return false
     return true
   }
   if (increment.expr != null && size.expr != null) {

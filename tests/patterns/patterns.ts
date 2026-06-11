@@ -1001,6 +1001,32 @@ export function compoundAssignmentsComputeExactly() {
   return value
 }
 
+/** @fit
+ * given a + 2 * b >= 0
+ * given a - 2 * b >= 0
+ * a + b >= 0
+ * return >= 0
+ */
+export function linearCombinationNeedsFractionalMultipliers(a: number, b: number) {
+  return a + b
+}
+
+/** @fit
+ * given x1 >= 0
+ * given x2 >= 0
+ * given x3 >= 0
+ * given x4 >= 0
+ * given x5 >= 0
+ * given x6 >= 0
+ * given x7 >= 0
+ * given x8 >= 0
+ * x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8 >= 0
+ * return >= 0
+ */
+export function longNonnegativeSumHasNoDepthCliff(x1: number, x2: number, x3: number, x4: number, x5: number, x6: number, x7: number, x8: number) {
+  return x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8
+}
+
 function sumPair(left: number, right: number) {
   let total = left
   total += right

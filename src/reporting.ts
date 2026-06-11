@@ -1,4 +1,5 @@
 import {publicFitText, type ComparisonOperator, type FitRange} from './parser.ts'
+import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} from './rational.ts'
 
 export type ReportNumberValue = {
   min: number
@@ -11,8 +12,8 @@ export type ReportNumberValue = {
 }
 
 export type ReportLinearExpr = {
-  constant: number
-  terms: Map<string, number>
+  constant: Rational
+  terms: Map<string, Rational>
 }
 
 export type ReportLinearConstraint = {
@@ -42,8 +43,6 @@ type ReportSequenceRelation = {
   op: ComparisonOperator
   right: {terms: {item: 'previous' | 'next'; path: string[]}[]; addends: string[]}
 }
-
-const linearEpsilon = 1e-9
 
 export function comparisonFailureReason(
   left: ReportNumberValue,
@@ -224,12 +223,12 @@ export function formatLinearConstraint(constraint: ReportLinearConstraint): stri
 
 export function formatLinear(linear: ReportLinearExpr | null) {
   if (linear == null) return '<nonlinear>'
-  const clean = cleanReportLinear(linear)
   const parts: string[] = []
-  for (const [name, coefficient] of [...clean.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+  for (const [name, coefficient] of [...linear.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    if (rationalIsZero(coefficient)) continue
     parts.push(formatLinearTerm(coefficient, publicFitText(name), parts.length === 0))
   }
-  if (clean.constant !== 0 || parts.length === 0) parts.push(formatLinearTerm(clean.constant, '', parts.length === 0))
+  if (!rationalIsZero(linear.constant) || parts.length === 0) parts.push(formatLinearTerm(linear.constant, '', parts.length === 0))
   return parts.join(' ')
 }
 
@@ -279,20 +278,10 @@ export function formatKnownProofFact(assumption: ReportLinearConstraint): string
   }
 }
 
-function cleanReportLinear(linear: ReportLinearExpr): ReportLinearExpr {
-  const terms = new Map<string, number>()
-  for (const [name, coefficient] of linear.terms) {
-    if (Math.abs(coefficient) > linearEpsilon) terms.set(name, coefficient)
-  }
-  return {
-    constant: Math.abs(linear.constant) > linearEpsilon ? linear.constant : 0,
-    terms,
-  }
-}
-
-function formatLinearTerm(coefficient: number, name: string, first: boolean) {
-  const sign = coefficient < 0 ? '-' : '+'
-  const amount = Math.abs(coefficient)
+function formatLinearTerm(coefficient: Rational, name: string, first: boolean) {
+  const sign = rationalIsNegative(coefficient) ? '-' : '+'
+  // Display rounds; proofs never do.
+  const amount = Math.abs(rationalToNumber(coefficient))
   const body = name.length === 0 ? formatNumber(amount) : amount === 1 ? name : `${formatNumber(amount)} * ${name}`
   return first ? (sign === '-' ? `-${body}` : body) : `${sign} ${body}`
 }

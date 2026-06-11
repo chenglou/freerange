@@ -31,15 +31,12 @@ import {
 } from './domain-paths.ts'
 import {
   cleanLinear,
-  linearAdd,
-  linearEpsilon,
   linearScaleExact,
   linearVariable,
-  mergeScale,
   sameExpressionText,
   isFixedElementPathExpression,
-  type LinearExpr,
 } from './linear.ts'
+import {rationalCompare, rationalNegate, rationalOne, rationalZero} from './rational.ts'
 import {
   fitSpecIsAssumption,
   fitExpressionParsed,
@@ -575,40 +572,22 @@ function givenComparisonContradictionReason(fact: LinearConstraint, assumptions:
 function nonNegativeConstraintIsImpossible(fact: NonNegativeConstraint) {
   const clean = cleanLinear(fact.diff)
   if (clean.terms.size > 0) return false
-  return fact.strict ? clean.constant <= linearEpsilon : clean.constant < -linearEpsilon
+  const sign = rationalCompare(clean.constant, rationalZero)
+  return fact.strict ? sign <= 0 : sign < 0
 }
 
+// Kept separate from the earlier-set check only to name the one conflicting
+// line in the report.
 function nonNegativeConstraintsConflict(left: NonNegativeConstraint, right: NonNegativeConstraint) {
-  const scale = positiveTermCancelScale(left.diff, right.diff)
-  if (scale == null) return false
-  const combined = linearAdd(left.diff, linearScaleExact(right.diff, scale))
-  if (combined == null || combined.terms.size > 0) return false
-  if (combined.constant < -linearEpsilon) return true
-  return (left.strict || right.strict) && combined.constant <= linearEpsilon
+  return nonNegativeConstraintConflictsWithEarlier(left, [right])
 }
 
 function nonNegativeConstraintConflictsWithEarlier(fact: NonNegativeConstraint, earlierConstraints: NonNegativeConstraint[]) {
-  return proveNonNegativeFromConstraints(linearScaleExact(fact.diff, -1), !fact.strict, earlierConstraints)
+  return proveNonNegativeFromConstraints(linearScaleExact(fact.diff, rationalNegate(rationalOne)), !fact.strict, earlierConstraints)
 }
 
 function givenFactLabel(text: string | undefined) {
   return text?.startsWith('given ') === true ? text.slice('given '.length) : text ?? 'this comparison'
-}
-
-function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | null {
-  let scale: number | null = null
-  const names = new Set([...left.terms.keys(), ...right.terms.keys()])
-  for (const name of names) {
-    const leftCoefficient = left.terms.get(name) ?? 0
-    const rightCoefficient = right.terms.get(name) ?? 0
-    if (Math.abs(leftCoefficient) <= linearEpsilon && Math.abs(rightCoefficient) <= linearEpsilon) continue
-    if (Math.abs(rightCoefficient) <= linearEpsilon) return null
-    const nextScale = -leftCoefficient / rightCoefficient
-    if (nextScale <= linearEpsilon) return null
-    scale = scale == null ? nextScale : mergeScale(scale, nextScale)
-    if (scale === Number.NEGATIVE_INFINITY) return null
-  }
-  return scale
 }
 
 function givenCatalogNameShadowedByUser(spec: FitExpressionGivenSpec, context: EvalContext): boolean {

@@ -1,3 +1,4 @@
+import {rationalIsExactNumber, rationalToNumber} from './rational.ts'
 import {
   domainPathSyntheticName,
   parseDomainPathText,
@@ -40,8 +41,9 @@ export function numberValue(
   const cleanOrigin = [...new Set(origin)]
   const cleanMin = Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max
-  if (clean != null && clean.terms.size === 0 && Number.isFinite(clean.constant)) {
-    return {kind: 'number', min: clean.constant, max: clean.constant, isInteger: Number.isInteger(clean.constant), expr, linear: clean, cases, origin: cleanOrigin}
+  if (clean != null && clean.terms.size === 0 && rationalIsExactNumber(clean.constant)) {
+    const exact = rationalToNumber(clean.constant)
+    return {kind: 'number', min: exact, max: exact, isInteger: Number.isInteger(exact), expr, linear: clean, cases, origin: cleanOrigin}
   }
   if (cleanMin > cleanMax) {
     return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, isInteger: false, expr, linear: clean, cases, origin: cleanOrigin}
