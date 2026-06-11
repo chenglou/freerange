@@ -738,6 +738,50 @@ export function negativeDynamicIndexWrite(i: number) {
 }
 
 /** @fit
+ * given items.length: int 1..50
+ * given items[].height: 1..40
+ * nondecreasing(return.top)
+ */
+export function negativeSeededArrayBreaksAdjacency(items: {height: number}[]) {
+  const rows: {top: number; height: number}[] = [{top: 100, height: 5}]
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height
+  }
+  return rows
+}
+
+/** @fit
+ * given rows.length: int 1..100
+ * given rows[].height: 1..100
+ * return >= 5
+ */
+export function negativeConditionalSumGuardMayNeverFire(rows: {height: number}[]) {
+  let total = 0
+  for (const row of rows) {
+    if (row.height > 50) total += 5
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: int 0..200
+ * given items[].height: 1..100
+ * given gap: 0..5
+ * return[$i + 1].top <= return[$i].height + gap
+ */
+export function negativeFirstIterationCoincidenceIsNotARelation(items: {height: number}[], gap: number) {
+  const rows: {top: number; height: number}[] = []
+  let y = 0
+  for (const item of items) {
+    rows.push({top: y, height: item.height})
+    y += item.height + gap
+  }
+  return rows
+}
+
+/** @fit
  * given items.length: int 1..10
  * given items[].height: 0..5
  * given minHeight: 0..5

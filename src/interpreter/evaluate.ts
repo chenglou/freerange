@@ -1349,18 +1349,20 @@ function finalizeGuardedLoopPushes(
   for (const push of pushes) {
     const target = frame.env.get(push.arrayName)
     if (target?.kind !== 'array') return noteUnsupported(frame, `${loopLabel} guarded push expected ${push.arrayName} to be an array`)
+    const startedEmpty = target.length.min === 0 && target.length.max === 0
     const length = conditionalPushLength(push.arrayName, loop.source.length, target.length)
     const baseElement = loopElementFromPush(push, new Map(), extrema, loop.source.length, frame.env, frame.assumptions)
     const element = segmentedStackElement(push, baseElement, loop.source.length, frame.env)
-    writePath({root: push.arrayName, segments: []}, {
+    writeMutationPath({root: push.arrayName, segments: []}, {
       ...target,
       length,
       elements: null,
       element: pushedElementValue(target, element),
-      summary: mergeArraySummary(target.summary, segmentedStackSummary(push, element)),
+      // Adjacent-pair relations only cover pairs the loop itself produced.
+      summary: startedEmpty ? mergeArraySummary(target.summary, segmentedStackSummary(push, element)) : target.summary,
     }, frame)
     applySegmentedStackCursorUpdate(push, element, loop.source.length, frame.env)
-    if (target.length.min === 0 && target.length.max === 0) {
+    if (startedEmpty) {
       const fact = comparisonConstraint(length, '<=', loop.source.length, `${length.expr ?? push.arrayName + '.length'} <= ${loop.source.length.expr ?? 'loop length'}`)
       if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
     }
@@ -1413,6 +1415,7 @@ function evaluateIndexedForPush(
       conditional: frame.conditionalDepth > 0,
       length: lengthValue,
       element,
+      argument,
       base: current,
       cursorPaths: expressionCursorPaths(argument),
     } : null,
@@ -2476,6 +2479,7 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
       conditional: frame.conditionalDepth > 0,
       length: symbolicLength ?? nextLength,
       element: values[0] ?? null,
+      argument: expression.arguments[0] ?? null,
       base: current,
       cursorPaths: expressionCursorPaths(expression.arguments[0]),
     })

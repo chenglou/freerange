@@ -26,10 +26,11 @@ export type LoopSourceContext = {
 
 export function readLoopPush(expression: ts.CallExpression, context: LoopSourceContext): Omit<LoopPush, 'arrayName' | 'length'> {
   const row = expression.arguments[0]
-  if (row == null) return {element: null, topName: null, topPath: null, height: null, cursorPaths: []}
+  if (row == null) return {element: null, source: null, topName: null, topPath: null, height: null, cursorPaths: []}
   if (!ts.isObjectLiteralExpression(row)) {
     return {
       element: context.evaluateExpression(row, context.env),
+      source: row,
       topName: null,
       topPath: null,
       height: null,
@@ -41,6 +42,7 @@ export function readLoopPush(expression: ts.CallExpression, context: LoopSourceC
   const topName = stackShape?.topName ?? (topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null)
   return {
     element: context.evaluateExpression(row, context.env),
+    source: row,
     topName,
     topPath: stackShape?.topPath ?? (topName == null ? null : ['top']),
     height: stackShape?.height ?? null,

@@ -22,11 +22,11 @@ import {
   linearScale,
   linearVariable,
   sameExpressionText,
-  sameLinear,
   unwrapExpression,
 } from './linear.ts'
 import {parseExpression} from './parser.ts'
 import {proveComparison} from './proof.ts'
+import {flattenSignedSum, propertyNameText} from './interpreter/source-syntax.ts'
 
 export type LoopScalarUpdate = {
   start: NumberValue
@@ -44,6 +44,8 @@ export type LoopPush = {
   arrayName: string
   length: NumberValue
   element: Value | null
+  // the pushed source expression, when available; see LoopAppend.argument
+  source: ts.Expression | null
   topName: string | null
   topPath: string[] | null
   height: NumberValue | null
@@ -203,7 +205,8 @@ export function segmentedStackSummary(push: GuardedLoopPush, element: Value | nu
     advance,
     size: height,
   })
-  return sequenceSummaryFromAppendClock(clock, {resolveNumber: () => null, includeExtentEnd: false})
+  // segmentedStackElement constructed the bottom prop as top + height itself.
+  return sequenceSummaryFromAppendClock(clock, {resolveNumber: () => null, includeExtentEnd: false, bottomPath: ['bottom']})
 }
 
 export function applySegmentedStackCursorUpdate(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, env: Map<string, Value>) {
@@ -239,12 +242,51 @@ export function sequenceSummaryFromLoopPush(
     advance: update.increment,
     size: push.height,
   })
+  const sizeExpr = push.height.expr
   return sequenceSummaryFromAppendClock(clock, {
     resolveNumber: options.resolveNumber,
     includeExtentEnd: true,
     assumptions: options.assumptions,
     cursorEnd: update.end,
+    bottomPath: sizeExpr == null ? null : sourceBottomPath(push.source, push.topName, sizeExpr),
   })
+}
+
+// Finds the pushed field written as `cursor + size` in source, e.g. the bottom
+// of {top: y, height: item.height, bottom: y + item.height}. Source syntax
+// holds at every iteration; evaluated field values are snapshots of the first
+// iteration and must not identify cross-field relations.
+function sourceBottomPath(source: ts.Expression | null, topName: string, sizeExpr: string): string[] | null {
+  if (source == null) return null
+  const unwrapped = unwrapExpression(source)
+  return ts.isObjectLiteralExpression(unwrapped) ? findCursorPlusSizeProperty(unwrapped, topName, sizeExpr, []) : null
+}
+
+function findCursorPlusSizeProperty(literal: ts.ObjectLiteralExpression, topName: string, sizeExpr: string, path: string[]): string[] | null {
+  for (const property of literal.properties) {
+    if (!ts.isPropertyAssignment(property)) continue
+    const name = propertyNameText(property.name)
+    if (name == null) continue
+    const initializer = unwrapExpression(property.initializer)
+    if (ts.isObjectLiteralExpression(initializer)) {
+      const nested = findCursorPlusSizeProperty(initializer, topName, sizeExpr, [...path, name])
+      if (nested != null) return nested
+      continue
+    }
+    if (initializerIsCursorPlusSize(initializer, topName, sizeExpr)) return [...path, name]
+  }
+  return null
+}
+
+function initializerIsCursorPlusSize(initializer: ts.Expression, topName: string, sizeExpr: string): boolean {
+  const leaves: {expression: ts.Expression; negate: boolean}[] = []
+  flattenSignedSum(initializer, false, leaves)
+  if (leaves.some(leaf => leaf.negate)) return false
+  const cursorLeaves = leaves.filter(leaf => ts.isIdentifier(leaf.expression) && leaf.expression.text === topName)
+  if (cursorLeaves.length !== 1) return false
+  const rest = leaves.filter(leaf => leaf !== cursorLeaves[0])
+  if (rest.length === 0) return false
+  return sameExpressionText(rest.map(leaf => leaf.expression.getText()).join(' + '), sizeExpr)
 }
 
 function appendClockFromElement(
@@ -275,6 +317,7 @@ function sequenceSummaryFromAppendClock(
     includeExtentEnd: boolean
     assumptions?: LinearConstraint[]
     cursorEnd?: NumberValue
+    bottomPath?: string[] | null
   },
 ): ArraySummary | null {
   const recurrence = clock.recurrence
@@ -291,8 +334,13 @@ function sequenceSummaryFromAppendClock(
   const gapExpr = spacedGapExpr(advanceExpr, sizeExpr)
   if (gapExpr == null) return summary
 
-  addSpacedRelations(summary, clock, recurrence.path, sizeExpr, gapExpr)
+  const heightPath = pathForStreamValue(clock, sizeExpr)
+  const bottomPath = options.bottomPath ?? null
+  addSpacedRelations(summary, recurrence.path, heightPath, bottomPath, gapExpr)
   if (!options.includeExtentEnd) return summary
+  // lastEnd/extentEnd mean "final .top + .height" by contract; a recurrence on
+  // other fields is a fine relation but not a row extent.
+  if (pathText(recurrence.path) !== 'top' || (!samePath(heightPath ?? [], ['height']) && !samePath(bottomPath ?? [], ['bottom']))) return summary
 
   const loopEndName = `lastEnd(${clock.arrayName})`
   const loopEnd = options.cursorEnd ?? nonEmptyLoopEnd(loopEndName, recurrence.start, recurrence.advance, clock.length)
@@ -312,8 +360,7 @@ function addNondecreasingRelation(summary: ArraySummary, path: string[]) {
   })
 }
 
-function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topPath: string[], sizeExpr: string, gapExpr: string) {
-  const heightPath = pathForStreamValue(clock, sizeExpr)
+function addSpacedRelations(summary: ArraySummary, topPath: string[], heightPath: string[] | null, bottomPath: string[] | null, gapExpr: string) {
   if (heightPath != null) {
     summary.relations.push({
       kind: 'adjacent-comparison',
@@ -323,7 +370,6 @@ function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topPath: 
     })
   }
 
-  const bottomPath = pathForStreamSum(clock, topPath, heightPath, sizeExpr)
   if (bottomPath != null) {
     summary.relations.push({
       kind: 'adjacent-comparison',
@@ -337,23 +383,6 @@ function addSpacedRelations(summary: ArraySummary, clock: AppendClock, topPath: 
 function pathForStreamValue(clock: AppendClock, expr: string): string[] | null {
   const stream = clock.streams.find(item => item.value.kind === 'number' && item.value.expr != null && sameExpressionText(item.value.expr, expr))
   return stream?.path ?? null
-}
-
-function pathForStreamSum(clock: AppendClock, leftPath: string[], rightPath: string[] | null, rightExpr: string) {
-  const left = pathValue(clock, leftPath)
-  const right = rightPath == null ? null : pathValue(clock, rightPath)
-  if (left?.kind !== 'number') return null
-  for (const stream of clock.streams) {
-    if (stream.value.kind !== 'number') continue
-    const sum = right?.kind === 'number' ? linearAdd(left.linear, right.linear) : null
-    if (stream.value.linear != null && sum != null && sameLinear(stream.value.linear, sum)) return stream.path
-    if (stream.value.expr != null && sameExpressionText(stream.value.expr, `${left.expr ?? ''} + ${rightExpr}`)) return stream.path
-  }
-  return null
-}
-
-function pathValue(clock: AppendClock, path: string[]): Value | null {
-  return clock.streams.find(stream => samePath(stream.path, path))?.value ?? null
 }
 
 function samePath(left: string[], right: string[]) {

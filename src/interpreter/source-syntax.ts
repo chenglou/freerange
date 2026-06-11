@@ -134,7 +134,7 @@ export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpd
   }
 }
 
-function flattenSignedSum(expression: ts.Expression, negate: boolean, out: {expression: ts.Expression; negate: boolean}[]) {
+export function flattenSignedSum(expression: ts.Expression, negate: boolean, out: {expression: ts.Expression; negate: boolean}[]) {
   const current = unwrapExpression(expression)
   if (ts.isBinaryExpression(current)
     && (current.operatorToken.kind === ts.SyntaxKind.PlusToken || current.operatorToken.kind === ts.SyntaxKind.MinusToken)) {

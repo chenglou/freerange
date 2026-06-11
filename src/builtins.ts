@@ -9,7 +9,7 @@ import {
 import {sameExpressionText} from './linear.ts'
 import {parseExpression, publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
-import {hasNondecreasingProp, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
+import {hasNondecreasingProp, isRowExtentShape, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
 
 export type BuiltinContext = {
   expression: ts.CallExpression
@@ -81,12 +81,13 @@ function evaluateNoOverlapCall(context: BuiltinContext): Value {
   if (arr.kind !== 'array') return unknown('noOverlap expected an array')
   const summary = arr.summary
   if (summary == null) return unknown(noOverlapFailureReason(text, arr, null))
-  for (const shape of spacedShapesFromRelations(summary.relations)) {
+  const rowExtentShapes = spacedShapesFromRelations(summary.relations).filter(isRowExtentShape)
+  for (const shape of rowExtentShapes) {
     if (gapIsNonnegative(shape.gapExpr, context)) {
       return literalValue([true], text, [`lifted from spaced(${shape.gapExpr}): ${formatArraySummary(arr)}`])
     }
   }
-  return unknown(noOverlapFailureReason(text, arr, spacedShapesFromRelations(summary.relations)[0] ?? null))
+  return unknown(noOverlapFailureReason(text, arr, rowExtentShapes[0] ?? null))
 }
 
 function gapIsNonnegative(gapExpr: string, context: BuiltinContext): boolean {

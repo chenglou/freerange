@@ -108,6 +108,9 @@ export type LoopAppend = {
   conditional: boolean
   length: NumberValue
   element: Value | null
+  // the pushed source expression; cross-field relations are identified from
+  // this syntax, which holds at every iteration, never from evaluated values
+  argument: ts.Expression | null
   base: ArrayValue
   cursorPaths: {path: string[]; targetName: string}[]
 }

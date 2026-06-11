@@ -83,18 +83,30 @@ export function hasNondecreasingProp(array: ArrayValue, prop: string) {
   })
 }
 
+// spaced(rows, gap) means next.top == previous.top + previous.height + gap by
+// contract, so only a relation over those fields (or the equivalent
+// previous.bottom form) discharges it. A numerically true recurrence on some
+// other field pair says nothing about row geometry.
 export function provedSpacing(array: ArrayValue, gapExpr: string) {
   return array.summary?.relations.find(relation => {
     if (relation.kind !== 'adjacent-comparison') return false
     if (relation.op !== '==') return false
     if (relation.left.item !== 'next') return false
+    if (!samePath(relation.left.path, ['top'])) return false
     if (!sameAddends(relation.right.addends, gapExpr === '0' ? [] : [gapExpr])) return false
     const terms = relation.right.terms
     if (!terms.every(term => term.item === 'previous')) return false
-    if (terms.length === 1) return true
-    if (terms.length === 2) return terms.some(term => samePath(term.path, relation.left.path))
+    if (terms.length === 1) return samePath(terms[0]!.path, ['bottom'])
+    if (terms.length === 2) {
+      return terms.some(term => samePath(term.path, ['top'])) && terms.some(term => samePath(term.path, ['height']))
+    }
     return false
   }) ?? null
+}
+
+// noOverlap lifts from any spacing whose fields really are the row extent.
+export function isRowExtentShape(shape: SpacedShape): boolean {
+  return shape.advanceExpr === 'top' && (shape.heightExpr === 'height' || shape.heightExpr === 'bottom')
 }
 
 function samePath(left: string[], right: string[]) {

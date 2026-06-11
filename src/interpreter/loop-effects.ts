@@ -34,7 +34,7 @@ import {
   loopAppendElementWithCursorUpdates,
   loopAppendShapeWithCursorUpdates,
 } from './loop-values.ts'
-import {writePath} from './value-path.ts'
+import {writeMutationPath} from './value-path.ts'
 
 type PendingLoopScalarAddBase = {
   increment: NumberValue
@@ -161,7 +161,12 @@ export function finalizeLoopEffects(
           ? conditionalRunningSumNumber(targetName, start, loop.source.length, effect.increment)
           : runningSumNumber(targetName, start, loop.source.length, effect.increment)
         updates.set(targetName, {start, increment: effect.increment, end})
-        frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, loop.source.length, effect.increment))
+        // A guarded add may fire zero times however long the loop runs, so its
+        // facts must hold at execution count 0.
+        const factCount = effect.effectKind === 'conditional-scalar-add'
+          ? {...loop.source.length, min: 0}
+          : loop.source.length
+        frame.assumptions = mergeAssumptions(frame.assumptions, runningSumFacts(end, start, factCount, effect.increment))
         break
       }
       case 'extremum': {
@@ -330,6 +335,12 @@ function applyLoopCursorFacts(
     let summary = target.summary
     const appends = loop.appends.filter(item => item.arrayName === arrayName)
     let element = appends[0]?.base.element ?? null
+    // Adjacent-pair relations describe consecutive pushes of one recurrence.
+    // They hold for the whole array only when every adjacent pair came from it:
+    // the array was empty before the loop and exactly one unconditional push
+    // runs per iteration.
+    const startedEmpty = appends[0] != null && appends[0].base.length.min === 0 && appends[0].base.length.max === 0
+    const recurrencePush = appends.length === 1 && !appends[0]!.conditional ? appends[0] : null
     for (const append of appends) {
       const loopPush = loopAppendShapeWithCursorUpdates(append, updates)
       for (const cursorPath of loopPush.cursorPaths) {
@@ -339,7 +350,7 @@ function applyLoopCursorFacts(
         }
       }
       element = mergeElementValue(element, loopAppendElementWithCursorUpdates(append, updates, frame.assumptions))
-      if (!append.conditional) {
+      if (startedEmpty && append === recurrencePush) {
         const update = loopPush.topName == null ? undefined : updates.get(loopPush.topName)
         summary = mergeArraySummary(summary, sequenceSummaryFromLoopPush(loopPush, update, {
           assumptions: frame.assumptions,
@@ -347,7 +358,7 @@ function applyLoopCursorFacts(
         }))
       }
     }
-    writePath({root: arrayName, segments: []}, {
+    writeMutationPath({root: arrayName, segments: []}, {
       ...target,
       element,
       summary,

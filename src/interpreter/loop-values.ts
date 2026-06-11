@@ -49,6 +49,7 @@ export function loopAppendShapeWithCursorUpdates(append: LoopAppend, updates: Ma
     arrayName: append.arrayName,
     length: append.length,
     element: append.element,
+    source: append.argument,
     topName: cursorName,
     topPath,
     height: topPath == null || increment == null ? null : siblingSizeValue(append.element, topPath, increment),
