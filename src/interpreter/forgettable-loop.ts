@@ -144,7 +144,7 @@ function knownMutationRoots(roots: string[], env: Map<string, Value>): string[] 
 function referenceRootName(value: Value | undefined): string | null {
   if (value == null || (value.kind !== 'object' && value.kind !== 'array')) return null
   if (value.expr == null) return null
-  return /^(?:this|[A-Za-z_$][\w$]*)/.exec(value.expr)?.[0] ?? null
+  return /^(?:this|[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)/u.exec(value.expr)?.[0] ?? null
 }
 
 export function forgetRoot(env: Map<string, Value>, root: string) {

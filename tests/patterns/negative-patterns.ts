@@ -774,6 +774,26 @@ export function negativeTinyCoefficientIsNotZero(x: number) {
 }
 
 /** @fit
+ * given widths.length: int 0..10
+ * return.length: int 0..10
+ */
+export function negativeCallbackFitPlacementIsReported(widths: number[]) {
+  return widths.map(width => ({
+    half: width / 2, // @fit > 0
+  }))
+}
+
+/** @fit
+ * return == 99
+ */
+export function negativeTrailingCommentBelongsToItsOwnDeclaration() {
+  const earlier = 99; const annotated = 1 // @fit == 99
+  void earlier
+  void annotated
+  return 99
+}
+
+/** @fit
  * return == 0.3
  */
 export function negativeFloatSumIsNotItsDecimalLook() {

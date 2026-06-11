@@ -536,7 +536,7 @@ function givenValueMentionsInput(value: NumberValue, inputRoots: string[]) {
 
 function expressionBaseRoot(text: string) {
   if (text === 'this' || text.startsWith('this.')) return 'this'
-  const match = /^([A-Za-z_$][\w$]*)/.exec(text)
+  const match = /^([\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)/u.exec(text)
   return match?.[1] ?? text
 }
 

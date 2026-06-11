@@ -465,6 +465,16 @@ function verifyFunctionSpecsDetailed(
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
   const checks = [...setup.typeChecks, ...setup.givenChecks]
+  for (const placement of fn.bodySpecs.unsupportedPlacements) {
+    checks.push({
+      file,
+      functionName,
+      line: placement.line,
+      text: placement.text,
+      status: 'unknown',
+      reason: 'Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function',
+    })
+  }
   if (setup.typeChecks.some(check => check.status !== 'pass')) {
     return {checks, callsiteChecks: [], recordedCallsites: false}
   }

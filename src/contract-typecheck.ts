@@ -110,9 +110,10 @@ const contractTypeCheckCache = new WeakMap<Program, ContractTypeCheckResult>()
 const fitNumberTypeName = '__FRNumber'
 const returnValueName = '__fit_return'
 const builtinNames = new Set(['nondecreasing', 'spaced', 'lastEnd', 'extentEnd', 'noOverlap'])
-const identifierPattern = '[A-Za-z_$][\\w$]*'
-const indexLabelPattern = '\\$[A-Za-z_][\\w$]*(?:\\s*[+-]\\s*\\d+)?'
-const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'g')
+// Identifiers as the language defines them, not ASCII approximations.
+const identifierPattern = '[\\p{ID_Start}_$][\\p{ID_Continue}$\\u200C\\u200D]*'
+const indexLabelPattern = '\\$[\\p{ID_Start}_][\\p{ID_Continue}$\\u200C\\u200D]*(?:\\s*[+-]\\s*\\d+)?'
+const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'gu')
 const typePrinter = ts.createPrinter({removeComments: true})
 let generatedId = 0
 

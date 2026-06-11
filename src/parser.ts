@@ -127,13 +127,18 @@ export type FitBodySpecIndex = {
   returnSpecsByNode: Map<ts.Node, FitInlineCheckSpec[]>
   objectPropertyTemplatesByNode: Map<ts.PropertyAssignment | ts.ShorthandPropertyAssignment, FitInlineSpecTemplate[]>
   loopSpecsByStatement: Map<ts.ForOfStatement | ts.ForStatement, FitSpec[]>
+  // @fit comments in places the checker does not evaluate (e.g. inside a map
+  // callback). Reported as unsupported: a written contract is never ignored
+  // silently.
+  unsupportedPlacements: {line: number; text: string}[]
 }
 
 type FitExpressionParser = (text: string) => FitExpression
 
-const identifierPattern = '[A-Za-z_$][\\w$]*'
-const indexLabelPattern = '\\$[A-Za-z_][\\w$]*(?:\\s*[+-]\\s*\\d+)?'
-const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'g')
+// Identifiers as the language defines them, not ASCII approximations.
+const identifierPattern = '[\\p{ID_Start}_$][\\p{ID_Continue}$\\u200C\\u200D]*'
+const indexLabelPattern = '\\$[\\p{ID_Start}_][\\p{ID_Continue}$\\u200C\\u200D]*(?:\\s*[+-]\\s*\\d+)?'
+const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'gu')
 export const fitReturnPublicRoot = 'return'
 export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
@@ -349,6 +354,7 @@ export function emptyFitBodySpecIndex(): FitBodySpecIndex {
     returnSpecsByNode: new Map(),
     objectPropertyTemplatesByNode: new Map(),
     loopSpecsByStatement: new Map(),
+    unsupportedPlacements: [],
   }
 }
 
@@ -384,11 +390,34 @@ export function parseTopLevelFitSpecIndex(sourceText: string, sourceFile: ts.Sou
 
 function collectBodyFitSpecIndex(sourceText: string, root: ts.Node, index: FitBodySpecIndex) {
   const visit = (node: ts.Node) => {
-    if (node !== root && isFunctionLikeWithBodyNode(node)) return
+    if (node !== root && isFunctionLikeWithBodyNode(node)) {
+      collectUnsupportedNestedFitComments(sourceText, node, index)
+      return
+    }
     collectBodyFitSpecIndexForNode(sourceText, node, index)
     ts.forEachChild(node, visit)
   }
   visit(root)
+}
+
+// The checker does not evaluate nested function bodies statement by statement,
+// so @fit comments inside them are not provable where they are written. Record
+// them so the report can say so instead of staying silent.
+function collectUnsupportedNestedFitComments(sourceText: string, nested: ts.Node, index: FitBodySpecIndex) {
+  const seen = new Set<number>()
+  const record = (lines: FitCommentLine[]) => {
+    for (const line of lines) {
+      if (seen.has(line.pos) || index.unsupportedPlacements.some(existing => existing.line === line.line && existing.text === line.text)) continue
+      seen.add(line.pos)
+      index.unsupportedPlacements.push({line: line.line, text: line.text})
+    }
+  }
+  const visit = (node: ts.Node) => {
+    record(fitCommentLines(sourceText, node).flat().filter(line => line.text.startsWith('@fit')))
+    record(inlineFitCommentLines(sourceText, node))
+    ts.forEachChild(node, visit)
+  }
+  ts.forEachChild(nested, visit)
 }
 
 function collectBodyFitSpecIndexForNode(sourceText: string, node: ts.Node, index: FitBodySpecIndex) {
@@ -468,11 +497,17 @@ function rejectInlineBlockFitComments(sourceText: string, node: ts.Node) {
   throw new Error(`Block @fit comments are only supported for function, loop, and type contract blocks; use // @fit for attached facts near line ${line.line}`)
 }
 
+// A line comment trails a node only when nothing but whitespace and the
+// closing , or ; sits between them. With two declarations on one line, the
+// comment belongs to the one it follows, not to every node ending on the line.
+const trailingGapPattern = /^[\s,;]*$/
+
 function trailingLineFitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[] {
   const lineEnd = sourceText.indexOf('\n', node.end)
   const restOfLine = sourceText.slice(node.end, lineEnd < 0 ? sourceText.length : lineEnd)
   const commentStart = restOfLine.indexOf('//')
   if (commentStart < 0) return []
+  if (!trailingGapPattern.test(restOfLine.slice(0, commentStart))) return []
   const line = cleanCommentLine(restOfLine.slice(commentStart))
   return line.startsWith('@fit ')
     ? [{text: line, line: lineNumberAtPosition(sourceText, node.end + commentStart), pos: node.end + commentStart}]
@@ -484,9 +519,12 @@ function trailingBlockFitCommentLines(sourceText: string, node: ts.Node): FitCom
   const restOfLine = sourceText.slice(node.end, lineEnd < 0 ? sourceText.length : lineEnd)
   const commentPattern = /\/\*[\s\S]*?\*\//g
   const lines: FitCommentLine[] = []
+  let gapStart = 0
   for (;;) {
     const match = commentPattern.exec(restOfLine)
     if (match == null) break
+    if (!trailingGapPattern.test(restOfLine.slice(gapStart, match.index))) break
+    gapStart = match.index + match[0].length
     const pos = node.end + match.index
     lines.push(...commentRangeLines(sourceText, {
       pos,
@@ -1094,7 +1132,7 @@ function parseNormalizedFitExpression(normalizedText: string): ParsedFitExpressi
 }
 
 export function parseDomainPathText(text: string): FitDomainPath | null {
-  const match = new RegExp(`^(${identifierPattern})((?:\\.${identifierPattern}|\\[(?:\\]|${indexLabelPattern}\\]))*)$`).exec(text)
+  const match = new RegExp(`^(${identifierPattern})((?:\\.${identifierPattern}|\\[(?:\\]|${indexLabelPattern}\\]))*)$`, 'u').exec(text)
   if (match == null) return null
   const root = match[1]!
   const suffix = match[2]!
@@ -1106,7 +1144,7 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
       index += 2
       continue
     }
-    const itemLabel = new RegExp(`^\\[(${indexLabelPattern})\\]`).exec(suffix.slice(index))
+    const itemLabel = new RegExp(`^\\[(${indexLabelPattern})\\]`, 'u').exec(suffix.slice(index))
     if (itemLabel != null) {
       const parsed = parseIndexLabelText(itemLabel[1]!)
       if (parsed == null) return null
@@ -1115,7 +1153,7 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
       continue
     }
     if (suffix[index] !== '.') return null
-    const next = new RegExp(`^\\.(${identifierPattern})`).exec(suffix.slice(index))
+    const next = new RegExp(`^\\.(${identifierPattern})`, 'u').exec(suffix.slice(index))
     if (next == null) return null
     segments.push({kind: 'prop', name: next[1]!})
     index += next[0].length

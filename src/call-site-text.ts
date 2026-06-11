@@ -79,7 +79,7 @@ function compiledCallSiteBindings(bindings: CallSiteBindings): CompiledCallSiteB
   if (cached != null) return cached
   const names = [...bindings.keys()].sort((left, right) => right.length - left.length)
   const compiled = {
-    pattern: new RegExp(`(?<![\\w$.])(?:${names.map(escapeRegExp).join('|')})(?![\\w$]|\\s*\\()`, 'g'),
+    pattern: new RegExp(`(?<![\\p{ID_Continue}$.])(?:${names.map(escapeRegExp).join('|')})(?![\\p{ID_Continue}$]|\\s*\\()`, 'gu'),
     replacements: new Map(bindings),
   }
   compiledBindingsCache.set(bindings, compiled)
@@ -163,7 +163,7 @@ function callSitePropertyBaseText(text: string) {
 }
 
 function isSimpleCallSiteText(text: string) {
-  return /^(?:this|[A-Za-z_$][\w$]*|-?\d+(?:\.\d+)?)(?:(?:\.[A-Za-z_$][\w$]*)|(?:\[[^\]]+\]))*$/.test(text)
+  return /^(?:this|[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*|-?\d+(?:\.\d+)?)(?:(?:\.[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)|(?:\[[^\]]+\]))*$/u.test(text)
 }
 
 function isParenthesizedCallSiteText(text: string) {

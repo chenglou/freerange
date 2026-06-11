@@ -150,15 +150,15 @@ function contextualUnsupportedReason(line: string): string | null {
 }
 
 function unknownIdentifierRoot(reason: string): string | null {
-  return /^Unknown identifier ([A-Za-z_$][\w$]*)$/.exec(reason)?.[1] ?? null
+  return /^Unknown identifier ([\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)$/u.exec(reason)?.[1] ?? null
 }
 
 function recursiveHelperName(reason: string): string | null {
-  return /^Recursive helper inlining is unsupported at ([A-Za-z_$][\w$]*)$/.exec(reason)?.[1] ?? null
+  return /^Recursive helper inlining is unsupported at ([\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)$/u.exec(reason)?.[1] ?? null
 }
 
 function unknownAssignmentRoot(reason: string): string | null {
-  return /^Unknown assignment root ([A-Za-z_$][\w$]*)$/.exec(reason)?.[1] ?? null
+  return /^Unknown assignment root ([\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*)$/u.exec(reason)?.[1] ?? null
 }
 
 function unsupportedLineIsDerivativeOfUnknownRoot(reason: string, unknownRoots: Set<string>) {
@@ -190,7 +190,7 @@ function compoundAssignmentRoot(reason: string): string | null {
 }
 
 function expressionRoot(text: string): string | null {
-  return /^[A-Za-z_$][\w$]*/.exec(text.trim())?.[0] ?? null
+  return /^[\p{ID_Start}_$][\p{ID_Continue}$\u200C\u200D]*/u.exec(text.trim())?.[0] ?? null
 }
 
 function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) {
