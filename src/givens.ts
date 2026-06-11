@@ -443,7 +443,11 @@ function collectGivenExpressionAssumption(
   if (conflict != null) {
     return {kind: 'invalid', status: 'fail', reason: `no input can satisfy both ${conflict}`}
   }
-  const projectReason = projectGivenExpression(context.env, spec)
+  // A user function sharing a catalog name keeps its own meaning: the given is
+  // then an ordinary boolean expression, not the catalog projection.
+  const projectReason = givenCatalogNameShadowedByUser(spec, context)
+    ? `user function shadows the catalog name in ${publicFitText(spec.text)}`
+    : projectGivenExpression(context.env, spec)
   if (projectReason == null) {
     assumeBooleanExpression(context, spec.expression)
     return {kind: 'valid'}
@@ -605,6 +609,14 @@ function positiveTermCancelScale(left: LinearExpr, right: LinearExpr): number | 
     if (scale === Number.NEGATIVE_INFINITY) return null
   }
   return scale
+}
+
+function givenCatalogNameShadowedByUser(spec: FitExpressionGivenSpec, context: EvalContext): boolean {
+  const parsed = fitExpressionParsed(spec.expression)
+  if (!ts.isCallExpression(parsed.expression)) return false
+  const target = parsed.expression.expression
+  if (!ts.isIdentifier(target)) return false
+  return context.program.functions.has(target.text) || context.env.has(target.text)
 }
 
 function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGivenSpec): string | null {

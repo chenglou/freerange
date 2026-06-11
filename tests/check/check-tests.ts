@@ -6,7 +6,7 @@ import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 
 const positiveFiles = ['tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
-const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
+const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/patterns/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('../..', import.meta.url).pathname

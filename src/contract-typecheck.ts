@@ -704,6 +704,35 @@ function checkNumberExpression(expression: FitExpressionLike, options: LowerOpti
   }
 }
 
+export function sourceDeclaresTopLevelName(sourceFile: ts.SourceFile, name: string): boolean {
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name?.text === name) return true
+    if (ts.isClassDeclaration(statement) && statement.name?.text === name) return true
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (bindingNameDeclares(declaration.name, name)) return true
+      }
+    }
+    if (ts.isImportDeclaration(statement) && statement.importClause != null) {
+      const clause = statement.importClause
+      if (clause.name?.text === name) return true
+      const bindings = clause.namedBindings
+      if (bindings != null && ts.isNamedImports(bindings) && bindings.elements.some(element => element.name.text === name)) return true
+      if (bindings != null && ts.isNamespaceImport(bindings) && bindings.name.text === name) return true
+    }
+  }
+  return false
+}
+
+function bindingNameDeclares(binding: ts.BindingName, name: string): boolean {
+  if (ts.isIdentifier(binding)) return binding.text === name
+  for (const element of binding.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    if (bindingNameDeclares(element.name, name)) return true
+  }
+  return false
+}
+
 function lowerExpression(expression: FitExpressionLike, options: LowerOptions): LoweredExpression {
   if (expressionHasDeclarationOnlyScope(expression, options.program)) return {expression: '0', prelude: []}
   const parsed = fitExpressionParsed(expression)
@@ -720,6 +749,10 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
   if (!ts.isCallExpression(unwrapped)) return null
   const target = unwrapExpression(unwrapped.expression)
   if (!ts.isIdentifier(target) || !builtinNames.has(target.text)) return null
+  // A user declaration or import with the same name wins over the catalog: the
+  // call lowers as a plain expression and type-checks against the user's own
+  // function.
+  if (sourceDeclaresTopLevelName(options.program.sourceFile, target.text)) return null
   const id = nextGeneratedId()
   switch (target.text) {
     case 'nondecreasing': {

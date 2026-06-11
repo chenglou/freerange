@@ -1051,6 +1051,19 @@ UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >
 FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
   result: is false
   missing fact: -1 > 0
+FAIL tests/patterns/negative-shadowed-catalog.ts:negativeUserFunctionNotHijackedByCatalog: return >= 0
+  result: is false
+  known:
+    (0 - 10): int -10..-10
+    assumed from input: given items.length: int 1..10
+    assumed from input: given items[].height: 10..10
+    inferred from code: y >= 0
+    inferred from code: y >= start + increment
+    inferred from code: rows[rows.length - 1].top >= 0
+    inferred from code: rows[rows.length - 1].top <= 100
+    inferred from code: rows[rows.length - 1].height >= 10
+    inferred from code: rows[rows.length - 1].height <= 10
+  missing fact: (0 - 10) >= 0
 FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   range was any number as unannotatedImportedClamp(width), expected inside 0..320
   known:

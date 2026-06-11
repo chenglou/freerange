@@ -68,6 +68,7 @@ import {
   numericLiteralValue,
 } from '../linear.ts'
 import {
+  builtinCallName,
   evaluateBuiltinCall,
   extentEndSummaryValue,
 } from '../builtins.ts'
@@ -2141,6 +2142,12 @@ function passedFunctionNode(expression: ts.Expression, frame: InterpreterFrame):
   return resolved.kind === 'function' ? resolved.fn.node : null
 }
 
+function userBindingForCallTarget(target: ts.Expression, frame: InterpreterFrame): boolean {
+  if (!ts.isIdentifier(target)) return false
+  if (frame.env.has(target.text)) return true
+  return resolveCallTarget(target, frame.program).kind === 'function'
+}
+
 function assignmentHasExternalEffect(path: ValuePath, frame: InterpreterFrame) {
   return path.segments.length > 0 || !frame.localBindings.has(path.root)
 }
@@ -2294,12 +2301,16 @@ function arrayFromLengthExpression(expression: ts.Expression, frame: Interpreter
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
   const target = unwrapExpression(expression.expression)
-  const ambient = evaluateBuiltinCall({
-    expression,
-    evaluateExpression: current => evaluateExpression(current, frame),
-    expressionText: current => nodeText(current, frame),
-  })
-  if (ambient != null) return ambient
+  // Catalog names are ordinary identifiers: the user's own binding — a local,
+  // a module function, or an import — always wins over the catalog meaning.
+  if (builtinCallName(expression) != null && !userBindingForCallTarget(target, frame)) {
+    const ambient = evaluateBuiltinCall({
+      expression,
+      evaluateExpression: current => evaluateExpression(current, frame),
+      expressionText: current => nodeText(current, frame),
+    })
+    if (ambient != null) return ambient
+  }
   let returnTypeFallback: Value | null | undefined
   const fallback = () => {
     returnTypeFallback ??= valueFromProjectCallReturnType(expression.getText(frame.program.sourceFile), expression, frame.program)

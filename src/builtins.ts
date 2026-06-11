@@ -17,6 +17,16 @@ export type BuiltinContext = {
   expressionText: (expression: ts.Expression) => string
 }
 
+// The catalog name a bare call would dispatch to. Callers must check that the
+// name does not resolve to a user binding first: these are ordinary
+// identifiers, not real platform globals, and the user's own function wins.
+export function builtinCallName(expression: ts.CallExpression): string | null {
+  const name = ambientCallName(expression)
+  return name != null && builtinCallNames.has(name) ? name : null
+}
+
+const builtinCallNames = new Set(['nondecreasing', 'spaced', 'lastEnd', 'extentEnd', 'noOverlap'])
+
 export function evaluateBuiltinCall(context: BuiltinContext): Value | null {
   const name = ambientCallName(context.expression)
   if (name == null) return null
