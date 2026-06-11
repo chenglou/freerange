@@ -257,6 +257,7 @@ function collectTypeReferenceContractSpecs(
   if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
     return collectTypeContractSpecs(program, typeArgument, `${root}[]`, role, seen)
   }
+  if (typeReferenceIsTypeParameter(program, type)) return emptyResult()
 
   const declaration = localTypeDeclarationForReference(program, type)
   if (declaration == null) return instantiateTypeContractTemplates(parseUnsupportedAttachedTemplates(type.getSourceFile().text, type, 'type @fit supports source-backed type references'), root, role)
@@ -668,6 +669,16 @@ function typeDeclarationFromTypeChecker(
     : symbol
   const declaration = target?.declarations?.find(isTypeContractDeclaration) ?? null
   return declaration != null && isSupportedTypeContractSource(declaration.getSourceFile()) ? declaration : null
+}
+
+function typeReferenceIsTypeParameter(program: Program, type: ts.TypeReferenceNode) {
+  const checker = program.typeChecker
+  if (checker == null) return false
+  const symbol = checker.getSymbolAtLocation(type.typeName)
+  const target = symbol != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0
+    ? checker.getAliasedSymbol(symbol)
+    : symbol
+  return target != null && (target.flags & ts.SymbolFlags.TypeParameter) !== 0
 }
 
 function localTypeDeclaration(sourceFile: ts.SourceFile, name: string): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {

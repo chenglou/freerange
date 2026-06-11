@@ -278,6 +278,55 @@ if (
   console.log('shortcut cleanup: no invented spec or callback paths')
 }
 
+const constrainedGenericFunctionResult = verifyFitSourceWithCallsites('constrained-generic-function.ts', `/** @fit
+ * given value > 0
+ * return > 0
+ */
+function positiveIdentity<T extends number>(value: T) {
+  return value
+}
+
+function goodGenericCall() {
+  return positiveIdentity(1)
+}
+
+function badGenericCall() {
+  return positiveIdentity(-1)
+}
+`)
+const constrainedGenericReturnCheck = constrainedGenericFunctionResult.annotationChecks.find(check =>
+  check.functionName === 'positiveIdentity' && check.text === 'return > 0'
+)
+const goodGenericCallCheck = constrainedGenericFunctionResult.callsiteChecks.find(check =>
+  check.functionName === 'goodGenericCall' && check.text === 'positiveIdentity(1): requires value > 0'
+)
+const badGenericCallCheck = constrainedGenericFunctionResult.callsiteChecks.find(check =>
+  check.functionName === 'badGenericCall' && check.text === 'positiveIdentity(-1): requires value > 0'
+)
+const unconstrainedGenericFunctionChecks = verifyFitSource('unconstrained-generic-function.ts', `/** @fit
+ * given value > 0
+ */
+function unsafeIdentity<T>(value: T) {
+  return value
+}
+`)
+const unconstrainedGenericGivenCheck = unconstrainedGenericFunctionChecks.find(check =>
+  check.functionName === 'unsafeIdentity' && check.text === 'given value > 0'
+)
+if (
+  constrainedGenericReturnCheck?.status !== 'pass'
+  || goodGenericCallCheck?.status !== 'pass'
+  || badGenericCallCheck?.status !== 'fail'
+  || unconstrainedGenericGivenCheck?.status !== 'unknown'
+  || unconstrainedGenericGivenCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
+) {
+  console.error('expected TypeScript generic constraints to drive function contracts and call checks')
+  console.error(JSON.stringify({constrainedGenericFunctionResult, unconstrainedGenericFunctionChecks}, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('generic functions: constrained numbers checked through calls')
+}
+
 const contractTypeLayerChecks = verifyFitSource('contract-type-layer.ts', `type Tile = {
   width: number // @fit missingTypeMin..Infinity
 }

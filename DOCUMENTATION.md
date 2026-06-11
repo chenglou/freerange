@@ -88,6 +88,21 @@ type PhotoGrid = {
 }
 ```
 
+Generic constraints stay TypeScript constraints:
+
+```ts
+type Measured<T> = {
+  width: number // @fit > 0
+  payload: T
+}
+
+type Positive<T extends number> = {
+  value: T // @fit > 0
+}
+```
+
+Both contracts type check. `value: T // @fit > 0` is rejected when `T` is unconstrained. Type-field contracts inside mapped types, conditional type branches, or nested generic type members aren't supported yet.
+
 `given` lines are input assumptions. All other lines are for Freerange to prove to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.

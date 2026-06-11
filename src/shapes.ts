@@ -193,10 +193,10 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
   const literal = literalValueFromTsType(expr, type)
   if (literal != null) return literal
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return unknownNumber(expr)
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return literalValue([false, true], expr)
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return unknown(`String values are not in the static layout subset: ${expr}`)
   if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return null
+  if (checker.isTypeAssignableTo(type, checker.getNumberType())) return unknownNumber(expr)
+  if (checker.isTypeAssignableTo(type, checker.getBooleanType())) return literalValue([false, true], expr)
+  if (checker.isTypeAssignableTo(type, checker.getStringType())) return unknown(`String values are not in the static layout subset: ${expr}`)
   if (isArrayLikeType(type, checker)) return unknownArray(expr, arrayLengthValue(expr, type))
   if ((type.flags & ts.TypeFlags.Object) !== 0) return unknownObject(expr)
   return type.getProperties().length === 0 ? null : unknownObject(expr)

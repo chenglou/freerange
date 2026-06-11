@@ -160,6 +160,118 @@ if (
   console.log('type contracts: annotation boundaries')
 }
 
+const genericTypeContractChecks = verifyFitSource('generic-type-contracts.ts', `type AliasBox<T> = {
+  width: number // @fit > 0
+  value: T
+}
+
+interface InterfaceBox<T> {
+  width: number // @fit > 0
+  value: T
+}
+
+type ConstrainedBox<T extends number> = {
+  value: T // @fit > 0
+}
+
+type NestedBox<T, U> = {
+  nested: {
+    width: number // @fit > 0
+    payload: T
+  }
+  other: U
+}
+
+type DefaultBox<out T = string> = {
+  width: number // @fit > 0
+  value: T
+}
+
+type UnsafeBox<T> = {
+  value: T // @fit > 0
+}
+
+function badAlias(): AliasBox<string> {
+  return {width: -1, value: "value"}
+}
+
+function badInterface(): InterfaceBox<string> {
+  return {width: -1, value: "value"}
+}
+
+function badConstrained(): ConstrainedBox<number> {
+  return {value: -1}
+}
+
+function badNested(): NestedBox<string, boolean> {
+  return {nested: {width: -1, payload: "value"}, other: true}
+}
+
+function badDefault(): DefaultBox {
+  return {width: -1, value: "value"}
+}
+
+/** @fit
+ * return > 0
+ */
+function readConstrained<T extends number>(box: ConstrainedBox<T>) {
+  return box.value
+}
+
+function unsafeUse(): UnsafeBox<string> {
+  return {value: "value"}
+}
+`)
+const badGenericTypeFunctions = ['badAlias', 'badInterface', 'badConstrained', 'badNested', 'badDefault']
+const missingGenericTypeFailures = badGenericTypeFunctions.filter(functionName =>
+  !genericTypeContractChecks.some(check => check.functionName === functionName && check.status === 'fail')
+)
+const constrainedGenericReadCheck = genericTypeContractChecks.find(check => check.functionName === 'readConstrained' && check.text === 'return > 0')
+const unsafeGenericDeclarationCheck = genericTypeContractChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit > 0')
+const unsafeGenericUseNoise = genericTypeContractChecks.find(check => check.functionName === 'unsafeUse')
+if (
+  missingGenericTypeFailures.length > 0
+  || constrainedGenericReadCheck?.status !== 'pass'
+  || unsafeGenericDeclarationCheck?.status !== 'unknown'
+  || unsafeGenericDeclarationCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
+  || unsafeGenericUseNoise != null
+) {
+  console.error('expected generic type contracts to preserve constraints without representative type arguments')
+  console.error(JSON.stringify(genericTypeContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: generic declaration constraints')
+}
+
+const unsupportedGenericTypeContextChecks = verifyFitSource('unsupported-generic-type-contexts.ts', `type ConditionalBox<T> = T extends number ? {
+  value: T // @fit > 0
+} : never
+
+type MappedBox<T> = {
+  [K in keyof T]: {
+    value: T[K] // @fit > 0
+  }
+}
+
+type GenericFactory = <T>() => {
+  value: T // @fit > 0
+}
+`)
+const conditionalTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('conditional type branch'))
+const mappedTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('mapped type'))
+const nestedGenericTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('nested generic type member'))
+if (
+  conditionalTypeContextCheck?.status !== 'unknown'
+  || mappedTypeContextCheck?.status !== 'unknown'
+  || nestedGenericTypeContextCheck?.status !== 'unknown'
+) {
+  console.error('expected type contracts with unpreserved inner generic context to be rejected directly')
+  console.error(JSON.stringify(unsupportedGenericTypeContextChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: inner generic contexts rejected directly')
+}
+
 const typeGivenKeywordChecks = verifyFitSource('type-given-keyword.ts', `type Bar = {
   b: number // @fit > 0
 }
@@ -327,6 +439,56 @@ if (
   process.exitCode = 1
 } else {
   console.log('type contracts: imported declaration type errors')
+}
+
+const importedGenericTypeChecks = await verifyTempFitFiles({
+  'helper.ts': `export type ImportedBox<T> = {
+  width: number // @fit > 0
+  payload: T
+}
+
+export type ImportedPositive<T extends number> = {
+  value: T // @fit > 0
+}
+
+export type ImportedUnsafe<T> = {
+  value: T // @fit > 0
+}
+`,
+  'user.ts': `import type {ImportedBox, ImportedPositive, ImportedUnsafe} from './helper'
+
+export function badImportedBox(): ImportedBox<string> {
+  return {width: -1, payload: "value"}
+}
+
+/** @fit
+ * return > 0
+ */
+export function readImportedPositive<T extends number>(box: ImportedPositive<T>) {
+  return box.value
+}
+
+export function unsafeImportedBox(): ImportedUnsafe<string> {
+  return {value: "value"}
+}
+`,
+})
+const badImportedGenericCheck = importedGenericTypeChecks.find(check => check.functionName === 'badImportedBox' && check.status === 'fail')
+const importedConstrainedReadCheck = importedGenericTypeChecks.find(check => check.functionName === 'readImportedPositive' && check.text === 'return > 0')
+const unsafeImportedGenericCheck = importedGenericTypeChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit > 0')
+const unsafeImportedUseNoise = importedGenericTypeChecks.find(check => check.functionName === 'unsafeImportedBox')
+if (
+  badImportedGenericCheck == null
+  || importedConstrainedReadCheck?.status !== 'pass'
+  || unsafeImportedGenericCheck?.status !== 'unknown'
+  || unsafeImportedGenericCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
+  || unsafeImportedUseNoise != null
+) {
+  console.error('expected imported generic type contracts to keep their declaration constraints')
+  console.error(JSON.stringify(importedGenericTypeChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: imported generic declaration constraints')
 }
 
 const typeFieldRelationChecks = verifyFitSource('type-field-relation.ts', `type Size = {

@@ -69,6 +69,11 @@ type ContractTypeCheckResult = {
   failedKeys: Set<string>
 }
 
+type DeclarationTypeCheckPlan = {
+  edits: Edit[]
+  result: ContractTypeCheckResult
+}
+
 type TypeCheckSource = {
   project: Program['project']
   sourceId: string
@@ -88,6 +93,18 @@ type LowerOptions = {
   returnName: string
   typeContractSourceIds?: Set<string>
 }
+
+type TypeContractCheckContext =
+  | {
+      kind: 'supported'
+      selfType: string
+      typeParameters: string[]
+      ownerType: string | null
+    }
+  | {
+      kind: 'unsupported'
+      reason: string
+    }
 
 const contractTypeCheckCache = new WeakMap<Program, ContractTypeCheckResult>()
 const fitNumberTypeName = '__FRNumber'
@@ -130,7 +147,10 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
   for (const fn of program.functions.values()) builder.addFunction(fn)
   builder.addTopLevel()
   const virtuals: VirtualTypeCheckSource[] = []
-  const main = builder.build(declarationTypeCheckEdits(program))
+  const directResults: ContractTypeCheckResult[] = []
+  const mainDeclarations = declarationTypeCheckPlan(program)
+  directResults.push(mainDeclarations.result)
+  const main = builder.build(mainDeclarations.edits)
   if (main.spans.length > 0) {
     virtuals.push({
       originalSourceId: program.sourceId,
@@ -143,16 +163,18 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
   for (const source of program.project.files.values()) {
     if (source.sourceId === program.sourceId) continue
     if (!declarationSourceIds.has(source.sourceId)) continue
-    const declarationChecks = buildDeclarationTypeChecks(source)
-    if (declarationChecks.spans.length === 0) continue
+    const declarationChecks = declarationTypeCheckPlan(source)
+    directResults.push(declarationChecks.result)
+    const built = buildEditedSource(source.sourceText, declarationChecks.edits)
+    if (built.spans.length === 0) continue
     virtuals.push({
       originalSourceId: source.sourceId,
       virtualSourceId: virtualTypeCheckSourceId(source.sourceId),
-      text: declarationChecks.text,
-      spans: declarationChecks.spans,
+      text: built.text,
+      spans: built.spans,
     })
   }
-  if (virtuals.length === 0) return {checks: [], failedKeys: new Set()}
+  if (virtuals.length === 0) return mergeContractTypeCheckResults(directResults)
 
   const virtualBySourceId = new Map(virtuals.map(virtual => [virtual.virtualSourceId, {
     sourceFile: ts.createSourceFile(virtual.virtualSourceId, virtual.text, ts.ScriptTarget.Latest, true, scriptKindForVirtualSource(virtual.originalSourceId)),
@@ -179,7 +201,10 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
       ...typeProgram.getSemanticDiagnostics(checkedSource),
     ]
   })
-  return checksFromDiagnostics(diagnostics, virtuals.flatMap(virtual => virtual.spans))
+  return mergeContractTypeCheckResults([
+    ...directResults,
+    checksFromDiagnostics(diagnostics, virtuals.flatMap(virtual => virtual.spans)),
+  ])
 }
 
 class VirtualContractTypeCheckBuilder {
@@ -325,41 +350,70 @@ class VirtualContractTypeCheckBuilder {
   }
 }
 
-function buildDeclarationTypeChecks(source: TypeCheckSource): {text: string; spans: Span[]} {
-  return buildEditedSource(source.sourceText, declarationTypeCheckEdits(source))
-}
-
-function declarationTypeCheckEdits(source: TypeCheckSource): Edit[] {
+function declarationTypeCheckPlan(source: TypeCheckSource): DeclarationTypeCheckPlan {
   const edits: Edit[] = []
+  const checks: FitCheck[] = []
+  const failedKeys = new Set<string>()
+  const rejectedKeys = new Set<string>()
   for (const [node, result] of source.typeContracts.byNode) {
     if (result.templates.length === 0) continue
     const statement = containingStatement(node)
     if (statement == null) continue
-    const selfType = typeContractSelfTypeText(node, source.sourceFile)
-    if (selfType == null) continue
-    const blocks = result.templates.flatMap(template => declarationTypeCheckBlock(source, template, selfType))
+    const context = typeContractCheckContext(node, source.sourceFile)
+    if (context == null) continue
+    if (context.kind === 'unsupported') {
+      for (const template of result.templates) {
+        const key = template.typeCheckKey
+        if (key != null) {
+          failedKeys.add(key)
+          if (rejectedKeys.has(key)) continue
+          rejectedKeys.add(key)
+        }
+        checks.push({
+          file: source.file,
+          functionName: '<type>',
+          text: `type @fit ${template.text}`,
+          status: 'unknown',
+          reason: context.reason,
+          ...(template.line == null ? {} : {line: template.line}),
+        })
+      }
+      continue
+    }
+    const blocks = result.templates.map(template => declarationTypeCheckBlock(source, template, context))
     if (blocks.length === 0) continue
     edits.push({start: statement.end, end: statement.end, blocks})
   }
-  return edits
+  return {edits, result: {checks, failedKeys}}
 }
 
-function declarationTypeCheckBlock(source: TypeCheckSource, template: TypeContractTemplate, selfType: string): GeneratedBlock[] {
+function declarationTypeCheckBlock(
+  source: TypeCheckSource,
+  template: TypeContractTemplate,
+  context: Extract<TypeContractCheckContext, {kind: 'supported'}>,
+): GeneratedBlock {
+  const checkName = `__fit_type_check_${nextGeneratedId()}`
   const selfName = `__fit_type_self_${nextGeneratedId()}`
   const spec = instantiateTypeContractTemplateForCheck(template, selfName)
   const statements = statementsForSpec(spec, lowerOptions(source))
-  if (statements.length === 0) return []
-  return [blockForEntry({
+  const typeParameters = context.typeParameters.length === 0 ? '' : `<${context.typeParameters.join(', ')}>`
+  const ownerName = `__fit_type_owner_${nextGeneratedId()}`
+  const parameters = [
+    `${selfName}: ${context.selfType}`,
+    ...(context.ownerType == null || context.ownerType === context.selfType ? [] : [`${ownerName}: ${context.ownerType}`]),
+  ]
+  const uses = [
+    `void ${selfName};`,
+    ...(context.ownerType == null || context.ownerType === context.selfType ? [] : [`void ${ownerName};`]),
+  ]
+  return functionBlockForEntry({
     sourceFile: source.sourceFile,
     file: source.file,
     functionName: '<type>',
     text: `type @fit ${template.text}`,
     ...(template.typeCheckKey == null ? {} : {key: template.typeCheckKey}),
     ...(template.line == null ? {} : {line: template.line}),
-  }, [
-    `const ${selfName} = null! as ${selfType}; void ${selfName};`,
-    ...statements,
-  ])]
+  }, checkName, typeParameters, parameters, [...uses, ...statements])
 }
 
 function buildEditedSource(sourceText: string, edits: Edit[]): {text: string; spans: Span[]} {
@@ -386,13 +440,38 @@ function buildEditedSource(sourceText: string, edits: Edit[]): {text: string; sp
   return {text, spans}
 }
 
-function typeContractSelfTypeText(node: ts.Node, sourceFile: ts.SourceFile): string | null {
+function typeContractCheckContext(node: ts.Node, sourceFile: ts.SourceFile): TypeContractCheckContext | null {
+  const declaration = containingTypeContractDeclaration(node)
+  const unsupported = declaration == null ? null : unsupportedNestedTypeContext(node, declaration)
+  if (unsupported != null) return {kind: 'unsupported', reason: unsupported}
   const scope = typeContractSelfScope(node)
   if (scope == null) return null
-  if (ts.isInterfaceDeclaration(scope) || ts.isTypeAliasDeclaration(scope)) {
-    return typeDeclarationReferenceText(scope)
+  if (declaration == null) {
+    if (!ts.isTypeLiteralNode(scope)) return null
+    return {
+      kind: 'supported',
+      selfType: printTypeNode(scope, sourceFile),
+      typeParameters: [],
+      ownerType: null,
+    }
   }
-  return printTypeNode(scope, sourceFile)
+  const ownerType = typeDeclarationReferenceText(declaration)
+  const directAliasLiteral = ts.isTypeAliasDeclaration(declaration)
+    && ts.isTypeLiteralNode(scope)
+    && declaration.type === scope
+  let selfType: string
+  if (scope === declaration || directAliasLiteral) {
+    selfType = ownerType
+  } else {
+    if (!ts.isTypeLiteralNode(scope)) return null
+    selfType = printTypeNode(scope, sourceFile)
+  }
+  return {
+    kind: 'supported',
+    selfType,
+    typeParameters: typeDeclarationParametersText(declaration, sourceFile),
+    ownerType: declaration.typeParameters == null || declaration.typeParameters.length === 0 ? null : ownerType,
+  }
 }
 
 function typeContractSelfScope(node: ts.Node): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.TypeLiteralNode | null {
@@ -406,8 +485,63 @@ function typeContractSelfScope(node: ts.Node): ts.InterfaceDeclaration | ts.Type
 }
 
 function typeDeclarationReferenceText(node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration) {
-  const typeArguments = node.typeParameters?.map(() => 'any').join(', ')
+  const typeArguments = node.typeParameters?.map(parameter => parameter.name.text).join(', ')
   return typeArguments == null || typeArguments.length === 0 ? node.name.text : `${node.name.text}<${typeArguments}>`
+}
+
+function typeDeclarationParametersText(
+  node: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
+  sourceFile: ts.SourceFile,
+): string[] {
+  // Defaults and variance modifiers do not restrict the legal type arguments checked by the witness.
+  return node.typeParameters?.map(parameter => {
+    const constraint = parameter.constraint
+    return constraint == null
+      ? parameter.name.text
+      : `${parameter.name.text} extends ${constraint.getText(sourceFile)}`
+  }) ?? []
+}
+
+function containingTypeContractDeclaration(node: ts.Node): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
+  let current: ts.Node | undefined = node
+  while (current != null) {
+    if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) return current
+    current = current.parent
+  }
+  return null
+}
+
+function unsupportedNestedTypeContext(
+  node: ts.Node,
+  declaration: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
+): string | null {
+  let current: ts.Node | undefined = node.parent
+  while (current != null && current !== declaration) {
+    if (ts.isConditionalTypeNode(current)) {
+      return 'type @fit inside a conditional type branch is not supported yet'
+    }
+    if (ts.isMappedTypeNode(current)) {
+      return 'type @fit inside a mapped type is not supported yet'
+    }
+    if (nestedTypeParameters(current).length > 0) {
+      return 'type @fit inside a nested generic type member is not supported yet'
+    }
+    current = current.parent
+  }
+  return null
+}
+
+function nestedTypeParameters(node: ts.Node): readonly ts.TypeParameterDeclaration[] {
+  if (
+    ts.isFunctionTypeNode(node)
+    || ts.isConstructorTypeNode(node)
+    || ts.isCallSignatureDeclaration(node)
+    || ts.isConstructSignatureDeclaration(node)
+    || ts.isMethodSignature(node)
+  ) {
+    return node.typeParameters ?? []
+  }
+  return []
 }
 
 function printTypeNode(node: ts.TypeNode, sourceFile: ts.SourceFile) {
@@ -487,6 +621,26 @@ function blockForEntry(entry: ContractTypeCheckEntry, statements: string[]): Gen
       ...(needsFitNumberType ? [`type ${fitNumberTypeName}<T extends string> = T extends string ? number : never;`] : []),
       ...statements,
       '}',
+    ].join('\n') + '\n',
+  }
+}
+
+function functionBlockForEntry(
+  entry: ContractTypeCheckEntry,
+  name: string,
+  typeParameters: string,
+  parameters: string[],
+  statements: string[],
+): GeneratedBlock {
+  const needsFitNumberType = statements.some(statement => statement.includes(fitNumberTypeName))
+  return {
+    entry,
+    text: [
+      `\nfunction ${name}${typeParameters}(${parameters.join(', ')}): void {`,
+      ...(needsFitNumberType ? [`type ${fitNumberTypeName}<T extends string> = T extends string ? number : never;`] : []),
+      ...statements,
+      '}',
+      `void ${name};`,
     ].join('\n') + '\n',
   }
 }
@@ -770,6 +924,22 @@ function checksFromDiagnostics(diagnostics: readonly ts.Diagnostic[], spans: Spa
       status: 'unknown',
       reason,
     })
+  }
+  return {checks, failedKeys}
+}
+
+function mergeContractTypeCheckResults(results: ContractTypeCheckResult[]): ContractTypeCheckResult {
+  const checks: FitCheck[] = []
+  const failedKeys = new Set<string>()
+  const seenChecks = new Set<string>()
+  for (const result of results) {
+    for (const key of result.failedKeys) failedKeys.add(key)
+    for (const check of result.checks) {
+      const key = `${check.file}\0${check.functionName}\0${check.line ?? ''}\0${check.text}\0${check.reason ?? ''}`
+      if (seenChecks.has(key)) continue
+      seenChecks.add(key)
+      checks.push(check)
+    }
   }
   return {checks, failedKeys}
 }
