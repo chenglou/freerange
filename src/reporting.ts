@@ -112,11 +112,11 @@ export function comparisonNeed(left: ReportNumberValue, op: ComparisonOperator, 
 
 export function formatArraySummary(value: ReportArrayValue) {
   if (value.summary == null) return 'no sequence facts'
-  const lines: string[] = []
-  for (const prop of nondecreasingPropsFromReportRelations(value.summary.relations)) lines.push(`nondecreasing(.${prop})`)
-  for (const fact of spacedShapesFromReportRelations(value.summary.relations)) lines.push(`spaced(${publicFitText(fact.gapExpr)})`)
-  if (value.summary.lastEnd != null) lines.push(`lastEnd = ${formatRange(value.summary.lastEnd.value)}`)
-  return lines.length === 0 ? 'no sequence facts' : lines.join(', ')
+  const lines = new Set<string>()
+  for (const prop of nondecreasingPropsFromReportRelations(value.summary.relations)) lines.add(`nondecreasing(.${prop})`)
+  for (const fact of spacedShapesFromReportRelations(value.summary.relations)) lines.add(`spaced(${publicFitText(fact.gapExpr)})`)
+  if (value.summary.lastEnd != null) lines.add(`lastEnd = ${formatRange(value.summary.lastEnd.value)}`)
+  return lines.size === 0 ? 'no sequence facts' : [...lines].join(', ')
 }
 
 function nondecreasingPropsFromReportRelations(relations: ReportSequenceRelation[]): string[] {

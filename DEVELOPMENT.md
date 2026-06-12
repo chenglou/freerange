@@ -56,7 +56,7 @@ Facts, values, and proof:
 
 - [src/domain-types.ts](./src/domain-types.ts), [src/value-domain.ts](./src/value-domain.ts), [src/number-domain.ts](./src/number-domain.ts), [src/array-summary.ts](./src/array-summary.ts), [src/domain-paths.ts](./src/domain-paths.ts), and [src/domain.ts](./src/domain.ts) — abstract values, numeric ranges, arrays, paths, and the compatibility facade
 - [src/facts.ts](./src/facts.ts), [src/assumptions.ts](./src/assumptions.ts), [src/constraint-reachability.ts](./src/constraint-reachability.ts), [src/linear.ts](./src/linear.ts), [src/proof.ts](./src/proof.ts), and [src/proof-rules.ts](./src/proof-rules.ts) — published facts, assumptions, linear expressions, and comparison proof rules
-- [src/indexed-facts.ts](./src/indexed-facts.ts), [src/sequence-facts.ts](./src/sequence-facts.ts), [src/bound-index.ts](./src/bound-index.ts), [src/loop-source.ts](./src/loop-source.ts), and [src/loop-summary.ts](./src/loop-summary.ts) — index, adjacent sequence, and loop facts
+- [src/indexed-facts.ts](./src/indexed-facts.ts), [src/sequence-facts.ts](./src/sequence-facts.ts), [src/bound-index.ts](./src/bound-index.ts), [src/interpreter/loop-transfer.ts](./src/interpreter/loop-transfer.ts), and [src/loop-summary.ts](./src/loop-summary.ts) — index facts, adjacent sequence facts, the loop analysis, and recurrence closed forms
 
 Dev tools and harnesses:
 

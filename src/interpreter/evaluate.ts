@@ -53,17 +53,7 @@ import {
   adjacentElementAccessFacts,
   valueWithRebasedElementPath,
 } from '../indexed-facts.ts'
-import {
-  applySegmentedStackCursorUpdate,
-  conditionalPushLength,
-  indexedElementPathValue,
-  loopElementFromPush,
-  pushedElementValue,
-  segmentedStackElement,
-  segmentedStackSummary,
-  type GuardedLoopPush,
-} from '../loop-summary.ts'
-import {readGuardedLoopPushes, type LoopSourceContext} from '../loop-source.ts'
+import {indexedElementPathValue} from '../loop-summary.ts'
 import {
   linearConstant,
   numericLiteralValue,
@@ -103,7 +93,6 @@ import {
   type InterpreterReturnCase,
   type InterpreterStateCase,
   type LoopFrame,
-  type LoopAppend,
 } from './context.ts'
 import {
   exactInteger,
@@ -119,14 +108,10 @@ import {
 } from './value-path.ts'
 import {
   compoundAssignmentOperator,
-  expressionCursorPaths,
-  expressionIndexPaths,
   indexedForLoopShape,
   isAssignmentOperator,
-  isPushCallExpression,
   isSideEffectFreeExpression,
   propertyNameText,
-  symbolicForOfBranchSupported,
   unwrapExpression,
   type IndexedForLoopShape,
 } from './source-syntax.ts'
@@ -139,22 +124,7 @@ import {
   type FunctionEffects,
   type FunctionLikeNode,
 } from './function-effects.ts'
-import {
-  indexedElementAssumptions,
-  indexedLoopValue,
-  loopElementPathExpression,
-} from './loop-values.ts'
-import {
-  captureLoopBodyEffect,
-  finalizeLoopEffects,
-  hasPendingLoopEffects,
-  pendingLoopEffects,
-  pendingLoopEffectsAreOnlyExtrema,
-  pendingLoopEffectsHaveScalarAdds,
-  pendingLoopEffectTargetNames,
-  pendingLoopExtrema,
-  type PendingLoopEffects,
-} from './loop-effects.ts'
+import {evaluateSymbolicLoop, type LoopAnalysisContext} from './loop-transfer.ts'
 import {
   branchFrame,
   compareNumbers,
@@ -212,15 +182,6 @@ type InterpreterBodyResult = InterpreterFunctionResult & {
   returnCases?: InterpreterReturnCase[]
 }
 
-type LoopBodyHandlers = {
-  loopLabel: string
-  unsupportedBodyMessage: (statement: ts.Statement) => string
-  unsupportedAfterEffectMessage: (statement: ts.Statement) => string
-  beforeStatement?: (order: number) => void
-  handlePush: (expression: ts.CallExpression & {expression: ts.PropertyAccessExpression}, order: number) => Value | null
-  handleIf: (statement: ts.IfStatement, order: number) => Value | null
-}
-
 type IndexedForLoopBound = {
   length: NumberValue
   expression: ts.Expression
@@ -230,26 +191,6 @@ type IndexedForLoopBound = {
 type IndexedForLoopOrigin = {
   source: ArrayValue
   sourceExpr: string
-}
-
-type IndexedAppendRecord = {
-  path: ValuePath
-  count: number
-  initialEmpty: boolean
-  conditional: boolean
-}
-
-type IndexedAppendResult =
-  | {kind: 'ok'; append: LoopAppend | null; initialEmpty: boolean; conditional: boolean}
-  | {kind: 'error'; value: Value}
-
-type IndexedForBodyContext = {
-  indexName: string
-  length: NumberValue
-  source: ArrayValue | null
-  order: number
-  loop: LoopFrame
-  appendedArrays: Map<string, IndexedAppendRecord>
 }
 
 export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
@@ -958,7 +899,7 @@ function evaluateForOfStatementCore(statement: ts.ForOfStatement, frame: Interpr
   const scopedNames = [...forOfScopedNames(statement.initializer), ...forOfBodyScopedNames(statement.statement)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
-  if (itemName != null) frame.loopStack.push({source, sourceExpr, mode: 'finite', statementIndex: 0, appends: []})
+  if (itemName != null) frame.loopStack.push({source, sourceExpr, mode: 'finite', appends: []})
   try {
     for (const element of elements) {
       bindForOfInitializer(statement.initializer, element, frame)
@@ -974,86 +915,40 @@ function evaluateForOfStatementCore(statement: ts.ForOfStatement, frame: Interpr
 
 function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: ArrayValue, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
   if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports block bodies only', statement.statement)}
-  const itemName = forOfItemName(statement.initializer)
-  if (itemName == null) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports simple variable bindings only', statement.initializer)}
-  const scopedNames = [...forOfScopedNames(statement.initializer), ...blockScopedNames(statement.statement)]
+  const iterationRoots = forOfScopedNames(statement.initializer)
+  if (iterationRoots.length === 0) return {kind: 'return', value: noteUnsupported(frame, 'Abstract for..of supports simple variable bindings only', statement.initializer)}
+  const body = statement.statement
+  const scopedNames = [...iterationRoots, ...blockScopedNames(body)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
   const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
-  const loop: LoopFrame = {source, sourceExpr, mode: 'symbolic', statementIndex: 0, appends: []}
-  const effects = pendingLoopEffects()
-  const guardedPushes: GuardedLoopPush[] = []
-  frame.loopStack.push(loop)
   try {
-    bindForOfInitializer(statement.initializer, item, frame)
-    const bodyError = evaluateLoopBodyEffects(statement.statement.statements, effects, {
-      loopLabel: 'Abstract for..of',
-      beforeStatement: order => {
-        loop.statementIndex = order
-      },
-      handlePush: expression => {
-        evaluateExpression(expression, frame)
-        return null
-      },
-      handleIf: child => evaluateSymbolicForOfIf(child, loop, effects, guardedPushes, frame),
-      unsupportedAfterEffectMessage: child => `Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: ${child.getText(frame.program.sourceFile)}`,
-      unsupportedBodyMessage: child => `Abstract for..of expected a simple append/reducer body: local bindings, direct array.push(value), supported if guards, and final scalar cursor/extrema updates; got ${child.getText(frame.program.sourceFile)}`,
-    }, frame)
-    if (bodyError != null) return {kind: 'return', value: bodyError}
-    const error = finalizeLoopEffectsAndGuardedPushes(loop, effects, guardedPushes, 'Abstract for..of', frame)
-    if (error != null) return {kind: 'return', value: error}
-    finalizeSymbolicLoopAppendedArrays(loop, frame)
-    addLoopFactRoots(claim, loop, effects, guardedPushes)
+    const outcome = evaluateSymbolicLoop({
+      claim,
+      body,
+      source,
+      sourceExpr,
+      sourceRoot: pathFromExpression(statement.expression, frame)?.root ?? null,
+      sourceKind: 'collection',
+      count: source.length,
+      bindIteration: target => bindForOfInitializer(statement.initializer, item, target),
+      iterationRoots,
+    }, frame, loopAnalysisContext)
+    if (outcome.kind === 'function-unknown') return {kind: 'return', value: outcome.value}
   } finally {
-    frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
 }
 
-function evaluateSymbolicForOfIf(
-  statement: ts.IfStatement,
-  loop: LoopFrame,
-  effects: PendingLoopEffects,
-  guardedPushes: GuardedLoopPush[],
-  frame: InterpreterFrame,
-): Value | null {
-  const guarded = readGuardedPushAfterExtrema(statement, loop, effects, 'Abstract for..of', frame)
-  if (guarded != null) {
-    guardedPushes.push(...guarded)
-    return null
-  }
-  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`, statement)
-  return evaluateSymbolicForOfGuard(statement, frame)
-}
-
-function evaluateSymbolicForOfGuard(statement: ts.IfStatement, frame: InterpreterFrame): Value | null {
-  if (!symbolicForOfBranchSupported(statement)) {
-    return noteUnsupported(frame, `Abstract for..of guarded bodies only support local bindings and direct push calls: ${statement.getText(frame.program.sourceFile)}`, statement)
-  }
-  const flow = evaluateIfStatement(statement, frame)
-  if (flow.kind === 'fallthrough') return null
-  return flow.kind === 'return' || flow.kind === 'return-cases'
-    ? completedFlowValue(flow, frame)!
-    : noteUnsupported(frame, 'Abstract for..of loop control flow is unsupported', statement)
-}
-
-function finalizeSymbolicLoopAppendedArrays(loop: LoopFrame, frame: InterpreterFrame) {
-  const seen = new Set<string>()
-  for (const append of loop.appends) {
-    if (seen.has(append.arrayName)) continue
-    seen.add(append.arrayName)
-    if (!append.conditional) continue
-    const value = frame.env.get(append.arrayName)
-    if (value?.kind !== 'array') continue
-    const length = conditionalPushLength(append.arrayName, loop.source.length, append.base.length)
-    addLengthAtMostSourceFact(length, loop.source.length, frame)
-    frame.env.set(append.arrayName, {
-      ...value,
-      length,
-      elements: null,
-    })
-  }
+const loopAnalysisContext: LoopAnalysisContext = {
+  evaluateExpression: (expression, frame) => evaluateExpression(expression, frame),
+  evaluateStatement: (statement, frame) => evaluateBranch(statement, frame),
+  conditionTruth: (condition, frame) => {
+    const truthValues = evaluateConditionTruthiness(condition, frame, 'Branch condition')
+    return truthValues == null ? null : singleBooleanValue(truthValues)
+  },
+  refinedBranchFrame: (frame, condition, truth, name) => branchFrame(frame, condition, truth, name, evaluateExpression),
 }
 
 function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -1069,50 +964,38 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
   if ('error' in bound) return {kind: 'return', value: bound.error}
   if (!bound.length.isInteger || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer', statement.condition ?? statement)}
 
-  const scopedNames = [shape.indexName, ...blockScopedNames(statement.statement)]
+  const body = statement.statement
+  const scopedNames = [shape.indexName, ...blockScopedNames(body)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const length = indexedLoopLength(bound.length, bound.expression, frame)
   const indexValue = indexedElementPathValue(shape.indexName, length)
-  frame.env.set(shape.indexName, indexValue)
   frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
   const loop = indexedForLoopContext(bound, length, frame)
-  const effects = pendingLoopEffects()
-  const guardedPushes: GuardedLoopPush[] = []
-  frame.loopStack.push(loop)
   try {
-    const appendedArrays = new Map<string, IndexedAppendRecord>()
-    const bodyError = evaluateLoopBodyEffects(statement.statement.statements, effects, {
-      loopLabel: 'Indexed for loop',
-      handlePush: (expression, order) => evaluateIndexedForPushStatement(expression, {
-        indexName: shape.indexName,
-        length,
-        source: bound.origin?.source ?? null,
-        order,
-        loop,
-        appendedArrays,
-      }, frame),
-      handleIf: (child, order) => evaluateIndexedForIf(child, {
-        indexName: shape.indexName,
-        length,
-        source: bound.origin?.source ?? null,
-        order,
-        loop,
-        appendedArrays,
-      }, effects, guardedPushes, frame),
-      unsupportedAfterEffectMessage: child => `Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: ${child.getText(frame.program.sourceFile)}`,
-      unsupportedBodyMessage: child => `Indexed for loop expected a simple append/reducer body: local bindings, direct array.push(value), supported if guards, and final scalar cursor/extrema updates; got ${child.getText(frame.program.sourceFile)}`,
-    }, frame)
-    if (bodyError != null) return {kind: 'return', value: bodyError}
-    const cursorError = finalizeLoopEffectsAndGuardedPushes(loop, effects, guardedPushes, 'Indexed for loop', frame)
-    if (cursorError != null) return {kind: 'return', value: cursorError}
-    finalizeIndexedAppendedArrays(appendedArrays, bound.origin, frame)
-    addLoopFactRoots(claim, loop, effects, guardedPushes)
-    for (const record of appendedArrays.values()) claim.factRoots.add(record.path.root)
+    const outcome = evaluateSymbolicLoop({
+      claim,
+      body,
+      source: loop.source,
+      sourceExpr: loop.sourceExpr,
+      sourceRoot: bound.origin == null ? null : pathFromExpression(shape.source.kind === 'array' ? shape.source.expression : bound.expression, frame)?.root ?? null,
+      sourceKind: bound.origin == null ? 'count' : 'collection',
+      count: length,
+      bindIteration: target => {
+        target.env.set(shape.indexName, indexValue)
+      },
+      iterationRoots: [shape.indexName],
+    }, frame, loopAnalysisContext)
+    if (outcome.kind === 'function-unknown') return {kind: 'return', value: outcome.value}
   } finally {
-    frame.loopStack.pop()
     restoreScopedValues(frame.env, scopedValues)
   }
   return {kind: 'fallthrough'}
+}
+
+function indexedElementAssumptions(value: NumberValue, length: NumberValue): LinearConstraint[] {
+  const lower = comparisonConstraint(value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
+  const upper = comparisonConstraint(value, '<', length)
+  return [lower, upper].filter((fact): fact is LinearConstraint => fact != null)
 }
 
 function evaluateForgettableForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
@@ -1135,88 +1018,12 @@ function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoS
   return {kind: 'fallthrough'}
 }
 
-function evaluateIndexedForPushStatement(
-  expression: ts.CallExpression & {expression: ts.PropertyAccessExpression},
-  context: IndexedForBodyContext,
-  frame: InterpreterFrame,
-): Value | null {
-  const pushPath = pathFromExpression(expression.expression.expression, frame)
-  if (pushPath == null) return noteUnsupported(frame, `Unsupported push target ${expression.expression.expression.getText(frame.program.sourceFile)}`, expression.expression.expression)
-  const result = evaluateIndexedForPush(expression, pushPath, context.indexName, context.length, context.source, context.order, frame)
-  if (result.kind === 'error') return result.value
-  if (result.append != null) context.loop.appends.push(result.append)
-  rememberIndexedAppend(context.appendedArrays, pushPath, result.initialEmpty, result.conditional)
-  return null
-}
-
-function evaluateIndexedForIf(
-  statement: ts.IfStatement,
-  context: IndexedForBodyContext,
-  effects: PendingLoopEffects,
-  guardedPushes: GuardedLoopPush[],
-  frame: InterpreterFrame,
-): Value | null {
-  const guarded = readGuardedPushAfterExtrema(statement, context.loop, effects, 'Indexed for loop', frame)
-  if (guarded != null) {
-    guardedPushes.push(...guarded)
-    return null
-  }
-  if (hasPendingLoopEffects(effects)) return noteUnsupported(frame, `Indexed for loop scalar cursor updates can only be followed by guarded pushes with safe resets: ${statement.getText(frame.program.sourceFile)}`, statement)
-  return evaluateIndexedForGuardedStatement(statement, context, frame)
-}
-
-function evaluateIndexedForGuardedStatement(
-  statement: ts.IfStatement,
-  context: IndexedForBodyContext,
-  frame: InterpreterFrame,
-): Value | null {
-  if (statement.elseStatement != null) return noteUnsupported(frame, 'Indexed for loop guarded pushes do not support else branches', statement.elseStatement)
-  if (!isSideEffectFreeExpression(statement.expression)) return noteUnsupported(frame, 'Indexed for loop guards must be side-effect-free', statement.expression)
-  const thenFrame = branchFrame(frame, statement.expression, true, '<indexed-if-true>', evaluateExpression)
-  const elseFrame = branchFrame(frame, statement.expression, false, '<indexed-if-false>', evaluateExpression)
-  thenFrame.conditionalDepth++
-  try {
-    const error = evaluateIndexedForGuardedBody(statement.thenStatement, context, thenFrame)
-    if (error != null) return error
-  } finally {
-    thenFrame.conditionalDepth--
-  }
-  frame.env = joinBranchFrameEnvs(thenFrame, elseFrame)
-  return null
-}
-
-function evaluateIndexedForGuardedBody(
-  statement: ts.Statement,
-  context: IndexedForBodyContext,
-  frame: InterpreterFrame,
-): Value | null {
-  const statements = ts.isBlock(statement) ? statement.statements : [statement]
-  for (const child of statements) {
-    if (ts.isVariableStatement(child)) {
-      for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(child, declaration, frame)
-      continue
-    }
-    if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-      const error = evaluateIndexedForPushStatement(child.expression, context, frame)
-      if (error != null) return error
-      continue
-    }
-    if (ts.isIfStatement(child)) {
-      const error = evaluateIndexedForGuardedStatement(child, context, frame)
-      if (error != null) return error
-      continue
-    }
-    return noteUnsupported(frame, `Indexed for loop guarded bodies only support local bindings and direct push calls: ${child.getText(frame.program.sourceFile)}`, child)
-  }
-  return null
-}
-
 function indexedForLoopContext(bound: IndexedForLoopBound, length: NumberValue, frame: InterpreterFrame): LoopFrame {
   const expr = bound.origin?.sourceExpr ?? bound.expression.getText(frame.program.sourceFile)
   const source = bound.origin == null
     ? unknownArray(expr, length)
     : {...bound.origin.source, length}
-  return {source, sourceExpr: expr, mode: 'symbolic', statementIndex: 0, appends: []}
+  return {source, sourceExpr: expr, mode: 'symbolic', appends: []}
 }
 
 function evaluateIndexedForLoopBound(shape: IndexedForLoopShape, frame: InterpreterFrame): IndexedForLoopBound | {error: Value} {
@@ -1236,217 +1043,11 @@ function evaluateIndexedForLoopBound(shape: IndexedForLoopShape, frame: Interpre
   }
 }
 
-function evaluateLoopBodyEffects(
-  statements: ts.NodeArray<ts.Statement> | ts.Statement[],
-  effects: PendingLoopEffects,
-  handlers: LoopBodyHandlers,
-  frame: InterpreterFrame,
-): Value | null {
-  let sawEffect = false
-  for (let order = 0; order < statements.length; order++) {
-    const child = statements[order]!
-    handlers.beforeStatement?.(order)
-    const effect = captureLoopBodyEffect(child, order, effects, handlers.loopLabel, frame, evaluateExpression)
-    if (effect.kind === 'unsupported') return effect.value
-    if (effect.kind === 'captured') {
-      sawEffect = true
-      continue
-    }
-    if (ts.isVariableStatement(child)) {
-      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
-      for (const declaration of child.declarationList.declarations) evaluateVariableDeclaration(child, declaration, frame)
-      continue
-    }
-    if (ts.isExpressionStatement(child) && isPushCallExpression(child.expression)) {
-      if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
-      const error = handlers.handlePush(child.expression, order)
-      if (error != null) return error
-      continue
-    }
-    if (ts.isIfStatement(child)) {
-      const error = handlers.handleIf(child, order)
-      if (error != null) return error
-      continue
-    }
-    const forgottenRoots = forgettableMutationRoots(child, frame.env)
-    if (forgottenRoots != null) {
-      forgetRoots(frame.env, forgottenRoots)
-      continue
-    }
-    if (sawEffect) return noteUnsupported(frame, handlers.unsupportedAfterEffectMessage(child), child)
-    return noteUnsupported(frame, handlers.unsupportedBodyMessage(child), child)
-  }
-  return null
-}
-
-function readGuardedPushAfterExtrema(
-  statement: ts.IfStatement,
-  loop: LoopFrame,
-  effects: PendingLoopEffects,
-  loopLabel: string,
-  frame: InterpreterFrame,
-): GuardedLoopPush[] | null {
-  if (!hasPendingLoopEffects(effects)) return null
-  if (!pendingLoopEffectsAreOnlyExtrema(effects)) return null
-  const pushes = readGuardedLoopPushes(statement, loopSourceContext(frame), loop.source.length, pendingLoopExtrema(effects))
-  if (pushes == null) return null
-  if (pushes.length > 1) {
-    noteUnsupported(frame, `${loopLabel} guarded scalar flushes support one pushed array`, statement)
-    return null
-  }
-  return pushes
-}
-
-function addLoopFactRoots(
-  claim: InterpreterLoopClaim,
-  loop: LoopFrame,
-  effects: PendingLoopEffects,
-  guardedPushes: GuardedLoopPush[],
-) {
-  for (const append of loop.appends) claim.factRoots.add(append.arrayName)
-  for (const push of guardedPushes) claim.factRoots.add(push.arrayName)
-  for (const targetName of pendingLoopEffectTargetNames(effects)) claim.factRoots.add(targetName)
-}
-
-function loopSourceContext(frame: InterpreterFrame): LoopSourceContext {
-  return {
-    env: frame.env,
-    sourceFile: frame.program.sourceFile,
-    evaluateExpression: (expression, env) => evaluateExpression(expression, {...frame, env}),
-    bindVariableStatement: (statement, env) => {
-      const localFrame = {...frame, env}
-      for (const declaration of statement.declarationList.declarations) evaluateVariableDeclaration(statement, declaration, localFrame)
-    },
-    isSideEffectFreeExpression,
-  }
-}
-
-function finalizeLoopEffectsAndGuardedPushes(
-  loop: LoopFrame,
-  effects: PendingLoopEffects,
-  guardedPushes: GuardedLoopPush[],
-  loopLabel: string,
-  frame: InterpreterFrame,
-): Value | null {
-  if (guardedPushes.length > 0) return finalizeGuardedLoopPushes(loop, guardedPushes, effects, loopLabel, frame)
-  return finalizeLoopEffects(loop, effects, loopLabel, frame)
-}
-
-function finalizeGuardedLoopPushes(
-  loop: LoopFrame,
-  pushes: GuardedLoopPush[],
-  effects: PendingLoopEffects,
-  loopLabel: string,
-  frame: InterpreterFrame,
-): Value | null {
-  if (pushes.length === 0) return null
-  const guardedArrays = new Set(pushes.map(push => push.arrayName))
-  if (loop.appends.some(append => guardedArrays.has(append.arrayName))) {
-    return noteUnsupported(frame, `${loopLabel} guarded scalar flushes cannot mix with unguarded pushes to the same array`)
-  }
-  if (pendingLoopEffectsHaveScalarAdds(effects)) {
-    return noteUnsupported(frame, `${loopLabel} guarded scalar flushes support scalar extrema only`)
-  }
-  const extrema = pendingLoopExtrema(effects)
-  for (const push of pushes) {
-    const target = frame.env.get(push.arrayName)
-    if (target?.kind !== 'array') return noteUnsupported(frame, `${loopLabel} guarded push expected ${push.arrayName} to be an array`)
-    const startedEmpty = target.length.min === 0 && target.length.max === 0
-    const length = conditionalPushLength(push.arrayName, loop.source.length, target.length)
-    const baseElement = loopElementFromPush(push, new Map(), extrema, loop.source.length, frame.env, frame.assumptions)
-    const element = segmentedStackElement(push, baseElement, loop.source.length, frame.env)
-    writeMutationPath({root: push.arrayName, segments: []}, {
-      ...target,
-      length,
-      elements: null,
-      element: pushedElementValue(target, element),
-      // Adjacent-pair relations only cover pairs the loop itself produced.
-      summary: startedEmpty ? mergeArraySummary(target.summary, segmentedStackSummary(push, element)) : target.summary,
-    }, frame)
-    applySegmentedStackCursorUpdate(push, element, loop.source.length, frame.env)
-    if (startedEmpty) {
-      const fact = comparisonConstraint(length, '<=', loop.source.length, `${length.expr ?? push.arrayName + '.length'} <= ${loop.source.length.expr ?? 'loop length'}`)
-      if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
-    }
-  }
-  return null
-}
-
 function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame: InterpreterFrame): NumberValue {
   const expr = limit.expr ?? expression.getText(frame.program.sourceFile)
   const min = Math.max(0, limit.min)
   const max = Math.max(0, limit.max)
   return numberValue(min, max, true, expr, limit.linear, null, limit.origin)
-}
-
-function evaluateIndexedForPush(
-  expression: ts.CallExpression & {expression: ts.PropertyAccessExpression},
-  path: ValuePath,
-  indexName: string,
-  length: NumberValue,
-  source: ArrayValue | null,
-  order: number,
-  frame: InterpreterFrame,
-): IndexedAppendResult {
-  const current = readPath(path, frame, expression.expression.expression)
-  if (current.kind !== 'array') return {kind: 'error', value: noteUnsupported(frame, `push expected an array: ${expression.expression.expression.getText(frame.program.sourceFile)}`, expression.expression.expression)}
-  if (source != null && current === source) return {kind: 'error', value: noteUnsupported(frame, 'Indexed for loop cannot push into its source array', expression)}
-  if (expression.arguments.length !== 1) return {kind: 'error', value: noteUnsupported(frame, 'Indexed for loop push supports one item per iteration', expression)}
-  const argument = expression.arguments[0]!
-  const rawElement = evaluateExpression(argument, frame)
-  const targetExpr = valuePathExpression(path)
-  const element = indexedLoopValue(rawElement, indexName, targetExpr, [], length)
-  const lengthValue = current.length.min === 0 && current.length.max === 0 ? length : addNumbers(current.length, length)
-  const initialEmpty = current.length.min === 0 && current.length.max === 0
-  writePath(path, {
-    ...current,
-    length: lengthValue,
-    elements: null,
-    element: mergeElementValue(current.element, element),
-  }, frame)
-  frame.assumptions = mergeAssumptions(frame.assumptions, ...expressionIndexPaths(argument, indexName).map(indexPath => {
-    return indexedElementAssumptions(indexedElementPathValue(loopElementPathExpression(targetExpr, indexPath), length), length)
-  }))
-  return {
-    kind: 'ok',
-    initialEmpty,
-    conditional: frame.conditionalDepth > 0,
-    append: path.segments.length === 0 ? {
-      arrayName: path.root,
-      order,
-      conditional: frame.conditionalDepth > 0,
-      length: lengthValue,
-      element,
-      argument,
-      base: current,
-      cursorPaths: expressionCursorPaths(argument),
-    } : null,
-  }
-}
-
-function rememberIndexedAppend(records: Map<string, IndexedAppendRecord>, path: ValuePath, initialEmpty: boolean, conditional: boolean) {
-  const key = valuePathExpression(path)
-  const current = records.get(key)
-  records.set(key, current == null ? {path, count: 1, initialEmpty, conditional} : {
-    ...current,
-    count: current.count + 1,
-    conditional: current.conditional || conditional,
-  })
-}
-
-function finalizeIndexedAppendedArrays(records: Map<string, IndexedAppendRecord>, origin: IndexedForLoopOrigin | null, frame: InterpreterFrame) {
-  for (const record of records.values()) {
-    const value = readPath(record.path, frame)
-    if (value.kind !== 'array') continue
-    const length = record.conditional && record.initialEmpty && origin != null
-      ? conditionalPushLength(valuePathExpression(record.path), origin.source.length)
-      : value.length
-    if (length !== value.length && origin != null) addLengthAtMostSourceFact(length, origin.source.length, frame)
-    const summary = origin != null && record.count === 1 && record.initialEmpty
-      ? mergeArraySummary(value.summary, emptyArraySummary(record.conditional ? filterOrigin(origin.source, origin.sourceExpr) : mapOrigin(origin.source, origin.sourceExpr)))
-      : value.summary
-    writePath(record.path, {...value, length, elements: null, summary}, frame)
-  }
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
@@ -2487,13 +2088,8 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   if (loop?.mode === 'symbolic' && path.segments.length === 0) {
     loop.appends.push({
       arrayName: path.root,
-      order: loop.statementIndex,
-      conditional: frame.conditionalDepth > 0,
-      length: symbolicLength ?? nextLength,
       element: values[0] ?? null,
-      argument: expression.arguments[0] ?? null,
       base: current,
-      cursorPaths: expressionCursorPaths(expression.arguments[0]),
     })
   }
   const next: ArrayValue = {
@@ -2724,6 +2320,11 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   }
 }
 
+function addLengthAtMostSourceFact(length: NumberValue, sourceLength: NumberValue, frame: InterpreterFrame) {
+  const fact = comparisonConstraint(length, '<=', sourceLength, `${length.expr ?? 'length'} <= ${sourceLength.expr ?? 'source length'}`)
+  if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
+}
+
 function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame, text: string): NumberValue {
   const fallback = numberValue(0, source.length.max, true, `${text}.length`)
   if (source.length.max === 0) return numberValue(0, 0, true, `${text}.length`)
@@ -2766,11 +2367,6 @@ function callbackPredicateExpression(callbackFn: ArrayCallbackFunction): ts.Expr
 function firstIdentifierParameterName(callbackFn: ArrayCallbackFunction): string | null {
   const first = callbackFn.parameters[0]
   return first != null && ts.isIdentifier(first.name) ? first.name.text : null
-}
-
-function addLengthAtMostSourceFact(length: NumberValue, sourceLength: NumberValue, frame: InterpreterFrame) {
-  const fact = comparisonConstraint(length, '<=', sourceLength)
-  if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
 }
 
 function sourceExpression(source: ArrayValue, expression: ts.Expression, frame: InterpreterFrame): string {

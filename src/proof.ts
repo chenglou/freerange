@@ -50,6 +50,7 @@ import {
   rationalIsZero,
   rationalNegate,
   rationalOne,
+  rationalToNumber,
   rationalZero,
   type Rational,
 } from './rational.ts'
@@ -510,6 +511,26 @@ export function comparisonCounterexample(
     if (assigned != null) point.set(name, assigned)
   }
   return {kind: 'point', point}
+}
+
+// The best constant bounds the published facts prove for a value, found with
+// the same simplex the counterexample search uses: the interval the polytope
+// projects onto, intersected with the value's own interval.
+export function provableBounds(value: NumberValue, assumptions: LinearConstraint[]): {min: number; max: number} {
+  if (value.linear == null || value.linear.terms.size === 0) return {min: value.min, max: value.max}
+  const facts = assumptions.flatMap(nonNegativeConstraints)
+  const anchored = new Set<string>()
+  for (const fact of facts) for (const name of fact.diff.terms.keys()) anchored.add(name)
+  for (const name of value.linear.terms.keys()) {
+    if (!anchored.has(name)) return {min: value.min, max: value.max}
+  }
+  let min = value.min
+  let max = value.max
+  const upper = linearMaximum(value.linear, facts)
+  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumber(upper.value))
+  const lower = linearMaximum(linearScaleExact(value.linear, rationalNegate(rationalOne)), facts)
+  if (lower.kind === 'optimum') min = Math.max(min, -rationalToNumber(lower.value))
+  return min <= max ? {min, max} : {min: value.min, max: value.max}
 }
 
 // The value's own interval is sound knowledge the fact set may not spell out.

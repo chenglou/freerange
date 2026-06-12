@@ -9,7 +9,7 @@ import {
 import {sameExpressionText} from './linear.ts'
 import {parseExpression, publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
-import {ambiguousRowAxes, hasNondecreasingProp, isRowExtentShape, provedSpacing, rowAxes, spacedShapesFromRelations} from './sequence-facts.ts'
+import {ambiguousRowAxes, hasNondecreasingProp, isRowExtentShape, provedSpacing, rowAxes, spacedShapesFromRelations, type AddendResolver} from './sequence-facts.ts'
 
 export type BuiltinContext = {
   expression: ts.CallExpression
@@ -84,7 +84,7 @@ function evaluateSpacedCall(context: BuiltinContext): Value {
   if (rows.kind !== 'array') return unknown('spaced expected an array')
   if (ambiguousRowAxes(rows)) return unknown(`spaced(...) is ambiguous: ${ambiguousAxesReason}`)
   if (gap.kind !== 'number' || gap.expr == null) return unknown('spaced expected a known gap expression')
-  if (provedSpacing(rows, gap.expr) != null) {
+  if (provedSpacing(rows, gap.expr, addendResolver(context)) != null) {
     return literalValue([true], text, [`sequence facts: ${formatArraySummary(rows)}`])
   }
   return unknown(spacedFailureReason(text, rows, gap.expr))
@@ -116,6 +116,17 @@ function evaluateNoOverlapCall(context: BuiltinContext): Value {
     }
   }
   return unknown(noOverlapFailureReason(text, arr, rowExtentShapes[0] ?? null))
+}
+
+function addendResolver(context: BuiltinContext): AddendResolver {
+  return text => {
+    try {
+      const value = context.evaluateExpression(parseExpression(text))
+      return value.kind === 'number' ? value : null
+    } catch {
+      return null
+    }
+  }
 }
 
 function gapIsNonnegative(gapExpr: string, context: BuiltinContext): boolean {

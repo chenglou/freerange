@@ -48,19 +48,17 @@ infer matrix for-of push visible rows
 infer matrix abstract for-of param rows
   return return.rows.length == items.length
   return return.rows.length: int 0..Infinity
-  return return.rows[].height == item.height
+  return return.rows[].height == rows[].height
   return return.rows follows items by index
   local rows.length == items.length
   local rows.length: int 0..Infinity
-  local rows[].height == item.height
   local rows follows items by index
 infer matrix abstract guarded for-of rows
   return return.rows.length == rows.length
   return return.rows.length: int 0..Infinity
-  return return.rows[].height == item.height
+  return return.rows[].height == rows[].height
   return return.rows is an order-preserving subset of items
   local rows.length: int 0..Infinity
-  local rows[].height == item.height
   local rows is an order-preserving subset of items
 infer matrix abstract for-of cursor values
   return return.bottom == y
@@ -68,12 +66,18 @@ infer matrix abstract for-of cursor values
   return return.rows.length == items.length
   return return.rows.length: int 0..50
   return return.rows[] == rows[]
-  return return.rows[]: 0..3000
+  return return.rows[]: 0..2960
   return return.rows follows items by index
+  return nondecreasing(return.rows.)
+  return spaced(return.rows, step)
+  return return.rows[$i + 1] == return.rows[$i] + step
   local rows.length == items.length
   local rows.length: int 0..50
-  local rows[]: 0..3000
+  local rows[]: 0..2960
   local rows follows items by index
+  local nondecreasing(rows.)
+  local spaced(rows, step)
+  local rows[$i + 1] == rows[$i] + step
   local y: 0..3000
 infer matrix abstract conditional count
   return return == count
@@ -102,27 +106,25 @@ infer matrix indexed limit range
 infer matrix indexed array param rows
   return return.rows.length == items.length
   return return.rows.length: int 0..20
-  return return.rows[].height == items[i].height
+  return return.rows[].height == rows[].height
   return return.rows[].height: 0..80
   return return.rows[].sourceIndex == rows[].sourceIndex
   return return.rows[].sourceIndex: int 0..19
   return return.rows follows items by index
   local rows.length == items.length
   local rows.length: int 0..20
-  local rows[].height == items[i].height
   local rows[].height: 0..80
   local rows[].sourceIndex: int 0..19
   local rows follows items by index
 infer matrix indexed array guarded rows
   return return.rows.length == rows.length
   return return.rows.length: int 0..20
-  return return.rows[].height == items[i].height
+  return return.rows[].height == rows[].height
   return return.rows[].height: 0..80
   return return.rows[].sourceIndex == rows[].sourceIndex
   return return.rows[].sourceIndex: int 0..19
   return return.rows is an order-preserving subset of items
   local rows.length: int 0..20
-  local rows[].height == items[i].height
   local rows[].height: 0..80
   local rows[].sourceIndex: int 0..19
   local rows is an order-preserving subset of items
@@ -132,10 +134,10 @@ infer matrix indexed array guarded cursor values
   return return.rows.length == rows.length
   return return.rows.length: int 0..50
   return return.rows[] == rows[]
-  return return.rows[]: 0..3000
+  return return.rows[]: 0..2960
   return return.rows is an order-preserving subset of items
   local rows.length: int 0..50
-  local rows[]: 0..3000
+  local rows[]: 0..2960
   local rows is an order-preserving subset of items
   local y: 0..3000
 infer matrix indexed array cursor values
@@ -144,12 +146,18 @@ infer matrix indexed array cursor values
   return return.rows.length == items.length
   return return.rows.length: int 0..50
   return return.rows[] == rows[]
-  return return.rows[]: 0..3000
+  return return.rows[]: 0..2960
   return return.rows follows items by index
+  return nondecreasing(return.rows.)
+  return spaced(return.rows, step)
+  return return.rows[$i + 1] == return.rows[$i] + step
   local rows.length == items.length
   local rows.length: int 0..50
-  local rows[]: 0..3000
+  local rows[]: 0..2960
   local rows follows items by index
+  local nondecreasing(rows.)
+  local spaced(rows, step)
+  local rows[$i + 1] == rows[$i] + step
   local y: 0..3000
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length

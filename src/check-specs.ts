@@ -710,7 +710,11 @@ function specBoundIndexContext(context: EvalContext, hooks: CheckSpecHooks): Bou
     proveAdjacentComparison: (collectionPath, comparison) => {
       const collection = hooks.evaluateDomainPath(collectionPath, context)
       if (collection.kind !== 'array') return {status: 'unknown', reason: `${domainPathText(collectionPath)} expected an array`}
-      if (proveAdjacentComparison(collection, comparison)) return {status: 'pass'}
+      const resolve = (text: string) => {
+        const value = evaluateSpecExpression(text, context, hooks)
+        return value.kind === 'number' ? value : null
+      }
+      if (proveAdjacentComparison(collection, comparison, resolve)) return {status: 'pass'}
       const collectionText = domainPathText(collectionPath)
       return {
         status: 'unknown',

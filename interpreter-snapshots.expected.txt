@@ -106,14 +106,13 @@ case negative alias mutation surface: tests/interpreter-matrix/interpreter-matri
   return[].value: int -1..-1
   fact return follows source by index
 case negative cursor update before push surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixCursorUpdateBeforePush
-  return: unknown (Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
-  unsupported negativeMatrixCursorUpdateBeforePush line 33: Abstract for..of scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
+  return.length: int 0..Infinity
+  return[]: int 2..Infinity
+  fact return follows items by index
 case negative conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
-  return: unknown (Abstract for..of conditional running sums do not support else branches)
-  unsupported negativeMatrixConditionalElseCount line 41: Abstract for..of conditional running sums do not support else branches
+  return: int 0..Infinity
 case negative mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
-  return: unknown (Abstract for..of scalar extrema support extrema updates only)
-  unsupported negativeMatrixMixedExtremumAndCursor line 52: Abstract for..of scalar extrema support extrema updates only
+  return: any number
 case negative indexed loop starts at one surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
   return: unknown (Unsupported for loop body: {
     values.push(i)
@@ -122,29 +121,24 @@ case negative indexed loop starts at one surface: tests/interpreter-matrix/inter
     values.push(i)
   }
 case negative indexed array guarded else surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
-  return: unknown (Indexed for loop guarded pushes do not support else branches)
-  unsupported negativeMatrixIndexedArrayGuardedElse line 70: Indexed for loop guarded pushes do not support else branches
+  return.length: int 0..Infinity
+  return[]: any number
+  fact return follows items by index
 case negative indexed array pushes into source surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
-  return: unknown (Indexed for loop cannot push into its source array)
-  unsupported negativeMatrixIndexedArrayPushesIntoSource line 77: Indexed for loop cannot push into its source array
+  return: unknown (Loop body mutates its own source array)
+  unsupported negativeMatrixIndexedArrayPushesIntoSource line 76: Loop body mutates its own source array
 case negative indexed cursor update before push surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
-  return: unknown (Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y))
-  unsupported negativeMatrixIndexedCursorUpdateBeforePush line 87: Indexed for loop scalar cursor/extrema updates must stay after all local bindings and append pushes: rows.push(y)
+  return.length: int 0..Infinity
+  return[]: int 2..Infinity
+  fact return follows items by index
 case negative indexed conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
-  return: unknown (Indexed for loop conditional running sums do not support else branches)
-  unsupported negativeMatrixIndexedConditionalElseCount line 96: Indexed for loop conditional running sums do not support else branches
+  return: int 0..Infinity
 case negative indexed mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
-  return: unknown (Indexed for loop scalar extrema support extrema updates only)
-  unsupported negativeMatrixIndexedMixedExtremumAndCursor line 108: Indexed for loop scalar extrema support extrema updates only
+  return: any number
 case negative guarded unsafe reset surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
-  return: unknown (Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
-      rows.push({height: rowHeight})
-      rowHeight = -1
-    })
-  unsupported negativeMatrixGuardedExtremumUnsafeReset line 118: Abstract for..of scalar cursor/extrema updates can only be followed by guarded pushes with safe resets: if (item.endsRow) {
-      rows.push({height: rowHeight})
-      rowHeight = -1
-    }
+  return.rows.length: int 0..Infinity
+  return.rows[].height: int 0..1
+  fact return.rows is an order-preserving subset of items
 case negative forgettable impure read surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixForgettableLoopImpureRead
   return: unknown (Unsupported for loop body: {
     scratch += negativeMatrixImpureLoopApi.touch()

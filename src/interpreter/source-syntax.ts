@@ -10,11 +10,6 @@ export type IndexedForLoopSource =
   | {kind: 'limit'; expression: ts.Expression}
   | {kind: 'array'; expression: ts.Expression; lengthExpression: ts.Expression}
 
-export type CursorPath = {
-  path: string[]
-  targetName: string
-}
-
 export function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopShape | null {
   if (statement.initializer == null || !ts.isVariableDeclarationList(statement.initializer)) return null
   if (statement.initializer.declarations.length !== 1) return null
@@ -30,58 +25,6 @@ export function indexedForLoopShape(statement: ts.ForStatement): IndexedForLoopS
   return {indexName, source: indexedForLoopSource(condition.right)}
 }
 
-export function expressionIndexPaths(expression: ts.Expression | undefined, indexName: string, path: string[] = []): string[][] {
-  if (expression == null) return []
-  const unwrapped = unwrapExpression(expression)
-  if (isIdentifierNamed(unwrapped, indexName)) return [path]
-  if (ts.isObjectLiteralExpression(unwrapped)) {
-    const paths: string[][] = []
-    for (const property of unwrapped.properties) {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        if (property.name.text === indexName) paths.push([...path, property.name.text])
-        continue
-      }
-      if (!ts.isPropertyAssignment(property)) continue
-      const name = propertyNameText(property.name)
-      if (name == null) continue
-      paths.push(...expressionIndexPaths(property.initializer, indexName, [...path, name]))
-    }
-    return paths
-  }
-  if (ts.isArrayLiteralExpression(unwrapped)) {
-    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
-      ? expressionIndexPaths(element.expression, indexName, [...path, '[]'])
-      : expressionIndexPaths(element, indexName, [...path, '[]']))
-  }
-  return []
-}
-
-export function expressionCursorPaths(expression: ts.Expression | undefined, path: string[] = []): CursorPath[] {
-  if (expression == null) return []
-  const unwrapped = unwrapExpression(expression)
-  if (ts.isIdentifier(unwrapped)) return [{path, targetName: unwrapped.text}]
-  if (ts.isObjectLiteralExpression(unwrapped)) {
-    const paths: CursorPath[] = []
-    for (const property of unwrapped.properties) {
-      if (ts.isShorthandPropertyAssignment(property)) {
-        paths.push({path: [...path, property.name.text], targetName: property.name.text})
-        continue
-      }
-      if (!ts.isPropertyAssignment(property)) continue
-      const name = propertyNameText(property.name)
-      if (name == null) continue
-      paths.push(...expressionCursorPaths(property.initializer, [...path, name]))
-    }
-    return paths
-  }
-  if (ts.isArrayLiteralExpression(unwrapped)) {
-    return unwrapped.elements.flatMap(element => ts.isSpreadElement(element)
-      ? expressionCursorPaths(element.expression, [...path, '[]'])
-      : expressionCursorPaths(element, [...path, '[]']))
-  }
-  return []
-}
-
 // One signed addend of a scalar update. `{constant}` covers the implicit 1 of `++`/`--`.
 export type ScalarUpdateTerm =
   | {expression: ts.Expression; negate: boolean}
@@ -93,15 +36,10 @@ export type ScalarUpdate = {
   node: ts.Expression
 }
 
-// Recognizes every statement whose effect is "add a target-free amount to a scalar local":
+// Recognizes every expression whose effect is "add a target-free amount to a scalar local":
 // `x += e`, `x -= e`, `x++`, `--x`, and `x = <sum>` where the sum mentions x exactly once,
 // positively, at the top level of a +/- chain (`x = a + x - b` included). The target may not
 // appear inside any other addend; updates that scale or replace the target are not additions.
-export function scalarUpdateFromStatement(statement: ts.Statement): ScalarUpdate | null {
-  if (!ts.isExpressionStatement(statement)) return null
-  return scalarUpdateFromExpression(statement.expression)
-}
-
 export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpdate | null {
   const current = unwrapExpression(expression)
   if (ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current)) {
@@ -159,13 +97,6 @@ export function isIdentifierNamed(expression: ts.Expression, name: string): bool
   return ts.isIdentifier(target) && target.text === name
 }
 
-export function referencesAnyIdentifier(expression: ts.Expression, names: Set<string>): boolean {
-  for (const name of names) {
-    if (referencesIdentifier(expression, name)) return true
-  }
-  return false
-}
-
 export function referencesIdentifier(node: ts.Node, name: string): boolean {
   let found = false
   const visit = (current: ts.Node) => {
@@ -196,17 +127,6 @@ export function isSideEffectFreeExpression(expression: ts.Expression): boolean {
     && isSideEffectFreeExpression(current.left)
     && isSideEffectFreeExpression(current.right)
   if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) return isSideEffectFreeExpression(current.expression)
-  return false
-}
-
-export function symbolicForOfBranchSupported(statement: ts.Statement): boolean {
-  if (ts.isBlock(statement)) return statement.statements.every(symbolicForOfBranchSupported)
-  if (ts.isVariableStatement(statement)) return true
-  if (ts.isExpressionStatement(statement)) return isPushCallExpression(statement.expression)
-  if (ts.isIfStatement(statement)) {
-    return symbolicForOfBranchSupported(statement.thenStatement)
-      && (statement.elseStatement == null || symbolicForOfBranchSupported(statement.elseStatement))
-  }
   return false
 }
 

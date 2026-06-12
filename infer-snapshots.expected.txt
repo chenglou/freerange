@@ -24,13 +24,19 @@ return:
   return.length == items.length
   return.length: int 0..50
   return[] == rows[]
-  return[]: 0..3000
+  return[]: 0..2960
   return follows items by index
+  nondecreasing(return.)
+  spaced(return, step)
+  return[$i + 1] == return[$i] + step
 locals:
   rows.length == items.length
   rows.length: int 0..50
-  rows[]: 0..3000
+  rows[]: 0..2960
   rows follows items by index
+  nondecreasing(rows.)
+  spaced(rows, step)
+  rows[$i + 1] == rows[$i] + step
   cursor: 0..3000
 tests/imports/import-patterns.ts:namespaceImportedStructuralShape
 return:
@@ -65,7 +71,8 @@ return:
   return.rows[].height == items[].height
   return.rows[].height: 0..40
   return.rows[].y == rows[].y
-  return.rows[].y: 0..3500
+  return.rows[].y: 0..3450
+  return.rows follows items by index
   nondecreasing(return.rows.y)
   spaced(return.rows, gap)
   return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + gap
@@ -78,7 +85,8 @@ locals:
   rows.length: int 1..50
   rows[].height == items[].height
   rows[].height: 0..40
-  rows[].y: 0..3500
+  rows[].y: 0..3450
+  rows follows items by index
   nondecreasing(rows.y)
   spaced(rows, gap)
   rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
@@ -93,7 +101,8 @@ loop 1251: for (const item of items)
     rows.length: int 1..50
     rows[].height == items[].height
     rows[].height: 0..40
-    rows[].y: 0..3500
+    rows[].y: 0..3450
+    rows follows items by index
     nondecreasing(rows.y)
     spaced(rows, gap)
     rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
@@ -125,25 +134,30 @@ return:
   return.rows[].height == rows[].height
   return.rows[].height: 0..Infinity
   return.rows[].y == rows[].y
+  return.rows[].y: 40..Infinity
   nondecreasing(return.rows.y)
-  spaced(return.rows, boxesGapY)
+  spaced(return.rows, 24)
 locals:
   cols: int 1..7
   boxMaxSizeX: 18.285714285714285..1952
+  rows[].bottom == (rows[].y + rows[].height)
   rows[].bottom: 40..Infinity
   rows[].height: 0..Infinity
+  rows[].y: 40..Infinity
   nondecreasing(rows.y)
-  spaced(rows, boxesGapY)
+  spaced(rows, 24)
   measurements.length == layoutSources.length
   measurements[].imageSizeX: 0..1952
 loop 186: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
     measurements[].imageSizeX: 0..1952
+    rows[].bottom == (rows[].y + rows[].height)
     rows[].bottom: 40..Infinity
     rows[].height: 0..Infinity
+    rows[].y: 40..Infinity
     nondecreasing(rows.y)
-    spaced(rows, boxesGapY)
+    spaced(rows, 24)
   checked:
     rows.length <= layoutSources.length
     rows[].bottom == rows[].y + rows[].height
@@ -153,8 +167,8 @@ loop 186: for (let i = 0; i < layoutSources.length; i++)
 return:
   return.items.length == layoutSources.length
   return.items.length: int 0..Infinity
-  return.items[].prompt.box.sizeX == promptLayout.width
-  return.items[].prompt.box.sizeY == promptLayout.visibleHeight
+  return.items[].prompt.box.sizeX == items[].prompt.box.sizeX
+  return.items[].prompt.box.sizeY == items[].prompt.box.sizeY
   return.items[].prompt.lines.length == promptLayout.lines.length
   return.items[].prompt.lines.length: int 0..Infinity
 locals:

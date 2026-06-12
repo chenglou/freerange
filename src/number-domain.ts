@@ -241,7 +241,7 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
 }
 
 export function negateNumber(value: NumberValue, expr: string | null): NumberValue {
-  const plain = numberValue(-value.max, -value.min, value.isInteger, expr, null, null, value.origin)
+  const plain = numberValue(-value.max, -value.min, value.isInteger, expr, linearScale(value.linear, -1), null, value.origin)
   if (value.cases == null) return plain
   return withNumberCases(plain, value.cases.map(branch => ({
     value: numberValue(
@@ -249,7 +249,7 @@ export function negateNumber(value: NumberValue, expr: string | null): NumberVal
       -branch.value.min,
       branch.value.isInteger,
       expr,
-      null,
+      linearScale(branch.value.linear, -1),
       null,
       branch.value.origin,
     ),

@@ -1023,7 +1023,7 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
 function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
   if (rootContext.callObligations == null) return null
   const callContext = contextForInterpreterFrame(frame, rootContext, {
-    checks: shouldRecordCallObligations(rootContext) ? rootContext.checks : [],
+    checks: shouldRecordCallObligations(rootContext) && frame.suppressChecks !== true ? rootContext.checks : [],
     includeObjectPath: false,
   })
   const callArgumentExpressions = ts.isCallExpression(call.expression) ? call.expression.arguments : ts.factory.createNodeArray<ts.Expression>([])

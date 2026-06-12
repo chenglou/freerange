@@ -2048,3 +2048,33 @@ export default (rect: {x: number; right: number; y: number; bottom: number}) => 
   x: rect.x + (rect.right - rect.x) / 2,
   y: rect.y + (rect.bottom - rect.y) / 2,
 })
+
+/** @fit
+ * given items[].height: 1..100
+ * given items.length: 1..50
+ * given gap: 0..10
+ * spaced(return.rows, gap)
+ */
+export function negativeLoopCursorMovesWithoutPush(items: {height: number}[], gap: number) {
+  const rows: {y: number; height: number}[] = []
+  let y = 0
+  for (const item of items) {
+    if (item.height > 50) rows.push({y, height: item.height})
+    y += item.height + gap
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items[].height: 1..100
+ * given items.length: 1..50
+ * return: 0..5000
+ */
+export function negativeLoopStaleBodyClaim(items: {height: number}[]): number {
+  let y = 0
+  for (const item of items) {
+    const snapshot = y // @fit 0..0
+    y += item.height + snapshot - snapshot
+  }
+  return y
+}

@@ -113,7 +113,7 @@ assumptions:
   given data[].fxFactor.k > 0
   given data[].fxFactor.b > 0
 unsupported:
-  unsupported hitTest2DMode > <indexed-if-true> line 219: Indexed for loop guarded bodies only support local bindings and direct push calls: return i
+  unsupported hitTest2DMode line 219: Loop control flow is unsupported: return i
 
 function hitTest1DMode
 assumptions:

@@ -219,3 +219,16 @@ Stable value guarantees belong in representation; phase-local or algorithm-shape
 - SQL checks — named local constraints, clear failure labels.
 - SystemVerilog assertions — `assume` / `assert` / future `cover`, not the syntax.
 - SMT / Alloy — backend and counterexample inspiration, not public syntax.
+
+## Loop Analysis Is A Transfer Function, Not A Recognizer Catalog
+
+The loop analysis evaluates the body once per control-flow path on a generalized iteration: every variable the body writes starts as an unbounded pre-state symbol. Any bound the evaluator derives from that state holds at every iteration, which kills the first-iteration-snapshot bug class outright (a claim like `const snapshot = y // @fit 0..0` inside a body used to pass against iteration one's env; it is now disproven with a counterexample).
+
+The per-iteration effect of each scalar must land in a small closed algebra — unchanged, `+= delta`, `min`/`max` with a candidate, or a plain rebind — with written compose and join rules. Anything outside the algebra makes that one variable unknown instead of failing the whole loop. Sequence relations come from subtracting consecutive pushed elements' linear forms (with pre-state symbols advanced by the path's delta and per-iteration names renamed apart); a relation is emitted when the residue is loop-invariant. No source-text matching anywhere in the pipeline.
+
+Two findings worth keeping:
+
+- Names are only safe to share when they denote one well-defined quantity for the iteration. The evaluator's fallback names coined from expression text (`max(rowHeight, h)`) break this once a mutated variable moves between two reads, so the analysis re-mints such values with fresh symbols at every binding and assignment. Same-iteration reuse through a local stays recognizable; cross-statement text coincidences cannot cancel.
+- Interval narrowing needs more than one round. The widened first pass can leave a max-accumulator's floor unanchored (`max(unbounded, h)` has no lower bound), and only the next round, run against the proven hulls, anchors it. Iterate pre-state hulls to a small fixpoint, and validate each round's closed forms against the previous post-loop hull before accepting.
+
+The standard names for the pieces: abstract interpretation fixpoints (Cousot), widening/narrowing, and scalar evolution's `{start, +, step}` recurrences derived from semantics. The relation layer over pushed sequences is a small bespoke relational domain on top.

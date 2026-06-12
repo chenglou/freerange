@@ -5,7 +5,6 @@ import {
   unknown,
   type ArrayValue,
   type LinearConstraint,
-  type NumberValue,
   type Value,
 } from '../domain.ts'
 import type {FitFunction} from '../modules.ts'
@@ -48,6 +47,9 @@ export type InterpreterFrame = {
   assumptions: LinearConstraint[]
   hooks?: InterpreterHooks
   objectPath?: string[]
+  // Internal analysis replays (the loop analysis runs a body several times)
+  // must not record user-facing checks; only the reporting evaluation does.
+  suppressChecks?: true
 }
 
 export type InterpreterStateCase = {
@@ -98,21 +100,15 @@ export type LoopFrame = {
   source: ArrayValue
   sourceExpr: string
   mode: 'finite' | 'symbolic'
-  statementIndex: number
   appends: LoopAppend[]
 }
 
+// One recorded push during a symbolic loop run: the element value carries the
+// linear forms the loop analysis derives sequence relations from.
 export type LoopAppend = {
   arrayName: string
-  order: number
-  conditional: boolean
-  length: NumberValue
   element: Value | null
-  // the pushed source expression; cross-field relations are identified from
-  // this syntax, which holds at every iteration, never from evaluated values
-  argument: ts.Expression | null
   base: ArrayValue
-  cursorPaths: {path: string[]; targetName: string}[]
 }
 
 export type InterpreterFlow =
@@ -153,6 +149,7 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     assumptions: [...parent.assumptions],
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
+    ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),
   }
 }
 
@@ -171,6 +168,7 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     assumptions: [...parent.assumptions],
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
+    ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),
   }
 }
 

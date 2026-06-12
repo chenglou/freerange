@@ -1,11 +1,19 @@
 import {
+  addNumbers,
+  numberValue,
   type ArrayValue,
+  type NumberValue,
   type SequenceExpression,
   type SequenceRelation,
   type SequenceTerm,
 } from './domain.ts'
-import {sameExpressionText} from './linear.ts'
+import {linearConstant, sameExpressionText, sameLinear} from './linear.ts'
 import {type ComparisonOperator} from './parser.ts'
+
+// Resolves an addend's text to its abstract value, so written gaps and loop
+// residues compare by value: a claim's `boxesGapY` matches a relation's `8`
+// when the constant is exactly 8.
+export type AddendResolver = (text: string) => NumberValue | null
 
 export type SpacedShape = {gapExpr: string; heightExpr: string; advanceExpr: string}
 
@@ -94,8 +102,8 @@ export type AdjacentComparison = {
   right: SequenceExpression
 }
 
-export function proveAdjacentComparison(array: ArrayValue, target: AdjacentComparison) {
-  return array.summary?.relations.some(relation => relationImplies(relation, target)) === true
+export function proveAdjacentComparison(array: ArrayValue, target: AdjacentComparison, resolve: AddendResolver | null = null) {
+  return array.summary?.relations.some(relation => relationImplies(relation, target, resolve)) === true
 }
 
 export function hasNondecreasingProp(array: ArrayValue, prop: string) {
@@ -111,12 +119,12 @@ export function hasNondecreasingProp(array: ArrayValue, prop: string) {
 // + gap over one of the axis vocabularies (or the equivalent previous.end
 // form), so only a relation over those fields discharges it. A numerically
 // true recurrence on some other field pair says nothing about row geometry.
-export function provedSpacing(array: ArrayValue, gapExpr: string) {
+export function provedSpacing(array: ArrayValue, gapExpr: string, resolve: AddendResolver | null = null) {
   return array.summary?.relations.find(relation => {
     if (relation.kind !== 'adjacent-comparison') return false
     if (relation.op !== '==') return false
     if (relation.left.item !== 'next') return false
-    if (!sameAddends(relation.right.addends, gapExpr === '0' ? [] : [gapExpr])) return false
+    if (!addendSumsEqual(relation.right.addends, gapExpr === '0' ? [] : [gapExpr], resolve)) return false
     const terms = relation.right.terms
     if (!terms.every(term => term.item === 'previous')) return false
     return rowAxes.some(axis => {
@@ -147,11 +155,11 @@ export function sequenceRelationText(collection: string, relation: SequenceRelat
   return adjacentComparisonText(collection, relation)
 }
 
-function relationImplies(relation: SequenceRelation, target: AdjacentComparison) {
+function relationImplies(relation: SequenceRelation, target: AdjacentComparison, resolve: AddendResolver | null) {
   return relation.kind === 'adjacent-comparison'
     && sameSequenceTerm(relation.left, target.left)
     && comparisonImplies(relation.op, target.op)
-    && sameSequenceExpression(relation.right, target.right)
+    && sameSequenceExpression(relation.right, target.right, resolve)
 }
 
 function comparisonImplies(known: ComparisonOperator, target: ComparisonOperator) {
@@ -160,8 +168,8 @@ function comparisonImplies(known: ComparisonOperator, target: ComparisonOperator
   return false
 }
 
-function sameSequenceExpression(left: SequenceExpression, right: SequenceExpression) {
-  return sameSequenceTerms(left.terms, right.terms) && sameAddends(left.addends, right.addends)
+function sameSequenceExpression(left: SequenceExpression, right: SequenceExpression, resolve: AddendResolver | null) {
+  return sameSequenceTerms(left.terms, right.terms) && addendSumsEqual(left.addends, right.addends, resolve)
 }
 
 function sameSequenceTerms(left: SequenceTerm[], right: SequenceTerm[]) {
@@ -176,6 +184,28 @@ function sameSequenceTerm(left: SequenceTerm, right: SequenceTerm) {
 
 function sameAddends(left: string[], right: string[]) {
   return left.length === right.length && left.every((addend, index) => sameExpressionText(addend, right[index]!))
+}
+
+// Addend lists compare as sums: by text first, then by resolved value when
+// both sides settle to the same exact number or the same linear form.
+function addendSumsEqual(left: string[], right: string[], resolve: AddendResolver | null) {
+  if (sameAddends(left, right)) return true
+  if (resolve == null) return false
+  const leftTotal = addendsTotal(left, resolve)
+  const rightTotal = addendsTotal(right, resolve)
+  if (leftTotal == null || rightTotal == null) return false
+  if (leftTotal.min === leftTotal.max && rightTotal.min === rightTotal.max) return leftTotal.min === rightTotal.min
+  return leftTotal.linear != null && rightTotal.linear != null && sameLinear(leftTotal.linear, rightTotal.linear)
+}
+
+function addendsTotal(addends: string[], resolve: AddendResolver): NumberValue | null {
+  let total: NumberValue | null = null
+  for (const addend of addends) {
+    const value = resolve(addend)
+    if (value == null) return null
+    total = total == null ? value : addNumbers(total, value)
+  }
+  return total ?? numberValue(0, 0, true, '0', linearConstant(0))
 }
 
 function sequenceExpressionText(collection: string, expression: SequenceExpression) {

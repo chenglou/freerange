@@ -2491,3 +2491,140 @@ export default (rect: {x: number; right: number; y: number; bottom: number}) => 
   x: rect.x + (rect.right - rect.x) / 2,
   y: rect.y + (rect.bottom - rect.y) / 2,
 })
+
+/** @fit
+ * given items[].height: 0..100
+ * given items[].width: 0..50
+ * given items.length: 0..50
+ * return: 0..7500
+ */
+export function loopTwoAddsSameVariable(items: {height: number; width: number}[]): number {
+  let total = 0
+  for (const item of items) {
+    total += item.height
+    total += item.width
+  }
+  return total
+}
+
+/** @fit
+ * given items.length: 0..50
+ * return: 0..250
+ */
+export function loopIfElseAdd(items: {visible: boolean}[]): number {
+  let total = 0
+  for (const item of items) {
+    if (item.visible) total += 2
+    else total += 5
+  }
+  return total
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 0..50
+ * return.total: 0..5000
+ * return.best: 0..100
+ */
+export function loopSumAndMaxTogether(items: {height: number}[]) {
+  let total = 0
+  let best = 0
+  for (const item of items) {
+    best = Math.max(best, item.height)
+    total += item.height
+  }
+  return {total, best}
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 0..50
+ * return: 0..100
+ */
+export function loopGuardedExtremum(items: {height: number}[]): number {
+  let best = 0
+  for (const item of items) {
+    if (item.height > best) best = item.height
+  }
+  return best
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 1..50
+ * given gap: 0..10
+ * nondecreasing(return.rows.y)
+ * spaced(return.rows, gap)
+ */
+export function loopPushLocalRow(items: {height: number}[], gap: number) {
+  const rows: {y: number; height: number}[] = []
+  let y = 0
+  for (const item of items) {
+    const row = {y, height: item.height}
+    rows.push(row)
+    y += item.height + gap
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 1..50
+ * spaced(return.rows, 0)
+ */
+export function loopUpdateBeforePush(items: {height: number}[]) {
+  const rows: {y: number; height: number}[] = []
+  let y = 0
+  for (const item of items) {
+    y += item.height
+    rows.push({y: y - item.height, height: item.height})
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 0..50
+ * return.total: 0..5000
+ */
+export function loopScratchRebind(items: {height: number}[]) {
+  let total = 0
+  let scratch = 0
+  for (const item of items) {
+    scratch = item.height
+    total += scratch
+  }
+  return {total, scratch}
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 0..50
+ * return.total: 0..5000
+ * return.count: 0..50
+ */
+export function loopSurvivesUnrelatedHavoc(items: {height: number}[], log: number[]) {
+  let total = 0
+  let count = 0
+  for (const item of items) {
+    total += item.height
+    log[0] = item.height
+    count += 1
+  }
+  return {total, count}
+}
+
+/** @fit
+ * given items[].height: 0..100
+ * given items.length: 0..50
+ * return: 0..10000
+ */
+export function loopNetOfSignedAdds(items: {height: number}[]): number {
+  let total = 0
+  for (const item of items) {
+    total += item.height
+    total += item.height
+    total -= item.height
+  }
+  return total
+}

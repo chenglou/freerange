@@ -1171,7 +1171,7 @@ const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedRedundantFacts = [
   ['return.length == items.length', 'return.length == items.length'],
-  ['return[]: 0..3000', 'return[]: 0..3000'],
+  ['return[]: 0..3000', 'return[]: 0..2960'],
 ] as const
 const missingRedundantFacts = expectedRedundantFacts.filter(([fact, reason]) => redundantFacts.get(fact) !== reason)
 const redundantSpecStatuses = new Map(redundantFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
@@ -1315,9 +1315,9 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item === 'return.rows[].height == rows[].height') return true
   if (item === 'return.rows[].height: 0..Infinity') return true
   if (item === 'return.rows[].y == rows[].y') return true
-  if (item === 'return.rows[].top: 40..Infinity') return true
+  if (item === 'return.rows[].y: 40..Infinity') return true
   if (item === 'nondecreasing(return.rows.y)') return true
-  if (item === 'spaced(return.rows, boxesGapY)') return true
+  if (item === 'spaced(return.rows, 24)') return true
   if (section === 'return') {
     return item === 'return.items[].imageBox.sizeX: 0..1952'
       || item === 'return.items[].layoutBox.sizeX: 0..1952'
@@ -1328,12 +1328,12 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   }
   return item === 'cols: int 1..7'
     || item === 'boxMaxSizeX: 18.285714285714285..1952'
-    || item === 'rows[].bottom == (rows[].top + rows[].height)'
+    || item === 'rows[].bottom == (rows[].y + rows[].height)'
     || item === 'rows[].bottom: 40..Infinity'
     || item === 'rows[].height: 0..Infinity'
-    || item === 'rows[].top: 40..Infinity'
+    || item === 'rows[].y: 40..Infinity'
     || item === 'nondecreasing(rows.y)'
-    || item === 'spaced(rows, boxesGapY)'
+    || item === 'spaced(rows, 24)'
     || item === 'measurements.length == layoutSources.length'
     || item === 'measurements[].imageSizeX: 0..1952'
     || item.includes('measurements[].promptLayout.lineCount ==')
