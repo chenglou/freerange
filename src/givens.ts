@@ -45,6 +45,8 @@ import {
   fitRangeCases,
   parseDomainPathText,
   publicFitText,
+  type ComparisonOperator,
+  type FitExpression,
   type FitExpressionLike,
   type FitComparisonGivenSpec,
   type FitExpressionGivenSpec,
@@ -56,6 +58,7 @@ import {
 import {
   comparisonConstraint,
   comparisonFactContradictedByAssumptions,
+  flipComparison,
   nonNegativeConstraints,
   proveComparison,
   proveNonNegativeFromConstraints,
@@ -213,7 +216,12 @@ function givenExpressionRootNamesFromText(text: FitExpressionLike) {
 }
 
 function givenExpressionRootNames(expression: ts.Expression, ignored: string[]): string[] {
-  if (ts.isIdentifier(expression)) return ignored.includes(expression.text) ? [] : [expression.text]
+  // Infinity and NaN are number constants, not scope roots, the same way
+  // range bounds already treat them.
+  if (ts.isIdentifier(expression)) {
+    if (parsePrintedNumber(expression.text) != null) return []
+    return ignored.includes(expression.text) ? [] : [expression.text]
+  }
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return ignored.includes('this') ? [] : ['this']
   if (ts.isCallExpression(expression)) {
     const roots: string[] = []
@@ -435,6 +443,7 @@ export function collectGivenAssumptions(
       }
       assumptions.push(fact)
     }
+    applyGivenComparisonNarrowing(env, spec, comparison.left, comparison.right)
   }
   return {assumptions, booleanAssumptions, checks}
 }
@@ -745,6 +754,58 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
 }
 
+// A given comparison holds at runtime, and NaN compares false with
+// everything, so a constant bound both records a fact and narrows the
+// bounded side's hull: `given pos < Infinity` leaves pos in
+// -Infinity..Number.MAX_VALUE, which also certifies pos is not NaN.
+// Identifier and array-length sides narrow; other shapes keep the
+// comparison as a pure fact.
+function applyGivenComparisonNarrowing(env: Map<string, Value>, spec: FitComparisonGivenSpec, left: NumberValue, right: NumberValue) {
+  narrowComparisonSide(env, spec.left, spec.op, right)
+  narrowComparisonSide(env, spec.right, flipComparison(spec.op), left)
+}
+
+function narrowComparisonSide(env: Map<string, Value>, side: FitExpression, op: ComparisonOperator, bound: NumberValue) {
+  if (bound.min !== bound.max) return
+  const constant = bound.min
+  const upper = op === '>' || op === '>='
+    ? Number.POSITIVE_INFINITY
+    : boundEndpoint('number', op !== '<', constant, 'upper')
+  const lower = op === '<' || op === '<='
+    ? Number.NEGATIVE_INFINITY
+    : boundEndpoint('number', op !== '>', constant, 'lower')
+  if (side.text.includes('[]')) return
+  const expression = side.parsed.expression
+  if (ts.isIdentifier(expression)) {
+    const current = env.get(expression.text)
+    if (current?.kind !== 'number') return
+    const met = metNumber(current, lower, upper)
+    if (met != null) env.set(expression.text, met)
+    return
+  }
+  const lengthRoot = arrayLengthRoot(expression)
+  if (lengthRoot != null) {
+    const target = env.get(lengthRoot)
+    if (target?.kind !== 'array') return
+    const met = metNumber(target.length, lower, upper)
+    if (met != null) env.set(lengthRoot, {...target, length: met})
+  }
+}
+
+function metNumber(current: NumberValue, lower: number, upper: number): NumberValue | null {
+  const min = Math.max(current.min, lower)
+  const max = Math.min(current.max, upper)
+  // An empty meet means the givens contradict; the fact-level check reports
+  // that, so don't manufacture an inverted hull here.
+  if (!(min <= max)) return null
+  if (min === current.min && max === current.max) return current
+  const cases = current.cases?.map(numberCase => ({
+    ...numberCase,
+    value: metNumber(numberCase.value, lower, upper) ?? numberCase.value,
+  }))
+  return numberValue(min, max, current.grid, current.expr, current.linear, cases, current.origin)
+}
+
 function staticRangeValue(range: FitRange, expressionText: string): NumberValue | null {
   if (range.finiteValues != null) return finiteNumberValue(range.finiteValues, expressionText, linearVariable(linearNameForExpression(expressionText)))
   const cases = fitRangeCases(range).map(rangeCase => staticRangeCaseApprox(range, rangeCase))
@@ -758,29 +819,36 @@ function evaluatedRangeValue(range: FitRange, expressionText: string, cases: Eva
   return rangeCasesValue(range, expressionText, cases.map(({rangeCase, lower, upper}) => evaluatedRangeCaseApprox(range, rangeCase, lower, upper)))
 }
 
+// One endpoint of a bound over doubles. Excluding an infinite endpoint
+// admits every finite double, so the bound becomes ±MAX_VALUE inclusive —
+// MAX_VALUE is integral, so this holds for int ranges too and wins over the
+// int adjustment. An exclusive int bound steps one whole number inward; an
+// exclusive finite float bound keeps the constant (sound, just not tight).
+function boundEndpoint(valueKind: 'int' | 'number', inclusive: boolean, bound: number, side: 'lower' | 'upper'): number {
+  if (!inclusive && bound === (side === 'lower' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY)) {
+    return side === 'lower' ? -Number.MAX_VALUE : Number.MAX_VALUE
+  }
+  if (valueKind === 'int' && !inclusive) return side === 'lower' ? Math.floor(bound) + 1 : Math.ceil(bound) - 1
+  return bound
+}
+
 function evaluatedRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase, lower: NumberValue, upper: NumberValue): {min: number; max: number} {
-  const min = range.valueKind === 'int' && !rangeCase.lowerInclusive
-    ? Math.floor(lower.min) + 1
-    : lower.min
-  const max = range.valueKind === 'int' && !rangeCase.upperInclusive
-    ? Math.ceil(upper.max) - 1
-    : upper.max
-  return {min, max}
+  return {
+    min: boundEndpoint(range.valueKind, rangeCase.lowerInclusive, lower.min, 'lower'),
+    max: boundEndpoint(range.valueKind, rangeCase.upperInclusive, upper.max, 'upper'),
+  }
 }
 
 function staticRangeCaseApprox(range: FitRange, rangeCase: FitRangeCase): {min: number; max: number} | null {
   if (rangeCase.lowerValue == null && rangeCase.upperValue == null && range.valueKind !== 'int') return null
-  const min = rangeCase.lowerValue == null
-    ? Number.NEGATIVE_INFINITY
-    : range.valueKind === 'int' && !rangeCase.lowerInclusive
-      ? Math.floor(rangeCase.lowerValue) + 1
-      : rangeCase.lowerValue
-  const max = rangeCase.upperValue == null
-    ? Number.POSITIVE_INFINITY
-    : range.valueKind === 'int' && !rangeCase.upperInclusive
-      ? Math.ceil(rangeCase.upperValue) - 1
-      : rangeCase.upperValue
-  return {min, max}
+  return {
+    min: rangeCase.lowerValue == null
+      ? Number.NEGATIVE_INFINITY
+      : boundEndpoint(range.valueKind, rangeCase.lowerInclusive, rangeCase.lowerValue, 'lower'),
+    max: rangeCase.upperValue == null
+      ? Number.POSITIVE_INFINITY
+      : boundEndpoint(range.valueKind, rangeCase.upperInclusive, rangeCase.upperValue, 'upper'),
+  }
 }
 
 function rangeCasesValue(range: FitRange, expressionText: string, cases: {min: number; max: number}[]): NumberValue {

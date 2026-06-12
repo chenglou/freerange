@@ -930,7 +930,12 @@ FAIL tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotFit: given
     assumed from input: given width: 100..200
   missing fact: width <= 50
 FAIL tests/patterns/negative-patterns.ts:negativeGivenComparisonsCannotBothHold: given width <= 50
-  no input can satisfy both given width >= 100 and given width <= 50
+  no input can satisfy this with the earlier given lines
+  result: is false
+  known:
+    width: 100..Infinity
+    assumed from input: given width >= 100
+  missing fact: width <= 50
 FAIL tests/patterns/negative-patterns.ts:negativeGivenComparisonsCannotTransitivelyHold: given right > x
   no input can satisfy this with the earlier given lines; they already rule out right > x
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: given width + 1: 0..10
@@ -1268,6 +1273,23 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityModuloIsNaN: return 
     assumed from input: given a: 0..Infinity
     assumed from input: given b: 1..1000
   missing fact: (a % b) >= 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeOppositeInfinitySumIsNaN: return == a + b
+  known:
+    (a + b): any number
+    assumed from input: given a: -Infinity..0
+    assumed from input: given b: 0..Infinity
+  missing fact: (a + b) == (a + b)
+UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityOverInfinityEchoIsNaN: return == a / b
+  known:
+    (a / b): any number
+    assumed from input: given a: 0..Infinity
+    assumed from input: given b: 1..Infinity
+  missing fact: (a / b) == (a / b)
+UNKNOWN tests/patterns/negative-patterns.ts:negativeHalfFiniteSelfDifferenceIsNaN: return == 0
+  known:
+    (x - x): any number
+    assumed from input: given x < Infinity
+  missing fact: (x - x) == 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1224,2): error TS2304: Cannot find name 'row'.

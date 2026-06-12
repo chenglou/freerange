@@ -264,6 +264,8 @@ a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
 int a..b // integer in the inclusive interval from a to b.
 int a..<b // integer from a up to, but not including, b.
+0..<Infinity // any finite double at least 0: excluding Infinity caps at Number.MAX_VALUE.
+given pos > -Infinity // with `given pos < Infinity`: any finite double, sign included. Also excludes NaN — NaN satisfies no comparison.
 0 | 40 | 200 // exact finite numeric set.
 0..10 | 20..30 // numeric alternatives. The value must fit one branch of the union.
 low() | high() // pure expression union.

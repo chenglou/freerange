@@ -49,9 +49,19 @@ export function integerValued(value: NumberValue): boolean {
 
 // NaN has no representation in the domain: any constraining fact is false of
 // it (NaN fails every comparison), so a value with at least one finite bound
-// cannot be NaN at runtime. Only the fully unconstrained hull admits it.
+// cannot be NaN at runtime. Only the fully unconstrained hull admits it, and
+// an op that proved its operands avoid the indeterminate forms opts back out
+// with neverNaN (overflow to ±Infinity stays possible, NaN does not).
 export function possiblyNaN(value: NumberValue): boolean {
-  return value.min === Number.NEGATIVE_INFINITY && value.max === Number.POSITIVE_INFINITY
+  return value.neverNaN !== true && value.min === Number.NEGATIVE_INFINITY && value.max === Number.POSITIVE_INFINITY
+}
+
+// Attach the NaN exclusion an op just proved. Only a fully unbounded hull
+// needs it; any finite bound already excludes NaN.
+function neverNaNResult(value: NumberValue, certain: boolean): NumberValue {
+  return certain && value.min === Number.NEGATIVE_INFINITY && value.max === Number.POSITIVE_INFINITY
+    ? {...value, neverNaN: true}
+    : value
 }
 
 // Union of two values keeps only the grid both sit on (the finer exponent);
@@ -265,6 +275,9 @@ function numberCasesCanMerge(left: NumberValue, right: NumberValue) {
 
 function numberValueContains(container: NumberValue, item: NumberValue) {
   if (container.min > item.min || container.max < item.max) return false
+  // NaN is a runtime value too: a NaN-excluding container cannot stand in
+  // for an item that admits it.
+  if (possiblyNaN(item) && !possiblyNaN(container)) return false
   return !integerValued(container) || integerValued(item)
 }
 
@@ -297,7 +310,7 @@ function sameNumberShape(left: NumberValue, right: NumberValue) {
 // and hull all survive.
 function zeroIdentity(other: NumberValue, zero: NumberValue, expr: string | null, origin: string[]): NumberValue | null {
   if (zero.min !== 0 || zero.max !== 0) return null
-  return numberValue(other.min, other.max, other.grid, expr, other.linear, null, origin)
+  return neverNaNResult(numberValue(other.min, other.max, other.grid, expr, other.linear, null, origin), !possiblyNaN(other))
 }
 
 export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
@@ -309,7 +322,11 @@ export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
   if (folded != null) return folded
   const grid = gridJoin(left.grid, right.grid)
   const linear = sumIsExact(left, right, grid) ? linearAdd(left.linear, right.linear) : opaqueLinear(expr)
-  return numberValue(left.min + right.min, left.max + right.max, grid, expr, linear, null, origin)
+  // Addition is NaN only from opposite infinities (or an operand already NaN).
+  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+    && !(left.max === Number.POSITIVE_INFINITY && right.min === Number.NEGATIVE_INFINITY)
+    && !(left.min === Number.NEGATIVE_INFINITY && right.max === Number.POSITIVE_INFINITY)
+  return neverNaNResult(numberValue(left.min + right.min, left.max + right.max, grid, expr, linear, null, origin), noNaN)
 }
 
 export function subtractNumbers(left: NumberValue, right: NumberValue): NumberValue {
@@ -326,7 +343,11 @@ export function subtractNumbers(left: NumberValue, right: NumberValue): NumberVa
   }
   const grid = gridJoin(left.grid, right.grid)
   const linear = sumIsExact(left, right, grid) ? linearSubtract(left.linear, right.linear) : opaqueLinear(expr)
-  return numberValue(left.min - right.max, left.max - right.min, grid, expr, linear, null, origin)
+  // Subtraction is NaN only from same-side infinities (or an operand NaN).
+  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+    && !(left.max === Number.POSITIVE_INFINITY && right.max === Number.POSITIVE_INFINITY)
+    && !(left.min === Number.NEGATIVE_INFINITY && right.min === Number.NEGATIVE_INFINITY)
+  return neverNaNResult(numberValue(left.min - right.max, left.max - right.min, grid, expr, linear, null, origin), noNaN)
 }
 
 // Scaling by one pinned double keeps the algebraic form only when the op is
@@ -380,7 +401,9 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
   const linear = (left.min === left.max ? scaledLinear(right, left.min, resultFinite) : null)
     ?? (right.min === right.max ? scaledLinear(left, right.min, resultFinite) : null)
     ?? opaqueLinear(expr)
-  return numberValue(products.min, products.max, grid, expr, linear, null, origin)
+  // The 0 * Infinity widenings returned above, so only an operand NaN remains.
+  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+  return neverNaNResult(numberValue(products.min, products.max, grid, expr, linear, null, origin), noNaN)
 }
 
 function touchesZero(value: NumberValue): boolean {
@@ -424,7 +447,10 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
       linear = linearScaleExact(left.linear, rationalDivide(rationalOne, rationalFromNumber(right.min)!)!)
     }
   }
-  return numberValue(quotients.min, quotients.max, grid, expr, linear ?? opaqueLinear(expr), null, origin)
+  // The divisor excludes zero and the Infinity / Infinity widening returned
+  // above, so only an operand NaN remains.
+  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+  return neverNaNResult(numberValue(quotients.min, quotients.max, grid, expr, linear ?? opaqueLinear(expr), null, origin), noNaN)
 }
 
 // % never rounds: the exact remainder is always representable (verified
@@ -445,7 +471,10 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
 
 // Unary minus is a sign-bit flip: exact for every double, grid preserved.
 export function negateNumber(value: NumberValue, expr: string | null): NumberValue {
-  const plain = numberValue(-value.max, -value.min, value.grid, expr, linearScale(value.linear, -1), null, value.origin)
+  const plain = neverNaNResult(
+    numberValue(-value.max, -value.min, value.grid, expr, linearScale(value.linear, -1), null, value.origin),
+    !possiblyNaN(value),
+  )
   if (value.cases == null) return plain
   return withNumberCases(plain, value.cases.map(branch => ({
     value: numberValue(

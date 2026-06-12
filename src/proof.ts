@@ -20,6 +20,7 @@ import {
 import {
   additionIsExact,
   gridJoin,
+  gridOfNumber,
   integerValued,
   possiblyNaN,
   linearNameForExpression,
@@ -488,6 +489,13 @@ function singleLinearBound(linear: LinearExpr) {
 }
 
 export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: ConstraintSource = 'code'): LinearConstraint | null {
+  // A strict bound against ±Infinity is finiteness in disguise: over doubles
+  // x < Infinity is exactly x <= Number.MAX_VALUE, and Infinity itself has
+  // no linear form, so without the desugar the fact would silently drop.
+  if (op === '<' && pinnedAt(right, Number.POSITIVE_INFINITY)) return comparisonConstraint(left, '<=', extremeDouble(1), text, source)
+  if (op === '>' && pinnedAt(right, Number.NEGATIVE_INFINITY)) return comparisonConstraint(left, '>=', extremeDouble(-1), text, source)
+  if (op === '<' && pinnedAt(left, Number.NEGATIVE_INFINITY)) return comparisonConstraint(extremeDouble(-1), '<=', right, text, source)
+  if (op === '>' && pinnedAt(left, Number.POSITIVE_INFINITY)) return comparisonConstraint(extremeDouble(1), '>=', right, text, source)
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
   if (diff == null && text == null && (left.expr == null || right.expr == null)) return null
@@ -501,6 +509,15 @@ export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, 
     ...(text == null ? {} : {text}),
     ...(integerStrict ? {integerStrict: true as const} : {}),
   }
+}
+
+function pinnedAt(value: NumberValue, bound: number): boolean {
+  return value.min === bound && value.max === bound
+}
+
+function extremeDouble(sign: 1 | -1): NumberValue {
+  const value = sign * Number.MAX_VALUE
+  return numberValue(value, value, gridOfNumber(value), String(value), linearConstant(value))
 }
 
 export function comparisonFactContradictedByAssumptions(fact: LinearConstraint, assumptions: LinearConstraint[]) {

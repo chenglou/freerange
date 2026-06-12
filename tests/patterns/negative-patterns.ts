@@ -2270,3 +2270,34 @@ export function negativeZeroTimesInfinityIsNaN(a: number, b: number) {
 export function negativeInfinityModuloIsNaN(a: number, b: number) {
   return a % b
 }
+
+// Even a value's equality with itself fails at NaN, and these reach NaN from
+// in-domain inputs: opposite infinities sum to NaN, same-side infinities
+// cancel to NaN, and an infinite numerator over an infinite denominator is
+// NaN. One-sided finiteness is not enough.
+
+/** @fit
+ * given a: -Infinity..0
+ * given b: 0..Infinity
+ * return == a + b
+ */
+export function negativeOppositeInfinitySumIsNaN(a: number, b: number) {
+  return a + b
+}
+
+/** @fit
+ * given a: 0..Infinity
+ * given b: 1..Infinity
+ * return == a / b
+ */
+export function negativeInfinityOverInfinityEchoIsNaN(a: number, b: number) {
+  return a / b
+}
+
+/** @fit
+ * given x < Infinity
+ * return == 0
+ */
+export function negativeHalfFiniteSelfDifferenceIsNaN(x: number) {
+  return x - x
+}

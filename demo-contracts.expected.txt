@@ -4,7 +4,7 @@ PASS ../vibescript/demos/draggable-cards/swap-layout.ts:27:stackLayout: return.l
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:10:getCorners: return.length == 4
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:11:getCorners: return[].x: 20..3860
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:12:getCorners: return[].y: 20..3900
-PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:40:decayRestPos: return == pos + velocity / decayFriction
+PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:42:decayRestPos: return == pos + velocity / decayFriction
 PASS ../vibescript/demos/life-calendar/grid-sizing.ts:17:hitIndexInside: return >= 0
 PASS ../vibescript/demos/mobile-test-standalone/index.ts:23:center: return == (b - a) / 2
 PASS ../vibescript/demos/mobile-test-standalone/index.ts:27:fit: return <= maxW

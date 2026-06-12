@@ -1768,6 +1768,53 @@ export function ambientResizeObserverInlineSize(size: ResizeObserverSize) {
   return size.inlineSize
 }
 
+// Finiteness without magnitude: a strict bound against ±Infinity is the
+// userland spelling for "any finite double". The computation below can
+// overflow to ±Infinity (velocity / 0.998 exceeds MAX_VALUE) but never
+// reaches NaN, so the value still equals itself.
+
+/** @fit
+ * given pos > -Infinity
+ * given pos < Infinity
+ * given velocity > -Infinity
+ * given velocity < Infinity
+ * return == pos + velocity / 0.998
+ */
+export function decayedRestingPoint(pos: number, velocity: number) {
+  return pos + velocity / 0.998
+}
+
+/** @fit
+ * given size > -Infinity
+ * given size < Infinity
+ * given scale > -Infinity
+ * given scale < Infinity
+ * return == size * scale
+ */
+export function scaledExtentEcho(size: number, scale: number) {
+  return size * scale
+}
+
+/** @fit
+ * given x > -Infinity
+ * given x < Infinity
+ * return == 0
+ */
+export function selfDifferenceOfFiniteInput(x: number) {
+  return x - x
+}
+
+// An int range excluding Infinity ends at MAX_VALUE (itself integral), so the
+// product hull keeps its sign instead of widening over 0 * Infinity.
+/** @fit
+ * given count: int 1..<Infinity
+ * given size: 0..<Infinity
+ * return >= 0
+ */
+export function totalExtentOfCountedItems(count: number, size: number) {
+  return count * size
+}
+
 /** @fit
  * given rect.x: int -1000..1000
  * given rect.right: int -1000..1000

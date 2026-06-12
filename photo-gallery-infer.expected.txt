@@ -8,8 +8,10 @@ unsupported:
 function spring
 return:
   return.b == b
+  return.b: 0..Infinity
   return.dest == pos
   return.k == k
+  return.k: 0..Infinity
   return.pos == pos
   return.v == v
 checked:
