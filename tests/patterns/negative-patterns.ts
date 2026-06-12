@@ -2078,3 +2078,59 @@ export function negativeLoopStaleBodyClaim(items: {height: number}[]): number {
   }
   return y
 }
+
+/** @fit
+ * given value: 0..10
+ * return: 0..10
+ */
+export function negativeInlineCallBudget(value: number) {
+  return chain1(value)
+}
+
+function chain1(value: number) {
+  return chain2(value)
+}
+
+function chain2(value: number) {
+  return chain3(value)
+}
+
+function chain3(value: number) {
+  return chain4(value)
+}
+
+function chain4(value: number) {
+  return chain5(value)
+}
+
+function chain5(value: number) {
+  return chain6(value)
+}
+
+function chain6(value: number) {
+  return chain7(value)
+}
+
+function chain7(value: number) {
+  return chain8(value)
+}
+
+function chain8(value: number) {
+  return chain9(value)
+}
+
+function chain9(value: number) {
+  return chain10(value)
+}
+
+function chain10(value: number) {
+  return chain11(value)
+}
+
+function chain11(value: number) {
+  return chain12(value)
+}
+
+function chain12(value: number) {
+  return value
+}

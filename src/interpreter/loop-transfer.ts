@@ -88,7 +88,6 @@ export type LoopAnalysisContext = {
 export type LoopOutcome = {kind: 'done'} | {kind: 'function-unknown'; value: Value}
 
 const pathCap = 32
-const restartCap = 8
 const narrowingRoundCap = 3
 
 // Names minted across all analyses stay globally unique: facts published by
@@ -160,8 +159,10 @@ export function evaluateSymbolicLoop(loop: SymbolicLoop, frame: InterpreterFrame
     mintCounter: 0,
   }
 
+  // Restarts terminate without a cap: every restart root is an env name not
+  // yet in the write set, and the write set only grows.
   let first: LoopResult | null = null
-  for (let attempt = 0; attempt < restartCap && first == null; attempt++) {
+  while (first == null) {
     if (loop.iterationRoots.some(root => analysis.writeSet.has(root))) {
       return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop item/index is reassigned in the body', loop.body)}
     }
@@ -178,9 +179,6 @@ export function evaluateSymbolicLoop(loop: SymbolicLoop, frame: InterpreterFrame
       break
     }
     for (const root of walked.restartRoots) analysis.writeSet.add(root)
-  }
-  if (first == null) {
-    return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop body writes could not be bounded', loop.body)}
   }
 
   // Narrowing rounds: rerun with pre-states bounded by the proven hulls.

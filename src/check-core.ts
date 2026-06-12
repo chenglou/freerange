@@ -1463,7 +1463,21 @@ function evaluateLocalFunctionCall(
     callSiteBindings?: CallSiteBindings | undefined
   },
 ): Value {
-  if (context.stack.length >= maxInlineDepth) return unknown(`Inline depth exceeded at ${functionName}`)
+  if (context.stack.length >= maxInlineDepth) {
+    // Announce the budget like the branch-state budget: a recorded check, not
+    // just a value reason, because call results get rewritten at function
+    // boundaries and would swallow the explanation.
+    const reason = `Inline call budget exceeded: ${context.stack.length} nested calls reach limit ${maxInlineDepth}; facts through ${functionName} become unknown`
+    context.checks.push({
+      file: context.file,
+      functionName: context.stack.join(' > '),
+      text: options.callText,
+      status: 'unknown',
+      reason,
+      ...(options.callLine == null ? {} : {line: options.callLine}),
+    })
+    return unknown(reason)
+  }
   if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for ${functionName}`)
   const obligations = verifyCallGivenSpecs(context.program, fn, options.callText, argumentValues, context, {
     record: shouldRecordCallObligations(context),

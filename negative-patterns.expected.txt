@@ -1119,6 +1119,15 @@ FAIL tests/patterns/negative-patterns.ts:negativeLoopStaleBodyClaim: snapshot: 0
     assumed from input: given items.length: 1..50
   missing: y <= 0
   counterexample within the known facts: y@loop105 = 4900
+UNKNOWN tests/patterns/negative-patterns.ts:negativeInlineCallBudget > chain1 > chain2 > chain3 > chain4 > chain5 > chain6 > chain7 > chain8 > chain9 > chain10 > chain11: chain12(value)
+  Inline call budget exceeded: 12 nested calls reach limit 12; facts through chain12 become unknown
+UNKNOWN tests/patterns/negative-patterns.ts:negativeInlineCallBudget: return: 0..10
+  range was any number as chain11Result, expected inside 0..10
+  known:
+    chain11Result: any number
+    assumed from input: given value: 0..10
+  missing: chain11Result >= 0
+  missing: chain11Result <= 10
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1224,2): error TS2304: Cannot find name 'row'.
