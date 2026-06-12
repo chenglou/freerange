@@ -2,12 +2,13 @@ import {benchStats, formatMs, runBench} from './bench-core.ts'
 import {demoContractPaths} from './demo-contract-paths.ts'
 
 const runs = 4
-const maxWarmMedianTotalMs = 2500
+const maxWarmMedianTotalMs = 2900
 // The loop analysis evaluates each loop body several times by design: once
 // generalized, usually once narrowed, once for reporting. Demo verify went
-// from ~1050ms to ~1500ms when that landed; the budget keeps the same
-// relative headroom over the new baseline.
-const maxWarmMedianVerifyMs = 1900
+// from ~1050ms to ~1500ms when that landed. The float-soundness gate added
+// the rounded-op proof rules, the eager monotone facts, and the exactness
+// window checks (~2100ms warm verify); the budget keeps similar headroom.
+const maxWarmMedianVerifyMs = 2400
 const maxWarmSingleRunMs = 5000
 
 const benchRuns = Array.from({length: runs}, () => runBench(demoContractPaths))

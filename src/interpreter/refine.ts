@@ -8,6 +8,8 @@ import {
   type NumberCase,
   type NumberValue,
   type Value,
+  gridOfNumber,
+  integerValued,
 } from '../domain.ts'
 import {mergeAssumptions} from '../assumptions.ts'
 import type {ComparisonOperator} from '../parser.ts'
@@ -259,15 +261,15 @@ function refineNumberPathCases(
 function narrowNumber(value: NumberValue, op: ComparisonOperator, other: number): NumberValue {
   switch (op) {
     case '==':
-      return numberValue(other, other, Number.isInteger(other), value.expr, value.linear, null, value.origin)
+      return numberValue(other, other, gridOfNumber(other), value.expr, value.linear, null, value.origin)
     case '>=':
-      return numberValue(Math.max(value.min, other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.origin)
+      return numberValue(Math.max(value.min, other), value.max, value.grid, value.expr, value.linear, value.cases, value.origin)
     case '>':
-      return numberValue(Math.max(value.min, value.isInteger ? Math.floor(other) + 1 : other), value.max, value.isInteger, value.expr, value.linear, value.cases, value.origin)
+      return numberValue(Math.max(value.min, integerValued(value) ? Math.floor(other) + 1 : other), value.max, value.grid, value.expr, value.linear, value.cases, value.origin)
     case '<=':
-      return numberValue(value.min, Math.min(value.max, other), value.isInteger, value.expr, value.linear, value.cases, value.origin)
+      return numberValue(value.min, Math.min(value.max, other), value.grid, value.expr, value.linear, value.cases, value.origin)
     case '<':
-      return numberValue(value.min, Math.min(value.max, value.isInteger ? Math.ceil(other) - 1 : other), value.isInteger, value.expr, value.linear, value.cases, value.origin)
+      return numberValue(value.min, Math.min(value.max, integerValued(value) ? Math.ceil(other) - 1 : other), value.grid, value.expr, value.linear, value.cases, value.origin)
   }
 }
 

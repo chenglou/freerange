@@ -5,16 +5,21 @@ import {
 import {
   type LinearConstraint,
   type NumberValue,
+  integerValued,
+  possiblyNaN,
 } from './domain.ts'
 import {
   binaryExpression,
   callArg,
-  ceilDivisionProduct,
   expressionKeyFromText,
-  floorDivision,
+  linearFromExpressionText,
+  linearFromTopOperation,
+  linearSubtract,
   productFactors,
   productText,
   sameExpressionText,
+  singleUnitAtom,
+  type LinearExpr,
 } from './linear.ts'
 
 export type ComparisonGoal = {
@@ -23,10 +28,17 @@ export type ComparisonGoal = {
   right: NumberValue
 }
 
+// Offsets are the prover's own real arithmetic over the named doubles (the
+// floor bracketing lemma needs `x < r + 1` with a real `+ 1`), never a claim
+// that the program computed them; they stay out of the expression text so
+// text lowering cannot mistake them for program ops.
+export type ReductionOffsets = {left?: number; right?: number}
+
 export type ProofRulesContext = {
   assumptions: LinearConstraint[]
-  hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string): boolean
+  hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, offsets?: ReductionOffsets): boolean
   provesExprNonNegative(expression: string, strict: boolean): boolean
+  provesLinearNonNegative(diff: LinearExpr, strict: boolean): boolean
 }
 
 export type ProofRuleResult =
@@ -40,7 +52,14 @@ type ComparisonGraphEdge = {
 
 export function evaluateComparisonRules(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   if (goal.left.expr == null || goal.right.expr == null) return null
-  if (context.hasComparisonFact(goal.left.expr, goal.op, goal.right.expr)) return pass('comparison-fact', 'matched a known comparison fact')
+  // An identity fact (return == x from a copy) is true of NaN, but the ==
+  // claim is not. A hull bound or any recorded comparison fact about the
+  // value certifies non-NaN; an alias pair with neither stays unproven.
+  const nanEquality = goal.op === '==' && possiblyNaN(goal.left) && possiblyNaN(goal.right)
+    && !context.assumptions.some(assumption => assumption.leftExpr != null && assumption.rightExpr != null
+      && (sameExpressionText(assumption.leftExpr, goal.left.expr!) || sameExpressionText(assumption.rightExpr, goal.left.expr!)
+        || sameExpressionText(assumption.leftExpr, goal.right.expr!) || sameExpressionText(assumption.rightExpr, goal.right.expr!)))
+  if (!nanEquality && context.hasComparisonFact(goal.left.expr, goal.op, goal.right.expr)) return pass('comparison-fact', 'matched a known comparison fact')
 
   let blockedResult: ProofRuleResult | null = null
   for (const rule of comparisonProofRules) {
@@ -131,13 +150,63 @@ function addComparisonGraphEdge(graph: Map<string, ComparisonGraphEdge[]>, fromE
 
 type ComparisonProofRule = (goal: ComparisonGoal, context: ProofRulesContext) => ProofRuleResult | null
 
+// The former floor-division-below-count and ceil-division-covers-total rules
+// are gone: both reason through a float division whose quotient can round
+// across the integer boundary (pointer < count * cellSize admits
+// floor(pointer / cellSize) == count at ordinary layout magnitudes). Sound
+// versions need the divisor's integrality and a magnitude window, which these
+// expression-text rules cannot resolve to values yet.
 const comparisonProofRules: ComparisonProofRule[] = [
   evaluateRoundingMonotonicity,
+  evaluateRoundedOpMonotonicity,
+  evaluateSignRecovery,
   evaluateScaleMonotonicity,
-  evaluateFloorDivisionBelowCount,
-  evaluateCeilDivisionCoversTotal,
   evaluateSimplifiedComparison,
 ]
+
+// Sign goals recurse op-by-op (provesExprNonNegative walks the expression),
+// so `x1 + ... + x8 >= 0` from eight sign givens survives the nested
+// roundings one monotone step at a time. A relabeled value (a callee
+// parameter bound to a caller argument) recurses through its atom, which
+// still names the caller's computation.
+function evaluateSignRecovery(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null) return null
+  if (lessGoal.left.min !== 0 || lessGoal.left.max !== 0) return null
+  const strict = lessGoal.op === '<'
+  if (context.provesExprNonNegative(lessGoal.rightExpr, strict)) {
+    return pass('sign-recovery', 'sign survives rounding one operation at a time')
+  }
+  const atom = singleUnitAtom(lessGoal.right.linear)
+  if (atom != null && atom !== lessGoal.rightExpr && context.provesExprNonNegative(atom, strict)) {
+    return pass('sign-recovery', 'sign survives rounding one operation at a time')
+  }
+  return null
+}
+
+// fl is monotone and each side rounds once: a non-strict comparison of two
+// computed results follows from the same comparison of their exact real
+// values, with operands kept as opaque atoms. Covers `y + gapTop >= y` from
+// gapTop >= 0 and `(cols - w) >= 0` from `w <= cols` without granting the
+// rounded results any algebra. Strict goals stay out: two real values that
+// differ can round to the same double.
+function evaluateRoundedOpMonotonicity(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
+  const lessGoal = comparisonLessGoal(goal)
+  if (lessGoal == null || lessGoal.op !== '<=') return null
+  const leftTop = linearFromTopOperation(lessGoal.leftExpr)
+  const rightTop = linearFromTopOperation(lessGoal.rightExpr)
+  if (leftTop == null && rightTop == null) return null
+  // The non-expanded side keeps its value's own gated form (a floor result's
+  // atom carries the recorded bracketing facts; call text has no lowering).
+  const left = leftTop ?? lessGoal.left.linear ?? linearFromExpressionText(lessGoal.leftExpr)
+  const right = rightTop ?? lessGoal.right.linear ?? linearFromExpressionText(lessGoal.rightExpr)
+  const diff = linearSubtract(right, left)
+  if (diff == null) return null
+  if (context.provesLinearNonNegative(diff, false)) {
+    return pass('rounded-op-monotonicity', 'rounding preserves non-strict order through one operation per side')
+  }
+  return null
+}
 
 type LessComparisonGoal = {
   left: NumberValue
@@ -149,8 +218,10 @@ type LessComparisonGoal = {
 
 type ComparisonReduction = {
   left: string
+  leftOffset: number
   op: '<=' | '<'
   right: string
+  rightOffset: number
   reason: string
   rule: string
 }
@@ -166,13 +237,13 @@ function evaluateSimplifiedComparison(goal: ComparisonGoal, context: ProofRulesC
   if (reductions.length === 0) return null
 
   for (const reduction of reductions) {
-    if (context.hasComparisonFact(reduction.left, reduction.op, reduction.right)) {
+    if (context.hasComparisonFact(reduction.left, reduction.op, reduction.right, {left: reduction.leftOffset, right: reduction.rightOffset})) {
       return pass(reduction.rule, reduction.reason)
     }
   }
 
   const first = reductions[0]!
-  return blocked(first.rule, `${publicFitText(first.left)} ${first.op} ${publicFitText(first.right)}`, first.reason)
+  return blocked(first.rule, `${offsetText(publicFitText(first.left), first.leftOffset)} ${first.op} ${offsetText(publicFitText(first.right), first.rightOffset)}`, first.reason)
 }
 
 function comparisonReductions(goal: LessComparisonGoal): ComparisonReduction[] {
@@ -189,16 +260,16 @@ function lowerRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[
 
   switch (lower.name) {
     case 'floor':
-      return goal.right.isInteger
-        ? [{left: lower.arg, op: '<', right: goal.op === '<' ? right : offsetExpression(right, 1), rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
-        : [{left: lower.arg, op: goal.op, right, rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
+      return integerValued(goal.right)
+        ? [{left: lower.arg, leftOffset: 0, op: '<', right, rightOffset: goal.op === '<' ? 0 : 1, rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
+        : [{left: lower.arg, leftOffset: 0, op: goal.op, right, rightOffset: 0, rule: 'rounding-simplification', reason: 'simplified comparison through floor bounds'}]
     case 'ceil':
-      return goal.right.isInteger
-        ? [{left: lower.arg, op: '<=', right: goal.op === '<' ? offsetExpression(right, -1) : right, rule: 'rounding-simplification', reason: 'simplified comparison through integer ceil bounds'}]
+      return integerValued(goal.right)
+        ? [{left: lower.arg, leftOffset: 0, op: '<=', right, rightOffset: goal.op === '<' ? -1 : 0, rule: 'rounding-simplification', reason: 'simplified comparison through integer ceil bounds'}]
         : []
     case 'round':
-      return goal.right.isInteger
-        ? [{left: lower.arg, op: '<', right: offsetExpression(right, goal.op === '<' ? -0.5 : 0.5), rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
+      return integerValued(goal.right)
+        ? [{left: lower.arg, leftOffset: 0, op: '<', right, rightOffset: goal.op === '<' ? -0.5 : 0.5, rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
         : []
     case 'trunc':
       return []
@@ -206,18 +277,18 @@ function lowerRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[
 }
 
 function upperRoundingReductions(goal: LessComparisonGoal): ComparisonReduction[] {
-  if (!goal.left.isInteger) return []
+  if (!integerValued(goal.left)) return []
   const upper = roundingCall(goal.rightExpr)
   if (upper == null) return []
   const left = goal.leftExpr
 
   switch (upper.name) {
     case 'floor':
-      return [{left: goal.op === '<' ? offsetExpression(left, 1) : left, op: '<=', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through integer floor bounds'}]
+      return [{left, leftOffset: goal.op === '<' ? 1 : 0, op: '<=', right: upper.arg, rightOffset: 0, rule: 'rounding-simplification', reason: 'simplified comparison through integer floor bounds'}]
     case 'ceil':
-      return [{left: goal.op === '<' ? left : offsetExpression(left, -1), op: '<', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through ceil bounds'}]
+      return [{left, leftOffset: goal.op === '<' ? 0 : -1, op: '<', right: upper.arg, rightOffset: 0, rule: 'rounding-simplification', reason: 'simplified comparison through ceil bounds'}]
     case 'round':
-      return [{left: offsetExpression(left, goal.op === '<' ? 0.5 : -0.5), op: '<=', right: upper.arg, rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
+      return [{left, leftOffset: goal.op === '<' ? 0.5 : -0.5, op: '<=', right: upper.arg, rightOffset: 0, rule: 'rounding-simplification', reason: 'simplified comparison through round half-unit bounds'}]
     case 'trunc':
       return []
   }
@@ -233,7 +304,7 @@ function roundingCall(expression: string): RoundingCall | null {
 
 const roundingFunctionNames = ['floor', 'ceil', 'round', 'trunc'] as const
 
-function offsetExpression(expression: string, offset: number) {
+function offsetText(expression: string, offset: number) {
   if (offset === 0) return expression
   return offset > 0 ? `(${expression} + ${offset})` : `(${expression} - ${Math.abs(offset)})`
 }
@@ -255,7 +326,9 @@ function matchingRoundingCall(leftExpr: string, rightExpr: string): {left: strin
 
 function evaluateScaleMonotonicity(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   const lessGoal = comparisonLessGoal(goal)
-  if (lessGoal == null) return null
+  // Strict goals are out: two scaled values that differ over the reals can
+  // round to the same double.
+  if (lessGoal == null || lessGoal.op !== '<=') return null
   const obligations = [
     ...positiveMonotoneObligations(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context),
     ...negativeProductObligations(lessGoal.leftExpr, lessGoal.op, lessGoal.rightExpr, context),
@@ -272,31 +345,6 @@ function comparisonLessGoal(goal: ComparisonGoal): LessComparisonGoal | null {
   if (goal.op === '>=') return {left: goal.right, leftExpr: goal.right.expr, op: '<=', right: goal.left, rightExpr: goal.left.expr}
   if (goal.op === '>') return {left: goal.right, leftExpr: goal.right.expr, op: '<', right: goal.left, rightExpr: goal.left.expr}
   return null
-}
-
-function evaluateFloorDivisionBelowCount(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
-  if (goal.op !== '<' && goal.op !== '<=') return null
-  if (goal.left.expr == null || goal.right.expr == null || !goal.right.isInteger) return null
-  const shape = floorDivision(goal.left.expr)
-  if (shape == null) return null
-  const divisorNeed = `${shape.right} > 0`
-  const boundNeed = `${shape.left} < ${goal.right.expr} * ${shape.right}`
-  const divisorProven = context.provesExprNonNegative(shape.right, true)
-  const boundProven = context.hasComparisonFact(shape.left, '<', `(${goal.right.expr} * ${shape.right})`)
-    || context.hasComparisonFact(shape.left, '<', `(${shape.right} * ${goal.right.expr})`)
-  if (divisorProven && boundProven) return pass('floor-division-below-count', 'floor division stays below count from its product bound')
-  if (boundProven) return blocked('floor-division-below-count', divisorNeed, 'floor division stays below count from its product bound')
-  if (divisorProven) return blocked('floor-division-below-count', boundNeed, 'floor division stays below count from its product bound')
-  return blocked('floor-division-below-count', `${divisorNeed} and ${boundNeed}`, 'floor division stays below count from its product bound')
-}
-
-function evaluateCeilDivisionCoversTotal(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
-  if (goal.op !== '>=') return null
-  if (goal.left.expr == null || goal.right.expr == null) return null
-  const shape = ceilDivisionProduct(goal.left.expr)
-  if (shape == null || !sameExpressionText(shape.total, goal.right.expr)) return null
-  if (context.provesExprNonNegative(shape.count, true)) return pass('ceil-division-covers-total', 'ceil division product covers the total')
-  return blocked('ceil-division-covers-total', `${shape.count} > 0`, 'ceil division product covers the total')
 }
 
 type ScaleMonotoneObligation = {

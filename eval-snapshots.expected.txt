@@ -47,18 +47,18 @@ infer matrix for-of push visible rows
   local rows is an order-preserving subset of items
 infer matrix abstract for-of param rows
   return return.rows.length == items.length
-  return return.rows.length: int 0..Infinity
+  return return.rows.length: int 0..4294967295
   return return.rows[].height == rows[].height
   return return.rows follows items by index
   local rows.length == items.length
-  local rows.length: int 0..Infinity
+  local rows.length: int 0..4294967295
   local rows follows items by index
 infer matrix abstract guarded for-of rows
   return return.rows.length == rows.length
-  return return.rows.length: int 0..Infinity
+  return return.rows.length: int 0..4294967295
   return return.rows[].height == rows[].height
   return return.rows is an order-preserving subset of items
-  local rows.length: int 0..Infinity
+  local rows.length: int 0..4294967295
   local rows is an order-preserving subset of items
 infer matrix abstract for-of cursor values
   return return.bottom == y

@@ -26,8 +26,8 @@ export function adjacentElementAccessFacts(
 ): LinearConstraint[] {
   const summary = target.summary
   if (summary == null || summary.relations.length === 0) return []
-  const zero = numberValue(0, 0, true, '0', linearConstant(0))
-  const one = numberValue(1, 1, true, '1', linearConstant(1))
+  const zero = numberValue(0, 0, 0, '0', linearConstant(0))
+  const one = numberValue(1, 1, 0, '1', linearConstant(1))
   const facts: LinearConstraint[] = []
 
   const hasPrevious = proveComparison(index, '>', zero, assumptions)
@@ -52,6 +52,10 @@ function instantiateAdjacentFacts(nextAccessExpr: string, previousAccessExpr: st
   const facts: LinearConstraint[] = []
   for (const relation of relations) {
     if (relation.left.item !== 'next') continue
+    // A rounded == relation states the loop's computation in the loop's own
+    // grouping; restated over this text's grouping it can be off by an ulp,
+    // so only its non-strict reading survives as a fact.
+    if (relation.rounded === true && relation.op === '==') continue
     const leftExpr = sequenceTermExpr(nextAccessExpr, previousAccessExpr, relation.left)
     const rightExpr = sequenceExpressionExpr(nextAccessExpr, previousAccessExpr, relation.right)
     const fact = comparisonConstraint(unknownNumber(leftExpr), relation.op, unknownNumber(rightExpr), undefined, 'code')
@@ -125,7 +129,7 @@ function numberWithRebasedElementPath(value: NumberValue, sourceElementExpr: str
   const rebased = numberValue(
     value.min,
     value.max,
-    value.isInteger,
+    value.grid,
     expr,
     expr === value.expr ? value.linear : null,
     null,

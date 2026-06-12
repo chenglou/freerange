@@ -43,6 +43,12 @@ export const arrowInlineClaims = (
 
 type PatternRect = {x: number; y: number; width: number; height: number}
 
+/** @fit
+ * given x: 0..1000
+ * given y: 0..1000
+ * given width: 0..1000
+ * given height: 0..1000
+ */
 export const destructuredArrowParamClaims = ({x, y, width, height}: PatternRect) => ({
   x2: x + width, // @fit == x + width
   y2: y + height, // @fit == y + height
@@ -129,7 +135,7 @@ export function scalarComparisons(value: number) {
  * return.half: 0..2.5
  */
 export function straightLineArithmetic(value: number) {
-  const square = value ** 2
+  const square = value * value
   const half = value / 2
   return {square, half}
 }
@@ -204,7 +210,7 @@ function booleanLiteralOffset(useFallback: boolean, y: number) {
 }
 
 /** @fit
- * given panelX: 0..1000
+ * given panelX: int 0..1000
  * return.ordered.yThresholdX < return.ordered.uThresholdX
  * return.ordered.emptyIntervalWidth == 200
  * return.inverted.yThresholdX > return.inverted.uThresholdX
@@ -336,28 +342,6 @@ export function mathChoiceCarriesBranchFacts(width: number, scale: number, floor
     fitted: Math.min(scaled, 400),
     raised: Math.max(floor, scaled),
   }
-}
-
-/** @fit
- * given total: int 0..6000
- * given count: int 1..200
- * return >= total
- */
-export function ceilDivisionCoversTotal(total: number, count: number) {
-  return Math.ceil(total / count) * count
-}
-
-/** @fit
- * given pointer: 0..100000
- * given cellSize: int 1..1000
- * given count: int 1..1000
- * given pointer < count * cellSize
- * return >= 0
- * return < count
- */
-export function floorHitIndexInsideCount(pointer: number, cellSize: number, count: number) {
-  const maxPointer = count * cellSize
-  return pointer < maxPointer ? Math.floor(pointer / cellSize) : Math.floor(pointer / cellSize)
 }
 
 /** @fit
@@ -677,6 +661,8 @@ export function compoundAssignmentsComputeExactly() {
 }
 
 /** @fit
+ * given a: int -1000..1000
+ * given b: int -1000..1000
  * given a + 2 * b >= 0
  * given a - 2 * b >= 0
  * a + b >= 0
@@ -893,7 +879,7 @@ export function oneSidedInfinityAdd(
 }
 
 export function inlineComparisonFacts(
-  value: number, // @fit 0..100
+  value: number, // @fit int 0..100
   max: number, // @fit >= value
 ) {
   const next = value + 1 // @fit > value
@@ -911,8 +897,8 @@ export function inlineReturnComparisonFact(
 }
 
 export function inlineComparisonPrefixVariants(
-  value: number, // @fit >= min
-  min: number, // @fit 0..100
+  value: number, // @fit int 0..100
+  min: number, // @fit <= value
   max: number, // @fit >= value
 ) {
   const exact = value // @fit == value
@@ -1298,6 +1284,8 @@ export function ifClampFeedsLocalHelper(value: number) {
 type TypedTupleRows = [{height: number}, {height: number}]
 
 /** @fit
+ * given input[0].height: 0..100
+ * given input[1].height: 0..100
  * return.length == 2
  * return[0].height == input[0].height
  * return[1].height == input[1].height
@@ -1667,15 +1655,6 @@ export function inlineCommentFormatVariants(
 }
 
 /** @fit
- * given total: int -6000..6000
- * given count: int 1..200
- * return >= total
- */
-export function ceilDivisionCoversSignedTotal(total: number, count: number) {
-  return Math.ceil(total / count) * count
-}
-
-/** @fit
  * given width: 0..1000
  * given cap: 0..1000
  * given limit: 0..1000
@@ -1790,10 +1769,10 @@ export function ambientResizeObserverInlineSize(size: ResizeObserverSize) {
 }
 
 /** @fit
- * given rect.x: -1000..1000
- * given rect.right: -1000..1000
- * given rect.y: -1000..1000
- * given rect.bottom: -1000..1000
+ * given rect.x: int -1000..1000
+ * given rect.right: int -1000..1000
+ * given rect.y: int -1000..1000
+ * given rect.bottom: int -1000..1000
  * return.x: -1000..1000
  * return.y: -1000..1000
  */

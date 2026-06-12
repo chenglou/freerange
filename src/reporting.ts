@@ -4,7 +4,7 @@ import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} fro
 export type ReportNumberValue = {
   min: number
   max: number
-  isInteger: boolean
+  grid: number | null
   expr: string | null
   linear: ReportLinearExpr | null
   cases?: {value: ReportNumberValue; assumptions: unknown[]}[] | null
@@ -188,13 +188,13 @@ function formatNumberValueRange(value: ReportNumberValue) {
   if (cases.length > 1 && cases.length === value.cases?.length) {
     return [...new Set(cases.map(item => formatNumberRangePart(item.value)))].join(' | ')
   }
-  return formatExpectedRange(value.min, value.max, value.isInteger)
+  return formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)
 }
 
 function formatNumberRangePart(value: ReportNumberValue) {
   return value.min === value.max && Number.isFinite(value.min)
     ? formatNumber(value.min)
-    : formatExpectedRange(value.min, value.max, value.isInteger)
+    : formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)
 }
 
 export function formatRangeSpec(range: FitRange) {

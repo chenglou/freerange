@@ -18,6 +18,9 @@ import {
   type NumberCase,
   type NumberValue,
   type Value,
+  gridMeet,
+  gridOfNumber,
+  integerValued,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {assumptionsAreReachable} from './constraint-reachability.ts'
@@ -427,7 +430,7 @@ export function evaluateRangeValue(
   if (cases.length === 0) return {kind: 'unknown', reason: `Range ${formatRangeSpec(range)} had no possible values`}
   const min = Math.min(...cases.map(item => item.value.min))
   const max = Math.max(...cases.map(item => item.value.max))
-  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => item.value.isInteger), expr, null, null, origin)
+  const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => integerValued(item.value)) ? 0 : null, expr, null, null, origin)
   return withNumberCases(value, cases)
 }
 
@@ -482,7 +485,7 @@ function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase
       value: numberValue(
         branch.value.min,
         branch.value.max,
-        range.valueKind === 'int' || branch.value.isInteger,
+        gridMeet(range.valueKind === 'int' ? 0 : null, branch.value.grid),
         expr ?? branch.value.expr,
         branch.value.linear,
         null,
@@ -501,7 +504,7 @@ function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase
         value: numberValue(
           lower.value.min,
           upper.value.max,
-          range.valueKind === 'int',
+          range.valueKind === 'int' ? 0 : null,
           expr,
           null,
           null,
@@ -535,13 +538,13 @@ function proveNumberInsideRangeCases(
   const joined = proveNumberInsideAnyRangeCase(value, range, cases, assumptions)
   if (joined.kind === 'pass') return {status: 'pass'}
 
-  let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus} | null = null
+  let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus; assumptions: LinearConstraint[]} | null = null
   for (const branch of numberBranches(value)) {
     const branchAssumptions = [...assumptions, ...branch.assumptions]
     const branchProof = proveNumberInsideAnyRangeCase(branch.value, range, cases, branchAssumptions)
     if (branchProof.kind === 'pass') continue
     if (branchProof.kind === 'unknown') {
-      unknown ??= {case: branchProof.case, status: branchProof.status}
+      unknown ??= {case: branchProof.case, status: branchProof.status, assumptions: branchAssumptions}
       continue
     }
     return {status: 'fail', reason: rangeSpecFailureReasonForCases(branch.value, range, cases, branchAssumptions, branchProof.status, branchProof.case)}
@@ -549,10 +552,11 @@ function proveNumberInsideRangeCases(
   if (unknown != null) {
     const reason = rangeSpecFailureReasonForCases(value, range, cases, assumptions, unknown.status, unknown.case)
     // Unproven but fact-anchored: search the fact polytope for a valuation
-    // that violates the claim. Finding one upgrades to a disproof the report
-    // can show; finding none keeps the honest unknown.
+    // that violates the claim, with the value's own branch facts included (a
+    // checked helper contract rides on the value). Finding one upgrades to a
+    // disproof the report can show; finding none keeps the honest unknown.
     if (cases.length === 1) {
-      const witness = rangeCaseCounterexample(value, unknown.case, unknown.status, assumptions)
+      const witness = rangeCaseCounterexample(value, unknown.case, unknown.status, unknown.assumptions)
       if (witness != null) return {status: 'fail', reason: `${reason}\n${witness}`}
     }
     return {status: 'unknown', reason}
@@ -641,7 +645,7 @@ function proveNumberInsideRangeCase(
 }
 
 function integerClaimStatus(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
-  if (range.valueKind !== 'int' || value.isInteger) return {status: 'pass'}
+  if (range.valueKind !== 'int' || integerValued(value)) return {status: 'pass'}
   const provablyFractional = value.min === value.max && Number.isFinite(value.min) && !Number.isInteger(value.min)
   return {
     status: provablyFractional ? 'fail' : 'unknown',
@@ -727,7 +731,7 @@ function specBoundIndexContext(context: EvalContext, hooks: CheckSpecHooks): Bou
 export function evaluateRangeBound(text: FitExpressionLike, context: EvalContext, hooks: CheckSpecHooks): Value {
   const sourceText = fitExpressionText(text)
   const printed = hooks.parsePrintedNumber(sourceText)
-  if (printed != null) return numberValue(printed, printed, Number.isInteger(printed), sourceText, Number.isFinite(printed) ? linearConstant(printed) : null)
+  if (printed != null) return numberValue(printed, printed, gridOfNumber(printed), sourceText, Number.isFinite(printed) ? linearConstant(printed) : null)
   return evaluateSpecExpression(text, context, hooks)
 }
 

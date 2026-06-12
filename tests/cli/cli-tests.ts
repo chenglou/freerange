@@ -200,7 +200,8 @@ function use(value: number) {
   }, dir => {
     const check = runFr(['check', 'layout.ts'], dir)
     expectCli(check.exitCode === 1, 'expected star-barrel helper import to preserve callee range', check.output)
-    expectCli(check.output.includes('FAIL return: 0..10'), 'expected star-barrel helper failure output', check.output)
+    expectCli(check.output.includes('UNKNOWN could not prove return: 0..10'), 'expected star-barrel helper failure output', check.output)
+    expectCli(check.output.includes('range was 0..100 as wide(value)'), 'expected star-barrel helper to preserve the callee range', check.output)
     expectCli(!check.output.includes('Unsupported call wide'), 'expected star-barrel helper call to resolve', check.output)
   })
 

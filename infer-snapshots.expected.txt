@@ -1,23 +1,23 @@
 tests/patterns/patterns.ts:typedObjectParamArrayShape
 return:
   return.rows.length == params.items.length
-  return.rows.length: int 0..Infinity
+  return.rows.length: int 0..4294967295
   return.rows[].height == item.height
   return.rows follows params.items by index
 locals:
   rows.length == params.items.length
-  rows.length: int 0..Infinity
+  rows.length: int 0..4294967295
   rows[].height == item.height
   rows follows params.items by index
 tests/patterns/patterns.ts:propertyAccessCallShape
 tests/patterns/patterns.ts:mapCallbackReturnShape
 return:
   return.rows.length == items.length
-  return.rows.length: int 0..Infinity
+  return.rows.length: int 0..4294967295
   return.rows follows items by index
 locals:
   rows.length == items.length
-  rows.length: int 0..Infinity
+  rows.length: int 0..4294967295
   rows follows items by index
 tests/patterns/loop-patterns.ts:scalarPushLoop
 return:
@@ -41,10 +41,10 @@ locals:
 tests/imports/import-patterns.ts:namespaceImportedStructuralShape
 return:
   return.rows.length == items.length
-  return.rows.length: int 0..Infinity
+  return.rows.length: int 0..4294967295
 locals:
   boxed.value.length == items.length
-  boxed.value.length: int 0..Infinity
+  boxed.value.length: int 0..4294967295
 tests/patterns/patterns.ts:mapBlockRowsWithDestructure
 return:
   return.rows.length == items.length
@@ -94,7 +94,7 @@ locals:
   lastEnd(rows): -10..3500
   extentEnd(rows, y): -10..3500
   cursor: 0..3500
-loop 488: for (const item of items)
+loop 475: for (const item of items)
   inferred:
     cursor: 0..3500
     rows.length == items.length
@@ -120,61 +120,41 @@ loop 488: for (const item of items)
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout
 return:
   return.contentHeight == nextRowTop
-  return.contentHeight: 40..Infinity
   return.items.length == layoutSources.length
   return.items[].imageBox.sizeX: 0..1952
   return.items[].layoutBox.sizeX: 0..1952
   return.items[].prompt.box.sizeX == promptLayout.width
   return.items[].prompt.box.sizeY == promptLayout.visibleHeight
   return.items[].prompt.lines.length == promptLayout.lines.length
-  return.items[].prompt.lines.length: int 0..Infinity
+  return.items[].prompt.lines.length: int 0..4294967295
   return.rows.length == rows.length
-  return.rows[].bottom == (rows[].y + rows[].height)
-  return.rows[].bottom: 40..Infinity
   return.rows[].height == rows[].height
   return.rows[].height: 0..Infinity
   return.rows[].y == rows[].y
-  return.rows[].y: 40..Infinity
-  nondecreasing(return.rows.y)
-  spaced(return.rows, 24)
 locals:
   cols: int 1..7
   boxMaxSizeX: 18.285714285714285..1952
-  rows[].bottom == (rows[].y + rows[].height)
-  rows[].bottom: 40..Infinity
   rows[].height: 0..Infinity
-  rows[].y: 40..Infinity
-  nondecreasing(rows.y)
-  spaced(rows, 24)
   measurements.length == layoutSources.length
   measurements[].imageSizeX: 0..1952
 loop 186: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
     measurements[].imageSizeX: 0..1952
-    rows[].bottom == (rows[].y + rows[].height)
-    rows[].bottom: 40..Infinity
     rows[].height: 0..Infinity
-    rows[].y: 40..Infinity
-    nondecreasing(rows.y)
-    spaced(rows, 24)
   checked:
     rows.length <= layoutSources.length
-    rows[].bottom == rows[].y + rows[].height
-    spaced(rows, boxesGapY)
-    noOverlap(rows)
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout
 return:
   return.items.length == layoutSources.length
-  return.items.length: int 0..Infinity
+  return.items.length: int 0..4294967295
   return.items[].prompt.box.sizeX == items[].prompt.box.sizeX
   return.items[].prompt.box.sizeY == items[].prompt.box.sizeY
   return.items[].prompt.lines.length == promptLayout.lines.length
-  return.items[].prompt.lines.length: int 0..Infinity
+  return.items[].prompt.lines.length: int 0..4294967295
 locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
-  measurements.length: int 0..Infinity
   items.length == layoutSources.length
-  items.length: int 0..Infinity
+  items.length: int 0..4294967295

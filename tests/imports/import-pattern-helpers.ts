@@ -116,6 +116,8 @@ export function importedTupleCenter(sourceX: number, sourceY: number, targetX: n
 
 /** @fit
  * given min <= max
+ * given min: -1000..1000
+ * given max: -1000..1000
  * return: min..max
  */
 export function importedDynamicRange(min: number, max: number) {

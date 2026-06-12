@@ -37,6 +37,50 @@ export function rationalIsExactNumber(value: Rational): boolean {
   return converted != null && rationalEquals(value, converted)
 }
 
+// Largest double <= the rational: the safe direction for a published lower
+// bound. rationalToNumber alone rounds to nearest, which can overstate a
+// lower bound by up to an ulp.
+export function rationalToNumberFloor(value: Rational): number {
+  let result = rationalToNumber(value)
+  while (doubleComparesToRational(result, value) > 0) result = nextDoubleDown(result)
+  return result
+}
+
+// Smallest double >= the rational: the safe direction for a published upper
+// bound.
+export function rationalToNumberCeil(value: Rational): number {
+  let result = rationalToNumber(value)
+  while (doubleComparesToRational(result, value) < 0) result = nextDoubleUp(result)
+  return result
+}
+
+function doubleComparesToRational(double: number, value: Rational): number {
+  if (double === Number.NEGATIVE_INFINITY) return -1
+  if (double === Number.POSITIVE_INFINITY) return 1
+  return rationalCompare(rationalFromNumber(double)!, value)
+}
+
+const doubleScratch = new Float64Array(1)
+const doubleScratchBits = new BigUint64Array(doubleScratch.buffer)
+
+function nextDoubleDown(value: number): number {
+  if (value === Number.NEGATIVE_INFINITY) return value
+  if (value === Number.POSITIVE_INFINITY) return Number.MAX_VALUE
+  if (value === 0) return -Number.MIN_VALUE
+  doubleScratch[0] = value
+  doubleScratchBits[0] = doubleScratchBits[0]! + (value > 0 ? -1n : 1n)
+  return doubleScratch[0]!
+}
+
+function nextDoubleUp(value: number): number {
+  if (value === Number.POSITIVE_INFINITY) return value
+  if (value === Number.NEGATIVE_INFINITY) return -Number.MAX_VALUE
+  if (value === 0) return Number.MIN_VALUE
+  doubleScratch[0] = value
+  doubleScratchBits[0] = doubleScratchBits[0]! + (value > 0 ? 1n : -1n)
+  return doubleScratch[0]!
+}
+
 export function rationalAdd(left: Rational, right: Rational): Rational {
   return normalize(left.num * right.den + right.num * left.den, left.den * right.den)
 }

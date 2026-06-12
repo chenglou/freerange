@@ -196,7 +196,7 @@ function valueFingerprint(value: Value): string {
         kind: value.kind,
         min: value.min,
         max: value.max,
-        isInteger: value.isInteger,
+        grid: value.grid,
         expr: value.expr,
         linear: value.linear == null ? null : linearKey(value.linear),
         cases: value.cases?.map(stateCase => ({

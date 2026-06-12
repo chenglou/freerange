@@ -10,12 +10,15 @@ import {
   rationalAdd,
   rationalCompare,
   rationalDivide,
+  rationalEquals,
   rationalFromNumber,
+  rationalIsExactNumber,
   rationalIsZero,
   rationalKey,
   rationalMultiply,
   rationalNegate,
   rationalOne,
+  rationalToNumber,
   rationalZero,
   type Rational,
 } from './rational.ts'
@@ -53,6 +56,12 @@ export function linearFromExpressionText(text: FitExpressionLike): LinearExpr | 
   }
 }
 
+// Expression text follows JS evaluation, not real arithmetic: lowering
+// `(x / 3) * 3` to the real form x would prove cancellations the runtime's
+// rounding refutes. Arithmetic on known constants folds with exact IEEE
+// semantics like source literals; everything else becomes one opaque atom,
+// named like the evaluator names the same computation, so identical
+// computations still connect through Farkas without claiming any algebra.
 export function linearFromExpression(expression: ts.Expression): LinearExpr | null {
   if (ts.isNumericLiteral(expression)) return linearConstant(Number(expression.text))
   if (ts.isIdentifier(expression)) return linearVariable(expression.text)
@@ -62,32 +71,104 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
   if (ts.isPrefixUnaryExpression(expression)) {
     const operand = linearFromExpression(expression.operand)
     if (operand == null) return null
+    // Unary minus is a sign-bit flip: exact for every double.
     if (expression.operator === ts.SyntaxKind.MinusToken) return linearScaleExact(operand, rationalNegate(rationalOne))
     if (expression.operator === ts.SyntaxKind.PlusToken) return operand
     return null
   }
   if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  if (op !== ts.SyntaxKind.PlusToken && op !== ts.SyntaxKind.MinusToken && op !== ts.SyntaxKind.AsteriskToken && op !== ts.SyntaxKind.SlashToken) return null
   const left = linearFromExpression(expression.left)
   const right = linearFromExpression(expression.right)
-  switch (expression.operatorToken.kind) {
+  if (left == null || right == null) return null
+  const leftConstant = constantOnlyValue(left)
+  const rightConstant = constantOnlyValue(right)
+  if (leftConstant != null && rightConstant != null) {
+    const folded = foldArithmetic(op, leftConstant, rightConstant)
+    return folded == null ? null : linearConstant(folded)
+  }
+  return linearVariable(canonicalArithmeticText(expression))
+}
+
+function constantOnlyValue(linear: LinearExpr): number | null {
+  if (linear.terms.size > 0) return null
+  return rationalIsExactNumber(linear.constant) ? rationalToNumber(linear.constant) : null
+}
+
+function foldArithmetic(op: ts.SyntaxKind, left: number, right: number): number | null {
+  switch (op) {
+    case ts.SyntaxKind.PlusToken:
+      return left + right
+    case ts.SyntaxKind.MinusToken:
+      return left - right
+    case ts.SyntaxKind.AsteriskToken:
+      return left * right
+    case ts.SyntaxKind.SlashToken:
+      return right === 0 ? null : left / right
+    default:
+      return null
+  }
+}
+
+// One real-arithmetic step over the named doubles: the outermost + - * /
+// lowers algebraically, while its operands stay opaque atoms (or constants).
+// The single rounding this ignores is the caller's to discharge — rounding is
+// monotone, so `real(L) <= real(R)` carries `fl(L) <= fl(R)` for one op per
+// side. Expanding deeper would stack roundings nobody discharges.
+export function linearFromTopOperation(text: FitExpressionLike): LinearExpr | null {
+  const parsed = parseFitExpressionOrNull(text)
+  if (parsed == null) return null
+  const expression = unwrapExpression(parsed.expression)
+  if (!ts.isBinaryExpression(expression)) return null
+  const op = expression.operatorToken.kind
+  const left = operandLinear(expression.left)
+  const right = operandLinear(expression.right)
+  if (left == null || right == null) return null
+  switch (op) {
     case ts.SyntaxKind.PlusToken:
       return linearAdd(left, right)
     case ts.SyntaxKind.MinusToken:
       return linearSubtract(left, right)
     case ts.SyntaxKind.AsteriskToken: {
-      const leftValue = numericLiteralValue(expression.left)
-      const rightValue = numericLiteralValue(expression.right)
-      if (leftValue != null) return linearScale(right, leftValue)
-      if (rightValue != null) return linearScale(left, rightValue)
+      const leftConstant = constantOnlyValue(left)
+      const rightConstant = constantOnlyValue(right)
+      if (leftConstant != null) return linearScale(right, leftConstant)
+      if (rightConstant != null) return linearScale(left, rightConstant)
       return null
     }
     case ts.SyntaxKind.SlashToken: {
-      const rightValue = numericLiteralValue(expression.right)
-      return rightValue == null || rightValue === 0 ? null : linearDivide(left, rightValue)
+      const rightConstant = constantOnlyValue(right)
+      return rightConstant == null || rightConstant === 0 ? null : linearDivide(left, rightConstant)
     }
     default:
       return null
   }
+}
+
+function operandLinear(expression: ts.Expression): LinearExpr | null {
+  const current = unwrapExpression(expression)
+  if (ts.isNumericLiteral(current)) return linearConstant(Number(current.text))
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken && ts.isNumericLiteral(current.operand)) {
+    return linearConstant(-Number(current.operand.text))
+  }
+  return linearVariable(canonicalArithmeticText(current))
+}
+
+// One stable name per computation: parenthesized and spaced like the
+// evaluator's result expressions, so a claim restating a computation reaches
+// the same atom. Operand order stays as written; commutative matching lives
+// in expressionKey.
+function canonicalArithmeticText(expression: ts.Expression): string {
+  const current = unwrapExpression(expression)
+  if (ts.isBinaryExpression(current)) {
+    const opText = current.operatorToken.getText()
+    return `(${canonicalArithmeticText(current.left)} ${opText} ${canonicalArithmeticText(current.right)})`
+  }
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
+    return `-${canonicalArithmeticText(current.operand)}`
+  }
+  return current.getText()
 }
 
 export function isFixedElementPathExpression(expression: ts.Expression): boolean {
@@ -137,6 +218,16 @@ export function linearScaleExact(linear: LinearExpr, factor: Rational): LinearEx
 export function sameLinear(left: LinearExpr, right: LinearExpr) {
   const diff = linearSubtract(left, right)
   return diff != null && isZeroLinear(diff)
+}
+
+// The one atom a linear form IS (coefficient one, no constant), or null. Atom
+// names are computation texts, so callers can recurse into the expression a
+// relabeled value still denotes (a callee parameter bound to a caller
+// argument keeps the caller's atom).
+export function singleUnitAtom(linear: LinearExpr | null): string | null {
+  if (linear == null || linear.terms.size !== 1 || !rationalIsZero(linear.constant)) return null
+  const [name, coefficient] = [...linear.terms.entries()][0]!
+  return rationalEquals(coefficient, rationalOne) ? name : null
 }
 
 // Removes exactly-zero terms; nothing else is droppable.
@@ -196,7 +287,13 @@ function structuralExpressionKey(current: ts.Expression): string {
   if (ts.isPrefixUnaryExpression(current)) return `prefix:${current.operator}:${expressionKey(current.operand)}`
   if (ts.isBinaryExpression(current)) {
     const op = current.operatorToken.kind
-    if (op === ts.SyntaxKind.AsteriskToken) return `product:${productFactorExpressions(current).map(expressionKey).sort().join('*')}`
+    // + and * may swap their two operands (IEEE commutativity is bitwise) but
+    // never regroup across nesting: a different association rounds
+    // differently.
+    if (op === ts.SyntaxKind.AsteriskToken || op === ts.SyntaxKind.PlusToken) {
+      const operands = [expressionKey(current.left), expressionKey(current.right)].sort()
+      return `${op === ts.SyntaxKind.AsteriskToken ? 'product' : 'sum'}:${operands.join(op === ts.SyntaxKind.AsteriskToken ? '*' : '+')}`
+    }
     return `binary:${ts.SyntaxKind[op]}:${expressionKey(current.left)}:${expressionKey(current.right)}`
   }
   return `text:${current.getText()}`
@@ -241,23 +338,6 @@ export function callArg(text: FitExpressionLike, name: string): string | null {
   return args != null && args.length === 1 ? args[0]! : null
 }
 
-export function ceilDivisionProduct(text: FitExpressionLike): {total: string; count: string} | null {
-  const product = binaryExpression(text, '*')
-  if (product == null) return null
-  for (const [maybeCeil, maybeCount] of [[product.left, product.right], [product.right, product.left]] as const) {
-    const ceilArg = callArg(maybeCeil, 'ceil')
-    if (ceilArg == null) continue
-    const division = binaryExpression(ceilArg, '/')
-    if (division != null && sameExpressionText(division.right, maybeCount)) return {total: division.left, count: division.right}
-  }
-  return null
-}
-
-export function floorDivision(text: FitExpressionLike): {left: string; right: string} | null {
-  const floorArg = callArg(text, 'floor')
-  return floorArg == null ? null : binaryExpression(floorArg, '/')
-}
-
 export function binaryExpression(text: FitExpressionLike, op: '*' | '/' | '%' | '+' | '-'): {left: string; right: string} | null {
   const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
@@ -276,12 +356,15 @@ export function binaryExpression(text: FitExpressionLike, op: '*' | '/' | '%' | 
   return {left: publicParsedExpressionText(parsed, expression.left), right: publicParsedExpressionText(parsed, expression.right)}
 }
 
+// One multiplication's two factors. Flattening nested products would let a
+// rule cancel a factor across a regrouping the runtime never performed —
+// float multiplication is commutative but not associative.
 export function productFactors(text: FitExpressionLike): string[] | null {
   const parsed = parseFitExpressionOrNull(text)
   if (parsed == null) return null
   const expression = unwrapExpression(parsed.expression)
-  const factors = productFactorExpressions(expression).map(factor => publicParsedExpressionText(parsed, factor))
-  return factors.length <= 1 ? null : factors
+  if (!ts.isBinaryExpression(expression) || expression.operatorToken.kind !== ts.SyntaxKind.AsteriskToken) return null
+  return [publicParsedExpressionText(parsed, expression.left), publicParsedExpressionText(parsed, expression.right)]
 }
 
 function parseFitExpressionOrNull(text: FitExpressionLike): ParsedFitExpression | null {
@@ -290,12 +373,6 @@ function parseFitExpressionOrNull(text: FitExpressionLike): ParsedFitExpression 
   } catch {
     return null
   }
-}
-
-function productFactorExpressions(expression: ts.Expression): ts.Expression[] {
-  const current = unwrapExpression(expression)
-  if (!ts.isBinaryExpression(current) || current.operatorToken.kind !== ts.SyntaxKind.AsteriskToken) return [current]
-  return [...productFactorExpressions(current.left), ...productFactorExpressions(current.right)]
 }
 
 export function productText(factors: string[]) {

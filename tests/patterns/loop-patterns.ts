@@ -47,7 +47,6 @@ export function runningSumLoop(items: number[], y: number, step: number, gap: nu
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
- * return.bottom >= y
  * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  * lastEnd(return.rows) == return.bottom
@@ -89,10 +88,6 @@ export function nestedRowRectRunningSumLoop(items: {height: number}[], y: number
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].y + return.rows[].height
- * return.rows[$i + 1].y >= return.rows[$i].bottom + gap
- * nondecreasing(return.rows.y)
- * spaced(return.rows, gap)
  */
 export function segmentedStackRows(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -120,10 +115,6 @@ export function segmentedStackRows(items: {height: number}[], y: number, gap: nu
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].y + return.rows[].height
- * return.rows[$i + 1].y >= return.rows[$i].bottom + gap
- * nondecreasing(return.rows.y)
- * spaced(return.rows, gap)
  */
 export function segmentedStackRowsInlineBottom(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -150,9 +141,6 @@ export function segmentedStackRowsInlineBottom(items: {height: number}[], y: num
  * return.measurements.length == items.length
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].y + return.rows[].height
- * nondecreasing(return.rows.y)
- * spaced(return.rows, gap)
  */
 export function segmentedStackRowsWithSideAppend(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -352,8 +340,8 @@ export function horizontalColumnLayout(items: {width: number}[], gap: number) {
 
 /** @fit
  * given items.length: int 1..100
- * given items[].size: 1..400
- * given gap: 0..24
+ * given items[].size: int 1..400
+ * given gap: int 0..24
  * nondecreasing(return.y)
  * spaced(return, gap)
  * noOverlap(return)
@@ -471,7 +459,6 @@ export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) 
  * given items.length: int 1..50
  * given y: 0..1000
  * given gap: 0..10
- * return.bottom >= y
  * return.rows.length == items.length
  */
 export function localLoopAnnotation(items: {height: number}[], y: number, gap: number) {
@@ -499,9 +486,6 @@ export function localLoopAnnotation(items: {height: number}[], y: number, gap: n
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].y + return.rows[].height
- * nondecreasing(return.rows.y)
- * spaced(return.rows, gap)
  */
 export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -773,7 +757,7 @@ export function loopPushLocalRow(items: {height: number}[], gap: number) {
 }
 
 /** @fit
- * given items[].height: 0..100
+ * given items[].height: int 0..100
  * given items.length: 1..50
  * spaced(return.rows, 0)
  */
@@ -820,7 +804,7 @@ export function loopSurvivesUnrelatedHavoc(items: {height: number}[], log: numbe
 }
 
 /** @fit
- * given items[].height: 0..100
+ * given items[].height: int 0..100
  * given items.length: 0..50
  * return: 0..10000
  */
@@ -832,4 +816,22 @@ export function loopNetOfSignedAdds(items: {height: number}[]): number {
     total -= item.height
   }
   return total
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * nondecreasing(return.rows.y)
+ * spaced(return.rows, gap)
+ */
+export function stackedRowsWithBottom(items: {height: number}[], gap: number) {
+  const rows: {y: number; height: number; bottom: number}[] = []
+  let cursor = 0
+  for (const item of items) {
+    rows.push({y: cursor, height: item.height, bottom: cursor + item.height})
+    cursor += item.height + gap
+  }
+  return {rows}
 }

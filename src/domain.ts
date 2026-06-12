@@ -4,12 +4,17 @@ export {
 } from './array-summary.ts'
 export {mergeAssumptions} from './assumptions.ts'
 export {
+  additionIsExact,
   addNumbers,
   binaryExpr,
   callExpr,
   divideNumbers,
   finiteNumberSet,
   finiteNumberValue,
+  gridJoin,
+  gridMeet,
+  gridOfNumber,
+  integerValued,
   linearNameForExpression,
   maxNumberCases,
   mergeOrigin,
@@ -20,10 +25,12 @@ export {
   numberBranches,
   numberValue,
   plainNumber,
+  possiblyNaN,
   powerNumbers,
   subtractNumbers,
   unknownNumber,
   withNumberCases,
+  withinGridWindow,
 } from './number-domain.ts'
 export {
   finiteLiteralSetValues,
@@ -37,6 +44,7 @@ export {
   tupleElements,
   unknown,
   unknownArray,
+  maxArrayLength,
   unknownArrayLength,
   unknownObject,
   valueWithAssumptions,

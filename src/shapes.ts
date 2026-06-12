@@ -313,5 +313,5 @@ function isTupleTypeReference(type: ts.Type): type is ts.TupleTypeReference {
 
 function tupleLengthValue(expr: string, minLength: number, maxLength: number) {
   const lengthExpr = `${expr}.length`
-  return numberValue(minLength, maxLength, true, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
+  return numberValue(minLength, maxLength, 0, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
 }

@@ -17,8 +17,11 @@ import {
   mapOrigin,
 } from '../array-summary.ts'
 import {
+  additionIsExact,
   addNumbers,
   divideNumbers,
+  gridOfNumber,
+  integerValued,
   joinValues,
   literalKey,
   literalValue,
@@ -56,6 +59,7 @@ import {
 import {indexedElementPathValue} from '../loop-summary.ts'
 import {
   linearConstant,
+  linearSubtract,
   numericLiteralValue,
 } from '../linear.ts'
 import {
@@ -130,7 +134,7 @@ import {
   compareNumbers,
   isComparisonOperator,
 } from './refine.ts'
-import {comparisonConstraint, proveComparisonPlain} from '../proof.ts'
+import {admitsNaN, comparisonConstraint, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints} from '../proof.ts'
 import {formatRange} from '../reporting.ts'
 import {
   forgetRoot,
@@ -962,7 +966,7 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
   if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only', statement.statement)}
   const bound = evaluateIndexedForLoopBound(shape, frame)
   if ('error' in bound) return {kind: 'return', value: bound.error}
-  if (!bound.length.isInteger || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer', statement.condition ?? statement)}
+  if (!integerValued(bound.length) || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer', statement.condition ?? statement)}
 
   const body = statement.statement
   const scopedNames = [shape.indexName, ...blockScopedNames(body)]
@@ -993,7 +997,7 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
 }
 
 function indexedElementAssumptions(value: NumberValue, length: NumberValue): LinearConstraint[] {
-  const lower = comparisonConstraint(value, '>=', numberValue(0, 0, true, '0', linearConstant(0)))
+  const lower = comparisonConstraint(value, '>=', numberValue(0, 0, 0, '0', linearConstant(0)))
   const upper = comparisonConstraint(value, '<', length)
   return [lower, upper].filter((fact): fact is LinearConstraint => fact != null)
 }
@@ -1047,7 +1051,7 @@ function indexedLoopLength(limit: NumberValue, expression: ts.Expression, frame:
   const expr = limit.expr ?? expression.getText(frame.program.sourceFile)
   const min = Math.max(0, limit.min)
   const max = Math.max(0, limit.max)
-  return numberValue(min, max, true, expr, limit.linear, null, limit.origin)
+  return numberValue(min, max, 0, expr, limit.linear, null, limit.origin)
 }
 
 function bindForOfInitializer(initializer: ts.ForInitializer, value: Value, frame: InterpreterFrame) {
@@ -1080,7 +1084,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
   if (path != null) return path
 
   const numeric = numericLiteralValue(expression)
-  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), nodeText(expression, frame), linearConstant(numeric))
+  if (numeric != null) return numberValue(numeric, numeric, gridOfNumber(numeric), nodeText(expression, frame), linearConstant(numeric))
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], nodeText(expression, frame))
   if (ts.isTemplateExpression(expression)) {
     for (const span of expression.templateSpans) evaluateExpression(span.expression, frame)
@@ -1152,7 +1156,7 @@ function evaluateVoidExpression(expression: ts.VoidExpression, frame: Interprete
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
   if (expression.text === 'undefined') return nullValue('undefined')
-  if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, false, 'Infinity')
+  if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, null, 'Infinity')
   const ambient = ambientIdentifierBound(expression, frame.program)
   if (ambient != null) return ambient
   return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
@@ -1293,7 +1297,7 @@ function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.
   if (target.kind === 'nullable') return symbolicArrayElementAccess(target.present, index, expression, frame)
   if (target.kind !== 'array') return noteUnsupported(frame, `Element access expected an array path: ${expression.expression.getText(frame.program.sourceFile)}`, expression.expression)
   if (index.kind !== 'number') return noteUnsupported(frame, `Array index ${expression.argumentExpression?.getText(frame.program.sourceFile) ?? '<missing>'} expected a number`, expression.argumentExpression ?? expression)
-  const lower = proveComparisonPlain(index, '>=', numberValue(0, 0, true, '0', linearConstant(0)), frame.assumptions)
+  const lower = proveComparisonPlain(index, '>=', numberValue(0, 0, 0, '0', linearConstant(0)), frame.assumptions)
   const upper = proveComparisonPlain(index, '<', target.length, frame.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') {
     return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(target.length)}; prove 0 <= index < length or use a finite literal index`, expression.argumentExpression ?? expression)
@@ -1314,10 +1318,10 @@ function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.
 function addValueRangeAssumptions(value: Value, frame: InterpreterFrame) {
   if (value.kind === 'number') {
     const lower = Number.isFinite(value.min)
-      ? comparisonConstraint(value, '>=', numberValue(value.min, value.min, Number.isInteger(value.min), String(value.min), linearConstant(value.min)), undefined, 'code')
+      ? comparisonConstraint(value, '>=', numberValue(value.min, value.min, gridOfNumber(value.min), String(value.min), linearConstant(value.min)), undefined, 'code')
       : null
     const upper = Number.isFinite(value.max)
-      ? comparisonConstraint(value, '<=', numberValue(value.max, value.max, Number.isInteger(value.max), String(value.max), linearConstant(value.max)), undefined, 'code')
+      ? comparisonConstraint(value, '<=', numberValue(value.max, value.max, gridOfNumber(value.max), String(value.max), linearConstant(value.max)), undefined, 'code')
       : null
     frame.assumptions = mergeAssumptions(frame.assumptions, lower == null ? [] : [lower], upper == null ? [] : [upper])
     return
@@ -1403,7 +1407,7 @@ function objectPropertyPath(frame: InterpreterFrame, propertyName: string): stri
 }
 
 function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: InterpreterFrame): Value {
-  let length = numberValue(0, 0, true, '0', linearConstant(0))
+  let length = numberValue(0, 0, 0, '0', linearConstant(0))
   let elements: Value[] | null = []
   let element: Value | null = null
   for (const item of expression.elements) {
@@ -1419,12 +1423,12 @@ function evaluateArrayLiteral(expression: ts.ArrayLiteralExpression, frame: Inte
       continue
     }
     const value = evaluateExpression(item, frame)
-    length = addNumbers(length, numberValue(1, 1, true, '1', linearConstant(1)))
+    length = addNumbers(length, numberValue(1, 1, 0, '1', linearConstant(1)))
     if (elements != null) elements.push(value)
     element = mergeElementValue(element, value)
   }
   if (elements != null) {
-    length = numberValue(elements.length, elements.length, true, String(elements.length), linearConstant(elements.length))
+    length = numberValue(elements.length, elements.length, 0, String(elements.length), linearConstant(elements.length))
   }
   return {
     kind: 'array',
@@ -1461,7 +1465,7 @@ function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.Po
     return value
   }
   const old = readPath(path, frame, expression)
-  const one = numberValue(1, 1, true, '1', linearConstant(1))
+  const one = numberValue(1, 1, 0, '1', linearConstant(1))
   const next = old.kind === 'number'
     ? expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one)
     : noteUnsupported(frame, `Update ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
@@ -1584,10 +1588,16 @@ function evaluatePlainNumberBinary(
   expression: ts.Expression,
 ): Value {
   switch (kind) {
-    case ts.SyntaxKind.PlusToken:
-      return addNumbers(left, right)
-    case ts.SyntaxKind.MinusToken:
-      return subtractNumbers(left, right)
+    case ts.SyntaxKind.PlusToken: {
+      const result = addNumbers(left, right)
+      publishRoundedMonotoneFacts(result, '+', left, right, frame)
+      return result
+    }
+    case ts.SyntaxKind.MinusToken: {
+      const result = subtractNumbers(left, right)
+      publishRoundedMonotoneFacts(result, '-', left, right, frame)
+      return result
+    }
     case ts.SyntaxKind.AsteriskToken:
       return multiplyNumbers(left, right)
     case ts.SyntaxKind.SlashToken:
@@ -1605,6 +1615,49 @@ function evaluatePlainNumberBinary(
     default:
       return noteUnsupported(frame, `Unsupported numeric operator ${expression.getText(frame.program.sourceFile)}`, expression)
   }
+}
+
+// A rounded sum or difference still compares against its own operands:
+// rounding is monotone and each operand is a double, so fl(x + d) >= x
+// whenever d >= 0. Published eagerly so later goals can chain through the
+// result, e.g. `container >= containee + padding` reaching
+// `container >= containee` needs the recorded edge. Exact results skip this:
+// their algebraic form already subsumes it.
+function publishRoundedMonotoneFacts(result: Value, op: '+' | '-', left: NumberValue, right: NumberValue, frame: InterpreterFrame) {
+  if (result.kind !== 'number' || result.linear == null || result.expr == null) return
+  // A NaN operand makes the result NaN, which fails the comparison the fact
+  // asserts; operands stay in once any hull bound or trusted fact excludes
+  // NaN.
+  if (admitsNaN(left, frame.assumptions) || admitsNaN(right, frame.assumptions)) return
+  if (additionIsExact(left, right)) return
+  const facts: LinearConstraint[] = []
+  const push = (fact: LinearConstraint | null) => {
+    if (fact != null) facts.push(fact)
+  }
+  if (op === '+') {
+    // The >= pair carries the corpus's sign chains; the <= mirror images are
+    // goal-time recoverable and not worth growing every Farkas call for.
+    if (right.min >= 0) push(comparisonConstraint(result, '>=', left, `${result.expr} >= ${left.expr ?? '?'}`))
+    if (left.min >= 0) push(comparisonConstraint(result, '>=', right, `${result.expr} >= ${right.expr ?? '?'}`))
+  } else {
+    if (right.min >= 0) push(comparisonConstraint(result, '<=', left, `${result.expr} <= ${left.expr ?? '?'}`))
+    if (right.max <= 0) push(comparisonConstraint(result, '>=', left, `${result.expr} >= ${left.expr ?? '?'}`))
+    // The difference's sign: a >= b makes the real difference nonnegative,
+    // and rounding cannot cross zero (fl(0) is 0 and rounding is monotone).
+    // One direct Farkas query keeps this cheap on the hot path.
+    if (result.min < 0 && signFromFacts(left, right, frame.assumptions)) {
+      const zero = numberValue(0, 0, 0, '0', linearConstant(0))
+      push(comparisonConstraint(result, '>=', zero, `${result.expr} >= 0`))
+    }
+  }
+  if (facts.length > 0) frame.assumptions = mergeAssumptions(frame.assumptions, facts)
+}
+
+function signFromFacts(left: NumberValue, right: NumberValue, assumptions: LinearConstraint[]): boolean {
+  if (left.min >= right.max) return true
+  const diff = linearSubtract(left.linear, right.linear)
+  if (diff == null) return false
+  return proveNonNegativeFromConstraints(diff, false, assumptions.flatMap(nonNegativeConstraints))
 }
 
 function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
@@ -2083,8 +2136,8 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   for (const value of values) element = mergeElementValue(element, value)
   const symbolicLength = loop?.mode === 'symbolic' ? symbolicLoopAppendLength(current, loop) : null
   const nextLength = current.elements == null
-    ? numberValue(current.length.min + values.length, current.length.max + values.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
-    : numberValue(elements.length, elements.length, true, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
+    ? numberValue(current.length.min + values.length, current.length.max + values.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
+    : numberValue(elements.length, elements.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
   if (loop?.mode === 'symbolic' && path.segments.length === 0) {
     loop.appends.push({
       arrayName: path.root,
@@ -2326,8 +2379,8 @@ function addLengthAtMostSourceFact(length: NumberValue, sourceLength: NumberValu
 }
 
 function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame, text: string): NumberValue {
-  const fallback = numberValue(0, source.length.max, true, `${text}.length`)
-  if (source.length.max === 0) return numberValue(0, 0, true, `${text}.length`)
+  const fallback = numberValue(0, source.length.max, 0, `${text}.length`)
+  if (source.length.max === 0) return numberValue(0, 0, 0, `${text}.length`)
   const sourceExpr = source.expr ?? text
   const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`filterIndex(${sourceExpr})`, source.length)
@@ -2336,10 +2389,10 @@ function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, f
   const truth = truthinessValues(refined)
   if (truth == null) return fallback
   if (truth.every(value => value === true)) {
-    return numberValue(source.length.min, source.length.max, true, `${text}.length`, source.length.linear)
+    return numberValue(source.length.min, source.length.max, 0, `${text}.length`, source.length.linear)
   }
   if (truth.every(value => value === false)) {
-    return numberValue(0, 0, true, `${text}.length`)
+    return numberValue(0, 0, 0, `${text}.length`)
   }
   return fallback
 }

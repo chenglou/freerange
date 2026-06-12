@@ -80,7 +80,7 @@ function ambientNumberValue(expr: string, fact: AmbientNumberBound) {
   return numberValue(
     fact.min,
     fact.max,
-    fact.isInteger,
+    fact.isInteger ? 0 : null,
     expr,
     linearVariable(linearNameForExpression(expr)),
   )

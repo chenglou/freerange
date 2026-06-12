@@ -2134,3 +2134,107 @@ function chain11(value: number) {
 function chain12(value: number) {
   return value
 }
+
+// The former division-cancellation rules reasoned through a float quotient
+// that can round across the integer boundary: with float pointers,
+// cellSize = 4.044367056305642 and count = 13 admit
+// floor(pointer / cellSize) == count even though pointer < count * cellSize.
+// The integer variants are in-domain true but need a quotient-boundary margin
+// the checker cannot yet justify, so all three report unknown.
+
+/** @fit
+ * given total: int 0..6000
+ * given count: int 1..200
+ * return >= total
+ */
+export function negativeCeilDivisionRoundsAcrossTotal(total: number, count: number) {
+  return Math.ceil(total / count) * count
+}
+
+/** @fit
+ * given pointer: 0..100000
+ * given cellSize: int 1..1000
+ * given count: int 1..1000
+ * given pointer < count * cellSize
+ * return < count
+ */
+export function negativeFloorHitIndexRoundsAcrossCount(pointer: number, cellSize: number, count: number) {
+  const maxPointer = count * cellSize
+  return pointer < maxPointer ? Math.floor(pointer / cellSize) : 0
+}
+
+// Conditional flush loops (push guarded by i % 3 or a last-index test, with a
+// reset accumulator) rebind their cursor through a rounded computation the
+// loop analysis cannot classify as an additive step yet, so their sequence
+// facts stay underived for fractional data.
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given y: 0..1000
+ * given gap: 0..10
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * nondecreasing(return.rows.y)
+ * spaced(return.rows, gap)
+ */
+export function negativeSegmentedFlushSequenceFactsUnderived(items: {height: number}[], y: number, gap: number) {
+  const rows = []
+  let nextRowTop = y
+  let rowHeight = 0
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]!
+    rowHeight = Math.max(rowHeight, item.height)
+    if (i % 3 === 2 || i === items.length - 1) {
+      const rowTop = nextRowTop
+      const rowBottom = rowTop + rowHeight
+      rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
+      nextRowTop = rowBottom + gap
+      rowHeight = 0
+    }
+  }
+  return {rows}
+}
+
+// The real-arithmetic identities the rounding gate rejects: each of these
+// proved before the gate and has an IEEE counterexample in its given range.
+
+/** @fit
+ * given x: 0..100
+ * return == x
+ */
+export function negativeDivisionCancellationRounds(x: number) {
+  // x = 0.9: (0.9 / 3) * 3 is 0.8999999999999999
+  return (x / 3) * 3
+}
+
+/** @fit
+ * given x: 0..100
+ * given y: 0..1000000000
+ * return == x
+ */
+export function negativeAddSubtractCancellationRounds(x: number, y: number) {
+  // x = 0.1, y = 1e9: the sum absorbs x's low bits
+  return x + y - y
+}
+
+/** @fit
+ * given x: 1..100
+ * return > x
+ */
+export function negativeSubUlpMarginIsAbsorbed(x: number) {
+  // x = 1: 1 + 1e-30 === 1
+  return x + 1e-30
+}
+
+/** @fit
+ * given n: int 0..100
+ * return == n * 0.1
+ */
+export function negativeRepeatedAdditionIsNotMultiplication(n: number) {
+  // n = 6: six 0.1 additions give 0.6, but 6 * 0.1 is 0.6000000000000001
+  let total = 0
+  for (let i = 0; i < n; i++) {
+    total += 0.1
+  }
+  return total
+}

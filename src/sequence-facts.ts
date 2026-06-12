@@ -205,7 +205,7 @@ function addendsTotal(addends: string[], resolve: AddendResolver): NumberValue |
     if (value == null) return null
     total = total == null ? value : addNumbers(total, value)
   }
-  return total ?? numberValue(0, 0, true, '0', linearConstant(0))
+  return total ?? numberValue(0, 0, 0, '0', linearConstant(0))
 }
 
 function sequenceExpressionText(collection: string, expression: SequenceExpression) {

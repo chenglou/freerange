@@ -6,6 +6,7 @@ import {
   numberValue,
   type NumberValue,
   type Value,
+  gridOfNumber,
 } from './domain.ts'
 import {
   linearConstant,
@@ -30,7 +31,7 @@ function topLevelLiteralValue(expression: ts.Expression, expr: string): Value | 
     return topLevelLiteralValue(expression.expression, expr)
   }
   const numeric = numericLiteralValue(expression)
-  if (numeric != null) return numberValue(numeric, numeric, Number.isInteger(numeric), expr, linearConstant(numeric))
+  if (numeric != null) return numberValue(numeric, numeric, gridOfNumber(numeric), expr, linearConstant(numeric))
   if (ts.isStringLiteral(expression) || ts.isNoSubstitutionTemplateLiteral(expression)) return literalValue([expression.text], expr)
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
@@ -64,7 +65,7 @@ function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: 
     elements.push(value)
     elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
   }
-  const length = numberValue(expression.elements.length, expression.elements.length, true, `${expr}.length`, linearConstant(expression.elements.length))
+  const length = numberValue(expression.elements.length, expression.elements.length, 0, `${expr}.length`, linearConstant(expression.elements.length))
   return {kind: 'array', layout: 'collection', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
 }
 

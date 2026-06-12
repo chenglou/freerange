@@ -26,6 +26,8 @@ import {
   type NumberCase,
   type NumberValue,
   type Value,
+  gridMeet,
+  integerValued,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {assumptionsAreReachable} from './constraint-reachability.ts'
@@ -221,7 +223,7 @@ function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBind
   const missing = {
     lower: range.lowerValue != null && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue),
     upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
-    integer: range.valueKind === 'int' && !value.isInteger,
+    integer: range.valueKind === 'int' && !integerValued(value),
   }
   if ((missing.lower && missing.upper) || (missing.integer && (missing.lower || missing.upper))) {
     return [`${valueText}: ${rangeText}`]
@@ -543,7 +545,7 @@ function summaryIntersectionValue(left: Value, right: Value): Value {
   return numberValue(
     Math.max(left.min, right.min),
     Math.min(left.max, right.max),
-    left.isInteger || right.isInteger,
+    gridMeet(left.grid, right.grid),
     left.expr ?? right.expr,
     left.linear ?? right.linear,
     null,
@@ -584,7 +586,7 @@ function summaryRangeValue(
     const envelope = numberValue(
       Math.max(current.min, rangeValue.min),
       Math.min(current.max, rangeValue.max),
-      current.isInteger || rangeValue.isInteger,
+      gridMeet(current.grid, rangeValue.grid),
       expr,
       linear,
       null,
@@ -598,7 +600,7 @@ function summaryRangeValue(
   return numberValue(
     Math.max(current.min, rangeValue.min),
     Math.min(current.max, rangeValue.max),
-    current.isInteger || rangeValue.isInteger,
+    gridMeet(current.grid, rangeValue.grid),
     expr,
     linear,
     null,
@@ -625,7 +627,7 @@ function summaryRangeCases(
         value: numberValue(
           min,
           max,
-          currentBranch.value.isInteger || rangeBranch.value.isInteger,
+          gridMeet(currentBranch.value.grid, rangeBranch.value.grid),
           expr,
           linear,
           null,
@@ -728,15 +730,15 @@ function applySummaryComparisonToPath(
 
   switch (op) {
     case '==':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.isInteger, other.expr, other.linear, other.cases, origin)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.grid, other.expr, other.linear, other.cases, origin)))
       return
     case '>=':
     case '>':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.isInteger, current.expr, current.linear, current.cases, origin)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.grid, current.expr, current.linear, current.cases, origin)))
       return
     case '<=':
     case '<':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.isInteger, current.expr, current.linear, current.cases, origin)))
+      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.grid, current.expr, current.linear, current.cases, origin)))
       return
   }
 }

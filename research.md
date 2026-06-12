@@ -232,3 +232,19 @@ Two findings worth keeping:
 - Interval narrowing needs more than one round. The widened first pass can leave a max-accumulator's floor unanchored (`max(unbounded, h)` has no lower bound), and only the next round, run against the proven hulls, anchors it. Iterate pre-state hulls to a small fixpoint, and validate each round's closed forms against the previous post-loop hull before accepting.
 
 The standard names for the pieces: abstract interpretation fixpoints (Cousot), widening/narrowing, and scalar evolution's `{start, +, step}` recurrences derived from semantics. The relation layer over pushed sequences is a small bespoke relational domain on top.
+
+## Floats Prove By Exactness Or Monotonicity, Never By Algebra
+
+Program arithmetic gets its algebraic linear form only when the operation provably rounds nothing; everything else becomes one opaque atom named by its computation, keeping only its hull and whatever monotone facts survive rounding. The exactness family is checkable from data the values already carry: every runtime value is an integer multiple of `2^grid` (so `int` is grid 0 and `x * 0.5` lands on grid −1), and a result on the grid with magnitude at most `2^(53+grid)` is representable, so ECMA's round-of-exact-real returns it untouched. Array lengths sit in the window for free because JS caps them at `2^32 − 1`.
+
+What survives rounding without exactness, each verified by brute force against exact rationals:
+
+- Rounding is monotone, so `real(L) <= real(R)` carries `fl(L) <= fl(R)` for one operation per side. This recovers most float inequality proving — `y + gap >= y`, `(cols - w) >= 0` from `w <= cols` — without granting the results any algebra.
+- Sign survives op by op: a positive real sum or difference of doubles is at least `2^-1074` (all doubles share that grid), which rounding cannot cross, so even strict sign carries through `+` and `-`. Products and quotients keep `>= 0` but can underflow a strict sign to zero.
+- Commutativity is bitwise; reassociation is not. Expression keys may sort the two operands of `+` and `*` but never flatten across nesting.
+- Equality across rounding needs identical computation (same atom) or exactness. `(x / 3) * 3 == x` has runtime counterexamples in both directions (~4% of doubles each way), and one-sided `<=`/`>=` versions are just as false.
+- `%` never rounds (the exact remainder is always representable; 150k checks), and `x - x` is exactly `+0` for finite x.
+
+Strictness through rounding is the recurring trap: two real values that differ can round to the same double, so strict conclusions need exactness, an integer gap, or a margin past the boundary. The deleted floor/ceil division rules are the canonical case — `floor(p / cell) < count` fails at ordinary layout magnitudes (cell 4.044367056305642, count 13) because the quotient rounds onto the boundary; "error below one" is no defense against a cliff.
+
+NaN is the other axis: it fails every comparison, so any trusted or observed fact about a value certifies it non-NaN, while a fully unconstrained value proves nothing reflexive (`x == x` included). The same certificate logic decides when a counterexample vertex is a real witness: only variables pinned by givens or checked contracts anchor a disproof; a derived hull over-approximates its correlations.

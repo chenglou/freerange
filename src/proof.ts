@@ -9,6 +9,7 @@ import {
   evaluateComparisonRules,
   symbolicComparisonProves,
   type ProofRulesContext,
+  type ReductionOffsets,
 } from './proof-rules.ts'
 import type {FitCheck} from './check-types.ts'
 import {
@@ -17,6 +18,10 @@ import {
   type FitProofStep,
 } from './obligations.ts'
 import {
+  additionIsExact,
+  gridJoin,
+  integerValued,
+  possiblyNaN,
   linearNameForExpression,
   literalKey,
   numberBranches,
@@ -29,17 +34,20 @@ import {
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {
+  binaryExpression,
   cleanLinear,
   isZeroLinear,
   linearConstantStatus,
   linearAdd,
   linearConstant,
   linearFromExpressionText,
+  linearFromTopOperation,
   linearScaleExact,
   linearSubtract,
   linearVariable,
   sameExpressionText,
   sameLinear,
+  singleUnitAtom,
   type LinearExpr,
 } from './linear.ts'
 import {farkasProvesNonNegative, linearMaximum} from './farkas.ts'
@@ -50,7 +58,8 @@ import {
   rationalIsZero,
   rationalNegate,
   rationalOne,
-  rationalToNumber,
+  rationalToNumberCeil,
+  rationalToNumberFloor,
   rationalZero,
   type Rational,
 } from './rational.ts'
@@ -173,10 +182,13 @@ function structuralExpr(value: Value): string | null {
 }
 
 export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
-  if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) return {status: 'pass'}
+  // Same-expression == needs NaN excluded: NaN !== NaN, and a value is
+  // NaN-free once anything constrains it (NaN fails every comparison, so a
+  // recorded fact about it is a non-NaN certificate).
+  if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr && !admitsNaN(left, assumptions)) return {status: 'pass'}
   const mathTruth = proveMathLemma(left, op, right, assumptions)
   if (mathTruth === 'true') return {status: 'pass'}
-  const truth = compareRanges(left, op, right)
+  const truth = compareRanges(left, op, right, admitsNaN(left, assumptions) || admitsNaN(right, assumptions))
   if (truth === 'true') return {status: 'pass'}
   if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
   const linearTruth = compareLinear(left, op, right, assumptions)
@@ -192,7 +204,7 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
   const ruleResult = evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))
   if (ruleResult?.status === 'pass') return {domain: 'numeric', rule: ruleResult.rule, message: ruleResult.message}
 
-  const truth = compareRanges(left, op, right)
+  const truth = compareRanges(left, op, right, admitsNaN(left, assumptions) || admitsNaN(right, assumptions))
   if (truth !== 'maybe') return {domain: 'numeric', rule: 'range-comparison', message: 'checked comparison from interval bounds'}
 
   const linearTruth = compareLinear(left, op, right, assumptions)
@@ -203,7 +215,34 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
   return {domain: 'numeric', rule: 'comparison', message: 'checked comparison claim'}
 }
 
-function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue): Truth {
+// NaN has no representation in the domain: any recorded comparison fact
+// mentioning a value is false of NaN at runtime, so it certifies non-NaN the
+// same way a finite hull bound does.
+export function admitsNaN(value: NumberValue, assumptions: LinearConstraint[]): boolean {
+  if (!possiblyNaN(value)) return false
+  const atom = singleUnitAtom(value.linear) ?? value.expr
+  if (atom == null) return true
+  for (const assumption of assumptions) {
+    // Only trusted or observed facts certify: a given is caller-checked and a
+    // branch fact was tested at runtime, both false of NaN. A 'code' fact
+    // (e.g. a published rounding bracket) may itself have assumed too much.
+    if (assumption.source === 'code') continue
+    if (assumption.leftExpr != null && sameExpressionText(assumption.leftExpr, atom)) return false
+    if (assumption.rightExpr != null && sameExpressionText(assumption.rightExpr, atom)) return false
+    if (assumption.diff != null && assumption.diff.terms.has(atom)) return false
+  }
+  return true
+}
+
+function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue, nanHazard: boolean): Truth {
+  // A hull-decided 'true' against an infinite endpoint (x <= Infinity) is
+  // false for NaN; 'false' verdicts stay sound since NaN fails every
+  // comparison too.
+  if (nanHazard && compareRangesPlain(left, op, right) === 'true') return 'maybe'
+  return compareRangesPlain(left, op, right)
+}
+
+function compareRangesPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue): Truth {
   switch (op) {
     case '==':
       if (left.min === left.max && right.min === right.max && left.min === right.min) return 'true'
@@ -232,37 +271,79 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   return evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
 }
 
-function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]) {
+function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]): boolean {
   if (hasComparisonFact(expression, strict ? '>' : '>=', '0', assumptions)) return true
   const linear = linearFromExpressionText(expression)
-  return linear != null && provesNonNegative(linear, strict, assumptions)
+  if (linear != null && provesNonNegative(linear, strict, assumptions)) return true
+  return roundedSignNonNegative(expression, strict, assumptions)
+}
+
+// Sign survives rounding op-by-op. A real sum or difference of doubles that
+// is positive is at least 2^-1074 (every double sits on that grid), which
+// rounding to nearest cannot cross, so even strict sign carries through + and
+// -; products and quotients keep >= 0 but can underflow a strict sign to
+// zero.
+function roundedSignNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]): boolean {
+  const sum = binaryExpression(expression, '+')
+  const difference = binaryExpression(expression, '-')
+  if (sum != null || difference != null) {
+    const top = linearFromTopOperation(expression)
+    if (top != null && provesNonNegative(top, strict, assumptions)) return true
+    if (sum != null) {
+      return (provesExprNonNegative(sum.left, strict, assumptions) && provesExprNonNegative(sum.right, false, assumptions))
+        || (provesExprNonNegative(sum.left, false, assumptions) && provesExprNonNegative(sum.right, strict, assumptions))
+    }
+    return difference != null && hasComparisonFact(difference.left, strict ? '>' : '>=', difference.right, assumptions)
+  }
+  if (strict) return false
+  const product = binaryExpression(expression, '*')
+  if (product != null) {
+    return provesExprNonNegative(product.left, false, assumptions) && provesExprNonNegative(product.right, false, assumptions)
+  }
+  const quotient = binaryExpression(expression, '/')
+  if (quotient != null) {
+    return provesExprNonNegative(quotient.left, false, assumptions) && provesExprNonNegative(quotient.right, true, assumptions)
+  }
+  return false
 }
 
 function proofRulesContext(assumptions: LinearConstraint[]): ProofRulesContext {
   return {
     assumptions,
-    hasComparisonFact: (leftExpr, op, rightExpr) => hasComparisonFact(leftExpr, op, rightExpr, assumptions),
+    hasComparisonFact: (leftExpr, op, rightExpr, offsets) => hasComparisonFact(leftExpr, op, rightExpr, assumptions, offsets),
     provesExprNonNegative: (expression, strict) => provesExprNonNegative(expression, strict, assumptions),
+    provesLinearNonNegative: (diff, strict) => provesNonNegative(diff, strict, assumptions),
   }
 }
 
-function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[]) {
-  for (const assumption of assumptions) {
-    if (assumption.leftExpr == null || assumption.rightExpr == null) continue
-    if (sameExpressionText(assumption.leftExpr, leftExpr) && sameExpressionText(assumption.rightExpr, rightExpr) && comparisonImplies(assumption.op, op)) return true
-    if (sameExpressionText(assumption.leftExpr, rightExpr) && sameExpressionText(assumption.rightExpr, leftExpr) && comparisonImplies(flipComparison(assumption.op), op)) return true
+function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[], offsets?: ReductionOffsets) {
+  const leftOffset = offsets?.left ?? 0
+  const rightOffset = offsets?.right ?? 0
+  if (leftOffset === 0 && rightOffset === 0) {
+    for (const assumption of assumptions) {
+      if (assumption.leftExpr == null || assumption.rightExpr == null) continue
+      if (sameExpressionText(assumption.leftExpr, leftExpr) && sameExpressionText(assumption.rightExpr, rightExpr) && comparisonImplies(assumption.op, op)) return true
+      if (sameExpressionText(assumption.leftExpr, rightExpr) && sameExpressionText(assumption.rightExpr, leftExpr) && comparisonImplies(flipComparison(assumption.op), op)) return true
+    }
+    if (symbolicComparisonProves(leftExpr, op, rightExpr, assumptions)) return true
   }
-  if (symbolicComparisonProves(leftExpr, op, rightExpr, assumptions)) return true
 
-  const leftLinear = linearFromExpressionText(leftExpr)
-  const rightLinear = linearFromExpressionText(rightExpr)
+  const leftLinear = offsetLinear(linearFromExpressionText(leftExpr), leftOffset)
+  const rightLinear = offsetLinear(linearFromExpressionText(rightExpr), rightOffset)
   if (leftLinear == null || rightLinear == null) return false
   return compareLinear(
-    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, leftExpr, leftLinear),
+    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, leftExpr, leftLinear),
     op,
-    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, false, rightExpr, rightLinear),
+    numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, rightExpr, rightLinear),
     assumptions,
   ) === 'true'
+}
+
+// A reduction offset is the prover's real arithmetic over the named double,
+// never a program op.
+function offsetLinear(linear: LinearExpr | null, offset: number): LinearExpr | null {
+  if (linear == null || offset === 0) return linear
+  return linearAdd(linear, linearConstant(offset))
 }
 
 function comparisonImplies(actual: ComparisonOperator, needed: ComparisonOperator) {
@@ -373,7 +454,7 @@ export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, 
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null && left.expr == null && right.expr == null && text == null) return null
   if (diff == null && text == null && (left.expr == null || right.expr == null)) return null
-  const integerStrict = diff != null && (op === '>' || op === '<') && left.isInteger && right.isInteger
+  const integerStrict = diff != null && (op === '>' || op === '<') && integerValued(left) && integerValued(right)
   return {
     diff,
     op,
@@ -425,6 +506,11 @@ export function constraintsFromRange(
 function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null) return 'maybe'
+
+  // A zero diff with no fact in play is self-comparison; only a fully
+  // unconstrained value can be NaN, and NaN fails even x == x. The strict
+  // 'false' verdicts below stay sound: NaN fails those comparisons too.
+  if (isZeroLinear(diff) && (admitsNaN(left, assumptions) || admitsNaN(right, assumptions)) && op !== '>' && op !== '<') return 'maybe'
 
   switch (op) {
     case '==':
@@ -489,8 +575,18 @@ export function comparisonCounterexample(
     ...intervalConstraints({...left, linear: leftLinear}),
     ...intervalConstraints({...right, linear: rightLinear}),
   ]
+  // Anchoring needs interface facts — givens and checked contracts: a vertex
+  // is a contract-modular witness only when the variables are pinned down by
+  // what the caller asserted, not by a derived hull (a loop accumulator's
+  // interval over-approximates its trajectory, so a point inside it need not
+  // be reachable).
   const anchored = new Set<string>()
-  for (const fact of facts) for (const name of fact.diff.terms.keys()) anchored.add(name)
+  for (const assumption of assumptions) {
+    if (assumption.source === 'code' || assumption.source === 'branch') continue
+    for (const fact of nonNegativeConstraints(assumption)) {
+      for (const name of fact.diff.terms.keys()) anchored.add(name)
+    }
+  }
   for (const name of violation.terms.keys()) {
     if (!anchored.has(name)) return null
   }
@@ -524,12 +620,14 @@ export function provableBounds(value: NumberValue, assumptions: LinearConstraint
   for (const name of value.linear.terms.keys()) {
     if (!anchored.has(name)) return {min: value.min, max: value.max}
   }
+  // The optima are exact rationals; published endpoints round outward so the
+  // hull never tightens past the polytope.
   let min = value.min
   let max = value.max
   const upper = linearMaximum(value.linear, facts)
-  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumber(upper.value))
+  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumberCeil(upper.value))
   const lower = linearMaximum(linearScaleExact(value.linear, rationalNegate(rationalOne)), facts)
-  if (lower.kind === 'optimum') min = Math.max(min, -rationalToNumber(lower.value))
+  if (lower.kind === 'optimum') min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
   return min <= max ? {min, max} : {min: value.min, max: value.max}
 }
 
@@ -600,11 +698,14 @@ export function runningSumFacts(value: NumberValue, start: NumberValue, count: N
     const upper = comparisonConstraint(value, '<=', start, `${value.expr ?? formatRange(value)} <= ${start.expr ?? formatRange(start)}`)
     if (upper != null) facts.push(upper)
   }
-  if (count.min >= 1 && start.linear != null && increment.linear != null) {
+  // The one-iteration fact compares the runtime accumulator against the REAL
+  // sum start + increment, which a rounded first addition can undershoot;
+  // only an exact addition supports it.
+  if (count.min >= 1 && start.linear != null && increment.linear != null && additionIsExact(start, increment)) {
     const oneIterEnd = numberValue(
       start.min + increment.min,
       start.max + increment.max,
-      start.isInteger && increment.isInteger,
+      gridJoin(start.grid, increment.grid),
       null,
       linearAdd(start.linear, increment.linear),
     )

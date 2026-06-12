@@ -12,7 +12,7 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
     return numberValue(
       value.min,
       value.max,
-      value.isInteger,
+      value.grid,
       expr,
       options.preserveLinear === true ? value.linear : linearVariable(linearNameForExpression(expr)),
       options.preserveLinear === true ? value.cases : null,

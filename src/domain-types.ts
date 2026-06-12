@@ -23,7 +23,13 @@ export type NumberValue = {
   kind: 'number'
   min: number
   max: number
-  isInteger: boolean
+  // Every possible runtime value is an integer multiple of 2^grid (so `int`
+  // is grid 0 and a coarser grid implies the finer ones); null means no known
+  // grid. Rounding to nearest keeps a value on its grid, so the grid survives
+  // the float ops that produced the value — what rounding breaks is only the
+  // algebraic identity between result and operands, which the linear-form
+  // exactness gate decides separately.
+  grid: number | null
   expr: string | null
   linear: LinearExpr | null
   cases: NumberCase[] | null
@@ -93,6 +99,13 @@ export type SequenceRelation = {
   left: SequenceTerm
   op: ComparisonOperator
   right: SequenceExpression
+  // The relation states the loop's own computation (the addends name the
+  // amounts the code added, in whatever grouping it used), not a
+  // real-arithmetic identity: rounding separates the two by ulps, so no
+  // consumer may turn a rounded relation back into algebra. Sequence builtins
+  // like spaced read it as provenance; an exact relation (integer data) keeps
+  // the full identity.
+  rounded?: true
 }
 
 export type SequenceTerm = {

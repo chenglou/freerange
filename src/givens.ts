@@ -24,6 +24,7 @@ import {
   type NumberValue,
   type SequenceRelation,
   type Value,
+  gridMeet,
 } from './domain.ts'
 import {
   parsePrintedNumber,
@@ -310,7 +311,19 @@ export function collectGivenAssumptions(
   const booleanAssumptions = new Map<string, boolean>()
   const checks: FitCheck[] = []
   const context: EvalContext = {program, file, env, inputRoots, stack, checks: [], assumptions, booleanAssumptions, contractCache}
+  // Evaluating a given's expression runs the interpreter, which publishes its
+  // own facts (a rounded sum compares against its operands) by replacing
+  // context.assumptions; fold those back so later givens and the returned
+  // fact list keep them.
+  const syncEvaluationFacts = () => {
+    if (context.assumptions === assumptions) return
+    for (const fact of context.assumptions) {
+      if (!assumptions.includes(fact)) assumptions.push(fact)
+    }
+    context.assumptions = assumptions
+  }
   for (const given of givens) {
+    syncEvaluationFacts()
     if (given.kind === 'range') {
       const spec = given.spec
       const value = evaluateGivenNumber(file, functionName, spec, spec.expression, context, evaluators)
@@ -384,6 +397,7 @@ export function collectGivenAssumptions(
 
     const spec = given.spec
     const comparison = evaluateGivenComparison(file, functionName, spec, context, evaluators)
+    syncEvaluationFacts()
     if (comparison.kind === 'invalid') {
       checks.push(comparison.check)
       continue
@@ -718,7 +732,10 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   if (lengthRoot != null) {
     const target = env.get(lengthRoot)
     if (target?.kind === 'array') {
-      env.set(lengthRoot, {...target, length: value})
+      // The given refines what the array already guarantees: a length is an
+      // integer whether or not the range says `int`.
+      const length = numberValue(value.min, value.max, gridMeet(value.grid, target.length.grid), value.expr, value.linear, value.cases, value.origin)
+      env.set(lengthRoot, {...target, length})
       return
     }
   }
@@ -771,14 +788,14 @@ function rangeCasesValue(range: FitRange, expressionText: string, cases: {min: n
   const value = numberValue(
     Math.min(...cases.map(rangeCase => rangeCase.min)),
     Math.max(...cases.map(rangeCase => rangeCase.max)),
-    range.valueKind === 'int',
+    range.valueKind === 'int' ? 0 : null,
     expressionText,
     linear,
   )
   return cases.length === 1
     ? value
     : withNumberCases(value, cases.map(rangeCase => ({
-      value: numberValue(rangeCase.min, rangeCase.max, range.valueKind === 'int', expressionText, linear),
+      value: numberValue(rangeCase.min, rangeCase.max, range.valueKind === 'int' ? 0 : null, expressionText, linear),
       assumptions: [],
     })))
 }

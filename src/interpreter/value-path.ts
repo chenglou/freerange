@@ -5,6 +5,7 @@ import {
   tupleElements,
   unknown,
   type Value,
+  integerValued,
 } from '../domain.ts'
 import {linearConstant} from '../linear.ts'
 import {expressionRootName} from '../source-expressions.ts'
@@ -107,7 +108,7 @@ export function readArrayIndexValue(target: Value, index: number, expr: string):
 }
 
 export function exactInteger(value: Value): number | null {
-  return value.kind === 'number' && value.min === value.max && value.isInteger ? value.min : null
+  return value.kind === 'number' && value.min === value.max && integerValued(value) ? value.min : null
 }
 
 export function valueExpr(value: Value): string | null {
@@ -159,7 +160,7 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value, 
     layout: 'tuple',
     elements,
     element,
-    length: numberValue(elements.length, elements.length, true, `${expr}.length`, linearConstant(elements.length)),
+    length: numberValue(elements.length, elements.length, 0, `${expr}.length`, linearConstant(elements.length)),
   }
 }
 

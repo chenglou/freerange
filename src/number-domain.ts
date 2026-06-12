@@ -1,4 +1,14 @@
-import {rationalIsExactNumber, rationalToNumber} from './rational.ts'
+import {
+  rationalAdd,
+  rationalCompare,
+  rationalDivide,
+  rationalFromNumber,
+  rationalIsExactNumber,
+  rationalMultiply,
+  rationalOne,
+  rationalToNumber,
+  type Rational,
+} from './rational.ts'
 import {
   domainPathSyntheticName,
   parseDomainPathText,
@@ -8,6 +18,7 @@ import {
   linearAdd,
   linearConstant,
   linearScale,
+  linearScaleExact,
   linearSubtract,
   linearVariable,
   sameLinear,
@@ -28,10 +39,120 @@ export function linearNameForExpression(text: string) {
   return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathSyntheticName(text) : text
 }
 
+// A value pinned to zero sits on every grid; coarser than any nonzero
+// double's grid (whose exponents reach 1024 - 53 at most).
+const zeroGrid = 1075
+
+export function integerValued(value: NumberValue): boolean {
+  return value.grid != null && value.grid >= 0
+}
+
+// NaN has no representation in the domain: any constraining fact is false of
+// it (NaN fails every comparison), so a value with at least one finite bound
+// cannot be NaN at runtime. Only the fully unconstrained hull admits it.
+export function possiblyNaN(value: NumberValue): boolean {
+  return value.min === Number.NEGATIVE_INFINITY && value.max === Number.POSITIVE_INFINITY
+}
+
+// Union of two values keeps only the grid both sit on (the finer exponent);
+// intersection keeps the coarser of the two claims.
+export function gridJoin(left: number | null, right: number | null): number | null {
+  return left == null || right == null ? null : Math.min(left, right)
+}
+
+export function gridMeet(left: number | null, right: number | null): number | null {
+  if (left == null) return right
+  if (right == null) return left
+  return Math.max(left, right)
+}
+
+// The finest dyadic grid one double sits on: value = m * 2^grid with m odd.
+export function gridOfNumber(value: number): number | null {
+  if (!Number.isFinite(value)) return null
+  if (value === 0) return zeroGrid
+  const rational = rationalFromNumber(value)!
+  let num = rational.num < 0n ? -rational.num : rational.num
+  let grid = 0
+  while ((num & 1n) === 0n) {
+    num >>= 1n
+    grid++
+  }
+  let den = rational.den
+  while (den > 1n) {
+    den >>= 1n
+    grid--
+  }
+  return grid
+}
+
+// 2^(53+grid) bounds the magnitudes where every multiple of 2^grid is
+// representable. An exact real result on the grid and inside the window IS
+// what the runtime returns (ECMA defines + - * / as round-of-exact-real), so
+// the op rounds nothing and its algebraic linear form is the runtime double.
+export function withinGridWindow(magnitude: Rational, grid: number): boolean {
+  const exponent = 53 + grid
+  const threshold: Rational = exponent >= 0
+    ? {num: 1n << BigInt(exponent), den: 1n}
+    : {num: 1n, den: 1n << BigInt(-exponent)}
+  return rationalCompare(magnitude, threshold) <= 0
+}
+
+// Largest magnitude the hull admits, exactly; null when unbounded.
+function maxAbsRational(value: NumberValue): Rational | null {
+  if (!Number.isFinite(value.min) || !Number.isFinite(value.max)) return null
+  return rationalFromNumber(Math.max(Math.abs(value.min), Math.abs(value.max)))
+}
+
+// |value| is exactly 2^k for some k: the normalized denominator is always a
+// power of two, so this is just the numerator's odd part being one.
+function powerOfTwoMagnitude(value: number): boolean {
+  const rational = rationalFromNumber(value)
+  if (rational == null || rational.num === 0n) return false
+  const num = rational.num < 0n ? -rational.num : rational.num
+  return (num & (num - 1n)) === 0n
+}
+
+function sumIsExact(left: NumberValue, right: NumberValue, grid: number | null): boolean {
+  if (grid == null || left.linear == null || right.linear == null) return false
+  const leftMagnitude = maxAbsRational(left)
+  const rightMagnitude = maxAbsRational(right)
+  if (leftMagnitude == null || rightMagnitude == null) return false
+  return withinGridWindow(rationalAdd(leftMagnitude, rightMagnitude), grid)
+}
+
+// True when the program's a + b (or a - b) provably rounds nothing, so its
+// algebraic form is the runtime double.
+export function additionIsExact(left: NumberValue, right: NumberValue): boolean {
+  return sumIsExact(left, right, gridJoin(left.grid, right.grid))
+}
+
+// A rounded result with no algebraic identity still denotes one double per
+// evaluation; naming it by its source expression lets identical computations
+// (echo claims, recorded branch facts) connect without claiming any algebra.
+function opaqueLinear(expr: string | null): LinearExpr | null {
+  return expr == null ? null : linearVariable(linearNameForExpression(expr))
+}
+
+// Both operands pinned to one finite double each: the op folds to the exact
+// IEEE result, like source literals do.
+function foldBinary(
+  left: NumberValue,
+  right: NumberValue,
+  apply: (left: number, right: number) => number,
+  expr: string | null,
+  origin: string[],
+): NumberValue | null {
+  if (left.min !== left.max || right.min !== right.max) return null
+  if (!Number.isFinite(left.min) || !Number.isFinite(right.min)) return null
+  const result = apply(left.min, right.min)
+  if (Number.isNaN(result)) return null
+  return numberValue(result, result, gridOfNumber(result), expr, linearConstant(result), null, origin)
+}
+
 export function numberValue(
   min: number,
   max: number,
-  isInteger: boolean,
+  grid: number | null,
   expr: string | null,
   linear: LinearExpr | null = null,
   cases: NumberCase[] | null = null,
@@ -43,12 +164,12 @@ export function numberValue(
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max
   if (clean != null && clean.terms.size === 0 && rationalIsExactNumber(clean.constant)) {
     const exact = rationalToNumber(clean.constant)
-    return {kind: 'number', min: exact, max: exact, isInteger: Number.isInteger(exact), expr, linear: clean, cases, origin: cleanOrigin}
+    return {kind: 'number', min: exact, max: exact, grid: gridOfNumber(exact), expr, linear: clean, cases, origin: cleanOrigin}
   }
   if (cleanMin > cleanMax) {
-    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, isInteger: false, expr, linear: clean, cases, origin: cleanOrigin}
+    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, grid: null, expr, linear: clean, cases, origin: cleanOrigin}
   }
-  return {kind: 'number', min: cleanMin, max: cleanMax, isInteger, expr, linear: clean, cases, origin: cleanOrigin}
+  return {kind: 'number', min: cleanMin, max: cleanMax, grid, expr, linear: clean, cases, origin: cleanOrigin}
 }
 
 export function finiteNumberValue(
@@ -61,10 +182,10 @@ export function finiteNumberValue(
   if (finiteValues.length === 0) return unknownNumber(expr ?? '<empty finite set>')
   const min = finiteValues[0]!
   const max = finiteValues[finiteValues.length - 1]!
-  const isInteger = finiteValues.every(Number.isInteger)
-  const value = numberValue(min, max, isInteger, expr, linear, null, origin)
+  const grid = finiteValues.reduce<number | null>((joined, choice) => gridJoin(joined, gridOfNumber(choice)), zeroGrid)
+  const value = numberValue(min, max, grid, expr, linear, null, origin)
   return withNumberCases(value, finiteValues.map(choice => ({
-    value: numberValue(choice, choice, Number.isInteger(choice), String(choice), linearConstant(choice), null, origin),
+    value: numberValue(choice, choice, gridOfNumber(choice), String(choice), linearConstant(choice), null, origin),
     assumptions: [],
   })))
 }
@@ -88,7 +209,7 @@ export function unknownNumber(name: string): NumberValue {
     kind: 'number',
     min: Number.NEGATIVE_INFINITY,
     max: Number.POSITIVE_INFINITY,
-    isInteger: false,
+    grid: null,
     expr: name,
     linear: linearVariable(linearNameForExpression(name)),
     cases: null,
@@ -138,13 +259,13 @@ function normalizeNumberCases(cases: NumberCase[]): NumberCase[] {
 
 function numberCasesCanMerge(left: NumberValue, right: NumberValue) {
   if (numberValueContains(left, right) || numberValueContains(right, left)) return true
-  if (left.isInteger !== right.isInteger) return false
-  return left.isInteger ? left.max + 1 >= right.min : left.max >= right.min
+  if (integerValued(left) !== integerValued(right)) return false
+  return integerValued(left) ? left.max + 1 >= right.min : left.max >= right.min
 }
 
 function numberValueContains(container: NumberValue, item: NumberValue) {
   if (container.min > item.min || container.max < item.max) return false
-  return !container.isInteger || item.isInteger
+  return !integerValued(container) || integerValued(item)
 }
 
 function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberValue {
@@ -155,7 +276,7 @@ function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberVal
   return numberValue(
     Math.min(left.min, right.min),
     Math.max(left.max, right.max),
-    left.isInteger && right.isInteger,
+    gridJoin(left.grid, right.grid),
     expr,
     linear,
     null,
@@ -166,51 +287,82 @@ function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberVal
 function sameNumberShape(left: NumberValue, right: NumberValue) {
   return left.min === right.min
     && left.max === right.max
-    && left.isInteger === right.isInteger
+    && left.grid === right.grid
     && (left.expr ?? null) === (right.expr ?? null)
     && ((left.linear == null && right.linear == null) || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)))
 }
 
-function linearMultiply(left: NumberValue, right: NumberValue): LinearExpr | null {
-  if (left.min === left.max) return linearScale(right.linear, left.min)
-  if (right.min === right.max) return linearScale(left.linear, right.min)
-  return null
+// Adding a pinned zero returns the other operand under JS == (only the sign
+// of -0 + 0 changes, which == cannot see), so the operand's identity, grid,
+// and hull all survive.
+function zeroIdentity(other: NumberValue, zero: NumberValue, expr: string | null, origin: string[]): NumberValue | null {
+  if (zero.min !== 0 || zero.max !== 0) return null
+  return numberValue(other.min, other.max, other.grid, expr, other.linear, null, origin)
 }
 
 export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  const min = left.min + right.min
-  const max = left.max + right.max
-  return numberValue(
-    Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min,
-    Number.isNaN(max) ? Number.POSITIVE_INFINITY : max,
-    left.isInteger && right.isInteger,
-    binaryExpr(left, '+', right),
-    linearAdd(left.linear, right.linear),
-    null,
-    mergeOrigin(left, right),
-  )
+  const expr = binaryExpr(left, '+', right)
+  const origin = mergeOrigin(left, right)
+  const folded = foldBinary(left, right, (a, b) => a + b, expr, origin)
+    ?? zeroIdentity(left, right, expr, origin)
+    ?? zeroIdentity(right, left, expr, origin)
+  if (folded != null) return folded
+  const grid = gridJoin(left.grid, right.grid)
+  const linear = sumIsExact(left, right, grid) ? linearAdd(left.linear, right.linear) : opaqueLinear(expr)
+  return numberValue(left.min + right.min, left.max + right.max, grid, expr, linear, null, origin)
 }
 
 export function subtractNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  const min = left.min - right.max
-  const max = left.max - right.min
-  return numberValue(
-    Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min,
-    Number.isNaN(max) ? Number.POSITIVE_INFINITY : max,
-    left.isInteger && right.isInteger,
-    binaryExpr(left, '-', right),
-    linearSubtract(left.linear, right.linear),
-    null,
-    mergeOrigin(left, right),
-  )
+  const expr = binaryExpr(left, '-', right)
+  const origin = mergeOrigin(left, right)
+  const folded = foldBinary(left, right, (a, b) => a - b, expr, origin)
+    ?? zeroIdentity(left, right, expr, origin)
+  if (folded != null) return folded
+  // x - x is exactly +0 for any finite x; the same atom names the same double
+  // within one evaluation.
+  if (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)
+    && Number.isFinite(left.min) && Number.isFinite(left.max)) {
+    return numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin)
+  }
+  const grid = gridJoin(left.grid, right.grid)
+  const linear = sumIsExact(left, right, grid) ? linearSubtract(left.linear, right.linear) : opaqueLinear(expr)
+  return numberValue(left.min - right.max, left.max - right.min, grid, expr, linear, null, origin)
+}
+
+// Scaling by one pinned double keeps the algebraic form only when the op is
+// provably exact: an upward power of two that cannot overflow, a downward one
+// the operand's grid survives, or a general constant whose products stay in
+// the operand-times-constant grid window.
+function scaledLinear(other: NumberValue, constant: number, resultFinite: boolean): LinearExpr | null {
+  if (other.linear == null || constant === 0 || !Number.isFinite(constant)) return null
+  const constantGrid = gridOfNumber(constant)!
+  const constantRational = rationalFromNumber(constant)!
+  if (powerOfTwoMagnitude(constant)) {
+    const exact = constantGrid >= 0
+      ? resultFinite
+      : other.grid != null && other.grid + constantGrid >= -1074
+    return exact ? linearScaleExact(other.linear, constantRational) : null
+  }
+  if (other.grid == null || !resultFinite) return null
+  const magnitude = maxAbsRational(other)
+  if (magnitude == null) return null
+  const product = rationalMultiply(magnitude, rationalFromNumber(Math.abs(constant))!)
+  return withinGridWindow(product, other.grid + constantGrid) ? linearScaleExact(other.linear, constantRational) : null
 }
 
 export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberValue {
-  if (left.min === 0 && left.max === 0) {
-    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
-  }
-  if (right.min === 0 && right.max === 0) {
-    return numberValue(0, 0, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
+  const expr = binaryExpr(left, '*', right)
+  const origin = mergeOrigin(left, right)
+  const folded = foldBinary(left, right, (a, b) => a * b, expr, origin)
+  if (folded != null) return folded
+  // 0 * x is 0 only for finite x; an unbounded hull admits Infinity, whose
+  // product is NaN.
+  for (const [zero, other] of [[left, right], [right, left]] as const) {
+    if (zero.min === 0 && zero.max === 0) {
+      return Number.isFinite(other.min) && Number.isFinite(other.max)
+        ? numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin)
+        : numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, opaqueLinear(expr), null, origin)
+    }
   }
   const products = nonNanExtrema([
     left.min * right.min,
@@ -218,36 +370,66 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
     left.max * right.min,
     left.max * right.max,
   ])
-  return numberValue(products.min, products.max, left.isInteger && right.isInteger, binaryExpr(left, '*', right), linearMultiply(left, right), null, mergeOrigin(left, right))
+  const grid = left.grid == null || right.grid == null ? null : left.grid + right.grid
+  const resultFinite = Number.isFinite(products.min) && Number.isFinite(products.max)
+  const linear = (left.min === left.max ? scaledLinear(right, left.min, resultFinite) : null)
+    ?? (right.min === right.max ? scaledLinear(left, right.min, resultFinite) : null)
+    ?? opaqueLinear(expr)
+  return numberValue(products.min, products.max, grid, expr, linear, null, origin)
 }
 
 export function divideNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 && right.max >= 0) return unknownValue('Division by a range containing zero is unsupported')
+  const expr = binaryExpr(left, '/', right)
+  const origin = mergeOrigin(left, right)
+  const folded = foldBinary(left, right, (a, b) => a / b, expr, origin)
+  if (folded != null) return folded
   const quotients = nonNanExtrema([
     left.min / right.min,
     left.min / right.max,
     left.max / right.min,
     left.max / right.max,
   ])
-  return numberValue(quotients.min, quotients.max, false, binaryExpr(left, '/', right), right.min === right.max ? linearScale(left.linear, 1 / right.min) : null, null, mergeOrigin(left, right))
+  // Division by a pinned power of two is multiplication by its exact
+  // reciprocal; any other divisor leaves the dyadic grid, so neither the
+  // algebraic form nor a grid survives.
+  let grid: number | null = null
+  let linear: LinearExpr | null = null
+  if (right.min === right.max && powerOfTwoMagnitude(right.min)) {
+    const divisorGrid = gridOfNumber(right.min)!
+    if (left.grid != null) grid = left.grid - divisorGrid
+    const resultFinite = Number.isFinite(quotients.min) && Number.isFinite(quotients.max)
+    const exact = divisorGrid <= 0
+      ? resultFinite
+      : left.grid != null && left.grid - divisorGrid >= -1074
+    if (exact && left.linear != null) {
+      linear = linearScaleExact(left.linear, rationalDivide(rationalOne, rationalFromNumber(right.min)!)!)
+    }
+  }
+  return numberValue(quotients.min, quotients.max, grid, expr, linear ?? opaqueLinear(expr), null, origin)
 }
 
+// % never rounds: the exact remainder is always representable (verified
+// against exact rationals over random and adversarial doubles), so the
+// operands' common grid survives.
 export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 || left.min < 0) return unknownValue('Modulo is only supported for non-negative values and positive divisors')
-  const max = left.isInteger && right.isInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
+  const bothInteger = integerValued(left) && integerValued(right)
+  const max = bothInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
   const expr = binaryExpr(left, '%', right)
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
-  return numberValue(0, max, left.isInteger && right.isInteger, expr, linear, null, mergeOrigin(left, right))
+  return numberValue(0, max, gridJoin(left.grid, right.grid), expr, linear, null, mergeOrigin(left, right))
 }
 
+// Unary minus is a sign-bit flip: exact for every double, grid preserved.
 export function negateNumber(value: NumberValue, expr: string | null): NumberValue {
-  const plain = numberValue(-value.max, -value.min, value.isInteger, expr, linearScale(value.linear, -1), null, value.origin)
+  const plain = numberValue(-value.max, -value.min, value.grid, expr, linearScale(value.linear, -1), null, value.origin)
   if (value.cases == null) return plain
   return withNumberCases(plain, value.cases.map(branch => ({
     value: numberValue(
       -branch.value.max,
       -branch.value.min,
-      branch.value.isInteger,
+      branch.value.grid,
       expr,
       linearScale(branch.value.linear, -1),
       null,
@@ -263,10 +445,13 @@ export function nonNanExtrema(values: number[], fallbackMin = Number.NEGATIVE_IN
   return {min: Math.min(...cleanValues), max: Math.max(...cleanValues)}
 }
 
+// ** is implementation-approximated per ECMA (no error bound, engines may
+// differ), so no grid claim survives it; the endpoint hulls keep the existing
+// host-monotonicity assumption.
 export function powerNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min !== right.max) return unknownValue('Non-constant exponent is unsupported')
-  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, left.isInteger, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
-  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, Number.isInteger(left.min ** right.min), binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
+  if (right.min === 2 && left.min >= 0) return numberValue(left.min ** 2, left.max ** 2, null, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
+  if (left.min === left.max) return numberValue(left.min ** right.min, left.min ** right.min, null, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
   return unknownValue('Only square of non-negative ranges is supported')
 }
 

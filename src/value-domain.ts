@@ -11,6 +11,7 @@ import {
   numberBranches,
   numberValue,
   withNumberCases,
+  gridJoin,
 } from './number-domain.ts'
 import type {
   ArrayValue,
@@ -57,9 +58,13 @@ export function unknownObject(name: string): ObjectValue {
   }
 }
 
+// A JS array length is spec-bounded by 2^32 - 1, which keeps length
+// arithmetic inside the exact-integer window even with no written given.
+export const maxArrayLength = 4294967295
+
 export function unknownArrayLength(name: string): NumberValue {
   const expr = `${name}.length`
-  return numberValue(0, Number.POSITIVE_INFINITY, true, expr, linearVariable(linearNameForExpression(expr)))
+  return numberValue(0, maxArrayLength, 0, expr, linearVariable(linearNameForExpression(expr)))
 }
 
 export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): ArrayValue {
@@ -151,7 +156,7 @@ export function joinValues(left: Value, right: Value): Value {
     const joined = numberValue(
       Math.min(left.min, right.min),
       Math.max(left.max, right.max),
-      left.isInteger && right.isInteger,
+      gridJoin(left.grid, right.grid),
       left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
       left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
       null,
@@ -219,7 +224,7 @@ export function joinValues(left: Value, right: Value): Value {
 
 function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, joined: NumberValue) {
   if (left.cases != null || right.cases != null) return true
-  const sameRange = left.min === right.min && left.max === right.max && left.isInteger === right.isInteger
+  const sameRange = left.min === right.min && left.max === right.max && left.grid === right.grid
   const sameExpr = (left.expr ?? null) === (right.expr ?? null)
   const sameLinearity = (left.linear == null && right.linear == null)
     || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))

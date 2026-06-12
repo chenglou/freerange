@@ -7,6 +7,7 @@ import {
   finiteNumberSet,
   type NumberValue,
   type Value,
+  integerValued,
 } from './domain.ts'
 import {sameExpressionText} from './linear.ts'
 import {formatRange} from './reporting.ts'
@@ -245,7 +246,7 @@ export function numberFacts(path: string, value: NumberValue): FitInferFact[] {
       path: publicFitText(path),
       min: value.min,
       max: value.max,
-      isInteger: value.isInteger,
+      isInteger: integerValued(value),
     })
   }
   return facts
