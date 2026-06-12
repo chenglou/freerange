@@ -59,9 +59,60 @@ export function farkasProvesNonNegative(target: LinearExpr, strict: boolean, fac
   return solved.unbounded || rationalIsPositive(solved.objectiveValue)
 }
 
+export type LinearExtremum =
+  | {kind: 'optimum'; value: Rational; point: Map<string, Rational>}
+  | {kind: 'unbounded'}
+  | {kind: 'infeasible'}
+
+// Maximizes `objective` over the valuations satisfying every fact — the same
+// polytope Farkas proves over, searched instead of certified. The optimum
+// vertex is a concrete counterexample when it violates a claim: an assignment
+// the recorded facts admit. Free variables are encoded as differences of two
+// nonnegative ones; each fact gets a slack.
+export function linearMaximum(objective: LinearExpr, facts: NonNegativeFact[]): LinearExtremum {
+  const names = new Set<string>()
+  for (const name of objective.terms.keys()) names.add(name)
+  for (const fact of facts) for (const name of fact.diff.terms.keys()) names.add(name)
+  const variableNames = [...names]
+  // columns: x+ per name, x- per name, one slack per fact
+  const columnCount = variableNames.length * 2 + facts.length
+  const columnFor = (name: string) => variableNames.indexOf(name)
+
+  const rows: Rational[][] = []
+  const rhs: Rational[] = []
+  facts.forEach((fact, factIndex) => {
+    const row: Rational[] = Array.from({length: columnCount}, () => rationalZero)
+    for (const [name, coefficient] of fact.diff.terms) {
+      row[columnFor(name)] = coefficient
+      row[variableNames.length + columnFor(name)] = rationalNegate(coefficient)
+    }
+    row[variableNames.length * 2 + factIndex] = rationalNegate(rationalOne)
+    rows.push(row)
+    rhs.push(rationalNegate(fact.diff.constant))
+  })
+
+  const objectiveRow: Rational[] = Array.from({length: columnCount}, () => rationalZero)
+  for (const [name, coefficient] of objective.terms) {
+    objectiveRow[columnFor(name)] = coefficient
+    objectiveRow[variableNames.length + columnFor(name)] = rationalNegate(coefficient)
+  }
+
+  const solved = solveSimplex(rows, rhs, objectiveRow)
+  if (solved == null) return {kind: 'infeasible'}
+  if (solved.unbounded) return {kind: 'unbounded'}
+  const point = new Map<string, Rational>()
+  variableNames.forEach((name, index) => {
+    const positive = solved.point[index] ?? rationalZero
+    const negative = solved.point[variableNames.length + index] ?? rationalZero
+    point.set(name, rationalSubtract(positive, negative))
+  })
+  return {kind: 'optimum', value: rationalAdd(solved.objectiveValue, objective.constant), point}
+}
+
 type SimplexResult = {
   objectiveValue: Rational
   unbounded: boolean
+  point: Rational[]
 }
 
 // Two-phase simplex with Bland's rule (exact rationals, no cycling). Maximizes
@@ -133,7 +184,7 @@ function optimize(tableau: Rational[][], basis: number[], objective: Rational[],
       }
     }
     if (entering === -1) {
-      return {objectiveValue: objectiveValueAt(tableau, basis, objective), unbounded: false}
+      return {objectiveValue: objectiveValueAt(tableau, basis, objective), unbounded: false, point: basicPoint(tableau, basis, objective.length)}
     }
     let leaving = -1
     let bestRatio: Rational | null = null
@@ -147,7 +198,7 @@ function optimize(tableau: Rational[][], basis: number[], objective: Rational[],
         leaving = row
       }
     }
-    if (leaving === -1) return {objectiveValue: rationalZero, unbounded: true}
+    if (leaving === -1) return {objectiveValue: rationalZero, unbounded: true, point: []}
     pivot(tableau, basis, leaving, entering)
   }
 }
@@ -175,6 +226,16 @@ function objectiveValueAt(tableau: Rational[][], basis: number[], objective: Rat
     value = rationalAdd(value, rationalMultiply(cost, rightHandSide(tableau[row]!)))
   }
   return value
+}
+
+// Values of the original (non-artificial) variables at the current basis.
+function basicPoint(tableau: Rational[][], basis: number[], columnCount: number): Rational[] {
+  const point: Rational[] = Array.from({length: columnCount}, () => rationalZero)
+  for (let row = 0; row < tableau.length; row++) {
+    const column = basis[row]!
+    if (column < columnCount) point[column] = rightHandSide(tableau[row]!)
+  }
+  return point
 }
 
 function rightHandSide(row: Rational[]): Rational {

@@ -190,6 +190,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeMathSignCanBeNegative: return: 
     sign(value): int -1..1
     assumed from input: given value: -10..10
   missing: sign(value) >= 0
+  counterexample within the known facts: sign(value) = -1
 FAIL tests/patterns/negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: return[]: int 1..<limit
   range was int 0..999 as values[], expected inside int 1..<limit
   known:
@@ -201,6 +202,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeNumericLimitRangeLoopCanInclude
     inferred from code: __fit_domain_values___item >= 0
     inferred from code: __fit_domain_values___item - limit < 0
   missing: values[] >= 1
+  counterexample within the known facts: __fit_domain_values___item = 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeUnboundedWidthNeedsCap: return <= 500
   known:
     (width / 2): 0.5..Infinity
@@ -230,7 +232,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bo
 UNKNOWN tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: box.bottom: requires this.height: -100..1000
   caller passed: this.height: unknown (this.height was not inferred)
   missing: box.height: -100..1000
-FAIL tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
+UNKNOWN tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
   range was any number as (box.top + box.height), expected inside 0..2000
   known:
     (box.top + box.height): any number
@@ -308,12 +310,13 @@ FAIL tests/patterns/negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: r
     assumed from input: given base.x: -10..100
     assumed from input: given y: 0..100
   missing: base.x >= 0
+  counterexample within the known facts: base.x = -10
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows == other.rows
   Non-number equality is only proven for the same source expression
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(607,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
-FAIL tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
+UNKNOWN tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
   range was any number as items[index]!.height, expected inside 0..40
   known:
     items[index]!.height: any number
@@ -335,7 +338,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeRunningTotalNeedsNonNegative
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
   missing fact: total >= 0
-FAIL tests/patterns/negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
   range was any number as total, expected inside 0..10
   known:
     total: any number
@@ -436,6 +439,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeRunningMaxNeedsItemBound: retur
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].width: 0..120
   missing: maxWidth <= 80
+  counterexample within the known facts: maxWidth = 120
 UNKNOWN tests/patterns/negative-patterns.ts:negativeRunningMinNeedsItemBound: return >= 0
   known:
     minWidth: -20..80
@@ -534,36 +538,32 @@ FAIL tests/patterns/negative-patterns.ts:negativeMapRowsNeedFieldDomain: return.
     items[].height: -40..40
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
   missing: items[].height >= 0
+  counterexample within the known facts: __fit_domain_items___item_height = -40
 FAIL tests/patterns/negative-patterns.ts:negativeMapIndexCanBeZero: return.rows[].index: int 1..49
   range was int 0..49 as mapIndex(items), expected inside int 1..49
   known:
     mapIndex(items): int 0..49
     assumed from input: given items.length: int 1..50
     assumed from input: given items[].height: 0..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
   missing: mapIndex(items) >= 1
+  counterexample within the known facts: mapIndex(items) = 0
 FAIL tests/patterns/negative-patterns.ts:negativeMapBlockRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
   known:
     items[].height: -40..40
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
   missing: items[].height >= 0
+  counterexample within the known facts: __fit_domain_items___item_height = -40
 FAIL tests/patterns/negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].height: 0..40
   range was -40..40 as items[].height, expected inside 0..40
   known:
     items[].height: -40..40
     assumed from input: given items.length: int 0..50
     assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
   missing: items[].height >= 0
+  counterexample within the known facts: __fit_domain_items___item_height = -40
 FAIL tests/patterns/negative-patterns.ts:negativeTypeFieldReturnCheck: return.k > 0
   result: is false
   missing fact: -1 > 0
@@ -652,7 +652,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementPathCannotHideDy
 FAIL tests/patterns/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
   result: is false
   missing fact: 10 <= 2
-FAIL tests/patterns/negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return: 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return: 0
   range was any number as scratch, expected inside 0
   known:
     scratch: any number
@@ -670,7 +670,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalNumberNeedsPresentGu
     Type 'undefined' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
   Math.max expected number arguments
-FAIL tests/patterns/negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
   range was any number as scratch, expected inside 0
   known:
     scratch: any number
@@ -700,7 +700,8 @@ FAIL tests/patterns/negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: retu
     inferred from code: __fit_domain_rows___item_index >= 0
     inferred from code: __fit_domain_rows___item_index - items.length < 0
   missing: rows[].index >= 1
-UNKNOWN tests/patterns/negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[].rowIndex: int 0..<items.length
+  counterexample within the known facts: __fit_domain_rows___item_index = 0
+FAIL tests/patterns/negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[].rowIndex: int 0..<items.length
   range was int 1..50 as (rowIndex + 1), expected inside int 0..<items.length
   known:
     (rowIndex + 1): int 1..50
@@ -712,6 +713,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh
     inferred from code: items[rowIndex].height >= 0
     inferred from code: items[rowIndex].height <= 40
   missing: (rowIndex + 1) < items.length
+  counterexample within the known facts: items.length = 50, rowIndex = 49
 UNKNOWN tests/patterns/negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: return.bottom >= params.top
   known:
     y: -2000..3000
@@ -738,7 +740,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeStaleGapAfterRefactor: space
     loop proved: next.top = previous.height + (gap + 1)
     sequence facts: nondecreasing(.top), spaced((gap + 1))
   missing: given (gap + 1) == gap
-UNKNOWN tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
+FAIL tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
   range was int 1..50 as (focused + 1), expected inside int 0..<items.length
   known:
     (focused + 1): int 1..50
@@ -746,6 +748,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.
     assumed from input: given items.length: int 1..50
     assumed from input: given focused: int 0..<items.length
   missing: (focused + 1) < items.length
+  counterexample within the known facts: focused = 49, items.length = 49
 UNKNOWN tests/patterns/negative-patterns.ts:negativeMissingRowBottom: return.bottom == return.top + return.height
   known:
     ((row.top + row.height) - 1): -1..1039
@@ -763,7 +766,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeUnboundedPromptHeight: retur
 FAIL tests/patterns/negative-patterns.ts:negativeInvertedClampBounds: negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
   caller passed: max: 0, min: 1
   missing: 0 >= 1
-FAIL tests/patterns/negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
   range was any number as total, expected inside 0..0
   known:
     total: any number
@@ -836,13 +839,14 @@ FAIL tests/patterns/negative-patterns.ts:negativeForOfConditionalPushNeedsItemBo
     assumed from input: given items[].height: 0..100
     inferred from code: rows.length <= items.length
   missing: rows[].height <= 40
+  counterexample within the known facts: __fit_domain_rows___item_height = 100
 UNKNOWN tests/patterns/negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(return.rows.top)
   nondecreasing(return.rows.top) was not inferred
   need: every next .top >= previous .top
   known:
     sequence facts: no sequence facts
   missing: sequence facts for .top
-FAIL tests/patterns/negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[].height: 0..40
+UNKNOWN tests/patterns/negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[].height: 0..40
   range was any number as return.rows[].height, expected inside 0..40
   known:
     return.rows[].height: any number
@@ -970,12 +974,13 @@ FAIL tests/patterns/negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPos
     (focused - 1): int -1..999
     assumed from input: given focused: int 0..1000
   missing: (focused - 1) >= 0
+  counterexample within the known facts: focused = 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1840,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   rows not found in this contract scope
-FAIL tests/patterns/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
+UNKNOWN tests/patterns/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
   range was any number as input[1].height, expected inside 0..40
   known:
     input[1].height: any number
@@ -1045,7 +1050,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeMapCallbackMutationForgetsRetur
     inferred from code: mapIndex([item]) >= 0
     inferred from code: mapIndex([item]) - 1 < 0
   missing fact: -1 > 0
-FAIL tests/patterns/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..Infinity
+UNKNOWN tests/patterns/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..Infinity
   range was any number as box.clientWidth, expected inside 0..Infinity
   known:
     box.clientWidth: any number
@@ -1060,6 +1065,7 @@ FAIL tests/patterns/negative-patterns.ts:default: return.x: 50..100
     assumed from input: given rect.top: 0..100
     assumed from input: given rect.bottom: 0..100
   missing: (rect.left + ((rect.right - rect.left) / 2)) >= 50
+  counterexample within the known facts: rect.left = 0, rect.right = 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.left
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1191,2): error TS2304: Cannot find name 'row'.
@@ -1079,7 +1085,7 @@ FAIL tests/patterns/negative-shadowed-catalog.ts:negativeUserFunctionNotHijacked
     inferred from code: rows[rows.length - 1].height >= 10
     inferred from code: rows[rows.length - 1].height <= 10
   missing fact: (0 - 10) >= 0
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
+UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
   range was any number as unannotatedImportedClamp(width), expected inside 0..320
   known:
     unannotatedImportedClamp(width): any number
@@ -1090,14 +1096,14 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperUnresolv
   Could not resolve @fit-fixtures/missing-import-helper from tests/imports/negative-import-patterns.ts with TypeScript module resolution
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperDeclarationMapMissing: return: 0..320
   Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: return: 0..320
+UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: return: 0..320
   range was any number as barrelUnannotatedClamp(width), expected inside 0..320
   known:
     barrelUnannotatedClamp(width): any number
     assumed from input: given width: 0..1000
   missing: barrelUnannotatedClamp(width) >= 0
   missing: barrelUnannotatedClamp(width) <= 320
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperDefaultImportNeedsFit: return: 0..320
+UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperDefaultImportNeedsFit: return: 0..320
   range was any number as unannotatedDefaultImportedClamp(width), expected inside 0..320
   known:
     unannotatedDefaultImportedClamp(width): any number
@@ -1108,14 +1114,13 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperSourceCo
   imported helper contract failed in source before this call could use it
   helper: importedClampWithBadContract from ./negative-import-helpers
   failed check: tests/imports/negative-import-helpers.ts:importedClampWithBadContract: return: 0..100
-  range was 0..1000 as width, expected inside 0..100
+  range was 320, expected inside 0..100
   known:
-    width: 0..1000
     assumed from input: given width: 0..1000
     inferred from code: min(width, 320) <= width
     inferred from code: min(width, 320) <= 320
-    inferred from branch: width - 320 <= 0
-  missing: width <= 100
+    inferred from branch: -width + 320 <= 0
+  missing: 320 <= 100
 FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 0..100
   range was 0..320 as importedClampWidth(width), expected inside 0..100
   known:
@@ -1123,6 +1128,7 @@ FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperContractToo
     checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
     assumed from input: given width: 0..1000
   missing: importedClampWidth(width) <= 100
+  counterexample within the known facts: importedClampWidth(width) = 320
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsThisGiven: return >= box.top
   imported helper contract was not proven in source before this call could use it
   helper: box.bottom (NegativeImportedClassBox) from ./negative-import-helpers
@@ -1145,6 +1151,7 @@ FAIL tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportCon
     checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
     assumed from input: given width: 0..1000
   missing: barrelClampWidth(width) <= 100
+  counterexample within the known facts: barrelClampWidth(width) = 320
 FAIL tests/imports/negative-import-patterns.ts:negativeNamespaceImportedHelperReExportContractTooWide: return: 0..100
   range was 0..320 as importPatternBarrel.barrelClampWidth(width), expected inside 0..100
   known:
@@ -1152,6 +1159,7 @@ FAIL tests/imports/negative-import-patterns.ts:negativeNamespaceImportedHelperRe
     checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
     assumed from input: given width: 0..1000
   missing: importPatternBarrel.barrelClampWidth(width) <= 100
+  counterexample within the known facts: importPatternBarrel.barrelClampWidth(width) = 320
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedNumericConstantMismatch: return == width + importedChromeX + 1
   known:
     (width + importedChromeX): 16..1016

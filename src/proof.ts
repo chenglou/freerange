@@ -17,6 +17,7 @@ import {
   type FitProofStep,
 } from './obligations.ts'
 import {
+  linearNameForExpression,
   literalKey,
   numberBranches,
   numberValue,
@@ -36,17 +37,20 @@ import {
   linearFromExpressionText,
   linearScaleExact,
   linearSubtract,
+  linearVariable,
   sameExpressionText,
   sameLinear,
   type LinearExpr,
 } from './linear.ts'
-import {farkasProvesNonNegative} from './farkas.ts'
+import {farkasProvesNonNegative, linearMaximum} from './farkas.ts'
 import {
+  rationalCompare,
   rationalDivide,
   rationalIsPositive,
   rationalIsZero,
   rationalNegate,
   rationalOne,
+  rationalZero,
   type Rational,
 } from './rational.ts'
 
@@ -450,6 +454,79 @@ export function proveNonNegativeFromConstraints(diff: LinearExpr, strict: boolea
   const cleanDiff = cleanLinear(diff)
   if (linearConstantStatus(cleanDiff, strict)) return true
   return farkasProvesNonNegative(cleanDiff, strict, facts)
+}
+
+export type FactCounterexample =
+  | {kind: 'point'; point: Map<string, Rational>}
+  | {kind: 'unbounded'}
+
+// A valuation the recorded facts admit under which `left op right` is false —
+// the facts themselves disprove the claim, contract-modularly. Two guards keep
+// this honest: every variable of the claim must be mentioned by some fact (a
+// value the analyzer forgot has no facts, and the absence of constraints is
+// not evidence), and only all-integer vertices are reported (a fractional
+// assignment may not be a real input when parameters are integers).
+export function comparisonCounterexample(
+  left: NumberValue,
+  op: ComparisonOperator,
+  right: NumberValue,
+  assumptions: LinearConstraint[],
+): FactCounterexample | null {
+  // A value without a linear form still has a name and an interval; for the
+  // search it acts as one bounded variable.
+  const leftLinear = left.linear ?? (left.expr == null ? null : linearVariable(linearNameForExpression(left.expr)))
+  const rightLinear = right.linear ?? (right.expr == null ? null : linearVariable(linearNameForExpression(right.expr)))
+  if (leftLinear == null || rightLinear == null) return null
+  const satisfied = op === '<=' || op === '<'
+    ? linearSubtract(rightLinear, leftLinear)
+    : linearSubtract(leftLinear, rightLinear)
+  if (satisfied == null || op === '==') return null
+  const violation = cleanLinear(linearScaleExact(satisfied, rationalNegate(rationalOne)))
+  if (violation.terms.size === 0) return null
+  const facts = [
+    ...assumptions.flatMap(nonNegativeConstraints),
+    ...intervalConstraints({...left, linear: leftLinear}),
+    ...intervalConstraints({...right, linear: rightLinear}),
+  ]
+  const anchored = new Set<string>()
+  for (const fact of facts) for (const name of fact.diff.terms.keys()) anchored.add(name)
+  for (const name of violation.terms.keys()) {
+    if (!anchored.has(name)) return null
+  }
+  const extremum = linearMaximum(violation, facts)
+  if (extremum.kind === 'infeasible') return null
+  if (extremum.kind === 'unbounded') return {kind: 'unbounded'}
+  const sign = rationalCompare(extremum.value, rationalZero)
+  const strictClaim = op === '>' || op === '<'
+  if (!(strictClaim ? sign >= 0 : sign > 0)) return null
+  for (const value of extremum.point.values()) {
+    if (value.den !== 1n) return null
+  }
+  // Report the claim's own variables; the rest of the assignment is real but
+  // not informative.
+  const point = new Map<string, Rational>()
+  for (const name of violation.terms.keys()) {
+    const assigned = extremum.point.get(name)
+    if (assigned != null) point.set(name, assigned)
+  }
+  return {kind: 'point', point}
+}
+
+// The value's own interval is sound knowledge the fact set may not spell out.
+function intervalConstraints(value: NumberValue): NonNegativeConstraint[] {
+  if (value.linear == null) return []
+  const facts: NonNegativeConstraint[] = []
+  const lower = linearConstant(value.min)
+  if (lower != null) {
+    const diff = linearSubtract(value.linear, lower)
+    if (diff != null) facts.push({diff, strict: false})
+  }
+  const upper = linearConstant(value.max)
+  if (upper != null) {
+    const diff = linearSubtract(upper, value.linear)
+    if (diff != null) facts.push({diff, strict: false})
+  }
+  return facts
 }
 
 export function nonNegativeConstraints(assumption: LinearConstraint): NonNegativeConstraint[] {

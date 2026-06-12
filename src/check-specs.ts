@@ -38,6 +38,7 @@ import {
   type FitDomainPath,
   type FitExpressionCheckSpec,
   type FitExpressionLike,
+  type ComparisonOperator,
   type FitRange,
   type FitRangeCase,
   type FitValueSpec,
@@ -48,7 +49,8 @@ import {
   withResolvedFitValueSpecTypeReference,
   type FitValueSpecTypeEnv,
 } from './value-specs.ts'
-import {proveComparison, proveComparisonWithStep} from './proof.ts'
+import {comparisonCounterexample, proveComparison, proveComparisonWithStep} from './proof.ts'
+import {rationalToNumber, type Rational} from './rational.ts'
 import {
   booleanExpressionIsAssumed,
   proveBooleanTrue,
@@ -544,8 +546,47 @@ function proveNumberInsideRangeCases(
     }
     return {status: 'fail', reason: rangeSpecFailureReasonForCases(branch.value, range, cases, branchAssumptions, branchProof.status, branchProof.case)}
   }
-  if (unknown != null) return {status: 'unknown', reason: rangeSpecFailureReasonForCases(value, range, cases, assumptions, unknown.status, unknown.case)}
+  if (unknown != null) {
+    const reason = rangeSpecFailureReasonForCases(value, range, cases, assumptions, unknown.status, unknown.case)
+    // Unproven but fact-anchored: search the fact polytope for a valuation
+    // that violates the claim. Finding one upgrades to a disproof the report
+    // can show; finding none keeps the honest unknown.
+    if (cases.length === 1) {
+      const witness = rangeCaseCounterexample(value, unknown.case, unknown.status, assumptions)
+      if (witness != null) return {status: 'fail', reason: `${reason}\n${witness}`}
+    }
+    return {status: 'unknown', reason}
+  }
   return {status: 'pass'}
+}
+
+function rangeCaseCounterexample(
+  value: NumberValue,
+  rangeCase: EvaluatedRangeCase,
+  status: RangeCaseStatus,
+  assumptions: LinearConstraint[],
+): string | null {
+  const proofAssumptions = mergeAssumptions(assumptions, rangeCase.assumptions)
+  const sides: {proof: {status: string}; op: ComparisonOperator; bound: NumberValue}[] = [
+    {proof: status.lower, op: rangeCase.source.lowerInclusive ? '>=' : '>', bound: rangeCase.lower},
+    {proof: status.upper, op: rangeCase.source.upperInclusive ? '<=' : '<', bound: rangeCase.upper},
+  ]
+  for (const side of sides) {
+    if (side.proof.status === 'pass') continue
+    const witness = comparisonCounterexample(value, side.op, side.bound, proofAssumptions)
+    if (witness == null) continue
+    return witness.kind === 'unbounded'
+      ? `counterexample: the known facts put no bound on ${publicFitText(value.expr ?? formatRange(value))} in that direction`
+      : `counterexample within the known facts: ${formatCounterexamplePoint(witness.point)}`
+  }
+  return null
+}
+
+function formatCounterexamplePoint(point: Map<string, Rational>): string {
+  const entries = [...point.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([name, value]) => `${publicFitText(name)} = ${rationalToNumber(value)}`)
+  return entries.length > 6 ? `${entries.slice(0, 6).join(', ')}, …` : entries.join(', ')
 }
 
 type RangeCasesProof =
@@ -577,6 +618,10 @@ type RangeCaseStatus = {
   integer: {status: FitCheckStatus; reason?: string}
 }
 
+// FAIL is a disproof: every value the recorded facts allow violates the claim.
+// A range that merely is not proven inside — partial overlap, an unknown
+// value, an unproven integer-ness — reports unknown, with the missing piece
+// named. The comparison layer already returns fail only on full violation.
 function proveNumberInsideRangeCase(
   value: NumberValue,
   range: FitRange,
@@ -584,17 +629,9 @@ function proveNumberInsideRangeCase(
   assumptions: LinearConstraint[],
 ): RangeCaseStatus {
   const proofAssumptions = mergeAssumptions(assumptions, rangeCase.assumptions)
-  const lower = rangeBoundProofStatus(
-    proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, proofAssumptions),
-    staticLowerBoundExceeded(value, rangeCase.source),
-  )
-  const upper = rangeBoundProofStatus(
-    proveComparison(value, rangeCase.source.upperInclusive ? '<=' : '<', rangeCase.upper, proofAssumptions),
-    staticUpperBoundExceeded(value, rangeCase.source),
-  )
-  const integer: {status: FitCheckStatus; reason?: string} = range.valueKind === 'int' && !value.isInteger
-    ? {status: 'fail', reason: `need: ${value.expr ?? formatRange(value)} to be integer`}
-    : {status: 'pass'}
+  const lower = proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, proofAssumptions)
+  const upper = proveComparison(value, rangeCase.source.upperInclusive ? '<=' : '<', rangeCase.upper, proofAssumptions)
+  const integer = integerClaimStatus(value, range)
   const status: FitCheckStatus = lower.status === 'pass' && upper.status === 'pass' && integer.status === 'pass'
     ? 'pass'
     : lower.status === 'fail' || upper.status === 'fail' || integer.status === 'fail'
@@ -603,20 +640,13 @@ function proveNumberInsideRangeCase(
   return {status, lower, upper, integer}
 }
 
-function rangeBoundProofStatus(proof: ReturnType<typeof proveComparison>, staticBoundExceeded: boolean): ReturnType<typeof proveComparison> {
-  return proof.status === 'unknown' && staticBoundExceeded
-    ? {...proof, status: 'fail'}
-    : proof
-}
-
-function staticLowerBoundExceeded(value: NumberValue, rangeCase: FitRangeCase) {
-  if (rangeCase.lowerValue == null) return false
-  return rangeCase.lowerInclusive ? value.min < rangeCase.lowerValue : value.min <= rangeCase.lowerValue
-}
-
-function staticUpperBoundExceeded(value: NumberValue, rangeCase: FitRangeCase) {
-  if (rangeCase.upperValue == null) return false
-  return rangeCase.upperInclusive ? value.max > rangeCase.upperValue : value.max >= rangeCase.upperValue
+function integerClaimStatus(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
+  if (range.valueKind !== 'int' || value.isInteger) return {status: 'pass'}
+  const provablyFractional = value.min === value.max && Number.isFinite(value.min) && !Number.isInteger(value.min)
+  return {
+    status: provablyFractional ? 'fail' : 'unknown',
+    reason: `need: ${value.expr ?? formatRange(value)} to be integer`,
+  }
 }
 
 function rangeSpecFailureReasonForCases(
@@ -653,7 +683,8 @@ function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: Fit
   const produced = finiteNumberSet(value)
   if (produced != null && produced.every(choice => expected.includes(choice))) return {status: 'pass'}
   return {
-    status: 'fail',
+    // A value that cannot be enumerated is unproven, not disproven.
+    status: produced == null ? 'unknown' : 'fail',
     reason: finiteRangeSpecFailureReason(value, range, produced),
   }
 }
