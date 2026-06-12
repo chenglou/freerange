@@ -27,6 +27,7 @@ import {
 import {parseExpression} from './parser.ts'
 import {proveComparison} from './proof.ts'
 import {flattenSignedSum, propertyNameText} from './interpreter/source-syntax.ts'
+import {rowAxes, type RowAxis} from './sequence-facts.ts'
 
 export type LoopScalarUpdate = {
   start: NumberValue
@@ -59,6 +60,7 @@ export type GuardedLoopPush = LoopPush & {
 export type SegmentedStackPush = {
   cursorName: string
   topName: string
+  axis: RowAxis
   gap: NumberValue
 }
 
@@ -175,15 +177,16 @@ export function loopElementFromPush(
 
 export function segmentedStackElement(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, env: Map<string, Value>): Value | null {
   if (push.segmentedStack == null || element?.kind !== 'object') return element
+  const axis = push.segmentedStack.axis
   const props = new Map(element.props)
-  const height = props.get('height')
-  if (height?.kind !== 'number') return element
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  const size = props.get(axis.size)
+  if (size?.kind !== 'number') return element
+  const advance = segmentedStackAdvance(size, push.segmentedStack.gap)
 
-  const top = segmentedStackTopValue(push, sourceLength, advance, env)
-  const bottom = addNumbers(top, height)
-  props.set('top', top)
-  props.set('bottom', bottom)
+  const position = segmentedStackTopValue(push, sourceLength, advance, env)
+  const end = addNumbers(position, size)
+  props.set(axis.position, position)
+  props.set(axis.end, end)
   return {...element, props}
 }
 
@@ -196,24 +199,25 @@ export function pushedElementValue(target: ArrayValue, element: Value | null): V
 
 export function segmentedStackSummary(push: GuardedLoopPush, element: Value | null): ArraySummary | null {
   if (push.segmentedStack == null || element?.kind !== 'object') return null
-  const height = element.props.get('height')
-  if (height?.kind !== 'number') return null
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  const axis = push.segmentedStack.axis
+  const size = element.props.get(axis.size)
+  if (size?.kind !== 'number') return null
+  const advance = segmentedStackAdvance(size, push.segmentedStack.gap)
   const clock = appendClockFromElement(push.arrayName, push.length, element, {
-    path: push.topPath ?? ['top'],
-    start: unknownNumber(`${push.arrayName}[].top`),
+    path: push.topPath ?? [axis.position],
+    start: unknownNumber(`${push.arrayName}[].${axis.position}`),
     advance,
-    size: height,
+    size,
   })
-  // segmentedStackElement constructed the bottom prop as top + height itself.
-  return sequenceSummaryFromAppendClock(clock, {resolveNumber: () => null, includeExtentEnd: false, bottomPath: ['bottom']})
+  // segmentedStackElement constructed the end prop as position + size itself.
+  return sequenceSummaryFromAppendClock(clock, {resolveNumber: () => null, includeExtentEnd: false, bottomPath: [axis.end]})
 }
 
 export function applySegmentedStackCursorUpdate(push: GuardedLoopPush, element: Value | null, sourceLength: NumberValue, env: Map<string, Value>) {
   if (push.segmentedStack == null || element?.kind !== 'object') return
-  const height = element.props.get('height')
-  if (height?.kind !== 'number') return
-  const advance = segmentedStackAdvance(height, push.segmentedStack.gap)
+  const size = element.props.get(push.segmentedStack.axis.size)
+  if (size?.kind !== 'number') return
+  const advance = segmentedStackAdvance(size, push.segmentedStack.gap)
   const start = env.get(push.segmentedStack.cursorName)
   if (start?.kind !== 'number') return
   env.set(push.segmentedStack.cursorName, segmentedStackCursorValue(push.segmentedStack.cursorName, start, sourceLength, advance))
@@ -338,9 +342,12 @@ function sequenceSummaryFromAppendClock(
   const bottomPath = options.bottomPath ?? null
   addSpacedRelations(summary, recurrence.path, heightPath, bottomPath, gapExpr)
   if (!options.includeExtentEnd) return summary
-  // lastEnd/extentEnd mean "final .top + .height" by contract; a recurrence on
-  // other fields is a fine relation but not a row extent.
-  if (pathText(recurrence.path) !== 'top' || (!samePath(heightPath ?? [], ['height']) && !samePath(bottomPath ?? [], ['bottom']))) return summary
+  // lastEnd/extentEnd mean "final position + size" over one axis vocabulary;
+  // a recurrence on other fields is a fine relation but not a row extent.
+  const rowExtent = rowAxes.some(axis =>
+    pathText(recurrence.path) === axis.position
+    && (samePath(heightPath ?? [], [axis.size]) || samePath(bottomPath ?? [], [axis.end])))
+  if (!rowExtent) return summary
 
   const loopEndName = `lastEnd(${clock.arrayName})`
   const loopEnd = options.cursorEnd ?? nonEmptyLoopEnd(loopEndName, recurrence.start, recurrence.advance, clock.length)
@@ -443,15 +450,16 @@ function segmentedStackAdvance(height: NumberValue, gap: NumberValue): NumberVal
 }
 
 function segmentedStackTopValue(push: GuardedLoopPush, sourceLength: NumberValue, advance: NumberValue, env: Map<string, Value>): NumberValue {
+  const positionName = push.segmentedStack == null ? 'top' : push.segmentedStack.axis.position
   const start = push.segmentedStack == null ? null : env.get(push.segmentedStack.cursorName)
-  if (start?.kind !== 'number') return unknownNumber(`${push.arrayName}[].top`)
+  if (start?.kind !== 'number') return unknownNumber(`${push.arrayName}[].${positionName}`)
   const bounds = repeatedAdvanceBounds(sourceLength, advance)
   return numberValue(
     start.min + bounds.min,
     start.max + bounds.max,
     start.isInteger && advance.isInteger,
-    `${push.arrayName}[].top`,
-    linearVariable(linearNameForExpression(`${push.arrayName}[].top`)),
+    `${push.arrayName}[].${positionName}`,
+    linearVariable(linearNameForExpression(`${push.arrayName}[].${positionName}`)),
   )
 }
 

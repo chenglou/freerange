@@ -13,6 +13,7 @@ import {
 } from './type-contracts.ts'
 import type {FitFunction} from './modules.ts'
 import {formatTypeScriptDiagnostics} from './ts-diagnostics.ts'
+import {rowAxisUnionTypeText} from './sequence-facts.ts'
 import {
   fitExpressionParsed,
   fitExpressionScopeSourceId,
@@ -773,8 +774,7 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
         prelude: [
           checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options)),
           checkedConst(`${id}_gap`, 'number', lowerRawExpressionText(gap.getText(), options)),
-          checkedConst(`${id}_top`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.top`),
-          checkedConst(`${id}_height`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.height`),
+          checkedConst(`${id}_axis`, rowAxisUnionTypeText(), `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
         ],
       }
     }
@@ -783,7 +783,10 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
       if (rows == null || unwrapped.arguments.length !== 1) return {expression: 'true', prelude: [checkedConst(`${id}_arity`, 'never', 'undefined')]}
       return {
         expression: 'true',
-        prelude: [checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options))],
+        prelude: [
+          checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options)),
+          checkedConst(`${id}_axis`, rowAxisUnionTypeText(), `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
+        ],
       }
     }
     case 'lastEnd': {
@@ -793,8 +796,7 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
         expression: '0',
         prelude: [
           checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options)),
-          checkedConst(`${id}_top`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.top`),
-          checkedConst(`${id}_height`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.height`),
+          checkedConst(`${id}_axis`, rowAxisUnionTypeText(), `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
         ],
       }
     }
@@ -807,8 +809,7 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
         prelude: [
           checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options)),
           checkedConst(`${id}_empty`, 'number', lowerRawExpressionText(empty.getText(), options)),
-          checkedConst(`${id}_top`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.top`),
-          checkedConst(`${id}_height`, 'number', `${lowerRawExpressionText(rows.getText(), options)}[0]!.height`),
+          checkedConst(`${id}_axis`, rowAxisUnionTypeText(), `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
         ],
       }
     }

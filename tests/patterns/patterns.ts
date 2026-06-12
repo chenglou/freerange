@@ -992,6 +992,24 @@ export function indexedRunningTotalLonghandIncrement(items: {height: number}[]) 
 }
 
 /** @fit
+ * given items.length: int 0..100
+ * given items[].width: 1..400
+ * given gap: 0..24
+ * nondecreasing(return.left)
+ * spaced(return, gap)
+ * noOverlap(return)
+ */
+export function horizontalColumnLayout(items: {width: number}[], gap: number) {
+  const cols: {left: number; width: number}[] = []
+  let x = 0
+  for (const item of items) {
+    cols.push({left: x, width: item.width})
+    x += item.width + gap
+  }
+  return cols
+}
+
+/** @fit
  * return == 16
  */
 export function compoundAssignmentsComputeExactly() {

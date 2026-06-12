@@ -9,6 +9,30 @@ import {type ComparisonOperator} from './parser.ts'
 
 export type SpacedShape = {gapExpr: string; heightExpr: string; advanceExpr: string}
 
+// The two field vocabularies the row catalog accepts. Other namings reach the
+// catalog by mapping into one of these (e.g. rows.map(row => ({top: row.y,
+// height: row.size}))).
+export type RowAxis = {position: string; size: string; end: string}
+
+export const rowAxes: RowAxis[] = [
+  {position: 'top', size: 'height', end: 'bottom'},
+  {position: 'left', size: 'width', end: 'right'},
+]
+
+export function rowAxisUnionTypeText(): string {
+  return rowAxes.map(axis => `{${axis.position}: number; ${axis.size}: number}`).join(' | ')
+}
+
+// An element carrying both vocabularies makes spaced/lastEnd/extentEnd/
+// noOverlap ambiguous; the caller should map to a single axis first.
+export function ambiguousRowAxes(array: ArrayValue): boolean {
+  const element = array.element
+  if (element == null || element.kind !== 'object') return false
+  const present = rowAxes.filter(axis =>
+    element.props.has(axis.position) && (element.props.has(axis.size) || element.props.has(axis.end)))
+  return present.length > 1
+}
+
 export function nondecreasingPropsFromRelations(relations: SequenceRelation[]): string[] {
   const props = new Set<string>()
   for (const relation of relations) {
@@ -83,30 +107,32 @@ export function hasNondecreasingProp(array: ArrayValue, prop: string) {
   })
 }
 
-// spaced(rows, gap) means next.top == previous.top + previous.height + gap by
-// contract, so only a relation over those fields (or the equivalent
-// previous.bottom form) discharges it. A numerically true recurrence on some
-// other field pair says nothing about row geometry.
+// spaced(rows, gap) means next.position == previous.position + previous.size
+// + gap over one of the axis vocabularies (or the equivalent previous.end
+// form), so only a relation over those fields discharges it. A numerically
+// true recurrence on some other field pair says nothing about row geometry.
 export function provedSpacing(array: ArrayValue, gapExpr: string) {
   return array.summary?.relations.find(relation => {
     if (relation.kind !== 'adjacent-comparison') return false
     if (relation.op !== '==') return false
     if (relation.left.item !== 'next') return false
-    if (!samePath(relation.left.path, ['top'])) return false
     if (!sameAddends(relation.right.addends, gapExpr === '0' ? [] : [gapExpr])) return false
     const terms = relation.right.terms
     if (!terms.every(term => term.item === 'previous')) return false
-    if (terms.length === 1) return samePath(terms[0]!.path, ['bottom'])
-    if (terms.length === 2) {
-      return terms.some(term => samePath(term.path, ['top'])) && terms.some(term => samePath(term.path, ['height']))
-    }
-    return false
+    return rowAxes.some(axis => {
+      if (!samePath(relation.left.path, [axis.position])) return false
+      if (terms.length === 1) return samePath(terms[0]!.path, [axis.end])
+      if (terms.length === 2) {
+        return terms.some(term => samePath(term.path, [axis.position])) && terms.some(term => samePath(term.path, [axis.size]))
+      }
+      return false
+    })
   }) ?? null
 }
 
 // noOverlap lifts from any spacing whose fields really are the row extent.
 export function isRowExtentShape(shape: SpacedShape): boolean {
-  return shape.advanceExpr === 'top' && (shape.heightExpr === 'height' || shape.heightExpr === 'bottom')
+  return rowAxes.some(axis => shape.advanceExpr === axis.position && (shape.heightExpr === axis.size || shape.heightExpr === axis.end))
 }
 
 function samePath(left: string[], right: string[]) {

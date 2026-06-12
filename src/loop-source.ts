@@ -15,6 +15,7 @@ import {
   type LoopPush,
   type SegmentedStackPush,
 } from './loop-summary.ts'
+import {rowAxes, type RowAxis} from './sequence-facts.ts'
 
 export type LoopSourceContext = {
   env: Map<string, Value>
@@ -37,17 +38,24 @@ export function readLoopPush(expression: ts.CallExpression, context: LoopSourceC
       cursorPaths: ts.isIdentifier(row) ? [{path: [], targetName: row.text}] : [],
     }
   }
-  const topExpression = objectPropertyExpression(row, 'top')
   const stackShape = readRowStackShape(row, context)
-  const topName = stackShape?.topName ?? (topExpression != null && ts.isIdentifier(topExpression) ? topExpression.text : null)
+  const fallback = readBarePositionCursor(row)
   return {
     element: context.evaluateExpression(row, context.env),
     source: row,
-    topName,
-    topPath: stackShape?.topPath ?? (topName == null ? null : ['top']),
+    topName: stackShape?.topName ?? fallback?.topName ?? null,
+    topPath: stackShape?.topPath ?? fallback?.topPath ?? null,
     height: stackShape?.height ?? null,
     cursorPaths: objectIdentifierPropertyPaths(row),
   }
+}
+
+function readBarePositionCursor(row: ts.ObjectLiteralExpression): {topName: string; topPath: string[]} | null {
+  for (const axis of rowAxes) {
+    const expression = objectPropertyExpression(row, axis.position)
+    if (expression != null && ts.isIdentifier(expression)) return {topName: expression.text, topPath: [axis.position]}
+  }
+  return null
 }
 
 export function readGuardedLoopPushes(
@@ -119,41 +127,43 @@ function readSegmentedStackAdvance(
   if (assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken || !ts.isIdentifier(assignment.left)) return null
 
   const cursorName = assignment.left.text
-  if (push.topName == null) return null
+  if (push.topName == null || push.topPath == null) return null
+  const axis = rowAxes.find(candidate => push.topPath?.at(-1) === candidate.position)
+  if (axis == null) return null
   const topSourceName = identifierAliases.get(push.topName) ?? push.topName
   if (topSourceName !== cursorName) return null
 
-  const heightName = pushPropertyIdentifier(push, 'height')
-  const bottomName = pushPropertyIdentifier(push, 'bottom')
-  if (heightName == null) return null
+  const sizeName = pushPropertyIdentifier(push, axis.size)
+  const endName = pushPropertyIdentifier(push, axis.end)
+  if (sizeName == null) return null
 
-  const bottomInitializer = bottomName == null ? null : localInitializers.get(bottomName)
-  const bottomMatches = bottomInitializer == null
-    ? pushedBottomMatchesTopPlusHeight(push)
-    : expressionIsIdentifierSum(bottomInitializer, push.topName, heightName) || expressionIsIdentifierSum(bottomInitializer, topSourceName, heightName)
-  if (!bottomMatches) return null
+  const endInitializer = endName == null ? null : localInitializers.get(endName)
+  const endMatches = endInitializer == null
+    ? pushedEndMatchesPositionPlusSize(push, axis)
+    : expressionIsIdentifierSum(endInitializer, push.topName, sizeName) || expressionIsIdentifierSum(endInitializer, topSourceName, sizeName)
+  if (!endMatches) return null
 
-  const gapExpression = (bottomName == null ? null : otherSideOfIdentifierSum(assignment.right, bottomName))
-    ?? gapAfterTopAndHeight(assignment.right, [push.topName, topSourceName], heightName)
+  const gapExpression = (endName == null ? null : otherSideOfIdentifierSum(assignment.right, endName))
+    ?? gapAfterTopAndHeight(assignment.right, [push.topName, topSourceName], sizeName)
   if (gapExpression == null) return null
   const gap = context.evaluateExpression(gapExpression, context.env)
   if (gap.kind !== 'number' || gap.expr == null) return null
-  return {cursorName, topName: push.topName, gap}
+  return {cursorName, topName: push.topName, axis, gap}
 }
 
 function pushPropertyIdentifier(push: LoopPush, prop: string): string | null {
   return push.cursorPaths.find(cursorPath => cursorPath.path.length === 1 && cursorPath.path[0] === prop)?.targetName ?? null
 }
 
-function pushedBottomMatchesTopPlusHeight(push: LoopPush) {
+function pushedEndMatchesPositionPlusSize(push: LoopPush, axis: RowAxis) {
   if (push.element?.kind !== 'object') return false
-  const top = push.element.props.get('top')
-  const height = push.element.props.get('height')
-  const bottom = push.element.props.get('bottom')
-  if (top?.kind !== 'number' || height?.kind !== 'number' || bottom?.kind !== 'number') return false
-  if (top.linear == null || height.linear == null || bottom.linear == null) return false
-  const expectedBottom = linearAdd(top.linear, height.linear)
-  return expectedBottom != null && sameLinear(bottom.linear, expectedBottom)
+  const position = push.element.props.get(axis.position)
+  const size = push.element.props.get(axis.size)
+  const end = push.element.props.get(axis.end)
+  if (position?.kind !== 'number' || size?.kind !== 'number' || end?.kind !== 'number') return false
+  if (position.linear == null || size.linear == null || end.linear == null) return false
+  const expectedEnd = linearAdd(position.linear, size.linear)
+  return expectedEnd != null && sameLinear(end.linear, expectedEnd)
 }
 
 function expressionIsIdentifierSum(expression: ts.Expression, leftName: string, rightName: string) {
@@ -218,15 +228,17 @@ function readRowStackShape(
   expression: ts.ObjectLiteralExpression,
   context: LoopSourceContext,
 ): {topName: string; topPath: string[]; height: NumberValue} | null {
-  const candidates = objectPropertyCandidates(expression, 'top')
-    .filter(candidate => ts.isIdentifier(candidate.expression))
-    .sort((left, right) => left.path.length - right.path.length)
+  for (const axis of rowAxes) {
+    const candidates = objectPropertyCandidates(expression, axis.position)
+      .filter(candidate => ts.isIdentifier(candidate.expression))
+      .sort((left, right) => left.path.length - right.path.length)
 
-  for (const candidate of candidates) {
-    const heightExpression = objectPropertyExpression(candidate.container, 'height')
-    if (heightExpression == null) continue
-    const height = context.evaluateExpression(heightExpression, context.env)
-    if (height.kind === 'number') return {topName: (candidate.expression as ts.Identifier).text, topPath: candidate.path, height}
+    for (const candidate of candidates) {
+      const sizeExpression = objectPropertyExpression(candidate.container, axis.size)
+      if (sizeExpression == null) continue
+      const size = context.evaluateExpression(sizeExpression, context.env)
+      if (size.kind === 'number') return {topName: (candidate.expression as ts.Identifier).text, topPath: candidate.path, height: size}
+    }
   }
   return null
 }

@@ -65,6 +65,7 @@ import {
   arrayLengthRoot,
 } from './source-expressions.ts'
 import {formatRangeSpec} from './reporting.ts'
+import {ambiguousRowAxes, rowAxes, type RowAxis} from './sequence-facts.ts'
 
 export type GivenEvaluators = {
   evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Value
@@ -613,6 +614,7 @@ function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGive
     if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${arrayRoot}`
     const gapText = args[1]!.getText()
     const updated = arrayWithSpacedRelation(array, gapText)
+    if (updated === 'ambiguous') return `Given ${publicFitText(spec.text)} is ambiguous: the elements carry both top/height and left/width; map to one axis first`
     env.set(arrayRoot, updated)
     return null
   }
@@ -645,17 +647,33 @@ function nondecreasingPropPath(expression: ts.Expression): {root: string; path: 
   return null
 }
 
-function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue {
-  const relation: SequenceRelation = {
-    kind: 'adjacent-comparison',
-    left: {item: 'next', path: ['top']},
-    op: '==',
-    right: {
-      terms: [{item: 'previous', path: ['bottom']}],
-      addends: gapText === '0' ? [] : [gapText],
-    },
+function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue | 'ambiguous' {
+  if (ambiguousRowAxes(array)) return 'ambiguous'
+  // Without element fields to look at, assert the relation for both axis
+  // vocabularies; claims on fields the element does not have are rejected by
+  // the type gate before they could use the spare relation.
+  const axes = detectedRowAxes(array)
+  let summary = array.summary
+  for (const axis of axes) {
+    const relation: SequenceRelation = {
+      kind: 'adjacent-comparison',
+      left: {item: 'next', path: [axis.position]},
+      op: '==',
+      right: {
+        terms: [{item: 'previous', path: [axis.end]}],
+        addends: gapText === '0' ? [] : [gapText],
+      },
+    }
+    summary = appendRelation(summary, relation)
   }
-  return {...array, summary: appendRelation(array.summary, relation)}
+  return {...array, summary}
+}
+
+function detectedRowAxes(array: ArrayValue): RowAxis[] {
+  const element = array.element
+  if (element == null || element.kind !== 'object') return rowAxes
+  const present = rowAxes.filter(axis => element.props.has(axis.position))
+  return present.length > 0 ? present : rowAxes
 }
 
 function arrayWithNondecreasingRelation(array: ArrayValue, path: string[]): ArrayValue {

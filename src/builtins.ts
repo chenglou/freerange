@@ -9,7 +9,7 @@ import {
 import {sameExpressionText} from './linear.ts'
 import {parseExpression, publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
-import {hasNondecreasingProp, isRowExtentShape, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
+import {ambiguousRowAxes, hasNondecreasingProp, isRowExtentShape, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
 
 export type BuiltinContext = {
   expression: ts.CallExpression
@@ -61,6 +61,8 @@ function evaluateNondecreasingCall(context: BuiltinContext): Value {
   return unknown(nondecreasingFailureReason(text, target))
 }
 
+const ambiguousAxesReason = 'elements carry both top/height and left/width; map to one axis first'
+
 function evaluateSpacedCall(context: BuiltinContext): Value {
   const text = context.expressionText(context.expression)
   const args = context.expression.arguments
@@ -68,6 +70,7 @@ function evaluateSpacedCall(context: BuiltinContext): Value {
   const rows = context.evaluateExpression(args[0]!)
   const gap = context.evaluateExpression(args[1]!)
   if (rows.kind !== 'array') return unknown('spaced expected an array')
+  if (ambiguousRowAxes(rows)) return unknown(`spaced(...) is ambiguous: ${ambiguousAxesReason}`)
   if (gap.kind !== 'number' || gap.expr == null) return unknown('spaced expected a known gap expression')
   if (provedSpacing(rows, gap.expr) != null) {
     return literalValue([true], text, [`sequence facts: ${formatArraySummary(rows)}`])
@@ -80,6 +83,7 @@ function evaluateLastEndCall(context: BuiltinContext): Value {
   if (targetExpression == null || context.expression.arguments.length !== 1) return unknown('lastEnd expects one array')
   const target = context.evaluateExpression(targetExpression)
   if (target.kind !== 'array') return unknown('lastEnd expected an array')
+  if (ambiguousRowAxes(target)) return unknown(`lastEnd(...) is ambiguous: ${ambiguousAxesReason}`)
   return target.summary?.lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
 }
 
@@ -89,6 +93,7 @@ function evaluateNoOverlapCall(context: BuiltinContext): Value {
   if (args.length !== 1) return unknown('noOverlap expects noOverlap(arr)')
   const arr = context.evaluateExpression(args[0]!)
   if (arr.kind !== 'array') return unknown('noOverlap expected an array')
+  if (ambiguousRowAxes(arr)) return unknown(`noOverlap(...) is ambiguous: ${ambiguousAxesReason}`)
   const summary = arr.summary
   if (summary == null) return unknown(noOverlapFailureReason(text, arr, null))
   const rowExtentShapes = spacedShapesFromRelations(summary.relations).filter(isRowExtentShape)
@@ -132,6 +137,7 @@ function evaluateExtentEndCall(context: BuiltinContext): Value {
   }
   const target = context.evaluateExpression(targetExpression)
   if (target.kind !== 'array') return unknown('extentEnd expected an array')
+  if (ambiguousRowAxes(target)) return unknown(`extentEnd(...) is ambiguous: ${ambiguousAxesReason}`)
   const empty = context.evaluateExpression(emptyExpression)
   if (empty.kind !== 'number' || empty.expr == null) return unknown('extentEnd expected a known empty value')
 

@@ -766,6 +766,23 @@ export function negativeConditionalSumGuardMayNeverFire(rows: {height: number}[]
 }
 
 /** @fit
+ * given cells.length: int 0..50
+ * given cells[].height: 1..40
+ * given cells[].width: 1..40
+ * given gap: 0..10
+ * noOverlap(return)
+ */
+export function negativeBothAxesAreAmbiguous(cells: {height: number; width: number}[], gap: number) {
+  const rows: {top: number; height: number; left: number; width: number}[] = []
+  let y = 0
+  for (const cell of cells) {
+    rows.push({top: y, height: cell.height, left: 0, width: cell.width})
+    y += cell.height + gap
+  }
+  return rows
+}
+
+/** @fit
  * given x: -1000000000000..1000000000000
  * return == 0
  */
