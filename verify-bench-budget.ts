@@ -3,7 +3,11 @@ import {demoContractPaths} from './demo-contract-paths.ts'
 
 const runs = 4
 const maxWarmMedianTotalMs = 2500
-const maxWarmMedianVerifyMs = 1500
+// The loop analysis evaluates each loop body several times by design: once
+// generalized, usually once narrowed, once for reporting. Demo verify went
+// from ~1050ms to ~1500ms when that landed; the budget keeps the same
+// relative headroom over the new baseline.
+const maxWarmMedianVerifyMs = 1900
 const maxWarmSingleRunMs = 5000
 
 const benchRuns = Array.from({length: runs}, () => runBench(demoContractPaths))

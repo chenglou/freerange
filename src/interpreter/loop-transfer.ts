@@ -397,7 +397,7 @@ function walkStatements(statements: ts.Statement[], paths: PathState[], restartR
       next.push(...stepped.paths)
     }
     if (next.length > pathCap) {
-      return {kind: 'abort', reason: `Loop body has too many branch combinations (over ${pathCap} paths)`, node: statement}
+      return {kind: 'abort', reason: `Loop body has more than ${pathCap} branch combinations`, node: statement}
     }
     current = next
   }

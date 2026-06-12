@@ -5,7 +5,7 @@ import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 
-const positiveFiles = ['tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const positiveFiles = ['tests/patterns/patterns.ts', 'tests/patterns/loop-patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
 const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/patterns/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
@@ -1098,7 +1098,7 @@ if (missingFilterMapInferFacts.length > 0) {
   console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
 }
 
-const loopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'localLoopAnnotation'})
+const loopInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'localLoopAnnotation'})
 const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]
 const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
@@ -1140,7 +1140,7 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
 
-const segmentedLoopInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
+const segmentedLoopInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
 const segmentedFunction = segmentedLoopInferReport.functions[0]
 const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
 const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
@@ -1166,7 +1166,7 @@ if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
   console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
 }
 
-const redundantInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarPushLoop'})
+const redundantInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'scalarPushLoop'})
 const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedRedundantFacts = [
@@ -1235,10 +1235,10 @@ const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'typedObjectParamArrayShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'propertyAccessCallShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapCallbackReturnShape'),
-  formatInferSnapshot(['tests/patterns/patterns.ts'], 'scalarPushLoop'),
+  formatInferSnapshot(['tests/patterns/loop-patterns.ts'], 'scalarPushLoop'),
   formatInferSnapshot(['tests/imports/import-patterns.ts'], 'namespaceImportedStructuralShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapBlockRowsWithDestructure'),
-  formatInferSnapshot(['tests/patterns/patterns.ts'], 'localLoopAnnotation'),
+  formatInferSnapshot(['tests/patterns/loop-patterns.ts'], 'localLoopAnnotation'),
   formatInferSnapshot([
     '../vibescript/demos/photo-gallery/layout.ts',
     '../vibescript/demos/photo-gallery/prompt-layout.ts',

@@ -19,7 +19,7 @@ locals:
   rows.length == items.length
   rows.length: int 0..Infinity
   rows follows items by index
-tests/patterns/patterns.ts:scalarPushLoop
+tests/patterns/loop-patterns.ts:scalarPushLoop
 return:
   return.length == items.length
   return.length: int 0..50
@@ -62,7 +62,7 @@ locals:
   rows[].index == mapIndex(items)
   rows[].index: int 0..49
   rows follows items by index
-tests/patterns/patterns.ts:localLoopAnnotation
+tests/patterns/loop-patterns.ts:localLoopAnnotation
 return:
   return.bottom == (cursor - gap)
   return.bottom: -10..3500
@@ -94,7 +94,7 @@ locals:
   lastEnd(rows): -10..3500
   extentEnd(rows, y): -10..3500
   cursor: 0..3500
-loop 1251: for (const item of items)
+loop 488: for (const item of items)
   inferred:
     cursor: 0..3500
     rows.length == items.length

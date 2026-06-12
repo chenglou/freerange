@@ -238,6 +238,12 @@ Freerange currently keeps up to 8 reachable branch states from code. If code nee
 
 (TypeScript avoids this problem by widening to `{left: number; width: number}`, which avoids needing to track branches, but this isn't good enough for Freerange)
 
+#### Loops
+
+Inside a `for` / `for..of` body, Freerange follows each way one iteration can branch and works out what the iteration does to every variable: leaves it unchanged, adds some amount, takes a `Math.min`/`Math.max` against a candidate, or reassigns it. An update outside those (say `total = total * 2`) makes that one variable unknown after the loop; the loop's other facts survive. A body with more than 32 branch combinations reports that budget, like the branch-state budget above.
+
+An inline `// @fit` claim inside the body must hold at every iteration, not just the first. `const rowTop = cursor // @fit 0..1000` checks against everything the cursor can be over the whole loop.
+
 ## Glossary
 
 ### Syntax

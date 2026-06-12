@@ -30,7 +30,7 @@ bun install
 
 - [README.md](./README.md) — short project front door
 - [DOCUMENTATION.md](./DOCUMENTATION.md) — user-facing syntax, glossary, adoption guide, and supported checker surface
-- [tests/patterns/patterns.ts](./tests/patterns/patterns.ts) and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) — positive pattern specimens
+- [tests/patterns/patterns.ts](./tests/patterns/patterns.ts), [tests/patterns/loop-patterns.ts](./tests/patterns/loop-patterns.ts), and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) — positive pattern specimens; loop-patterns.ts is the loop-analysis catalog and a fast focused `fr check` target during loop work
 - [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
@@ -106,7 +106,7 @@ Do not leave comments in corpus branches just to make a repo look covered. If a 
 
 ## Adding Support
 
-[tests/patterns/patterns.ts](./tests/patterns/patterns.ts) and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) are the runnable catalog of good examples.
+[tests/patterns/patterns.ts](./tests/patterns/patterns.ts), [tests/patterns/loop-patterns.ts](./tests/patterns/loop-patterns.ts), and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) are the runnable catalog of good examples; loop fixtures go in loop-patterns.ts.
 
 [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) have the bad examples. Their expected reports live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
 
