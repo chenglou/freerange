@@ -130,6 +130,10 @@ type ResolutionContext = {
   typeProgram: ts.Program
   typeChecker: ts.TypeChecker
   rootNames: string[]
+  // Package sources reached through declaration maps (and their internal
+  // imports). Their authors already typechecked them; their diagnostics are
+  // not the user's preflight errors.
+  packageSources: Set<string>
 }
 
 type ResolvedImport =
@@ -221,10 +225,12 @@ function sourceFileParseDiagnostics(sourceFile: ts.SourceFile): readonly ts.Diag
   return (sourceFile as ts.SourceFile & {parseDiagnostics?: readonly ts.Diagnostic[]}).parseDiagnostics ?? []
 }
 
-function throwOnUserlandTypeDiagnostics(source: Pick<ResolutionContext, 'typeProgram' | 'configDiagnostics'>) {
+function throwOnUserlandTypeDiagnostics(source: Pick<ResolutionContext, 'typeProgram' | 'configDiagnostics'> & {packageSources?: Set<string>}) {
+  const packageSources = source.packageSources ?? new Set<string>()
   const diagnostics = [
     ...source.configDiagnostics,
-    ...ts.getPreEmitDiagnostics(source.typeProgram),
+    ...ts.getPreEmitDiagnostics(source.typeProgram).filter(diagnostic =>
+      diagnostic.file == null || !packageSources.has(normalizePath(diagnostic.file.fileName))),
   ]
   if (diagnostics.length === 0) return
   throw new TypeScriptUserlandError(diagnostics)
@@ -676,8 +682,23 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
   addTiming(timing, 'configMs', configStart)
 
   const typeProgramStart = performance.now()
-  const rootNames = typeProgramRootNames(paths, parsedConfig)
-  const typeProgram = ts.createProgram(rootNames, {...compilerOptions, noEmit: true})
+  const cache = ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions)
+  // Imports into packages that ship declaration maps resolve to their real
+  // sources; those must be program members so their files get a type checker.
+  // Emit-layout options would reject roots outside the project (TS6059) and
+  // are meaningless for this in-memory, never-emitted program.
+  const discovered = discoverDeclarationMappedSources(typeProgramRootNames(paths, parsedConfig), compilerOptions, cache)
+  const rootNames = [...new Set([...typeProgramRootNames(paths, parsedConfig), ...discovered.mapped])]
+  const programOptions: ts.CompilerOptions = {...compilerOptions, noEmit: true}
+  delete programOptions.rootDir
+  delete programOptions.composite
+  delete programOptions.declaration
+  delete programOptions.declarationMap
+  delete programOptions.declarationDir
+  delete programOptions.emitDeclarationOnly
+  delete programOptions.tsBuildInfoFile
+  delete programOptions.incremental
+  const typeProgram = ts.createProgram(rootNames, programOptions)
   addTiming(timing, 'typeProgramMs', typeProgramStart)
 
   const typeCheckerStart = performance.now()
@@ -688,11 +709,57 @@ function createResolutionContext(paths: string[], timing: FitProjectLoadTiming |
     compilerOptions,
     configFile,
     configDiagnostics: parsedConfig?.errors ?? [],
-    cache: ts.createModuleResolutionCache(cwd(), cacheKeyFor, compilerOptions),
+    cache,
     typeProgram,
     typeChecker,
     rootNames,
+    packageSources: discovered.packageSources,
   }
+}
+
+// A cheap syntactic walk over the static import graph, following declaration
+// maps into package sources. Only the mapped entry files need returning: the
+// program pulls their internal module graphs itself.
+function discoverDeclarationMappedSources(rootNames: string[], compilerOptions: ts.CompilerOptions, cache: ts.ModuleResolutionCache): {mapped: string[]; packageSources: Set<string>} {
+  const seen = new Set<string>()
+  const mapped = new Set<string>()
+  const packageSources = new Set<string>()
+  const queue: {file: string; insidePackage: boolean}[] = rootNames.map(file => ({file, insidePackage: false}))
+  while (queue.length > 0) {
+    const {file, insidePackage} = queue.pop()!
+    if (seen.has(file)) continue
+    seen.add(file)
+    if (insidePackage) packageSources.add(file)
+    const text = readFile(file)
+    if (text == null) continue
+    const sourceFile = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, false)
+    for (const statement of sourceFile.statements) {
+      const specifier = importedModuleSpecifier(statement)
+      if (specifier == null) continue
+      const resolved = ts.resolveModuleName(specifier, file, compilerOptions, ts.sys, cache).resolvedModule
+      if (resolved == null) continue
+      if (isDeclarationExtension(resolved.extension)) {
+        const source = sourceFromDeclarationMap(resolved.resolvedFileName)
+        if (source != null) {
+          mapped.add(source)
+          queue.push({file: source, insidePackage: true})
+        }
+        continue
+      }
+      if (isSupportedSourceExtension(resolved.extension)) {
+        queue.push({file: normalizePath(resolved.resolvedFileName), insidePackage})
+      }
+    }
+  }
+  return {mapped: [...mapped], packageSources}
+}
+
+function importedModuleSpecifier(statement: ts.Statement): string | null {
+  if (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) {
+    const specifier = statement.moduleSpecifier
+    return specifier != null && ts.isStringLiteral(specifier) ? specifier.text : null
+  }
+  return null
 }
 
 function typeProgramRootNames(paths: string[], parsedConfig: ts.ParsedCommandLine | null) {
@@ -774,7 +841,10 @@ function sourceFromDeclarationMap(declarationFile: string): string | null {
   const source = sources[0]!
   const sourceId = resolveSourceMapSource(mapFile, sourceRoot, source)
 
-  return sourceId != null && isSupportedSourcePath(sourceId) && fileExists(sourceId) && !isNodeModulesPath(sourceId)
+  // A declaration map is the package's own pointer to its sources; for an
+  // installed package those live inside node_modules on purpose. Callers that
+  // only want project-local files apply their own location filter.
+  return sourceId != null && isSupportedSourcePath(sourceId) && fileExists(sourceId)
     ? sourceId
     : null
 }

@@ -523,6 +523,8 @@ function writeBaseRoots(expression: ts.Expression, classifiers: Classifiers, pro
 function expressionRoots(expression: ts.Expression, program: Program): string[] {
   const roots: string[] = []
   const visit = (current: ts.Node) => {
+    // Type positions name types, not values; nothing flows through them.
+    if (ts.isTypeNode(current)) return
     if (ts.isExpression(current) && !expressionHasMutableType(current, program)) return
     if (ts.isIdentifier(current)) {
       roots.push(current.text)

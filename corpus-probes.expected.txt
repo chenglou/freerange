@@ -1,4 +1,4 @@
-summary: 16 groups, 38 files; typecheck: 16 groups, 18356 errors; check: 0 pass, 0 fail, 0 requires, 0 unknown
+summary: 16 groups, 38 files; typecheck: 16 groups, 18311 errors; check: 0 pass, 0 fail, 0 requires, 0 unknown
 
 2d-geometry: 9 files
   2d-geometry/src/algorithms/distance.ts
@@ -38,7 +38,7 @@ angular-grid-layout: 1 files
 Chart.js: 2 files
   Chart.js/src/helpers/helpers.curve.ts
   Chart.js/src/helpers/helpers.math.ts
-  typecheck: 1853 errors
+  typecheck: 1852 errors
     error TS2688: Cannot find type definition file for 'offscreencanvas'.
       The file is in the program because:
         Entry point of type library 'offscreencanvas' specified in compilerOptions
@@ -51,7 +51,7 @@ Chart.js: 2 files
     ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(7,35): error TS7006: Parameter 'type' implicitly has an 'any' type.
     ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(10,9): error TS7034: Variable 'values' implicitly has type 'any[]' in some locations where its type cannot be determined.
     ../freerange-corpus/Chart.js/src/controllers/controller.bar.js(13,16): error TS7005: Variable 'values' implicitly has an 'any[]' type.
-    ... 1845 more
+    ... 1844 more
 d3-scale: 1 files
   d3-scale/src/radial.js
   typecheck: 1 errors
@@ -84,16 +84,16 @@ dnd-kit:packages/geometry: 1 files
     ... 1 more
 fabric.js: 1 files
   fabric.js/src/util/misc/capValue.ts
-  typecheck: 61 errors
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '__objectSelectionMonitor' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_animate' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_applyPatternForTransformedGradient' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_applyPatternGradientTransform' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_calcCornerCoords' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_calculateCurrentDimensions' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_constrainScale' of exported anonymous class type may not be private or protected.
-    ../freerange-corpus/fabric.js/dist/index.mjs(18852,5): error TS4094: Property '_createCacheCanvas' of exported anonymous class type may not be private or protected.
-    ... 53 more
+  typecheck: 19 errors
+    ../freerange-corpus/fabric.js/extensions/aligning_guidelines/util/basic.spec.ts(1,38): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingControls.spec.ts(1,40): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingHandlers.spec.ts(17,67): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingHandlers.spec.ts(781,10): error TS7031: Binding element 'controlName' implicitly has an 'any' type.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingHandlers.spec.ts(781,23): error TS7031: Binding element 'oppositeControlName' implicitly has an 'any' type.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingHandlers.spec.ts(781,44): error TS7031: Binding element 'flipX' implicitly has an 'any' type.
+    ../freerange-corpus/fabric.js/extensions/cropping_controls/croppingHandlers.spec.ts(781,51): error TS7031: Binding element 'flipY' implicitly has an 'any' type.
+    ../freerange-corpus/fabric.js/extensions/data_updaters/gradient/index.spec.ts(1,59): error TS2307: Cannot find module 'vitest' or its corresponding type declarations.
+    ... 11 more
 floating-ui:packages/utils: 1 files
   floating-ui/packages/utils/src/index.ts
   typecheck: 1 errors
@@ -177,7 +177,7 @@ react-grid-layout: 3 files
     ... 71 more
 tldraw:packages/editor: 1 files
   tldraw/packages/editor/src/lib/primitives/utils.ts
-  typecheck: 2744 errors
+  typecheck: 2743 errors
     error TS2688: Cannot find type definition file for 'node'.
       The file is in the program because:
         Entry point of type library 'node' specified in compilerOptions
@@ -187,28 +187,28 @@ tldraw:packages/editor: 1 files
     error TS2688: Cannot find type definition file for 'vitest/globals'.
       The file is in the program because:
         Entry point of type library 'vitest/globals' specified in compilerOptions
-    error TS5074: Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified.
     ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(18,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
     ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(19,2): error TS2593: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
     ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(23,3): error TS2304: Cannot find name 'expect'.
     ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(57,3): error TS2304: Cannot find name 'expect'.
-    ... 2736 more
+    ../freerange-corpus/tldraw/packages/editor/src/lib/config/TLEditorSnapshot.test.ts(91,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ... 2735 more
 tldraw:packages/tldraw: 1 files
   tldraw/packages/tldraw/src/lib/shapes/arrow/elbow/range.tsx
-  typecheck: 7602 errors
+  typecheck: 7601 errors
     error TS2688: Cannot find type definition file for 'node'.
       The file is in the program because:
         Entry point of type library 'node' specified in compilerOptions
     error TS2688: Cannot find type definition file for 'vitest/globals'.
       The file is in the program because:
         Entry point of type library 'vitest/globals' specified in compilerOptions
-    error TS5074: Option '--incremental' can only be specified using tsconfig, emitting to single file or when option '--tsBuildInfoFile' is specified.
     ../freerange-corpus/tldraw/packages/tldraw/src/lib/assets/ImageAssetUtil.test.ts(9,1): error TS2593: Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
     ../freerange-corpus/tldraw/packages/tldraw/src/lib/assets/ImageAssetUtil.test.ts(13,1): error TS2304: Cannot find name 'afterEach'.
     ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(34,1): error TS2593: Cannot find name 'beforeEach'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
     ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(45,1): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
     ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(46,2): error TS2593: Cannot find name 'describe'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
-    ... 7594 more
+    ../freerange-corpus/tldraw/packages/tldraw/src/lib/shapes/arrow/ArrowShapeOptions.test.ts(47,3): error TS2593: Cannot find name 'it'. Do you need to install type definitions for a test runner? Try `npm i --save-dev @types/jest` or `npm i --save-dev @types/mocha` and then add 'jest' or 'mocha' to the types field in your tsconfig.
+    ... 7593 more
 xyflow:packages/system: 7 files
   xyflow/packages/system/src/utils/edges/bezier-edge.ts
   xyflow/packages/system/src/utils/edges/general.ts
