@@ -56,6 +56,7 @@ import {
   rationalDivide,
   rationalIsPositive,
   rationalIsZero,
+  rationalIsNegative,
   rationalNegate,
   rationalOne,
   rationalToNumberCeil,
@@ -234,6 +235,27 @@ export function admitsNaN(value: NumberValue, assumptions: LinearConstraint[]): 
   return true
 }
 
+// The hull side is infinite and no trusted fact pins a finite constant bound
+// there, so the value can actually reach that infinity at runtime (a range
+// given like `x <= 1000` is false of +Infinity and excludes it).
+export function mayBeInfinite(value: NumberValue, side: 'positive' | 'negative', assumptions: LinearConstraint[]): boolean {
+  if (side === 'positive' ? value.max !== Number.POSITIVE_INFINITY : value.min !== Number.NEGATIVE_INFINITY) return false
+  const atom = singleUnitAtom(value.linear) ?? value.expr
+  if (atom == null) return true
+  for (const assumption of assumptions) {
+    if (assumption.source === 'code') continue
+    for (const fact of nonNegativeConstraints(assumption)) {
+      if (fact.diff.terms.size !== 1) continue
+      const coefficient = fact.diff.terms.get(atom)
+      if (coefficient == null) continue
+      // diff = c - v >= 0 bounds v above; diff = v - c >= 0 bounds it below.
+      if (side === 'positive' && rationalIsNegative(coefficient)) return false
+      if (side === 'negative' && rationalIsPositive(coefficient)) return false
+    }
+  }
+  return true
+}
+
 function compareRanges(left: NumberValue, op: ComparisonOperator, right: NumberValue, nanHazard: boolean): Truth {
   // A hull-decided 'true' against an infinite endpoint (x <= Infinity) is
   // false for NaN; 'false' verdicts stay sound since NaN fails every
@@ -271,11 +293,11 @@ function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: Number
   return evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
 }
 
-function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]): boolean {
+function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[], nanHazard = false): boolean {
   if (hasComparisonFact(expression, strict ? '>' : '>=', '0', assumptions)) return true
   const linear = linearFromExpressionText(expression)
   if (linear != null && provesNonNegative(linear, strict, assumptions)) return true
-  return roundedSignNonNegative(expression, strict, assumptions)
+  return roundedSignNonNegative(expression, strict, assumptions, nanHazard)
 }
 
 // Sign survives rounding op-by-op. A real sum or difference of doubles that
@@ -283,26 +305,41 @@ function provesExprNonNegative(expression: string, strict: boolean, assumptions:
 // rounding to nearest cannot cross, so even strict sign carries through + and
 // -; products and quotients keep >= 0 but can underflow a strict sign to
 // zero.
-function roundedSignNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[]): boolean {
+function roundedSignNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[], nanHazard: boolean): boolean {
   const sum = binaryExpression(expression, '+')
-  const difference = binaryExpression(expression, '-')
-  if (sum != null || difference != null) {
+  if (sum != null) {
+    // Two proven-nonnegative addends cannot mix infinities, so the sum is
+    // never NaN regardless of the hull.
     const top = linearFromTopOperation(expression)
     if (top != null && provesNonNegative(top, strict, assumptions)) return true
-    if (sum != null) {
-      return (provesExprNonNegative(sum.left, strict, assumptions) && provesExprNonNegative(sum.right, false, assumptions))
-        || (provesExprNonNegative(sum.left, false, assumptions) && provesExprNonNegative(sum.right, strict, assumptions))
-    }
-    return difference != null && hasComparisonFact(difference.left, strict ? '>' : '>=', difference.right, assumptions)
+    return (provesExprNonNegative(sum.left, strict, assumptions, nanHazard) && provesExprNonNegative(sum.right, false, assumptions, nanHazard))
+      || (provesExprNonNegative(sum.left, false, assumptions, nanHazard) && provesExprNonNegative(sum.right, strict, assumptions, nanHazard))
+  }
+  const difference = binaryExpression(expression, '-')
+  if (difference != null) {
+    // Infinity - Infinity is NaN from clean operands; only a hull that rules
+    // NaN out supports the conclusion (a NaN-capable difference widens
+    // fully). Nested differences arrive without a value to check, so the
+    // hazard flag stays conservative.
+    if (nanHazard) return false
+    const top = linearFromTopOperation(expression)
+    if (top != null && provesNonNegative(top, strict, assumptions)) return true
+    return hasComparisonFact(difference.left, strict ? '>' : '>=', difference.right, assumptions)
   }
   if (strict) return false
   const product = binaryExpression(expression, '*')
   if (product != null) {
-    return provesExprNonNegative(product.left, false, assumptions) && provesExprNonNegative(product.right, false, assumptions)
+    // 0 * Infinity is NaN, so both factors must be strictly positive (then
+    // the product is positive or a benign underflow to +0).
+    return provesExprNonNegative(product.left, true, assumptions, nanHazard) && provesExprNonNegative(product.right, true, assumptions, nanHazard)
   }
   const quotient = binaryExpression(expression, '/')
   if (quotient != null) {
-    return provesExprNonNegative(quotient.left, false, assumptions) && provesExprNonNegative(quotient.right, true, assumptions)
+    // Infinity / Infinity is NaN, so the divisor must be one positive
+    // constant; an infinite numerator then just gives Infinity.
+    const divisor = linearFromExpressionText(quotient.right)
+    const divisorConstant = divisor != null && divisor.terms.size === 0 && rationalIsPositive(divisor.constant)
+    return divisorConstant && provesExprNonNegative(quotient.left, false, assumptions, nanHazard)
   }
   return false
 }
@@ -311,7 +348,7 @@ function proofRulesContext(assumptions: LinearConstraint[]): ProofRulesContext {
   return {
     assumptions,
     hasComparisonFact: (leftExpr, op, rightExpr, offsets) => hasComparisonFact(leftExpr, op, rightExpr, assumptions, offsets),
-    provesExprNonNegative: (expression, strict) => provesExprNonNegative(expression, strict, assumptions),
+    provesExprNonNegative: (expression, strict, nanHazard) => provesExprNonNegative(expression, strict, assumptions, nanHazard),
     provesLinearNonNegative: (diff, strict) => provesNonNegative(diff, strict, assumptions),
   }
 }
@@ -690,6 +727,9 @@ function nonNumberReason(value: Exclude<Value, NumberValue>) {
 
 export function runningSumFacts(value: NumberValue, start: NumberValue, count: NumberValue, increment: NumberValue): LinearConstraint[] {
   const facts: LinearConstraint[] = []
+  // A NaN-capable accumulator (mixed-infinity steps) fails every published
+  // comparison.
+  if (possiblyNaN(value)) return facts
   if (increment.min >= 0) {
     const lower = comparisonConstraint(value, '>=', start, `${value.expr ?? formatRange(value)} >= ${start.expr ?? formatRange(start)}`)
     if (lower != null) facts.push(lower)

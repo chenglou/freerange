@@ -34,10 +34,24 @@ export type ComparisonGoal = {
 // text lowering cannot mistake them for program ops.
 export type ReductionOffsets = {left?: number; right?: number}
 
+// Mirrors proof.ts admitsNaN for goal values reached through the rules.
+function admitsNaNGoal(value: NumberValue, assumptions: LinearConstraint[]): boolean {
+  if (!possiblyNaN(value)) return false
+  const atom = singleUnitAtom(value.linear) ?? value.expr
+  if (atom == null) return true
+  for (const assumption of assumptions) {
+    if (assumption.source === 'code') continue
+    if (assumption.leftExpr != null && sameExpressionText(assumption.leftExpr, atom)) return false
+    if (assumption.rightExpr != null && sameExpressionText(assumption.rightExpr, atom)) return false
+    if (assumption.diff != null && assumption.diff.terms.has(atom)) return false
+  }
+  return true
+}
+
 export type ProofRulesContext = {
   assumptions: LinearConstraint[]
   hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, offsets?: ReductionOffsets): boolean
-  provesExprNonNegative(expression: string, strict: boolean): boolean
+  provesExprNonNegative(expression: string, strict: boolean, nanHazard?: boolean): boolean
   provesLinearNonNegative(diff: LinearExpr, strict: boolean): boolean
 }
 
@@ -173,12 +187,17 @@ function evaluateSignRecovery(goal: ComparisonGoal, context: ProofRulesContext):
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null) return null
   if (lessGoal.left.min !== 0 || lessGoal.left.max !== 0) return null
+  // NaN handling is per-shape inside the recursion: a sum of proven
+  // nonnegatives cannot mix infinities, but a difference can be
+  // Infinity - Infinity, so it needs a hull or trusted fact that rules NaN
+  // out (a given mentioning the result certifies it).
+  const nanHazard = admitsNaNGoal(lessGoal.right, context.assumptions)
   const strict = lessGoal.op === '<'
-  if (context.provesExprNonNegative(lessGoal.rightExpr, strict)) {
+  if (context.provesExprNonNegative(lessGoal.rightExpr, strict, nanHazard)) {
     return pass('sign-recovery', 'sign survives rounding one operation at a time')
   }
   const atom = singleUnitAtom(lessGoal.right.linear)
-  if (atom != null && atom !== lessGoal.rightExpr && context.provesExprNonNegative(atom, strict)) {
+  if (atom != null && atom !== lessGoal.rightExpr && context.provesExprNonNegative(atom, strict, nanHazard)) {
     return pass('sign-recovery', 'sign survives rounding one operation at a time')
   }
   return null
@@ -193,6 +212,9 @@ function evaluateSignRecovery(goal: ComparisonGoal, context: ProofRulesContext):
 function evaluateRoundedOpMonotonicity(goal: ComparisonGoal, context: ProofRulesContext): ProofRuleResult | null {
   const lessGoal = comparisonLessGoal(goal)
   if (lessGoal == null || lessGoal.op !== '<=') return null
+  // NaN on either side falsifies the conclusion; a fully unbounded hull is
+  // how a NaN-capable side presents.
+  if (possiblyNaN(lessGoal.left) || possiblyNaN(lessGoal.right)) return null
   const leftTop = linearFromTopOperation(lessGoal.leftExpr)
   const rightTop = linearFromTopOperation(lessGoal.rightExpr)
   if (leftTop == null && rightTop == null) return null

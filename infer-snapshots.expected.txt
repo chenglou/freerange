@@ -156,5 +156,6 @@ locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
+  measurements.length: int 0..4294967295
   items.length == layoutSources.length
   items.length: int 0..4294967295

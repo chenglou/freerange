@@ -40,22 +40,25 @@ const unboundedNonnegativeProduct = multiplyNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'left'),
   numberValue(0, Number.POSITIVE_INFINITY, null, 'right'),
 )
-if (unboundedNonnegativeProduct.min !== 0 || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected 0..Infinity product, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
+// Zero times Infinity is NaN, and both are admitted here, so the hull must
+// widen fully for the NaN exclusion to see it.
+if (unboundedNonnegativeProduct.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected the NaN-admitting product to widen fully, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
   process.exitCode = 1
 } else {
-  console.log('domain: unbounded nonnegative product')
+  console.log('domain: NaN-admitting product widens')
 }
 
 const unboundedNonnegativeQuotient = divideNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'left'),
   numberValue(1, Number.POSITIVE_INFINITY, null, 'right'),
 )
-if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== 0 || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected 0..Infinity quotient, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
+// Infinity over Infinity is NaN, and both sides admit Infinity here.
+if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
+  console.error(`expected the NaN-admitting quotient to widen fully, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
   process.exitCode = 1
 } else {
-  console.log('domain: unbounded nonnegative quotient')
+  console.log('domain: NaN-admitting quotient widens')
 }
 
 const unboundedNonnegativeRunningSum = runningSumNumber(

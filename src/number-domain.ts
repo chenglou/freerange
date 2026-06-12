@@ -364,6 +364,11 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
         : numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, opaqueLinear(expr), null, origin)
     }
   }
+  // A range touching zero times a range touching infinity admits 0 * Infinity
+  // = NaN; the hull must widen fully so the NaN exclusion sees it.
+  if ((touchesZero(left) && touchesInfinity(right)) || (touchesZero(right) && touchesInfinity(left))) {
+    return numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, opaqueLinear(expr), null, origin)
+  }
   const products = nonNanExtrema([
     left.min * right.min,
     left.min * right.max,
@@ -378,12 +383,25 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
   return numberValue(products.min, products.max, grid, expr, linear, null, origin)
 }
 
+function touchesZero(value: NumberValue): boolean {
+  return value.min <= 0 && value.max >= 0
+}
+
+function touchesInfinity(value: NumberValue): boolean {
+  return value.min === Number.NEGATIVE_INFINITY || value.max === Number.POSITIVE_INFINITY
+}
+
 export function divideNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 && right.max >= 0) return unknownValue('Division by a range containing zero is unsupported')
   const expr = binaryExpr(left, '/', right)
   const origin = mergeOrigin(left, right)
   const folded = foldBinary(left, right, (a, b) => a / b, expr, origin)
   if (folded != null) return folded
+  // An infinite dividend over an infinite divisor admits Infinity / Infinity
+  // = NaN; widen fully so the NaN exclusion sees it.
+  if (touchesInfinity(left) && touchesInfinity(right)) {
+    return numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, opaqueLinear(expr), null, origin)
+  }
   const quotients = nonNanExtrema([
     left.min / right.min,
     left.min / right.max,
@@ -414,10 +432,14 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
 // operands' common grid survives.
 export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 || left.min < 0) return unknownValue('Modulo is only supported for non-negative values and positive divisors')
-  const bothInteger = integerValued(left) && integerValued(right)
-  const max = bothInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
   const expr = binaryExpr(left, '%', right)
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
+  // An infinite dividend gives NaN; widen fully so the NaN exclusion sees it.
+  if (left.max === Number.POSITIVE_INFINITY) {
+    return numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, linear, null, mergeOrigin(left, right))
+  }
+  const bothInteger = integerValued(left) && integerValued(right)
+  const max = bothInteger ? Math.max(0, Math.ceil(right.max) - 1) : right.max
   return numberValue(0, max, gridJoin(left.grid, right.grid), expr, linear, null, mergeOrigin(left, right))
 }
 

@@ -4,6 +4,7 @@
 - **`reduce` recognition** for summing arbitrary numbers. The 0|1 counting case is covered by `filter(p).length`; `reduce` would cover summing widths, weights, totals.
 - **Views via pure code**: users transform their field names with `arr.map(item => ({start, size}))` before calling catalog items. Confirm this works for the layouts that currently can't use `top/height/bottom` directly. Segmented-stack still hardcodes those names; revisit when a real case demands it.
 - **Open-ended range spellings** (`int 1..`, `0..`). Hold off until the noise from spelling `Infinity` becomes annoying.
+- **A `finite` range spelling.** Several demo givens now carry arbitrary magnitudes (`scrollY: -1000000..1000000`, `pos: -1000000..1000000`) whose only real job is excluding Infinity and NaN: with `0..Infinity` inputs, `Infinity - Infinity` reaches echo claims as NaN and correctly blocks them. `given scrollY: finite` would say exactly that; the magnitude only matters for exactness-window claims (integer `+ 1` strictness), which are rarer and deserve a real bound.
 
 ## Engine Work
 

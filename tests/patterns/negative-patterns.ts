@@ -2238,3 +2238,35 @@ export function negativeRepeatedAdditionIsNotMultiplication(n: number) {
   }
   return total
 }
+
+// Infinity is in-domain (`0..Infinity` is the canonical unbounded range), and
+// these ops manufacture NaN from non-NaN operands: Infinity - Infinity,
+// 0 * Infinity, and Infinity % d are all NaN, which fails every comparison.
+
+/** @fit
+ * given a: 0..Infinity
+ * given b: 0..Infinity
+ * given a >= b
+ * return >= 0
+ */
+export function negativeInfinityMinusInfinityIsNaN(a: number, b: number) {
+  return a - b
+}
+
+/** @fit
+ * given a: 0..1
+ * given b: 0..Infinity
+ * return >= 0
+ */
+export function negativeZeroTimesInfinityIsNaN(a: number, b: number) {
+  return a * b
+}
+
+/** @fit
+ * given a: 0..Infinity
+ * given b: 1..1000
+ * return >= 0
+ */
+export function negativeInfinityModuloIsNaN(a: number, b: number) {
+  return a % b
+}

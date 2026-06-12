@@ -23,6 +23,7 @@ import {
   gridOfNumber,
   integerValued,
   joinValues,
+  possiblyNaN,
   literalKey,
   literalValue,
   mergeArraySummary,
@@ -134,7 +135,7 @@ import {
   compareNumbers,
   isComparisonOperator,
 } from './refine.ts'
-import {admitsNaN, comparisonConstraint, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints} from '../proof.ts'
+import {admitsNaN, comparisonConstraint, mayBeInfinite, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints} from '../proof.ts'
 import {formatRange} from '../reporting.ts'
 import {
   forgetRoot,
@@ -1604,7 +1605,7 @@ function evaluatePlainNumberBinary(
       return divideNumbers(left, right)
     case ts.SyntaxKind.PercentToken: {
       const result = moduloNumbers(left, right)
-      if (result.kind === 'number' && result.linear != null && right.linear != null) {
+      if (result.kind === 'number' && !possiblyNaN(result) && result.linear != null && right.linear != null) {
         const upper = comparisonConstraint(result, '<', right, `${result.expr} < ${right.expr}`)
         if (upper != null) frame.assumptions = mergeAssumptions(frame.assumptions, [upper])
       }
@@ -1625,10 +1626,14 @@ function evaluatePlainNumberBinary(
 // their algebraic form already subsumes it.
 function publishRoundedMonotoneFacts(result: Value, op: '+' | '-', left: NumberValue, right: NumberValue, frame: InterpreterFrame) {
   if (result.kind !== 'number' || result.linear == null || result.expr == null) return
-  // A NaN operand makes the result NaN, which fails the comparison the fact
-  // asserts; operands stay in once any hull bound or trusted fact excludes
-  // NaN.
+  // A NaN result fails the comparison the fact asserts: NaN operands, or the
+  // mixed infinities the op itself can collapse (Infinity - Infinity).
   if (admitsNaN(left, frame.assumptions) || admitsNaN(right, frame.assumptions)) return
+  const positiveClash = mayBeInfinite(left, op === '-' ? 'positive' : 'positive', frame.assumptions)
+    && mayBeInfinite(right, op === '-' ? 'positive' : 'negative', frame.assumptions)
+  const negativeClash = mayBeInfinite(left, 'negative', frame.assumptions)
+    && mayBeInfinite(right, op === '-' ? 'negative' : 'positive', frame.assumptions)
+  if (positiveClash || negativeClash) return
   if (additionIsExact(left, right)) return
   const facts: LinearConstraint[] = []
   const push = (fact: LinearConstraint | null) => {

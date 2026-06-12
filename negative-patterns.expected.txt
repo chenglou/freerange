@@ -1249,6 +1249,25 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeRepeatedAdditionIsNotMultipl
     inferred from code: i - n < 0
     inferred from code: total >= 0
   missing fact: total == (n * 0.1)
+UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityMinusInfinityIsNaN: return >= 0
+  known:
+    (a - b): any number
+    assumed from input: given a: 0..Infinity
+    assumed from input: given b: 0..Infinity
+    assumed from input: given a >= b
+  missing fact: (a - b) >= 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeZeroTimesInfinityIsNaN: return >= 0
+  known:
+    (a * b): any number
+    assumed from input: given a: 0..1
+    assumed from input: given b: 0..Infinity
+  missing fact: (a * b) >= 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityModuloIsNaN: return >= 0
+  known:
+    (a % b): any number
+    assumed from input: given a: 0..Infinity
+    assumed from input: given b: 1..1000
+  missing fact: (a % b) >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1224,2): error TS2304: Cannot find name 'row'.
