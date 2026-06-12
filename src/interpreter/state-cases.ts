@@ -249,7 +249,7 @@ function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary'])
   return {
     ...summary,
     advances: summary.advances.map(item => ({...item, value: valueFingerprint(item.value)})),
-    lastEnd: summary.lastEnd == null ? null : valueFingerprint(summary.lastEnd),
+    lastEnd: summary.lastEnd == null ? null : valueFingerprint(summary.lastEnd.value),
     extentEnds: summary.extentEnds.map(item => ({...item, value: valueFingerprint(item.value)})),
   }
 }

@@ -200,7 +200,7 @@ function addFactsFromValue(inventory: FactInventory, path: string, value: Value)
       }, {kind: 'loop-summary'}, publicFitText(path))
     }
     if (value.summary.lastEnd != null) {
-      inventory.addMany(numberFacts(`lastEnd(${path})`, value.summary.lastEnd), {kind: 'loop-summary'}, publicFitText(path))
+      inventory.addMany(numberFacts(`lastEnd(${path})`, value.summary.lastEnd.value), {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const fact of value.summary.extentEnds) {
       inventory.addMany(numberFacts(`extentEnd(${path}, ${fact.emptyExpr})`, fact.value), {kind: 'loop-summary'}, publicFitText(path))

@@ -106,8 +106,9 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
       right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
     })),
     advances: summary.advances.map(fact => ({...fact, value: numberWithCallSiteText(fact.value, bindings)})),
-    lastEnd: summary.lastEnd == null ? null : numberWithCallSiteText(summary.lastEnd, bindings),
+    lastEnd: summary.lastEnd == null ? null : {...summary.lastEnd, value: numberWithCallSiteText(summary.lastEnd.value, bindings)},
     extentEnds: summary.extentEnds.map(fact => ({
+      ...fact,
       emptyExpr: callSiteText(fact.emptyExpr, bindings),
       value: numberWithCallSiteText(fact.value, bindings),
     })),

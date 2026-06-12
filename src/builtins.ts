@@ -9,7 +9,7 @@ import {
 import {sameExpressionText} from './linear.ts'
 import {parseExpression, publicFitText} from './parser.ts'
 import {formatArraySummary, formatRange} from './reporting.ts'
-import {ambiguousRowAxes, hasNondecreasingProp, isRowExtentShape, provedSpacing, spacedShapesFromRelations} from './sequence-facts.ts'
+import {ambiguousRowAxes, hasNondecreasingProp, isRowExtentShape, provedSpacing, rowAxes, spacedShapesFromRelations} from './sequence-facts.ts'
 
 export type BuiltinContext = {
   expression: ts.CallExpression
@@ -48,7 +48,19 @@ export function evaluateBuiltinCall(context: BuiltinContext): Value | null {
 
 export function extentEndSummaryValue(array: ArrayValue, emptyExpr: string): NumberValue | null {
   const extentEnds = array.summary?.extentEnds ?? []
-  return extentEnds.find(fact => sameExpressionText(fact.emptyExpr, emptyExpr))?.value ?? null
+  const fact = extentEnds.find(candidate => sameExpressionText(candidate.emptyExpr, emptyExpr))
+  return fact == null ? null : blessedRowEnd(fact)
+}
+
+// The recorded loop end means "final position + size" only when the fields its
+// recurrence ran over form one of the catalog's axes; rename through map to
+// get there from other field vocabularies.
+function blessedRowEnd(end: {value: NumberValue; positionPath: string[]; sizePath: string[]} | null): NumberValue | null {
+  if (end == null) return null
+  const blessed = rowAxes.some(axis =>
+    end.positionPath.length === 1 && end.positionPath[0] === axis.position
+    && end.sizePath.length === 1 && (end.sizePath[0] === axis.size || end.sizePath[0] === axis.end))
+  return blessed ? end.value : null
 }
 
 function evaluateNondecreasingCall(context: BuiltinContext): Value {
@@ -84,7 +96,8 @@ function evaluateLastEndCall(context: BuiltinContext): Value {
   const target = context.evaluateExpression(targetExpression)
   if (target.kind !== 'array') return unknown('lastEnd expected an array')
   if (ambiguousRowAxes(target)) return unknown(`lastEnd(...) is ambiguous: ${ambiguousAxesReason}`)
-  return target.summary?.lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
+  const lastEnd = blessedRowEnd(target.summary?.lastEnd ?? null)
+  return lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
 }
 
 function evaluateNoOverlapCall(context: BuiltinContext): Value {
@@ -142,7 +155,8 @@ function evaluateExtentEndCall(context: BuiltinContext): Value {
   if (empty.kind !== 'number' || empty.expr == null) return unknown('extentEnd expected a known empty value')
 
   if (target.length.max === 0) return empty
-  if (target.length.min >= 1 && target.summary?.lastEnd != null) return target.summary.lastEnd
+  const lastEnd = blessedRowEnd(target.summary?.lastEnd ?? null)
+  if (target.length.min >= 1 && lastEnd != null) return lastEnd
   return extentEndSummaryValue(target, empty.expr) ?? unknown(extentEndFailureReason(context.expressionText(targetExpression), empty.expr, target))
 }
 

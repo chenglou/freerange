@@ -71,8 +71,17 @@ export type ArraySummary = {
   origin?: ArrayOrigin | null
   relations: SequenceRelation[]
   advances: {prop: string; value: NumberValue}[]
-  lastEnd: NumberValue | null
-  extentEnds: {emptyExpr: string; value: NumberValue}[]
+  lastEnd: RowEnd | null
+  extentEnds: (RowEnd & {emptyExpr: string})[]
+}
+
+// A loop's final cursor value, tagged with the pushed fields its recurrence
+// ran over. It means "final position + size" only when those fields form one
+// of the catalog's axes — directly, or after a rename through map.
+export type RowEnd = {
+  value: NumberValue
+  positionPath: string[]
+  sizePath: string[]
 }
 
 export type ArrayOrigin =

@@ -27,7 +27,7 @@ import {
 import {parseExpression} from './parser.ts'
 import {proveComparison} from './proof.ts'
 import {flattenSignedSum, propertyNameText} from './interpreter/source-syntax.ts'
-import {rowAxes, type RowAxis} from './sequence-facts.ts'
+import {type RowAxis} from './sequence-facts.ts'
 
 export type LoopScalarUpdate = {
   start: NumberValue
@@ -342,19 +342,20 @@ function sequenceSummaryFromAppendClock(
   const bottomPath = options.bottomPath ?? null
   addSpacedRelations(summary, recurrence.path, heightPath, bottomPath, gapExpr)
   if (!options.includeExtentEnd) return summary
-  // lastEnd/extentEnd mean "final position + size" over one axis vocabulary;
-  // a recurrence on other fields is a fine relation but not a row extent.
-  const rowExtent = rowAxes.some(axis =>
-    pathText(recurrence.path) === axis.position
-    && (samePath(heightPath ?? [], [axis.size]) || samePath(bottomPath ?? [], [axis.end])))
-  if (!rowExtent) return summary
+  // The loop end is recorded with the fields its recurrence ran over; whether
+  // those fields mean a row extent is the discharge side's question (directly
+  // blessed, or blessed after a rename through map).
+  const sizeTagPath = heightPath ?? bottomPath
+  if (sizeTagPath == null) return summary
 
   const loopEndName = `lastEnd(${clock.arrayName})`
   const loopEnd = options.cursorEnd ?? nonEmptyLoopEnd(loopEndName, recurrence.start, recurrence.advance, clock.length)
   const nonEmptyEnd = lastEndFromLoopEnd(loopEnd, gapExpr, options.resolveNumber)
-  if (clock.length.min >= 1) summary.lastEnd = nonEmptyEnd
+  if (clock.length.min >= 1 && nonEmptyEnd != null) {
+    summary.lastEnd = {value: nonEmptyEnd, positionPath: recurrence.path, sizePath: sizeTagPath}
+  }
   const extentEnd = extentEndFromLoopPush(clock.arrayName, recurrence.start, nonEmptyEnd)
-  if (extentEnd != null) summary.extentEnds.push(extentEnd)
+  if (extentEnd != null) summary.extentEnds.push({...extentEnd, positionPath: recurrence.path, sizePath: sizeTagPath})
   return summary
 }
 
@@ -390,10 +391,6 @@ function addSpacedRelations(summary: ArraySummary, topPath: string[], heightPath
 function pathForStreamValue(clock: AppendClock, expr: string): string[] | null {
   const stream = clock.streams.find(item => item.value.kind === 'number' && item.value.expr != null && sameExpressionText(item.value.expr, expr))
   return stream?.path ?? null
-}
-
-function samePath(left: string[], right: string[]) {
-  return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
 function pathText(path: string[]) {
@@ -491,7 +488,7 @@ function extentEndFromLoopPush(
   arrayName: string,
   empty: NumberValue,
   nonEmptyEnd: NumberValue | null,
-): ArraySummary['extentEnds'][number] | null {
+): {emptyExpr: string; value: NumberValue} | null {
   if (empty.expr == null || nonEmptyEnd == null) return null
   return {
     emptyExpr: empty.expr,

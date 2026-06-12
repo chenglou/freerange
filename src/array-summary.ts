@@ -61,7 +61,7 @@ function originSummaryFromEmptyBranch(emptyCandidate: ArrayValue, other: ArrayVa
 function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null) {
   if (left === right) return true
   if (left == null || right == null) return false
-  if ((left.lastEnd?.expr ?? null) !== (right.lastEnd?.expr ?? null)) return false
+  if ((left.lastEnd?.value.expr ?? null) !== (right.lastEnd?.value.expr ?? null)) return false
   if (!sameArrayOrigin(left.origin ?? null, right.origin ?? null)) return false
   if (left.relations.length !== right.relations.length) return false
   if (!left.relations.every((fact, index) => sameSequenceRelation(fact, right.relations[index]!))) return false

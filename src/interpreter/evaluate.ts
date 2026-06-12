@@ -40,6 +40,7 @@ import {
   valueWithAssumptions,
   valueWithDefaultedUndefined,
   withNumberCases,
+  type ArraySummary,
   type ArrayValue,
   type LinearConstraint,
   type LiteralPrimitive,
@@ -2572,6 +2573,10 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   const effectiveSource = sourceAfterCallback(source, callbackEffects)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const abstractElement = evaluateMapElement(effectiveSource, sourceExpr, callbackFn, frame)
+  // A pure field rename keeps the rows' adjacency story: the same facts hold
+  // under the output names. This is how other field vocabularies reach the
+  // catalog: rows.map(row => ({top: row.y, height: row.size})).
+  const renamed = projectSummaryThroughRename(effectiveSource.summary, callbackFn)
   return {
     kind: 'array',
     layout: 'collection',
@@ -2579,8 +2584,103 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
     elements: null,
     element: abstractElement,
     expr: expression.getText(frame.program.sourceFile),
-    summary: emptyArraySummary(mapOrigin(effectiveSource, sourceExpr)),
+    summary: mergeArraySummary(emptyArraySummary(mapOrigin(effectiveSource, sourceExpr)), renamed),
   }
+}
+
+type RenamePair = {inputPath: string[]; outputPath: string[]}
+
+// The output-field → input-field mapping of a callback that only relabels:
+// every property initializer is a property chain on the element parameter
+// (recursively through nested object literals). Computed fields are simply
+// unmapped; a spread hides the field set, so nothing maps.
+function pureRenamePairs(callbackFn: FunctionLikeNode): RenamePair[] | null {
+  const parameter = callbackFn.parameters[0]
+  if (parameter == null || !ts.isIdentifier(parameter.name)) return null
+  const body = ts.isArrowFunction(callbackFn) && ts.isExpression(callbackFn.body)
+    ? callbackFn.body
+    : singleReturnExpression(callbackFn)
+  if (body == null) return null
+  const literal = unwrapExpression(body)
+  if (!ts.isObjectLiteralExpression(literal)) return null
+  const pairs: RenamePair[] = []
+  return collectRenamePairs(literal, parameter.name.text, [], pairs) ? pairs : null
+}
+
+function collectRenamePairs(literal: ts.ObjectLiteralExpression, parameterName: string, prefix: string[], pairs: RenamePair[]): boolean {
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) return false
+    if (!ts.isPropertyAssignment(property) || !ts.isIdentifier(property.name)) continue
+    const outputPath = [...prefix, property.name.text]
+    const initializer = unwrapExpression(property.initializer)
+    if (ts.isObjectLiteralExpression(initializer)) {
+      if (!collectRenamePairs(initializer, parameterName, outputPath, pairs)) return false
+      continue
+    }
+    const inputPath = parameterPropertyChain(initializer, parameterName)
+    if (inputPath != null) pairs.push({inputPath, outputPath})
+  }
+  return true
+}
+
+function parameterPropertyChain(expression: ts.Expression, parameterName: string): string[] | null {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current)) return current.text === parameterName ? [] : null
+  if (!ts.isPropertyAccessExpression(current)) return null
+  const parent = parameterPropertyChain(current.expression, parameterName)
+  return parent == null ? null : [...parent, current.name.text]
+}
+
+function singleReturnExpression(callbackFn: FunctionLikeNode): ts.Expression | null {
+  if (callbackFn.body == null || !ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
+  const statement = callbackFn.body.statements[0]!
+  return ts.isReturnStatement(statement) ? statement.expression ?? null : null
+}
+
+function projectSummaryThroughRename(summary: ArraySummary | null, callbackFn: FunctionLikeNode): ArraySummary | null {
+  if (summary == null) return null
+  const pairs = pureRenamePairs(callbackFn)
+  if (pairs == null || pairs.length === 0) return null
+  const renameOutput = (inputPath: string[]): string[] | null =>
+    pairs.find(pair => samePathParts(pair.inputPath, inputPath))?.outputPath ?? null
+
+  const projected: ArraySummary = {relations: [], advances: [], lastEnd: null, extentEnds: []}
+  for (const relation of summary.relations) {
+    const left = renameOutput(relation.left.path)
+    const terms = relation.right.terms.map(term => {
+      const path = renameOutput(term.path)
+      return path == null ? null : {...term, path}
+    })
+    if (left == null || terms.some(term => term == null)) continue
+    projected.relations.push({
+      ...relation,
+      left: {...relation.left, path: left},
+      right: {...relation.right, terms: terms as typeof relation.right.terms},
+    })
+  }
+  for (const advance of summary.advances) {
+    const path = renameOutput(advance.prop.split('.').filter(part => part.length > 0))
+    if (path != null) projected.advances.push({...advance, prop: path.join('.')})
+  }
+  if (summary.lastEnd != null) {
+    const positionPath = renameOutput(summary.lastEnd.positionPath)
+    const sizePath = renameOutput(summary.lastEnd.sizePath)
+    if (positionPath != null && sizePath != null) {
+      projected.lastEnd = {...summary.lastEnd, positionPath, sizePath}
+    }
+  }
+  for (const fact of summary.extentEnds) {
+    const positionPath = renameOutput(fact.positionPath)
+    const sizePath = renameOutput(fact.sizePath)
+    if (positionPath != null && sizePath != null) projected.extentEnds.push({...fact, positionPath, sizePath})
+  }
+  return projected.relations.length === 0 && projected.advances.length === 0 && projected.lastEnd == null && projected.extentEnds.length === 0
+    ? null
+    : projected
+}
+
+function samePathParts(left: string[], right: string[]) {
+  return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
 function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {

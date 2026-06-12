@@ -127,7 +127,7 @@ export function valueWithAssumptions(value: Value, assumptions: LinearConstraint
       summary: value.summary == null ? null : {
         ...value.summary,
         advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
-        lastEnd: value.summary.lastEnd == null ? null : valueWithAssumptions(value.summary.lastEnd, assumptions) as NumberValue,
+        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithAssumptions(value.summary.lastEnd.value, assumptions) as NumberValue},
         extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
       },
     }

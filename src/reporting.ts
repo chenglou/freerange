@@ -32,7 +32,7 @@ export type ReportArrayValue = {
   summary: {
     relations: ReportSequenceRelation[]
     advances: {prop: string; value: ReportNumberValue}[]
-    lastEnd: ReportNumberValue | null
+    lastEnd: {value: ReportNumberValue} | null
     extentEnds: {emptyExpr: string; value: ReportNumberValue}[]
   } | null
 }
@@ -115,7 +115,7 @@ export function formatArraySummary(value: ReportArrayValue) {
   const lines: string[] = []
   for (const prop of nondecreasingPropsFromReportRelations(value.summary.relations)) lines.push(`nondecreasing(.${prop})`)
   for (const fact of spacedShapesFromReportRelations(value.summary.relations)) lines.push(`spaced(${publicFitText(fact.gapExpr)})`)
-  if (value.summary.lastEnd != null) lines.push(`lastEnd = ${formatRange(value.summary.lastEnd)}`)
+  if (value.summary.lastEnd != null) lines.push(`lastEnd = ${formatRange(value.summary.lastEnd.value)}`)
   return lines.length === 0 ? 'no sequence facts' : lines.join(', ')
 }
 

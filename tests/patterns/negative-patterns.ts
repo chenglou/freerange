@@ -783,6 +783,22 @@ export function negativeBothAxesAreAmbiguous(cells: {height: number; width: numb
 }
 
 /** @fit
+ * given items.length: int 1..100
+ * given items[].size: 1..400
+ * given gap: 0..24
+ * spaced(return, gap)
+ */
+export function negativePartialRenameLosesTheRelation(items: {size: number}[], gap: number) {
+  const bands: {y: number; size: number}[] = []
+  let y = 0
+  for (const item of items) {
+    bands.push({y, size: item.size})
+    y += item.size + gap
+  }
+  return bands.map(band => ({top: band.y, height: band.size + 1}))
+}
+
+/** @fit
  * given x: -1000000000000..1000000000000
  * return == 0
  */

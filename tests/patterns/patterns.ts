@@ -1010,6 +1010,25 @@ export function horizontalColumnLayout(items: {width: number}[], gap: number) {
 }
 
 /** @fit
+ * given items.length: int 1..100
+ * given items[].size: 1..400
+ * given gap: 0..24
+ * nondecreasing(return.top)
+ * spaced(return, gap)
+ * noOverlap(return)
+ * lastEnd(return) >= 0
+ */
+export function renamedBandsReachTheCatalog(items: {size: number}[], gap: number) {
+  const bands: {y: number; size: number}[] = []
+  let y = 0
+  for (const item of items) {
+    bands.push({y, size: item.size})
+    y += item.size + gap
+  }
+  return bands.map(band => ({top: band.y, height: band.size}))
+}
+
+/** @fit
  * return == 16
  */
 export function compoundAssignmentsComputeExactly() {
