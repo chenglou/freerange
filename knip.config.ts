@@ -14,6 +14,7 @@ const config: KnipConfig = {
     // Fixture files loaded by file path inside test suites and the verify scripts
     'tests/patterns/patterns.ts',
     'tests/patterns/negative-patterns.ts',
+    'tests/patterns/negative-shadowed-catalog.ts',
     'tests/imports/import-patterns.ts',
     'tests/imports/import-pattern-*.{ts,tsx}',
     'tests/imports/negative-import-*.ts',
