@@ -198,9 +198,9 @@ function literalIfColumnGeometry(kind: 'ordered' | 'inverted', panelX: number) {
   return {kind, yThresholdX, uThresholdX}
 }
 
-function booleanLiteralOffset(useFallback: boolean, top: number) {
-  if (useFallback) return {slotY: top + 36}
-  return {slotY: top}
+function booleanLiteralOffset(useFallback: boolean, y: number) {
+  if (useFallback) return {slotY: y + 36}
+  return {slotY: y}
 }
 
 /** @fit
@@ -222,23 +222,23 @@ export function finiteLiteralDiscriminantsSpecialize(panelX: number) {
 }
 
 /** @fit
- * given top: 0..1000
- * return.inline.slotY == top
- * return.fallback.slotY == top + 36
+ * given y: 0..1000
+ * return.inline.slotY == y
+ * return.fallback.slotY == y + 36
  */
-export function booleanLiteralBranchesSpecialize(top: number) {
+export function booleanLiteralBranchesSpecialize(y: number) {
   return {
-    inline: booleanLiteralOffset(false, top),
-    fallback: booleanLiteralOffset(true, top),
+    inline: booleanLiteralOffset(false, y),
+    fallback: booleanLiteralOffset(true, y),
   }
 }
 
 /** @fit
- * return: {left: 0, width: 100} | {left: 20, width: 80}
+ * return: {x: 0, width: 100} | {x: 20, width: 80}
  */
 export function pairedObjectReturnShape(pinned: boolean) {
-  if (pinned) return {left: 20, width: 80} as const
-  return {left: 0, width: 100} as const
+  if (pinned) return {x: 20, width: 80} as const
+  return {x: 0, width: 100} as const
 }
 
 export function lowShapeBound() {
@@ -460,15 +460,15 @@ export function positiveDivisionKeepsOrder(content: number, available: number, c
 }
 
 /** @fit
- * given left <= right
+ * given x <= right
  * return.floorLeft <= return.floorRight
  * return.ceilLeft <= return.ceilRight
  */
-export function roundingKeepsNonStrictOrder(left: number, right: number) {
+export function roundingKeepsNonStrictOrder(x: number, right: number) {
   return {
-    floorLeft: Math.floor(left),
+    floorLeft: Math.floor(x),
     floorRight: Math.floor(right),
-    ceilLeft: Math.ceil(left),
+    ceilLeft: Math.ceil(x),
     ceilRight: Math.ceil(right),
   }
 }
@@ -627,32 +627,32 @@ export function numericLimitRangeLoop(limit: number) {
 
 /** @fit
  * given items.length: int 1..50
- * given top: 0..1000
+ * given y: 0..1000
  * given step: 0..40
  * given gap: 0..10
  * return.rows.length == items.length
- * nondecreasing(return.rows.top)
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  * lastEnd(return.rows) == return.bottom
  */
-export function runningSumLoop(items: number[], top: number, step: number, gap: number) {
+export function runningSumLoop(items: number[], y: number, step: number, gap: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    rows.push({top: y, height: step, source: item})
-    y += step + gap
+    rows.push({y: cursor, height: step, source: item})
+    cursor += step + gap
   }
-  return {rows, bottom: y - gap}
+  return {rows, bottom: cursor - gap}
 }
 
 /** @fit
  * given item.height: 0..40
- * given item.top: 0..1000
- * return.bottom >= item.top
+ * given item.y: 0..1000
+ * return.bottom >= item.y
  * return.height: 0..40
  */
-export function objectFieldDomain(item: {top: number; height: number}) {
-  return {height: item.height, bottom: item.top + item.height}
+export function objectFieldDomain(item: {y: number; height: number}) {
+  return {height: item.height, bottom: item.y + item.height}
 }
 
 /** @fit
@@ -702,41 +702,41 @@ export function indexedPerItemField(items: {height: number}[], index: number) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
- * return.bottom >= top
- * nondecreasing(return.rows.top)
+ * return.bottom >= y
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  * lastEnd(return.rows) == return.bottom
  */
-export function runningSumLoopPerItemHeight(items: {height: number}[], top: number, gap: number) {
+export function runningSumLoopPerItemHeight(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height + gap
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
   }
-  return {rows, bottom: y - gap}
+  return {rows, bottom: cursor - gap}
 }
 
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].rowRect.height: 0..40
- * nondecreasing(return.rows.rowRect.top)
- * return.rows[$i + 1].rowRect.top == return.rows[$i].rowRect.top + return.rows[$i].rowRect.height + gap
+ * nondecreasing(return.rows.rowRect.y)
+ * return.rows[$i + 1].rowRect.y == return.rows[$i].rowRect.y + return.rows[$i].rowRect.height + gap
  */
-export function nestedRowRectRunningSumLoop(items: {height: number}[], top: number, gap: number) {
+export function nestedRowRectRunningSumLoop(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    rows.push({rowRect: {top: y, height: item.height}, source: item})
-    y += item.height + gap
+    rows.push({rowRect: {y: cursor, height: item.height}, source: item})
+    cursor += item.height + gap
   }
   return {rows}
 }
@@ -744,18 +744,18 @@ export function nestedRowRectRunningSumLoop(items: {height: number}[], top: numb
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
- * nondecreasing(return.rows.top)
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * return.rows[$i + 1].y >= return.rows[$i].bottom + gap
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  */
-export function segmentedStackRows(items: {height: number}[], top: number, gap: number) {
+export function segmentedStackRows(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let nextRowTop = top
+  let nextRowTop = y
   let rowHeight = 0
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!
@@ -764,7 +764,7 @@ export function segmentedStackRows(items: {height: number}[], top: number, gap: 
     if (i % 3 === 2 || i === items.length - 1) {
       const rowTop = nextRowTop
       const rowBottom = rowTop + rowHeight
-      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
       nextRowTop = rowBottom + gap
       rowHeight = 0
     }
@@ -775,25 +775,25 @@ export function segmentedStackRows(items: {height: number}[], top: number, gap: 
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- * return.rows[$i + 1].top >= return.rows[$i].bottom + gap
- * nondecreasing(return.rows.top)
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * return.rows[$i + 1].y >= return.rows[$i].bottom + gap
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  */
-export function segmentedStackRowsInlineBottom(items: {height: number}[], top: number, gap: number) {
+export function segmentedStackRowsInlineBottom(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let nextRowTop = top
+  let nextRowTop = y
   let rowHeight = 0
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!
     rowHeight = Math.max(rowHeight, item.height)
     if (i % 3 === 2 || i === items.length - 1) {
       const rowTop = nextRowTop
-      rows.push({top: rowTop, height: rowHeight, bottom: rowTop + rowHeight})
+      rows.push({y: rowTop, height: rowHeight, bottom: rowTop + rowHeight})
       nextRowTop = rowTop + rowHeight + gap
       rowHeight = 0
     }
@@ -804,19 +804,19 @@ export function segmentedStackRowsInlineBottom(items: {height: number}[], top: n
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.measurements.length == items.length
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- * nondecreasing(return.rows.top)
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  */
-export function segmentedStackRowsWithSideAppend(items: {height: number}[], top: number, gap: number) {
+export function segmentedStackRowsWithSideAppend(items: {height: number}[], y: number, gap: number) {
   const rows = []
   const measurements = []
-  let nextRowTop = top
+  let nextRowTop = y
   let rowHeight = 0
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!
@@ -826,7 +826,7 @@ export function segmentedStackRowsWithSideAppend(items: {height: number}[], top:
     if (i % 3 === 2 || i === items.length - 1) {
       const rowTop = nextRowTop
       const rowBottom = rowTop + rowHeight
-      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
       nextRowTop = rowBottom + gap
       rowHeight = 0
     }
@@ -995,15 +995,15 @@ export function indexedRunningTotalLonghandIncrement(items: {height: number}[]) 
  * given items.length: int 0..100
  * given items[].width: 1..400
  * given gap: 0..24
- * nondecreasing(return.left)
+ * nondecreasing(return.x)
  * spaced(return, gap)
  * noOverlap(return)
  */
 export function horizontalColumnLayout(items: {width: number}[], gap: number) {
-  const cols: {left: number; width: number}[] = []
+  const cols: {x: number; width: number}[] = []
   let x = 0
   for (const item of items) {
-    cols.push({left: x, width: item.width})
+    cols.push({x: x, width: item.width})
     x += item.width + gap
   }
   return cols
@@ -1013,7 +1013,7 @@ export function horizontalColumnLayout(items: {width: number}[], gap: number) {
  * given items.length: int 1..100
  * given items[].size: 1..400
  * given gap: 0..24
- * nondecreasing(return.top)
+ * nondecreasing(return.y)
  * spaced(return, gap)
  * noOverlap(return)
  * lastEnd(return) >= 0
@@ -1025,7 +1025,7 @@ export function renamedBandsReachTheCatalog(items: {size: number}[], gap: number
     bands.push({y, size: item.size})
     y += item.size + gap
   }
-  return bands.map(band => ({top: band.y, height: band.size}))
+  return bands.map(band => ({y: band.y, height: band.size}))
 }
 
 /** @fit
@@ -1064,8 +1064,8 @@ export function longNonnegativeSumHasNoDepthCliff(x1: number, x2: number, x3: nu
   return x1 + x2 + x3 + x4 + x5 + x6 + x7 + x8
 }
 
-function sumPair(left: number, right: number) {
-  let total = left
+function sumPair(x: number, right: number) {
+  let total = x
   total += right
   return total
 }
@@ -1081,17 +1081,17 @@ export function helperLocalMutationKeepsCallerFacts(width: number) {
 
 /** @fit
  * given items.length: int 0..50
- * given top: 0..1000
+ * given y: 0..1000
  * given step: 0..40
  * return.length == items.length
  * return[]: 0..3000
  */
-export function scalarPushLoop(items: number[], top: number, step: number) {
+export function scalarPushLoop(items: number[], y: number, step: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const _item of items) {
-    rows.push(y)
-    y += step
+    rows.push(cursor)
+    cursor += step
   }
   return rows
 }
@@ -1232,27 +1232,27 @@ export function directRunningCountKeepsLengthBound(items: {visible: boolean}[]) 
 
 /** @fit
  * given items.length: int 1..50
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
- * return.bottom >= top
+ * return.bottom >= y
  * return.rows.length == items.length
  */
-export function localLoopAnnotation(items: {height: number}[], top: number, gap: number) {
+export function localLoopAnnotation(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let y = top
+  let cursor = y
   /** @fit
    * given items[].height: 0..40
    * rows.length == items.length
    * rows[].height: 0..40
-   * nondecreasing(rows.top)
+   * nondecreasing(rows.y)
    * spaced(rows, gap)
-   * lastEnd(rows) == y - gap
+   * lastEnd(rows) == cursor - gap
    */
   for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height + gap
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
   }
-  return {rows, bottom: y - gap}
+  return {rows, bottom: cursor - gap}
 }
 
 type TypeFieldSpring = {
@@ -1325,15 +1325,15 @@ type TypeRelationBounds = {
 }
 
 /** @fit
- * rows[].bottom >= rows[].top
- * rows[].cells[].right >= rows[].cells[].left
+ * rows[].bottom >= rows[].y
+ * rows[].cells[].right >= rows[].cells[].x
  */
 type TypeRelationRows = {
   rows: {
-    top: number
+    y: number
     bottom: number
     cells: {
-      left: number
+      x: number
       right: number
     }[]
   }[]
@@ -1363,7 +1363,7 @@ export function typeRelationCallBoundary() {
 }
 
 export function typeRelationArrayPathReturnCheck(): TypeRelationRows {
-  return {rows: [{top: 0, bottom: 10, cells: [{left: 1, right: 4}]}]}
+  return {rows: [{y: 0, bottom: 10, cells: [{x: 1, right: 4}]}]}
 }
 
 /** @fit
@@ -1380,17 +1380,17 @@ export function oneSidedInfinityAdd(
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
- * return.rows[].bottom == return.rows[].top + return.rows[].height
- * nondecreasing(return.rows.top)
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
  */
-export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], top: number, gap: number) {
+export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let nextRowTop = top
+  let nextRowTop = y
   let rowHeight = 0
   for (let i = 0; i < items.length; i++) {
     const item = items[i]!
@@ -1399,7 +1399,7 @@ export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: numbe
       const rowTop = nextRowTop
       const rowBottom = rowTop + rowHeight
       const resetHeight = 0
-      rows.push({top: rowTop, height: rowHeight, bottom: rowBottom})
+      rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
       nextRowTop = rowBottom + gap
       rowHeight = resetHeight
     }
@@ -1446,20 +1446,20 @@ export function inlineComparisonPrefixVariants(
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
- * extentEnd(return.rows, top) == return.bottom
+ * extentEnd(return.rows, y) == return.bottom
  */
-export function extentEndHandlesEmptyRows(items: {height: number}[], top: number, gap: number) {
+export function extentEndHandlesEmptyRows(items: {height: number}[], y: number, gap: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height + gap
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
   }
-  const bottom = rows.length === 0 ? top : y - gap
+  const bottom = rows.length === 0 ? y : cursor - gap
   return {rows, bottom}
 }
 
@@ -1572,21 +1572,21 @@ export function indexedLoopNamedIndexField(items: {height: number}[]) {
 /** @fit
  * given params.items.length: int 1..50
  * given params.items[].height: 0..40
- * given params.top: 0..1000
+ * given params.y: 0..1000
  * return.rows.length == params.items.length
  * return.rows[].index: int 0..49
  * return.rows[].index < params.items.length
  * return.rows[].height: 0..40
- * return.bottom >= params.top
- * nondecreasing(return.rows.top)
+ * return.bottom >= params.y
+ * nondecreasing(return.rows.y)
  * lastEnd(return.rows) == return.bottom
  */
-export function indexedLoopAliasRows(params: {items: {height: number}[]; top: number}) {
+export function indexedLoopAliasRows(params: {items: {height: number}[]; y: number}) {
   const rows = []
-  let y = params.top
+  let y = params.y
   for (let i = 0; i < params.items.length; i++) {
     const item = params.items[i]!
-    rows.push({index: i, top: y, height: item.height})
+    rows.push({index: i, y: y, height: item.height})
     y += item.height
   }
   return {rows, bottom: y}
@@ -1609,20 +1609,20 @@ export function conditionalPushRows(items: {height: number; visible: boolean}[])
 /** @fit
  * given items.length: int 0..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * return.rows.length <= items.length
- * return.rows[].top: 0..3000
+ * return.rows[].y: 0..3000
  * return.rows[].height: 0..40
- * return.bottom >= top
+ * return.bottom >= y
  */
-export function conditionalPushRowsWithCursor(items: {height: number; visible: boolean}[], top: number) {
+export function conditionalPushRowsWithCursor(items: {height: number; visible: boolean}[], y: number) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    if (item.visible) rows.push({top: y, height: item.height})
-    y += item.height
+    if (item.visible) rows.push({y: cursor, height: item.height})
+    cursor += item.height
   }
-  return {rows, bottom: y}
+  return {rows, bottom: cursor}
 }
 
 /** @fit
@@ -1709,20 +1709,20 @@ export function forOfConditionalPushWithSafeReset(items: {height: number; endsRo
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * given top: 0..1000
+ * given y: 0..1000
  * given gap: 0..10
  * given parent.bottom: 4000..5000
- * return.rows[].top <= parent.bottom
- * return.rows[].top + return.rows[].height <= parent.bottom
+ * return.rows[].y <= parent.bottom
+ * return.rows[].y + return.rows[].height <= parent.bottom
  */
-export function wildcardRowsFitParent(items: {height: number}[], top: number, gap: number, parent: {bottom: number}) {
+export function wildcardRowsFitParent(items: {height: number}[], y: number, gap: number, parent: {bottom: number}) {
   const rows = []
-  let y = top
+  let cursor = y
   for (const item of items) {
-    rows.push({top: y, height: item.height})
-    y += item.height + gap
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
   }
-  return {rows, bottom: y - gap, parent}
+  return {rows, bottom: cursor - gap, parent}
 }
 
 /** @fit
@@ -1739,13 +1739,13 @@ export function sameIndexRowsKeepItemHeight(items: {height: number}[]) {
 /** @fit
  * given items.length: int 1..50
  * given items[].height: 0..40
- * return.rows[$i].top <= return.rows[$i + 1].top
+ * return.rows[$i].y <= return.rows[$i + 1].y
  */
 export function adjacentBoundIndexRowsAreNondecreasing(items: {height: number}[]) {
   const rows = []
   let y = 0
   for (const item of items) {
-    rows.push({top: y, height: item.height})
+    rows.push({y: y, height: item.height})
     y += item.height
   }
   return {rows}
@@ -1771,7 +1771,7 @@ export function reverseKeepsRowDomains(items: {height: number}[]) {
   const rows = []
   let y = 0
   for (const item of items) {
-    rows.push({top: y, height: item.height})
+    rows.push({y: y, height: item.height})
     y += item.height
   }
   rows.reverse()
@@ -2108,14 +2108,14 @@ export function focusedIndexKeepsElementDomain(items: {height: number}[], focuse
  */
 export function focusedIndexUsesAdjacentSequenceFact(items: {height: number}[], focused: number) {
   const rows = []
-  let top = 0
+  let y = 0
   for (const item of items) {
-    rows.push({top, height: item.height})
-    top += item.height
+    rows.push({y, height: item.height})
+    y += item.height
   }
   return {
-    previousTop: rows[focused - 1]!.top,
-    currentTop: rows[focused]!.top,
+    previousTop: rows[focused - 1]!.y,
+    currentTop: rows[focused]!.y,
   }
 }
 
@@ -2128,14 +2128,14 @@ export function focusedIndexUsesAdjacentSequenceFact(items: {height: number}[], 
  */
 export function focusedIndexUsesForwardAdjacentSequenceFact(items: {height: number}[], focused: number) {
   const rows = []
-  let top = 0
+  let y = 0
   for (const item of items) {
-    rows.push({top, height: item.height})
-    top += item.height
+    rows.push({y, height: item.height})
+    y += item.height
   }
   return {
-    currentTop: rows[focused]!.top,
-    nextTop: rows[focused+1]!.top,
+    currentTop: rows[focused]!.y,
+    nextTop: rows[focused+1]!.y,
   }
 }
 
@@ -2408,19 +2408,19 @@ export const topLevelInlineCallClaim = clampLayoutValue(2, 1, 3) // @fit 2
 
 export class ClassMethodThisClaims {
   constructor(
-    public top: number,
+    public y: number,
     public height: number,
     public width: number,
   ) {}
 
   /** @fit
-   * given this.top: 0..1000
+   * given this.y: 0..1000
    * given this.height: 0..1000
-   * return == this.top + this.height
+   * return == this.y + this.height
    * return: 0..2000
    */
   get bottom() {
-    return this.top + this.height
+    return this.y + this.height
   }
 
   /** @fit
@@ -2434,7 +2434,7 @@ export class ClassMethodThisClaims {
 }
 
 /** @fit
- * given box.top: 0..1000
+ * given box.y: 0..1000
  * given box.height: 0..1000
  * return: 0..2000
  */
@@ -2480,14 +2480,14 @@ export function ambientResizeObserverInlineSize(size: ResizeObserverSize) {
 }
 
 /** @fit
- * given rect.left: -1000..1000
+ * given rect.x: -1000..1000
  * given rect.right: -1000..1000
- * given rect.top: -1000..1000
+ * given rect.y: -1000..1000
  * given rect.bottom: -1000..1000
  * return.x: -1000..1000
  * return.y: -1000..1000
  */
-export default (rect: {left: number; right: number; top: number; bottom: number}) => ({
-  x: rect.left + (rect.right - rect.left) / 2,
-  y: rect.top + (rect.bottom - rect.top) / 2,
+export default (rect: {x: number; right: number; y: number; bottom: number}) => ({
+  x: rect.x + (rect.right - rect.x) / 2,
+  y: rect.y + (rect.bottom - rect.y) / 2,
 })

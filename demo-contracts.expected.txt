@@ -51,7 +51,7 @@ PASS ../vibescript/demos/photo-gallery/layout.ts:152:getGridLayout > measureGrid
 PASS ../vibescript/demos/photo-gallery/layout.ts:155:getGridLayout > measureGridImage: return.imageSizeX: 0..2000
 PASS ../vibescript/demos/photo-gallery/layout.ts:156:getGridLayout > measureGridImage: return.imageSizeY: 0..20000
 PASS ../vibescript/demos/photo-gallery/layout.ts:181:getGridLayout > loop: rows.length <= layoutSources.length
-PASS ../vibescript/demos/photo-gallery/layout.ts:182:getGridLayout > loop: rows[].bottom == rows[].top + rows[].height
+PASS ../vibescript/demos/photo-gallery/layout.ts:182:getGridLayout > loop: rows[].bottom == rows[].y + rows[].height
 PASS ../vibescript/demos/photo-gallery/layout.ts:183:getGridLayout > loop: spaced(rows, boxesGapY)
 PASS ../vibescript/demos/photo-gallery/layout.ts:184:getGridLayout > loop: noOverlap(rows)
 PASS ../vibescript/demos/photo-gallery/layout.ts:235:lineBoxMaxSizes: return.box1DMaxSizeX == windowSizeX - boxes1DGapX * 2 - hitArea1DSizeX * 2

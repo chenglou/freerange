@@ -614,7 +614,7 @@ function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGive
     if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${arrayRoot}`
     const gapText = args[1]!.getText()
     const updated = arrayWithSpacedRelation(array, gapText)
-    if (updated === 'ambiguous') return `Given ${publicFitText(spec.text)} is ambiguous: the elements carry both top/height and left/width; map to one axis first`
+    if (updated === 'ambiguous') return `Given ${publicFitText(spec.text)} is ambiguous: the elements carry both y/height and x/width; map to one axis first`
     env.set(arrayRoot, updated)
     return null
   }

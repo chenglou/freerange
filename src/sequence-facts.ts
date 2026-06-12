@@ -15,8 +15,8 @@ export type SpacedShape = {gapExpr: string; heightExpr: string; advanceExpr: str
 export type RowAxis = {position: string; size: string; end: string}
 
 export const rowAxes: RowAxis[] = [
-  {position: 'top', size: 'height', end: 'bottom'},
-  {position: 'left', size: 'width', end: 'right'},
+  {position: 'y', size: 'height', end: 'bottom'},
+  {position: 'x', size: 'width', end: 'right'},
 ]
 
 export function rowAxisUnionTypeText(): string {

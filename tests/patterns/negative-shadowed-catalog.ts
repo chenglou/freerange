@@ -1,11 +1,11 @@
 // Shares the catalog's lastEnd name on purpose: the user's function keeps its
-// own meaning everywhere. It returns the last top MINUS height, so the claim
+// own meaning everywhere. It returns the last y MINUS height, so the claim
 // on negativeUserFunctionNotHijackedByCatalog is false at runtime and must not
 // pass via the catalog. Lives in its own file because the module-level shadow
 // applies file-wide.
-function lastEnd(rows: {top: number; height: number}[]) {
+function lastEnd(rows: {y: number; height: number}[]) {
   const last = rows[rows.length - 1]
-  return last == null ? 0 : last.top - last.height
+  return last == null ? 0 : last.y - last.height
 }
 
 /** @fit
@@ -14,10 +14,10 @@ function lastEnd(rows: {top: number; height: number}[]) {
  * return >= 0
  */
 export function negativeUserFunctionNotHijackedByCatalog(items: {height: number}[]) {
-  const rows: {top: number; height: number}[] = []
+  const rows: {y: number; height: number}[] = []
   let y = 0
   for (const item of items) {
-    rows.push({top: y, height: item.height})
+    rows.push({y: y, height: item.height})
     y += item.height
   }
   return lastEnd(rows) - 10
@@ -25,10 +25,10 @@ export function negativeUserFunctionNotHijackedByCatalog(items: {height: number}
 
 /** @fit
  * given rows.length: int 1..10
- * given rows[].top: 0..100
+ * given rows[].y: 0..100
  * given rows[].height: 0..10
  * return: -10..100
  */
-export function userFunctionWinsOverCatalogName(rows: {top: number; height: number}[]) {
+export function userFunctionWinsOverCatalogName(rows: {y: number; height: number}[]) {
   return lastEnd(rows)
 }

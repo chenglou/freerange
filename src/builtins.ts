@@ -73,7 +73,7 @@ function evaluateNondecreasingCall(context: BuiltinContext): Value {
   return unknown(nondecreasingFailureReason(text, target))
 }
 
-const ambiguousAxesReason = 'elements carry both top/height and left/width; map to one axis first'
+const ambiguousAxesReason = 'elements carry both y/height and x/width; map to one axis first'
 
 function evaluateSpacedCall(context: BuiltinContext): Value {
   const text = context.expressionText(context.expression)

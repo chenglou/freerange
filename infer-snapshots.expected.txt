@@ -31,7 +31,7 @@ locals:
   rows.length: int 0..50
   rows[]: 0..3000
   rows follows items by index
-  y: 0..3000
+  cursor: 0..3000
 tests/imports/import-patterns.ts:namespaceImportedStructuralShape
 return:
   return.rows.length == items.length
@@ -58,54 +58,54 @@ locals:
   rows follows items by index
 tests/patterns/patterns.ts:localLoopAnnotation
 return:
-  return.bottom == (y - gap)
+  return.bottom == (cursor - gap)
   return.bottom: -10..3500
   return.rows.length == items.length
   return.rows.length: int 1..50
   return.rows[].height == items[].height
   return.rows[].height: 0..40
-  return.rows[].top == rows[].top
-  return.rows[].top: 0..3500
-  nondecreasing(return.rows.top)
+  return.rows[].y == rows[].y
+  return.rows[].y: 0..3500
+  nondecreasing(return.rows.y)
   spaced(return.rows, gap)
-  return.rows[$i + 1].top == return.rows[$i].top + return.rows[$i].height + gap
-  lastEnd(return.rows) == (y - gap)
+  return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + gap
+  lastEnd(return.rows) == (cursor - gap)
   lastEnd(return.rows): -10..3500
-  extentEnd(return.rows, top) == extentEnd(rows, top)
-  extentEnd(return.rows, top): -10..3500
+  extentEnd(return.rows, y) == extentEnd(rows, y)
+  extentEnd(return.rows, y): -10..3500
 locals:
   rows.length == items.length
   rows.length: int 1..50
   rows[].height == items[].height
   rows[].height: 0..40
-  rows[].top: 0..3500
-  nondecreasing(rows.top)
+  rows[].y: 0..3500
+  nondecreasing(rows.y)
   spaced(rows, gap)
-  rows[$i + 1].top == rows[$i].top + rows[$i].height + gap
-  lastEnd(rows) == (y - gap)
+  rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
+  lastEnd(rows) == (cursor - gap)
   lastEnd(rows): -10..3500
-  extentEnd(rows, top): -10..3500
-  y: 0..3500
+  extentEnd(rows, y): -10..3500
+  cursor: 0..3500
 loop 1251: for (const item of items)
   inferred:
+    cursor: 0..3500
     rows.length == items.length
     rows.length: int 1..50
     rows[].height == items[].height
     rows[].height: 0..40
-    rows[].top: 0..3500
-    nondecreasing(rows.top)
+    rows[].y: 0..3500
+    nondecreasing(rows.y)
     spaced(rows, gap)
-    rows[$i + 1].top == rows[$i].top + rows[$i].height + gap
-    lastEnd(rows) == (y - gap)
+    rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
+    lastEnd(rows) == (cursor - gap)
     lastEnd(rows): -10..3500
-    extentEnd(rows, top): -10..3500
-    y: 0..3500
+    extentEnd(rows, y): -10..3500
   checked:
     rows.length == items.length
     rows[].height: 0..40
-    nondecreasing(rows.top)
+    nondecreasing(rows.y)
     spaced(rows, gap)
-    lastEnd(rows) == y - gap
+    lastEnd(rows) == cursor - gap
   assumptions:
     given items[].height: 0..40
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout
@@ -120,22 +120,19 @@ return:
   return.items[].prompt.lines.length == promptLayout.lines.length
   return.items[].prompt.lines.length: int 0..Infinity
   return.rows.length == rows.length
-  return.rows[].bottom == (rows[].top + rows[].height)
+  return.rows[].bottom == (rows[].y + rows[].height)
   return.rows[].bottom: 40..Infinity
   return.rows[].height == rows[].height
   return.rows[].height: 0..Infinity
-  return.rows[].top == rows[].top
-  return.rows[].top: 40..Infinity
-  nondecreasing(return.rows.top)
+  return.rows[].y == rows[].y
+  nondecreasing(return.rows.y)
   spaced(return.rows, boxesGapY)
 locals:
   cols: int 1..7
   boxMaxSizeX: 18.285714285714285..1952
-  rows[].bottom == (rows[].top + rows[].height)
   rows[].bottom: 40..Infinity
   rows[].height: 0..Infinity
-  rows[].top: 40..Infinity
-  nondecreasing(rows.top)
+  nondecreasing(rows.y)
   spaced(rows, boxesGapY)
   measurements.length == layoutSources.length
   measurements[].imageSizeX: 0..1952
@@ -143,15 +140,13 @@ loop 186: for (let i = 0; i < layoutSources.length; i++)
   inferred:
     measurements.length == layoutSources.length
     measurements[].imageSizeX: 0..1952
-    rows[].bottom == (rows[].top + rows[].height)
     rows[].bottom: 40..Infinity
     rows[].height: 0..Infinity
-    rows[].top: 40..Infinity
-    nondecreasing(rows.top)
+    nondecreasing(rows.y)
     spaced(rows, boxesGapY)
   checked:
     rows.length <= layoutSources.length
-    rows[].bottom == rows[].top + rows[].height
+    rows[].bottom == rows[].y + rows[].height
     spaced(rows, boxesGapY)
     noOverlap(rows)
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout

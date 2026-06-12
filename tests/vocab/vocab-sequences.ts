@@ -1,7 +1,7 @@
 // Sequence vocabulary: adjacent-pair claims on loop-built arrays.
 // spaced, nondecreasing, lastEnd, extentEnd, and the noOverlap catalog lift.
 
-type Row = {top: number; height: number}
+type Row = {y: number; height: number}
 
 /** @fit
  * given items.length: int 0..200
@@ -10,14 +10,14 @@ type Row = {top: number; height: number}
  * given startY: 0..100
  * return.length == items.length
  * spaced(return, gap)
- * nondecreasing(return.top)
+ * nondecreasing(return.y)
  * noOverlap(return)
  */
 export function stack(items: {height: number}[], gap: number, startY: number): Row[] {
   const rows: Row[] = []
   let y = startY
   for (const item of items) {
-    rows.push({top: y, height: item.height})
+    rows.push({y: y, height: item.height})
     y += item.height + gap
   }
   return rows
@@ -36,7 +36,7 @@ export function stackWithBottom(items: {height: number}[], startY: number) {
   const rows: Row[] = []
   let y = startY
   for (const item of items) {
-    rows.push({top: y, height: item.height})
+    rows.push({y: y, height: item.height})
     y += item.height
   }
   return {rows, bottom: y}

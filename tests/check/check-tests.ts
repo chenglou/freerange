@@ -1107,7 +1107,7 @@ const loopRedundantSpecs = new Map(loopReport?.redundant.map(spec => [spec.text,
 const expectedLoopFacts = [
   'rows.length == items.length',
   'rows[].height: 0..40',
-  'nondecreasing(rows.top)',
+  'nondecreasing(rows.y)',
   'spaced(rows, gap)',
 ]
 const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
@@ -1146,14 +1146,14 @@ const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?
 const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedSegmentedFacts = [
   'return.rows.length: int 0..50',
-  'return.rows[].bottom == (rows[].top + rows[].height)',
-  'nondecreasing(return.rows.top)',
+  'return.rows[].bottom == (rows[].y + rows[].height)',
+  'nondecreasing(return.rows.y)',
   'spaced(return.rows, gap)',
 ]
 const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
 const expectedSegmentedSpecStatuses = [
   ['return.rows.length <= items.length', 'checked'],
-  ['return.rows[].bottom == return.rows[].top + return.rows[].height', 'checked'],
+  ['return.rows[].bottom == return.rows[].y + return.rows[].height', 'checked'],
   ['spaced(return.rows, gap)', 'checked'],
 ] as const
 const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
@@ -1206,7 +1206,7 @@ const equalityRedundantReport = inferFitFiles([
 const equalityRedundantLoop = equalityRedundantReport.functions[0]?.loops[0]
 const equalityRedundantFacts = new Map(equalityRedundantLoop?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
 const expectedEqualityRedundantFacts = [
-  ['rows[].bottom == rows[].top + rows[].height', 'rows[].bottom == (rows[].top + rows[].height)'],
+  ['rows[].bottom == rows[].y + rows[].height', 'rows[].bottom == (rows[].y + rows[].height)'],
 ] as const
 const missingEqualityRedundantFacts = expectedEqualityRedundantFacts.filter(([fact, reason]) => equalityRedundantFacts.get(fact) !== reason)
 if (missingEqualityRedundantFacts.length > 0) {
@@ -1310,13 +1310,13 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
   if (item === 'return.contentHeight == nextRowTop') return true
   if (item === 'return.contentHeight: 40..Infinity') return true
   if (item === 'return.rows.length == rows.length') return true
-  if (item === 'return.rows[].bottom == (rows[].top + rows[].height)') return true
+  if (item === 'return.rows[].bottom == (rows[].y + rows[].height)') return true
   if (item === 'return.rows[].bottom: 40..Infinity') return true
   if (item === 'return.rows[].height == rows[].height') return true
   if (item === 'return.rows[].height: 0..Infinity') return true
-  if (item === 'return.rows[].top == rows[].top') return true
+  if (item === 'return.rows[].y == rows[].y') return true
   if (item === 'return.rows[].top: 40..Infinity') return true
-  if (item === 'nondecreasing(return.rows.top)') return true
+  if (item === 'nondecreasing(return.rows.y)') return true
   if (item === 'spaced(return.rows, boxesGapY)') return true
   if (section === 'return') {
     return item === 'return.items[].imageBox.sizeX: 0..1952'
@@ -1332,7 +1332,7 @@ function keepGridLayoutSnapshotItem(section: string, item: string) {
     || item === 'rows[].bottom: 40..Infinity'
     || item === 'rows[].height: 0..Infinity'
     || item === 'rows[].top: 40..Infinity'
-    || item === 'nondecreasing(rows.top)'
+    || item === 'nondecreasing(rows.y)'
     || item === 'spaced(rows, boxesGapY)'
     || item === 'measurements.length == layoutSources.length'
     || item === 'measurements[].imageSizeX: 0..1952'
