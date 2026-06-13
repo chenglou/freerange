@@ -658,6 +658,9 @@ function functionBlockForEntry(
 function statementsForSpec(spec: FitSpec, options: LowerOptions): string[] {
   const id = nextGeneratedId()
   switch (spec.kind) {
+    // `pure` has no expression to lower; it is checked against the effect summary.
+    case 'pure':
+      return []
     case 'range': {
       const target = checkNumberExpression(spec.expression, options, `${id}_value`)
       return [...target.prelude, target.statement, ...rangeBoundStatements(spec.range, options, id)]
@@ -911,6 +914,8 @@ function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
       return [spec.left, spec.right]
     case 'expression':
       return [spec.expression]
+    case 'pure':
+      return []
   }
 }
 

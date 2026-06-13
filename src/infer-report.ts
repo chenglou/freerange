@@ -201,6 +201,7 @@ function inferredFactReasonForSpecText(specText: string, facts: FitInferFact[]) 
   if (spec == null || fitSpecIsAssumption(spec)) return null
   if (spec.kind === 'expression') return null
   if (spec.kind === 'value') return null
+  if (spec.kind === 'pure') return null
   if (spec.kind === 'range') return rangeFactReasonForSpec(spec, facts)
   return comparisonFactReasonForSpec(spec, facts)
 }

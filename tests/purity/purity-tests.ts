@@ -2,14 +2,14 @@
 // isFunctionPure is a pure function of the source, so each case is just
 // source -> pure | impure, no interpreter run or proof needed.
 import {readTopLevelGlobal} from '../../src/check-core.ts'
-import {isFunctionPure} from '../../src/interpreter/function-effects.ts'
+import {functionPurity} from '../../src/interpreter/function-effects.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
 
 function purityOf(name: string, source: string): boolean {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
   const fn = program.functions.get(name)
   if (fn == null) throw new Error(`no function ${name} in source`)
-  return isFunctionPure(fn.node, program)
+  return functionPurity(fn.node, program).pure
 }
 
 const cases: {label: string; source: string; pure: boolean}[] = [
@@ -36,6 +36,9 @@ const cases: {label: string; source: string; pure: boolean}[] = [
   {label: 'calls an unresolved function', pure: false, source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
   {label: 'calls an impure helper (transitive)', pure: false, source: `function noisy() { return Math.random() }\nfunction f() { return noisy() }`},
   {label: 'map with impure inline callback', pure: false, source: `function f(xs: number[]) { return xs.map(() => Math.random())[0] ?? 0 }`},
+  {label: 'map with a resolvable impure callback', pure: false, source: `function bump(n: number) { return Math.random() + n }\nfunction f(xs: number[]) { return xs.map(bump)[0] ?? 0 }`},
+  {label: 'map with an unresolvable callback parameter', pure: false, source: `function f(xs: number[], cb: (n: number) => number) { return xs.map(cb)[0] ?? 0 }`},
+  {label: 'forEach with an unresolvable callback parameter', pure: false, source: `function f(xs: number[], cb: (n: number) => void) { xs.forEach(cb); return xs.length }`},
 ]
 
 let failures = 0

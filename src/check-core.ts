@@ -23,9 +23,11 @@ import {
   type FitDomainPath,
   type FitExpressionLike,
   type FitInlineCheckSpec,
+  type FitPureSpec,
   type FitRange,
   type FitSpec,
 } from './parser.ts'
+import {functionPurity} from './interpreter/function-effects.ts'
 import {
   evaluateRangeValue as evaluateParsedRangeValue,
   evaluateRangeBound as evaluateParsedRangeBound,
@@ -494,6 +496,10 @@ function verifyFunctionSpecsDetailed(
 
   for (const spec of contractSpecs) {
     if (!fitSpecIsProof(spec)) continue
+    if (spec.kind === 'pure') {
+      checks.push(verifyPureSpec(file, functionName, fn, program, spec))
+      continue
+    }
     checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, context.booleanAssumptions, contractCache))
   }
 
@@ -793,6 +799,24 @@ function evaluateInterpreterExpressionWithObjectPath(expression: ts.Expression, 
 function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value>) {
   target.clear()
   for (const [name, value] of source) target.set(name, value)
+}
+
+// `pure` is checked against the function's effect summary, not by evaluating a
+// value: a definite effect disproves it (fail), an unanalyzable call leaves it
+// unproven (unknown), and otherwise it passes.
+function verifyPureSpec(file: string, functionName: string, fn: FitFunction, program: Program, spec: FitPureSpec): FitCheck {
+  const purity = functionPurity(fn.node, program)
+  if (purity.pure) {
+    return {file, functionName, text: spec.text, status: 'pass', ...(spec.line == null ? {} : {line: spec.line})}
+  }
+  return {
+    file,
+    functionName,
+    text: spec.text,
+    status: purity.certain ? 'fail' : 'unknown',
+    reason: `not pure: ${purity.reason}`,
+    ...(spec.line == null ? {} : {line: spec.line}),
+  }
 }
 
 function verifyCheckSpec(
@@ -1388,6 +1412,8 @@ function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
       return [spec.left, spec.right]
     case 'expression':
       return [spec.expression]
+    case 'pure':
+      return []
   }
 }
 

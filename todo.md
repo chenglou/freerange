@@ -6,6 +6,17 @@
 - **Open-ended range spellings** (`int 1..`, `0..`). Hold off until the noise from spelling `Infinity` becomes annoying. If added, exclusion markers attach only to a written bound (`5<..` is strictly above 5); a bare `<..10` collides with the inline `< expr` comparison shorthand and stays out.
 - **A `-Infinity<..Infinity` lint.** Strict at one infinity, inclusive at the other is almost always a misread of `-Infinity<..<Infinity` (the inclusive end still admits Infinity). Worth a warning when a range mixes an exclusive infinite endpoint with an inclusive one.
 
+## `pure` Follow-Ups
+
+The `pure` @fit directive ships (checked against the effect summary, not by
+evaluating a value). These are the v1 boundaries to revisit when a real case
+demands more precision — each is sound (it over-rejects, never over-accepts):
+
+- **`const` object reads are impure.** Reading a module `const` primitive is pure, but reading a `const` object/array's fields is impure because another helper could mutate it. The precise refinement: re-admit such a read as pure once we confirm no function in the program writes that root — we already compute `writesOuter` program-wide, so this is a whole-program aggregation, not new analysis.
+- **User method calls are impure.** A call like `obj.method(...)` is treated as an unknown call (only the array/string non-mutating methods and known mutators are recognized). Resolving user methods/class members for purity is the methods extension.
+- **Function-scoped callbacks.** A callback passed by name to map/filter/etc. is analyzed only if it resolves to a top-level function or import; a function-scoped `const cb = ...` cannot be materialized yet, so it reads as an unknown call (unknown, not pure). Same limit as a direct local-arrow call.
+- **No trusted-library list yet.** A call into a source-less package (only `.d.ts`, no declaration map) is an unknown call. A curated specifier-level trusted-pure list (mirroring `pureGlobalMembers`) would re-admit common library functions.
+
 ## Engine Work
 
 - **Conditional flush loops under rounding**: the segmented-stack family (push on `i % 3 === 2` or last-index, reset accumulator) rebinds its cursor through a rounded computation the loop analysis cannot classify as an additive step, so spaced/noOverlap/bottom sequence facts stay underived (see negativeSegmentedFlushSequenceFactsUnderived and the trimmed photo-gallery grid-loop claims). The fix is value-level computation forms instead of expression-text atoms: a result remembers its operand values, so reclassification stops depending on time-sensitive text resolution.

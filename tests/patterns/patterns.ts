@@ -1852,6 +1852,16 @@ export function totalExtentOfCountedItems(count: number, size: number) {
 }
 
 /** @fit
+ * pure
+ * return: 0..100
+ */
+export function pureClampToHundred(x: number): number {
+  // builds a local array and uses Math: no observable effect, deterministic.
+  const limits = [0, 100]
+  return Math.min(Math.max(x, limits[0]!), limits[1]!)
+}
+
+/** @fit
  * given rect.x: int -1000..1000
  * given rect.right: int -1000..1000
  * given rect.y: int -1000..1000

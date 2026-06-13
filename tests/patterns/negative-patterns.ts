@@ -778,6 +778,32 @@ export function negativeSnapshotCancelsAcrossMutation(box: {size: number}) {
 }
 
 /** @fit
+ * pure
+ */
+export function negativePureClaimOnEnvironmentObserver(): number {
+  // Math.random is nondeterministic, so the pure claim is provably false.
+  return Math.random()
+}
+
+/** @fit
+ * pure
+ */
+export function negativePureClaimOnParameterMutator(box: {size: number}) {
+  box.size = 100
+  return box.size
+}
+
+declare function negativeUnanalyzableScore(value: number): number
+
+/** @fit
+ * pure
+ */
+export function negativePureClaimWithUnanalyzableCall(x: number) {
+  // An unresolved call cannot be confirmed pure: reported unknown, not disproved.
+  return negativeUnanalyzableScore(x)
+}
+
+/** @fit
  * return == 3
  */
 export function negativeArrayAliasPush() {

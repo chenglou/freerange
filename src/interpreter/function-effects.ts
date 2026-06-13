@@ -44,15 +44,33 @@ const noEffects = (): FunctionEffects => ({
 // A function is pure when it changes nothing observable, reads no mutable
 // outside state, observes no environment, and calls nothing unanalyzable. Local
 // mutation, allocation, throwing, and reading module-level `const` primitives
-// are all fine. Derived from the effect summary so there is one source of truth.
-export function isFunctionPure(node: FunctionLikeNode, program: Program): boolean {
+// are all fine. A definite effect (mutation, an outer write, an environment
+// observation, a mutable read) is `certain` — the function is provably impure.
+// An unanalyzable call is not certain: the callee could be pure or not, so the
+// claim is unproven rather than disproven. Derived from the effect summary, so
+// there is one source of truth.
+export type Purity =
+  | {pure: true}
+  | {pure: false; certain: boolean; reason: string}
+
+export function functionPurity(node: FunctionLikeNode, program: Program): Purity {
   const effects = functionEffects(node, program)
-  return effects.writesOuter.size === 0
-    && effects.mutatesParams.size === 0
-    && !effects.mutatesThis
-    && !effects.readsMutableOuter
-    && !effects.observesEnvironment
-    && !effects.callsUnknown
+  const mutatedParam = [...effects.mutatesParams][0]
+  if (mutatedParam != null) {
+    const parameter = node.parameters[mutatedParam]?.name
+    const name = parameter != null && ts.isIdentifier(parameter) ? parameter.text : null
+    return {pure: false, certain: true, reason: name == null ? 'mutates a parameter' : `mutates parameter \`${name}\``}
+  }
+  if (effects.mutatesThis) return {pure: false, certain: true, reason: 'mutates `this`'}
+  const writtenOuter = [...effects.writesOuter][0]
+  if (writtenOuter != null) {
+    const root = writtenOuter.slice(writtenOuter.indexOf('#') + 1)
+    return {pure: false, certain: true, reason: `writes outside state \`${root}\``}
+  }
+  if (effects.readsMutableOuter) return {pure: false, certain: true, reason: 'reads mutable outside state'}
+  if (effects.observesEnvironment) return {pure: false, certain: true, reason: 'observes the environment (I/O, the clock, or randomness)'}
+  if (effects.callsUnknown) return {pure: false, certain: false, reason: 'calls a function whose body cannot be analyzed'}
+  return {pure: true}
 }
 
 export type FunctionLikeNode =
@@ -405,9 +423,20 @@ function readsMutableOuter(id: ts.Identifier, classifiers: Classifiers, program:
   if (ts.isQualifiedName(parent) && parent.right === id) return false
   if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return false
   if (ts.isBindingElement(parent) && parent.propertyName === id) return false
+  // Identifiers in a type position (a parameter name inside `(n: number) => T`,
+  // a type reference) are not value reads.
+  if (isInTypeContext(id)) return false
   // Only outer bindings matter; params and locals are not outside state.
   if (!classifiers.container(id.text).some(root => root.kind === 'outer')) return false
   return !isSafeOuterRead(id, program)
+}
+
+function isInTypeContext(node: ts.Node): boolean {
+  for (let current = node.parent; current != null; current = current.parent) {
+    if (ts.isTypeNode(current)) return true
+    if (ts.isStatement(current) || ts.isSourceFile(current)) return false
+  }
+  return false
 }
 
 function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
@@ -476,6 +505,11 @@ function collectWrites(
   const collectCall = (call: ts.CallExpression) => {
     const target = unwrapExpression(call.expression)
     if (ts.isPropertyAccessExpression(target)) {
+      // A method or pure global invokes its callback arguments. An inline one is
+      // analyzed by descent and a resolvable one through its edge, but a callback
+      // we cannot resolve (a function passed in as a parameter) could do
+      // anything, so invoking it is an unknown call.
+      if (callsUnanalyzableCallback(call, program)) member.effects.callsUnknown = true
       const base = unwrapExpression(target.expression)
       if (ts.isIdentifier(base) && isPureGlobalMemberCall(base.text, target.name.text)) {
         if (isEnvironmentObservingCall(base.text, target.name.text)) member.effects.observesEnvironment = true
@@ -578,6 +612,27 @@ function functionValuedArgument(argument: ts.Expression, program: Program): {nod
     if (resolved.kind === 'function') return {node: resolved.fn.node, program: resolved.program}
   }
   return null
+}
+
+// A callback argument the analysis can neither inline (an arrow/function
+// expression, read by descent) nor resolve to a known function (whose effects
+// arrive through an edge): a function value passed in from outside. Invoking it
+// could do anything, so the receiving method or global is an unknown call.
+function callsUnanalyzableCallback(call: ts.CallExpression, program: Program): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return false
+  for (const argument of call.arguments) {
+    if (ts.isSpreadElement(argument)) continue
+    const current = unwrapExpression(argument)
+    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) continue
+    if (functionValuedArgument(argument, program) != null) continue
+    try {
+      if (checker.getTypeAtLocation(current).getCallSignatures().length > 0) return true
+    } catch {
+      // an unresolved type query is not evidence of a callback
+    }
+  }
+  return false
 }
 
 function mutableArgumentRoots(

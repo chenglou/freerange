@@ -76,6 +76,12 @@ export type FitValueCheckSpec = FitSpecBase<'prove', 'value'> & {
   value: FitValueSpec
 }
 
+// `pure`: a function-level claim that the function has no observable effect and
+// is deterministic. It has no expression — it is checked against the function's
+// effect summary, not by evaluating a value — so it skips the TypeScript
+// lowering the expression-bearing specs go through.
+export type FitPureSpec = FitSpecBase<'prove', 'pure'>
+
 export type FitRangeGivenSpec = FitRangeSpec<'assume'>
 export type FitComparisonGivenSpec = FitComparisonSpec<'assume'>
 export type FitExpressionGivenSpec = FitExpressionSpec<'assume'>
@@ -91,9 +97,10 @@ export type FitSpec =
   | FitValueCheckSpec
   | FitComparisonCheckSpec
   | FitExpressionCheckSpec
+  | FitPureSpec
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
-export type FitCheckSpec = FitRangeCheckSpec | FitValueCheckSpec | FitComparisonCheckSpec | FitExpressionCheckSpec
+export type FitCheckSpec = FitRangeCheckSpec | FitValueCheckSpec | FitComparisonCheckSpec | FitExpressionCheckSpec | FitPureSpec
 export type FitInlineCheckSpec = FitRangeCheckSpec | FitComparisonCheckSpec
 export type FitGivenSpec = FitRangeGivenSpec | FitComparisonGivenSpec | FitExpressionGivenSpec
 
@@ -591,6 +598,8 @@ export function parseFitSpecLine(line: string, lineNumber?: number): FitSpec {
   const body = givenMatch?.[1] ?? line
   const role: FitSpecRole = givenMatch == null ? 'prove' : 'assume'
   const lineFields = lineNumber == null ? {} : {line: lineNumber}
+
+  if (role === 'prove' && body.trim() === 'pure') return {role, kind: 'pure', text: line, ...lineFields}
 
   const colonSplit = findTopLevelColon(body)
   if (colonSplit != null) {
