@@ -143,6 +143,7 @@ import {
   forgettableMutationRoots,
   isForgettableForStatement,
   isForgettableReadExpression,
+  mentionsRoot,
 } from './forgettable-loop.ts'
 import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {
@@ -1700,8 +1701,29 @@ function assignedValue(kind: ts.SyntaxKind, path: ValuePath, right: Value, frame
 // write we could not model. Roots not bound in this frame have no facts to forget.
 function havocRoots(frame: InterpreterFrame, names: string[]) {
   for (const name of new Set(names)) {
-    if (frame.env.has(name)) forgetRoot(frame.env, name)
+    if (!frame.env.has(name)) continue
+    forgetRoot(frame.env, name)
+    forgetRootAssumptions(frame, name)
   }
+}
+
+// A given precondition (`given input.width: 0..10`) is recorded as a standing
+// linear assumption keyed by its path text. That assumption is only true at
+// entry, not after the body mutates the path, so forgetting the env value is
+// not enough — the assumption must be dropped too, or a re-read of the path
+// gets re-narrowed back into range. Drop every assumption naming the root.
+function forgetRootAssumptions(frame: InterpreterFrame, root: string) {
+  if (frame.assumptions.length === 0) return
+  const kept = frame.assumptions.filter(constraint => !constraintMentionsRoot(constraint, root))
+  if (kept.length !== frame.assumptions.length) frame.assumptions = kept
+}
+
+function constraintMentionsRoot(constraint: LinearConstraint, root: string): boolean {
+  if (constraint.diff != null) {
+    for (const name of constraint.diff.terms.keys()) if (mentionsRoot(name, root)) return true
+  }
+  return (constraint.leftExpr != null && mentionsRoot(constraint.leftExpr, root))
+    || (constraint.rightExpr != null && mentionsRoot(constraint.rightExpr, root))
 }
 
 // Callee bodies evaluate in their own environment; what they change in the
@@ -1792,6 +1814,28 @@ function applyUnknownCallEffects(
     const callbackEffects = functionEffects(callback, frame.program)
     applyFunctionCallEffects(callbackEffects, [], callback.parameters, null, frame)
     if (callbackEffects.mutatesParams.size > 0) havocAllInputs()
+  }
+}
+
+// A pure global (Array.from, ...) writes no caller state itself, but it may run
+// a callback argument over its other arguments. Apply each callback's own
+// effects, and when a callback mutates its parameter, forget the data arguments
+// it runs against (the callback is applied to them, not the other way around).
+function applyPureGlobalCallbackEffects(expression: ts.CallExpression, frame: InterpreterFrame) {
+  let mutatesData = false
+  for (const argument of expression.arguments) {
+    const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
+    const callback = passedFunctionNode(argumentExpression, frame)
+    if (callback == null) continue
+    const effects = functionEffects(callback, frame.program)
+    applyFunctionCallEffects(effects, [], callback.parameters, null, frame)
+    if (effects.mutatesParams.size > 0) mutatesData = true
+  }
+  if (!mutatesData) return
+  for (const argument of expression.arguments) {
+    const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
+    if (passedFunctionNode(argumentExpression, frame) != null) continue
+    havocRoots(frame, expressionRootNames(argumentExpression, []))
   }
 }
 
@@ -2020,6 +2064,10 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     && isPureGlobalMemberCall(target.expression.text, target.name.text)
   const argumentValues = evaluatedArguments(expression.arguments, frame)
   if (!pureGlobal) applyUnknownCallEffects(expression, target, argumentValues, frame)
+  // A pure global can still be handed a callback that mutates what it maps over
+  // (Array.from(iterable, mapFn)): the global writes no caller state, but the
+  // mapper's effects must still land on the data arguments it runs against.
+  else applyPureGlobalCallbackEffects(expression, frame)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
   return noteUnsupported(frame, resolved.reason, expression)
@@ -2045,6 +2093,7 @@ function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.Pro
   noteEffect(frame, `${target.name.text} mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {
     forgetRoot(frame.env, path.root)
+    forgetRootAssumptions(frame, path.root)
     return unknownArray(expression.getText(frame.program.sourceFile))
   }
   const next = {...current, elements: null, summary: null}
@@ -2179,6 +2228,23 @@ function currentLoopPushSummary(frame: InterpreterFrame) {
   return emptyArraySummary(origin)
 }
 
+// map/filter/every/some only model an inline callback's per-element result. A
+// callback passed by name (or any other non-inline form) still runs per element
+// at runtime, so its effects must land exactly as the inline path applies them:
+// captured writes take hold, and an element-parameter mutation forgets the
+// receiver. A callback we cannot resolve to a function could do either, so the
+// receiver is forgotten conservatively. Without this the per-element result is
+// reported unsupported while the receiver's stale facts survive a real mutation.
+function applyUnresolvedArrayCallbackEffects(
+  target: ts.PropertyAccessExpression,
+  callback: ts.Expression | undefined,
+  frame: InterpreterFrame,
+) {
+  const callbackNode = callback == null ? null : passedFunctionNode(unwrapExpression(callback), frame)
+  if (callbackNode != null) applyInlineCallbackEffects(callbackNode, target.expression, frame)
+  else havocRoots(frame, expressionRootNames(target.expression, []))
+}
+
 function evaluateEverySomeCall(
   expression: ts.CallExpression,
   target: ts.PropertyAccessExpression,
@@ -2189,7 +2255,10 @@ function evaluateEverySomeCall(
   if (source.kind !== 'array') return noteUnsupported(frame, `${kind} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
-  if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, `${kind} callback must be an inline function`, callback ?? expression)
+  if (callbackFn == null || !isInlineFunction(callbackFn)) {
+    applyUnresolvedArrayCallbackEffects(target, callback, frame)
+    return noteUnsupported(frame, `${kind} callback must be an inline function`, callback ?? expression)
+  }
   const text = expression.getText(frame.program.sourceFile)
   if (source.length.max === 0) return literalValue([kind === 'every'], text)
   const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
@@ -2219,7 +2288,10 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   if (source.kind !== 'array') return noteUnsupported(frame, `map expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
-  if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'map callback must be an inline function', callback ?? expression)
+  if (callbackFn == null || !isInlineFunction(callbackFn)) {
+    applyUnresolvedArrayCallbackEffects(target, callback, frame)
+    return noteUnsupported(frame, 'map callback must be an inline function', callback ?? expression)
+  }
   // Apply captured-write effects before the representative element run: later
   // iterations observe earlier mutations, so the representative must read the
   // already-forgotten state.
@@ -2358,7 +2430,10 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
   if (source.kind !== 'array') return noteUnsupported(frame, `filter expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
-  if (callbackFn == null || !isInlineFunction(callbackFn)) return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
+  if (callbackFn == null || !isInlineFunction(callbackFn)) {
+    applyUnresolvedArrayCallbackEffects(target, callback, frame)
+    return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
+  }
   const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
   const effectiveSource = sourceAfterCallback(source, callbackEffects)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)

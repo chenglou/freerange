@@ -152,6 +152,10 @@ spaced(rows, gap)
 
 Then public checks, built-ins, `infer`, and report wording all consume the same store. Object-array and parallel-array code should converge here when they prove the same layout relation.
 
+## Forgetting A Root Means Forgetting It In Every Store
+
+A fact about a path lives in more than one place: the env value, the symbolic identity a snapshot carries (its linear form and expression text), and standing assumptions like `given input.width: 0..10`. When a call mutates `input`, dropping only the env value is not enough — the others re-prove the stale fact. A given is a precondition true at entry, not a body-wide invariant, so a re-read of `input.width` after the mutation must not be re-narrowed by the surviving assumption; and a snapshot `const w = input.width` taken before the mutation keeps the range it copied but must lose the `input.width` identity, or a later read cancels against it (`w - input.width` folding to a proved 0, `w == input.width` matching by text). So havocing a root resets its value, drops every assumption naming a path under it, and strips the symbolic linear/text identity from values read earlier — keeping their proven numeric range, dropping only the now-false tie.
+
 ## Comparison Rules Stay Modest
 
 A rule matches one goal, asks for ordinary checks, and uses the same checks for proving and report text. Traces name the winning or blocking rule, not a flattened `numeric.comparison`. Examples:

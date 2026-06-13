@@ -718,6 +718,54 @@ export function negativeMapCallbackMutatesCaptured(items: number[]) {
 }
 
 /** @fit
+ * return == 1
+ */
+export function negativeNamedMapCallbackMutatesElement() {
+  const boxes = [{size: 1}]
+  // A named (non-inline) map callback still mutates each element at runtime, so
+  // the receiver's element facts must be forgotten, not kept from the literal.
+  boxes.map(negativeGrowBox)
+  return boxes[0]!.size
+}
+
+/** @fit
+ * return == 1
+ */
+export function negativeArrayFromMapperMutatesElement() {
+  const boxes = [{size: 1}]
+  // Array.from is a pure global, but its mapper runs on each element; a mutating
+  // mapper changes the source elements, so their facts cannot survive.
+  Array.from(boxes, negativeGrowBox)
+  return boxes[0]!.size
+}
+
+/** @fit
+ * given box.size: 0..10
+ * return: 0..10
+ */
+export function negativeGivenSurvivesParamMutation(box: {size: number}) {
+  // The given is a precondition, true only at entry. After negativeGrowBox sets
+  // box.size = 100 the precondition no longer describes box.size, so the return
+  // range cannot be re-proved from the stale entry assumption.
+  negativeGrowBox(box)
+  return box.size
+}
+
+/** @fit
+ * given box.size: 0..10
+ * return: 0..0
+ */
+export function negativeSnapshotCancelsAcrossMutation(box: {size: number}) {
+  // before and after read box.size on opposite sides of a mutation, so they are
+  // different values; the snapshot must not keep box.size's identity and cancel
+  // before - after to a proved 0.
+  const before = box.size
+  negativeGrowBox(box)
+  const after = box.size
+  return before - after
+}
+
+/** @fit
  * return == 3
  */
 export function negativeArrayAliasPush() {

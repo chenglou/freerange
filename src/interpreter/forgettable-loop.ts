@@ -151,17 +151,36 @@ export function forgetRoot(env: Map<string, Value>, root: string) {
   const current = env.get(root)
   if (current?.kind === 'array') {
     replaceRootValueEverywhere(env, root, {...current, length: unknownArrayLength(current.expr ?? root), elements: null, element: null, summary: null})
-    return
-  }
-  if (current?.kind === 'object') {
+  } else if (current?.kind === 'object') {
     replaceRootValueEverywhere(env, root, unknownObject(root))
-    return
-  }
-  if (current?.kind === 'number') {
+  } else if (current?.kind === 'number') {
     env.set(root, unknownNumber(root))
-    return
+  } else {
+    env.set(root, unknown(`Unsupported mutation changed ${root}`))
   }
-  env.set(root, unknown(`Unsupported mutation changed ${root}`))
+  forgetSymbolicReferences(env, root)
+}
+
+// Whether an expression text names the root as one of its identifiers (so a
+// path or computation reads through it): `box`, `box.v`, and `Math.min(box, y)`
+// all mention `box`, but `boxes` and `mybox` do not.
+export function mentionsRoot(text: string, root: string): boolean {
+  return new RegExp(`(?<![\\p{ID_Continue}$])${root}(?![\\p{ID_Continue}$])`, 'u').test(text)
+}
+
+// A value read before a mutation keeps the mutated path's symbolic identity:
+// `const a = box.v` stays both linearly and by expression text `box.v`. Once
+// `box` is forgotten that identity is stale — a later read of `box.v` is a
+// different value — so the snapshot must not still prove `a == box.v` (by text)
+// or `a - box.v == 0` (by linear form). Drop the symbolic identity from any
+// other value naming a path under the root, keeping its proven numeric range.
+function forgetSymbolicReferences(env: Map<string, Value>, root: string) {
+  for (const [name, value] of env) {
+    if (name === root || value.kind !== 'number') continue
+    const linearStale = value.linear != null && [...value.linear.terms.keys()].some(term => mentionsRoot(term, root))
+    const exprStale = value.expr != null && mentionsRoot(value.expr, root)
+    if (linearStale || exprStale) env.set(name, {...value, linear: null, expr: null})
+  }
 }
 
 // Any assignment whose target root is known and whose right side is a pure read
