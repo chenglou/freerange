@@ -1264,6 +1264,149 @@ if (Bun.argv.includes('--update')) {
   }
 }
 
+const referenceAliasChecks = verifyFitSource('reference-aliases.ts', `function grow(row: {size: number}) {
+  row.size = 999
+}
+
+/** @fit
+ * return == 1
+ */
+function assignedContainerAlias() {
+  const box = {size: 1}
+  let rows: {size: number}[] = []
+  rows = [box]
+  rows.forEach(row => { row.size = 999 })
+  return box.size
+}
+
+/** @fit
+ * return == 1
+ */
+function mappedElementAlias() {
+  const box = {size: 1}
+  const rows = [box]
+  const copied = rows.map(row => row)
+  copied.forEach(row => { row.size = 999 })
+  return box.size
+}
+
+/** @fit
+ * return == 1
+ */
+function filteredElementAlias() {
+  const box = {size: 1}
+  const rows = [box]
+  const copied = rows.filter(() => true)
+  copied.forEach(row => { row.size = 999 })
+  return box.size
+}
+
+/** @fit
+ * return == 1
+ */
+function directElementArgumentAlias() {
+  const box = {size: 1}
+  const rows = [box]
+  grow(rows[0]!)
+  return box.size
+}
+
+/** @fit
+ * return == 1
+ */
+function readOnlyElementAliasesKeepFacts() {
+  const box = {size: 1}
+  const rows = [box]
+  const copied = rows.filter(() => true)
+  copied.forEach(row => { void row.size })
+  return box.size
+}
+
+/** @fit
+ * return == 999
+ */
+function conditionalAliasDoesNotNarrow(flag: boolean) {
+  const left = {size: 1}
+  const right = {size: 1}
+  const chosen = flag ? left : right
+  chosen.size = 999
+  return left.size
+}
+
+declare function touch(row: {size: number}): void
+const outerBox = {size: 1}
+function touchOuterBox() {
+  touch(outerBox)
+}
+
+/** @fit
+ * return == 1
+ */
+function unavailableCallThroughHelper() {
+  touchOuterBox()
+  return outerBox.size
+}
+`)
+const aliasClaims = referenceAliasChecks.filter(check => check.text === 'return == 1')
+const readOnlyAlias = aliasClaims.find(check => check.functionName === 'readOnlyElementAliasesKeepFacts')
+const staleMutationProofs = aliasClaims.filter(check =>
+  check.functionName !== 'readOnlyElementAliasesKeepFacts'
+  && check.status === 'pass'
+)
+const conditionalAlias = referenceAliasChecks.find(check => check.functionName === 'conditionalAliasDoesNotNarrow' && check.text === 'return == 999')
+if (
+  staleMutationProofs.length > 0
+  || aliasClaims.length !== 6
+  || readOnlyAlias?.status !== 'pass'
+  || conditionalAlias?.status === 'pass'
+) {
+  console.error('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches')
+  console.error(JSON.stringify(referenceAliasChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('reference aliases: mutations forget every reachable binding')
+}
+
+const purePlacementChecks = verifyFitSource('pure-placement.ts', `function misplacedPure(items: number[]) {
+  /** @fit
+   * pure
+   */
+  for (const item of items) {
+    void item
+  }
+  return items.length
+}
+
+function nestedClassMemberContracts() {
+  class Local {
+    constructor() {
+      const value = 1 // @fit 1
+      void value
+    }
+
+    set item(next: number) {
+      const value = next // @fit == next
+      void value
+    }
+  }
+  return Local
+}
+`)
+const purePlacement = purePlacementChecks.find(check => check.text === 'pure')
+const nestedClassPlacements = purePlacementChecks.filter(check => check.functionName === 'nestedClassMemberContracts')
+const nestedPlacementReason = 'Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function'
+if (
+  purePlacement?.status !== 'unknown'
+  || purePlacement.reason !== 'Unsupported @fit placement: `pure` can only appear in a function-level @fit block'
+  || nestedClassPlacements.length !== 2
+  || nestedClassPlacements.some(check => check.status !== 'unknown' || check.reason !== nestedPlacementReason)
+) {
+  console.error('expected invalid loop and nested class-member placements to be rejected during placement classification')
+  console.error(JSON.stringify(purePlacementChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract placement: loop and nested class-member diagnostics')
+}
 
 function normalizeNegative(checks: FitCheck[]) {
   const lines = checks

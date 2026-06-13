@@ -74,7 +74,6 @@ export function frameForStateCase(parent: InterpreterFrame, stateCase: Interpret
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...stateCase.assumptions],
-    containedRoots: parent.containedRoots,
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
   }
@@ -216,6 +215,7 @@ function valueFingerprint(value: Value): string {
     case 'object':
       return JSON.stringify({
         kind: value.kind,
+        referenceIds: [...value.referenceIds].sort((left, right) => left - right),
         expr: value.expr,
         props: [...value.props.entries()]
           .map(([name, prop]) => [name, valueFingerprint(prop)])
@@ -224,6 +224,7 @@ function valueFingerprint(value: Value): string {
     case 'array':
       return JSON.stringify({
         kind: value.kind,
+        referenceIds: [...value.referenceIds].sort((left, right) => left - right),
         layout: value.layout,
         length: valueFingerprint(value.length),
         elements: value.elements?.map(valueFingerprint) ?? null,

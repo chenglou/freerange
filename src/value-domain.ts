@@ -23,9 +23,29 @@ import type {
   NullValue,
   NumberValue,
   ObjectValue,
+  ReferenceIds,
   UnknownValue,
   Value,
 } from './domain-types.ts'
+
+let nextReference = 1
+
+export function freshReferenceIds(): ReferenceIds {
+  return [nextReference++]
+}
+
+export function mergedReferenceIds(left: ReferenceIds, right: ReferenceIds): ReferenceIds {
+  const merged = [...left]
+  for (const referenceId of right) {
+    if (!merged.includes(referenceId)) merged.push(referenceId)
+  }
+  return merged
+}
+
+export function referenceIdsOverlap(left: ReferenceIds, right: ReferenceIds): boolean {
+  for (const referenceId of left) if (right.includes(referenceId)) return true
+  return false
+}
 
 export function literalValue(values: LiteralPrimitive[], expr: string | null, origin: string[] = []): LiteralValue | UnknownValue {
   const finiteValues = finiteLiteralSetValues(values)
@@ -53,6 +73,7 @@ export function literalKey(value: LiteralPrimitive) {
 export function unknownObject(name: string): ObjectValue {
   return {
     kind: 'object',
+    referenceIds: freshReferenceIds(),
     props: new Map(),
     expr: name,
   }
@@ -70,6 +91,7 @@ export function unknownArrayLength(name: string): NumberValue {
 export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): ArrayValue {
   return {
     kind: 'array',
+    referenceIds: freshReferenceIds(),
     layout: 'collection',
     length,
     elements: null,
@@ -180,7 +202,12 @@ export function joinValues(left: Value, right: Value): Value {
       const rightProp = right.props.get(key)
       props.set(key, leftProp == null || rightProp == null ? unknown(`Property ${key} only exists on one branch`) : joinValues(leftProp, rightProp))
     }
-    return {kind: 'object', props, expr: left.expr != null && left.expr === right.expr ? left.expr : null}
+    return {
+      kind: 'object',
+      referenceIds: mergedReferenceIds(left.referenceIds, right.referenceIds),
+      props,
+      expr: left.expr != null && left.expr === right.expr ? left.expr : null,
+    }
   }
   if (left.kind === 'array' && right.kind === 'array') {
     const length = joinValues(left.length, right.length)
@@ -194,6 +221,7 @@ export function joinValues(left: Value, right: Value): Value {
       : null
     return {
       kind: 'array',
+      referenceIds: mergedReferenceIds(left.referenceIds, right.referenceIds),
       layout: elements == null ? 'collection' : 'tuple',
       length,
       elements,

@@ -1,5 +1,6 @@
 import * as ts from 'typescript'
 import {
+  freshReferenceIds,
   literalValue,
   mergeElementValue,
   nullValue,
@@ -51,7 +52,7 @@ function topLevelObjectLiteralValue(expression: ts.ObjectLiteralExpression, expr
     if (value == null) return null
     props.set(name, value)
   }
-  return {kind: 'object', props, expr}
+  return {kind: 'object', referenceIds: freshReferenceIds(), props, expr}
 }
 
 function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: string): Value | null {
@@ -66,7 +67,16 @@ function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: 
     elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
   }
   const length = numberValue(expression.elements.length, expression.elements.length, 0, `${expr}.length`, linearConstant(expression.elements.length))
-  return {kind: 'array', layout: 'collection', length, elements, element: elementValue == null ? null : valueWithoutNumberCases(elementValue), expr, summary: null}
+  return {
+    kind: 'array',
+    referenceIds: freshReferenceIds(),
+    layout: 'collection',
+    length,
+    elements,
+    element: elementValue == null ? null : valueWithoutNumberCases(elementValue),
+    expr,
+    summary: null,
+  }
 }
 
 function valueWithoutNumberCases(value: Value): Value {

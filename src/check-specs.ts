@@ -166,9 +166,6 @@ export function verifyCheckSpecWithProof(
   }
 
   if (spec.kind === 'expression') return verifyBooleanExpressionSpec(file, functionName, spec, context, hooks)
-  // `pure` is checked against the effect summary by check-core, never here.
-  if (spec.kind === 'pure') throw new Error('pure spec reached the value-proof path')
-
   const boundIndexCheck = proveBoundIndexComparisonSpec(spec, boundIndexContext)
   if (boundIndexCheck != null) {
     return checkProof({

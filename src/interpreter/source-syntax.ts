@@ -232,6 +232,9 @@ function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclarati
   return (ts.isFunctionDeclaration(node)
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node))
+    || ts.isMethodDeclaration(node)
+    || ts.isConstructorDeclaration(node)
+    || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node))
     && node.body != null
 }

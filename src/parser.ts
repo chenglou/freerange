@@ -100,7 +100,9 @@ export type FitSpec =
   | FitPureSpec
 
 export type ComparisonOperator = '==' | '>=' | '<=' | '>' | '<'
-export type FitCheckSpec = FitRangeCheckSpec | FitValueCheckSpec | FitComparisonCheckSpec | FitExpressionCheckSpec | FitPureSpec
+export type FitCheckSpec = FitRangeCheckSpec | FitValueCheckSpec | FitComparisonCheckSpec | FitExpressionCheckSpec
+export type FitFunctionCheckSpec = FitCheckSpec | FitPureSpec
+export type FitLoopSpec = Exclude<FitSpec, FitPureSpec>
 export type FitInlineCheckSpec = FitRangeCheckSpec | FitComparisonCheckSpec
 export type FitGivenSpec = FitRangeGivenSpec | FitComparisonGivenSpec | FitExpressionGivenSpec
 
@@ -108,7 +110,7 @@ export function fitSpecIsAssumption(spec: FitSpec): spec is FitGivenSpec {
   return spec.role === 'assume'
 }
 
-export function fitSpecIsProof(spec: FitSpec): spec is FitCheckSpec {
+export function fitSpecIsProof(spec: FitSpec): spec is FitFunctionCheckSpec {
   return spec.role === 'prove'
 }
 
@@ -133,11 +135,11 @@ export type FitBodySpecIndex = {
   localSpecsByStatement: Map<ts.VariableStatement, FitInlineCheckSpec[]>
   returnSpecsByNode: Map<ts.Node, FitInlineCheckSpec[]>
   objectPropertyTemplatesByNode: Map<ts.PropertyAssignment | ts.ShorthandPropertyAssignment, FitInlineSpecTemplate[]>
-  loopSpecsByStatement: Map<ts.ForOfStatement | ts.ForStatement, FitSpec[]>
+  loopSpecsByStatement: Map<ts.ForOfStatement | ts.ForStatement, FitLoopSpec[]>
   // @fit comments in places the checker does not evaluate (e.g. inside a map
   // callback). Reported as unsupported: a written contract is never ignored
   // silently.
-  unsupportedPlacements: {line: number; text: string}[]
+  unsupportedPlacements: {line: number; text: string; reason: string}[]
 }
 
 type FitExpressionParser = (text: string) => FitExpression
@@ -370,7 +372,8 @@ export function fitBodySpecIndexHasWork(index: FitBodySpecIndex | undefined) {
     && (index.localSpecsByStatement.size > 0
       || index.returnSpecsByNode.size > 0
       || index.objectPropertyTemplatesByNode.size > 0
-      || index.loopSpecsByStatement.size > 0)
+      || index.loopSpecsByStatement.size > 0
+      || index.unsupportedPlacements.length > 0)
 }
 
 export function parseFunctionBodyFitSpecIndex(sourceText: string, fn: ts.FunctionLikeDeclaration): FitBodySpecIndex {
@@ -412,11 +415,12 @@ function collectBodyFitSpecIndex(sourceText: string, root: ts.Node, index: FitBo
 // them so the report can say so instead of staying silent.
 function collectUnsupportedNestedFitComments(sourceText: string, nested: ts.Node, index: FitBodySpecIndex) {
   const seen = new Set<number>()
+  const reason = 'Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function'
   const record = (lines: FitCommentLine[]) => {
     for (const line of lines) {
       if (seen.has(line.pos) || index.unsupportedPlacements.some(existing => existing.line === line.line && existing.text === line.text)) continue
       seen.add(line.pos)
-      index.unsupportedPlacements.push({line: line.line, text: line.text})
+      index.unsupportedPlacements.push({line: line.line, text: line.text, reason})
     }
   }
   const visit = (node: ts.Node) => {
@@ -445,7 +449,19 @@ function collectBodyFitSpecIndexForNode(sourceText: string, node: ts.Node, index
   }
   if (ts.isForOfStatement(node) || ts.isForStatement(node)) {
     const specs = parseFitSpecs(sourceText, node)
-    if (specs.length > 0) index.loopSpecsByStatement.set(node, specs)
+    const loopSpecs: FitLoopSpec[] = []
+    for (const spec of specs) {
+      if (spec.kind === 'pure') {
+        index.unsupportedPlacements.push({
+          line: spec.line ?? lineNumberAtPosition(sourceText, node.getStart()),
+          text: spec.text,
+          reason: 'Unsupported @fit placement: `pure` can only appear in a function-level @fit block',
+        })
+      } else {
+        loopSpecs.push(spec)
+      }
+    }
+    if (loopSpecs.length > 0) index.loopSpecsByStatement.set(node, loopSpecs)
   }
 }
 
@@ -465,7 +481,9 @@ function isFunctionLikeWithBodyNode(node: ts.Node) {
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
+    || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node)
 }
 
 function fitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[][] {

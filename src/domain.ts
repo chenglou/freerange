@@ -34,6 +34,7 @@ export {
 } from './number-domain.ts'
 export {
   finiteLiteralSetValues,
+  freshReferenceIds,
   joinValues,
   literalKey,
   literalValue,
@@ -41,6 +42,7 @@ export {
   mergeNullishKind,
   nullableValue,
   nullValue,
+  referenceIdsOverlap,
   tupleElements,
   unknown,
   unknownArray,

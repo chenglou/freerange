@@ -98,7 +98,8 @@ Inline `//` comments need to be on the same line as the type/value field, the fu
 Block comments need to be above the function, type, and loop scope.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure (no side-effects and nondeterminism like `Math.random()`). You don't need to annotate a function to be `pure` to use it in the contracts; Freerange will infer them. The optional `pure` annotation just indicates user intent, in case the function's refactored in the future. The purity check's guaranteed transitive! Aka recursively checks the purity of its body's functions (unlike linters).
+**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure: they don't mutate inputs or outside state, read mutable outside state, depend on I/O, the clock, or randomness, or call code Freerange can't inspect. Local allocation and mutation are fine. You don't need to annotate a function as `pure` to use it in a contract; Freerange infers this. The optional `pure` line records your intent so a later refactor is checked too, including every function called by the body.
+`pure` belongs only in the `@fit` block above a function. Putting it on a loop is rejected because it describes the whole function's behavior, not a value to prove at one program point. If a called function has no available body, Freerange reports the purity claim as unknown instead of guessing.
 An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
 
 Syntax Glossary's at the end of the docs.
@@ -108,7 +109,7 @@ Syntax Glossary's at the end of the docs.
 We expose some useful functions in `@fit` comments:
 
 ```ts
-pure // ensure the function is free of side-effects and nondeterminism like Math.random()
+pure // ensure the function has no visible side effects, mutable outside reads, or nondeterminism
 nondecreasing(values: number[]): boolean // values in the array should prove to be bigger than or equal to their previous cell value
 spaced(rows: {top: number; height: number}[], gap: number): boolean // each next row should prove to start after previous top + previous height + gap
 lastEnd(rows: {top: number; height: number}[]): number // returns the final row's .top + .height; rows must prove non-empty

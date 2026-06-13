@@ -8,7 +8,9 @@ export function isFunctionLikeWithBody(node: ts.Node): boolean {
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
+    || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
+    || ts.isSetAccessorDeclaration(node)
 }
 
 export function functionInputRoots(program: Program, fn: FitFunction): string[] {
@@ -21,7 +23,10 @@ export function functionInputRoots(program: Program, fn: FitFunction): string[] 
 }
 
 export function functionHasInstanceThisInput(fn: FitFunction): boolean {
-  return (ts.isMethodDeclaration(fn.node) || ts.isGetAccessorDeclaration(fn.node))
+  return (ts.isMethodDeclaration(fn.node)
+    || ts.isConstructorDeclaration(fn.node)
+    || ts.isGetAccessorDeclaration(fn.node)
+    || ts.isSetAccessorDeclaration(fn.node))
     && !hasModifier(fn.node, ts.SyntaxKind.StaticKeyword)
 }
 

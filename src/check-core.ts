@@ -23,6 +23,7 @@ import {
   type FitDomainPath,
   type FitExpressionLike,
   type FitInlineCheckSpec,
+  type FitLoopSpec,
   type FitPureSpec,
   type FitRange,
   type FitSpec,
@@ -474,7 +475,7 @@ function verifyFunctionSpecsDetailed(
       line: placement.line,
       text: placement.text,
       status: 'unknown',
-      reason: 'Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function',
+      reason: placement.reason,
     })
   }
   if (setup.typeChecks.some(check => check.status !== 'pass')) {
@@ -806,16 +807,14 @@ function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value
 // unproven (unknown), and otherwise it passes.
 function verifyPureSpec(file: string, functionName: string, fn: FitFunction, program: Program, spec: FitPureSpec): FitCheck {
   const purity = functionPurity(fn.node, program)
-  if (purity.pure) {
-    return {file, functionName, text: spec.text, status: 'pass', ...(spec.line == null ? {} : {line: spec.line})}
-  }
-  return {
-    file,
-    functionName,
-    text: spec.text,
-    status: purity.certain ? 'fail' : 'unknown',
-    reason: `not pure: ${purity.reason}`,
-    ...(spec.line == null ? {} : {line: spec.line}),
+  const base = {file, functionName, text: spec.text, ...(spec.line == null ? {} : {line: spec.line})}
+  switch (purity.kind) {
+    case 'pure':
+      return {...base, status: 'pass'}
+    case 'impure':
+      return {...base, status: 'fail', reason: `not pure: ${purity.reason}`}
+    case 'unknown':
+      return {...base, status: 'unknown', reason: `not pure: ${purity.reason}`}
   }
 }
 
@@ -1373,9 +1372,9 @@ function loopHeaderText(statement: ts.ForOfStatement | ts.ForStatement | ts.Whil
   return header.replace(/\s+/g, ' ').trim()
 }
 
-function splitLoopSpecs(specs: FitSpec[]): {validSpecs: FitSpec[]; resultSpecs: FitSpec[]} {
-  const validSpecs: FitSpec[] = []
-  const resultSpecs: FitSpec[] = []
+function splitLoopSpecs(specs: FitLoopSpec[]): {validSpecs: FitLoopSpec[]; resultSpecs: FitLoopSpec[]} {
+  const validSpecs: FitLoopSpec[] = []
+  const resultSpecs: FitLoopSpec[] = []
   for (const spec of specs) {
     if (specMentionsRoot(spec, fitReturnInternalRoot)) resultSpecs.push(spec)
     else validSpecs.push(spec)
@@ -1383,7 +1382,7 @@ function splitLoopSpecs(specs: FitSpec[]): {validSpecs: FitSpec[]; resultSpecs: 
   return {validSpecs, resultSpecs}
 }
 
-function reportLoopResultSpecs(specs: FitSpec[], context: EvalContext) {
+function reportLoopResultSpecs(specs: FitLoopSpec[], context: EvalContext) {
   if (specs.length === 0) return
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
   for (const spec of specs) {
@@ -1453,7 +1452,7 @@ function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
   for (const [key, expected] of booleanAssumptions) context.booleanAssumptions.set(key, expected)
 }
 
-function verifyLocalLoopSpecs(specs: FitSpec[], context: EvalContext) {
+function verifyLocalLoopSpecs(specs: FitLoopSpec[], context: EvalContext) {
   if (specs.length === 0) return
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
   const loopResult = unknown('Loop annotations do not have return; name local values directly')

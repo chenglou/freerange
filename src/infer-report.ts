@@ -39,6 +39,11 @@ export function inferFunctionSpecReports(
       return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}
     }
 
+    if (spec.kind === 'pure') {
+      const check = checkByText.get(spec.text)
+      if (check?.status === 'pass') return {text: spec.text, status: 'checked'}
+      return {text: spec.text, status: 'not-inferred', reason: check?.reason ?? check?.status ?? 'purity was not checked'}
+    }
     const check = verify(spec)
     if (check.status === 'pass') return {text: spec.text, status: 'checked'}
     return {text: spec.text, status: 'not-inferred', reason: check.reason ?? check.status}

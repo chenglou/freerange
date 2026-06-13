@@ -98,9 +98,110 @@ export function classMemberFunctionForPropertyAccess(
   }
 }
 
-function classMemberFunctionName(className: string, memberName: string, declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null) {
+export function classMemberFunctionForPropertyAccessInProgram(
+  access: ts.PropertyAccessExpression,
+  program: Program,
+): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(access.name)
+  const declaration = symbolDeclaration(symbol, checker)
+  if (
+    declaration == null
+    || !ts.isMethodDeclaration(declaration)
+    || !ts.isClassDeclaration(declaration.parent)
+    || declaration.parent.name == null
+  ) return null
+  return classFunctionTarget(declaration, access.name.text, program)
+}
+
+export function classAccessorFunctionForPropertyAccessInProgram(
+  access: ts.PropertyAccessExpression,
+  kind: 'get' | 'set',
+  program: Program,
+): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(access.name)
+  const declaration = symbol?.declarations?.find(candidate => {
+    switch (kind) {
+      case 'get':
+        return ts.isGetAccessorDeclaration(candidate)
+      case 'set':
+        return ts.isSetAccessorDeclaration(candidate)
+    }
+  })
+  if (
+    declaration == null
+    || (!ts.isGetAccessorDeclaration(declaration) && !ts.isSetAccessorDeclaration(declaration))
+    || !ts.isClassDeclaration(declaration.parent)
+    || declaration.parent.name == null
+  ) return null
+  return classFunctionTarget(declaration, access.name.text, program)
+}
+
+function classFunctionTarget(
+  declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+  memberName: string,
+  program: Program,
+): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+  const parent = declaration.parent
+  if (!ts.isClassDeclaration(parent) || parent.name == null) return null
+  const memberProgram = programForSourceFile(declaration.getSourceFile(), program)
+  if (memberProgram == null) return null
+  const functionName = classMemberFunctionName(parent.name.text, memberName, declaration)
+  const fn = memberProgram.functions.get(functionName)
+  return fn == null ? null : {kind: 'function', program: memberProgram, functionName, fn}
+}
+
+export function constructorFunctionForNewExpression(
+  expression: ts.NewExpression,
+  program: Program,
+): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+  const declaration = classDeclarationForNewExpression(expression, program)
+  if (declaration == null || declaration.name == null) return null
+  const constructor = declaration.members.find(ts.isConstructorDeclaration)
+  if (constructor?.body == null) return null
+  const constructorProgram = programForSourceFile(declaration.getSourceFile(), program)
+  if (constructorProgram == null) return null
+  const functionName = `${declaration.name.text}.constructor`
+  const fn = constructorProgram.functions.get(functionName)
+  return fn == null ? null : {kind: 'function', program: constructorProgram, functionName, fn}
+}
+
+export function classDeclarationForNewExpression(expression: ts.NewExpression, program: Program): ts.ClassDeclaration | null {
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(expression.expression)
+  const declaration = symbolDeclaration(symbol, checker)
+  return declaration != null && ts.isClassDeclaration(declaration) ? declaration : null
+}
+
+export function isDefaultLibrarySymbol(node: ts.Node, program: Program): boolean {
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(node)
+  if (symbol == null || checker == null) return false
+  const resolved = (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  return resolved.declarations?.some(declaration =>
+    program.project.typeProgram?.isSourceFileDefaultLibrary(declaration.getSourceFile()) === true,
+  ) === true
+}
+
+export function isDefaultLibraryMemberAccess(access: ts.PropertyAccessExpression, program: Program): boolean {
+  return isDefaultLibrarySymbol(access.name, program)
+}
+
+function classMemberFunctionName(
+  className: string,
+  memberName: string,
+  declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration | null,
+) {
   const owner = declaration != null && hasModifier(declaration, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
+  if (declaration != null && ts.isSetAccessorDeclaration(declaration)) return `${owner}.set.${memberName}`
   return `${owner}.${memberName}`
+}
+
+function symbolDeclaration(symbol: ts.Symbol | undefined, checker: ts.TypeChecker | null): ts.Declaration | undefined {
+  if (symbol == null) return undefined
+  const resolved = checker != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  return resolved.valueDeclaration ?? resolved.declarations?.[0]
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
@@ -131,9 +232,14 @@ function classMemberForPropertyAccess(access: ts.PropertyAccessExpression, frame
 
 function programForClassMember(declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null, frame: InterpreterFrame): Program | null {
   if (declaration == null) return frame.program
-  const sourceFile = declaration.getSourceFile()
-  if (sameProgramSourceFile(frame.program, sourceFile)) return frame.program
-  return importedPrograms(frame.program).find(program => sameProgramSourceFile(program, sourceFile)) ?? null
+  return programForSourceFile(declaration.getSourceFile(), frame.program)
+}
+
+function programForSourceFile(sourceFile: ts.SourceFile, program: Program): Program | null {
+  if (sameProgramSourceFile(program, sourceFile)) return program
+  const projectFile = program.project.filesBySourceFile.get(sourceFile)
+  if (projectFile != null && 'functions' in projectFile) return projectFile as Program
+  return importedPrograms(program).find(imported => sameProgramSourceFile(imported, sourceFile)) ?? null
 }
 
 function importedPrograms(program: Program): Program[] {

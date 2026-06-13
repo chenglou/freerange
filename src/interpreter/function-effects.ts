@@ -1,26 +1,42 @@
 import * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
-import {resolveCallTarget} from './call-targets.ts'
+import {
+  classAccessorFunctionForPropertyAccessInProgram,
+  classDeclarationForNewExpression,
+  classMemberFunctionForPropertyAccessInProgram,
+  constructorFunctionForNewExpression,
+  isDefaultLibraryMemberAccess,
+  isDefaultLibrarySymbol,
+  resolveCallTarget,
+} from './call-targets.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 
 // What a call can change in its caller's world, beyond returning a value.
-// `mutatesParams` holds parameter indexes whose argument may be written through,
-// or stored somewhere that outlives the call; the caller forgets the argument's
-// roots either way, because facts cannot be re-established through an alias it
-// no longer sees. `writesOuter` holds module-scope roots the function (or
-// anything it calls) writes, qualified by source id so same-named roots in
-// other modules stay untouched.
-// The first three fields are what a call changes in its caller's world; the
-// interpreter's fact-forgetting reads only those. The last three extend the
-// summary to the stricter notion a `pure` annotation needs: a pure function not
-// only writes nothing observable, it also reads no mutable outside state, never
+// `paramIndexes` holds parameters whose argument may be written through or
+// stored somewhere that outlives the call. The caller forgets the argument's
+// roots either way because facts cannot be re-established through an alias it
+// no longer sees. `outerRootsBySource` keeps module roots grouped by source so
+// same-named roots in other modules stay untouched.
+// The mutation fields are what the interpreter uses to forget caller facts.
+// The remaining fields extend the summary to the stricter notion a `pure`
+// annotation needs: a pure function also reads no mutable outside state, never
 // observes or affects the environment (I/O, the clock, randomness), and calls
-// nothing it cannot see into. Purity is derived from these (see isFunctionPure),
-// never stored separately.
+// nothing it cannot analyze. Purity is derived from this summary, never stored
+// separately.
+export type MutationTargets = {
+  outerRootsBySource: Map<string, Set<string>>
+  paramIndexes: Set<number>
+  thisValue: boolean
+}
+
 export type FunctionEffects = {
-  writesOuter: Set<string>
-  mutatesParams: Set<number>
-  mutatesThis: boolean
+  mutations: {
+    certain: MutationTargets
+    // A call whose body is unavailable may mutate these targets. The
+    // interpreter forgets their facts, while `pure` reports the call as unknown
+    // instead of claiming that the mutation definitely occurs.
+    uncertain: MutationTargets
+  }
   // reads a module-level `let`/`var`, or a `const` object/array's fields — a
   // value that some other code can change, so the result is not deterministic
   readsMutableOuter: boolean
@@ -28,14 +44,21 @@ export type FunctionEffects = {
   // that differs across runs with the same inputs
   observesEnvironment: boolean
   // calls something the analysis cannot resolve to a known function or method,
-  // so it could do anything — the unknown-means-impure default
+  // so it could do anything and the function cannot be proved pure
   callsUnknown: boolean
 }
 
+const noMutationTargets = (): MutationTargets => ({
+  outerRootsBySource: new Map(),
+  paramIndexes: new Set(),
+  thisValue: false,
+})
+
 const noEffects = (): FunctionEffects => ({
-  writesOuter: new Set(),
-  mutatesParams: new Set(),
-  mutatesThis: false,
+  mutations: {
+    certain: noMutationTargets(),
+    uncertain: noMutationTargets(),
+  },
   readsMutableOuter: false,
   observesEnvironment: false,
   callsUnknown: false,
@@ -44,33 +67,31 @@ const noEffects = (): FunctionEffects => ({
 // A function is pure when it changes nothing observable, reads no mutable
 // outside state, observes no environment, and calls nothing unanalyzable. Local
 // mutation, allocation, throwing, and reading module-level `const` primitives
-// are all fine. A definite effect (mutation, an outer write, an environment
-// observation, a mutable read) is `certain` — the function is provably impure.
-// An unanalyzable call is not certain: the callee could be pure or not, so the
-// claim is unproven rather than disproven. Derived from the effect summary, so
-// there is one source of truth.
+// are all fine. A definite effect makes the function impure. An unanalyzable
+// call leaves the claim unknown because the callee could be pure or not. This
+// result is derived from the effect summary, so there is one source of truth.
 export type Purity =
-  | {pure: true}
-  | {pure: false; certain: boolean; reason: string}
+  | {kind: 'pure'}
+  | {kind: 'impure'; reason: string}
+  | {kind: 'unknown'; reason: string}
 
 export function functionPurity(node: FunctionLikeNode, program: Program): Purity {
   const effects = functionEffects(node, program)
-  const mutatedParam = [...effects.mutatesParams][0]
+  const mutatedParam = effects.mutations.certain.paramIndexes.values().next().value
   if (mutatedParam != null) {
     const parameter = node.parameters[mutatedParam]?.name
     const name = parameter != null && ts.isIdentifier(parameter) ? parameter.text : null
-    return {pure: false, certain: true, reason: name == null ? 'mutates a parameter' : `mutates parameter \`${name}\``}
+    return {kind: 'impure', reason: name == null ? 'mutates a parameter' : `mutates parameter \`${name}\``}
   }
-  if (effects.mutatesThis) return {pure: false, certain: true, reason: 'mutates `this`'}
-  const writtenOuter = [...effects.writesOuter][0]
+  if (effects.mutations.certain.thisValue) return {kind: 'impure', reason: 'mutates `this`'}
+  const writtenOuter = firstOuterRoot(effects.mutations.certain)
   if (writtenOuter != null) {
-    const root = writtenOuter.slice(writtenOuter.indexOf('#') + 1)
-    return {pure: false, certain: true, reason: `writes outside state \`${root}\``}
+    return {kind: 'impure', reason: `writes outside state \`${writtenOuter}\``}
   }
-  if (effects.readsMutableOuter) return {pure: false, certain: true, reason: 'reads mutable outside state'}
-  if (effects.observesEnvironment) return {pure: false, certain: true, reason: 'observes the environment (I/O, the clock, or randomness)'}
-  if (effects.callsUnknown) return {pure: false, certain: false, reason: 'calls a function whose body cannot be analyzed'}
-  return {pure: true}
+  if (effects.readsMutableOuter) return {kind: 'impure', reason: 'reads mutable outside state'}
+  if (effects.observesEnvironment) return {kind: 'impure', reason: 'observes the environment (I/O, the clock, or randomness)'}
+  if (effects.callsUnknown) return {kind: 'unknown', reason: 'calls a function whose body cannot be analyzed'}
+  return {kind: 'pure'}
 }
 
 export type FunctionLikeNode =
@@ -78,21 +99,22 @@ export type FunctionLikeNode =
   | ts.FunctionExpression
   | ts.ArrowFunction
   | ts.MethodDeclaration
+  | ts.ConstructorDeclaration
   | ts.GetAccessorDeclaration
   | ts.SetAccessorDeclaration
 
-export function outerWriteKey(sourceId: string, root: string) {
-  return `${sourceId}#${root}`
-}
-
-export function outerWriteRoot(key: string, sourceId: string): string | null {
-  return key.startsWith(`${sourceId}#`) ? key.slice(sourceId.length + 1) : null
+function firstOuterRoot(targets: MutationTargets): string | null {
+  for (const roots of targets.outerRootsBySource.values()) {
+    const root = roots.values().next().value
+    if (root != null) return root
+  }
+  return null
 }
 
 // Real platform globals whose listed members neither mutate their arguments nor
 // reach back into user module state. Anything not listed is treated as an
 // unknown call. Object.assign is deliberately absent: it mutates its target.
-const pureGlobalMembers = new Map<string, 'all' | Set<string>>([
+const factPreservingGlobalMembers = new Map<string, 'all' | Set<string>>([
   ['Math', 'all'],
   ['JSON', 'all'],
   ['console', 'all'],
@@ -105,8 +127,8 @@ const pureGlobalMembers = new Map<string, 'all' | Set<string>>([
   ['Array', new Set(['isArray', 'of', 'from'])],
 ])
 
-export function isPureGlobalMemberCall(base: string, member: string): boolean {
-  const members = pureGlobalMembers.get(base)
+export function isFactPreservingGlobalMemberCall(base: string, member: string): boolean {
+  const members = factPreservingGlobalMembers.get(base)
   if (members == null) return false
   return members === 'all' || members.has(member)
 }
@@ -114,7 +136,8 @@ export function isPureGlobalMemberCall(base: string, member: string): boolean {
 // Globals that do not mutate caller state but still break purity: console writes
 // to the outside world (I/O), and the clock and randomness return a different
 // value each run with the same inputs (nondeterminism). They stay in
-// pureGlobalMembers (they corrupt no facts) but make a calling function impure.
+// factPreservingGlobalMembers (they corrupt no facts) but make a calling
+// function impure.
 const environmentObservingMembers = new Map<string, 'all' | Set<string>>([
   ['console', 'all'], // every console method writes to the outside world
   ['Date', new Set(['now'])], // parse/UTC are deterministic given their arguments
@@ -150,9 +173,14 @@ const nonMutatingMethodNames = new Set([
   'toReversed', 'toSorted', 'toSpliced', 'with',
 ])
 
+const callbackInvokingMethodNames = new Set([
+  'map', 'filter', 'every', 'some', 'forEach', 'reduce', 'reduceRight',
+  'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap',
+])
+
 type RootKind =
   | {kind: 'param'; index: number}
-  | {kind: 'outer'; key: string}
+  | {kind: 'outer'; sourceId: string; root: string}
   | {kind: 'this'}
 
 type CallEdge = {
@@ -193,28 +221,11 @@ export function functionEffects(node: FunctionLikeNode, program: Program): Funct
 
 function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffects): boolean {
   let changed = false
-  const add = (roots: RootKind[]) => {
-    for (const root of roots) {
-      if (root.kind === 'param' && !into.mutatesParams.has(root.index)) {
-        into.mutatesParams.add(root.index)
-        changed = true
-      }
-      if (root.kind === 'outer' && !into.writesOuter.has(root.key)) {
-        into.writesOuter.add(root.key)
-        changed = true
-      }
-      if (root.kind === 'this' && !into.mutatesThis) {
-        into.mutatesThis = true
-        changed = true
-      }
-    }
+  const add = (targets: MutationTargets, roots: RootKind[]) => {
+    if (addMutationRoots(targets, roots)) changed = true
   }
-  for (const key of callee.writesOuter) {
-    if (!into.writesOuter.has(key)) {
-      into.writesOuter.add(key)
-      changed = true
-    }
-  }
+  if (mergeOuterRoots(into.mutations.certain, callee.mutations.certain)) changed = true
+  if (mergeOuterRoots(into.mutations.uncertain, callee.mutations.uncertain)) changed = true
   // These three describe the callee itself, not anything it does through this
   // edge's arguments, so they propagate to every caller unconditionally: calling
   // an impure function is impure.
@@ -230,20 +241,79 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
     into.callsUnknown = true
     changed = true
   }
-  if (callee.mutatesThis) add(edge.receiverRoots)
-  if (callee.mutatesParams.size > 0) {
+  if (callee.mutations.certain.thisValue) add(into.mutations.certain, edge.receiverRoots)
+  if (callee.mutations.certain.paramIndexes.size > 0) {
     const hasSpread = edge.argumentRoots.some(roots => roots == null)
-    for (const index of callee.mutatesParams) {
+    for (const index of callee.mutations.certain.paramIndexes) {
       const rest = edge.callee.parameters[index]?.dotDotDotToken != null
       if (hasSpread) {
-        for (const roots of edge.argumentRoots) add(roots ?? [])
+        for (const roots of edge.argumentRoots) add(into.mutations.certain, roots ?? [])
       } else if (rest) {
-        for (const roots of edge.argumentRoots.slice(index)) add(roots ?? [])
+        for (const roots of edge.argumentRoots.slice(index)) add(into.mutations.certain, roots ?? [])
       } else {
-        add(edge.argumentRoots[index] ?? [])
+        add(into.mutations.certain, edge.argumentRoots[index] ?? [])
       }
     }
-    if (edge.callbackSpill != null) add(edge.callbackSpill)
+    if (edge.callbackSpill != null) add(into.mutations.certain, edge.callbackSpill)
+  }
+  if (callee.mutations.uncertain.thisValue) add(into.mutations.uncertain, edge.receiverRoots)
+  if (callee.mutations.uncertain.paramIndexes.size > 0) {
+    const hasSpread = edge.argumentRoots.some(roots => roots == null)
+    for (const index of callee.mutations.uncertain.paramIndexes) {
+      const rest = edge.callee.parameters[index]?.dotDotDotToken != null
+      if (hasSpread) {
+        for (const roots of edge.argumentRoots) add(into.mutations.uncertain, roots ?? [])
+      } else if (rest) {
+        for (const roots of edge.argumentRoots.slice(index)) add(into.mutations.uncertain, roots ?? [])
+      } else {
+        add(into.mutations.uncertain, edge.argumentRoots[index] ?? [])
+      }
+    }
+    if (edge.callbackSpill != null) add(into.mutations.uncertain, edge.callbackSpill)
+  }
+  return changed
+}
+
+function addMutationRoots(targets: MutationTargets, roots: RootKind[]): boolean {
+  let changed = false
+  for (const root of roots) {
+    switch (root.kind) {
+      case 'param':
+        if (!targets.paramIndexes.has(root.index)) {
+          targets.paramIndexes.add(root.index)
+          changed = true
+        }
+        break
+      case 'outer': {
+        if (addOuterRoot(targets, root.sourceId, root.root)) changed = true
+        break
+      }
+      case 'this':
+        if (!targets.thisValue) {
+          targets.thisValue = true
+          changed = true
+        }
+        break
+    }
+  }
+  return changed
+}
+
+function addOuterRoot(targets: MutationTargets, sourceId: string, root: string): boolean {
+  let sourceRoots = targets.outerRootsBySource.get(sourceId)
+  if (sourceRoots == null) {
+    sourceRoots = new Set()
+    targets.outerRootsBySource.set(sourceId, sourceRoots)
+  }
+  if (sourceRoots.has(root)) return false
+  sourceRoots.add(root)
+  return true
+}
+
+function mergeOuterRoots(into: MutationTargets, from: MutationTargets): boolean {
+  let changed = false
+  for (const [sourceId, roots] of from.outerRootsBySource) {
+    for (const root of roots) if (addOuterRoot(into, sourceId, root)) changed = true
   }
   return changed
 }
@@ -392,7 +462,7 @@ function makeClassifiers(scope: Scope, program: Program): Classifiers {
     } else {
       const paramIndex = scope.paramIndexByName.get(rootName)
       if (paramIndex != null) result.push({kind: 'param', index: paramIndex})
-      else if (!scope.declaredNames.has(rootName)) result.push({kind: 'outer', key: outerWriteKey(program.sourceId, rootName)})
+      else if (!scope.declaredNames.has(rootName)) result.push({kind: 'outer', sourceId: program.sourceId, root: rootName})
     }
     const sources = [
       ...(scope.containerSources.get(rootName) ?? []),
@@ -423,6 +493,18 @@ function readsMutableOuter(id: ts.Identifier, classifiers: Classifiers, program:
   if (ts.isQualifiedName(parent) && parent.right === id) return false
   if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return false
   if (ts.isBindingElement(parent) && parent.propertyName === id) return false
+  if (
+    (
+      ts.isFunctionDeclaration(parent)
+      || ts.isFunctionExpression(parent)
+      || ts.isMethodDeclaration(parent)
+      || ts.isGetAccessorDeclaration(parent)
+      || ts.isSetAccessorDeclaration(parent)
+      || ts.isClassDeclaration(parent)
+      || ts.isClassExpression(parent)
+    )
+    && parent.name === id
+  ) return false
   // Identifiers in a type position (a parameter name inside `(n: number) => T`,
   // a type reference) are not value reads.
   if (isInTypeContext(id)) return false
@@ -440,7 +522,7 @@ function isInTypeContext(node: ts.Node): boolean {
 }
 
 function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
-  if (pureGlobalMembers.has(id.text)) return true
+  if (factPreservingGlobalMembers.has(id.text) && isDefaultLibrarySymbol(id, program)) return true
   const checker = program.typeChecker
   if (checker == null) return false
   let symbol = checker.getSymbolAtLocation(id)
@@ -470,29 +552,71 @@ function collectWrites(
   members: Map<FunctionLikeNode, MemberInfo>,
 ) {
   const addMutation = (roots: RootKind[]) => {
-    for (const root of roots) {
-      if (root.kind === 'param') member.effects.mutatesParams.add(root.index)
-      if (root.kind === 'outer') member.effects.writesOuter.add(root.key)
-      if (root.kind === 'this') member.effects.mutatesThis = true
-    }
+    addMutationRoots(member.effects.mutations.certain, roots)
+  }
+  const addUncertainMutation = (roots: RootKind[]) => {
+    addMutationRoots(member.effects.mutations.uncertain, roots)
   }
   const classifyExpressionRoots = (expression: ts.Expression): RootKind[] =>
     expressionRoots(expression, program).flatMap(root => classifiers.reach(root))
+  const addResolvedEdge = (
+    target: Extract<ReturnType<typeof resolveCallTarget>, {kind: 'function'}>,
+    arguments_: readonly ts.Expression[],
+    receiverRoots: RootKind[],
+  ) => {
+    member.edges.push({
+      callee: target.fn.node,
+      argumentRoots: arguments_.map(argument =>
+        ts.isSpreadElement(argument)
+          ? null
+          : expressionHasMutableType(argument, program) ? classifyExpressionRoots(argument) : []),
+      receiverRoots,
+      callbackSpill: null,
+    })
+    collectMember(target.fn.node, target.program, members)
+  }
 
   const visit = (current: ts.Node) => {
+    if (isFunctionLike(current)) return
     if (ts.isIdentifier(current) && readsMutableOuter(current, classifiers, program)) {
       member.effects.readsMutableOuter = true
     }
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
-      const targetRoots = writeTargetRoots(current.left, classifiers, program)
+      const target = unwrapExpression(current.left)
+      const setter = ts.isPropertyAccessExpression(target)
+        ? classAccessorFunctionForPropertyAccessInProgram(target, 'set', program)
+        : null
+      const targetRoots = setter == null ? writeTargetRoots(current.left, classifiers, program) : []
       addMutation(targetRoots)
       // Writing a value into caller-visible state lets the caller's world reach
       // it later; the value's own roots must be forgotten too (escape).
       if (targetRoots.length > 0) addMutation(classifyExpressionRoots(current.right))
     }
+    if (ts.isPropertyAccessExpression(current)) {
+      const parent = current.parent
+      const assignment = ts.isBinaryExpression(parent) && parent.left === current && isAssignmentOperator(parent.operatorToken.kind)
+        ? parent
+        : null
+      const increment = (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent))
+        && parent.operand === current
+        && (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+      if (assignment == null || assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+        const getter = classAccessorFunctionForPropertyAccessInProgram(current, 'get', program)
+        if (getter != null) addResolvedEdge(getter, [], classifyExpressionRoots(current.expression))
+      }
+      if (assignment != null || increment) {
+        const setter = classAccessorFunctionForPropertyAccessInProgram(current, 'set', program)
+        const value = assignment?.right
+        if (setter != null) addResolvedEdge(setter, value == null ? [] : [value], classifyExpressionRoots(current.expression))
+      }
+    }
     if ((ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current))
       && (current.operator === ts.SyntaxKind.PlusPlusToken || current.operator === ts.SyntaxKind.MinusMinusToken)) {
-      addMutation(writeTargetRoots(current.operand, classifiers, program))
+      const target = unwrapExpression(current.operand)
+      const setter = ts.isPropertyAccessExpression(target)
+        ? classAccessorFunctionForPropertyAccessInProgram(target, 'set', program)
+        : null
+      if (setter == null) addMutation(writeTargetRoots(current.operand, classifiers, program))
     }
     if (ts.isDeleteExpression(current)) {
       addMutation(writeTargetRoots(current.expression, classifiers, program))
@@ -505,18 +629,28 @@ function collectWrites(
   const collectCall = (call: ts.CallExpression) => {
     const target = unwrapExpression(call.expression)
     if (ts.isPropertyAccessExpression(target)) {
-      // A method or pure global invokes its callback arguments. An inline one is
-      // analyzed by descent and a resolvable one through its edge, but a callback
-      // we cannot resolve (a function passed in as a parameter) could do
-      // anything, so invoking it is an unknown call.
-      if (callsUnanalyzableCallback(call, program)) member.effects.callsUnknown = true
       const base = unwrapExpression(target.expression)
-      if (ts.isIdentifier(base) && isPureGlobalMemberCall(base.text, target.name.text)) {
+      const defaultLibraryMember = isDefaultLibraryMemberAccess(target, program)
+      const defaultLibraryGlobal = ts.isIdentifier(base)
+        && isDefaultLibrarySymbol(base, program)
+        && defaultLibraryMember
+        && isFactPreservingGlobalMemberCall(base.text, target.name.text)
+      if (defaultLibraryGlobal) {
         if (isEnvironmentObservingCall(base.text, target.name.text)) member.effects.observesEnvironment = true
-        collectFunctionArguments(call, [])
+        if (base.text === 'Object' && target.name.text === 'freeze' && call.arguments[0] != null) {
+          addMutation(classifyExpressionRoots(call.arguments[0]))
+        }
+        if (base.text === 'Array' && target.name.text === 'from') collectInvokedFunctionArguments(call, [])
         return
       }
-      if (!nonMutatingMethodNames.has(target.name.text)) {
+      const classMember = classMemberFunctionForPropertyAccessInProgram(target, program)
+      if (classMember != null) {
+        addResolvedEdge(classMember, call.arguments, classifyExpressionRoots(target.expression))
+        return
+      }
+      const knownNonMutating = defaultLibraryMember && nonMutatingMethodNames.has(target.name.text)
+      const knownMutating = defaultLibraryMember && knownMutatingMethodNames.has(target.name.text)
+      if (!knownNonMutating) {
         // Mutating the container itself touches its aliases; what it retains
         // is only reachable through later path writes (tracked in buildScope) —
         // unless the container is caller-visible, in which case retention is an
@@ -525,15 +659,21 @@ function collectWrites(
         const containerRoots = containerBase != null
           ? classifiers.container(containerBase)
           : classifyExpressionRoots(target.expression)
-        addMutation(containerRoots)
-        if (!retainingMethodNames.has(target.name.text) || containerRoots.length > 0) {
-          addMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
+        if (knownMutating) addMutation(containerRoots)
+        else addUncertainMutation(containerRoots)
+        const argumentRoots = mutableArgumentRoots(call, program, classifyExpressionRoots)
+        if (!knownMutating || !retainingMethodNames.has(target.name.text) || containerRoots.length > 0) {
+          if (knownMutating) addMutation(argumentRoots)
+          else addUncertainMutation(argumentRoots)
         }
         // A method that is neither a known mutator nor a known non-mutating one
         // could do anything (including I/O); treat it as an unknown call.
-        if (!knownMutatingMethodNames.has(target.name.text)) member.effects.callsUnknown = true
+        if (!knownMutating) member.effects.callsUnknown = true
       }
-      collectFunctionArguments(call, classifyExpressionRoots(target.expression))
+      if (defaultLibraryMember && callbackInvokingMethodNames.has(target.name.text)) {
+        if (callsUnanalyzableCallback(call, program)) member.effects.callsUnknown = true
+        collectInvokedFunctionArguments(call, classifyExpressionRoots(target.expression))
+      }
       return
     }
     const resolved = resolveCallTarget(target, program)
@@ -542,26 +682,13 @@ function collectWrites(
       return
     }
     if (resolved.kind === 'function') {
-      member.edges.push({
-        callee: resolved.fn.node,
-        // Immutable-typed arguments cannot hand the callee a reference, so a
-        // callee-side parameter mutation cannot reach their roots.
-        argumentRoots: call.arguments.map(argument =>
-          ts.isSpreadElement(argument)
-            ? null
-            : expressionHasMutableType(argument, program) ? classifyExpressionRoots(argument) : []),
-        receiverRoots: [],
-        callbackSpill: null,
-      })
-      collectMember(resolved.fn.node, resolved.program, members)
-      collectFunctionArguments(call, [])
+      addResolvedEdge(resolved, call.arguments, [])
       return
     }
     // A call we cannot see: every mutable argument may be written or retained,
     // and the callee could do anything (write globals, I/O, nondeterminism).
-    addMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
+    addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
     member.effects.callsUnknown = true
-    collectFunctionArguments(call, [])
   }
 
   // Function-valued arguments: their captured writes are collected by the
@@ -569,7 +696,7 @@ function collectWrites(
   // handling is a callback that mutates its own parameters — the values fed to
   // it come from the call's receiver and arguments, so the mutation spills onto
   // those roots.
-  const collectFunctionArguments = (call: ts.CallExpression, receiverRoots: RootKind[]) => {
+  const collectInvokedFunctionArguments = (call: ts.CallExpression, receiverRoots: RootKind[]) => {
     for (const argument of call.arguments) {
       const fn = functionValuedArgument(argument, program)
       if (fn == null) continue
@@ -584,11 +711,25 @@ function collectWrites(
 
   const collectNew = (expression: ts.NewExpression) => {
     const name = ts.isIdentifier(expression.expression) ? expression.expression.text : null
-    if (name != null && lengthBearingConstructorNames.has(name)) return
-    if (expression.arguments == null) return
-    for (const argument of expression.arguments) {
-      if (expressionHasMutableType(argument, program)) addMutation(classifyExpressionRoots(argument))
+    if (name === 'Date' && isDefaultLibrarySymbol(expression.expression, program)) {
+      if ((expression.arguments?.length ?? 0) === 0) member.effects.observesEnvironment = true
+      return
     }
+    if (name != null && lengthBearingConstructorNames.has(name) && isDefaultLibrarySymbol(expression.expression, program)) return
+    const constructor = constructorFunctionForNewExpression(expression, program)
+    if (constructor != null) {
+      addResolvedEdge(constructor, expression.arguments ?? [], [])
+      return
+    }
+    const declaration = classDeclarationForNewExpression(expression, program)
+    const declared = declaration != null
+      && ts.canHaveModifiers(declaration)
+      && ts.getModifiers(declaration)?.some(modifier => modifier.kind === ts.SyntaxKind.DeclareKeyword) === true
+    if (declaration != null && !declared && !declaration.getSourceFile().isDeclarationFile && declaration.heritageClauses == null) return
+    for (const argument of expression.arguments ?? []) {
+      if (expressionHasMutableType(argument, program)) addUncertainMutation(classifyExpressionRoots(argument))
+    }
+    member.effects.callsUnknown = true
   }
 
   ts.forEachChild(node, visit)
@@ -768,6 +909,7 @@ function isFunctionLike(node: ts.Node): node is FunctionLikeNode {
     || ts.isFunctionExpression(node)
     || ts.isArrowFunction(node)
     || ts.isMethodDeclaration(node)
+    || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
     || ts.isSetAccessorDeclaration(node)
 }

@@ -50,8 +50,13 @@ export type LiteralValue = {
   origin: string[]
 }
 
+// A branch join keeps every allocation the value may reference. The IDs let
+// mutation invalidation distinguish an exact alias from a conditional alias.
+export type ReferenceIds = readonly number[]
+
 export type ObjectValue = {
   kind: 'object'
+  referenceIds: ReferenceIds
   props: Map<string, Value>
   expr: string | null
 }
@@ -60,6 +65,7 @@ export type ArrayLayout = 'collection' | 'tuple'
 
 export type ArrayValue = {
   kind: 'array'
+  referenceIds: ReferenceIds
   layout: ArrayLayout
   length: NumberValue
   elements: Value[] | null

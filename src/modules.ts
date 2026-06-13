@@ -17,7 +17,9 @@ export type FitFunctionNode =
   | ts.FunctionExpression
   | ts.ArrowFunction
   | ts.MethodDeclaration
+  | ts.ConstructorDeclaration
   | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration
 
 export type FitFunction = {
   name: string
@@ -392,7 +394,12 @@ function collectClassMemberFunctions(
   functions: Map<string, FitFunction>,
 ) {
   for (const member of declaration.members) {
-    if (!ts.isMethodDeclaration(member) && !ts.isGetAccessorDeclaration(member)) continue
+    if (
+      !ts.isMethodDeclaration(member)
+      && !ts.isConstructorDeclaration(member)
+      && !ts.isGetAccessorDeclaration(member)
+      && !ts.isSetAccessorDeclaration(member)
+    ) continue
     if (member.body == null) continue
     const memberName = classMemberFunctionName(declaration.name!.text, member)
     if (memberName == null) continue
@@ -415,9 +422,14 @@ function collectFitFunction(
   functions.set(fn.name, fn)
 }
 
-function classMemberFunctionName(className: string, member: ts.MethodDeclaration | ts.GetAccessorDeclaration): string | null {
+function classMemberFunctionName(
+  className: string,
+  member: ts.MethodDeclaration | ts.ConstructorDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+): string | null {
+  if (ts.isConstructorDeclaration(member)) return `${className}.constructor`
   if (!ts.isIdentifier(member.name)) return null
   const owner = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
+  if (ts.isSetAccessorDeclaration(member)) return `${owner}.set.${member.name.text}`
   return `${owner}.${member.name.text}`
 }
 

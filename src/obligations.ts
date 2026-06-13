@@ -135,8 +135,5 @@ function goalForSpec(spec: FitCheckSpec): FitObligationGoal {
       }
     case 'expression':
       return {kind: 'expression', text: spec.text, expression: publicFitText(fitExpressionText(spec.expression))}
-    // `pure` is checked against the effect summary, not via a proof obligation.
-    case 'pure':
-      throw new Error('pure spec has no proof obligation goal')
   }
 }

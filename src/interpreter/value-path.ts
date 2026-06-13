@@ -1,7 +1,9 @@
 import * as ts from 'typescript'
 import {
+  joinValues,
   mergeElementValue,
   numberValue,
+  referenceIdsOverlap,
   tupleElements,
   unknown,
   type Value,
@@ -165,7 +167,15 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value, 
 }
 
 function replaceSharedValue(value: Value, from: Value, to: Value): Value {
-  if (value === from) return to
+  if (
+    (value.kind === 'object' || value.kind === 'array')
+    && (from.kind === 'object' || from.kind === 'array')
+    && referenceIdsOverlap(value.referenceIds, from.referenceIds)
+  ) {
+    const sameReferences = value.referenceIds.length === from.referenceIds.length
+      && value.referenceIds.every(referenceId => from.referenceIds.includes(referenceId))
+    return sameReferences ? to : joinValues(value, to)
+  }
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
     let changed = false

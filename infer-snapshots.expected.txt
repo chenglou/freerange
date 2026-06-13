@@ -118,30 +118,10 @@ loop 475: for (const item of items)
   assumptions:
     given items[].height: 0..40
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout
-return:
-  return.contentHeight == nextRowTop
-  return.items.length == layoutSources.length
-  return.items[].imageBox.sizeX: 0..1952
-  return.items[].layoutBox.sizeX: 0..1952
-  return.items[].prompt.box.sizeX == promptLayout.width
-  return.items[].prompt.box.sizeY == promptLayout.visibleHeight
-  return.items[].prompt.lines.length == promptLayout.lines.length
-  return.items[].prompt.lines.length: int 0..4294967295
-  return.rows.length == rows.length
-  return.rows[].height == rows[].height
-  return.rows[].height: 0..Infinity
-  return.rows[].y == rows[].y
 locals:
   cols: int 1..7
   boxMaxSizeX: 18.285714285714285..1952
-  rows[].height: 0..Infinity
-  measurements.length == layoutSources.length
-  measurements[].imageSizeX: 0..1952
 loop 186: for (let i = 0; i < layoutSources.length; i++)
-  inferred:
-    measurements.length == layoutSources.length
-    measurements[].imageSizeX: 0..1952
-    rows[].height: 0..Infinity
   checked:
     rows.length <= layoutSources.length
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout
