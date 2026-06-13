@@ -2262,9 +2262,13 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   noteEffect(frame, `push mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   // The receiver now holds the pushed bindings, so a later element mutation must
   // forget them too — the same aliasing as a `[box]` literal, built up by push.
-  const pushedRoots = expression.arguments
-    .flatMap(argument => expressionRootNames(ts.isSpreadElement(argument) ? argument.expression : argument, []))
-    .filter(name => name !== path.root)
+  const pushedRoots: string[] = []
+  for (const argument of expression.arguments) {
+    const pushed = ts.isSpreadElement(argument) ? argument.expression : argument
+    for (const root of expressionRootNames(pushed, [])) {
+      if (root !== path.root) pushedRoots.push(root)
+    }
+  }
   if (pushedRoots.length > 0) {
     frame.containedRoots.set(path.root, new Set([...(frame.containedRoots.get(path.root) ?? []), ...pushedRoots]))
   }

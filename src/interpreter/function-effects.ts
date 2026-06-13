@@ -97,15 +97,17 @@ export function isPureGlobalMemberCall(base: string, member: string): boolean {
 // to the outside world (I/O), and the clock and randomness return a different
 // value each run with the same inputs (nondeterminism). They stay in
 // pureGlobalMembers (they corrupt no facts) but make a calling function impure.
-const environmentObservingMembers = new Map<string, Set<string>>([
-  ['console', new Set(['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'table', 'group', 'groupEnd', 'count', 'time', 'timeEnd', 'assert'])],
-  ['Date', new Set(['now'])],
+const environmentObservingMembers = new Map<string, 'all' | Set<string>>([
+  ['console', 'all'], // every console method writes to the outside world
+  ['Date', new Set(['now'])], // parse/UTC are deterministic given their arguments
   ['performance', new Set(['now'])],
-  ['Math', new Set(['random'])],
+  ['Math', new Set(['random'])], // every other Math member is deterministic
 ])
 
 function isEnvironmentObservingCall(base: string, member: string): boolean {
-  return environmentObservingMembers.get(base)?.has(member) === true
+  const members = environmentObservingMembers.get(base)
+  if (members == null) return false
+  return members === 'all' || members.has(member)
 }
 
 // Methods known to mutate their receiver in place (rather than returning a new

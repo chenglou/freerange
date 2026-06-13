@@ -30,6 +30,7 @@ const cases: {label: string; source: string; pure: boolean}[] = [
   {label: 'reads a module let', pure: false, source: `let counter = 0\nfunction f() { return counter }`},
   {label: 'reads a module const object field', pure: false, source: `const config = {n: 5}\nfunction f() { return config.n }`},
   {label: 'console.log is I/O', pure: false, source: `function f(x: number) { console.log(x); return x }`},
+  {label: 'any console method is I/O', pure: false, source: `function f(x: number) { console.countReset(); return x }`},
   {label: 'Math.random is nondeterministic', pure: false, source: `function f() { return Math.random() }`},
   {label: 'Date.now is nondeterministic', pure: false, source: `function f() { return Date.now() }`},
   {label: 'calls an unresolved function', pure: false, source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
