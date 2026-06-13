@@ -10,10 +10,49 @@ import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 // no longer sees. `writesOuter` holds module-scope roots the function (or
 // anything it calls) writes, qualified by source id so same-named roots in
 // other modules stay untouched.
+// The first three fields are what a call changes in its caller's world; the
+// interpreter's fact-forgetting reads only those. The last three extend the
+// summary to the stricter notion a `pure` annotation needs: a pure function not
+// only writes nothing observable, it also reads no mutable outside state, never
+// observes or affects the environment (I/O, the clock, randomness), and calls
+// nothing it cannot see into. Purity is derived from these (see isFunctionPure),
+// never stored separately.
 export type FunctionEffects = {
   writesOuter: Set<string>
   mutatesParams: Set<number>
   mutatesThis: boolean
+  // reads a module-level `let`/`var`, or a `const` object/array's fields — a
+  // value that some other code can change, so the result is not deterministic
+  readsMutableOuter: boolean
+  // calls console.*, Date.now, performance.now, or Math.random: I/O or a value
+  // that differs across runs with the same inputs
+  observesEnvironment: boolean
+  // calls something the analysis cannot resolve to a known function or method,
+  // so it could do anything — the unknown-means-impure default
+  callsUnknown: boolean
+}
+
+const noEffects = (): FunctionEffects => ({
+  writesOuter: new Set(),
+  mutatesParams: new Set(),
+  mutatesThis: false,
+  readsMutableOuter: false,
+  observesEnvironment: false,
+  callsUnknown: false,
+})
+
+// A function is pure when it changes nothing observable, reads no mutable
+// outside state, observes no environment, and calls nothing unanalyzable. Local
+// mutation, allocation, throwing, and reading module-level `const` primitives
+// are all fine. Derived from the effect summary so there is one source of truth.
+export function isFunctionPure(node: FunctionLikeNode, program: Program): boolean {
+  const effects = functionEffects(node, program)
+  return effects.writesOuter.size === 0
+    && effects.mutatesParams.size === 0
+    && !effects.mutatesThis
+    && !effects.readsMutableOuter
+    && !effects.observesEnvironment
+    && !effects.callsUnknown
 }
 
 export type FunctionLikeNode =
@@ -53,6 +92,32 @@ export function isPureGlobalMemberCall(base: string, member: string): boolean {
   if (members == null) return false
   return members === 'all' || members.has(member)
 }
+
+// Globals that do not mutate caller state but still break purity: console writes
+// to the outside world (I/O), and the clock and randomness return a different
+// value each run with the same inputs (nondeterminism). They stay in
+// pureGlobalMembers (they corrupt no facts) but make a calling function impure.
+const environmentObservingMembers = new Map<string, Set<string>>([
+  ['console', new Set(['log', 'info', 'warn', 'error', 'debug', 'trace', 'dir', 'table', 'group', 'groupEnd', 'count', 'time', 'timeEnd', 'assert'])],
+  ['Date', new Set(['now'])],
+  ['performance', new Set(['now'])],
+  ['Math', new Set(['random'])],
+])
+
+function isEnvironmentObservingCall(base: string, member: string): boolean {
+  return environmentObservingMembers.get(base)?.has(member) === true
+}
+
+// Methods known to mutate their receiver in place (rather than returning a new
+// value). On a local the function created this is fine; on a parameter, `this`,
+// or a module root it is a caller-visible write — both handled by the receiver
+// classification. What matters for purity is that these are *known*: a method
+// not listed here and not in nonMutatingMethodNames is unanalyzable, so calling
+// it is treated as an unknown call.
+const knownMutatingMethodNames = new Set([
+  'push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin',
+  'set', 'add', 'delete', 'clear',
+])
 
 // Methods that do not mutate their receiver. Mutation through their callback's
 // parameters is accounted for separately (a callback that writes its parameters
@@ -130,6 +195,21 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
       changed = true
     }
   }
+  // These three describe the callee itself, not anything it does through this
+  // edge's arguments, so they propagate to every caller unconditionally: calling
+  // an impure function is impure.
+  if (callee.readsMutableOuter && !into.readsMutableOuter) {
+    into.readsMutableOuter = true
+    changed = true
+  }
+  if (callee.observesEnvironment && !into.observesEnvironment) {
+    into.observesEnvironment = true
+    changed = true
+  }
+  if (callee.callsUnknown && !into.callsUnknown) {
+    into.callsUnknown = true
+    changed = true
+  }
   if (callee.mutatesThis) add(edge.receiverRoots)
   if (callee.mutatesParams.size > 0) {
     const hasSpread = edge.argumentRoots.some(roots => roots == null)
@@ -151,7 +231,7 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
 function collectMember(node: FunctionLikeNode, program: Program, members: Map<FunctionLikeNode, MemberInfo>) {
   if (members.has(node) || effectsCache.has(node)) return
   const member: MemberInfo = {
-    effects: {writesOuter: new Set(), mutatesParams: new Set(), mutatesThis: false},
+    effects: noEffects(),
     edges: [],
   }
   members.set(node, member)
@@ -311,6 +391,46 @@ function makeClassifiers(scope: Scope, program: Program): Classifiers {
   }
 }
 
+// Whether an identifier reads a module binding that some other code could
+// change — a `let`/`var`, or a `const` whose object/array fields are mutable.
+// Reading such a value makes a function non-deterministic. Property names
+// (`obj.field`) are not binding reads; builtin namespaces (Math, JSON, ...),
+// functions, classes, types, and `const` primitives are immutable references.
+// Uncertain cases resolve to true (impure) — the safe direction for a guarantee.
+function readsMutableOuter(id: ts.Identifier, classifiers: Classifiers, program: Program): boolean {
+  const parent = id.parent
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false
+  if (ts.isQualifiedName(parent) && parent.right === id) return false
+  if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return false
+  if (ts.isBindingElement(parent) && parent.propertyName === id) return false
+  // Only outer bindings matter; params and locals are not outside state.
+  if (!classifiers.container(id.text).some(root => root.kind === 'outer')) return false
+  return !isSafeOuterRead(id, program)
+}
+
+function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
+  if (pureGlobalMembers.has(id.text)) return true
+  const checker = program.typeChecker
+  if (checker == null) return false
+  let symbol = checker.getSymbolAtLocation(id)
+  if (symbol == null) return false
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
+  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
+  if (declaration == null) return true
+  if (ts.isFunctionDeclaration(declaration) || ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)
+    || ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration) || ts.isTypeParameterDeclaration(declaration)) return true
+  if (ts.isVariableDeclaration(declaration)) {
+    const isConst = ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const) !== 0
+    if (!isConst) return false
+    try {
+      return !typeCanBeMutable(checker.getTypeAtLocation(id))
+    } catch {
+      return false
+    }
+  }
+  return false
+}
+
 function collectWrites(
   node: FunctionLikeNode,
   program: Program,
@@ -329,6 +449,9 @@ function collectWrites(
     expressionRoots(expression, program).flatMap(root => classifiers.reach(root))
 
   const visit = (current: ts.Node) => {
+    if (ts.isIdentifier(current) && readsMutableOuter(current, classifiers, program)) {
+      member.effects.readsMutableOuter = true
+    }
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
       const targetRoots = writeTargetRoots(current.left, classifiers, program)
       addMutation(targetRoots)
@@ -353,6 +476,7 @@ function collectWrites(
     if (ts.isPropertyAccessExpression(target)) {
       const base = unwrapExpression(target.expression)
       if (ts.isIdentifier(base) && isPureGlobalMemberCall(base.text, target.name.text)) {
+        if (isEnvironmentObservingCall(base.text, target.name.text)) member.effects.observesEnvironment = true
         collectFunctionArguments(call, [])
         return
       }
@@ -369,12 +493,18 @@ function collectWrites(
         if (!retainingMethodNames.has(target.name.text) || containerRoots.length > 0) {
           addMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
         }
+        // A method that is neither a known mutator nor a known non-mutating one
+        // could do anything (including I/O); treat it as an unknown call.
+        if (!knownMutatingMethodNames.has(target.name.text)) member.effects.callsUnknown = true
       }
       collectFunctionArguments(call, classifyExpressionRoots(target.expression))
       return
     }
     const resolved = resolveCallTarget(target, program)
-    if (resolved.kind === 'math') return
+    if (resolved.kind === 'math') {
+      if (resolved.name === 'random') member.effects.observesEnvironment = true
+      return
+    }
     if (resolved.kind === 'function') {
       member.edges.push({
         callee: resolved.fn.node,
@@ -391,8 +521,10 @@ function collectWrites(
       collectFunctionArguments(call, [])
       return
     }
-    // A call we cannot see: every mutable argument may be written or retained.
+    // A call we cannot see: every mutable argument may be written or retained,
+    // and the callee could do anything (write globals, I/O, nondeterminism).
     addMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
+    member.effects.callsUnknown = true
     collectFunctionArguments(call, [])
   }
 

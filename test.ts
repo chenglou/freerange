@@ -1,4 +1,5 @@
 await import('./tests/check/check-tests.ts')
 await import('./tests/ranges/range-tests.ts')
 await import('./tests/type-contracts/type-contract-tests.ts')
+await import('./tests/purity/purity-tests.ts')
 await import('./tests/cli/cli-tests.ts')
