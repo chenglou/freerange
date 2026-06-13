@@ -182,7 +182,12 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
     sourceFile: ts.createSourceFile(virtual.virtualSourceId, virtual.text, ts.ScriptTarget.Latest, true, scriptKindForVirtualSource(virtual.originalSourceId)),
     text: virtual.text,
   }]))
-  const compilerOptions = {...program.project.compilerOptions, allowJs: true, noEmit: true}
+  // Reuse the SourceFiles the project program already parsed and bound (the
+  // 89 lib.d.ts files dominate) under the exact options they were bound by;
+  // only the contract-spliced twins are fresh. allowJs lets a twin keep its
+  // sibling .ts modules resolvable.
+  const sharedProgram = program.project.typeProgram
+  const compilerOptions = {...(sharedProgram?.getCompilerOptions() ?? program.project.compilerOptions), allowJs: true, noEmit: true}
   const host = ts.createCompilerHost(compilerOptions)
   const baseGetSourceFile = host.getSourceFile.bind(host)
   const baseReadFile = host.readFile.bind(host)
@@ -190,7 +195,7 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
   host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
     const virtual = virtualBySourceId.get(normalizePath(fileName))
     if (virtual != null) return virtual.sourceFile
-    return baseGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
+    return sharedProgram?.getSourceFile(fileName) ?? baseGetSourceFile(fileName, languageVersion, onError, shouldCreateNewSourceFile)
   }
   host.readFile = fileName => virtualBySourceId.get(normalizePath(fileName))?.text ?? baseReadFile(fileName)
   host.fileExists = fileName => virtualBySourceId.has(normalizePath(fileName)) ? true : baseFileExists(fileName)

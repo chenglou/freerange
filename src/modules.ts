@@ -32,6 +32,11 @@ export type FitProjectIndex<TGlobal> = {
   filesBySourceFile: Map<ts.SourceFile, FitProjectFile<TGlobal>>
   compilerOptions: ts.CompilerOptions
   rootNames: string[]
+  // The program these files were parsed and bound by. Contract type-checking
+  // builds its own program over contract-spliced twins, but shares these
+  // already-parsed SourceFiles (lib.d.ts dominates) instead of re-reading the
+  // world. Absent only on the standalone parse path that has no program.
+  typeProgram?: ts.Program
 }
 
 export type FitProjectFile<TGlobal> = {
@@ -154,6 +159,7 @@ export function loadFitProject<TGlobal>(
     compilerOptions: resolution.compilerOptions,
     rootNames: resolution.rootNames,
     configFile: resolution.configFile,
+    typeProgram: resolution.typeProgram,
   }
 
   for (const sourceFile of resolution.typeProgram.getSourceFiles()) {
@@ -209,7 +215,7 @@ export function buildFitSourceFile<TGlobal>(
   const sourceFile = typeProgram.getSourceFile(sourceId)
     ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
   throwOnUserlandTypeDiagnostics({typeProgram, configDiagnostics: []})
-  const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions, rootNames: [sourceId]}
+  const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions, rootNames: [sourceId], typeProgram}
   const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, typeProgram.getSyntacticDiagnostics(sourceFile), project)
   project.files.set(cacheKeyFor(sourceId), fitFile)
   project.filesBySourceFile.set(sourceFile, fitFile)
