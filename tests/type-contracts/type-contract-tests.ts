@@ -441,6 +441,59 @@ if (
   console.log('type contracts: imported declaration type errors')
 }
 
+// Two helpers, each with its own ill-typed type @fit, referenced from one
+// user file: three contract twins share the type-check program, so each
+// twin's diagnostics must attribute to its own file. Diagnostic offsets are
+// file-local, so matching them against a pooled span list would land one
+// helper's error on the other helper's (or the user's) line.
+const multiHelperAttributionChecks = await verifyTempFitFiles({
+  'width-helper.ts': `export function needsString(value: string) {
+  void value
+  return 0
+}
+
+export type WidthBox = {
+  width: number // @fit 0..needsString(width)
+}
+`,
+  'height-helper.ts': `export function needsBoolean(value: boolean) {
+  void value
+  return 0
+}
+
+export type HeightBox = {
+  height: number // @fit 0..needsBoolean(height)
+}
+`,
+  'user.ts': `import type {WidthBox} from './width-helper'
+import type {HeightBox} from './height-helper'
+
+export function buildWidth(): WidthBox {
+  return {width: 1}
+}
+
+export function buildHeight(): HeightBox {
+  return {height: 1}
+}
+`,
+})
+const widthAttribution = multiHelperAttributionChecks.find(check => check.text === 'type @fit 0..needsString(width)')
+const heightAttribution = multiHelperAttributionChecks.find(check => check.text === 'type @fit 0..needsBoolean(height)')
+if (
+  widthAttribution?.status !== 'unknown'
+  || !(widthAttribution.file?.endsWith('width-helper.ts') ?? false)
+  || widthAttribution.reason?.includes("not assignable to parameter of type 'string'") !== true
+  || heightAttribution?.status !== 'unknown'
+  || !(heightAttribution.file?.endsWith('height-helper.ts') ?? false)
+  || heightAttribution.reason?.includes("not assignable to parameter of type 'boolean'") !== true
+) {
+  console.error('expected each helper type @fit error to attribute to its own declaration file')
+  console.error(JSON.stringify(multiHelperAttributionChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('type contracts: multi-helper diagnostic attribution')
+}
+
 const importedGenericTypeChecks = await verifyTempFitFiles({
   'helper.ts': `export type ImportedBox<T> = {
   width: number // @fit > 0

@@ -201,17 +201,20 @@ function buildContractTypeChecks(program: Program): ContractTypeCheckResult {
   host.fileExists = fileName => virtualBySourceId.has(normalizePath(fileName)) ? true : baseFileExists(fileName)
   const rootNames = virtualRootNames(program.project.rootNames, virtuals)
   const typeProgram = ts.createProgram(rootNames, compilerOptions, host)
-  const diagnostics = virtuals.flatMap(virtual => {
+  // Match each twin's diagnostics against only its OWN spans. A diagnostic's
+  // start is an offset into its own twin file, so pooling spans across twins
+  // would let a diagnostic in one twin land on another twin's span at the
+  // same offset — wrong file, wrong line. (Dormant while a build had one
+  // twin; live once several twins share a program.)
+  const perVirtual = virtuals.map(virtual => {
     const checkedSource = typeProgram.getSourceFile(virtual.virtualSourceId) ?? virtualBySourceId.get(virtual.virtualSourceId)!.sourceFile
-    return [
+    const diagnostics = [
       ...typeProgram.getSyntacticDiagnostics(checkedSource),
       ...typeProgram.getSemanticDiagnostics(checkedSource),
     ]
+    return checksFromDiagnostics(diagnostics, virtual.spans)
   })
-  return mergeContractTypeCheckResults([
-    ...directResults,
-    checksFromDiagnostics(diagnostics, virtuals.flatMap(virtual => virtual.spans)),
-  ])
+  return mergeContractTypeCheckResults([...directResults, ...perVirtual])
 }
 
 class VirtualContractTypeCheckBuilder {
