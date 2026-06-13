@@ -320,7 +320,7 @@ const unsupportedRangeExpressionCheck = unsupportedRangeExpressionChecks.find(ch
 if (
   unsupportedRangeExpressionCheck?.status !== 'unknown'
   || unsupportedRangeExpressionCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
-  || unsupportedRangeExpressionCheck.reason.includes('assignment mutates box.limit') !== true
+  || unsupportedRangeExpressionCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
   console.error('expected unsupported range expressions to reject the same way as comparisons')
   console.error(JSON.stringify(unsupportedRangeExpressionChecks, null, 2))

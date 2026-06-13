@@ -459,7 +459,7 @@ function bad() {
     const infer = runFr(['infer', 'infer-contract.ts', '--function', 'bad'], dir)
     expectCli(infer.exitCode === 1, 'expected fr infer to fail when a written contract expression is unsupported', infer.output)
     expectCli(infer.output.includes('Unsupported @fit contract expression: randomLimit()'), 'expected infer output to name the unsupported contract expression', infer.output)
-    expectCli(infer.output.includes('Unsupported Math.random call'), 'expected infer output to include the interpreter blocker', infer.output)
+    expectCli(infer.output.includes('helper randomLimit is not pure: observes the environment'), 'expected infer output to include the purity blocker', infer.output)
   })
 
   {

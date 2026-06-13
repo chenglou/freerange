@@ -458,7 +458,7 @@ if (
   || invalidLayoutCheck?.status !== 'fail'
   || unknownLayoutCheck?.status !== 'unknown'
   || unsupportedLayoutCheck?.status !== 'unknown'
-  || unsupportedLayoutCheck.reason?.includes('Unsupported Math.random call') !== true
+  || unsupportedLayoutCheck.reason?.includes('helper randomLayoutCheck is not pure: observes the environment') !== true
   || numericExpressionCheck?.status !== 'unknown'
   || numericExpressionCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
 ) {
@@ -797,13 +797,39 @@ const impureContractHelperCheck = impureContractHelperChecks.find(check => check
 if (
   impureContractHelperCheck?.status !== 'unknown'
   || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
-  || impureContractHelperCheck.reason.includes('effect bad > bump line 4: assignment mutates box.limit') !== true
+  || impureContractHelperCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
   console.error('expected impure helper calls in contracts to be rejected loudly')
   console.error(JSON.stringify(impureContractHelperChecks, null, 2))
   process.exitCode = 1
 } else {
   console.log('contract expressions: impure helper rejected')
+}
+
+const mutableReadContractHelperChecks = verifyFitSource('contract-mutable-read.ts', `const state = {limit: 10}
+
+function currentLimit() {
+  return state.limit
+}
+
+/** @fit
+ * return <= currentLimit()
+ */
+function bad() {
+  return 0
+}
+`)
+const mutableReadContractHelperCheck = mutableReadContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= currentLimit()')
+if (
+  mutableReadContractHelperCheck?.status !== 'unknown'
+  || mutableReadContractHelperCheck.reason?.includes('Unsupported @fit contract expression: currentLimit()') !== true
+  || mutableReadContractHelperCheck.reason.includes('helper currentLimit is not pure: reads mutable outside state') !== true
+) {
+  console.error('expected contract helpers that read mutable outside state to be rejected by the shared purity check')
+  console.error(JSON.stringify(mutableReadContractHelperChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract expressions: mutable outside read rejected')
 }
 
 const unsupportedContractExpressionChecks = verifyFitSource('contract-unsupported.ts', `function randomLimit() {
@@ -824,7 +850,7 @@ const randomContractCheck = unsupportedContractExpressionChecks.find(check => ch
 const dynamicContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= Math[method](1, 2)')
 if (
   randomContractCheck?.status !== 'unknown'
-  || randomContractCheck.reason?.includes('Unsupported Math.random call') !== true
+  || randomContractCheck.reason?.includes('helper randomLimit is not pure: observes the environment') !== true
   || dynamicContractCheck?.status !== 'unknown'
   || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
 ) {
@@ -910,7 +936,7 @@ const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => 
 if (
   impureGivenCheck?.status !== 'unknown'
   || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
-  || impureGivenCheck.reason.includes('assignment mutates box.limit') !== true
+  || impureGivenCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
   || noInputGivenCheck?.status !== 'unknown'
   || noInputGivenCheck.reason !== 'given must mention an input'
   || derivedRangeTargetCheck?.status !== 'unknown'

@@ -530,7 +530,8 @@ function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
   if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
   const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
   if (declaration == null) return true
-  if (ts.isFunctionDeclaration(declaration) || ts.isClassDeclaration(declaration) || ts.isEnumDeclaration(declaration)
+  if (ts.isClassDeclaration(declaration)) return isSafeClassOuterRead(id, checker)
+  if (ts.isFunctionDeclaration(declaration) || ts.isEnumDeclaration(declaration)
     || ts.isInterfaceDeclaration(declaration) || ts.isTypeAliasDeclaration(declaration) || ts.isTypeParameterDeclaration(declaration)) return true
   if (ts.isVariableDeclaration(declaration)) {
     const isConst = ts.isVariableDeclarationList(declaration.parent) && (declaration.parent.flags & ts.NodeFlags.Const) !== 0
@@ -542,6 +543,54 @@ function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
     }
   }
   return false
+}
+
+function isSafeClassOuterRead(id: ts.Identifier, checker: ts.TypeChecker): boolean {
+  let expression: ts.Expression = id
+  while (
+    (ts.isParenthesizedExpression(expression.parent)
+      || ts.isNonNullExpression(expression.parent)
+      || ts.isAsExpression(expression.parent)
+      || ts.isTypeAssertionExpression(expression.parent)
+      || ts.isSatisfiesExpression(expression.parent))
+    && expression.parent.expression === expression
+  ) {
+    expression = expression.parent
+  }
+
+  const parent = expression.parent
+  if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === expression) return true
+
+  const access = (ts.isPropertyAccessExpression(parent) || ts.isElementAccessExpression(parent))
+    && parent.expression === expression
+    ? parent
+    : null
+  if (access == null) return false
+
+  const memberSymbol = ts.isPropertyAccessExpression(access)
+    ? checker.getSymbolAtLocation(access.name)
+    : classElementAccessSymbol(access, checker)
+  const declaration = memberSymbol?.valueDeclaration ?? memberSymbol?.declarations?.[0]
+  if (declaration == null) return false
+  if (ts.isMethodDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration)) return true
+  if (!ts.isPropertyDeclaration(declaration) && !ts.isPropertySignature(declaration)) return false
+  const readonly = ts.canHaveModifiers(declaration)
+    && ts.getModifiers(declaration)?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword) === true
+  if (!readonly) return false
+  try {
+    return !typeCanBeMutable(checker.getTypeAtLocation(access))
+  } catch {
+    return false
+  }
+}
+
+function classElementAccessSymbol(access: ts.ElementAccessExpression, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const argument = access.argumentExpression
+  if (argument == null) return undefined
+  if (ts.isStringLiteral(argument) || ts.isNumericLiteral(argument)) {
+    return checker.getPropertyOfType(checker.getTypeAtLocation(access.expression), argument.text)
+  }
+  return checker.getSymbolAtLocation(argument)
 }
 
 function collectWrites(

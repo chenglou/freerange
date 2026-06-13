@@ -1045,6 +1045,19 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
 
 function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
   if (rootContext.callObligations == null) return null
+  if (rootContext.contractExpression === true && rootContext.contractExpressionProblems != null) {
+    const purity = functionPurity(call.fn.node, call.program)
+    switch (purity.kind) {
+      case 'pure':
+        break
+      case 'impure':
+      case 'unknown': {
+        const reason = `helper ${call.functionName} is not pure: ${purity.reason}`
+        rootContext.contractExpressionProblems.push(reason)
+        return call.fallback ?? unknown(reason)
+      }
+    }
+  }
   const callContext = contextForInterpreterFrame(frame, rootContext, {
     checks: shouldRecordCallObligations(rootContext) && frame.suppressChecks !== true ? rootContext.checks : [],
     includeObjectPath: false,
