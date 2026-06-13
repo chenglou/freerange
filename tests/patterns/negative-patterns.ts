@@ -2301,3 +2301,26 @@ export function negativeInfinityOverInfinityEchoIsNaN(a: number, b: number) {
 export function negativeHalfFiniteSelfDifferenceIsNaN(x: number) {
   return x - x
 }
+
+// The misread trap of the range family: `-Infinity<..Infinity` excludes only
+// the lower endpoint — the inclusive upper still admits +Infinity. Finiteness
+// needs both markers: `-Infinity<..<Infinity`.
+
+/** @fit
+ * given pos: -Infinity<..Infinity
+ * return < Infinity
+ */
+export function negativeOneMarkerIsNotFinite(pos: number) {
+  return pos
+}
+
+// On a tied union extremum the inclusive case decides: x = 0 satisfies the
+// second case, so the envelope must not claim strictness.
+
+/** @fit
+ * given x: 0<..5 | 0..3
+ * return > 0
+ */
+export function negativeUnionTieIsNotStrict(x: number) {
+  return x
+}

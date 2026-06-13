@@ -74,6 +74,43 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
 }
 
 {
+  const spec = expectSpec(parseFitSpecLine('given x: 0<..10'), 'assume', 'range')
+  expectRange(spec.range, '0<..10', 'number')
+  expectEqual(spec.range.lowerInclusive, false, 'expected exclusive lower bound')
+  expectEqual(spec.range.upperInclusive, true, 'expected inclusive upper bound')
+
+  const open = expectSpec(parseFitSpecLine('given r: 0<..<1'), 'assume', 'range')
+  expectEqual(open.range.lowerInclusive, false, 'expected open interval to exclude its lower bound')
+  expectEqual(open.range.upperInclusive, false, 'expected open interval to exclude its upper bound')
+
+  const finite = expectSpec(parseFitSpecLine('given pos: -Infinity<..<Infinity'), 'assume', 'range')
+  expectEqual(finite.range.lowerValue, Number.NEGATIVE_INFINITY, 'expected -Infinity lower value')
+  expectEqual(finite.range.lowerInclusive, false, 'expected finiteness spelling to exclude -Infinity')
+  expectEqual(finite.range.upperInclusive, false, 'expected finiteness spelling to exclude Infinity')
+
+  const intRange = expectSpec(parseFitSpecLine('given n: int 0<..10'), 'assume', 'range')
+  expectRange(intRange.range, 'int 0<..10', 'int')
+  expectEqual(intRange.range.lowerInclusive, false, 'expected exclusive int lower bound')
+
+  const lowered = lowerFitValueSpecTextForTypeScript('{ratio: 0<..<1}')
+  expect(lowered != null, 'expected exclusive-lower leaf to lower in value-spec position')
+  expectEqual(lowered.typeText, '{ratio: __FRNumber<"r0">}', 'expected exclusive-lower leaf to become a branded number slot')
+  expectEqual(lowered.ranges.get('r0')!.lowerInclusive, false, 'expected lowered leaf to keep exclusive lower')
+
+  // The delimiter is exactly two dots: before the dot-run check, `0...10`
+  // silently split as `0.` + `10` and meant 0..10.
+  for (const bad of ['given x: 0...10', 'given x: 0<...10', 'given x: 0 < .. 10']) {
+    try {
+      parseFitSpecLine(bad)
+      throw new Error(`expected '${bad}' to be rejected`)
+    } catch (error) {
+      expect(error instanceof Error, 'expected parser error')
+      expect(error.message.includes('Unsupported @fit range'), `expected loud range rejection for '${bad}'`)
+    }
+  }
+}
+
+{
   const spec = expectSpec(parseFitSpecLine('given foo() > bar(10, "px")'), 'assume', 'comparison')
   expectEqual(fitExpressionText(spec.left), 'foo()', 'expected left expression')
   expectEqual(spec.op, '>', 'expected comparison op')

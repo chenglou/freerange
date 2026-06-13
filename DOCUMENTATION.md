@@ -262,10 +262,13 @@ bottom >= top // bare check relation. Freerange must prove this from source.
 2 // exact-number shorthand for 2..2.
 a..b // JavaScript number in the inclusive interval from a to b.
 a..<b // JavaScript number from a up to, but not including, b.
+a<..b // JavaScript number above a, up to and including b. The `<` excludes the endpoint it touches; read the dots as the value: a < x <= b.
+a<..<b // JavaScript number strictly between a and b.
 int a..b // integer in the inclusive interval from a to b.
 int a..<b // integer from a up to, but not including, b.
+int a<..b // integer above a: `int 0<..10` is the integers 1..10.
 0..<Infinity // any finite double at least 0: excluding Infinity caps at Number.MAX_VALUE.
-given pos > -Infinity // with `given pos < Infinity`: any finite double, sign included. Also excludes NaN — NaN satisfies no comparison.
+-Infinity<..<Infinity // any finite double, sign included. Also excludes NaN — NaN satisfies no comparison. Mind the difference from -Infinity<..Infinity, whose inclusive upper end still admits Infinity.
 0 | 40 | 200 // exact finite numeric set.
 0..10 | 20..30 // numeric alternatives. The value must fit one branch of the union.
 low() | high() // pure expression union.

@@ -21,7 +21,7 @@ case matrix ternary literal join: tests/interpreter-matrix/interpreter-matrix-pa
   return: int 3..7
 case matrix filter/map literal booleans: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixFilterMapLiteralBooleans
   return.length: int 0..3
-  return[]: int -1..3
+  return[]: -1 | 1 | 3
   fact return is an order-preserving subset of items
 case matrix for-of push visible rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfPushVisibleRows
   return.length: int 2..2

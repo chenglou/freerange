@@ -1290,6 +1290,17 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeHalfFiniteSelfDifferenceIsNa
     (x - x): any number
     assumed from input: given x < Infinity
   missing fact: (x - x) == 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeOneMarkerIsNotFinite: return < Infinity
+  known:
+    pos: -1.7976931348623157e+308..Infinity
+    Infinity: Infinity..Infinity
+    assumed from input: given pos: -Infinity<..Infinity
+  missing fact: pos < Infinity
+UNKNOWN tests/patterns/negative-patterns.ts:negativeUnionTieIsNotStrict: return > 0
+  known:
+    x: 0..5
+    assumed from input: given x: 0<..5 | 0..3
+  missing fact: x > 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1224,2): error TS2304: Cannot find name 'row'.

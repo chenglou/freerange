@@ -184,8 +184,13 @@ export function formatExpectedRange(min: number, max: number, isInteger: boolean
 }
 
 function formatNumberValueRange(value: ReportNumberValue) {
-  const cases = value.cases?.filter(item => item.assumptions.length === 0) ?? []
-  if (cases.length > 1 && cases.length === value.cases?.length) {
+  const cases = value.cases ?? []
+  // Cases are honest alternatives only when no assumption distinguishes
+  // them: function-level givens land on every case alike, while a
+  // branch-specific condition on one case makes the plain `a | b` listing
+  // misleading. Compare by identity — tagging shares the constraint objects.
+  const sharedByAll = (assumption: unknown) => cases.every(item => item.assumptions.includes(assumption))
+  if (cases.length > 1 && cases.every(item => item.assumptions.every(sharedByAll))) {
     return [...new Set(cases.map(item => formatNumberRangePart(item.value)))].join(' | ')
   }
   return formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)

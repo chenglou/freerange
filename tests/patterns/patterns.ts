@@ -1785,10 +1785,8 @@ export function decayedRestingPoint(pos: number, velocity: number) {
 }
 
 /** @fit
- * given size > -Infinity
- * given size < Infinity
- * given scale > -Infinity
- * given scale < Infinity
+ * given size: -Infinity<..<Infinity
+ * given scale: -Infinity<..<Infinity
  * return == size * scale
  */
 export function scaledExtentEcho(size: number, scale: number) {
@@ -1796,12 +1794,50 @@ export function scaledExtentEcho(size: number, scale: number) {
 }
 
 /** @fit
- * given x > -Infinity
- * given x < Infinity
+ * given x: -Infinity<..<Infinity
  * return == 0
  */
 export function selfDifferenceOfFiniteInput(x: number) {
   return x - x
+}
+
+// `a<..b` reads as the comparison chain it means: a < x <= b. The exclusive
+// int lower steps one whole number inward.
+
+/** @fit
+ * given fraction: 0<..1
+ * return > 0
+ */
+export function strictlyPositiveFraction(fraction: number) {
+  return fraction
+}
+
+/** @fit
+ * given count: int 0<..10
+ * return >= 1
+ */
+export function countedAtLeastOnce(count: number) {
+  return count
+}
+
+// A union admits any one case, so its envelope holds as a fact: strict at an
+// extremum only when every case there excludes it.
+
+/** @fit
+ * given width: 0..<5 | 10..<20
+ * return < 20
+ * return >= 0
+ */
+export function unionEnvelopeKeepsStrictUpper(width: number) {
+  return width
+}
+
+/** @fit
+ * given speed: 0<..5 | 10..20
+ * return > 0
+ */
+export function unionEnvelopeKeepsStrictLower(speed: number) {
+  return speed
 }
 
 // An int range excluding Infinity ends at MAX_VALUE (itself integral), so the

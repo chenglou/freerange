@@ -356,6 +356,23 @@ export function collectGivenAssumptions(
           evaluatedCases.push({rangeCase, lower: lower.value, upper: upper.value})
         }
         if (evaluatedCases.length !== rangeCases.length) continue
+        // A union admits any one of its cases, so only the envelope holds as
+        // a fact: at least the smallest case lower, at most the largest case
+        // upper, strict only when every case at that extremum excludes it.
+        const facts = unionEnvelopeFacts(value.value, evaluatedCases, spec.text, given.source)
+        const contradiction = givenRangeContradictionReason(facts, assumptions)
+        if (contradiction != null) {
+          checks.push({
+            file,
+            ...(spec.line == null ? {} : {line: spec.line}),
+            functionName,
+            text: spec.text,
+            status: 'fail',
+            reason: contradiction,
+          })
+          continue
+        }
+        assumptions.push(...facts)
         applyGivenRangeSpec(env, spec, evaluatedRangeValue(spec.range, spec.expression.text, evaluatedCases))
         continue
       }
@@ -752,6 +769,32 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
   env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+}
+
+function unionEnvelopeFacts(value: NumberValue, cases: EvaluatedRangeCase[], text: string, source: ConstraintSource): LinearConstraint[] {
+  const facts: LinearConstraint[] = []
+  const lower = envelopeBound(cases.map(c => ({bound: c.lower, inclusive: c.rangeCase.lowerInclusive})), 'lower')
+  if (lower != null) {
+    const fact = comparisonConstraint(value, lower.inclusive ? '>=' : '>', lower.bound, text, source)
+    if (fact != null) facts.push({...fact, fromRange: true})
+  }
+  const upper = envelopeBound(cases.map(c => ({bound: c.upper, inclusive: c.rangeCase.upperInclusive})), 'upper')
+  if (upper != null) {
+    const fact = comparisonConstraint(value, upper.inclusive ? '<=' : '<', upper.bound, text, source)
+    if (fact != null) facts.push({...fact, fromRange: true})
+  }
+  return facts
+}
+
+// The extremal bound across union cases. Only bounds that evaluated to one
+// number compare; a bound spanning a range (a call returning 1..5) makes the
+// extremum unknowable, so no fact. An endpoint admitted by any one case is
+// admitted by the union, so on ties inclusive wins.
+function envelopeBound(sides: {bound: NumberValue; inclusive: boolean}[], side: 'lower' | 'upper'): {bound: NumberValue; inclusive: boolean} | null {
+  if (!sides.every(s => s.bound.min === s.bound.max)) return null
+  const extremum = side === 'lower' ? Math.min(...sides.map(s => s.bound.min)) : Math.max(...sides.map(s => s.bound.min))
+  const ties = sides.filter(s => s.bound.min === extremum)
+  return {bound: ties[0]!.bound, inclusive: ties.some(s => s.inclusive)}
 }
 
 // A given comparison holds at runtime, and NaN compares false with

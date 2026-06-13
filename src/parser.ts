@@ -692,7 +692,7 @@ function lowerFitValueRangeLeaves(text: string, ranges: Map<string, FitRange>, p
 
 type FitRangeOperator = {
   position: number
-  length: 2 | 3
+  length: 2 | 3 | 4
 }
 
 function findFitRangeOperator(text: string, start: number): FitRangeOperator | null {
@@ -708,8 +708,12 @@ function findFitRangeOperator(text: string, start: number): FitRangeOperator | n
       quote = char
       continue
     }
-    if (!text.startsWith('..', index) || text.startsWith('...', index)) continue
-    return text.startsWith('..<', index) ? {position: index, length: 3} : {position: index, length: 2}
+    if (!text.startsWith('..', index) || text[index - 1] === '.' || text.startsWith('...', index)) continue
+    // Cover the whole token including exclusion markers, so the leaf scans
+    // around it never mistake a marker `<` for a generic-argument delimiter.
+    const lowerMark = text[index - 1] === '<' ? 1 : 0
+    const upperMark = text.startsWith('..<', index) ? 1 : 0
+    return {position: index - lowerMark, length: (2 + lowerMark + upperMark) as 2 | 3 | 4}
   }
   return null
 }
@@ -881,9 +885,10 @@ export function findTopLevelComparison(text: string): {left: string; op: Compari
         // the source for a trailing `=` ourselves to recover `>=`.
         return text[position + 1] === '=' ? '>=' : '>'
       case ts.SyntaxKind.LessThanToken:
-        // Skip the `<` of a `..<` range upper bound. Range syntax isn't valid TypeScript,
-        // so the scanner has no notion of `..<` — peek the source instead.
-        return text[position - 1] === '.' ? null : '<'
+        // Skip the `<` of a `..<` upper bound or a `<..` lower bound. Range
+        // syntax isn't valid TypeScript, so the scanner has no notion of the
+        // range tokens — peek the source instead.
+        return text[position - 1] === '.' || text.startsWith('..', position + 1) ? null : '<'
       default: return null
     }
   })
@@ -928,7 +933,7 @@ export function scanTopLevel<T extends string>(
 function parseFitRangeCaseText(text: string, parseExpression: FitExpressionParser): FitRangeCase | null {
   const bounds = splitRangeBounds(text)
   if (bounds != null) {
-    const {upperInclusive} = bounds
+    const {lowerInclusive, upperInclusive} = bounds
     const lower = normalizeFitText(bounds.lower)
     const upper = normalizeFitText(bounds.upper)
     if (!isRangeBoundText(lower) || !isRangeBoundText(upper)) return null
@@ -937,7 +942,7 @@ function parseFitRangeCaseText(text: string, parseExpression: FitExpressionParse
       upper: parseExpression(upper),
       lowerValue: parseRangeBoundNumber(lower),
       upperValue: parseRangeBoundNumber(upper),
-      lowerInclusive: true,
+      lowerInclusive,
       upperInclusive,
     }
   }
@@ -957,8 +962,19 @@ function parseFitRangeCaseText(text: string, parseExpression: FitExpressionParse
 }
 
 function rangeCaseEnvelope(cases: FitRangeCase[]): FitRangeCase {
-  const lowerCase = cases.reduce((best, current) => rangeCaseLowerSortValue(current) < rangeCaseLowerSortValue(best) ? current : best)
-  const upperCase = cases.reduce((best, current) => rangeCaseUpperSortValue(current) > rangeCaseUpperSortValue(best) ? current : best)
+  // On equal extremal bounds, the inclusive case decides: an endpoint
+  // admitted by any one case is admitted by the union (0<..5 | 0..3 has an
+  // inclusive lower 0), so a strict envelope there would exclude real values.
+  const lowerCase = cases.reduce((best, current) => {
+    const currentValue = rangeCaseLowerSortValue(current)
+    const bestValue = rangeCaseLowerSortValue(best)
+    return currentValue < bestValue || (currentValue === bestValue && current.lowerInclusive && !best.lowerInclusive) ? current : best
+  })
+  const upperCase = cases.reduce((best, current) => {
+    const currentValue = rangeCaseUpperSortValue(current)
+    const bestValue = rangeCaseUpperSortValue(best)
+    return currentValue > bestValue || (currentValue === bestValue && current.upperInclusive && !best.upperInclusive) ? current : best
+  })
   return {
     lower: lowerCase.lower,
     upper: upperCase.upper,
@@ -1012,7 +1028,7 @@ function splitTopLevelAlternatives(text: string): string[] | null {
   return parts
 }
 
-function splitRangeBounds(text: string): {lower: string; upper: string; upperInclusive: boolean} | null {
+function splitRangeBounds(text: string): {lower: string; upper: string; lowerInclusive: boolean; upperInclusive: boolean} | null {
   let parenDepth = 0
   let bracketDepth = 0
   let braceDepth = 0
@@ -1034,17 +1050,18 @@ function splitRangeBounds(text: string): {lower: string; upper: string; upperInc
     else if (char === ']') bracketDepth--
     else if (char === '{') braceDepth++
     else if (char === '}') braceDepth--
-    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) {
-      if (text.startsWith('..<', i)) {
-        const lower = text.slice(0, i).trim()
-        const upper = text.slice(i + 3).trim()
-        return lower.length === 0 || upper.length === 0 ? null : {lower, upper, upperInclusive: false}
-      }
-      if (text.startsWith('..', i) && !text.startsWith('...', i)) {
-        const lower = text.slice(0, i).trim()
-        const upper = text.slice(i + 2).trim()
-        return lower.length === 0 || upper.length === 0 ? null : {lower, upper, upperInclusive: true}
-      }
+    else if (parenDepth === 0 && bracketDepth === 0 && braceDepth === 0 && text.startsWith('..', i)) {
+      // The delimiter is exactly two dots: a longer dot run (`0...10`) is no
+      // range — without this both-sides check it would silently split as
+      // `0.` + `10`. A `<` glued to either side excludes that endpoint, so
+      // the family reads as the comparison chain it means: a..b, a..<b,
+      // a<..b, a<..<b. A `<` can end no TS expression, so it is always ours.
+      if (text[i - 1] === '.' || text.startsWith('...', i)) continue
+      const lowerInclusive = text[i - 1] !== '<'
+      const upperInclusive = !text.startsWith('..<', i)
+      const lower = text.slice(0, lowerInclusive ? i : i - 1).trim()
+      const upper = text.slice(i + (upperInclusive ? 2 : 3)).trim()
+      return lower.length === 0 || upper.length === 0 ? null : {lower, upper, lowerInclusive, upperInclusive}
     }
   }
   return null
