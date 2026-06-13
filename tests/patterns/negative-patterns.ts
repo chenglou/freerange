@@ -752,6 +752,18 @@ export function negativeGivenSurvivesParamMutation(box: {size: number}) {
 }
 
 /** @fit
+ * return == 1
+ */
+export function negativeArrayElementAliasMutatedThroughArray() {
+  const box = {size: 1}
+  const rows = [box]
+  // box and rows[0] are the same object; mutating the element through the array
+  // must forget box too, so its size cannot stay proved at 1.
+  rows.forEach(row => { row.size = 999 })
+  return box.size
+}
+
+/** @fit
  * given box.size: 0..10
  * return: 0..0
  */

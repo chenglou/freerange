@@ -344,6 +344,7 @@ function pathFrame(parent: InterpreterFrame, env: Map<string, Value>): Interpret
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    containedRoots: parent.containedRoots,
     ...(hooks == null ? {} : {hooks}),
     suppressChecks: true,
   }
@@ -1005,6 +1006,7 @@ function runReportingPass(analysis: Analysis, hulls: Map<string, Value>) {
     loopStack: [...parent.loopStack, {source: analysis.loop.source, sourceExpr: analysis.loop.sourceExpr, mode: 'symbolic', appends: []}],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    containedRoots: parent.containedRoots,
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
   }
   analysis.loop.bindIteration(frame)

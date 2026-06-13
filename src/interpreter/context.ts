@@ -45,6 +45,11 @@ export type InterpreterFrame = {
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
+  // container root -> roots whose objects it holds as elements/contents, e.g.
+  // `const arr = [box]` records arr -> {box}. Mutating the container's elements
+  // (a callback writing through them) must then also forget those bindings,
+  // which alias the same objects.
+  containedRoots: Map<string, Set<string>>
   hooks?: InterpreterHooks
   objectPath?: string[]
   // Internal analysis replays (the loop analysis runs a body several times)
@@ -130,6 +135,7 @@ export function rootFrame(program: Program, hooks?: InterpreterHooks): Interpret
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [],
+    containedRoots: new Map(),
     ...(hooks == null ? {} : {hooks}),
   }
 }
@@ -147,6 +153,9 @@ export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, na
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    // Branches, blocks, and inline callbacks share the caller's local scope, so
+    // they share its containment edges (a callback captures the same locals).
+    containedRoots: parent.containedRoots,
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
     ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),
@@ -166,6 +175,8 @@ export function frameWithProgram(parent: InterpreterFrame, program: Program, env
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...parent.assumptions],
+    // A new function scope has its own locals, so it starts with no edges.
+    containedRoots: new Map(),
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
     ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),

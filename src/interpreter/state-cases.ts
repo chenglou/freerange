@@ -74,6 +74,7 @@ export function frameForStateCase(parent: InterpreterFrame, stateCase: Interpret
     loopStack: [...parent.loopStack],
     conditionalDepth: parent.conditionalDepth,
     assumptions: [...stateCase.assumptions],
+    containedRoots: parent.containedRoots,
     ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
     ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
   }

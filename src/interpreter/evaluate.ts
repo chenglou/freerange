@@ -282,6 +282,7 @@ function interpreterFrame(
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [...assumptions],
+    containedRoots: new Map(),
     ...(hooks == null ? {} : {hooks}),
     ...(objectPath == null ? {} : {objectPath}),
   }
@@ -536,6 +537,9 @@ function evaluateVariableDeclaration(statement: ts.VariableStatement, declaratio
     : evaluateClaim(claim, frame, () => evaluateWithObjectPath(frame, variableObjectPath(declaration), () => evaluateExpression(declaration.initializer!, frame)))
   const boundValue = declarationValue(declaration, value, frame)
   bindPattern(declaration.name, boundValue, frame)
+  if (ts.isIdentifier(declaration.name) && declaration.initializer != null) {
+    recordContainedRoots(frame, declaration.name.text, declaration.initializer)
+  }
   afterClaim(claim, boundValue, frame)
 }
 
@@ -1759,6 +1763,71 @@ function applyFunctionCallEffects(
   }
 }
 
+// Roots whose objects are held (transitively) as the elements/contents of the
+// given container roots: after `const arr = [box]`, box is contained in arr.
+// Mutating a container's elements aliases these, so they must be forgotten
+// alongside the container.
+function containedRootsOf(frame: InterpreterFrame, roots: string[]): string[] {
+  const result = new Set<string>()
+  const stack = [...roots]
+  for (let root = stack.pop(); root != null; root = stack.pop()) {
+    for (const contained of frame.containedRoots.get(root) ?? []) {
+      if (!result.has(contained)) {
+        result.add(contained)
+        stack.push(contained)
+      }
+    }
+  }
+  return [...result]
+}
+
+// Forget the given roots and every binding whose object they hold as contents.
+// Use this where a callback mutates a container's elements (not for a container
+// shape change like push or sort, which leaves the held objects untouched).
+function havocRootsAndContents(frame: InterpreterFrame, roots: string[]) {
+  havocRoots(frame, roots)
+  havocRoots(frame, containedRootsOf(frame, roots))
+}
+
+// The object/array roots a container literal holds directly as its elements or
+// field values, recursing into nested literals: `[box]` and `{child: box}` both
+// hold box. (expressionRootNames cannot be used on the whole literal: an array
+// literal's elements live under a SyntaxList that is not an Expression.)
+function containerLiteralRoots(literal: ts.Expression): string[] {
+  const unwrapped = unwrapExpression(literal)
+  const roots: string[] = []
+  const fromElement = (expression: ts.Expression) => {
+    const element = unwrapExpression(expression)
+    if (ts.isArrayLiteralExpression(element) || ts.isObjectLiteralExpression(element)) roots.push(...containerLiteralRoots(element))
+    else roots.push(...expressionRootNames(element, []))
+  }
+  if (ts.isArrayLiteralExpression(unwrapped)) {
+    for (const element of unwrapped.elements) fromElement(ts.isSpreadElement(element) ? element.expression : element)
+  } else if (ts.isObjectLiteralExpression(unwrapped)) {
+    for (const property of unwrapped.properties) {
+      if (ts.isPropertyAssignment(property)) fromElement(property.initializer)
+      else if (ts.isShorthandPropertyAssignment(property)) roots.push(...expressionRootNames(property.name, []))
+      else if (ts.isSpreadAssignment(property)) fromElement(property.expression)
+    }
+  }
+  return roots
+}
+
+// `const arr = [box]` records that arr holds box, so a later element mutation
+// forgets box too. `const arr2 = arr` aliases the whole container, so arr2 holds
+// the same objects. Other initializers copy primitives or build values the held
+// objects don't escape into. A push of a binding is recorded at the push site.
+function recordContainedRoots(frame: InterpreterFrame, root: string, initializer: ts.Expression) {
+  const unwrapped = unwrapExpression(initializer)
+  if (isContainerLiteralInitializer(unwrapped)) {
+    const contained = containerLiteralRoots(unwrapped).filter(name => name !== root)
+    if (contained.length > 0) frame.containedRoots.set(root, new Set(contained))
+  } else if (ts.isIdentifier(unwrapped)) {
+    const inherited = frame.containedRoots.get(unwrapped.text)
+    if (inherited != null) frame.containedRoots.set(root, new Set(inherited))
+  }
+}
+
 // Inline callbacks run per element on a copy of the caller's environment, so
 // reads stay precise; writes to captured locals and mutations of the elements
 // fed through the callback's parameters are applied here instead.
@@ -1766,7 +1835,7 @@ function applyInlineCallbackEffects(callbackFn: FunctionLikeNode, receiverExpres
   const effects = functionEffects(callbackFn, frame.program)
   applyFunctionCallEffects(effects, [], callbackFn.parameters, null, frame)
   if (effects.mutatesParams.size > 0 && receiverExpression != null) {
-    havocRoots(frame, expressionRootNames(receiverExpression, []))
+    havocRootsAndContents(frame, expressionRootNames(receiverExpression, []))
   }
   return effects
 }
@@ -1813,7 +1882,15 @@ function applyUnknownCallEffects(
     if (callback == null) continue
     const callbackEffects = functionEffects(callback, frame.program)
     applyFunctionCallEffects(callbackEffects, [], callback.parameters, null, frame)
-    if (callbackEffects.mutatesParams.size > 0) havocAllInputs()
+    if (callbackEffects.mutatesParams.size > 0) {
+      havocAllInputs()
+      // The callback mutates the elements it runs over; forget the bindings that
+      // alias the receiver's held objects too (e.g. arr.forEach mutating box in
+      // `const arr = [box]`).
+      if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+        havocRoots(frame, containedRootsOf(frame, expressionRootNames(target.expression, [])))
+      }
+    }
   }
 }
 
@@ -1835,7 +1912,7 @@ function applyPureGlobalCallbackEffects(expression: ts.CallExpression, frame: In
   for (const argument of expression.arguments) {
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
     if (passedFunctionNode(argumentExpression, frame) != null) continue
-    havocRoots(frame, expressionRootNames(argumentExpression, []))
+    havocRootsAndContents(frame, expressionRootNames(argumentExpression, []))
   }
 }
 
@@ -1964,6 +2041,7 @@ function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
     loopStack: [...frame.loopStack],
     conditionalDepth: frame.conditionalDepth,
     assumptions: [...frame.assumptions],
+    containedRoots: frame.containedRoots,
     ...(frame.hooks == null ? {} : {hooks: frame.hooks}),
     ...(frame.objectPath == null ? {} : {objectPath: [...frame.objectPath]}),
   }
@@ -2181,6 +2259,14 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   const current = readPath(path, frame, target.expression)
   if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   noteEffect(frame, `push mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
+  // The receiver now holds the pushed bindings, so a later element mutation must
+  // forget them too — the same aliasing as a `[box]` literal, built up by push.
+  const pushedRoots = expression.arguments
+    .flatMap(argument => expressionRootNames(ts.isSpreadElement(argument) ? argument.expression : argument, []))
+    .filter(name => name !== path.root)
+  if (pushedRoots.length > 0) {
+    frame.containedRoots.set(path.root, new Set([...(frame.containedRoots.get(path.root) ?? []), ...pushedRoots]))
+  }
   const loop = currentLoop(frame)
   if (loop?.mode === 'symbolic' && expression.arguments.length !== 1) return noteUnsupported(frame, 'Abstract loop push supports one item per iteration', expression)
   const values = evaluatedArguments(expression.arguments, frame)
@@ -2242,7 +2328,7 @@ function applyUnresolvedArrayCallbackEffects(
 ) {
   const callbackNode = callback == null ? null : passedFunctionNode(unwrapExpression(callback), frame)
   if (callbackNode != null) applyInlineCallbackEffects(callbackNode, target.expression, frame)
-  else havocRoots(frame, expressionRootNames(target.expression, []))
+  else havocRootsAndContents(frame, expressionRootNames(target.expression, []))
 }
 
 function evaluateEverySomeCall(
