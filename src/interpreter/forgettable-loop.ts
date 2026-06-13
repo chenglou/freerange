@@ -161,11 +161,12 @@ export function forgetRoot(env: Map<string, Value>, root: string) {
   forgetSymbolicReferences(env, root)
 }
 
-// Whether an expression text names the root as one of its identifiers (so a
-// path or computation reads through it): `box`, `box.v`, and `Math.min(box, y)`
-// all mention `box`, but `boxes` and `mybox` do not.
-export function mentionsRoot(text: string, root: string): boolean {
-  return new RegExp(`(?<![\\p{ID_Continue}$])${root}(?![\\p{ID_Continue}$])`, 'u').test(text)
+// A regex matching the root as a standalone identifier inside an expression
+// text, so a path or computation reading through it is recognized: `box`,
+// `box.v`, and `Math.min(box, y)` all match `box`, but `boxes` and `mybox` do
+// not. Build once per root and reuse across a forget, not once per lookup.
+export function rootMentionPattern(root: string): RegExp {
+  return new RegExp(`(?<![\\p{ID_Continue}$])${root}(?![\\p{ID_Continue}$])`, 'u')
 }
 
 // A value read before a mutation keeps the mutated path's symbolic identity:
@@ -175,10 +176,19 @@ export function mentionsRoot(text: string, root: string): boolean {
 // or `a - box.v == 0` (by linear form). Drop the symbolic identity from any
 // other value naming a path under the root, keeping its proven numeric range.
 function forgetSymbolicReferences(env: Map<string, Value>, root: string) {
+  const mentionsRoot = rootMentionPattern(root)
   for (const [name, value] of env) {
     if (name === root || value.kind !== 'number') continue
-    const linearStale = value.linear != null && [...value.linear.terms.keys()].some(term => mentionsRoot(term, root))
-    const exprStale = value.expr != null && mentionsRoot(value.expr, root)
+    let linearStale = false
+    if (value.linear != null) {
+      for (const term of value.linear.terms.keys()) {
+        if (mentionsRoot.test(term)) {
+          linearStale = true
+          break
+        }
+      }
+    }
+    const exprStale = value.expr != null && mentionsRoot.test(value.expr)
     if (linearStale || exprStale) env.set(name, {...value, linear: null, expr: null})
   }
 }

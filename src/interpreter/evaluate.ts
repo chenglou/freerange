@@ -143,7 +143,7 @@ import {
   forgettableMutationRoots,
   isForgettableForStatement,
   isForgettableReadExpression,
-  mentionsRoot,
+  rootMentionPattern,
 } from './forgettable-loop.ts'
 import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {
@@ -1718,16 +1718,17 @@ function havocRoots(frame: InterpreterFrame, names: string[]) {
 // gets re-narrowed back into range. Drop every assumption naming the root.
 function forgetRootAssumptions(frame: InterpreterFrame, root: string) {
   if (frame.assumptions.length === 0) return
-  const kept = frame.assumptions.filter(constraint => !constraintMentionsRoot(constraint, root))
+  const mentionsRoot = rootMentionPattern(root)
+  const kept = frame.assumptions.filter(constraint => !constraintMentionsRoot(constraint, mentionsRoot))
   if (kept.length !== frame.assumptions.length) frame.assumptions = kept
 }
 
-function constraintMentionsRoot(constraint: LinearConstraint, root: string): boolean {
+function constraintMentionsRoot(constraint: LinearConstraint, mentionsRoot: RegExp): boolean {
   if (constraint.diff != null) {
-    for (const name of constraint.diff.terms.keys()) if (mentionsRoot(name, root)) return true
+    for (const name of constraint.diff.terms.keys()) if (mentionsRoot.test(name)) return true
   }
-  return (constraint.leftExpr != null && mentionsRoot(constraint.leftExpr, root))
-    || (constraint.rightExpr != null && mentionsRoot(constraint.rightExpr, root))
+  return (constraint.leftExpr != null && mentionsRoot.test(constraint.leftExpr))
+    || (constraint.rightExpr != null && mentionsRoot.test(constraint.rightExpr))
 }
 
 // Callee bodies evaluate in their own environment; what they change in the
