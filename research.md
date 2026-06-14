@@ -100,6 +100,8 @@ That contract check needs its own TypeScript program, separate from the one whos
 
 Resolve helper bindings at the call site and rebase parameter names to caller-side expressions there. Don't carry alias logic into every proof rule. Reports get to say `cols - w >= 0`, not a private helper parameter name.
 
+Function and variable identity comes from TypeScript bindings, not identifier text. Keep symbols while tracking reads, writes, and aliases; keep the implementation node while caching or composing a function's effects. Convert those identities back to source names only for reports and interpreter root invalidation. If a function-scoped value cannot be resolved to a body, report it as unknown rather than matching a same-named top-level function.
+
 ## Calls Have One Preparation Point
 
 Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The execution frame keeps live object references because a later argument can mutate an earlier one. Contract checking derives its localized parameter environment from those same values instead of evaluating source expressions again. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.

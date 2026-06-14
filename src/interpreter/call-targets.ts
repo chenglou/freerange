@@ -15,11 +15,94 @@ export type InterpreterCallTarget =
   | {kind: 'unresolved'; reason: string}
 
 export function resolveCallTarget(target: ts.Expression, program: Program): InterpreterCallTarget {
-  if (ts.isIdentifier(target)) return resolveIdentifierCallTarget(target.text, program)
+  const source = sourceFunctionTarget(target, program)
+  if (source != null) return source
+  if (ts.isIdentifier(target)) {
+    if (!identifierAllowsIndexedFallback(target, program)) {
+      return {kind: 'unresolved', reason: `Unsupported function value ${target.text}`}
+    }
+    return resolveIdentifierCallTarget(target.text, program)
+  }
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
+    if (!namespaceAccessAllowsIndexedFallback(target.expression, program)) {
+      return {kind: 'unresolved', reason: `Unsupported call ${target.getText()}`}
+    }
     return resolveNamespaceMemberCallTarget(target.expression.text, target.name.text, program, new Set())
   }
   return {kind: 'unresolved', reason: `Unsupported call ${target.getText()}`}
+}
+
+function sourceFunctionTarget(
+  target: ts.Expression,
+  program: Program,
+): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+  const checker = program.typeChecker
+  if (checker == null) return null
+  const symbolNode = ts.isPropertyAccessExpression(target) ? target.name : target
+  const symbol = resolvedSymbol(checker.getSymbolAtLocation(symbolNode), checker)
+  if (symbol == null) return null
+  for (const declaration of symbol.declarations ?? []) {
+    const node = functionNodeForDeclaration(declaration)
+    if (node == null) continue
+    const targetProgram = programForSourceFile(node.getSourceFile(), program)
+    if (targetProgram == null || targetProgram !== program || !('functions' in targetProgram)) continue
+    for (const [functionName, fn] of targetProgram.functions) {
+      if (fn.node === node) return {kind: 'function', program: targetProgram, functionName, fn}
+    }
+  }
+  return null
+}
+
+function functionNodeForDeclaration(declaration: ts.Declaration): FitFunction['node'] | null {
+  if (
+    ts.isFunctionDeclaration(declaration)
+    || ts.isMethodDeclaration(declaration)
+    || ts.isConstructorDeclaration(declaration)
+    || ts.isGetAccessorDeclaration(declaration)
+    || ts.isSetAccessorDeclaration(declaration)
+  ) {
+    return declaration.body == null ? null : declaration
+  }
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer == null) return null
+  return ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer)
+    ? declaration.initializer
+    : null
+}
+
+function identifierAllowsIndexedFallback(identifier: ts.Identifier, program: Program): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  const symbol = checker.getSymbolAtLocation(identifier)
+  if (symbol == null) return true
+  return symbol.declarations?.some(declaration =>
+    declaration.getSourceFile() === program.sourceFile
+    && (
+      ts.isImportClause(declaration)
+      || ts.isImportSpecifier(declaration)
+      || ts.isNamespaceImport(declaration)
+      || isTopLevelValueDeclaration(declaration)
+    ),
+  ) === true
+}
+
+function namespaceAccessAllowsIndexedFallback(identifier: ts.Identifier, program: Program): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  const symbol = checker.getSymbolAtLocation(identifier)
+  return symbol?.declarations?.some(declaration =>
+    declaration.getSourceFile() === program.sourceFile && ts.isNamespaceImport(declaration),
+  ) === true
+}
+
+function isTopLevelValueDeclaration(declaration: ts.Declaration) {
+  if (
+    ts.isFunctionDeclaration(declaration)
+    || ts.isClassDeclaration(declaration)
+    || ts.isExportAssignment(declaration)
+  ) return declaration.parent === declaration.getSourceFile()
+  if (!ts.isVariableDeclaration(declaration)) return false
+  const statement = declaration.parent.parent
+  return ts.isVariableStatement(statement) && statement.parent === declaration.getSourceFile()
 }
 
 function resolveIdentifierCallTarget(name: string, program: Program, seen = new Set<string>()): InterpreterCallTarget {
@@ -199,9 +282,19 @@ function classMemberFunctionName(
 }
 
 function symbolDeclaration(symbol: ts.Symbol | undefined, checker: ts.TypeChecker | null): ts.Declaration | undefined {
-  if (symbol == null) return undefined
-  const resolved = checker != null && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  const resolved = checker == null ? symbol : resolvedSymbol(symbol, checker)
+  if (resolved == null) return undefined
   return resolved.valueDeclaration ?? resolved.declarations?.[0]
+}
+
+function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | undefined {
+  let current = symbol
+  const seen = new Set<ts.Symbol>()
+  while (current != null && (current.flags & ts.SymbolFlags.Alias) !== 0 && !seen.has(current)) {
+    seen.add(current)
+    current = checker.getAliasedSymbol(current)
+  }
+  return current
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {

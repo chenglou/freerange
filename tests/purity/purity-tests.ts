@@ -4,6 +4,24 @@
 import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
+import {verifyFitFiles} from '../../src/reports.ts'
+import {
+  contractRejectsImportedAlias,
+  contractUsesImportedAlias,
+  importedAliasImpure,
+  importedAliasPure,
+  importedDefaultAliasPure,
+  importedNamespaceImpure,
+  importedNamespacePure,
+} from './imported-caller.ts'
+
+void contractRejectsImportedAlias
+void contractUsesImportedAlias
+void importedAliasImpure
+void importedAliasPure
+void importedDefaultAliasPure
+void importedNamespaceImpure
+void importedNamespacePure
 
 function purityOf(name: string, source: string): Purity['kind'] {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
@@ -24,10 +42,17 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'constructs a source class with no effects', kind: 'pure', source: `class Box {}\nfunction f() { return new Box() }`},
   {label: 'map with pure inline callback', kind: 'pure', source: `function f(xs: number[]) { return xs.map(y => y * 2)[0] ?? 0 }`},
   {label: 'calls a pure helper', kind: 'pure', source: `function dbl(n: number) { return n * 2 }\nfunction f(x: number) { return dbl(x) }`},
+  {label: 'calls a top-level arrow helper', kind: 'pure', source: `const dbl = (n: number) => n * 2\nfunction f(x: number) { return dbl(x) }`},
+  {label: 'calls a top-level helper alias', kind: 'pure', source: `function dbl(n: number) { return n * 2 }\nconst twice = dbl\nfunction f(x: number) { return twice(x) }`},
+  {label: 'pure overload implementation', kind: 'pure', source: `function helper(value: number): number\nfunction helper(value: number, extra: number): number\nfunction helper(value: number, extra?: number) { return value + (extra ?? 0) }\nfunction f() { return helper(1) }`},
   {label: 'allocates and returns a fresh object', kind: 'pure', source: `function f(x: number) { return {v: x} }`},
   {label: 'unused impure closure does not execute', kind: 'pure', source: `function f() { const noisy = () => Math.random(); return 1 }`},
   {label: 'calls a pure source method', kind: 'pure', source: `class Counter { value() { return 1 } }\nfunction f(counter: Counter) { return counter.value() }`},
+  {label: 'same-named pure method keeps its class identity', kind: 'pure', source: `class Pure { value() { return 1 } }\nclass Impure { value() { return Math.random() } }\nfunction f(counter: Pure) { return counter.value() }`},
   {label: 'calls a pure setter', kind: 'pure', source: `class Counter { set value(next: number) {} }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
+  {label: 'block local shadows parameter by binding', kind: 'pure', source: `function f(box: {value: number}) { { const box = {value: 0}; box.value = 1 } return 1 }`},
+  {label: 'callback mutation of captured local stays local', kind: 'pure', source: `function f(values: number[]) { let count = 0; values.forEach(() => count++); return count }`},
+  {label: 'callback read of captured local stays local', kind: 'pure', source: `function f(values: number[]) { let offset = 1; return values.map(value => value + offset)[0] ?? 0 }`},
 
   // --- impure ---
   {label: 'mutates a parameter', kind: 'impure', source: `function f(o: {v: number}) { o.v = 9; return 1 }`},
@@ -49,8 +74,12 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'source getter writes outside state', kind: 'impure', source: `let total = 0\nclass Counter { get value() { return total++ } }\nfunction f(counter: Counter) { return counter.value }`},
   {label: 'source setter writes outside state', kind: 'impure', source: `let total = 0\nclass Counter { set value(next: number) { total = next } }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
   {label: 'calls an impure helper (transitive)', kind: 'impure', source: `function noisy() { return Math.random() }\nfunction f() { return noisy() }`},
+  {label: 'calls an impure top-level arrow helper', kind: 'impure', source: `const noisy = () => Math.random()\nfunction f() { return noisy() }`},
+  {label: 'impure overload implementation', kind: 'impure', source: `function helper(value: number): number\nfunction helper(value: number, extra: number): number\nfunction helper(value: number, extra?: number) { return Math.random() + value + (extra ?? 0) }\nfunction f() { return helper(1) }`},
   {label: 'map with impure inline callback', kind: 'impure', source: `function f(xs: number[]) { return xs.map(() => Math.random())[0] ?? 0 }`},
   {label: 'map with a resolvable impure callback', kind: 'impure', source: `function bump(n: number) { return Math.random() + n }\nfunction f(xs: number[]) { return xs.map(bump)[0] ?? 0 }`},
+  {label: 'same-named impure method keeps its class identity', kind: 'impure', source: `class Pure { value() { return 1 } }\nclass Impure { value() { return Math.random() } }\nfunction f(counter: Impure) { return counter.value() }`},
+  {label: 'block local does not hide module read', kind: 'impure', source: `let state = 1\nfunction f(flag: boolean) { const before = state; if (flag) { const state = 2; return state } return before }`},
 
   // --- unknown ---
   {label: 'shadowed Math is not the platform global', kind: 'unknown', source: `function f(Math: {min(): number}) { return Math.min() }`},
@@ -59,6 +88,10 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'calls an unresolved function', kind: 'unknown', source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
   {label: 'map with an unresolvable callback parameter', kind: 'unknown', source: `function f(xs: number[], cb: (n: number) => number) { return xs.map(cb)[0] ?? 0 }`},
   {label: 'forEach with an unresolvable callback parameter', kind: 'unknown', source: `function f(xs: number[], cb: (n: number) => void) { xs.forEach(cb); return xs.length }`},
+  {label: 'local arrow shadows top-level pure helper', kind: 'unknown', source: `function helper() { return 1 }\nfunction f() { const helper = () => Math.random(); return helper() }`},
+  {label: 'local arrow shadows top-level impure helper', kind: 'unknown', source: `function helper() { return Math.random() }\nfunction f() { const helper = () => 1; return helper() }`},
+  {label: 'callback parameter shadows top-level helper', kind: 'unknown', source: `function helper() { return 1 }\nfunction f(helper: () => number) { return helper() }`},
+  {label: 'nested declaration shadows top-level helper', kind: 'unknown', source: `function helper() { return 1 }\nfunction f() { function helper() { return Math.random() } return helper() }`},
 ]
 
 let failures = 0
@@ -73,4 +106,31 @@ if (failures > 0) {
   process.exitCode = 1
 } else {
   console.log(`purity: ${cases.length} classifications`)
+}
+
+const importedPurity = await verifyFitFiles(['tests/purity/imported-caller.ts'])
+const pureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasPure' && check.text === 'pure')
+const impureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasImpure' && check.text === 'pure')
+const namespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespacePure' && check.text === 'pure')
+const impureNamespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespaceImpure' && check.text === 'pure')
+const defaultClaim = importedPurity.checks.find(check => check.functionName === 'importedDefaultAliasPure' && check.text === 'pure')
+const pureContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedAlias' && check.text === 'return <= identity()')
+const impureContract = importedPurity.checks.find(check => check.functionName === 'contractRejectsImportedAlias' && check.text === 'return <= noisy()')
+if (
+  pureClaim?.status !== 'pass'
+  || impureClaim?.status !== 'fail'
+  || namespaceClaim?.status !== 'pass'
+  || impureNamespaceClaim?.status !== 'fail'
+  || defaultClaim?.status !== 'pass'
+  || pureContract?.status !== 'pass'
+  || impureContract?.status !== 'unknown'
+  || impureClaim.reason?.includes('observes the environment') !== true
+  || impureNamespaceClaim.reason?.includes('observes the environment') !== true
+  || impureContract.reason?.includes('helper importedImpure is not pure: observes the environment') !== true
+) {
+  console.error('purity: expected imports, aliases, and re-exports to share binding identity')
+  console.error(JSON.stringify(importedPurity.checks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('purity: imported aliases and contract helpers share binding identity')
 }

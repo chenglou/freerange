@@ -15,16 +15,16 @@ import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 // `paramIndexes` holds parameters whose argument may be written through or
 // stored somewhere that outlives the call. The caller forgets the argument's
 // roots either way because facts cannot be re-established through an alias it
-// no longer sees. `outerRootsBySource` keeps module roots grouped by source so
-// same-named roots in other modules stay untouched.
+// no longer sees. Outside bindings retain TypeScript identity until the caller
+// asks for the root names from one source.
 // The mutation fields are what the interpreter uses to forget caller facts.
 // The remaining fields extend the summary to the stricter notion a `pure`
 // annotation needs: a pure function also reads no mutable outside state, never
 // observes or affects the environment (I/O, the clock, randomness), and calls
 // nothing it cannot analyze. Purity is derived from this summary, never stored
 // separately.
-export type MutationTargets = {
-  outerRootsBySource: Map<string, Set<string>>
+type MutationTargets = {
+  outerBindings: Map<BindingKey, OuterBinding>
   paramIndexes: Set<number>
   thisValue: boolean
 }
@@ -37,9 +37,9 @@ export type FunctionEffects = {
     // instead of claiming that the mutation definitely occurs.
     uncertain: MutationTargets
   }
-  // reads a module-level `let`/`var`, or a `const` object/array's fields — a
-  // value that some other code can change, so the result is not deterministic
-  readsMutableOuter: boolean
+  // Module-level `let`/`var` reads, and reads through `const` objects/arrays.
+  // Keep the bindings so callers can reclassify captured locals correctly.
+  mutableOuterReads: Map<BindingKey, OuterBinding>
   // calls console.*, Date.now, performance.now, or Math.random: I/O or a value
   // that differs across runs with the same inputs
   observesEnvironment: boolean
@@ -49,7 +49,7 @@ export type FunctionEffects = {
 }
 
 const noMutationTargets = (): MutationTargets => ({
-  outerRootsBySource: new Map(),
+  outerBindings: new Map(),
   paramIndexes: new Set(),
   thisValue: false,
 })
@@ -59,7 +59,7 @@ const noEffects = (): FunctionEffects => ({
     certain: noMutationTargets(),
     uncertain: noMutationTargets(),
   },
-  readsMutableOuter: false,
+  mutableOuterReads: new Map(),
   observesEnvironment: false,
   callsUnknown: false,
 })
@@ -88,7 +88,7 @@ export function functionPurity(node: FunctionLikeNode, program: Program): Purity
   if (writtenOuter != null) {
     return {kind: 'impure', reason: `writes outside state \`${writtenOuter}\``}
   }
-  if (effects.readsMutableOuter) return {kind: 'impure', reason: 'reads mutable outside state'}
+  if (effects.mutableOuterReads.size > 0) return {kind: 'impure', reason: 'reads mutable outside state'}
   if (effects.observesEnvironment) return {kind: 'impure', reason: 'observes the environment (I/O, the clock, or randomness)'}
   if (effects.callsUnknown) return {kind: 'unknown', reason: 'calls a function whose body cannot be analyzed'}
   return {kind: 'pure'}
@@ -104,11 +104,15 @@ export type FunctionLikeNode =
   | ts.SetAccessorDeclaration
 
 function firstOuterRoot(targets: MutationTargets): string | null {
-  for (const roots of targets.outerRootsBySource.values()) {
-    const root = roots.values().next().value
-    if (root != null) return root
+  return targets.outerBindings.values().next().value?.root ?? null
+}
+
+export function mutationOuterRoots(targets: MutationTargets, sourceId: string): string[] {
+  const roots = new Set<string>()
+  for (const binding of targets.outerBindings.values()) {
+    if (binding.sourceId === sourceId) roots.add(binding.root)
   }
-  return null
+  return [...roots]
 }
 
 // Real platform globals whose listed members neither mutate their arguments nor
@@ -180,8 +184,16 @@ const callbackInvokingMethodNames = new Set([
 
 type RootKind =
   | {kind: 'param'; index: number}
-  | {kind: 'outer'; sourceId: string; root: string}
+  | {kind: 'outer'; binding: OuterBinding}
   | {kind: 'this'}
+
+type BindingKey = ts.Symbol | string
+
+type OuterBinding = {
+  key: BindingKey
+  sourceId: string
+  root: string
+}
 
 type CallEdge = {
   callee: FunctionLikeNode
@@ -191,6 +203,7 @@ type CallEdge = {
   receiverRoots: RootKind[]
   // a callback whose own parameter mutations must spill onto these roots
   callbackSpill: RootKind[] | null
+  classifyBinding: Classifier
 }
 
 type MemberInfo = {
@@ -224,14 +237,20 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
   const add = (targets: MutationTargets, roots: RootKind[]) => {
     if (addMutationRoots(targets, roots)) changed = true
   }
-  if (mergeOuterRoots(into.mutations.certain, callee.mutations.certain)) changed = true
-  if (mergeOuterRoots(into.mutations.uncertain, callee.mutations.uncertain)) changed = true
+  for (const binding of callee.mutations.certain.outerBindings.values()) {
+    add(into.mutations.certain, edge.classifyBinding(binding.key))
+  }
+  for (const binding of callee.mutations.uncertain.outerBindings.values()) {
+    add(into.mutations.uncertain, edge.classifyBinding(binding.key))
+  }
   // These three describe the callee itself, not anything it does through this
   // edge's arguments, so they propagate to every caller unconditionally: calling
   // an impure function is impure.
-  if (callee.readsMutableOuter && !into.readsMutableOuter) {
-    into.readsMutableOuter = true
-    changed = true
+  for (const binding of callee.mutableOuterReads.values()) {
+    for (const root of edge.classifyBinding(binding.key)) {
+      if (root.kind !== 'outer') continue
+      if (addMutableOuterRead(into, root.binding)) changed = true
+    }
   }
   if (callee.observesEnvironment && !into.observesEnvironment) {
     into.observesEnvironment = true
@@ -285,7 +304,7 @@ function addMutationRoots(targets: MutationTargets, roots: RootKind[]): boolean 
         }
         break
       case 'outer': {
-        if (addOuterRoot(targets, root.sourceId, root.root)) changed = true
+        if (addOuterBinding(targets, root.binding)) changed = true
         break
       }
       case 'this':
@@ -299,23 +318,16 @@ function addMutationRoots(targets: MutationTargets, roots: RootKind[]): boolean 
   return changed
 }
 
-function addOuterRoot(targets: MutationTargets, sourceId: string, root: string): boolean {
-  let sourceRoots = targets.outerRootsBySource.get(sourceId)
-  if (sourceRoots == null) {
-    sourceRoots = new Set()
-    targets.outerRootsBySource.set(sourceId, sourceRoots)
-  }
-  if (sourceRoots.has(root)) return false
-  sourceRoots.add(root)
+function addOuterBinding(targets: MutationTargets, binding: OuterBinding): boolean {
+  if (targets.outerBindings.has(binding.key)) return false
+  targets.outerBindings.set(binding.key, binding)
   return true
 }
 
-function mergeOuterRoots(into: MutationTargets, from: MutationTargets): boolean {
-  let changed = false
-  for (const [sourceId, roots] of from.outerRootsBySource) {
-    for (const root of roots) if (addOuterRoot(into, sourceId, root)) changed = true
-  }
-  return changed
+function addMutableOuterRead(effects: FunctionEffects, binding: OuterBinding): boolean {
+  if (effects.mutableOuterReads.has(binding.key)) return false
+  effects.mutableOuterReads.set(binding.key, binding)
+  return true
 }
 
 function collectMember(node: FunctionLikeNode, program: Program, members: Map<FunctionLikeNode, MemberInfo>) {
@@ -331,63 +343,64 @@ function collectMember(node: FunctionLikeNode, program: Program, members: Map<Fu
 }
 
 type Scope = {
-  paramIndexByName: Map<string, number>
-  declaredNames: Set<string>
+  paramIndexByBinding: Map<BindingKey, number>
+  localBindings: Set<BindingKey>
   // ys = xs: ys IS the same container; mutating ys mutates xs.
-  containerSources: Map<string, Set<string>>
+  containerSources: Map<BindingKey, Set<BindingKey>>
   // ys.push(box), obj.field = box: box is reachable FROM the container; only a
   // later write through the container can hit it, mutating the container's own
   // shape (push, sort) cannot.
-  reachableSources: Map<string, Set<string>>
+  reachableSources: Map<BindingKey, Set<BindingKey>>
 }
 
 // Methods that store their arguments inside the receiver.
 const retainingMethodNames = new Set(['push', 'unshift', 'splice', 'fill'])
 
 function buildScope(node: FunctionLikeNode, program: Program): Scope {
-  const paramIndexByName = new Map<string, number>()
+  const paramIndexByBinding = new Map<BindingKey, number>()
   node.parameters.forEach((parameter, index) => {
-    for (const name of bindingNames(parameter.name)) paramIndexByName.set(name, index)
+    for (const binding of bindingKeys(parameter.name, program)) paramIndexByBinding.set(binding, index)
   })
-  const declaredNames = new Set<string>()
-  const containerEdges: {target: string; sourceRoots: string[]}[] = []
-  const reachableEdges: {target: string; sourceRoots: string[]}[] = []
+  const localBindings = new Set<BindingKey>()
+  const containerEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
+  const reachableEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
   const visit = (current: ts.Node) => {
     if (ts.isVariableDeclaration(current)) {
-      const names = bindingNames(current.name)
-      for (const name of names) declaredNames.add(name)
+      const bindings = bindingKeys(current.name, program)
+      for (const binding of bindings) localBindings.add(binding)
       if (current.initializer != null) {
-        const sourceRoots = expressionRoots(current.initializer, program)
-        for (const name of names) containerEdges.push({target: name, sourceRoots})
+        const sourceRoots = expressionRootBindings(current.initializer, program)
+        for (const binding of bindings) containerEdges.push({target: binding, sourceRoots})
       }
     }
-    if (ts.isFunctionDeclaration(current) && current.name != null) declaredNames.add(current.name.text)
-    if (ts.isClassDeclaration(current) && current.name != null) declaredNames.add(current.name.text)
-    if (current !== node && isFunctionLike(current)) {
-      for (const parameter of current.parameters) {
-        for (const name of bindingNames(parameter.name)) declaredNames.add(name)
-      }
+    if (ts.isFunctionDeclaration(current) && current.name != null) {
+      localBindings.add(bindingKey(current.name, program))
+      return
     }
+    if (ts.isClassDeclaration(current) && current.name != null) {
+      localBindings.add(bindingKey(current.name, program))
+    }
+    if (current !== node && isFunctionLike(current)) return
     if (ts.isCatchClause(current) && current.variableDeclaration != null) {
-      for (const name of bindingNames(current.variableDeclaration.name)) declaredNames.add(name)
+      for (const binding of bindingKeys(current.variableDeclaration.name, program)) localBindings.add(binding)
     }
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
       const target = unwrapExpression(current.left)
       if (ts.isIdentifier(target)) {
-        containerEdges.push({target: target.text, sourceRoots: expressionRoots(current.right, program)})
+        containerEdges.push({target: bindingKey(target, program), sourceRoots: expressionRootBindings(current.right, program)})
       } else {
-        const base = pathWriteBaseRoot(target)
-        if (base != null) reachableEdges.push({target: base, sourceRoots: expressionRoots(current.right, program)})
+        const base = pathWriteBaseBinding(target, program)
+        if (base != null) reachableEdges.push({target: base, sourceRoots: expressionRootBindings(current.right, program)})
       }
     }
     if (ts.isCallExpression(current)) {
       const target = unwrapExpression(current.expression)
       if (ts.isPropertyAccessExpression(target) && retainingMethodNames.has(target.name.text)) {
-        const base = pathWriteBaseRoot(target.expression)
+        const base = pathWriteBaseBinding(target.expression, program)
         if (base != null) {
           for (const argument of current.arguments) {
             const expression = ts.isSpreadElement(argument) ? argument.expression : argument
-            reachableEdges.push({target: base, sourceRoots: expressionRoots(expression, program)})
+            reachableEdges.push({target: base, sourceRoots: expressionRootBindings(expression, program)})
           }
         }
       }
@@ -403,17 +416,17 @@ function buildScope(node: FunctionLikeNode, program: Program): Scope {
     ...containerEdges.flatMap(edge => edge.sourceRoots.map(root => ({target: root, sourceRoots: [edge.target]}))),
   ]
   return {
-    paramIndexByName,
-    declaredNames,
+    paramIndexByBinding,
+    localBindings,
     containerSources: closeSourceEdges(symmetricContainerEdges),
     reachableSources: closeSourceEdges(reachableEdges),
   }
 }
 
-// Flow-insensitive closure: a name that ever received a root carries that
+// Flow-insensitive closure: a binding that ever received a root carries that
 // root's own sources transitively.
-function closeSourceEdges(edges: {target: string; sourceRoots: string[]}[]): Map<string, Set<string>> {
-  const sources = new Map<string, Set<string>>()
+function closeSourceEdges(edges: {target: BindingKey; sourceRoots: BindingKey[]}[]): Map<BindingKey, Set<BindingKey>> {
+  const sources = new Map<BindingKey, Set<BindingKey>>()
   for (let changed = true; changed;) {
     changed = false
     for (const {target, sourceRoots} of edges) {
@@ -437,15 +450,17 @@ function closeSourceEdges(edges: {target: string; sourceRoots: string[]}[]): Map
   return sources
 }
 
-function pathWriteBaseRoot(expression: ts.Expression): string | null {
+function pathWriteBaseBinding(expression: ts.Expression, program: Program): BindingKey | null {
   const current = unwrapExpression(expression)
-  if (ts.isIdentifier(current)) return current.text
+  if (ts.isIdentifier(current)) return bindingKey(current, program)
   if (current.kind === ts.SyntaxKind.ThisKeyword) return 'this'
-  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) return pathWriteBaseRoot(current.expression)
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    return pathWriteBaseBinding(current.expression, program)
+  }
   return null
 }
 
-type Classifier = (rootName: string) => RootKind[]
+type Classifier = (binding: BindingKey) => RootKind[]
 
 type Classifiers = {
   // mutations of the container itself: the root plus everything it container-aliases
@@ -455,18 +470,18 @@ type Classifiers = {
 }
 
 function makeClassifiers(scope: Scope, program: Program): Classifiers {
-  const classifyDirect = (rootName: string, seen: Set<string>, includeReachable: boolean): RootKind[] => {
+  const classifyDirect = (binding: BindingKey, seen: Set<BindingKey>, includeReachable: boolean): RootKind[] => {
     const result: RootKind[] = []
-    if (rootName === 'this') {
+    if (binding === 'this') {
       result.push({kind: 'this'})
     } else {
-      const paramIndex = scope.paramIndexByName.get(rootName)
+      const paramIndex = scope.paramIndexByBinding.get(binding)
       if (paramIndex != null) result.push({kind: 'param', index: paramIndex})
-      else if (!scope.declaredNames.has(rootName)) result.push({kind: 'outer', sourceId: program.sourceId, root: rootName})
+      else if (!scope.localBindings.has(binding)) result.push({kind: 'outer', binding: outerBinding(binding, program)})
     }
     const sources = [
-      ...(scope.containerSources.get(rootName) ?? []),
-      ...(includeReachable ? scope.reachableSources.get(rootName) ?? [] : []),
+      ...(scope.containerSources.get(binding) ?? []),
+      ...(includeReachable ? scope.reachableSources.get(binding) ?? [] : []),
     ]
     for (const source of sources) {
       if (seen.has(source)) continue
@@ -476,8 +491,45 @@ function makeClassifiers(scope: Scope, program: Program): Classifiers {
     return result
   }
   return {
-    container: rootName => classifyDirect(rootName, new Set([rootName]), false),
-    reach: rootName => classifyDirect(rootName, new Set([rootName]), true),
+    container: binding => classifyDirect(binding, new Set([binding]), false),
+    reach: binding => classifyDirect(binding, new Set([binding]), true),
+  }
+}
+
+function bindingKey(identifier: ts.Identifier, program: Program): BindingKey {
+  const checker = program.typeChecker
+  if (checker == null) return `binding:${identifier.text}`
+  let symbol = checker.getSymbolAtLocation(identifier)
+  if (symbol == null) return `binding:${identifier.text}`
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
+  return symbol
+}
+
+function bindingKeys(name: ts.BindingName, program: Program): BindingKey[] {
+  if (ts.isIdentifier(name)) return [bindingKey(name, program)]
+  const keys: BindingKey[] = []
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    keys.push(...bindingKeys(element.name, program))
+  }
+  return keys
+}
+
+function outerBinding(key: BindingKey, program: Program): OuterBinding {
+  if (typeof key === 'string') {
+    return {
+      key,
+      sourceId: program.sourceId,
+      root: key.startsWith('binding:') ? key.slice('binding:'.length) : key,
+    }
+  }
+  const declaration = key.valueDeclaration ?? key.declarations?.[0]
+  const sourceFile = declaration?.getSourceFile()
+  const projectFile = sourceFile == null ? null : program.project.filesBySourceFile.get(sourceFile)
+  return {
+    key,
+    sourceId: projectFile?.sourceId ?? sourceFile?.fileName ?? program.sourceId,
+    root: key.getName(),
   }
 }
 
@@ -487,12 +539,12 @@ function makeClassifiers(scope: Scope, program: Program): Classifiers {
 // (`obj.field`) are not binding reads; builtin namespaces (Math, JSON, ...),
 // functions, classes, types, and `const` primitives are immutable references.
 // Uncertain cases resolve to true (impure) — the safe direction for a guarantee.
-function readsMutableOuter(id: ts.Identifier, classifiers: Classifiers, program: Program): boolean {
+function mutableOuterRead(id: ts.Identifier, classifiers: Classifiers, program: Program): OuterBinding | null {
   const parent = id.parent
-  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return false
-  if (ts.isQualifiedName(parent) && parent.right === id) return false
-  if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return false
-  if (ts.isBindingElement(parent) && parent.propertyName === id) return false
+  if (ts.isPropertyAccessExpression(parent) && parent.name === id) return null
+  if (ts.isQualifiedName(parent) && parent.right === id) return null
+  if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return null
+  if (ts.isBindingElement(parent) && parent.propertyName === id) return null
   if (
     (
       ts.isFunctionDeclaration(parent)
@@ -504,13 +556,14 @@ function readsMutableOuter(id: ts.Identifier, classifiers: Classifiers, program:
       || ts.isClassExpression(parent)
     )
     && parent.name === id
-  ) return false
+  ) return null
   // Identifiers in a type position (a parameter name inside `(n: number) => T`,
   // a type reference) are not value reads.
-  if (isInTypeContext(id)) return false
+  if (isInTypeContext(id)) return null
   // Only outer bindings matter; params and locals are not outside state.
-  if (!classifiers.container(id.text).some(root => root.kind === 'outer')) return false
-  return !isSafeOuterRead(id, program)
+  const outer = classifiers.container(bindingKey(id, program)).find(root => root.kind === 'outer')
+  if (outer == null || isSafeOuterRead(id, program)) return null
+  return outer.binding
 }
 
 function isInTypeContext(node: ts.Node): boolean {
@@ -523,6 +576,7 @@ function isInTypeContext(node: ts.Node): boolean {
 
 function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
   if (factPreservingGlobalMembers.has(id.text) && isDefaultLibrarySymbol(id, program)) return true
+  if (isResolvedFunctionCallRead(id, program)) return true
   const checker = program.typeChecker
   if (checker == null) return false
   let symbol = checker.getSymbolAtLocation(id)
@@ -543,6 +597,23 @@ function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
     }
   }
   return false
+}
+
+function isResolvedFunctionCallRead(id: ts.Identifier, program: Program): boolean {
+  const parent = id.parent
+  if (ts.isCallExpression(parent) && parent.expression === id) {
+    return resolveCallTarget(id, program).kind !== 'unresolved'
+  }
+  if (
+    !ts.isPropertyAccessExpression(parent)
+    || parent.expression !== id
+    || !ts.isCallExpression(parent.parent)
+    || parent.parent.expression !== parent
+  ) return false
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(id)
+  const namespaceImport = symbol?.declarations?.some(ts.isNamespaceImport) === true
+  return namespaceImport && resolveCallTarget(parent, program).kind !== 'unresolved'
 }
 
 function isSafeClassOuterRead(id: ts.Identifier, checker: ts.TypeChecker): boolean {
@@ -607,7 +678,7 @@ function collectWrites(
     addMutationRoots(member.effects.mutations.uncertain, roots)
   }
   const classifyExpressionRoots = (expression: ts.Expression): RootKind[] =>
-    expressionRoots(expression, program).flatMap(root => classifiers.reach(root))
+    expressionRootBindings(expression, program).flatMap(root => classifiers.reach(root))
   const addResolvedEdge = (
     target: Extract<ReturnType<typeof resolveCallTarget>, {kind: 'function'}>,
     arguments_: readonly ts.Expression[],
@@ -621,14 +692,16 @@ function collectWrites(
           : expressionHasMutableType(argument, program) ? classifyExpressionRoots(argument) : []),
       receiverRoots,
       callbackSpill: null,
+      classifyBinding: classifiers.reach,
     })
     collectMember(target.fn.node, target.program, members)
   }
 
   const visit = (current: ts.Node) => {
     if (isFunctionLike(current)) return
-    if (ts.isIdentifier(current) && readsMutableOuter(current, classifiers, program)) {
-      member.effects.readsMutableOuter = true
+    if (ts.isIdentifier(current)) {
+      const binding = mutableOuterRead(current, classifiers, program)
+      if (binding != null) addMutableOuterRead(member.effects, binding)
     }
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
       const target = unwrapExpression(current.left)
@@ -697,6 +770,15 @@ function collectWrites(
         addResolvedEdge(classMember, call.arguments, classifyExpressionRoots(target.expression))
         return
       }
+      const resolved = resolveCallTarget(target, program)
+      if (resolved.kind === 'function') {
+        addResolvedEdge(resolved, call.arguments, [])
+        return
+      }
+      if (resolved.kind === 'math') {
+        if (resolved.name === 'random') member.effects.observesEnvironment = true
+        return
+      }
       const knownNonMutating = defaultLibraryMember && nonMutatingMethodNames.has(target.name.text)
       const knownMutating = defaultLibraryMember && knownMutatingMethodNames.has(target.name.text)
       if (!knownNonMutating) {
@@ -704,7 +786,7 @@ function collectWrites(
         // is only reachable through later path writes (tracked in buildScope) —
         // unless the container is caller-visible, in which case retention is an
         // escape and the arguments must be forgotten now.
-        const containerBase = pathWriteBaseRoot(target.expression)
+        const containerBase = pathWriteBaseBinding(target.expression, program)
         const containerRoots = containerBase != null
           ? classifiers.container(containerBase)
           : classifyExpressionRoots(target.expression)
@@ -753,7 +835,13 @@ function collectWrites(
         ...receiverRoots,
         ...mutableArgumentRoots(call, program, classifyExpressionRoots),
       ]
-      member.edges.push({callee: fn.node, argumentRoots: [], receiverRoots: [], callbackSpill: spill})
+      member.edges.push({
+        callee: fn.node,
+        argumentRoots: [],
+        receiverRoots: [],
+        callbackSpill: spill,
+        classifyBinding: classifiers.reach,
+      })
       collectMember(fn.node, fn.program, members)
     }
   }
@@ -873,12 +961,12 @@ function writeTargetRoots(target: ts.Expression, classifiers: Classifiers, progr
   if (ts.isIdentifier(current)) {
     // A bare rebind replaces the caller-invisible binding, except for outer
     // roots, whose binding the caller shares.
-    return classifiers.container(current.text).filter(root => root.kind === 'outer')
+    return classifiers.container(bindingKey(current, program)).filter(root => root.kind === 'outer')
   }
   if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
     return writeBaseRoots(current.expression, classifiers, program)
   }
-  return expressionRoots(current, program).flatMap(root => classifiers.reach(root))
+  return expressionRootBindings(current, program).flatMap(root => classifiers.reach(root))
 }
 
 // The container a path write mutates: the base chain's root, everything that
@@ -886,12 +974,12 @@ function writeTargetRoots(target: ts.Expression, classifiers: Classifiers, progr
 // written value's type. Index expressions are reads and stay out.
 function writeBaseRoots(expression: ts.Expression, classifiers: Classifiers, program: Program): RootKind[] {
   const current = unwrapExpression(expression)
-  if (ts.isIdentifier(current)) return classifiers.reach(current.text)
+  if (ts.isIdentifier(current)) return classifiers.reach(bindingKey(current, program))
   if (current.kind === ts.SyntaxKind.ThisKeyword) return [{kind: 'this'}]
   if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
     return writeBaseRoots(current.expression, classifiers, program)
   }
-  return expressionRoots(current, program).flatMap(root => classifiers.reach(root))
+  return expressionRootBindings(current, program).flatMap(root => classifiers.reach(root))
 }
 
 // Roots whose values could flow into this expression's value. A subtree of
@@ -899,14 +987,15 @@ function writeBaseRoots(expression: ts.Expression, classifiers: Classifiers, pro
 // nothing flows out of it. Callee names are not values that flow (only their
 // arguments and receiver are), and object literal property names are labels,
 // not reads.
-function expressionRoots(expression: ts.Expression, program: Program): string[] {
-  const roots: string[] = []
+function expressionRootBindings(expression: ts.Expression, program: Program): BindingKey[] {
+  const roots: BindingKey[] = []
   const visit = (current: ts.Node) => {
     // Type positions name types, not values; nothing flows through them.
     if (ts.isTypeNode(current)) return
+    if (isFunctionLike(current)) return
     if (ts.isExpression(current) && !expressionHasMutableType(current, program)) return
     if (ts.isIdentifier(current)) {
-      roots.push(current.text)
+      roots.push(bindingKey(current, program))
       return
     }
     if (current.kind === ts.SyntaxKind.ThisKeyword) {
@@ -941,16 +1030,6 @@ function expressionRoots(expression: ts.Expression, program: Program): string[] 
   }
   visit(expression)
   return [...new Set(roots)]
-}
-
-function bindingNames(name: ts.BindingName): string[] {
-  if (ts.isIdentifier(name)) return [name.text]
-  const names: string[] = []
-  for (const element of name.elements) {
-    if (ts.isOmittedExpression(element)) continue
-    names.push(...bindingNames(element.name))
-  }
-  return names
 }
 
 function isFunctionLike(node: ts.Node): node is FunctionLikeNode {

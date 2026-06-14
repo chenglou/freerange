@@ -129,6 +129,7 @@ import {
   functionEffects,
   isFactPreservingGlobalMemberCall,
   lengthBearingConstructorNames,
+  mutationOuterRoots,
   type FunctionEffects,
   type FunctionLikeNode,
 } from './function-effects.ts'
@@ -2012,8 +2013,8 @@ function applyFunctionCallEffects(
       havocExpressionAliases(frame, ts.isSpreadElement(argument) ? argument.expression : argument)
     }
   }
-  const certainOuterRoots = certain.outerRootsBySource.get(frame.program.sourceId) ?? []
-  const uncertainOuterRoots = uncertain.outerRootsBySource.get(frame.program.sourceId) ?? []
+  const certainOuterRoots = mutationOuterRoots(certain, frame.program.sourceId)
+  const uncertainOuterRoots = mutationOuterRoots(uncertain, frame.program.sourceId)
   havocRoots(frame, [...new Set([...certainOuterRoots, ...uncertainOuterRoots])])
 }
 
