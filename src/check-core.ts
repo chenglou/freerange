@@ -103,7 +103,11 @@ import {
   type CheckBoundary,
 } from './source-boundary.ts'
 import {programGlobalEnv} from './program-env.ts'
-import {functionInputRoots, isFunctionImplementation} from './function-shape.ts'
+import {
+  functionImplementationReference,
+  functionInputRoots,
+  isFunctionImplementation,
+} from './function-shape.ts'
 import {
   arrayPatternElementValue,
   unknownResultValue,
@@ -725,7 +729,7 @@ function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value
 // value: a definite effect disproves it (fail), an unanalyzable call leaves it
 // unproven (unknown), and otherwise it passes.
 function verifyPureSpec(file: string, functionName: string, fn: FitFunction, program: Program, spec: FitPureSpec): FitCheck {
-  const purity = functionPurity(fn.node, program)
+  const purity = functionPurity(functionImplementationReference(program, fn.node))
   const base = {file, functionName, text: spec.text, ...(spec.line == null ? {} : {line: spec.line})}
   switch (purity.kind) {
     case 'pure':
@@ -976,7 +980,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
   const resolvedTarget = call.target
   if (rootContext.callObligations == null) return null
   if (rootContext.contractExpression === true && rootContext.contractExpressionProblems != null) {
-    const purity = functionPurity(resolvedTarget.fn.node, resolvedTarget.program)
+    const purity = functionPurity(functionImplementationReference(resolvedTarget.program, resolvedTarget.fn.node))
     switch (purity.kind) {
       case 'pure':
         break

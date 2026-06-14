@@ -10,6 +10,8 @@ import {
   resolveCallTarget,
 } from './call-targets.ts'
 import {
+  assertFunctionImplementationReference,
+  functionImplementationReference,
   isFunctionImplementation,
   type FunctionImplementationRef,
   type FunctionImplementationNode,
@@ -80,8 +82,9 @@ export type Purity =
   | {kind: 'impure'; reason: string}
   | {kind: 'unknown'; reason: string}
 
-export function functionPurity(node: FunctionImplementationNode, program: Program): Purity {
-  const effects = functionEffects(node, program)
+export function functionPurity(implementation: FunctionImplementationRef): Purity {
+  const effects = functionEffects(implementation)
+  const node = implementation.node
   const mutatedParam = effects.mutations.certain.paramIndexes.values().next().value
   if (mutatedParam != null) {
     const parameter = node.parameters[mutatedParam]?.name
@@ -192,7 +195,7 @@ type OuterBinding = {
 }
 
 type CallEdge = {
-  callee: FunctionImplementationNode
+  callee: FunctionImplementationRef
   // classified roots per caller argument position; `null` marks a spread
   // argument whose positions cannot be mapped
   argumentRoots: (RootKind[] | null)[]
@@ -203,29 +206,37 @@ type CallEdge = {
 }
 
 type MemberInfo = {
+  implementation: FunctionImplementationRef
   effects: FunctionEffects
   edges: CallEdge[]
 }
 
-const effectsCache = new WeakMap<ts.Node, FunctionEffects>()
+type MemberIndex = Map<Program, Map<FunctionImplementationNode, MemberInfo>>
 
-export function functionEffects(node: FunctionImplementationNode, program: Program): FunctionEffects {
-  const cached = effectsCache.get(node)
+const effectsCache = new WeakMap<Program, WeakMap<FunctionImplementationNode, FunctionEffects>>()
+
+export function functionEffects(implementation: FunctionImplementationRef): FunctionEffects {
+  assertFunctionImplementationReference(implementation)
+  const cached = cachedFunctionEffects(implementation)
   if (cached != null) return cached
-  const members = new Map<FunctionImplementationNode, MemberInfo>()
-  collectMember(node, program, members)
+  const members: MemberIndex = new Map()
+  collectMember(implementation, members)
   for (let changed = true; changed;) {
     changed = false
-    for (const member of members.values()) {
-      for (const edge of member.edges) {
-        const callee = effectsCache.get(edge.callee) ?? members.get(edge.callee)?.effects
-        if (callee == null) continue
-        if (composeEdge(member.effects, edge, callee)) changed = true
+    for (const programMembers of members.values()) {
+      for (const member of programMembers.values()) {
+        for (const edge of member.edges) {
+          const callee = cachedFunctionEffects(edge.callee) ?? indexedMember(members, edge.callee)?.effects
+          if (callee == null) continue
+          if (composeEdge(member.effects, edge, callee)) changed = true
+        }
       }
     }
   }
-  for (const [memberNode, member] of members) effectsCache.set(memberNode, member.effects)
-  return members.get(node)!.effects
+  for (const programMembers of members.values()) {
+    for (const member of programMembers.values()) cacheFunctionEffects(member.implementation, member.effects)
+  }
+  return indexedMember(members, implementation)!.effects
 }
 
 function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffects): boolean {
@@ -260,7 +271,7 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
   if (callee.mutations.certain.paramIndexes.size > 0) {
     const hasSpread = edge.argumentRoots.some(roots => roots == null)
     for (const index of callee.mutations.certain.paramIndexes) {
-      const rest = edge.callee.parameters[index]?.dotDotDotToken != null
+      const rest = edge.callee.node.parameters[index]?.dotDotDotToken != null
       if (hasSpread) {
         for (const roots of edge.argumentRoots) add(into.mutations.certain, roots ?? [])
       } else if (rest) {
@@ -275,7 +286,7 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
   if (callee.mutations.uncertain.paramIndexes.size > 0) {
     const hasSpread = edge.argumentRoots.some(roots => roots == null)
     for (const index of callee.mutations.uncertain.paramIndexes) {
-      const rest = edge.callee.parameters[index]?.dotDotDotToken != null
+      const rest = edge.callee.node.parameters[index]?.dotDotDotToken != null
       if (hasSpread) {
         for (const roots of edge.argumentRoots) add(into.mutations.uncertain, roots ?? [])
       } else if (rest) {
@@ -326,16 +337,44 @@ function addMutableOuterRead(effects: FunctionEffects, binding: OuterBinding): b
   return true
 }
 
-function collectMember(node: FunctionImplementationNode, program: Program, members: Map<FunctionImplementationNode, MemberInfo>) {
-  if (members.has(node) || effectsCache.has(node)) return
+function cachedFunctionEffects(implementation: FunctionImplementationRef): FunctionEffects | undefined {
+  return effectsCache.get(implementation.program)?.get(implementation.node)
+}
+
+function cacheFunctionEffects(implementation: FunctionImplementationRef, effects: FunctionEffects) {
+  let programCache = effectsCache.get(implementation.program)
+  if (programCache == null) {
+    programCache = new WeakMap()
+    effectsCache.set(implementation.program, programCache)
+  }
+  programCache.set(implementation.node, effects)
+}
+
+function indexedMember(members: MemberIndex, implementation: FunctionImplementationRef): MemberInfo | undefined {
+  return members.get(implementation.program)?.get(implementation.node)
+}
+
+function indexMember(members: MemberIndex, member: MemberInfo) {
+  let programMembers = members.get(member.implementation.program)
+  if (programMembers == null) {
+    programMembers = new Map()
+    members.set(member.implementation.program, programMembers)
+  }
+  programMembers.set(member.implementation.node, member)
+}
+
+function collectMember(implementation: FunctionImplementationRef, members: MemberIndex) {
+  if (indexedMember(members, implementation) != null || cachedFunctionEffects(implementation) != null) return
   const member: MemberInfo = {
+    implementation,
     effects: noEffects(),
     edges: [],
   }
-  members.set(node, member)
+  indexMember(members, member)
+  const {node, program} = implementation
   const scope = buildScope(node, program)
   const classifiers = makeClassifiers(scope, program)
-  collectWrites(node, program, member, classifiers, members)
+  collectWrites(implementation, member, classifiers, members)
 }
 
 type Scope = {
@@ -661,12 +700,12 @@ function classElementAccessSymbol(access: ts.ElementAccessExpression, checker: t
 }
 
 function collectWrites(
-  node: FunctionImplementationNode,
-  program: Program,
+  implementation: FunctionImplementationRef,
   member: MemberInfo,
   classifiers: Classifiers,
-  members: Map<FunctionImplementationNode, MemberInfo>,
+  members: MemberIndex,
 ) {
+  const {node, program} = implementation
   const addMutation = (roots: RootKind[]) => {
     addMutationRoots(member.effects.mutations.certain, roots)
   }
@@ -680,8 +719,9 @@ function collectWrites(
     arguments_: readonly ts.Expression[],
     receiverRoots: RootKind[],
   ) => {
+    const callee = functionImplementationReference(target.program, target.fn.node)
     member.edges.push({
-      callee: target.fn.node,
+      callee,
       argumentRoots: arguments_.map(argument =>
         ts.isSpreadElement(argument)
           ? null
@@ -690,7 +730,7 @@ function collectWrites(
       callbackSpill: null,
       classifyBinding: classifiers.reach,
     })
-    collectMember(target.fn.node, target.program, members)
+    collectMember(callee, members)
   }
 
   const visit = (current: ts.Node) => {
@@ -832,13 +872,13 @@ function collectWrites(
         ...mutableArgumentRoots(call, program, classifyExpressionRoots),
       ]
       member.edges.push({
-        callee: fn.node,
+        callee: fn,
         argumentRoots: [],
         receiverRoots: [],
         callbackSpill: spill,
         classifyBinding: classifiers.reach,
       })
-      collectMember(fn.node, fn.program, members)
+      collectMember(fn, members)
     }
   }
 
@@ -880,10 +920,14 @@ export const lengthBearingConstructorNames = new Set([
 
 function functionValuedArgument(argument: ts.Expression, program: Program): FunctionImplementationRef | null {
   const current = unwrapExpression(argument)
-  if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return {node: current, program}
+  if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
+    return functionImplementationReference(program, current)
+  }
   if (ts.isIdentifier(current)) {
     const resolved = resolveCallTarget(current, program)
-    if (resolved.kind === 'function') return {node: resolved.fn.node, program: resolved.program}
+    if (resolved.kind === 'function') {
+      return functionImplementationReference(resolved.program, resolved.fn.node)
+    }
   }
   return null
 }

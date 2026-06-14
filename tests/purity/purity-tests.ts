@@ -2,8 +2,9 @@
 // isFunctionPure is a pure function of the source, so each case is just
 // source -> pure | impure | unknown, no interpreter run or proof needed.
 import {readTopLevelGlobal} from '../../src/check-core.ts'
+import {functionImplementationReference} from '../../src/function-shape.ts'
 import {functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
-import {buildFitSourceFile} from '../../src/modules.ts'
+import {buildFitSourceFile, loadFitProject} from '../../src/modules.ts'
 import {verifyFitFiles} from '../../src/reports.ts'
 import {
   contractRejectsImportedAlias,
@@ -31,7 +32,7 @@ function purityOf(name: string, source: string): Purity['kind'] {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
   const fn = program.functions.get(name)
   if (fn == null) throw new Error(`no function ${name} in source`)
-  return functionPurity(fn.node, program).kind
+  return functionPurity(functionImplementationReference(program, fn.node)).kind
 }
 
 const cases: {label: string; source: string; kind: Purity['kind']}[] = [
@@ -110,6 +111,35 @@ if (failures > 0) {
   process.exitCode = 1
 } else {
   console.log(`purity: ${cases.length} classifications`)
+}
+
+const identityProject = loadFitProject(['tests/purity/imported-caller.ts'], readTopLevelGlobal)
+const identityCaller = identityProject.entries[0]!
+const callbackBinding = identityCaller.imports.get('importedPureCallback')
+if (callbackBinding == null || callbackBinding.kind !== 'resolved') {
+  throw new Error('expected importedPureCallback to resolve')
+}
+const identityHelper = callbackBinding.file
+const importedCallback = identityHelper.functions.get('importedPureCallback')
+if (importedCallback == null) throw new Error('expected importedPureCallback implementation')
+let mismatchedReferenceReason: string | null = null
+try {
+  functionPurity({program: identityCaller, node: importedCallback.node})
+} catch (error) {
+  mismatchedReferenceReason = error instanceof Error ? error.message : String(error)
+}
+const purityAfterRejectedMismatch = functionPurity(
+  functionImplementationReference(identityHelper, importedCallback.node),
+)
+if (
+  mismatchedReferenceReason?.includes('does not belong') !== true
+  || purityAfterRejectedMismatch.kind !== 'pure'
+) {
+  console.error('purity: expected mismatched source programs to fail before caching')
+  console.error(JSON.stringify({mismatchedReferenceReason, purityAfterRejectedMismatch}, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('purity: implementation and source program stay one cache identity')
 }
 
 const importedPurity = await verifyFitFiles(['tests/purity/imported-caller.ts'])

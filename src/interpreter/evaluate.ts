@@ -73,6 +73,7 @@ import {
   extentEndSummaryValue,
 } from '../builtins.ts'
 import {
+  functionImplementationReference,
   functionHasInstanceThisInput,
   isInlineFunction,
   type FunctionImplementationRef,
@@ -1364,14 +1365,26 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
       thisValue: receiver,
     }, frame)
     if (hooked != null) {
-      applyFunctionCallEffects(functionEffects(getter.fn.node, getter.program), [], [], expression.expression, frame)
+      applyFunctionCallEffects(
+        functionEffects(functionImplementationReference(getter.program, getter.fn.node)),
+        [],
+        [],
+        expression.expression,
+        frame,
+      )
       return hooked
     }
     const value = valueWithTypeFallback(
       evaluateFunctionNodeBody(getter.fn.name, getter.fn.node, prepared.frame),
       fallback,
     )
-    applyFunctionCallEffects(functionEffects(getter.fn.node, getter.program), [], [], expression.expression, frame)
+    applyFunctionCallEffects(
+      functionEffects(functionImplementationReference(getter.program, getter.fn.node)),
+      [],
+      [],
+      expression.expression,
+      frame,
+    )
     return value
   }
   const target = evaluateExpression(expression.expression, frame)
@@ -2042,7 +2055,7 @@ function applyFunctionCallEffects(
 // reads stay precise; writes to captured locals and mutations of the elements
 // fed through the callback's parameters are applied here instead.
 function applyCallbackEffects(callback: FunctionImplementationRef, receiverExpression: ts.Expression | null, frame: InterpreterFrame): FunctionEffects {
-  const effects = functionEffects(callback.node, callback.program)
+  const effects = functionEffects(callback)
   applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
   if ((effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) && receiverExpression != null) {
     havocArrayElementAliases(frame, receiverExpression)
@@ -2093,7 +2106,7 @@ function applyUnknownCallEffects(
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
     const callback = passedFunctionReference(argumentExpression, frame)
     if (callback == null) continue
-    const callbackEffects = functionEffects(callback.node, callback.program)
+    const callbackEffects = functionEffects(callback)
     applyFunctionCallEffects(callbackEffects, [], callback.node.parameters, null, frame)
     if (callbackEffects.mutations.certain.paramIndexes.size > 0 || callbackEffects.mutations.uncertain.paramIndexes.size > 0) {
       havocAllInputs()
@@ -2115,7 +2128,7 @@ function applyFactPreservingGlobalCallbackEffects(expression: ts.CallExpression,
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
     const callback = passedFunctionReference(argumentExpression, frame)
     if (callback == null) continue
-    const effects = functionEffects(callback.node, callback.program)
+    const effects = functionEffects(callback)
     applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
     if (effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) mutatesData = true
   }
@@ -2128,10 +2141,12 @@ function applyFactPreservingGlobalCallbackEffects(expression: ts.CallExpression,
 }
 
 function passedFunctionReference(expression: ts.Expression, frame: InterpreterFrame): FunctionImplementationRef | null {
-  if (isInlineFunction(expression)) return {program: frame.program, node: expression}
+  if (isInlineFunction(expression)) return functionImplementationReference(frame.program, expression)
   if (!ts.isIdentifier(expression)) return null
   const resolved = resolveCallTarget(expression, frame.program)
-  return resolved.kind === 'function' ? {program: resolved.program, node: resolved.fn.node} : null
+  return resolved.kind === 'function'
+    ? functionImplementationReference(resolved.program, resolved.fn.node)
+    : null
 }
 
 function userBindingForCallTarget(target: ts.Expression, frame: InterpreterFrame): boolean {
@@ -2347,7 +2362,13 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     )
     if (prepared.kind === 'invalid') return noteUnsupported(frame, prepared.reason, expression)
     const result = evaluateFunctionNodeBody('<iife>', target, prepared.frame)
-    applyFunctionCallEffects(functionEffects(target, frame.program), expression.arguments, target.parameters, null, frame)
+    applyFunctionCallEffects(
+      functionEffects(functionImplementationReference(frame.program, target)),
+      expression.arguments,
+      target.parameters,
+      null,
+      frame,
+    )
     return result
   }
   if (ts.isPropertyAccessExpression(target)) {
@@ -2427,7 +2448,7 @@ function evaluateResolvedFunctionCall(
   // The call happened in every outcome above (including the recursion cut), so
   // its effects on the caller's world apply unconditionally.
   applyFunctionCallEffects(
-    functionEffects(target.fn.node, target.program),
+    functionEffects(functionImplementationReference(target.program, target.fn.node)),
     expression.arguments,
     target.fn.node.parameters,
     receiverExpression ?? null,

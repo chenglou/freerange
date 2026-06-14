@@ -19,10 +19,10 @@ export type FunctionImplementationNode =
   | (ts.GetAccessorDeclaration & {body: ts.Block})
   | (ts.SetAccessorDeclaration & {body: ts.Block})
 
-export type FunctionImplementationRef = {
+export type FunctionImplementationRef = Readonly<{
   program: Program
   node: FunctionImplementationNode
-}
+}>
 
 export function isFunctionImplementation(node: ts.Node): node is FunctionImplementationNode {
   return (
@@ -41,6 +41,19 @@ export function isClassFunctionNode(node: ts.Node): node is ClassFunctionNode {
     || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
     || ts.isSetAccessorDeclaration(node)
+}
+
+export function functionImplementationReference(
+  program: Program,
+  node: FunctionImplementationNode,
+): FunctionImplementationRef {
+  assertFunctionImplementationReference({program, node})
+  return {program, node}
+}
+
+export function assertFunctionImplementationReference(ref: FunctionImplementationRef) {
+  if (ref.node.getSourceFile() === ref.program.sourceFile) return
+  throw new Error(`Function implementation does not belong to ${ref.program.file}`)
 }
 
 export function functionImplementationForDeclaration(declaration: ts.Declaration): FunctionImplementationNode | null {
