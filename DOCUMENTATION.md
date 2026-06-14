@@ -105,19 +105,7 @@ An `@fit` line that's just a pure TS expression that returns a boolean, is check
 
 Syntax Glossary's at the end of the docs.
 
-## `@fit` Contracts Built-Ins
-
-We expose some useful functions in `@fit` comments:
-
-```ts
-pure // ensure the function has no visible side effects, mutable outside reads, or nondeterminism
-nondecreasing(values: number[]): boolean // values in the array should prove to be bigger than or equal to their previous cell value
-spaced(rows: {top: number; height: number}[], gap: number): boolean // each next row should prove to start after previous top + previous height + gap
-lastEnd(rows: {top: number; height: number}[]): number // returns the final row's .top + .height; rows must prove non-empty
-extentEnd(rows: {top: number; height: number}[], emptyValue: number): number // returns emptyValue for empty rows, otherwise the final row's .top + .height
-```
-
-## Checking Contracts
+## Contracts API
 
 Freerange checks the annotated function body, types, and their usages, to ensure the `@fit` contracts are upheld. Here's an example of a responsive 2D photo gallery grid where the column count is calculated to be between 1 and 7, and each photo tile's width is derived from that:
 
@@ -197,7 +185,134 @@ redundant:
   return.tiles[].width > 0 (covered by return.tiles[].width: 1..Infinity)
 ```
 
-### Inference Mental Model
+### Purity
+
+```ts
+/** @fit
+ * pure
+ */
+function widthWithPadding(width: number, padding: number) {
+  return width + padding * 2
+}
+```
+
+A function marked as `pure` is checked for purity:
+- it doesn't mutate arguments, `this`, or closure variables
+- it doesn't read outside state that other code can change
+- it doesn't do I/O, e.g. `console.log`
+- it doesn't call nondeterministic APIs like `Date.now()` and `Math.random()`
+- it doesn't call code whose behavior Freerange cannot inspect, e.g. an imported library that only has `.d.ts` and not original `.ts` files
+
+Local mutations are allowed.
+
+The purity check is **transitive**, aka every function that the annotated `pure` function calls, is checked too. These latter functions themselves don't need to be annotated; Freerange will just check them for you.
+
+### Numerics
+
+Freerange checks ranges and comparisons over ordinary numerical expressions:
+
+```ts
+width: 0..1000
+index: int 0..<items.length
+width * 2 + gap <= containerWidth
+focusedIndex < items.length
+```
+
+This includes addition, subtraction, multiplication by a known value, and division when the required facts about the divisor are known. Floating-point arithmetic follows JS evaluation and respects floating-point imprecision.
+
+### Array
+
+```ts
+rows[].height: 0..40
+rows[].top >= 0
+rows[$i].height == items[$i].height
+
+rows.length == items.length
+rows.length: int 0..200
+```
+
+`rows[].height: 0..40` means "the rows array, which contains objects with a field `height`, has that `height` between 0 and 40".
+`$i` is a special syntax to express "the same item index".
+Array elements require homogeneous (aka the same) contracts. To have differing contracts per array element, use tuples instead, just like you'd do it in regular TypeScript.
+
+### Tuple
+
+TODO: this section.
+
+### Boolean
+
+```ts
+return.width > 0 && !(return.height <= 0)
+```
+
+Supported checks can be combined with `&&` and negated with `!`. `||` is not supported yet.
+
+### Built-Ins
+
+We expose some useful functions in `@fit` comments:
+
+```ts
+nondecreasing(values: number[]): boolean // values in the array should prove to be bigger than or equal to their previous cell value
+spaced(rows: {top: number; height: number}[], gap: number): boolean // each next row should prove to start after previous top + previous height + gap
+lastEnd(rows: {top: number; height: number}[]): number // returns the final row's .top + .height; rows must prove non-empty
+extentEnd(rows: {top: number; height: number}[], emptyValue: number): number // returns emptyValue for empty rows, otherwise the final row's .top + .height
+noOverlap(rows)
+```
+
+### Custom Functions
+
+```ts
+function hasPositiveArea(tile: {width: number; height: number}) {
+  return tile.width > 0 && tile.height > 0
+}
+
+/** @fit
+ * hasPositiveArea(return.tiles[])
+ */
+function layoutPhotos() {
+  return {tiles: [{width: 100, height: 80}]}
+}
+```
+
+Freerange lets you invoke your own pure boolean functions in contracts! A call passes when Freerange proves it returns `true`, fails when it proves `false`, and remains unknown when Freerange cannot decide.
+
+### Types
+
+```ts
+/** @fit
+ * cells.length: int 0..200
+ * cells[].right >= cells[].left
+ */
+type PhotoGrid = {
+  gap: number // @fit >= 0
+  cells: {
+    left: number
+    right: number
+    width: number // @fit > 0
+  }[]
+}
+```
+
+Contracts on types are a convenience API to avoid repeating the same default `@fit` lines every time the type is used. They're inlined into the places that use them. If a type is used for function arguments, its contracts are automatically considered as `given`s (aka input assumptions). If it is used for the return value instead, its contracts are considered as things Freerange should infer and prove.
+
+## Inference
+
+To verify the contracts, Freerange does "inference" over the related code. Example:
+
+```ts
+/** @fit
+ * given availableWidth: int 320..1200
+ * return: 50..600
+ */
+function columnWidth(availableWidth: number) {
+  const gap = 16
+
+  if (availableWidth >= 600) return (availableWidth - gap * 2) / 3
+  return (availableWidth - gap) / 2
+}
+```
+
+Here, Freerange reads the `given` contract line plus the function body itself, and attempts to use various proof techniques to ensure that the returned value abides by the contract.
 
 Freerange inferred lots of facts! Here's what we infer:
 - Input facts, aka `given`s, are not proven from the function body. Freerange trusts them in the function, then checks them at visible call sites. Boolean givens like `given isValidLayout(input)` are kept as that exact fact. A few known built-ins, e.g. `given spaced(rows, gap)`, also add their documented row/order facts.

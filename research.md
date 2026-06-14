@@ -4,7 +4,7 @@ Durable observations about Freerange's design. Insight per bullet — not a chan
 
 ## Direction
 
-The system is split into three named regions and the page that lists them — `VOCABULARY.md` — is the product position. Core: linear scalar arithmetic, universal claims over adjacent array pairs, per-element claims, boolean composition. Catalog: named decidables with documented rules (`Math.*`, sequence shorthand, layout primitives). Outside: arbitrary-pair quantifier, polynomial inequalities, transcendental shape claims, set-of-set claims. Anything that wanders out of this split is either a bug against the page or a candidate to redraw the page deliberately. The page is the stopping condition for "are we done with this round."
+[DOCUMENTATION.md](./DOCUMENTATION.md) is the product position for supported contracts. New support should either fit the public surface described there or deliberately change that surface.
 
 The public surface is a small layout catalog over ordinary TS values. Users name layout shapes; they shouldn't write traversals. The catalog reads:
 

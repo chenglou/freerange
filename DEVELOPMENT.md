@@ -30,7 +30,6 @@ bun install
 
 - [README.md](./README.md) — short project front door
 - [DOCUMENTATION.md](./DOCUMENTATION.md) — user-facing syntax, glossary, adoption guide, and supported checker surface
-- [VOCABULARY.md](./VOCABULARY.md) — claim families Freerange decides, the named catalog, and explicit boundaries
 - [tests/patterns/patterns.ts](./tests/patterns/patterns.ts), [tests/patterns/loop-patterns.ts](./tests/patterns/loop-patterns.ts), and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) — positive pattern specimens; loop-patterns.ts is the loop-analysis catalog and a fast focused `fr check` target during loop work
 - [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
