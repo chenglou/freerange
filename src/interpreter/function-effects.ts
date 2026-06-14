@@ -23,6 +23,8 @@ import {
   retainedArgumentIndexes,
   type PlatformCallbackEffect,
   type PlatformCallEffect,
+  type PlatformResultEffect,
+  type PlatformResultSource,
   type PlatformValueSource,
 } from './platform-effects.ts'
 
@@ -65,6 +67,7 @@ export type FunctionEffects = {
 }
 
 const unknownCallBodyReason = 'calls a function whose body cannot be analyzed'
+const recursiveCallbackReturnReason = 'cannot analyze a recursive callback return value'
 
 const noMutationTargets = (): MutationTargets => ({
   outerBindings: new Map(),
@@ -321,9 +324,16 @@ function collectMember(implementation: FunctionImplementationRef, members: Membe
   }
   indexMember(members, member)
   const {node, program} = implementation
-  const scope = buildScope(node, program)
+  const valueFlowContext: ValueFlowContext = {
+    activeCallbackReturns: new Set(),
+    encounteredRecursiveCallbackReturn: false,
+  }
+  const scope = buildScope(node, program, valueFlowContext)
   const classifiers = makeClassifiers(scope, program)
-  collectWrites(implementation, member, classifiers, members)
+  collectWrites(implementation, member, classifiers, members, valueFlowContext)
+  if (valueFlowContext.encounteredRecursiveCallbackReturn) {
+    member.effects.unknownCallReasons.add(recursiveCallbackReturnReason)
+  }
 }
 
 type Scope = {
@@ -331,31 +341,78 @@ type Scope = {
   localBindings: Set<BindingKey>
   // ys = xs: ys IS the same container; mutating ys mutates xs.
   containerSources: Map<BindingKey, Set<BindingKey>>
+  // item = xs[0]: item aliases something reachable from xs, but xs does not
+  // alias item.
+  reachableAliasSources: Map<BindingKey, Set<BindingKey>>
   // ys.push(box), obj.field = box: box is reachable FROM the container; only a
   // later write through the container can hit it, mutating the container's own
   // shape (push, sort) cannot.
   reachableSources: Map<BindingKey, Set<BindingKey>>
 }
 
-function buildScope(node: FunctionImplementationNode, program: Program): Scope {
+type ValueFlowContext = {
+  activeCallbackReturns: Set<FunctionImplementationNode>
+  encounteredRecursiveCallbackReturn: boolean
+}
+
+type ValueAlias = {
+  binding: BindingKey
+  relation: 'same' | 'reachable'
+}
+
+type ValueFlow = {
+  aliases: ValueAlias[]
+  retainedRoots: BindingKey[]
+}
+
+function buildScope(
+  node: FunctionImplementationNode,
+  program: Program,
+  context: ValueFlowContext,
+): Scope {
   const paramIndexByBinding = new Map<BindingKey, number>()
   node.parameters.forEach((parameter, index) => {
     for (const binding of bindingKeys(parameter.name, program)) paramIndexByBinding.set(binding, index)
   })
   const localBindings = new Set<BindingKey>()
   const containerEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
+  const reachableAliasEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
   const reachableEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
-  const addValueFlow = (targets: BindingKey[], value: ts.Expression) => {
-    const retainedRoots = freshContainerRetainedRoots(value, program)
-    const edges = retainedRoots == null ? containerEdges : reachableEdges
-    const sourceRoots = retainedRoots ?? expressionRootBindings(value, program)
-    for (const target of targets) edges.push({target, sourceRoots})
+  const addValueFlow = (target: BindingKey, flow: ValueFlow) => {
+    containerEdges.push({
+      target,
+      sourceRoots: flow.aliases
+        .filter(alias => alias.relation === 'same')
+        .map(alias => alias.binding),
+    })
+    reachableAliasEdges.push({
+      target,
+      sourceRoots: flow.aliases
+        .filter(alias => alias.relation === 'reachable')
+        .map(alias => alias.binding),
+    })
+    reachableEdges.push({target, sourceRoots: flow.retainedRoots})
+  }
+  const addTargetValueFlow = (target: AssignmentTarget, flow: ValueFlow) => {
+    if (target.kind === 'binding') {
+      addValueFlow(bindingKey(target.identifier, program), flow)
+      return
+    }
+    const base = pathWriteBaseBinding(target.expression, program)
+    if (base != null) {
+      reachableEdges.push({target: base, sourceRoots: allReachableRoots(flow)})
+    }
   }
   const visit = (current: ts.Node) => {
     if (ts.isVariableDeclaration(current)) {
       const bindings = bindingKeys(current.name, program)
       for (const binding of bindings) localBindings.add(binding)
-      if (current.initializer != null) addValueFlow(bindings, current.initializer)
+      if (current.initializer != null) {
+        const sourceFlow = expressionValueFlow(current.initializer, program, context)
+        for (const {target, flow} of bindingValueFlows(current.name, sourceFlow, program, context)) {
+          addTargetValueFlow(target, flow)
+        }
+      }
     }
     if (ts.isFunctionDeclaration(current) && current.name != null) {
       localBindings.add(bindingKey(current.name, program))
@@ -368,13 +425,18 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
     if (ts.isCatchClause(current) && current.variableDeclaration != null) {
       for (const binding of bindingKeys(current.variableDeclaration.name, program)) localBindings.add(binding)
     }
-    if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
-      const target = unwrapExpression(current.left)
-      if (ts.isIdentifier(target)) {
-        addValueFlow([bindingKey(target, program)], current.right)
-      } else {
-        const base = pathWriteBaseBinding(target, program)
-        if (base != null) reachableEdges.push({target: base, sourceRoots: expressionRootBindings(current.right, program)})
+    if (
+      ts.isBinaryExpression(current)
+      && assignmentMayTakeRightValue(current.operatorToken.kind)
+    ) {
+      const sourceFlow = expressionValueFlow(current.right, program, context)
+      for (const {target, flow} of assignmentValueFlows(
+        current.left,
+        sourceFlow,
+        program,
+        context,
+      )) {
+        addTargetValueFlow(target, flow)
       }
     }
     if (ts.isCallExpression(current)) {
@@ -393,7 +455,10 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
             const argument = current.arguments[index]
             if (argument == null) continue
             const expression = ts.isSpreadElement(argument) ? argument.expression : argument
-            reachableEdges.push({target: base, sourceRoots: expressionRootBindings(expression, program)})
+            reachableEdges.push({
+              target: base,
+              sourceRoots: allReachableRoots(expressionValueFlow(expression, program, context)),
+            })
           }
         }
       }
@@ -411,52 +476,437 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
   return {
     paramIndexByBinding,
     localBindings,
-    containerSources: closeSourceEdges(symmetricContainerEdges),
-    reachableSources: closeSourceEdges(reachableEdges),
+    containerSources: sourceMap(symmetricContainerEdges),
+    reachableAliasSources: sourceMap(reachableAliasEdges),
+    reachableSources: sourceMap(reachableEdges),
   }
 }
 
-function freshContainerRetainedRoots(expression: ts.Expression, program: Program): BindingKey[] | null {
+function assignmentMayTakeRightValue(operator: ts.SyntaxKind) {
+  return operator === ts.SyntaxKind.EqualsToken
+    || operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken
+    || operator === ts.SyntaxKind.BarBarEqualsToken
+    || operator === ts.SyntaxKind.QuestionQuestionEqualsToken
+}
+
+type TargetValueFlow = {
+  target: AssignmentTarget
+  flow: ValueFlow
+}
+
+function bindingValueFlows(
+  name: ts.BindingName,
+  sourceFlow: ValueFlow,
+  program: Program,
+  context: ValueFlowContext,
+): TargetValueFlow[] {
+  if (ts.isIdentifier(name)) {
+    return [{target: {kind: 'binding', identifier: name}, flow: sourceFlow}]
+  }
+  const flows: TargetValueFlow[] = []
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    const selected = element.dotDotDotToken == null
+      ? reachableAliasFlow(sourceFlow)
+      : freshContainerFlow(sourceFlow)
+    const value = element.initializer == null
+      ? selected
+      : mergeValueFlows([
+        selected,
+        expressionValueFlow(element.initializer, program, context),
+      ])
+    flows.push(...bindingValueFlows(element.name, value, program, context))
+  }
+  return flows
+}
+
+function assignmentValueFlows(
+  expression: ts.Expression,
+  sourceFlow: ValueFlow,
+  program: Program,
+  context: ValueFlowContext,
+): TargetValueFlow[] {
   const current = unwrapExpression(expression)
-  if (ts.isArrayLiteralExpression(current)) {
-    return current.elements.flatMap(element =>
-      expressionRootBindings(ts.isSpreadElement(element) ? element.expression : element, program))
+  if (ts.isIdentifier(current)) {
+    return [{target: {kind: 'binding', identifier: current}, flow: sourceFlow}]
+  }
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    return [{target: {kind: 'path', expression: current}, flow: sourceFlow}]
   }
   if (ts.isObjectLiteralExpression(current)) {
     return current.properties.flatMap(property => {
-      if (ts.isSpreadAssignment(property)) return expressionRootBindings(property.expression, program)
-      if (ts.isShorthandPropertyAssignment(property)) return [bindingKey(property.name, program)]
-      if (ts.isPropertyAssignment(property)) return expressionRootBindings(property.initializer, program)
+      if (ts.isShorthandPropertyAssignment(property)) {
+        const selected = reachableAliasFlow(sourceFlow)
+        const value = property.objectAssignmentInitializer == null
+          ? selected
+          : mergeValueFlows([
+            selected,
+            expressionValueFlow(property.objectAssignmentInitializer, program, context),
+          ])
+        return [{
+          target: {kind: 'binding', identifier: property.name} as AssignmentTarget,
+          flow: value,
+        }]
+      }
+      if (ts.isPropertyAssignment(property)) {
+        return assignmentValueFlows(
+          property.initializer,
+          reachableAliasFlow(sourceFlow),
+          program,
+          context,
+        )
+      }
+      if (ts.isSpreadAssignment(property)) {
+        return assignmentValueFlows(
+          property.expression,
+          freshContainerFlow(sourceFlow),
+          program,
+          context,
+        )
+      }
       return []
     })
   }
-  if (ts.isNewExpression(current)) {
-    return (current.arguments ?? []).flatMap(argument => expressionRootBindings(argument, program))
+  if (ts.isArrayLiteralExpression(current)) {
+    return current.elements.flatMap(element => {
+      if (ts.isOmittedExpression(element)) return []
+      if (ts.isSpreadElement(element)) {
+        return assignmentValueFlows(
+          element.expression,
+          freshContainerFlow(sourceFlow),
+          program,
+          context,
+        )
+      }
+      return assignmentValueFlows(
+        element,
+        reachableAliasFlow(sourceFlow),
+        program,
+        context,
+      )
+    })
   }
-  return null
+  if (
+    ts.isBinaryExpression(current)
+    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    return assignmentValueFlows(
+      current.left,
+      mergeValueFlows([
+        sourceFlow,
+        expressionValueFlow(current.right, program, context),
+      ]),
+      program,
+      context,
+    )
+  }
+  return []
 }
 
-// Flow-insensitive closure: a binding that ever received a root carries that
-// root's own sources transitively.
-function closeSourceEdges(edges: {target: BindingKey; sourceRoots: BindingKey[]}[]): Map<BindingKey, Set<BindingKey>> {
-  const sources = new Map<BindingKey, Set<BindingKey>>()
-  for (let changed = true; changed;) {
-    changed = false
-    for (const {target, sourceRoots} of edges) {
-      let targetSources = sources.get(target)
-      for (const root of sourceRoots) {
-        const additions = [root, ...(sources.get(root) ?? [])]
-        for (const addition of additions) {
-          if (addition === target) continue
-          if (targetSources == null) {
-            targetSources = new Set()
-            sources.set(target, targetSources)
-          }
-          if (!targetSources.has(addition)) {
-            targetSources.add(addition)
-            changed = true
-          }
+function expressionValueFlow(
+  expression: ts.Expression,
+  program: Program,
+  context: ValueFlowContext,
+): ValueFlow {
+  const current = unwrapExpression(expression)
+  if (!expressionHasMutableType(current, program)) return emptyValueFlow()
+  if (ts.isIdentifier(current)) {
+    return {aliases: [{binding: bindingKey(current, program), relation: 'same'}], retainedRoots: []}
+  }
+  if (current.kind === ts.SyntaxKind.ThisKeyword) {
+    return {aliases: [{binding: 'this', relation: 'same'}], retainedRoots: []}
+  }
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    return reachableAliasFlow(expressionValueFlow(current.expression, program, context))
+  }
+  if (ts.isArrayLiteralExpression(current)) {
+    return {
+      aliases: [],
+      retainedRoots: current.elements.flatMap(element =>
+        allReachableRoots(expressionValueFlow(
+          ts.isSpreadElement(element) ? element.expression : element,
+          program,
+          context,
+        ))),
+    }
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    return {
+      aliases: [],
+      retainedRoots: current.properties.flatMap(property => {
+        if (ts.isSpreadAssignment(property)) {
+          return allReachableRoots(expressionValueFlow(property.expression, program, context))
         }
+        if (ts.isShorthandPropertyAssignment(property)) return [bindingKey(property.name, program)]
+        if (ts.isPropertyAssignment(property)) {
+          return allReachableRoots(expressionValueFlow(property.initializer, program, context))
+        }
+        return []
+      }),
+    }
+  }
+  if (ts.isNewExpression(current)) {
+    return {
+      aliases: [],
+      retainedRoots: (current.arguments ?? []).flatMap(argument =>
+        allReachableRoots(expressionValueFlow(argument, program, context))),
+    }
+  }
+  if (ts.isCallExpression(current)) {
+    const platformFlow = platformCallResultFlow(current, program, context)
+    if (platformFlow != null) return platformFlow
+  }
+  return {
+    aliases: expressionRootBindings(current, program)
+      .map(binding => ({binding, relation: 'reachable'})),
+    retainedRoots: [],
+  }
+}
+
+function platformCallResultFlow(
+  call: ts.CallExpression,
+  program: Program,
+  context: ValueFlowContext,
+): ValueFlow | null {
+  const target = unwrapExpression(call.expression)
+  if (!ts.isPropertyAccessExpression(target) || !isDefaultLibraryMemberAccess(target, program)) return null
+  const base = unwrapExpression(target.expression)
+  const global = ts.isIdentifier(base) && isDefaultLibrarySymbol(base, program)
+  const classification = global
+    ? classifyPlatformGlobalCall(base.text, target.name.text, call.arguments.length)
+    : classifyPlatformMethodCall(
+      defaultLibraryOwner(target, program),
+      target.name.text,
+      call.arguments.length,
+    )
+  if (classification.kind !== 'supported') return null
+  return platformResultFlow(
+    call,
+    classification.effect,
+    classification.effect.result,
+    global ? null : target.expression,
+    program,
+    context,
+  )
+}
+
+function platformResultFlow(
+  call: ts.CallExpression,
+  effect: PlatformCallEffect,
+  result: PlatformResultEffect,
+  receiver: ts.Expression | null,
+  program: Program,
+  context: ValueFlowContext,
+): ValueFlow {
+  const flowForValueSource = (source: PlatformValueSource): ValueFlow => {
+    switch (source.kind) {
+      case 'receiver':
+        return receiver == null ? emptyValueFlow() : expressionValueFlow(receiver, program, context)
+      case 'receiver-elements':
+        return receiver == null
+          ? emptyValueFlow()
+          : reachableAliasFlow(expressionValueFlow(receiver, program, context))
+      case 'argument': {
+        const argument = call.arguments[source.index]
+        if (argument == null) return emptyValueFlow()
+        return expressionValueFlow(
+          ts.isSpreadElement(argument) ? argument.expression : argument,
+          program,
+          context,
+        )
+      }
+    }
+  }
+  const flowForResultSource = (source: PlatformResultSource): ValueFlow => {
+    switch (source.kind) {
+      case 'receiver':
+      case 'receiver-elements':
+      case 'argument':
+        return flowForValueSource(source)
+      case 'arguments-from':
+        return mergeValueFlows(call.arguments.slice(source.index).map(argument =>
+          expressionValueFlow(
+            ts.isSpreadElement(argument) ? argument.expression : argument,
+            program,
+            context,
+          )))
+      case 'callback-return': {
+        const callback = effect.callbacks.find(callback =>
+          callback.argumentIndex === source.argumentIndex)
+        return callback == null
+          ? emptyValueFlow()
+          : callbackReturnFlow(call, callback, flowForValueSource, program, context)
+      }
+    }
+  }
+  const aliasFlow = mergeValueFlows(result.aliases.map(flowForResultSource))
+  const retainedFlow = mergeValueFlows(result.retains.map(flowForResultSource))
+  return {
+    aliases: aliasFlow.aliases,
+    retainedRoots: [
+      ...aliasFlow.retainedRoots,
+      ...allReachableRoots(retainedFlow),
+    ],
+  }
+}
+
+function callbackReturnFlow(
+  call: ts.CallExpression,
+  callback: PlatformCallbackEffect,
+  flowForValueSource: (source: PlatformValueSource) => ValueFlow,
+  callerProgram: Program,
+  context: ValueFlowContext,
+): ValueFlow {
+  const argument = call.arguments[callback.argumentIndex]
+  if (argument == null) return emptyValueFlow()
+  const implementation = functionValuedArgument(argument, callerProgram)
+  if (implementation == null) return emptyValueFlow()
+  const lexicalThisFlow = ts.isArrowFunction(implementation.node)
+    && unwrapExpression(argument) === implementation.node
+    ? {aliases: [{binding: 'this', relation: 'same'}] satisfies ValueAlias[], retainedRoots: []}
+    : null
+  if (context.activeCallbackReturns.has(implementation.node)) {
+    context.encounteredRecursiveCallbackReturn = true
+    return mergeValueFlows(callback.parameterSources
+      .flatMap(sources => sources.map(flowForValueSource))
+      .map(reachableAliasFlow))
+  }
+  context.activeCallbackReturns.add(implementation.node)
+  try {
+    const scope = buildScope(implementation.node, implementation.program, context)
+    const classifiers = makeClassifiers(scope, implementation.program)
+    const returnedFlows: ValueFlow[] = []
+    for (const expression of returnedExpressions(implementation.node)) {
+      const flow = expressionValueFlow(expression, implementation.program, context)
+      const aliasFlow = mergeValueFlows(flow.aliases.map(alias =>
+        callbackRootFlows(
+          alias.relation === 'same'
+            ? classifiers.container(alias.binding)
+            : classifiers.reach(alias.binding),
+          callback,
+          flowForValueSource,
+          lexicalThisFlow,
+        )))
+      const aliasContents = mergeValueFlows(flow.aliases.map(alias =>
+        callbackRootFlows(
+          classifiers.reach(alias.binding),
+          callback,
+          flowForValueSource,
+          lexicalThisFlow,
+        )))
+      returnedFlows.push({
+        aliases: aliasFlow.aliases,
+        retainedRoots: [
+          ...aliasFlow.retainedRoots,
+          ...allReachableRoots(aliasContents),
+          ...flow.retainedRoots.flatMap(root =>
+            allReachableRoots(callbackRootFlows(
+              classifiers.reach(root),
+              callback,
+              flowForValueSource,
+              lexicalThisFlow,
+            ))),
+        ],
+      })
+    }
+    return mergeValueFlows(returnedFlows)
+  } finally {
+    context.activeCallbackReturns.delete(implementation.node)
+  }
+}
+
+function callbackRootFlows(
+  roots: RootKind[],
+  callback: PlatformCallbackEffect,
+  flowForValueSource: (source: PlatformValueSource) => ValueFlow,
+  lexicalThisFlow: ValueFlow | null,
+): ValueFlow {
+  return mergeValueFlows(roots.flatMap(root => {
+    switch (root.kind) {
+      case 'param':
+        return (callback.parameterSources[root.index] ?? []).map(flowForValueSource)
+      case 'outer':
+        return [{
+          aliases: [{binding: root.binding.key, relation: 'same'}] satisfies ValueAlias[],
+          retainedRoots: [],
+        }]
+      case 'this':
+        if (lexicalThisFlow != null) return [lexicalThisFlow]
+        return callback.thisSource == null ? [] : [flowForValueSource(callback.thisSource)]
+    }
+  }))
+}
+
+function emptyValueFlow(): ValueFlow {
+  return {aliases: [], retainedRoots: []}
+}
+
+function mergeValueFlows(flows: readonly ValueFlow[]): ValueFlow {
+  const aliases = new Map<BindingKey, Set<ValueAlias['relation']>>()
+  const retainedRoots = new Set<BindingKey>()
+  for (const flow of flows) {
+    for (const alias of flow.aliases) {
+      let relations = aliases.get(alias.binding)
+      if (relations == null) {
+        relations = new Set()
+        aliases.set(alias.binding, relations)
+      }
+      relations.add(alias.relation)
+    }
+    for (const root of flow.retainedRoots) retainedRoots.add(root)
+  }
+  return {
+    aliases: [...aliases].flatMap(([binding, relations]) =>
+      [...relations].map(relation => ({binding, relation}))),
+    retainedRoots: [...retainedRoots],
+  }
+}
+
+function reachableAliasFlow(flow: ValueFlow): ValueFlow {
+  return {
+    aliases: allReachableRoots(flow).map(binding => ({binding, relation: 'reachable'})),
+    retainedRoots: [],
+  }
+}
+
+function freshContainerFlow(flow: ValueFlow): ValueFlow {
+  return {aliases: [], retainedRoots: allReachableRoots(flow)}
+}
+
+function allReachableRoots(flow: ValueFlow): BindingKey[] {
+  return [...new Set([
+    ...flow.aliases.map(alias => alias.binding),
+    ...flow.retainedRoots,
+  ])]
+}
+
+function returnedExpressions(node: FunctionImplementationNode): ts.Expression[] {
+  if (ts.isArrowFunction(node) && !ts.isBlock(node.body)) return [node.body]
+  const expressions: ts.Expression[] = []
+  const visit = (current: ts.Node) => {
+    if (current !== node && isFunctionImplementation(current)) return
+    if (ts.isReturnStatement(current)) {
+      if (current.expression != null) expressions.push(current.expression)
+      return
+    }
+    ts.forEachChild(current, visit)
+  }
+  ts.forEachChild(node, visit)
+  return expressions
+}
+
+function sourceMap(edges: {target: BindingKey; sourceRoots: BindingKey[]}[]): Map<BindingKey, Set<BindingKey>> {
+  const sources = new Map<BindingKey, Set<BindingKey>>()
+  for (const {target, sourceRoots} of edges) {
+    if (sourceRoots.length === 0) continue
+    let targetSources = sources.get(target)
+    if (targetSources == null) {
+      targetSources = new Set()
+      sources.set(target, targetSources)
+    }
+    for (const root of sourceRoots) {
+      if (root !== target) {
+        targetSources.add(root)
       }
     }
   }
@@ -473,6 +923,48 @@ function pathWriteBaseBinding(expression: ts.Expression, program: Program): Bind
   return null
 }
 
+type AssignmentTarget =
+  | {kind: 'binding'; identifier: ts.Identifier}
+  | {kind: 'path'; expression: ts.PropertyAccessExpression | ts.ElementAccessExpression}
+
+function assignmentTargets(expression: ts.Expression): AssignmentTarget[] {
+  const current = unwrapExpression(expression)
+  if (ts.isIdentifier(current)) return [{kind: 'binding', identifier: current}]
+  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
+    return [{kind: 'path', expression: current}]
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    const targets: AssignmentTarget[] = []
+    for (const property of current.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        targets.push({kind: 'binding', identifier: property.name})
+      } else if (ts.isPropertyAssignment(property)) {
+        targets.push(...assignmentTargets(property.initializer))
+      } else if (ts.isSpreadAssignment(property)) {
+        targets.push(...assignmentTargets(property.expression))
+      }
+    }
+    return targets
+  }
+  if (ts.isArrayLiteralExpression(current)) {
+    const targets: AssignmentTarget[] = []
+    for (const element of current.elements) {
+      if (ts.isOmittedExpression(element)) continue
+      targets.push(...assignmentTargets(
+        ts.isSpreadElement(element) ? element.expression : element,
+      ))
+    }
+    return targets
+  }
+  if (
+    ts.isBinaryExpression(current)
+    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    return assignmentTargets(current.left)
+  }
+  return []
+}
+
 type Classifier = (binding: BindingKey) => RootKind[]
 
 type Classifiers = {
@@ -483,7 +975,16 @@ type Classifiers = {
 }
 
 function makeClassifiers(scope: Scope, program: Program): Classifiers {
-  const classifyDirect = (binding: BindingKey, seen: Set<BindingKey>, includeReachable: boolean): RootKind[] => {
+  const classifyDirect = (
+    binding: BindingKey,
+    seen: Map<BindingKey, boolean>,
+    includeReachable: boolean,
+  ): RootKind[] => {
+    if (seen.has(binding)) {
+      const previouslyIncludedReachable = seen.get(binding)!
+      if (previouslyIncludedReachable || !includeReachable) return []
+    }
+    seen.set(binding, includeReachable)
     const result: RootKind[] = []
     if (binding === 'this') {
       result.push({kind: 'this'})
@@ -494,28 +995,40 @@ function makeClassifiers(scope: Scope, program: Program): Classifiers {
     }
     const sources = [
       ...(scope.containerSources.get(binding) ?? []),
-      ...(includeReachable ? scope.reachableSources.get(binding) ?? [] : []),
     ]
     for (const source of sources) {
-      if (seen.has(source)) continue
-      seen.add(source)
       result.push(...classifyDirect(source, seen, includeReachable))
+    }
+    for (const source of scope.reachableAliasSources.get(binding) ?? []) {
+      result.push(...classifyDirect(source, seen, true))
+    }
+    if (includeReachable) {
+      for (const source of scope.reachableSources.get(binding) ?? []) {
+        result.push(...classifyDirect(source, seen, true))
+      }
     }
     return result
   }
   return {
-    container: binding => classifyDirect(binding, new Set([binding]), false),
-    reach: binding => classifyDirect(binding, new Set([binding]), true),
+    container: binding => classifyDirect(binding, new Map(), false),
+    reach: binding => classifyDirect(binding, new Map(), true),
   }
 }
 
 function bindingKey(identifier: ts.Identifier, program: Program): BindingKey {
   const checker = program.typeChecker
   if (checker == null) return `binding:${identifier.text}`
-  let symbol = checker.getSymbolAtLocation(identifier)
+  let symbol = valueBindingSymbol(identifier, checker)
   if (symbol == null) return `binding:${identifier.text}`
   if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
   return symbol
+}
+
+function valueBindingSymbol(identifier: ts.Identifier, checker: ts.TypeChecker) {
+  const parent = identifier.parent
+  return ts.isShorthandPropertyAssignment(parent) && parent.name === identifier
+    ? checker.getShorthandAssignmentValueSymbol(parent)
+    : checker.getSymbolAtLocation(identifier)
 }
 
 function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | undefined {
@@ -566,8 +1079,27 @@ function mutableOuterRead(id: ts.Identifier, classifiers: Classifiers, program: 
   const parent = id.parent
   if (ts.isPropertyAccessExpression(parent) && parent.name === id) return null
   if (ts.isQualifiedName(parent) && parent.right === id) return null
-  if ((ts.isPropertyAssignment(parent) || ts.isPropertySignature(parent) || ts.isEnumMember(parent)) && parent.name === id) return null
+  if (
+    (
+      ts.isPropertyAssignment(parent)
+      || ts.isPropertyDeclaration(parent)
+      || ts.isPropertySignature(parent)
+      || ts.isEnumMember(parent)
+      || ts.isJsxAttribute(parent)
+    )
+    && parent.name === id
+  ) return null
   if (ts.isBindingElement(parent) && parent.propertyName === id) return null
+  if (isWriteOnlyAssignmentBinding(id)) return null
+  if (
+    (
+      ts.isJsxOpeningElement(parent)
+      || ts.isJsxClosingElement(parent)
+      || ts.isJsxSelfClosingElement(parent)
+    )
+    && parent.tagName === id
+    && isIntrinsicJsxTagName(id.text)
+  ) return null
   if (
     (
       ts.isFunctionDeclaration(parent)
@@ -589,6 +1121,26 @@ function mutableOuterRead(id: ts.Identifier, classifiers: Classifiers, program: 
   return outer.binding
 }
 
+function isWriteOnlyAssignmentBinding(identifier: ts.Identifier) {
+  for (let current: ts.Node = identifier; current.parent != null; current = current.parent) {
+    const parent = current.parent
+    if (
+      ts.isBinaryExpression(parent)
+      && parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      return assignmentTargets(parent.left).some(target =>
+        target.kind === 'binding' && target.identifier === identifier)
+    }
+    if (ts.isStatement(parent) || isFunctionImplementation(parent)) return false
+  }
+  return false
+}
+
+function isIntrinsicJsxTagName(name: string) {
+  const first = name.codePointAt(0)
+  return first != null && first >= 97 && first <= 122
+}
+
 function isInTypeContext(node: ts.Node): boolean {
   for (let current = node.parent; current != null; current = current.parent) {
     if (ts.isTypeNode(current)) return true
@@ -603,7 +1155,7 @@ function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
   if (isSafeNamespacePrimitiveRead(id, program)) return true
   const checker = program.typeChecker
   if (checker == null) return false
-  let symbol = checker.getSymbolAtLocation(id)
+  let symbol = valueBindingSymbol(id, checker)
   if (symbol == null) return false
   if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
   const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
@@ -708,6 +1260,7 @@ function collectWrites(
   member: MemberInfo,
   classifiers: Classifiers,
   members: MemberIndex,
+  valueFlowContext: ValueFlowContext,
 ) {
   const {node, program} = implementation
   const addMutation = (roots: RootKind[]) => {
@@ -720,7 +1273,9 @@ function collectWrites(
     member.effects.unknownCallReasons.add(reason)
   }
   const classifyExpressionRoots = (expression: ts.Expression): RootKind[] =>
-    expressionRootBindings(expression, program).flatMap(root => classifiers.reach(root))
+    classifyValueFlow(expressionValueFlow(expression, program, valueFlowContext), classifiers, true)
+  const classifyExpressionContainerRoots = (expression: ts.Expression): RootKind[] =>
+    classifyValueFlow(expressionValueFlow(expression, program, valueFlowContext), classifiers, false)
   const addResolvedEdge = (
     target: Extract<ReturnType<typeof resolveCallTarget>, {kind: 'function'}>,
     arguments_: readonly ts.Expression[],
@@ -750,10 +1305,16 @@ function collectWrites(
       if (expressionMayBeCallable(argument, program)) addUnknownCall()
       return
     }
+    const inlineArrow = ts.isArrowFunction(fn.node) && unwrapExpression(argument) === fn.node
+    if (ts.isArrowFunction(fn.node) && !inlineArrow && functionUsesThis(fn.node)) {
+      addUnknownCall('calls an arrow callback whose lexical `this` cannot be represented')
+    }
     member.edges.push({
       callee: fn,
       argumentRoots: callback.parameterSources.map(sources => sources.flatMap(rootsForSource)),
-      receiverRoots: callback.thisSource == null ? [] : rootsForSource(callback.thisSource),
+      receiverRoots: inlineArrow
+        ? [{kind: 'this'}]
+        : callback.thisSource == null ? [] : rootsForSource(callback.thisSource),
       classifyBinding: classifiers.reach,
     })
     collectMember(fn, members)
@@ -780,8 +1341,105 @@ function collectWrites(
     for (const callback of effect.callbacks) addCallbackEdge(call, callback, rootsForSource)
   }
 
+  for (const parameter of node.parameters) {
+    if (bindingNameHasNestedPattern(parameter.name)) {
+      addUnknownCall('nested destructuring is unsupported because selected values need separate reference tracking')
+    }
+    if (
+      ts.isArrayBindingPattern(parameter.name)
+      && !isKnownBuiltInIterableTypeAtLocation(parameter.name, program)
+    ) {
+      addUnknownCall('array destructuring is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isObjectBindingPattern(parameter.name)
+      && bindingPatternTypeAtLocationMayReadAccessor(parameter.name, program)
+    ) {
+      addUnknownCall('object destructuring is unsupported because reading a property can call a getter')
+    }
+  }
+
   const visit = (current: ts.Node) => {
     if (isFunctionImplementation(current)) return
+    if (
+      ts.isVariableDeclaration(current)
+      && bindingNameHasNestedPattern(current.name)
+    ) {
+      addUnknownCall('nested destructuring is unsupported because selected values need separate reference tracking')
+    }
+    if (ts.isSpreadElement(current) && !isKnownBuiltInIterable(current.expression, program)) {
+      addUnknownCall('spread is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isVariableDeclaration(current)
+      && ts.isArrayBindingPattern(current.name)
+      && current.initializer != null
+      && !isKnownBuiltInIterable(current.initializer, program)
+    ) {
+      addUnknownCall('array destructuring is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isVariableDeclaration(current)
+      && ts.isObjectBindingPattern(current.name)
+      && current.initializer != null
+      && bindingPatternMayReadAccessor(current.name, current.initializer, program)
+    ) {
+      addUnknownCall('object destructuring is unsupported because reading a property can call a getter')
+    }
+    if (ts.isCatchClause(current) && current.variableDeclaration != null) {
+      if (ts.isArrayBindingPattern(current.variableDeclaration.name)) {
+        addUnknownCall('array destructuring is unsupported because its iterator can run user code')
+      }
+      if (ts.isObjectBindingPattern(current.variableDeclaration.name)) {
+        addUnknownCall('object destructuring is unsupported because reading a property can call a getter')
+      }
+    }
+    if (
+      ts.isSpreadAssignment(current)
+      && expressionTypeHasAccessor(current.expression, program)
+    ) {
+      addUnknownCall('object spread is unsupported because reading a property can call a getter')
+    }
+    if (
+      ts.isForOfStatement(current)
+      && (
+        current.awaitModifier != null
+        || !isKnownBuiltInIterable(current.expression, program)
+      )
+    ) {
+      addUnknownCall('for-of is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isYieldExpression(current)
+      && current.asteriskToken != null
+      && current.expression != null
+      && !isKnownBuiltInIterable(current.expression, program)
+    ) {
+      addUnknownCall('yield* is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isBinaryExpression(current)
+      && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && assignmentHasNestedPattern(current.left)
+    ) {
+      addUnknownCall('nested destructuring is unsupported because selected values need separate reference tracking')
+    }
+    if (
+      ts.isBinaryExpression(current)
+      && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isArrayLiteralExpression(unwrapExpression(current.left))
+      && !isKnownBuiltInIterable(current.right, program)
+    ) {
+      addUnknownCall('array destructuring is unsupported because its iterator can run user code')
+    }
+    if (
+      ts.isBinaryExpression(current)
+      && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isObjectLiteralExpression(unwrapExpression(current.left))
+      && assignmentPatternMayReadAccessor(current.left, current.right, program)
+    ) {
+      addUnknownCall('object destructuring is unsupported because reading a property can call a getter')
+    }
     if (ts.isIdentifier(current)) {
       const binding = mutableOuterRead(current, classifiers, program)
       if (binding != null) addMutableOuterRead(member.effects, binding)
@@ -790,7 +1448,9 @@ function collectWrites(
       const target = unwrapExpression(current.left)
       const setter = (ts.isPropertyAccessExpression(target) && propertyAccessHasSourceAccessor(target, 'set', program))
         || (ts.isElementAccessExpression(target) && elementAccessHasSourceAccessor(target, 'set', program))
-      const targetRoots = setter ? [] : writeTargetRoots(current.left, classifiers, program)
+      const targetRoots = setter
+        ? []
+        : writeTargetRoots(current.left, classifiers, program, valueFlowContext)
       addMutation(targetRoots)
       // Writing a value into caller-visible state lets the caller's world reach
       // it later; the value's own roots must be forgotten too (escape).
@@ -846,10 +1506,12 @@ function collectWrites(
       const target = unwrapExpression(current.operand)
       const setter = (ts.isPropertyAccessExpression(target) && propertyAccessHasSourceAccessor(target, 'set', program))
         || (ts.isElementAccessExpression(target) && elementAccessHasSourceAccessor(target, 'set', program))
-      if (!setter) addMutation(writeTargetRoots(current.operand, classifiers, program))
+      if (!setter) {
+        addMutation(writeTargetRoots(current.operand, classifiers, program, valueFlowContext))
+      }
     }
     if (ts.isDeleteExpression(current)) {
-      addMutation(writeTargetRoots(current.expression, classifiers, program))
+      addMutation(writeTargetRoots(current.expression, classifiers, program, valueFlowContext))
     }
     if (ts.isCallExpression(current)) collectCall(current)
     if (ts.isNewExpression(current)) collectNew(current)
@@ -890,7 +1552,7 @@ function collectWrites(
       const receiverBase = pathWriteBaseBinding(target.expression, program)
       const receiverContainerRoots = receiverBase != null
         ? classifiers.container(receiverBase)
-        : classifyExpressionRoots(target.expression)
+        : classifyExpressionContainerRoots(target.expression)
       const receiverElementRoots = receiverBase != null
         ? classifiers.reach(receiverBase)
         : classifyExpressionRoots(target.expression)
@@ -994,6 +1656,255 @@ function functionValuedArgument(argument: ts.Expression, program: Program): Func
   return null
 }
 
+function bindingNameHasNestedPattern(name: ts.BindingName): boolean {
+  if (ts.isIdentifier(name)) return false
+  return name.elements.some(element =>
+    !ts.isOmittedExpression(element)
+    && !ts.isIdentifier(element.name))
+}
+
+function assignmentHasNestedPattern(expression: ts.Expression): boolean {
+  const current = unwrapExpression(expression)
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return assignmentHasNestedPattern(current.left)
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    return current.properties.some(property =>
+      ts.isPropertyAssignment(property)
+      && assignmentPatternExpression(property.initializer))
+  }
+  if (ts.isArrayLiteralExpression(current)) {
+    return current.elements.some(element =>
+      !ts.isOmittedExpression(element)
+      && assignmentPatternExpression(
+        ts.isSpreadElement(element) ? element.expression : element,
+      ))
+  }
+  return false
+}
+
+function assignmentPatternExpression(expression: ts.Expression): boolean {
+  const current = unwrapExpression(expression)
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return assignmentPatternExpression(current.left)
+  }
+  return ts.isObjectLiteralExpression(current) || ts.isArrayLiteralExpression(current)
+}
+
+function functionUsesThis(node: FunctionImplementationNode): boolean {
+  let found = false
+  const visit = (current: ts.Node) => {
+    if (found || (current !== node && isFunctionImplementation(current))) return
+    if (current.kind === ts.SyntaxKind.ThisKeyword) {
+      found = true
+      return
+    }
+    ts.forEachChild(current, visit)
+  }
+  ts.forEachChild(node, visit)
+  return found
+}
+
+function isKnownBuiltInIterable(expression: ts.Expression, program: Program): boolean {
+  const current = unwrapExpression(expression)
+  if (
+    ts.isCallExpression(current)
+    && ts.isPropertyAccessExpression(unwrapExpression(current.expression))
+  ) {
+    const target = unwrapExpression(current.expression)
+    if (
+      ts.isPropertyAccessExpression(target)
+      && isDefaultLibraryMemberAccess(target, program)
+      && (
+        target.name.text === 'keys'
+        || target.name.text === 'values'
+        || target.name.text === 'entries'
+      )
+    ) {
+      const classification = classifyPlatformMethodCall(
+        defaultLibraryOwner(target, program),
+        target.name.text,
+        current.arguments.length,
+      )
+      if (classification.kind === 'supported' || target.name.text === 'entries') return true
+    }
+  }
+  return isKnownBuiltInIterableTypeAtLocation(current, program)
+}
+
+function isKnownBuiltInIterableTypeAtLocation(node: ts.Node, program: Program): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return false
+  try {
+    return isKnownBuiltInIterableType(checker.getTypeAtLocation(node), checker, program)
+  } catch {
+    return false
+  }
+}
+
+function isKnownBuiltInIterableType(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  program: Program,
+): boolean {
+  if (type.isUnion()) {
+    return type.types.every(member => isKnownBuiltInIterableType(member, checker, program))
+  }
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return true
+  if (checker.isArrayType(type) || checker.isTupleType(type)) return true
+  const referenceTarget = (type.flags & ts.TypeFlags.Object) !== 0
+    && (type as ts.ObjectType).objectFlags & ts.ObjectFlags.Reference
+    ? (type as ts.TypeReference).target
+    : null
+  const symbols = [type.aliasSymbol, type.getSymbol(), referenceTarget?.getSymbol()]
+  return symbols.some(symbol =>
+    symbol != null
+    && builtInIterableTypeNames.has(symbol.getName())
+    && symbol.declarations?.some(declaration =>
+      program.project.typeProgram?.isSourceFileDefaultLibrary(declaration.getSourceFile()) === true,
+    ) === true)
+}
+
+const builtInIterableTypeNames = new Set([
+  'Array',
+  'ReadonlyArray',
+  'Map',
+  'ReadonlyMap',
+  'Set',
+  'ReadonlySet',
+  'Int8Array',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'Int16Array',
+  'Uint16Array',
+  'Int32Array',
+  'Uint32Array',
+  'Float32Array',
+  'Float64Array',
+  'BigInt64Array',
+  'BigUint64Array',
+])
+
+function bindingPatternMayReadAccessor(
+  pattern: ts.ObjectBindingPattern,
+  source: ts.Expression,
+  program: Program,
+): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  try {
+    return bindingPatternTypeMayReadAccessor(pattern, checker.getTypeAtLocation(source), checker)
+  } catch {
+    return true
+  }
+}
+
+function bindingPatternTypeAtLocationMayReadAccessor(
+  pattern: ts.ObjectBindingPattern,
+  program: Program,
+): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  try {
+    return bindingPatternTypeMayReadAccessor(
+      pattern,
+      checker.getTypeAtLocation(pattern),
+      checker,
+    )
+  } catch {
+    return true
+  }
+}
+
+function bindingPatternTypeMayReadAccessor(
+  pattern: ts.ObjectBindingPattern,
+  sourceType: ts.Type,
+  checker: ts.TypeChecker,
+): boolean {
+  for (const element of pattern.elements) {
+    if (element.dotDotDotToken != null) {
+      if (typeHasAccessor(sourceType, checker)) return true
+      continue
+    }
+    const name = staticPropertyName(element.propertyName ?? element.name)
+    if (name == null) return true
+    const property = checker.getPropertyOfType(sourceType, name)
+    if (symbolHasAccessor(property)) return true
+  }
+  return false
+}
+
+function assignmentPatternMayReadAccessor(
+  pattern: ts.Expression,
+  source: ts.Expression,
+  program: Program,
+): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  try {
+    return assignmentPatternTypeMayReadAccessor(
+      unwrapExpression(pattern),
+      checker.getTypeAtLocation(source),
+      checker,
+    )
+  } catch {
+    return true
+  }
+}
+
+function assignmentPatternTypeMayReadAccessor(
+  pattern: ts.Expression,
+  sourceType: ts.Type,
+  checker: ts.TypeChecker,
+): boolean {
+  const current = unwrapExpression(pattern)
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    return assignmentPatternTypeMayReadAccessor(current.left, sourceType, checker)
+  }
+  if (!ts.isObjectLiteralExpression(current)) return false
+  for (const property of current.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      if (typeHasAccessor(sourceType, checker)) return true
+      continue
+    }
+    const name = ts.isShorthandPropertyAssignment(property)
+      ? property.name.text
+      : ts.isPropertyAssignment(property) ? staticPropertyName(property.name) : null
+    if (name == null) return true
+    const sourceProperty = checker.getPropertyOfType(sourceType, name)
+    if (symbolHasAccessor(sourceProperty)) return true
+  }
+  return false
+}
+
+function expressionTypeHasAccessor(expression: ts.Expression, program: Program): boolean {
+  const checker = program.typeChecker
+  if (checker == null) return true
+  try {
+    return typeHasAccessor(checker.getTypeAtLocation(expression), checker)
+  } catch {
+    return true
+  }
+}
+
+function typeHasAccessor(type: ts.Type, checker: ts.TypeChecker): boolean {
+  if (type.isUnion()) return type.types.some(member => typeHasAccessor(member, checker))
+  return checker.getPropertiesOfType(type).some(symbolHasAccessor)
+}
+
+function symbolHasAccessor(symbol: ts.Symbol | undefined): boolean {
+  return symbol?.declarations?.some(declaration =>
+    ts.isGetAccessorDeclaration(declaration),
+  ) === true
+}
+
+function staticPropertyName(name: ts.PropertyName | ts.BindingName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) {
+    return name.text
+  }
+  return null
+}
+
 function expressionMayBeCallable(expression: ts.Expression, program: Program): boolean {
   const checker = program.typeChecker
   if (checker == null) return false
@@ -1047,30 +1958,62 @@ function typeCanBeMutable(type: ts.Type): boolean {
   return (type.flags & immutableTypeFlags) === 0
 }
 
-function writeTargetRoots(target: ts.Expression, classifiers: Classifiers, program: Program): RootKind[] {
-  const current = unwrapExpression(target)
-  if (ts.isIdentifier(current)) {
-    // A bare rebind replaces the caller-invisible binding, except for outer
-    // roots, whose binding the caller shares.
-    return classifiers.container(bindingKey(current, program)).filter(root => root.kind === 'outer')
+function writeTargetRoots(
+  target: ts.Expression,
+  classifiers: Classifiers,
+  program: Program,
+  valueFlowContext: ValueFlowContext,
+): RootKind[] {
+  const roots: RootKind[] = []
+  for (const assignmentTarget of assignmentTargets(target)) {
+    if (assignmentTarget.kind === 'binding') {
+      // A bare rebind replaces the caller-invisible binding, except for outer
+      // roots, whose binding the caller shares.
+      roots.push(...classifiers
+        .container(bindingKey(assignmentTarget.identifier, program))
+        .filter(root => root.kind === 'outer'))
+    } else {
+      roots.push(...writeBaseRoots(
+        assignmentTarget.expression.expression,
+        classifiers,
+        program,
+        valueFlowContext,
+      ))
+    }
   }
-  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-    return writeBaseRoots(current.expression, classifiers, program)
-  }
-  return expressionRootBindings(current, program).flatMap(root => classifiers.reach(root))
+  return roots
 }
 
-// The container a path write mutates: the base chain's root, everything that
-// container aliases, and everything retained inside it — regardless of the
-// written value's type. Index expressions are reads and stay out.
-function writeBaseRoots(expression: ts.Expression, classifiers: Classifiers, program: Program): RootKind[] {
-  const current = unwrapExpression(expression)
-  if (ts.isIdentifier(current)) return classifiers.reach(bindingKey(current, program))
-  if (current.kind === ts.SyntaxKind.ThisKeyword) return [{kind: 'this'}]
-  if (ts.isPropertyAccessExpression(current) || ts.isElementAccessExpression(current)) {
-    return writeBaseRoots(current.expression, classifiers, program)
+// A direct property write mutates the expression's aliased container. Each
+// property or element step in that expression turns a retained value into a
+// possible alias, so `holder.box.n = 1` can reach `box` while `holder.n = 1`
+// does not.
+function writeBaseRoots(
+  expression: ts.Expression,
+  classifiers: Classifiers,
+  program: Program,
+  valueFlowContext: ValueFlowContext,
+): RootKind[] {
+  return classifyValueFlow(
+    expressionValueFlow(expression, program, valueFlowContext),
+    classifiers,
+    false,
+  )
+}
+
+function classifyValueFlow(
+  flow: ValueFlow,
+  classifiers: Classifiers,
+  includeRetained: boolean,
+): RootKind[] {
+  const roots = flow.aliases.flatMap(alias =>
+    alias.relation === 'same'
+      ? classifiers.container(alias.binding)
+      : classifiers.reach(alias.binding))
+  if (includeRetained) {
+    roots.push(...flow.retainedRoots.flatMap(root => classifiers.reach(root)))
   }
-  return expressionRootBindings(current, program).flatMap(root => classifiers.reach(root))
+  return roots
 }
 
 // Roots whose values could flow into this expression's value. A subtree of
