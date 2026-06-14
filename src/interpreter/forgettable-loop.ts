@@ -4,6 +4,8 @@ import {
   unknownArrayLength,
   unknownNumber,
   unknownObject,
+  type NumberComputation,
+  type NumberValue,
   type Value,
 } from '../domain.ts'
 import {expressionRootName, expressionRootNames} from '../source-expressions.ts'
@@ -189,8 +191,28 @@ function forgetSymbolicReferences(env: Map<string, Value>, root: string) {
       }
     }
     const exprStale = value.expr != null && mentionsRoot.test(value.expr)
-    if (linearStale || exprStale) env.set(name, {...value, linear: null, expr: null})
+    const computationStale = computationMentionsRoot(value.computation, mentionsRoot)
+    if (linearStale || exprStale || computationStale) {
+      env.set(name, {...value, linear: null, expr: null, computation: null})
+    }
   }
+}
+
+function computationMentionsRoot(computation: NumberComputation | null, pattern: RegExp): boolean {
+  if (computation == null) return false
+  return computation.kind === 'unary'
+    ? numberMentionsRoot(computation.operand, pattern)
+    : numberMentionsRoot(computation.left, pattern) || numberMentionsRoot(computation.right, pattern)
+}
+
+function numberMentionsRoot(value: NumberValue, pattern: RegExp): boolean {
+  if (value.expr != null && pattern.test(value.expr)) return true
+  if (value.linear != null) {
+    for (const term of value.linear.terms.keys()) {
+      if (pattern.test(term)) return true
+    }
+  }
+  return computationMentionsRoot(value.computation, pattern)
 }
 
 // Any assignment whose target root is known and whose right side is a pure read
@@ -207,4 +229,3 @@ function isKnownPureReadCall(expression: ts.CallExpression): boolean {
   if (ts.isIdentifier(target.expression) && target.expression.text === 'Math') return true
   return target.name.text === 'at' && isForgettableReadExpression(target.expression)
 }
-

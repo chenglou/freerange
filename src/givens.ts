@@ -15,6 +15,7 @@ import {
 import {
   finiteNumberValue,
   linearNameForExpression,
+  numberWithBounds,
   numberValue,
   withNumberCases,
   type ArraySummary,
@@ -846,7 +847,7 @@ function metNumber(current: NumberValue, lower: number, upper: number): NumberVa
     ...numberCase,
     value: metNumber(numberCase.value, lower, upper) ?? numberCase.value,
   }))
-  return numberValue(min, max, current.grid, current.expr, current.linear, cases, current.origin)
+  return numberWithBounds(current, min, max, current.grid, cases)
 }
 
 function staticRangeValue(range: FitRange, expressionText: string): NumberValue | null {

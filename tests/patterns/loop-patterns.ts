@@ -486,6 +486,10 @@ export function localLoopAnnotation(items: {height: number}[], y: number, gap: n
  * given gap: 0..10
  * return.rows.length <= items.length
  * return.rows[].height: 0..40
+ * return.rows[].bottom == return.rows[].y + return.rows[].height
+ * nondecreasing(return.rows.y)
+ * spaced(return.rows, gap)
+ * noOverlap(return.rows)
  */
 export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -499,8 +503,8 @@ export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: numbe
       const rowBottom = rowTop + rowHeight
       const resetHeight = 0
       rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
-      nextRowTop = rowBottom + gap
       rowHeight = resetHeight
+      nextRowTop = rowBottom + gap
     }
   }
   return {rows}

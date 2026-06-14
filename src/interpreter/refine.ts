@@ -2,7 +2,7 @@ import * as ts from 'typescript'
 import {
   literalValue,
   numberBranches,
-  numberValue,
+  numberWithBounds,
   withNumberCases,
   type NullishKind,
   type NumberCase,
@@ -261,15 +261,15 @@ function refineNumberPathCases(
 function narrowNumber(value: NumberValue, op: ComparisonOperator, other: number): NumberValue {
   switch (op) {
     case '==':
-      return numberValue(other, other, gridOfNumber(other), value.expr, value.linear, null, value.origin)
+      return numberWithBounds(value, other, other, gridOfNumber(other), null)
     case '>=':
-      return numberValue(Math.max(value.min, other), value.max, value.grid, value.expr, value.linear, value.cases, value.origin)
+      return numberWithBounds(value, Math.max(value.min, other), value.max)
     case '>':
-      return numberValue(Math.max(value.min, integerValued(value) ? Math.floor(other) + 1 : other), value.max, value.grid, value.expr, value.linear, value.cases, value.origin)
+      return numberWithBounds(value, Math.max(value.min, integerValued(value) ? Math.floor(other) + 1 : other), value.max)
     case '<=':
-      return numberValue(value.min, Math.min(value.max, other), value.grid, value.expr, value.linear, value.cases, value.origin)
+      return numberWithBounds(value, value.min, Math.min(value.max, other))
     case '<':
-      return numberValue(value.min, Math.min(value.max, integerValued(value) ? Math.ceil(other) - 1 : other), value.grid, value.expr, value.linear, value.cases, value.origin)
+      return numberWithBounds(value, value.min, Math.min(value.max, integerValued(value) ? Math.ceil(other) - 1 : other))
   }
 }
 

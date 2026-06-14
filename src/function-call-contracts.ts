@@ -19,6 +19,7 @@ import {
   literalValue,
   mergeOrigin,
   numberBranches,
+  numberWithBounds,
   numberValue,
   unknown,
   withNumberCases,
@@ -722,16 +723,18 @@ function applySummaryComparisonToPath(
   }
 
   switch (op) {
-    case '==':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(other.min, other.max, other.grid, other.expr, other.linear, other.cases, origin)))
+    case '==': {
+      const narrowed = numberWithBounds(current, other.min, other.max, other.grid, other.cases)
+      setSummaryPathValue(env, path, withSummaryFact({...narrowed, expr: other.expr, linear: other.linear, origin}))
       return
+    }
     case '>=':
     case '>':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(Math.max(current.min, other.min), current.max, current.grid, current.expr, current.linear, current.cases, origin)))
+      setSummaryPathValue(env, path, withSummaryFact({...numberWithBounds(current, Math.max(current.min, other.min), current.max), origin}))
       return
     case '<=':
     case '<':
-      setSummaryPathValue(env, path, withSummaryFact(numberValue(current.min, Math.min(current.max, other.max), current.grid, current.expr, current.linear, current.cases, origin)))
+      setSummaryPathValue(env, path, withSummaryFact({...numberWithBounds(current, current.min, Math.min(current.max, other.max)), origin}))
       return
   }
 }

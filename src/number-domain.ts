@@ -27,6 +27,7 @@ import {
 import type {
   LiteralValue,
   NumberCase,
+  NumberComputation,
   NumberValue,
   UnknownValue,
   Value,
@@ -167,6 +168,7 @@ export function numberValue(
   linear: LinearExpr | null = null,
   cases: NumberCase[] | null = null,
   origin: string[] = [],
+  computation: NumberComputation | null = null,
 ): NumberValue {
   const clean = linear == null ? null : cleanLinear(linear)
   const cleanOrigin = [...new Set(origin)]
@@ -174,12 +176,12 @@ export function numberValue(
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max
   if (clean != null && clean.terms.size === 0 && rationalIsExactNumber(clean.constant)) {
     const exact = rationalToNumber(clean.constant)
-    return {kind: 'number', min: exact, max: exact, grid: gridOfNumber(exact), expr, linear: clean, cases, origin: cleanOrigin}
+    return {kind: 'number', min: exact, max: exact, grid: gridOfNumber(exact), expr, linear: clean, computation, cases, origin: cleanOrigin}
   }
   if (cleanMin > cleanMax) {
-    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, grid: null, expr, linear: clean, cases, origin: cleanOrigin}
+    return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, grid: null, expr, linear: clean, computation, cases, origin: cleanOrigin}
   }
-  return {kind: 'number', min: cleanMin, max: cleanMax, grid, expr, linear: clean, cases, origin: cleanOrigin}
+  return {kind: 'number', min: cleanMin, max: cleanMax, grid, expr, linear: clean, computation, cases, origin: cleanOrigin}
 }
 
 export function finiteNumberValue(
@@ -222,6 +224,7 @@ export function unknownNumber(name: string): NumberValue {
     grid: null,
     expr: name,
     linear: linearVariable(linearNameForExpression(name)),
+    computation: null,
     cases: null,
     origin: [],
   }
@@ -294,6 +297,7 @@ function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberVal
     linear,
     null,
     mergeOrigin(left, right),
+    sameNumberComputation(left.computation, right.computation) ? left.computation : null,
   )
 }
 
@@ -303,6 +307,61 @@ function sameNumberShape(left: NumberValue, right: NumberValue) {
     && left.grid === right.grid
     && (left.expr ?? null) === (right.expr ?? null)
     && ((left.linear == null && right.linear == null) || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)))
+    && sameNumberComputation(left.computation, right.computation)
+}
+
+export function sameNumberComputation(left: NumberComputation | null, right: NumberComputation | null): boolean {
+  if (left === right) return true
+  if (left == null || right == null || left.kind !== right.kind || left.op !== right.op) return false
+  if (left.kind === 'unary' && right.kind === 'unary') return sameComputationOperand(left.operand, right.operand)
+  if (left.kind === 'binary' && right.kind === 'binary') {
+    return sameComputationOperand(left.left, right.left) && sameComputationOperand(left.right, right.right)
+  }
+  return false
+}
+
+export function sameComputationOperand(left: NumberValue, right: NumberValue): boolean {
+  if (left === right) return true
+  if (left.min !== right.min || left.max !== right.max || left.grid !== right.grid) return false
+  if (left.computation != null || right.computation != null) {
+    return sameNumberComputation(left.computation, right.computation)
+  }
+  if (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)) return true
+  return false
+}
+
+export function binaryNumberComputation(
+  op: Extract<NumberComputation, {kind: 'binary'}>['op'],
+  left: NumberValue,
+  right: NumberValue,
+): NumberComputation {
+  return {kind: 'binary', op, left: plainNumber(left), right: plainNumber(right)}
+}
+
+export function unaryNumberComputation(
+  op: Extract<NumberComputation, {kind: 'unary'}>['op'],
+  operand: NumberValue,
+): NumberComputation {
+  return {kind: 'unary', op, operand: plainNumber(operand)}
+}
+
+export function numberWithComputation(value: NumberValue, computation: NumberComputation): NumberValue {
+  return {...value, computation}
+}
+
+export function numberWithBounds(
+  value: NumberValue,
+  min: number,
+  max: number,
+  grid = value.grid,
+  cases = value.cases,
+): NumberValue {
+  const bounded = numberValue(min, max, grid, value.expr, value.linear, cases, value.origin, value.computation)
+  return value.neverNaN === true
+    && bounded.min === Number.NEGATIVE_INFINITY
+    && bounded.max === Number.POSITIVE_INFINITY
+    ? {...bounded, neverNaN: true}
+    : bounded
 }
 
 // Adding a pinned zero returns the other operand under JS == (only the sign

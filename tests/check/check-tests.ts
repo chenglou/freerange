@@ -1,5 +1,16 @@
 import {createFunctionContractCache, inferFitFiles, readTopLevelGlobal, verifyFitProgramWithCallsites} from '../../src/check-core.ts'
-import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from '../../src/domain.ts'
+import {
+  addNumbers,
+  binaryNumberComputation,
+  divideNumbers,
+  joinValues,
+  multiplyNumbers,
+  numberValue,
+  numberWithBounds,
+  numberWithComputation,
+  sameNumberComputation,
+  subtractNumbers,
+} from '../../src/domain.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
@@ -84,6 +95,36 @@ if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.
   process.exitCode = 1
 } else {
   console.log('domain: unbounded difference')
+}
+
+const computationLeft = numberValue(0, 1000, null, 'left')
+const computationHeight = numberValue(0, 40, null, 'height')
+const computationGap = numberValue(0, 10, null, 'gap')
+const computedAdd = (left: typeof computationLeft, right: typeof computationLeft) =>
+  numberWithComputation(addNumbers(left, right), binaryNumberComputation('+', left, right))
+const computationBottom = computedAdd(computationLeft, computationHeight)
+const computationNext = computedAdd(computationBottom, computationGap)
+const computationNextAgain = computedAdd(computationBottom, computationGap)
+const computationRegrouped = computedAdd(computationLeft, computedAdd(computationHeight, computationGap))
+const sameComputationJoin = joinValues(computationNext, computationNextAgain)
+const regroupedComputationJoin = joinValues(computationNext, computationRegrouped)
+const narrowedComputation = numberWithBounds(computationNext, 0, 100)
+if (
+  computationNext.computation == null
+  || computationRegrouped.computation == null
+  || !sameNumberComputation(computationNext.computation, computationNextAgain.computation)
+  || sameNumberComputation(computationNext.computation, computationRegrouped.computation)
+  || sameComputationJoin.kind !== 'number'
+  || sameComputationJoin.computation == null
+  || regroupedComputationJoin.kind !== 'number'
+  || regroupedComputationJoin.computation != null
+  || narrowedComputation.computation == null
+  || !sameNumberComputation(computationNext.computation, narrowedComputation.computation)
+) {
+  console.error('expected numeric computations to preserve operand snapshots, grouping, and range refinement')
+  process.exitCode = 1
+} else {
+  console.log('domain: numeric computations preserve grouping across joins')
 }
 
 const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
@@ -1244,21 +1285,28 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
 
-// Conditional flush loops rebind their cursor through a rounded computation
-// the analysis cannot classify yet, so the segmented fixture keeps only its
-// structural facts; the simple-push stackedRowsWithBottom carries the
-// sequence vocabulary, including the single-op bottom identity.
+// Conditional flush loops keep the exact operand snapshots used by rounded
+// additions, so resetting the height after the push cannot change the
+// row-bottom or next-row computation retroactively.
 const segmentedLoopInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'segmentedStackRowsWithGuardLocalResetAlias'})
 const segmentedFunction = segmentedLoopInferReport.functions[0]
 const segmentedFacts = new Set(segmentedFunction?.facts.map(fact => fact.text) ?? [])
 const segmentedSpecs = new Map(segmentedFunction?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const expectedSegmentedFacts = [
   'return.rows.length: int 0..50',
+  'return.rows[].bottom == (rows[].y + rows[].height)',
   'return.rows[].height: 0..40',
+  'nondecreasing(return.rows.y)',
+  'spaced(return.rows, gap)',
+  'return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + gap',
 ]
 const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
 const expectedSegmentedSpecStatuses = [
   ['return.rows.length <= items.length', 'checked'],
+  ['return.rows[].bottom == return.rows[].y + return.rows[].height', 'checked'],
+  ['nondecreasing(return.rows.y)', 'checked'],
+  ['spaced(return.rows, gap)', 'checked'],
+  ['noOverlap(return.rows)', 'checked'],
 ] as const
 const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
 if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {

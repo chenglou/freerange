@@ -10,6 +10,7 @@ import {
   mergeOrigin,
   numberBranches,
   numberValue,
+  sameNumberComputation,
   withNumberCases,
   gridJoin,
 } from './number-domain.ts'
@@ -183,6 +184,7 @@ export function joinValues(left: Value, right: Value): Value {
       left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
       null,
       mergeOrigin(left, right),
+      sameNumberComputation(left.computation, right.computation) ? left.computation : null,
     )
     if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
     return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
@@ -256,7 +258,8 @@ function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, join
   const sameExpr = (left.expr ?? null) === (right.expr ?? null)
   const sameLinearity = (left.linear == null && right.linear == null)
     || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
-  if (sameRange && sameExpr && sameLinearity) return false
+  const sameComputation = sameNumberComputation(left.computation, right.computation)
+  if (sameRange && sameExpr && sameLinearity && sameComputation) return false
   return isUsefulNumberCase(left) && isUsefulNumberCase(right) && isUsefulNumberCase(joined)
 }
 

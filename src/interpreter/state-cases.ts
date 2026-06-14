@@ -190,6 +190,7 @@ function valueFingerprint(value: Value): string {
         grid: value.grid,
         expr: value.expr,
         linear: value.linear == null ? null : linearKey(value.linear),
+        computation: computationFingerprint(value),
         cases: value.cases?.map(stateCase => ({
           value: valueFingerprint(stateCase.value),
           assumptions: stateCase.assumptions.map(assumptionFingerprint).sort(),
@@ -235,6 +236,19 @@ function valueFingerprint(value: Value): string {
     case 'unknown':
       return JSON.stringify({kind: value.kind, reason: value.reason})
   }
+}
+
+function computationFingerprint(value: NumberValue): unknown {
+  const computation = value.computation
+  if (computation == null) return null
+  return computation.kind === 'unary'
+    ? {kind: computation.kind, op: computation.op, operand: valueFingerprint(computation.operand)}
+    : {
+        kind: computation.kind,
+        op: computation.op,
+        left: valueFingerprint(computation.left),
+        right: valueFingerprint(computation.right),
+      }
 }
 
 function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary']): unknown {

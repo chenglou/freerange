@@ -266,9 +266,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSpacedNeedsMatchingGap: spac
   spaced(return.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap
   known:
-    loop proved: next.y = previous.height + gap
-    sequence facts: nondecreasing(.height), nondecreasing(.y), spaced(gap), spaced(0), lastEnd = -10..3500 as (cursor - gap)
-  missing: given gap == otherGap
+    loop proved: next.y = previous.y + gap + step
+    sequence facts: nondecreasing(.height), nondecreasing(.y), spaced(gap + step), spaced(gap), spaced(0), lastEnd = -10..3500 as (cursor - gap)
+  missing: given gap + step == otherGap
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: return.rows[].bottom == return.rows[].y + return.rows[].height
   applies to: every item in return.rows
   known:
@@ -281,7 +281,8 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchi
     inferred from code: i >= 0
     inferred from code: i - items.length < 0
     inferred from code: __fit_domain_rows___item_y - nextRowTop@loop69@rows@loop69 == 0
-    inferred from code: __fit_domain_rows___item_height - rowHeight#4@loop69@rows@loop69 == 0
+    inferred from code: __fit_domain_rows___item_height - rowHeight#3@loop69@rows@loop69 == 0
+    inferred from code: __fit_domain_rows___item_bottom - ((nextRowTop + max(rowHeight, items[i].height)) + 1)@rows@loop69 == 0
     inferred from code: rows.length <= items.length
   missing fact: rows[].bottom == (rows[].y + rows[].height)
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsInlineBottomNeedsMatchingBottom: return.rows[].bottom == return.rows[].y + return.rows[].height
@@ -296,21 +297,24 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsInlineBott
     inferred from code: i >= 0
     inferred from code: i - items.length < 0
     inferred from code: __fit_domain_rows___item_y - nextRowTop@loop70@rows@loop70 == 0
-    inferred from code: __fit_domain_rows___item_height - rowHeight#4@loop70@rows@loop70 == 0
+    inferred from code: __fit_domain_rows___item_height - rowHeight#3@loop70@rows@loop70 == 0
+    inferred from code: __fit_domain_rows___item_bottom - ((nextRowTop + max(rowHeight, items[i].height)) + 1)@rows@loop70 == 0
     inferred from code: rows.length <= items.length
   missing fact: rows[].bottom == (rows[].y + rows[].height)
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: return.rows[$i + 1].y == return.rows[$i].bottom + gap
   return.rows[$i + 1].y == return.rows[$i].bottom + gap was not inferred
   need: a matching adjacent sequence relation
   known:
-    sequence facts: no sequence facts
+    sequence facts: nondecreasing(.y), spaced(otherGap)
+    adjacent: return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + otherGap
   missing: recognized adjacent row relation
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(return.rows, gap)
   spaced(return.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap
   known:
-    sequence facts: no sequence facts
-  missing: recognized adjacent row spacing
+    loop proved: next.y = previous.height + otherGap
+    sequence facts: nondecreasing(.y), spaced(otherGap)
+  missing: given otherGap == gap
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGuardedFlushCannotMixSameArrayAppend: spaced(return.rows, gap)
   spaced(return.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap
@@ -815,9 +819,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeStaleGapAfterRefactor: space
   spaced(return.rows, gap) was not inferred
   need: every next row top == previous top + previous height + gap
   known:
-    loop proved: next.y = previous.height + 1 + gap
-    sequence facts: nondecreasing(.y), spaced(1 + gap), lastEnd = -20..3049 as (y - (1 + gap))
-  missing: given 1 + gap == gap
+    loop proved: next.y = previous.height + gap + 1
+    sequence facts: nondecreasing(.y), spaced(gap + 1), lastEnd = -20..3049 as (y - (gap + 1))
+  missing: given gap + 1 == gap
 FAIL tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
   range was int 1..50 as (focused + 1), expected inside int 0..<items.length
   known:
@@ -1222,33 +1226,6 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFloorHitIndexRoundsAcrossCou
     inferred from code: floor((pointer / cellSize)) <= (pointer / cellSize)
     inferred from code: floor((pointer / cellSize)) > (pointer / cellSize) - 1
   missing: (pointer / cellSize) < count
-UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedFlushSequenceFactsUnderived: return.rows[].bottom == return.rows[].y + return.rows[].height
-  applies to: every item in return.rows
-  known:
-    rows[].bottom: any number
-    (rows[].y + rows[].height): any number
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    assumed from input: given y: 0..1000
-    assumed from input: given gap: 0..10
-    inferred from code: i >= 0
-    inferred from code: i - items.length < 0
-    inferred from code: __fit_domain_rows___item_y - nextRowTop@loop107@rows@loop107 == 0
-    inferred from code: __fit_domain_rows___item_height - rowHeight#4@loop107@rows@loop107 == 0
-    inferred from code: rows.length <= items.length
-  missing fact: rows[].bottom == (rows[].y + rows[].height)
-UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedFlushSequenceFactsUnderived: nondecreasing(return.rows.y)
-  nondecreasing(return.rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    sequence facts: no sequence facts
-  missing: sequence facts for .y
-UNKNOWN tests/patterns/negative-patterns.ts:negativeSegmentedFlushSequenceFactsUnderived: spaced(return.rows, gap)
-  spaced(return.rows, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    sequence facts: no sequence facts
-  missing: recognized adjacent row spacing
 UNKNOWN tests/patterns/negative-patterns.ts:negativeDivisionCancellationRounds: return == x
   known:
     ((x / 3) * 3): 0..100
@@ -1345,11 +1322,11 @@ FAIL tests/patterns/negative-shadowed-catalog.ts:negativeUserFunctionNotHijacked
     (0 - 10): int -10..-10
     assumed from input: given items.length: int 1..10
     assumed from input: given items[].height: 10..10
-    inferred from code: __fit_domain_rows___item_y - y@loop112@rows@loop112 == 0
-    inferred from code: -__fit_domain_items___item_height@rows@loop112 + __fit_domain_rows___item_height == 0
+    inferred from code: __fit_domain_rows___item_y - y@loop111@rows@loop111 == 0
+    inferred from code: -__fit_domain_items___item_height@rows@loop111 + __fit_domain_rows___item_height == 0
     inferred from code: -__fit_domain_items___item_height + __fit_domain_rows___item_height == 0
-    assumed from input: __fit_domain_items___item_height@rows@loop112 - 10 >= 0
-    assumed from input: __fit_domain_items___item_height@rows@loop112 - 10 <= 0
+    assumed from input: __fit_domain_items___item_height@rows@loop111 - 10 >= 0
+    assumed from input: __fit_domain_items___item_height@rows@loop111 - 10 <= 0
     inferred from code: y >= 0
     inferred from code: ((rows[rows.length - 1].y - rows[rows.length - 1].height) - 10) <= (rows[rows.length - 1].y - rows[rows.length - 1].height)
     inferred from code: rows[rows.length - 1].y >= 0

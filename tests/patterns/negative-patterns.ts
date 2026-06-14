@@ -2249,38 +2249,6 @@ export function negativeFloorHitIndexRoundsAcrossCount(pointer: number, cellSize
   return pointer < maxPointer ? Math.floor(pointer / cellSize) : 0
 }
 
-// Conditional flush loops (push guarded by i % 3 or a last-index test, with a
-// reset accumulator) rebind their cursor through a rounded computation the
-// loop analysis cannot classify as an additive step yet, so their sequence
-// facts stay underived for fractional data.
-
-/** @fit
- * given items.length: int 0..50
- * given items[].height: 0..40
- * given y: 0..1000
- * given gap: 0..10
- * return.rows[].bottom == return.rows[].y + return.rows[].height
- * nondecreasing(return.rows.y)
- * spaced(return.rows, gap)
- */
-export function negativeSegmentedFlushSequenceFactsUnderived(items: {height: number}[], y: number, gap: number) {
-  const rows = []
-  let nextRowTop = y
-  let rowHeight = 0
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]!
-    rowHeight = Math.max(rowHeight, item.height)
-    if (i % 3 === 2 || i === items.length - 1) {
-      const rowTop = nextRowTop
-      const rowBottom = rowTop + rowHeight
-      rows.push({y: rowTop, height: rowHeight, bottom: rowBottom})
-      nextRowTop = rowBottom + gap
-      rowHeight = 0
-    }
-  }
-  return {rows}
-}
-
 // The real-arithmetic identities the rounding gate rejects: each of these
 // proved before the gate and has an IEEE counterexample in its given range.
 

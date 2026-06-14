@@ -39,9 +39,25 @@ export type NumberValue = {
   neverNaN?: true
   expr: string | null
   linear: LinearExpr | null
+  // Actual source arithmetic keeps the operand values read at evaluation
+  // time. Abstract range calculations leave this null.
+  computation: NumberComputation | null
   cases: NumberCase[] | null
   origin: string[]
 }
+
+export type NumberComputation =
+  | {
+      kind: 'binary'
+      op: '+' | '-' | '*' | '/' | '%' | '**'
+      left: NumberValue
+      right: NumberValue
+    }
+  | {
+      kind: 'unary'
+      op: 'negate' | 'floor' | 'ceil' | 'round' | 'trunc'
+      operand: NumberValue
+    }
 
 export type LiteralValue = {
   kind: 'literal'

@@ -7,6 +7,7 @@ import type {
   SequenceTerm,
 } from './domain-types.ts'
 import {sameExpressionText} from './linear.ts'
+import {sameComputationOperand} from './number-domain.ts'
 
 export function mapOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
   const origin = source.summary?.origin
@@ -61,7 +62,8 @@ function originSummaryFromEmptyBranch(emptyCandidate: ArrayValue, other: ArrayVa
 function sameArraySummary(left: ArraySummary | null, right: ArraySummary | null) {
   if (left === right) return true
   if (left == null || right == null) return false
-  if ((left.lastEnd?.value.expr ?? null) !== (right.lastEnd?.value.expr ?? null)) return false
+  if (left.lastEnd != null && right.lastEnd != null && !sameComputationOperand(left.lastEnd.value, right.lastEnd.value)) return false
+  if ((left.lastEnd == null) !== (right.lastEnd == null)) return false
   if (!sameArrayOrigin(left.origin ?? null, right.origin ?? null)) return false
   if (left.relations.length !== right.relations.length) return false
   if (!left.relations.every((fact, index) => sameSequenceRelation(fact, right.relations[index]!))) return false
@@ -78,12 +80,12 @@ function sameArrayOrigin(left: ArrayOrigin | null, right: ArrayOrigin | null) {
 }
 
 function sameAdvanceFact(left: ArraySummary['advances'][number], right: ArraySummary['advances'][number]) {
-  return left.prop === right.prop && (left.value.expr ?? null) === (right.value.expr ?? null)
+  return left.prop === right.prop && sameComputationOperand(left.value, right.value)
 }
 
 function sameExtentEndFact(left: ArraySummary['extentEnds'][number], right: ArraySummary['extentEnds'][number]) {
   return sameExpressionText(left.emptyExpr, right.emptyExpr)
-    && (left.value.expr ?? null) === (right.value.expr ?? null)
+    && sameComputationOperand(left.value, right.value)
 }
 
 function sameSequenceRelation(left: SequenceRelation, right: SequenceRelation) {

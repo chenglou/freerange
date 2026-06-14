@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   additionIsExact,
   addNumbers,
+  binaryNumberComputation,
   gridJoin,
   maxArrayLength,
   gridOfNumber,
@@ -13,7 +14,10 @@ import {
   mergeElementValue,
   multiplyNumbers,
   negateNumber,
+  numberWithBounds,
   numberValue,
+  numberWithComputation,
+  sameComputationOperand,
   subtractNumbers,
   unknown,
   type ArrayValue,
@@ -53,7 +57,6 @@ import {
   rationalIsNegative,
   rationalIsZero,
   rationalMultiply,
-  rationalNegate,
   rationalOne,
   rationalZero,
   rationalToNumber,
@@ -545,7 +548,9 @@ function walkTrackedScalarUpdate(
     } else {
       composeEffect(path, tracked, {kind: 'add', delta})
       const current = path.frame.env.get(tracked)
-      if (current?.kind === 'number') path.frame.env.set(tracked, addNumbers(current, delta))
+      if (current?.kind === 'number') {
+        path.frame.env.set(tracked, numberWithComputation(addNumbers(current, delta), binaryNumberComputation('+', current, delta)))
+      }
     }
     diffRoots(before, statement, path, restartRoots, analysis, expected)
     return {kind: 'paths', paths: [path], restartRoots}
@@ -641,9 +646,9 @@ function extremumPair(kind: 'min' | 'max', left: NumberValue, right: NumberValue
 // too: the same text denotes different values once a mutated variable moves,
 // so such a name must never join two separate reads.
 function mintNumber(value: NumberValue, root: string, analysis: Analysis): NumberValue {
-  if (value.linear != null && stableLinear(value.linear, analysis)) return value
+  if (stableNumber(value, analysis)) return value
   const name = `${root}#${analysis.mintCounter++}@${analysis.prefix}`
-  const minted = numberValue(value.min, value.max, value.grid, value.expr ?? root, linearVariable(name), null, value.origin)
+  const minted = numberValue(value.min, value.max, value.grid, value.expr ?? root, linearVariable(name), null, value.origin, value.computation)
   analysis.mintedValues.set(name, minted)
   return minted
 }
@@ -651,20 +656,20 @@ function mintNumber(value: NumberValue, root: string, analysis: Analysis): Numbe
 // A form is iteration-stable when every name in it denotes one well-defined
 // quantity for the iteration: a pre-state symbol, a minted symbol, an
 // item/index name, or a loop-invariant.
+function stableNumber(value: NumberValue, analysis: Analysis): boolean {
+  if (value.linear != null && stableLinear(value.linear, analysis)) return true
+  const computation = value.computation
+  if (computation == null) return false
+  return computation.kind === 'unary'
+    ? stableNumber(computation.operand, analysis)
+    : stableNumber(computation.left, analysis) && stableNumber(computation.right, analysis)
+}
+
 function stableLinear(linear: LinearExpr, analysis: Analysis): boolean {
   for (const name of linear.terms.keys()) {
     if (analysis.preRoots.has(name) || analysis.mintedValues.has(name) || analysis.iterationNames.has(name)) continue
     if (invariantLinearName(name, analysis)) continue
-    // A rounded computation's atom is stable when each summed leaf is itself
-    // a stable name (a written root read at push time, an item path, an
-    // invariant): the structural matching in leafExprOverrides resolves the
-    // leaves the same way.
-    const leaves = sumAtomLeaves(unprimed(name))
-    if (leaves == null) return false
-    for (const leaf of leaves) {
-      if (analysis.writeSet.has(leaf.name) || analysis.iterationNames.has(leaf.name) || analysis.mintedValues.has(leaf.name)) continue
-      if (!invariantLinearName(leaf.name, analysis)) return false
-    }
+    return false
   }
   return true
 }
@@ -835,7 +840,7 @@ function tightenFromLinear(value: NumberValue, analysis: Analysis): NumberValue 
   const max = Math.min(value.max, bounds.max)
   if (min > max) return value
   if (min === value.min && max === value.max) return value
-  return numberValue(min, max, value.grid, value.expr, value.linear, null, value.origin)
+  return numberWithBounds(value, min, max, value.grid, null)
 }
 
 function joinEffects(effects: ScalarEffect[], startValue: Value): ScalarSummary {
@@ -916,7 +921,7 @@ function provedStart(start: Value | undefined, analysis: Analysis): Value | unde
   if (bothFinite && singleUnitAtom(start.linear) == null) return start
   const bounds = provableBounds(start, analysis.realFrame.assumptions)
   if (bounds.min === start.min && bounds.max === start.max) return start
-  return numberValue(bounds.min, bounds.max, start.grid, start.expr, start.linear, null, start.origin)
+  return numberWithBounds(start, bounds.min, bounds.max, start.grid, null)
 }
 
 function sameHulls(left: Map<string, Value>, right: Map<string, Value>): boolean {
@@ -1059,9 +1064,10 @@ function finalizeArrays(result: LoopResult, analysis: Analysis) {
       .map(append => append.element))
 
     const startedEmpty = base.length.min === 0 && base.length.max === 0
-    const leafForms = uniformLeafForms(sites, analysis)
+    const leafValues = uniformLeafValues(sites, analysis)
+    const leafForms = new Map([...leafValues].map(([key, value]) => [key, value.linear!]))
     const renames = new Map<string, LinearExpr>()
-    const exprOverrides = startedEmpty ? leafExprOverrides(arrayName, leafForms, analysis) : new Map<string, string>()
+    const exprOverrides = startedEmpty ? leafExprOverrides(arrayName, leafForms, leafValues, analysis) : new Map<string, string>()
     let element = base.element
     for (const pathSites of sites) {
       for (const pushed of pathSites) {
@@ -1156,8 +1162,8 @@ function rebaseElementValue(value: Value, arrayName: string, path: string[], exp
 
 // The element fields whose linear form is the same on every path and push
 // site; only those describe every pushed element.
-function uniformLeafForms(sites: (Value | null)[][], analysis: Analysis): Map<string, LinearExpr> {
-  const formsByLeaf = new Map<string, {form: LinearExpr | null; uniform: boolean; count: number}>()
+function uniformLeafValues(sites: (Value | null)[][], analysis: Analysis): Map<string, NumberValue> {
+  const valuesByLeaf = new Map<string, {value: NumberValue; uniform: boolean; count: number}>()
   let siteTotal = 0
   for (const pathSites of sites) {
     for (const pushed of pathSites) {
@@ -1165,19 +1171,20 @@ function uniformLeafForms(sites: (Value | null)[][], analysis: Analysis): Map<st
       siteTotal++
       for (const field of elementFieldForms(pushed, analysis)) {
         const key = field.path.join('.')
-        const current = formsByLeaf.get(key)
+        if (field.form == null) continue
+        const current = valuesByLeaf.get(key)
         if (current == null) {
-          formsByLeaf.set(key, {form: field.form, uniform: true, count: 1})
+          valuesByLeaf.set(key, {value: field.value, uniform: true, count: 1})
           continue
         }
         current.count++
-        if (current.form == null || field.form == null || !sameLinear(current.form, field.form)) current.uniform = false
+        if (current.value.linear == null || !sameLinear(current.value.linear, field.form)) current.uniform = false
       }
     }
   }
-  const uniform = new Map<string, LinearExpr>()
-  for (const [key, leaf] of formsByLeaf) {
-    if (leaf.uniform && leaf.form != null && leaf.count === siteTotal) uniform.set(key, leaf.form)
+  const uniform = new Map<string, NumberValue>()
+  for (const [key, leaf] of valuesByLeaf) {
+    if (leaf.uniform && leaf.count === siteTotal) uniform.set(key, leaf.value)
   }
   return uniform
 }
@@ -1186,7 +1193,12 @@ function uniformLeafForms(sites: (Value | null)[][], analysis: Analysis): Map<st
 // other fields, gets that origin as its expression: rows[].height reads as
 // items[].height and rows[].bottom as (rows[].y + rows[].height), which the
 // infer layer reports as equalities.
-function leafExprOverrides(arrayName: string, leafForms: Map<string, LinearExpr>, analysis: Analysis): Map<string, string> {
+function leafExprOverrides(
+  arrayName: string,
+  leafForms: Map<string, LinearExpr>,
+  leafValues: Map<string, NumberValue>,
+  analysis: Analysis,
+): Map<string, string> {
   const overrides = new Map<string, string>()
   const keys = [...leafForms.keys()]
   for (const key of keys) {
@@ -1225,22 +1237,12 @@ function leafExprOverrides(arrayName: string, leafForms: Map<string, LinearExpr>
     if (overrides.has(key)) continue
     // A field computed as one rounded addition of two other fields (bottom =
     // cursor + size) keeps that single-op identity: the claim restating it
-    // performs the same one addition on the same doubles. Leaf texts resolve
-    // through the iteration's values so a source name reaches the same minted
-    // symbol the other field's form carries.
-    const atom = singleUnitAtom(form)
-    const leaves = atom == null ? null : sumAtomLeaves(unprimed(atom))
-    if (leaves != null && leaves.length === 2 && leaves.every(leaf => !leaf.negated)) {
-      const leafMatchesForm = (leafName: string, otherForm: LinearExpr): boolean => {
-        const formAtom = singleUnitAtom(otherForm)
-        if (formAtom == null) return false
-        if (formAtom === leafName) return true
-        // A pre-state symbol's source root is how the leaf text names it at
-        // push time.
-        return analysis.preRoots.get(formAtom) === leafName
-      }
-      const first = keys.find(other => other !== key && leafMatchesForm(leaves[0]!.name, leafForms.get(other)!))
-      const second = keys.find(other => other !== key && other !== first && leafMatchesForm(leaves[1]!.name, leafForms.get(other)!))
+    // performs the same operation on the same captured doubles.
+    const value = leafValues.get(key)
+    const leaves = value == null ? null : addedOperandValues(value)
+    if (leaves != null && leaves.length === 2) {
+      const first = keys.find(other => other !== key && sameComputationOperand(leaves[0]!, leafValues.get(other)!))
+      const second = keys.find(other => other !== key && other !== first && sameComputationOperand(leaves[1]!, leafValues.get(other)!))
       if (first != null && second != null) {
         const firstExpr = overrides.get(first) ?? leafPathExpression(arrayName, first)
         const secondExpr = overrides.get(second) ?? leafPathExpression(arrayName, second)
@@ -1344,12 +1346,17 @@ function elementPathExpression(arrayName: string, path: string[]): string {
 type FieldForm = {
   path: string[]
   form: LinearExpr | null
+  value: NumberValue
 }
 
 // One pre-state variable's per-iteration advance. `rounded` records that the
 // runtime adds with rounding while the linear form is the real sum, so any
 // relation built through it states the loop's computation, not an identity.
-type TransferStep = {linear: LinearExpr | null; rounded: boolean}
+type TransferStep = {
+  linear: LinearExpr | null
+  value: NumberValue | null
+  rounded: boolean
+}
 
 type RelationPair = {
   prev: FieldForm[]
@@ -1432,7 +1439,7 @@ function elementFieldForms(element: Value | null, analysis: Analysis): FieldForm
   const fields: FieldForm[] = []
   const walk = (value: Value, path: string[]) => {
     if (value.kind === 'number') {
-      fields.push({path, form: value.linear != null && stableLinear(value.linear, analysis) ? value.linear : null})
+      fields.push({path, form: value.linear != null && stableNumber(value, analysis) ? value.linear : null, value})
       return
     }
     if (value.kind === 'object') {
@@ -1447,17 +1454,23 @@ function pathTransfer(path: PathState, analysis: Analysis): Map<string, Transfer
   const transfer = new Map<string, TransferStep>()
   for (const [name, root] of analysis.preRoots) {
     const effect = path.effects.get(root) ?? {kind: 'unchanged'}
+    const post = path.frame.env.get(root)
+    const postNumber = post?.kind === 'number' && stableNumber(post, analysis) ? post : null
     if (effect.kind === 'unchanged') {
-      transfer.set(name, {linear: linearVariable(name), rounded: false})
+      transfer.set(name, {linear: linearVariable(name), value: null, rounded: false})
+      continue
+    }
+    if (effect.kind === 'rebind' && effect.value.kind === 'number' && stableNumber(effect.value, analysis)) {
+      transfer.set(name, {linear: null, value: effect.value, rounded: true})
       continue
     }
     if (effect.kind !== 'add' || effect.delta.linear == null) {
-      transfer.set(name, {linear: null, rounded: true})
+      transfer.set(name, {linear: null, value: null, rounded: true})
       continue
     }
     const pre = analysis.mintedValues.get(name)
     const exact = pre != null && additionIsExact(pre, effect.delta)
-    transfer.set(name, {linear: linearAdd(linearVariable(name), effect.delta.linear), rounded: !exact})
+    transfer.set(name, {linear: linearAdd(linearVariable(name), effect.delta.linear), value: postNumber, rounded: !exact})
   }
   return transfer
 }
@@ -1509,43 +1522,45 @@ function arithmeticAtomName(name: string): boolean {
   }
 }
 
-// A rounded cursor still advances by the computation the source wrote: when
-// the consecutive-pair residue is one opaque sum atom, its parsed leaves are
-// that computation. A positive leaf matching another pushed field cancels
-// structurally, and the remaining loop-invariant leaves are the gamma. The
-// relation states the code's own recurrence in whatever grouping it used,
-// so it is always marked rounded.
+// A rounded cursor still advances by the computation the source evaluated.
+// Captured operands let us match the previous pushed fields without parsing
+// source text after mutable bindings have changed.
 function computationRelationCandidates(field: number, fieldCount: number, pairs: RelationPair[], analysis: Analysis): RelationCandidate[] {
   if (pairs.length === 0) return []
-  const candidates: RelationCandidate[] = []
+  const termSets: number[][] = []
+  for (let other = 0; other < fieldCount; other++) termSets.push([other])
   for (let other = 0; other < fieldCount; other++) {
-    if (other === field) continue
+    if (other !== field) termSets.push([field, other])
+  }
+  const candidates: RelationCandidate[] = []
+  for (const terms of termSets) {
     let gamma: LinearExpr | null = null
     let valid = true
     for (const pair of pairs) {
-      const residue = pairResidue(field, [field], pair, analysis)
-      const atom = residue == null ? null : singleUnitAtom(residue.linear)
-      const otherAtom = singleUnitAtom(pair.prev[other]?.form ?? null)
-      if (atom == null || otherAtom == null) {
+      const transferred = transferredFieldValue(field, pair)
+      const operands = transferred == null ? null : addedOperandValues(transferred)
+      if (operands == null) {
         valid = false
         break
       }
-      const leaves = sumAtomLeaves(unprimed(atom))
-      const matchIndex = leaves == null ? -1 : leaves.findIndex(leaf => !leaf.negated && leaf.name === otherAtom)
-      if (leaves == null || matchIndex < 0) {
-        valid = false
-        break
+      const remaining = [...operands]
+      for (const term of terms) {
+        const previous = pair.prev[term]?.value
+        const matchIndex = previous == null ? -1 : remaining.findIndex(value => sameComputationOperand(value, previous))
+        if (matchIndex < 0) {
+          valid = false
+          break
+        }
+        remaining.splice(matchIndex, 1)
       }
+      if (!valid) break
       let pairGamma: LinearExpr | null = {constant: rationalZero, terms: new Map()}
-      for (let index = 0; index < leaves.length; index++) {
-        if (index === matchIndex) continue
-        const leaf = leaves[index]!
-        if (!invariantLinearName(leaf.name, analysis)) {
+      for (const value of remaining) {
+        if (value.linear == null || !invariantLinear(value.linear, analysis)) {
           pairGamma = null
           break
         }
-        const part = leaf.negated ? linearScaleExact(linearVariable(leaf.name), rationalNegate(rationalOne)) : linearVariable(leaf.name)
-        pairGamma = linearAdd(pairGamma, part)
+        pairGamma = linearAdd(pairGamma, value.linear)
       }
       if (pairGamma == null || (gamma != null && !sameLinear(gamma, pairGamma))) {
         valid = false
@@ -1553,37 +1568,24 @@ function computationRelationCandidates(field: number, fieldCount: number, pairs:
       }
       gamma = pairGamma
     }
-    if (valid && gamma != null) candidates.push({field, terms: [field, other], gamma, rounded: true})
+    if (valid && gamma != null) candidates.push({field, terms, gamma, rounded: true})
   }
   return candidates
 }
 
-// Sum-tree leaves of an opaque atom's computation text, sign included; null
-// for shapes that are not pure sums (a product leaf would need its own
-// rounding story).
-function sumAtomLeaves(name: string): {name: string; negated: boolean}[] | null {
-  let parsed: ParsedFitExpression
-  try {
-    parsed = fitExpressionParsed(name)
-  } catch {
-    return null
-  }
-  const leaves: {name: string; negated: boolean}[] = []
-  const visit = (node: ts.Expression, negated: boolean): boolean => {
-    const current = unwrapExpression(node)
-    if (ts.isBinaryExpression(current)) {
-      const op = current.operatorToken.kind
-      if (op === ts.SyntaxKind.PlusToken) return visit(current.left, negated) && visit(current.right, negated)
-      if (op === ts.SyntaxKind.MinusToken) return visit(current.left, negated) && visit(current.right, !negated)
-      return false
-    }
-    if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
-      return visit(current.operand, !negated)
-    }
-    leaves.push({name: current.getText(), negated})
-    return true
-  }
-  return visit(parsed.expression, false) && leaves.length > 1 ? leaves : null
+function transferredFieldValue(field: number, pair: RelationPair): NumberValue | null {
+  if (pair.transfer == null) return null
+  const form = pair.next[field]?.form
+  const name = singleUnitAtom(form ?? null)
+  return name == null ? null : pair.transfer.get(name)?.value ?? null
+}
+
+function addedOperandValues(value: NumberValue): NumberValue[] | null {
+  const computation = value.computation
+  if (computation?.kind !== 'binary' || computation.op !== '+') return null
+  const left = addedOperandValues(computation.left) ?? [computation.left]
+  const right = addedOperandValues(computation.right) ?? [computation.right]
+  return [...left, ...right]
 }
 
 function pairResidue(field: number, terms: number[], pair: RelationPair, analysis: Analysis): {linear: LinearExpr; rounded: boolean} | null {
@@ -1716,16 +1718,42 @@ function renderLinear(linear: LinearExpr): string | null {
 
 function deriveNondecreasing(field: number, fieldPaths: string[][], pairs: RelationPair[], summary: ArraySummary, analysis: Analysis) {
   if (pairs.length === 0) return
+  let structured = true
   for (const pair of pairs) {
     const residue = pairResidue(field, [field], pair, analysis)
-    if (residue == null || !provedNonnegativeResidue(residue.linear, analysis)) return
+    if (residue == null || !provedNonnegativeResidue(residue.linear, analysis)) {
+      structured = false
+      break
+    }
   }
+  if (!structured && !computedAdvanceIsNonnegative(field, pairs, analysis)) return
   summary.relations.push({
     kind: 'adjacent-comparison',
     left: {item: 'next', path: fieldPaths[field]!},
     op: '>=',
     right: {terms: [{item: 'previous', path: fieldPaths[field]!}], addends: []},
   })
+}
+
+function computedAdvanceIsNonnegative(field: number, pairs: RelationPair[], analysis: Analysis): boolean {
+  for (const pair of pairs) {
+    const transferred = transferredFieldValue(field, pair)
+    const operands = transferred == null ? null : addedOperandValues(transferred)
+    const previous = pair.prev[field]?.value
+    if (operands == null || previous == null) return false
+    const remaining = [...operands]
+    const matchIndex = remaining.findIndex(value => sameComputationOperand(value, previous))
+    if (matchIndex < 0) return false
+    remaining.splice(matchIndex, 1)
+    if (!remaining.every(value => numberIsNonnegative(value, analysis))) return false
+  }
+  return true
+}
+
+function numberIsNonnegative(value: NumberValue, analysis: Analysis): boolean {
+  if (value.min >= 0) return true
+  const zero = numberValue(0, 0, 0, '0', linearConstant(0))
+  return proveComparison(value, '>=', zero, analysis.realFrame.assumptions).status === 'pass'
 }
 
 function provedNonnegativeResidue(residue: LinearExpr, analysis: Analysis): boolean {

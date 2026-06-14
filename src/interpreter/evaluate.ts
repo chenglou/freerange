@@ -19,6 +19,7 @@ import {
 import {
   additionIsExact,
   addNumbers,
+  binaryNumberComputation,
   divideNumbers,
   freshReferenceIds,
   gridOfNumber,
@@ -33,6 +34,7 @@ import {
   multiplyNumbers,
   negateNumber,
   numberBranches,
+  numberWithComputation,
   nullValue,
   nullableValue,
   numberValue,
@@ -46,6 +48,7 @@ import {
   valueWithAssumptions,
   valueWithDefaultedUndefined,
   withNumberCases,
+  unaryNumberComputation,
   type ArraySummary,
   type ArrayValue,
   type LinearConstraint,
@@ -1625,7 +1628,10 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
   if (value.kind !== 'number') return noteUnsupported(frame, `Unary ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (expression.operator === ts.SyntaxKind.PlusToken) return value
   if (expression.operator === ts.SyntaxKind.MinusToken) {
-    return negateNumber(value, `-${value.expr ?? expression.operand.getText(frame.program.sourceFile)}`)
+    return numberWithComputation(
+      negateNumber(value, `-${value.expr ?? expression.operand.getText(frame.program.sourceFile)}`),
+      unaryNumberComputation('negate', value),
+    )
   }
   return noteUnsupported(frame, `Unsupported unary expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }
@@ -1642,7 +1648,12 @@ function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.Po
   const old = readPath(path, frame, expression)
   const one = numberValue(1, 1, 0, '1', linearConstant(1))
   const next = old.kind === 'number'
-    ? expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one)
+    ? computedBinary(
+        expression.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-',
+        expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one),
+        old,
+        one,
+      )
     : noteUnsupported(frame, `Update ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (assignmentHasExternalEffect(path, expression.operand, frame)) {
     noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
@@ -1755,6 +1766,24 @@ function evaluateNumberBinary(
     evaluatePlainNumberBinary(kind, leftCase, rightCase, frame, expression)))
 }
 
+function computedBinary(
+  op: '+' | '-' | '*' | '/' | '%' | '**',
+  value: NumberValue,
+  left: NumberValue,
+  right: NumberValue,
+): NumberValue {
+  return numberWithComputation(value, binaryNumberComputation(op, left, right))
+}
+
+function computedBinaryValue(
+  op: '+' | '-' | '*' | '/' | '%' | '**',
+  value: Value,
+  left: NumberValue,
+  right: NumberValue,
+): Value {
+  return value.kind === 'number' ? computedBinary(op, value, left, right) : value
+}
+
 function evaluatePlainNumberBinary(
   kind: ts.SyntaxKind,
   left: NumberValue,
@@ -1764,21 +1793,21 @@ function evaluatePlainNumberBinary(
 ): Value {
   switch (kind) {
     case ts.SyntaxKind.PlusToken: {
-      const result = addNumbers(left, right)
+      const result = computedBinary('+', addNumbers(left, right), left, right)
       publishRoundedMonotoneFacts(result, '+', left, right, frame)
       return result
     }
     case ts.SyntaxKind.MinusToken: {
-      const result = subtractNumbers(left, right)
+      const result = computedBinary('-', subtractNumbers(left, right), left, right)
       publishRoundedMonotoneFacts(result, '-', left, right, frame)
       return result
     }
     case ts.SyntaxKind.AsteriskToken:
-      return multiplyNumbers(left, right)
+      return computedBinary('*', multiplyNumbers(left, right), left, right)
     case ts.SyntaxKind.SlashToken:
-      return divideNumbers(left, right)
+      return computedBinaryValue('/', divideNumbers(left, right), left, right)
     case ts.SyntaxKind.PercentToken: {
-      const result = moduloNumbers(left, right)
+      const result = computedBinaryValue('%', moduloNumbers(left, right), left, right)
       if (result.kind === 'number' && !possiblyNaN(result) && result.linear != null && right.linear != null) {
         const upper = comparisonConstraint(result, '<', right, `${result.expr} < ${right.expr}`)
         if (upper != null) frame.assumptions = mergeAssumptions(frame.assumptions, [upper])
@@ -1786,7 +1815,7 @@ function evaluatePlainNumberBinary(
       return result
     }
     case ts.SyntaxKind.AsteriskAsteriskToken:
-      return powerNumbers(left, right)
+      return computedBinaryValue('**', powerNumbers(left, right), left, right)
     default:
       return noteUnsupported(frame, `Unsupported numeric operator ${expression.getText(frame.program.sourceFile)}`, expression)
   }
@@ -2131,7 +2160,7 @@ function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, fra
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
   const left = readPath(path, frame, expression)
   if (left.kind !== 'number' || right.kind !== 'number') return stringishCompoundPlus(left, right, expression) ?? noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
-  return addNumbers(left, right)
+  return computedBinary('+', addNumbers(left, right), left, right)
 }
 
 function stringishCompoundPlus(left: Value, right: Value, expression: ts.Expression): Value | null {

@@ -11,6 +11,7 @@ import {
   numberBranches,
   plainNumber,
   powerNumbers,
+  unaryNumberComputation,
   unknown,
   withNumberCases,
   type LinearConstraint,
@@ -222,10 +223,11 @@ function truncNumber(value: NumberValue): NumberValue {
 }
 
 function roundingResult(name: 'floor' | 'ceil' | 'round' | 'trunc', apply: (n: number) => number, value: NumberValue): NumberValue {
-  if (integerValued(value)) return numberValue(value.min, value.max, value.grid, value.expr, value.linear, null, value.origin)
+  const computation = unaryNumberComputation(name, value)
+  if (integerValued(value)) return numberValue(value.min, value.max, value.grid, value.expr, value.linear, null, value.origin, computation)
   const expr = value.expr == null ? null : `${name}(${value.expr})`
   const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
-  return numberValue(apply(value.min), apply(value.max), 0, expr, linear, null, value.origin)
+  return numberValue(apply(value.min), apply(value.max), 0, expr, linear, null, value.origin, computation)
 }
 
 function sqrtNumber(value: NumberValue): Value {
