@@ -71,7 +71,9 @@ import {
   extentEndSummaryValue,
 } from '../builtins.ts'
 import {functionHasInstanceThisInput} from '../function-shape.ts'
+import {bindFunctionCallInputs} from '../function-inputs.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
+import type {PreparedCall, PreparedParameter} from '../prepared-call.ts'
 import {
   valueFromClassInstanceType,
   valueFromFunctionReturnType,
@@ -324,7 +326,51 @@ function invokeFitFunction(
 ): Value {
   const env = new Map(baseEnv)
   bindInstanceThis(fn, program, env, thisValue)
-  return invokeFunctionNode(fn.name, fn.node, argumentValues, frameWithProgram(caller, program, env, fn.name))
+  const prepared = prepareFunctionNodeInvocation(
+    fn.name,
+    fn.node,
+    argumentValues.map(value => value == null ? null : {value, sourceText: null}),
+    frameWithProgram(caller, program, env, fn.name),
+    'unknown',
+  )
+  return prepared.kind === 'invalid'
+    ? noteUnsupported(caller, prepared.reason, fn.node)
+    : evaluateFunctionNodeBody(fn.name, fn.node, prepared.frame)
+}
+
+function prepareFitFunctionInvocation(
+  fn: FitFunction,
+  arguments_: PreparedParameter[],
+  caller: InterpreterFrame,
+  program: Program,
+  thisValue?: Value,
+): {kind: 'valid'; frame: InterpreterFrame; prepared: PreparedCall} | {kind: 'invalid'; reason: string} {
+  const env = rootFrame(program, caller.hooks).env
+  bindInstanceThis(fn, program, env, thisValue)
+  const prepared = prepareFunctionNodeInvocation(
+    fn.name,
+    fn.node,
+    arguments_,
+    frameWithProgram(caller, program, env, fn.name),
+    'invalid',
+  )
+  if (prepared.kind === 'invalid') return prepared
+  const contractEnv = new Map(prepared.frame.env)
+  bindFunctionCallInputs(
+    fn,
+    prepared.parameters.map(parameter => parameter.value),
+    contractEnv,
+    program,
+    thisValue,
+  )
+  return {
+    kind: 'valid',
+    frame: prepared.frame,
+    prepared: {
+      analysisEnv: contractEnv,
+      parameters: prepared.parameters,
+    },
+  }
 }
 
 function bindInstanceThis(fn: FitFunction, program: Program, env: Map<string, Value>, thisValue?: Value) {
@@ -353,17 +399,16 @@ function invokeInlineFunction(
   argumentValues: (Value | undefined)[],
   caller: InterpreterFrame,
 ): Value {
-  return invokeFunctionNode(name, fn, argumentValues, childFrame(caller, new Map(caller.env), name))
-}
-
-function invokeFunctionNode(
-  name: string,
-  fn: FitFunctionNode | ArrayCallbackFunction,
-  argumentValues: (Value | undefined)[],
-  frame: InterpreterFrame,
-): Value {
-  bindParameters(fn.parameters, argumentValues, frame)
-  return evaluateFunctionNodeBody(name, fn, frame)
+  const prepared = prepareFunctionNodeInvocation(
+    name,
+    fn,
+    argumentValues.map(value => value == null ? null : {value, sourceText: null}),
+    childFrame(caller, new Map(caller.env), name),
+    'unknown',
+  )
+  return prepared.kind === 'invalid'
+    ? noteUnsupported(caller, prepared.reason, fn)
+    : evaluateFunctionNodeBody(name, fn, prepared.frame)
 }
 
 function evaluateFunctionNodeBody(
@@ -395,19 +440,139 @@ function evaluateFunctionNodeBodyResult(
   return {value: noteUnsupported(frame, `Function ${name} did not return`, fn.body)}
 }
 
-function bindParameters(parameters: ts.NodeArray<ts.ParameterDeclaration>, argumentValues: (Value | undefined)[], frame: InterpreterFrame) {
+type PreparedFunctionNodeInvocation =
+  | {kind: 'valid'; frame: InterpreterFrame; parameters: PreparedParameter[]}
+  | {kind: 'invalid'; reason: string}
+
+function prepareFunctionNodeInvocation(
+  name: string,
+  fn: FitFunctionNode | ArrayCallbackFunction,
+  arguments_: (PreparedParameter | null)[],
+  frame: InterpreterFrame,
+  missingRequired: 'invalid' | 'unknown',
+): PreparedFunctionNodeInvocation {
+  const parameters: PreparedParameter[] = []
+  let argumentIndex = 0
+  for (const param of fn.parameters) {
+    if (bindingPatternHasUnsupportedParameterParts(param.name)) {
+      return {kind: 'invalid', reason: `Unsupported parameter binding in ${name}: ${param.name.getText(frame.program.sourceFile)}`}
+    }
+    let input: PreparedParameter
+    if (param.dotDotDotToken != null) {
+      const restValues: Value[] = []
+      const restSourceTexts: string[] = []
+      let hasAllSourceText = true
+      for (; argumentIndex < arguments_.length; argumentIndex++) {
+        const argument = arguments_[argumentIndex]
+        if (argument == null) continue
+        restValues.push(argument.value)
+        if (argument.sourceText == null) hasAllSourceText = false
+        else restSourceTexts.push(argument.sourceText)
+      }
+      input = {
+        value: restParameterValue(restValues, param.name.getText(frame.program.sourceFile)),
+        sourceText: hasAllSourceText ? `[${restSourceTexts.join(', ')}]` : null,
+      }
+    } else {
+      const argument = arguments_[argumentIndex] ?? null
+      argumentIndex++
+      const initialized = initializeParameterInput(argument, param, frame, missingRequired)
+      if (initialized.kind === 'invalid') return initialized
+      input = initialized.input
+    }
+    bindPattern(param.name, parameterValue(param, input.value, frame), frame)
+    parameters.push(input)
+  }
   for (let index = 0; index < parameters.length; index++) {
-    const param = parameters[index]!
-    const argument = argumentValues[index]
-    const value = parameterDefaultValue(argument ?? null, param, frame)
-    bindPattern(param.name, parameterValue(param, value, frame), frame)
+    const nameNode = fn.parameters[index]!.name
+    if (!ts.isIdentifier(nameNode)) continue
+    const current = frame.env.get(nameNode.text)
+    if (current != null) parameters[index] = {...parameters[index]!, value: current}
+  }
+  return {kind: 'valid', frame, parameters}
+}
+
+function initializeParameterInput(
+  argument: PreparedParameter | null,
+  param: ts.ParameterDeclaration,
+  frame: InterpreterFrame,
+  missingRequired: 'invalid' | 'unknown',
+): {kind: 'valid'; input: PreparedParameter} | {kind: 'invalid'; reason: string} {
+  if (argument == null) {
+    if (param.initializer != null) {
+      return {
+        kind: 'valid',
+        input: {
+          value: evaluateExpression(param.initializer, frame),
+          sourceText: param.initializer.getText(frame.program.sourceFile),
+        },
+      }
+    }
+    if (missingRequired === 'unknown') {
+      return {kind: 'valid', input: {value: unknownParamPatternValue(param, frame), sourceText: null}}
+    }
+    if (param.questionToken != null) return {kind: 'valid', input: {value: nullValue('undefined'), sourceText: 'undefined'}}
+    return {kind: 'invalid', reason: `Call omitted required parameter ${param.name.getText(frame.program.sourceFile)}`}
+  }
+  if (param.initializer == null) return {kind: 'valid', input: argument}
+  switch (defaultUse(argument.value)) {
+    case 'never':
+      return {kind: 'valid', input: argument}
+    case 'always':
+      return {
+        kind: 'valid',
+        input: {
+          value: evaluateExpression(param.initializer, frame),
+          sourceText: param.initializer.getText(frame.program.sourceFile),
+        },
+      }
+    case 'maybe': {
+      const beforeEnv = new Map(frame.env)
+      const beforeAssumptions = [...frame.assumptions]
+      const defaultFrame = childFrame(frame, new Map(frame.env), '<default>')
+      const fallback = evaluateExpression(param.initializer, defaultFrame)
+      frame.env = joinFrameEnvs(beforeEnv, defaultFrame.env)
+      frame.assumptions = beforeAssumptions
+      return {
+        kind: 'valid',
+        input: {
+          value: valueWithDefaultedUndefined(argument.value, fallback),
+          sourceText: null,
+        },
+      }
+    }
   }
 }
 
-function parameterDefaultValue(argument: Value | null, param: ts.ParameterDeclaration, frame: InterpreterFrame): Value {
-  if (argument == null) return param.initializer == null ? unknownParamPatternValue(param, frame) : evaluateExpression(param.initializer, frame)
-  if (param.initializer == null) return argument
-  return valueWithDefaultedUndefined(argument, evaluateExpression(param.initializer, frame))
+function defaultUse(value: Value): 'never' | 'always' | 'maybe' {
+  if (value.kind === 'null' && value.expr === 'undefined') return 'always'
+  if (value.kind === 'nullable' && (value.absent === 'undefined' || value.absent === 'nullish')) return 'maybe'
+  return 'never'
+}
+
+function restParameterValue(values: Value[], expr: string): ArrayValue {
+  let element: Value | null = null
+  for (const value of values) element = mergeElementValue(element, value)
+  return {
+    kind: 'array',
+    referenceIds: freshReferenceIds(),
+    layout: 'tuple',
+    length: numberValue(values.length, values.length, 0, String(values.length), linearConstant(values.length)),
+    elements: values,
+    element,
+    expr,
+    summary: null,
+  }
+}
+
+function bindingPatternHasUnsupportedParameterParts(name: ts.BindingName): boolean {
+  if (ts.isIdentifier(name)) return false
+  for (const element of name.elements) {
+    if (ts.isOmittedExpression(element)) continue
+    if (element.dotDotDotToken != null || element.initializer != null) return true
+    if (bindingPatternHasUnsupportedParameterParts(element.name)) return true
+  }
+  return false
 }
 
 function parameterValue(param: ts.ParameterDeclaration, value: Value, frame: InterpreterFrame): Value {
@@ -1190,13 +1355,15 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   if (getter != null && ts.isGetAccessorDeclaration(getter.fn.node)) {
     const receiver = evaluateExpression(expression.expression, frame)
     const fallback = valueFromFunctionReturnType(expression.getText(frame.program.sourceFile), getter.fn.node, getter.program)
+    const prepared = prepareFitFunctionInvocation(getter.fn, [], frame, getter.program, receiver)
+    if (prepared.kind === 'invalid') return noteUnsupported(frame, prepared.reason, expression)
     const hooked = evaluateHookedCall({
       expression,
       callName: expression.getText(frame.program.sourceFile),
       program: getter.program,
       functionName: getter.functionName,
       fn: getter.fn,
-      argumentValues: [],
+      prepared: prepared.prepared,
       fallback,
       ...(getter.imported == null ? {} : {imported: getter.imported}),
       thisValue: receiver,
@@ -1206,7 +1373,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
       return hooked
     }
     const value = valueWithTypeFallback(
-      invokeFitFunction(getter.fn, [], frame, getter.program, rootFrame(getter.program).env, receiver),
+      evaluateFunctionNodeBody(getter.fn.name, getter.fn.node, prepared.frame),
       fallback,
     )
     applyFunctionCallEffects(functionEffects(getter.fn.node, getter.program), [], [], expression.expression, frame)
@@ -2141,7 +2308,17 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (defaultLibraryMethod && target.name.text === 'every') return evaluateEverySomeCall(expression, target, 'every', frame)
   if (defaultLibraryMethod && target.name.text === 'some') return evaluateEverySomeCall(expression, target, 'some', frame)
   if (isInlineFunction(target)) {
-    const result = invokeInlineFunction('<iife>', target, evaluatedArguments(expression.arguments, frame), frame)
+    const operands = evaluateInvocationOperands(expression.arguments, frame)
+    if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
+    const prepared = prepareFunctionNodeInvocation(
+      '<iife>',
+      target,
+      operands.arguments,
+      childFrame(frame, new Map(frame.env), '<iife>'),
+      'invalid',
+    )
+    if (prepared.kind === 'invalid') return noteUnsupported(frame, prepared.reason, expression)
+    const result = evaluateFunctionNodeBody('<iife>', target, prepared.frame)
     applyFunctionCallEffects(functionEffects(target, frame.program), expression.arguments, target.parameters, null, frame)
     return result
   }
@@ -2240,26 +2417,43 @@ function evaluateResolvedFunctionCallResult(
   frame: InterpreterFrame,
   thisValue?: Value,
 ): Value {
-  const argumentValues = evaluatedArguments(expression.arguments, frame)
+  const receiver = thisValue == null ? null : {value: thisValue, sourceText: null}
+  const operands = evaluateInvocationOperands(expression.arguments, frame, receiver)
+  if (operands.kind === 'invalid') {
+    const unsupported = noteUnsupported(frame, operands.reason, expression)
+    return fallback ?? unsupported
+  }
+  const resolvedThisValue = operands.receiver?.value
+  const callKey = `${target.program.sourceId}#${target.functionName}`
+  if (frame.activeCalls.has(callKey)) {
+    const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.functionName}`, expression)
+    return fallback ?? unsupported
+  }
+  const prepared = prepareFitFunctionInvocation(
+    target.fn,
+    operands.arguments,
+    frameWithActiveCall(frame, callKey),
+    target.program,
+    resolvedThisValue,
+  )
+  if (prepared.kind === 'invalid') {
+    const unsupported = noteUnsupported(frame, prepared.reason, expression)
+    return fallback ?? unsupported
+  }
   const hooked = evaluateHookedCall({
     expression,
     callName,
     program: target.program,
     functionName: target.functionName,
     fn: target.fn,
-    argumentValues,
+    prepared: prepared.prepared,
     fallback,
     ...(target.imported == null ? {} : {imported: target.imported}),
-    ...(thisValue == null ? {} : {thisValue}),
+    ...(resolvedThisValue == null ? {} : {thisValue: resolvedThisValue}),
   }, frame)
   if (hooked != null) return hooked
-  const callKey = `${target.program.sourceId}#${target.functionName}`
-  if (frame.activeCalls.has(callKey)) {
-    const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.functionName}`, expression)
-    return fallback ?? unsupported
-  }
   return valueWithTypeFallback(
-    invokeFitFunction(target.fn, argumentValues, frameWithActiveCall(frame, callKey), target.program, rootFrame(target.program, frame.hooks).env, thisValue),
+    evaluateFunctionNodeBody(target.fn.name, target.fn.node, prepared.frame),
     fallback,
   )
 }
@@ -2593,10 +2787,17 @@ function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: Arr
   if (predicate == null || !isSideEffectFreeExpression(predicate)) return source.element
   const element = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
-  bindParameters(callbackFn.parameters, [element, undefined, source], callbackFrame)
+  const prepared = prepareFunctionNodeInvocation(
+    '<filter-predicate>',
+    callbackFn,
+    [{value: element, sourceText: null}, null, {value: source, sourceText: null}],
+    callbackFrame,
+    'unknown',
+  )
+  if (prepared.kind === 'invalid') return source.element
   const itemName = firstIdentifierParameterName(callbackFn)
   if (itemName == null) return source.element
-  const trueFrame = branchFrame(callbackFrame, predicate, true, '<filter-true>', evaluateExpression)
+  const trueFrame = branchFrame(prepared.frame, predicate, true, '<filter-true>', evaluateExpression)
   const refined = trueFrame.env.get(itemName)
   return refined == null ? source.element : valueWithAssumptions(refined, trueFrame.assumptions)
 }
@@ -2615,6 +2816,54 @@ function firstIdentifierParameterName(callbackFn: ArrayCallbackFunction): string
 
 function sourceExpression(source: ArrayValue, expression: ts.Expression, frame: InterpreterFrame): string {
   return source.expr ?? expression.getText(frame.program.sourceFile)
+}
+
+type EvaluatedInvocationOperands =
+  | {kind: 'valid'; receiver: PreparedParameter | null; arguments: PreparedParameter[]}
+  | {kind: 'invalid'; reason: string}
+
+function evaluateInvocationOperands(
+  args: ts.NodeArray<ts.Expression>,
+  frame: InterpreterFrame,
+  receiver: PreparedParameter | null = null,
+): EvaluatedInvocationOperands {
+  const captured: {root: string; sourceText: string | null; receiver: boolean}[] = []
+  let nextOperandIndex = 0
+  const capture = (value: Value, sourceText: string | null, isReceiver = false) => {
+    let root = `\0call-operand-${nextOperandIndex++}`
+    while (frame.env.has(root)) root = `\0call-operand-${nextOperandIndex++}`
+    frame.env.set(root, value)
+    captured.push({root, sourceText, receiver: isReceiver})
+  }
+  if (receiver != null) capture(receiver.value, receiver.sourceText, true)
+
+  let invalidReason: string | null = null
+  for (const argument of args) {
+    if (!ts.isSpreadElement(argument)) {
+      capture(evaluateExpression(argument, frame), argument.getText())
+      continue
+    }
+    const spread = evaluateExpression(argument.expression, frame)
+    const elements = spread.kind === 'array' ? tupleElements(spread) : null
+    if (elements == null) {
+      invalidReason ??= `Call spread needs an exact tuple: ${argument.getText()}`
+      continue
+    }
+    const spreadText = argument.expression.getText()
+    for (let index = 0; index < elements.length; index++) capture(elements[index]!, `${spreadText}[${index}]`)
+  }
+
+  let resolvedReceiver: PreparedParameter | null = null
+  const arguments_: PreparedParameter[] = []
+  for (const operand of captured) {
+    const value = frame.env.get(operand.root)
+    frame.env.delete(operand.root)
+    if (value == null) return {kind: 'invalid', reason: 'Call operand was lost during evaluation'}
+    if (operand.receiver) resolvedReceiver = {value, sourceText: operand.sourceText}
+    else arguments_.push({value, sourceText: operand.sourceText})
+  }
+  if (invalidReason != null) return {kind: 'invalid', reason: invalidReason}
+  return {kind: 'valid', receiver: resolvedReceiver, arguments: arguments_}
 }
 
 function evaluatedArguments(args: ts.NodeArray<ts.Expression>, frame: InterpreterFrame): Value[] {

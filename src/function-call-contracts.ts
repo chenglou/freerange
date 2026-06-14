@@ -37,9 +37,6 @@ import {
   setCheckedDomainPathValue,
   setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
-import {
-  bindFunctionCallInputs,
-} from './function-inputs.ts'
 import {functionContractSpecs} from './function-contracts.ts'
 import {filterTypeCheckedSpecs} from './contract-typecheck.ts'
 import {functionInputRoots} from './function-shape.ts'
@@ -49,6 +46,7 @@ import {
   type LinearExpr,
 } from './linear.ts'
 import type {FitFunction} from './modules.ts'
+import type {PreparedCall} from './prepared-call.ts'
 import {
   fitSpecIsAssumption,
   fitSpecIsProof,
@@ -83,7 +81,6 @@ import {
 import {
   callPreconditionObligation,
 } from './obligations.ts'
-import {programGlobalEnv} from './program-env.ts'
 import {
   comparisonConstraint,
   flipComparison,
@@ -118,15 +115,14 @@ export function verifyCallGivenSpecs(
   calleeProgram: Program,
   fn: FitFunction,
   callText: string,
-  argumentValues: Value[],
+  prepared: PreparedCall,
   context: EvalContext,
-  options: {record: boolean; callLine?: number | undefined; thisValue?: Value | undefined; callSiteBindings?: CallSiteBindings | undefined},
+  options: {record: boolean; callLine?: number | undefined; callSiteBindings?: CallSiteBindings | undefined},
   evaluators: CallContractEvaluators,
 ) {
   const contractSpecs = filterTypeCheckedSpecs(calleeProgram, functionContractSpecs(calleeProgram, fn))
-  const env = programGlobalEnv(calleeProgram)
+  const env = new Map(prepared.analysisEnv)
   let statusSummary: FitCheckStatus = 'pass'
-  bindFunctionCallInputs(fn, argumentValues, env, calleeProgram, options.thisValue)
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
   for (const spec of contractSpecs) {
@@ -380,16 +376,14 @@ export function valueWithFunctionContractSummary(
   program: Program,
   fn: FitFunction,
   specs: FitSpec[],
-  argumentValues: Value[],
+  prepared: PreparedCall,
   contractCache: Map<string, FunctionContractProof>,
   source: FunctionContractSource,
   result: Value,
-  thisValue: Value | undefined,
   callSiteBindings: CallSiteBindings | undefined,
   evaluators: CallContractEvaluators,
 ): Value {
-  const env = programGlobalEnv(program)
-  bindFunctionCallInputs(fn, argumentValues, env, program, thisValue)
+  const env = new Map(prepared.analysisEnv)
   env.set(fitReturnInternalRoot, result)
 
   const context: EvalContext = {

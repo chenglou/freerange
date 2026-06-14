@@ -100,6 +100,10 @@ That contract check needs its own TypeScript program, separate from the one whos
 
 Resolve helper bindings at the call site and rebase parameter names to caller-side expressions there. Don't carry alias logic into every proof rule. Reports get to say `cols - w >= 0`, not a private helper parameter name.
 
+## Calls Have One Preparation Point
+
+Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The execution frame keeps live object references because a later argument can mutate an earlier one. Contract checking derives its localized parameter environment from those same values instead of evaluating source expressions again. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.
+
 ## Control-Flow Truth Versus Proof Truth
 
 A failed universal comparison over case-split values does not make an `if` branch impossible. Mixed cases stay `maybe`. If two of the eight branch states satisfy `width > 0` and six don't, the branch is still reachable — proof has to handle the joined set, not declare the branch dead.

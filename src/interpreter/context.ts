@@ -8,6 +8,7 @@ import {
   type Value,
 } from '../domain.ts'
 import type {FitFunction} from '../modules.ts'
+import type {PreparedCall} from '../prepared-call.ts'
 import {programGlobalEnv} from '../program-env.ts'
 
 export type InterpreterIssue = {
@@ -81,7 +82,7 @@ export type InterpreterCall = {
   program: Program
   functionName: string
   fn: FitFunction
-  argumentValues: Value[]
+  prepared: PreparedCall
   fallback: Value | null
   imported?: {
     localName: string

@@ -109,7 +109,7 @@ export function inlineParamFactsMixWithFunctionFacts(
 export function inlineParamGivensOnlyDoNotAuditBody(
   value: number, // @fit 0..10
 ) {
-  return helperWithNarrowInput(value + 100)
+  return helperWithNarrowInput(value)
 }
 
 function helperWithNarrowInput(

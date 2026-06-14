@@ -54,7 +54,6 @@ import {
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
   unknown,
-  valueWithDefaultedUndefined,
   type LinearConstraint,
   type Value,
 } from './domain.ts'
@@ -123,10 +122,6 @@ import {
 } from './function-contracts.ts'
 import {
   arrayPatternElementValue,
-  bindFunctionCallInputs,
-  bindFunctionThisInput,
-  bindPatternFromValue,
-  parameterArgumentValue,
   unknownResultValue,
   valueWithBindingTypeFallback,
 } from './function-inputs.ts'
@@ -175,6 +170,7 @@ import type {
   InterpreterReturnCase,
 } from './interpreter/context.ts'
 import {formatInterpreterEffects, formatInterpreterIssues} from './interpreter/format.ts'
+import type {PreparedCall} from './prepared-call.ts'
 
 export type {FitInferRedundantSpec, FitInferSpec, FitInferSpecStatus} from './infer-report.ts'
 export type {
@@ -1062,20 +1058,17 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
     checks: shouldRecordCallObligations(rootContext) && frame.suppressChecks !== true ? rootContext.checks : [],
     includeObjectPath: false,
   })
-  const callArgumentExpressions = ts.isCallExpression(call.expression) ? call.expression.arguments : ts.factory.createNodeArray<ts.Expression>([])
-  const callArguments = evaluateFunctionCallArguments(call.fn, callArgumentExpressions, callContext, call.program, call.thisValue)
-  if (callArguments.kind === 'invalid') return call.fallback ?? unknown(callArguments.reason)
 
-  const callText = call.expression.getText(frame.program.sourceFile)
+  const callText = call.expression.getText()
   const callLine = lineNumberForNode(frame.program.sourceFile, call.expression)
-  const receiverText = ts.isPropertyAccessExpression(call.expression) ? call.expression.expression.getText(frame.program.sourceFile) : undefined
-  const callSiteBindings = callSiteBindingsFor(call.fn, callArgumentExpressions, frame.program.sourceFile, receiverText, callArguments.values, callArguments.texts)
+  const target = ts.isCallExpression(call.expression) ? unwrapExpression(call.expression.expression) : call.expression
+  const receiverText = ts.isPropertyAccessExpression(target) ? target.expression.getText() : undefined
+  const callSiteBindings = callSiteBindingsFor(call.fn, call.prepared.parameters, receiverText)
   if (call.program === frame.program) {
-    return evaluateLocalFunctionCall(call.functionName, call.fn, callArguments.values, callContext, {
+    return evaluateLocalFunctionCall(call.functionName, call.fn, call.prepared, callContext, {
       callText,
       callLine,
       fallback: call.fallback,
-      thisValue: call.thisValue,
       callSiteBindings,
     })
   }
@@ -1085,7 +1078,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
     program: call.program,
     functionName: call.functionName,
     imported: call.imported,
-  }, call.fn, callArguments.values, callText, callLine, callContext, call.fallback, callSiteBindings, call.thisValue)
+  }, call.fn, call.prepared, callText, callLine, callContext, call.fallback, callSiteBindings)
 }
 
 function evaluateInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext, evaluate: () => Value): Value {
@@ -1491,13 +1484,12 @@ function verifyLocalLoopSpecs(specs: FitLoopSpec[], context: EvalContext) {
 function evaluateLocalFunctionCall(
   functionName: string,
   fn: FitFunction,
-  argumentValues: Value[],
+  prepared: PreparedCall,
   context: EvalContext,
   options: {
     callText: string
     callLine?: number | undefined
     fallback: Value | null
-    thisValue?: Value | undefined
     callSiteBindings?: CallSiteBindings | undefined
   },
 ): Value {
@@ -1516,21 +1508,16 @@ function evaluateLocalFunctionCall(
     })
     return unknown(reason)
   }
-  if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for ${functionName}`)
-  const obligations = verifyCallGivenSpecs(context.program, fn, options.callText, argumentValues, context, {
+  const obligations = verifyCallGivenSpecs(context.program, fn, options.callText, prepared, context, {
     record: shouldRecordCallObligations(context),
     callLine: options.callLine,
-    thisValue: options.thisValue,
     callSiteBindings: options.callSiteBindings,
   }, callContractEvaluators)
-
-  const env = programGlobalEnv(context.program)
-  bindFunctionCallInputs(fn, argumentValues, env, context.program, options.thisValue)
 
   const result = evaluateFunctionBody(fn, {
     program: context.program,
     file: context.file,
-    env,
+    env: new Map(prepared.analysisEnv),
     inputRoots: functionInputRoots(context.program, fn),
     stack: [...context.stack, functionName],
     checks: shouldRecordCallObligations(context) ? context.checks : [],
@@ -1555,90 +1542,23 @@ function evaluateLocalFunctionCall(
   const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
   if (proof.status !== 'pass') return callSiteFallbackResult
 
-  return valueWithFunctionContractSummary(functionName, context.program, fn, contractSpecs, argumentValues, context.contractCache, {
+  return valueWithFunctionContractSummary(functionName, context.program, fn, contractSpecs, prepared, context.contractCache, {
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
-  }, fallbackResult, options.thisValue, options.callSiteBindings, callContractEvaluators)
-}
-
-type FunctionCallArguments =
-  | {kind: 'valid'; values: Value[]; texts: string[]; env: Map<string, Value>}
-  | {kind: 'invalid'; reason: string}
-
-function evaluateFunctionCallArguments(
-  fn: FitFunction,
-  args: ts.NodeArray<ts.Expression>,
-  callerContext: EvalContext,
-  calleeProgram: Program,
-  thisValue?: Value,
-  baseEnv?: Map<string, Value>,
-): FunctionCallArguments {
-  if (args.length > fn.node.parameters.length) return {kind: 'invalid', reason: `Call arity mismatch for ${fn.name}`}
-
-  const env = new Map(baseEnv ?? programGlobalEnv(calleeProgram))
-  bindFunctionThisInput(fn, env, thisValue)
-
-  const values: Value[] = []
-  const texts: string[] = []
-  for (let index = 0; index < fn.node.parameters.length; index++) {
-    const param = fn.node.parameters[index]!
-    const argument = args[index]
-    if (argument == null && param.initializer == null) return {kind: 'invalid', reason: `Call arity mismatch for ${fn.name}`}
-    const value = argument == null
-      ? evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram)
-      : evaluateCallArgumentExpression(argument, callerContext)
-    const defaultedValue = argument == null || param.initializer == null
-      ? value
-      : valueWithDefaultedUndefined(value, evaluateDefaultArgument(param, fn, env, callerContext, calleeProgram))
-    values.push(defaultedValue)
-    texts.push(argument == null ? param.initializer!.getText(calleeProgram.sourceFile) : argument.getText(callerContext.program.sourceFile))
-    bindPatternFromValue(param.name, parameterArgumentValue(param, defaultedValue, calleeProgram), env, {preserveLinear: true}, calleeProgram)
-  }
-
-  return {kind: 'valid', values, texts, env}
-}
-
-function evaluateDefaultArgument(
-  param: ts.ParameterDeclaration,
-  fn: FitFunction,
-  env: Map<string, Value>,
-  callerContext: EvalContext,
-  calleeProgram: Program,
-): Value {
-  const context = {
-    program: calleeProgram,
-    file: calleeProgram.file,
-    env,
-    inputRoots: functionInputRoots(calleeProgram, fn),
-    stack: [...callerContext.stack, `${fn.name} default`],
-    checks: shouldRecordCallObligations(callerContext) ? callerContext.checks : [],
-    assumptions: callerContext.assumptions,
-    ...(callerContext.booleanAssumptions == null ? {} : {booleanAssumptions: callerContext.booleanAssumptions}),
-    contractCache: callerContext.contractCache,
-    ...(callerContext.callObligations == null ? {} : {callObligations: callerContext.callObligations}),
-    ...(callerContext.contractExpression == null ? {} : {contractExpression: callerContext.contractExpression}),
-    ...(callerContext.contractExpressionProblems == null ? {} : {contractExpressionProblems: callerContext.contractExpressionProblems}),
-  } satisfies EvalContext
-  return evaluateCallArgumentExpression(param.initializer!, context)
-}
-
-function evaluateCallArgumentExpression(expression: ts.Expression, context: EvalContext): Value {
-  if (context.contractExpression === true) return evaluateContractExpression(expression, context)
-  return evaluateCheckedExpression(expression, context.callObligations == null ? {...context, callObligations: 'silent'} : context)
+  }, fallbackResult, options.callSiteBindings, callContractEvaluators)
 }
 
 function evaluateImportedFunctionCall(
   callName: string,
   target: Extract<ResolvedCallTarget, {kind: 'function'}>,
   fn: FitFunction,
-  argumentValues: Value[],
+  prepared: PreparedCall,
   callText: string,
   callLine: number,
   context: EvalContext,
   returnTypeFallback: Value | null,
   callSiteBindings: CallSiteBindings,
-  thisValue?: Value,
 ): Value {
   const contractSpecs = filterTypeCheckedSpecs(target.program, functionContractSpecs(target.program, fn))
   const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${target.functionName}Result`, fn.node, target.program)
@@ -1650,7 +1570,6 @@ function evaluateImportedFunctionCall(
       `resolved to ${target.program.file}#${target.functionName}, but that function has no @fit contract`,
     ))
   }
-  if (fn.node.parameters.length !== argumentValues.length) return unknown(`Call arity mismatch for imported function ${target.functionName}`)
   if (!shouldRecordCallObligations(context)) return resolvedReturnTypeFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
 
   const proof = verifyFunctionContract(target.program, target.functionName, context.contractCache)
@@ -1660,18 +1579,18 @@ function evaluateImportedFunctionCall(
     target.program,
     fn,
     callText,
-    argumentValues,
+    prepared,
     context,
-    {record: true, callLine, thisValue, callSiteBindings},
+    {record: true, callLine, callSiteBindings},
     callContractEvaluators,
   )
   if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, argumentValues, context.contractCache, {
+  return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, prepared, context.contractCache, {
     kind: 'imported',
     sourceFile: target.program.file,
     sourceFunctionName: fn.name,
-  }, resolvedReturnTypeFallback ?? unknownResultValue(), thisValue, callSiteBindings, callContractEvaluators)
+  }, resolvedReturnTypeFallback ?? unknownResultValue(), callSiteBindings, callContractEvaluators)
 }
 
 function shouldRecordCallObligations(context: EvalContext) {
