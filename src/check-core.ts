@@ -319,15 +319,15 @@ function functionHasAuditAnnotationSurface(program: Program, fn: FitFunction) {
 
 function auditTopLevelSelectors(program: Program, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
   const context = topLevelEvalContext(program, contractCache)
-  const result = evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
-  return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
+  const result = evaluateInterpreterTopLevel(interpreterInput(context))
+  return result.output.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
 }
 
 function auditFunctionSelectors(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const context = functionEvalContext(program, fn, setup, contractCache, {callObligations: 'silent'})
-  const result = evaluateInterpreterFunctionBody(program, fn, context.env, context.stack, context.assumptions, interpreterHooks(context))
-  return result.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
+  const result = evaluateInterpreterFunctionBody({...interpreterInput(context), fn})
+  return result.output.audits.map(audit => interpreterAuditToFitAudit(program.file, audit))
 }
 
 function interpreterAuditToFitAudit(file: string, audit: InterpreterAudit): FitAudit {
@@ -367,7 +367,7 @@ function dedupeAudits(audits: FitAudit[]) {
 
 function checkTopLevelCallsites(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const context = topLevelEvalContext(program, contractCache, 'record')
-  evaluateInterpreterTopLevel(program, context.env, context.stack, context.assumptions, interpreterHooks(context))
+  evaluateInterpreterTopLevel(interpreterInput(context))
   return callChecks(context)
 }
 
@@ -703,58 +703,38 @@ function isLoadedProgram(file: FitProjectFile<Value>): file is Program {
 function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {
   if (context.contractExpression === true) return evaluateContractExpression(expression, context)
   const originalEnv = context.env
-  const result = evaluateInterpreterExpression(
-    context.program,
+  const result = evaluateInterpreterExpression({
+    ...interpreterInput(context),
     expression,
-    context.env,
-    context.stack,
-    context.assumptions,
-    interpreterHooks(context),
-    context.objectPath,
-  )
-  replaceEnvEntries(originalEnv, result.env)
+  })
+  replaceEnvEntries(originalEnv, result.state.env)
   context.env = originalEnv
-  context.assumptions = result.assumptions
+  context.assumptions = result.state.assumptions
   return result.value
 }
 
 function evaluateContractExpression(expression: ts.Expression, context: EvalContext): Value {
   const problems = context.contractExpressionProblems ?? []
   const problemStart = problems.length
-  const previousContractExpression = context.contractExpression
-  const previousContractExpressionProblems = context.contractExpressionProblems
-  const previousCallObligations = context.callObligations
-  context.contractExpression = true
-  context.contractExpressionProblems = problems
-  context.callObligations = 'record'
-
-  const originalEnv = context.env
-  try {
-    const result = evaluateInterpreterExpression(
-      context.program,
-      expression,
-      context.env,
-      context.stack,
-      context.assumptions,
-      interpreterHooks(context),
-      context.objectPath,
-    )
-    replaceEnvEntries(originalEnv, result.env)
-    context.env = originalEnv
-    context.assumptions = result.assumptions
-    problems.push(...formatContractExpressionProblems(result.issues, result.effects))
-
-    const localProblems = problems.slice(problemStart)
-    if (localProblems.length > 0) return unknown(contractExpressionUnsupportedReason(expression, localProblems))
-    return result.value
-  } finally {
-    if (previousContractExpression == null) delete context.contractExpression
-    else context.contractExpression = previousContractExpression
-    if (previousContractExpressionProblems == null) delete context.contractExpressionProblems
-    else context.contractExpressionProblems = previousContractExpressionProblems
-    if (previousCallObligations == null) delete context.callObligations
-    else context.callObligations = previousCallObligations
+  const contractContext: EvalContext = {
+    ...context,
+    contractExpression: true,
+    contractExpressionProblems: problems,
+    callObligations: 'record',
   }
+  const originalEnv = context.env
+  const result = evaluateInterpreterExpression({
+    ...interpreterInput(contractContext),
+    expression,
+  })
+  replaceEnvEntries(originalEnv, result.state.env)
+  context.env = originalEnv
+  context.assumptions = result.state.assumptions
+  problems.push(...formatContractExpressionProblems(result.output.issues, result.output.effects))
+
+  const localProblems = problems.slice(problemStart)
+  if (localProblems.length > 0) return unknown(contractExpressionUnsupportedReason(expression, localProblems))
+  return result.value
 }
 
 function contractExpressionUnsupportedReason(expression: ts.Expression, problems: string[]) {
@@ -783,14 +763,10 @@ function isHardContractExpressionIssue(issue: InterpreterIssue) {
 }
 
 function evaluateInterpreterExpressionWithObjectPath(expression: ts.Expression, context: EvalContext, objectPath: string[]): Value {
-  const previous = context.objectPath
-  context.objectPath = objectPath
-  try {
-    return evaluateCheckedExpression(expression, context)
-  } finally {
-    if (previous == null) delete context.objectPath
-    else context.objectPath = previous
-  }
+  const scopedContext = {...context, objectPath}
+  const value = evaluateCheckedExpression(expression, scopedContext)
+  context.assumptions = scopedContext.assumptions
+  return value
 }
 
 function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value>) {
@@ -910,20 +886,30 @@ function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
 }
 
 function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]; returnCases?: InterpreterReturnCase[]} {
-  const hooks = interpreterHooks(context)
-  const result = evaluateInterpreterFunctionBody(context.program, fn, context.env, context.stack, context.assumptions, hooks)
-  context.assumptions = result.assumptions
+  const result = evaluateInterpreterFunctionBody({...interpreterInput(context), fn})
+  context.assumptions = result.state.assumptions
   if (context.inferUnsupported != null) {
-    context.inferUnsupported.push(...formatInterpreterIssues(result.issues))
+    context.inferUnsupported.push(...formatInterpreterIssues(result.output.issues))
   }
   if (context.contractExpression === true && context.contractExpressionProblems != null) {
-    context.contractExpressionProblems.push(...formatContractExpressionProblems(result.issues, result.effects))
+    context.contractExpressionProblems.push(...formatContractExpressionProblems(result.output.issues, result.output.effects))
   }
   return {
     result: result.value,
-    env: result.env,
-    assumptions: result.assumptions,
+    env: result.state.env,
+    assumptions: result.state.assumptions,
     ...(result.returnCases == null ? {} : {returnCases: result.returnCases}),
+  }
+}
+
+function interpreterInput(context: EvalContext) {
+  return {
+    program: context.program,
+    env: context.env,
+    stack: context.stack,
+    assumptions: context.assumptions,
+    hooks: interpreterHooks(context),
+    ...(context.objectPath == null ? {} : {objectPath: context.objectPath}),
   }
 }
 
@@ -1055,7 +1041,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
     }
   }
   const callContext = contextForInterpreterFrame(frame, rootContext, {
-    checks: shouldRecordCallObligations(rootContext) && frame.suppressChecks !== true ? rootContext.checks : [],
+    checks: shouldRecordCallObligations(rootContext) && frame.policy.checkRecording === 'record' ? rootContext.checks : [],
     includeObjectPath: false,
   })
 

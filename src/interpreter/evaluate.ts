@@ -74,6 +74,7 @@ import {functionHasInstanceThisInput} from '../function-shape.ts'
 import {bindFunctionCallInputs} from '../function-inputs.ts'
 import {type FitFunction, type FitFunctionNode} from '../modules.ts'
 import type {PreparedCall, PreparedParameter} from '../prepared-call.ts'
+import {programGlobalEnv} from '../program-env.ts'
 import {
   valueFromClassInstanceType,
   valueFromFunctionReturnType,
@@ -84,22 +85,24 @@ import {
 import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
 import {
   childFrame,
+  deriveFrame,
   frameWithActiveCall,
   frameWithProgram,
+  interpreterPolicy,
   joinFrameEnvs,
   noteEffect,
   noteUnsupported,
   rootFrame,
   type InterpreterCall,
-  type InterpreterAudit,
   type InterpreterClaim,
-  type InterpreterEffect,
   type InterpreterFlow,
   type InterpreterFrame,
   type InterpreterHooks,
-  type InterpreterIssue,
   type InterpreterLoopClaim,
+  type InterpreterOutput,
   type InterpreterReturnCase,
+  type InterpreterStart,
+  type InterpreterState,
   type InterpreterStateCase,
   type LoopFrame,
 } from './context.ts'
@@ -181,17 +184,23 @@ import {
   type StateCaseSetResult,
 } from './state-cases.ts'
 
-type InterpreterFunctionResult = {
+type InterpreterValueResult = {
   value: Value
-  issues: InterpreterIssue[]
-  effects: InterpreterEffect[]
-  audits: InterpreterAudit[]
+  state: InterpreterState
+  output: InterpreterOutput
 }
 
-type InterpreterBodyResult = InterpreterFunctionResult & {
-  env: Map<string, Value>
-  assumptions: LinearConstraint[]
+type InterpreterBodyResult = InterpreterValueResult & {
   returnCases?: InterpreterReturnCase[]
+}
+
+type InterpreterTopLevelResult = {
+  state: InterpreterState
+  output: InterpreterOutput
+}
+
+type InterpreterExecutionInput = InterpreterStart & {
+  hooks?: InterpreterHooks
 }
 
 type IndexedForLoopBound = {
@@ -205,91 +214,66 @@ type IndexedForLoopOrigin = {
   sourceExpr: string
 }
 
-export function evaluateInterpreterFunction(program: Program, functionName: string): InterpreterFunctionResult {
-  const frame = rootFrame(program)
+export function evaluateInterpreterFunction(input: {
+  program: Program
+  functionName: string
+}): InterpreterValueResult {
+  const {program, functionName} = input
+  const frame = interpreterFrame({
+    program,
+    env: programGlobalEnv(program),
+    stack: [],
+    assumptions: [],
+  })
   const fn = program.functions.get(functionName)
   if (fn == null) {
     return {
       value: noteUnsupported(frame, `Unknown function ${functionName}`),
-      issues: frame.issues,
-      effects: frame.effects,
-      audits: frame.audits,
+      state: interpreterState(frame),
+      output: frame.output,
     }
   }
   const value = invokeFitFunction(fn, [], frame, program, frame.env)
-  return {value, issues: frame.issues, effects: frame.effects, audits: frame.audits}
+  return {value, state: interpreterState(frame), output: frame.output}
 }
 
-export function evaluateInterpreterFunctionBody(
-  program: Program,
-  fn: FitFunction,
-  env: Map<string, Value>,
-  stack: string[] = [fn.name],
-  assumptions: LinearConstraint[] = [],
-  hooks?: InterpreterHooks,
-): InterpreterBodyResult {
-  const frame = interpreterFrame(program, env, stack, assumptions, hooks)
+export function evaluateInterpreterFunctionBody(input: InterpreterExecutionInput & {
+  fn: FitFunction
+}): InterpreterBodyResult {
+  const {program, fn} = input
+  const frame = interpreterFrame(input)
   bindInstanceThis(fn, program, frame.env)
   const result = evaluateFunctionNodeBodyResult(fn.name, fn.node, frame)
   return {
     value: result.value,
-    env: frame.env,
-    issues: frame.issues,
-    effects: frame.effects,
-    audits: frame.audits,
-    assumptions: frame.assumptions,
+    state: interpreterState(frame),
+    output: frame.output,
     ...(result.returnCases == null ? {} : {returnCases: result.returnCases}),
   }
 }
 
-export function evaluateInterpreterTopLevel(
-  program: Program,
-  env: Map<string, Value>,
-  stack: string[] = ['<top-level>'],
-  assumptions: LinearConstraint[] = [],
-  hooks?: InterpreterHooks,
-): InterpreterBodyResult {
-  const frame = interpreterFrame(program, env, stack, assumptions, hooks)
-  evaluateStatements(topLevelExecutableStatements(program.sourceFile.statements), frame)
-  return {value: unknown('Top-level did not return'), env: frame.env, issues: frame.issues, effects: frame.effects, audits: frame.audits, assumptions: frame.assumptions}
+export function evaluateInterpreterTopLevel(input: InterpreterExecutionInput): InterpreterTopLevelResult {
+  const frame = interpreterFrame(input)
+  evaluateStatements(topLevelExecutableStatements(input.program.sourceFile.statements), frame)
+  return {state: interpreterState(frame), output: frame.output}
 }
 
-export function evaluateInterpreterExpression(
-  program: Program,
-  expression: ts.Expression,
-  env: Map<string, Value>,
-  stack: string[] = [],
-  assumptions: LinearConstraint[] = [],
-  hooks?: InterpreterHooks,
-  objectPath?: string[],
-): InterpreterBodyResult {
-  const frame = interpreterFrame(program, env, stack, assumptions, hooks, objectPath)
-  const value = evaluateExpression(expression, frame)
-  return {value, env: frame.env, issues: frame.issues, effects: frame.effects, audits: frame.audits, assumptions: frame.assumptions}
+export function evaluateInterpreterExpression(input: InterpreterExecutionInput & {
+  expression: ts.Expression
+}): InterpreterValueResult {
+  const frame = interpreterFrame(input)
+  const value = evaluateExpression(input.expression, frame)
+  return {value, state: interpreterState(frame), output: frame.output}
 }
 
-function interpreterFrame(
-  program: Program,
-  env: Map<string, Value>,
-  stack: string[],
-  assumptions: LinearConstraint[],
-  hooks?: InterpreterHooks,
-  objectPath?: string[],
-): InterpreterFrame {
+function interpreterFrame(input: InterpreterExecutionInput): InterpreterFrame {
+  return rootFrame(input, interpreterPolicy(input.hooks))
+}
+
+function interpreterState(frame: InterpreterFrame): InterpreterState {
   return {
-    program,
-    env: new Map(env),
-    issues: [],
-    effects: [],
-    audits: [],
-    stack,
-    activeCalls: new Set(),
-    localBindings: new Set(),
-    loopStack: [],
-    conditionalDepth: 0,
-    assumptions: [...assumptions],
-    ...(hooks == null ? {} : {hooks}),
-    ...(objectPath == null ? {} : {objectPath}),
+    env: frame.env,
+    assumptions: frame.assumptions,
   }
 }
 
@@ -346,7 +330,7 @@ function prepareFitFunctionInvocation(
   program: Program,
   thisValue?: Value,
 ): {kind: 'valid'; frame: InterpreterFrame; prepared: PreparedCall} | {kind: 'invalid'; reason: string} {
-  const env = rootFrame(program, caller.hooks).env
+  const env = programGlobalEnv(program)
   bindInstanceThis(fn, program, env, thisValue)
   const prepared = prepareFunctionNodeInvocation(
     fn.name,
@@ -590,7 +574,6 @@ function unknownParamPatternValue(param: ts.ParameterDeclaration, frame: Interpr
 
 function bindPattern(name: ts.BindingName, value: Value, frame: InterpreterFrame) {
   if (ts.isIdentifier(name)) {
-    frame.localBindings.add(name.text)
     frame.env.set(name.text, value)
     return
   }
@@ -763,11 +746,11 @@ function nearestFunctionLike(node: ts.Node): ts.SignatureDeclaration | null {
 }
 
 function evaluateClaim(claim: InterpreterClaim, frame: InterpreterFrame, evaluate: () => Value): Value {
-  return frame.hooks?.evaluateClaim?.(claim, frame, evaluate) ?? evaluate()
+  return frame.policy.hooks?.evaluateClaim?.(claim, frame, evaluate) ?? evaluate()
 }
 
 function afterClaim(claim: InterpreterClaim, value: Value, frame: InterpreterFrame) {
-  frame.hooks?.afterClaim?.(claim, value, frame)
+  frame.policy.hooks?.afterClaim?.(claim, value, frame)
 }
 
 function evaluateWithObjectPath<T>(frame: InterpreterFrame, path: string[] | undefined, evaluate: () => T): T {
@@ -1066,7 +1049,7 @@ function evaluateForOfStatement(statement: ts.ForOfStatement, frame: Interpreter
 }
 
 function evaluateLoop(claim: InterpreterLoopClaim, frame: InterpreterFrame, evaluate: () => InterpreterFlow): InterpreterFlow {
-  return frame.hooks?.evaluateLoop?.(claim, frame, evaluate) ?? evaluate()
+  return frame.policy.hooks?.evaluateLoop?.(claim, frame, evaluate) ?? evaluate()
 }
 
 function evaluateForOfStatementCore(statement: ts.ForOfStatement, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
@@ -1256,7 +1239,7 @@ function evaluateExpression(expression: ts.Expression, frame: InterpreterFrame):
     return evaluateExpression(expression.expression, frame)
   }
 
-  const path = frame.hooks?.evaluatePath?.(expression, frame)
+  const path = frame.policy.hooks?.evaluatePath?.(expression, frame)
   if (path != null) return path
 
   const numeric = numericLiteralValue(expression)
@@ -1653,7 +1636,7 @@ function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.Po
   const next = old.kind === 'number'
     ? expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one)
     : noteUnsupported(frame, `Update ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
-  if (assignmentHasExternalEffect(path, frame)) {
+  if (assignmentHasExternalEffect(path, expression.operand, frame)) {
     noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   }
   writePath(path, next, frame)
@@ -1728,10 +1711,10 @@ function truthinessValues(value: Value): boolean[] | null {
 }
 
 function evaluateConditionTruthiness(expression: ts.Expression, frame: InterpreterFrame, label: string): boolean[] | null {
-  const issueCount = frame.issues.length
+  const issueCount = frame.output.issues.length
   const values = truthinessValues(evaluateExpression(expression, frame))
   if (values != null) return values
-  if (frame.issues.length === issueCount) noteUnsupported(frame, `${label} ${nodeText(expression, frame)} expected boolean-like values`, expression)
+  if (frame.output.issues.length === issueCount) noteUnsupported(frame, `${label} ${nodeText(expression, frame)} expected boolean-like values`, expression)
   return null
 }
 
@@ -1858,7 +1841,7 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
   }
   const right = evaluateExpression(expression.right, frame)
   const value = assignedValue(expression.operatorToken.kind, path, right, frame, expression)
-  if (assignmentHasExternalEffect(path, frame)) {
+  if (assignmentHasExternalEffect(path, expression.left, frame)) {
     noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   }
   writePath(path, value, frame)
@@ -2120,8 +2103,21 @@ function userBindingForCallTarget(target: ts.Expression, frame: InterpreterFrame
   return resolveCallTarget(target, frame.program).kind === 'function'
 }
 
-function assignmentHasExternalEffect(path: ValuePath, frame: InterpreterFrame) {
-  return path.segments.length > 0 || !frame.localBindings.has(path.root)
+function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, frame: InterpreterFrame) {
+  if (path.segments.length > 0) return true
+  const current = unwrapExpression(target)
+  if (!ts.isIdentifier(current)) return true
+  const checker = frame.program.typeChecker
+  if (checker == null) return true
+  let symbol = checker.getSymbolAtLocation(current)
+  if (symbol == null) return true
+  if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
+  const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
+  if (declaration == null) return true
+  for (let owner = declaration.parent; owner != null && !ts.isSourceFile(owner); owner = owner.parent) {
+    if (ts.isFunctionLike(owner)) return false
+  }
+  return true
 }
 
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
@@ -2220,21 +2216,15 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
 }
 
 function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
-  return {
-    program: frame.program,
+  return deriveFrame(frame, {
     env: new Map(frame.env),
-    issues: [],
-    effects: [],
-    audits: frame.audits,
-    stack: frame.stack,
-    activeCalls: new Set(frame.activeCalls),
-    localBindings: new Set(frame.localBindings),
-    loopStack: [...frame.loopStack],
-    conditionalDepth: frame.conditionalDepth,
-    assumptions: [...frame.assumptions],
-    ...(frame.hooks == null ? {} : {hooks: frame.hooks}),
-    ...(frame.objectPath == null ? {} : {objectPath: [...frame.objectPath]}),
-  }
+    stateCases: null,
+    output: {
+      issues: [],
+      effects: [],
+      audits: frame.output.audits,
+    },
+  })
 }
 
 function evaluateExtentEndConditional(expression: ts.ConditionalExpression, frame: InterpreterFrame): NumberValue | null {
@@ -2460,7 +2450,7 @@ function evaluateResolvedFunctionCallResult(
 }
 
 function evaluateHookedCall(call: InterpreterCall, frame: InterpreterFrame): Value | null {
-  return frame.hooks?.evaluateCall?.(call, frame) ?? null
+  return frame.policy.hooks?.evaluateCall?.(call, frame) ?? null
 }
 
 function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {

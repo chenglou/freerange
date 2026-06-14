@@ -9,7 +9,6 @@ import {
 } from '../domain.ts'
 import type {FitFunction} from '../modules.ts'
 import type {PreparedCall} from '../prepared-call.ts'
-import {programGlobalEnv} from '../program-env.ts'
 
 export type InterpreterIssue = {
   kind: 'unsupported'
@@ -33,29 +32,37 @@ export type InterpreterAudit = {
   reason: string
 }
 
+export type InterpreterOutput = {
+  issues: InterpreterIssue[]
+  effects: InterpreterEffect[]
+  audits: InterpreterAudit[]
+}
+
+export type InterpreterPolicy = Readonly<{
+  hooks?: InterpreterHooks
+  checkRecording: 'record' | 'suppress'
+}>
+
 export type InterpreterFrame = {
   program: Program
   env: Map<string, Value>
   stateCases?: InterpreterStateCase[]
-  issues: InterpreterIssue[]
-  effects: InterpreterEffect[]
-  audits: InterpreterAudit[]
+  output: InterpreterOutput
+  policy: InterpreterPolicy
   stack: string[]
   activeCalls: Set<string>
-  localBindings: Set<string>
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: LinearConstraint[]
-  hooks?: InterpreterHooks
   objectPath?: string[]
-  // Internal analysis replays (the loop analysis runs a body several times)
-  // must not record user-facing checks; only the reporting evaluation does.
-  suppressChecks?: true
 }
 
-export type InterpreterStateCase = {
+export type InterpreterState = {
   env: Map<string, Value>
   assumptions: LinearConstraint[]
+}
+
+export type InterpreterStateCase = InterpreterState & {
   label?: string
 }
 
@@ -118,72 +125,107 @@ export type InterpreterFlow =
   | {kind: 'fallthrough'}
   | {kind: 'exit'}
 
-export function rootFrame(program: Program, hooks?: InterpreterHooks): InterpreterFrame {
+export type InterpreterStart = {
+  program: Program
+  env: Map<string, Value>
+  stack: string[]
+  assumptions: LinearConstraint[]
+  objectPath?: string[]
+}
+
+export function emptyInterpreterOutput(): InterpreterOutput {
   return {
-    program,
-    env: programGlobalEnv(program),
     issues: [],
     effects: [],
     audits: [],
-    stack: [],
-    activeCalls: new Set(),
-    localBindings: new Set(),
-    loopStack: [],
-    conditionalDepth: 0,
-    assumptions: [],
+  }
+}
+
+export function interpreterPolicy(
+  hooks?: InterpreterHooks,
+  checkRecording: InterpreterPolicy['checkRecording'] = 'record',
+): InterpreterPolicy {
+  return {
+    checkRecording,
     ...(hooks == null ? {} : {hooks}),
   }
 }
 
-export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, name: string): InterpreterFrame {
+export function rootFrame(start: InterpreterStart, policy = interpreterPolicy()): InterpreterFrame {
   return {
-    program: parent.program,
-    env,
-    issues: parent.issues,
-    effects: parent.effects,
-    audits: parent.audits,
-    stack: [...parent.stack, name],
-    activeCalls: new Set(parent.activeCalls),
-    localBindings: new Set(parent.localBindings),
-    loopStack: [...parent.loopStack],
-    conditionalDepth: parent.conditionalDepth,
-    assumptions: [...parent.assumptions],
-    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
-    ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
-    ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),
+    program: start.program,
+    env: new Map(start.env),
+    output: emptyInterpreterOutput(),
+    policy,
+    stack: [...start.stack],
+    activeCalls: new Set(),
+    loopStack: [],
+    conditionalDepth: 0,
+    assumptions: [...start.assumptions],
+    ...(start.objectPath == null ? {} : {objectPath: [...start.objectPath]}),
   }
 }
 
-export function frameWithProgram(parent: InterpreterFrame, program: Program, env: Map<string, Value>, name: string): InterpreterFrame {
+type DerivedFrameOptions = {
+  program?: Program
+  env: Map<string, Value>
+  stateCases: InterpreterStateCase[] | null
+  stack?: string[]
+  activeCalls?: Set<string>
+  loopStack?: LoopFrame[]
+  conditionalDepth?: number
+  assumptions?: LinearConstraint[]
+  objectPath?: string[] | null
+  output?: InterpreterOutput
+  policy?: InterpreterPolicy
+}
+
+export function deriveFrame(parent: InterpreterFrame, options: DerivedFrameOptions): InterpreterFrame {
+  const objectPath = options.objectPath === undefined ? parent.objectPath : options.objectPath
   return {
+    program: options.program ?? parent.program,
+    env: options.env,
+    ...(options.stateCases == null ? {} : {stateCases: options.stateCases}),
+    output: options.output ?? parent.output,
+    policy: options.policy ?? parent.policy,
+    stack: options.stack ?? [...parent.stack],
+    activeCalls: options.activeCalls ?? new Set(parent.activeCalls),
+    loopStack: options.loopStack ?? [...parent.loopStack],
+    conditionalDepth: options.conditionalDepth ?? parent.conditionalDepth,
+    assumptions: options.assumptions ?? [...parent.assumptions],
+    ...(objectPath == null ? {} : {objectPath: [...objectPath]}),
+  }
+}
+
+export function childFrame(parent: InterpreterFrame, env: Map<string, Value>, name: string): InterpreterFrame {
+  return deriveFrame(parent, {
+    env,
+    stateCases: null,
+    stack: [...parent.stack, name],
+  })
+}
+
+export function frameWithProgram(parent: InterpreterFrame, program: Program, env: Map<string, Value>, name: string): InterpreterFrame {
+  return deriveFrame(parent, {
     program,
     env,
-    issues: parent.issues,
-    effects: parent.effects,
-    audits: parent.audits,
+    stateCases: null,
     stack: [...parent.stack, name],
-    activeCalls: new Set(parent.activeCalls),
-    localBindings: new Set(),
-    loopStack: [...parent.loopStack],
-    conditionalDepth: parent.conditionalDepth,
-    assumptions: [...parent.assumptions],
-    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
-    ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
-    ...(parent.suppressChecks == null ? {} : {suppressChecks: parent.suppressChecks}),
-  }
+  })
 }
 
 export function frameWithActiveCall(parent: InterpreterFrame, key: string): InterpreterFrame {
   const activeCalls = new Set(parent.activeCalls)
   activeCalls.add(key)
-  return {
-    ...parent,
+  return deriveFrame(parent, {
+    env: parent.env,
+    stateCases: parent.stateCases ?? null,
     activeCalls,
-  }
+  })
 }
 
 export function noteAudit(frame: InterpreterFrame, text: string, reason: string, node?: ts.Node) {
-  frame.audits.push({
+  frame.output.audits.push({
     kind: 'selector',
     stack: frame.stack,
     text,
@@ -193,7 +235,7 @@ export function noteAudit(frame: InterpreterFrame, text: string, reason: string,
 }
 
 export function noteEffect(frame: InterpreterFrame, message: string, node?: ts.Node) {
-  frame.effects.push({
+  frame.output.effects.push({
     kind: 'effect',
     message,
     stack: frame.stack,
@@ -202,7 +244,7 @@ export function noteEffect(frame: InterpreterFrame, message: string, node?: ts.N
 }
 
 export function noteUnsupported(frame: InterpreterFrame, message: string, node?: ts.Node): Value {
-  frame.issues.push({
+  frame.output.issues.push({
     kind: 'unsupported',
     message,
     stack: frame.stack,

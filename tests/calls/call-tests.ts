@@ -228,16 +228,16 @@ function destructuringDefault() {
 }
 `, readTopLevelGlobal)
 
-const unknownSpread = evaluateInterpreterFunction(unsupportedCallProgram, 'unknownSpread')
-const destructuringDefault = evaluateInterpreterFunction(unsupportedCallProgram, 'destructuringDefault')
+const unknownSpread = evaluateInterpreterFunction({program: unsupportedCallProgram, functionName: 'unknownSpread'})
+const destructuringDefault = evaluateInterpreterFunction({program: unsupportedCallProgram, functionName: 'destructuringDefault'})
 if (
-  !unknownSpread.issues.some(issue => issue.message.includes('Call spread needs an exact tuple'))
-  || !destructuringDefault.issues.some(issue => issue.message.includes('Unsupported parameter binding'))
+  !unknownSpread.output.issues.some(issue => issue.message.includes('Call spread needs an exact tuple'))
+  || !destructuringDefault.output.issues.some(issue => issue.message.includes('Unsupported parameter binding'))
 ) {
   console.error('expected unsupported call input families to be reported directly')
   console.error({
-    unknownSpread: unknownSpread.issues.map(issue => issue.message),
-    destructuringDefault: destructuringDefault.issues.map(issue => issue.message),
+    unknownSpread: unknownSpread.output.issues.map(issue => issue.message),
+    destructuringDefault: destructuringDefault.output.issues.map(issue => issue.message),
   })
   process.exitCode = 1
 } else {

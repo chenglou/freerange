@@ -1,4 +1,5 @@
 import {
+  deriveFrame,
   joinFrameEnvs,
   type InterpreterFrame,
   type InterpreterReturnCase,
@@ -62,21 +63,11 @@ export function stateCasesFromFrame(frame: InterpreterFrame): InterpreterStateCa
 }
 
 export function frameForStateCase(parent: InterpreterFrame, stateCase: InterpreterStateCase): InterpreterFrame {
-  return {
-    program: parent.program,
+  return deriveFrame(parent, {
     env: new Map(stateCase.env),
-    issues: parent.issues,
-    effects: parent.effects,
-    audits: parent.audits,
-    stack: parent.stack,
-    activeCalls: new Set(parent.activeCalls),
-    localBindings: new Set(parent.localBindings),
-    loopStack: [...parent.loopStack],
-    conditionalDepth: parent.conditionalDepth,
+    stateCases: null,
     assumptions: [...stateCase.assumptions],
-    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
-    ...(parent.objectPath == null ? {} : {objectPath: [...parent.objectPath]}),
-  }
+  })
 }
 
 export function snapshotStateCase(frame: InterpreterFrame, label?: string): InterpreterStateCase {

@@ -83,10 +83,10 @@ function addCase(label: string, paths: string[], project: ReturnType<typeof load
     lines.push('  missing program')
     return
   }
-  const result = evaluateInterpreterFunction(program, functionName)
+  const result = evaluateInterpreterFunction({program, functionName})
   for (const line of formatInterpreterValue(result.value)) lines.push(`  ${line}`)
   for (const line of formatInterpreterFacts(result.value)) lines.push(`  ${line}`)
-  for (const line of formatInterpreterIssues(result.issues)) lines.push(`  ${line}`)
+  for (const line of formatInterpreterIssues(result.output.issues)) lines.push(`  ${line}`)
 }
 
 function loadInterpreterProject(paths: string[]) {

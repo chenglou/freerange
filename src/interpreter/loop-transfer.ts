@@ -61,7 +61,17 @@ import {
   rationalToNumberFloor,
   type Rational,
 } from '../rational.ts'
-import {noteUnsupported, type InterpreterFlow, type InterpreterFrame, type InterpreterLoopClaim, type LoopFrame} from './context.ts'
+import {
+  deriveFrame,
+  emptyInterpreterOutput,
+  interpreterPolicy,
+  noteUnsupported,
+  type InterpreterFlow,
+  type InterpreterFrame,
+  type InterpreterHooks,
+  type InterpreterLoopClaim,
+  type LoopFrame,
+} from './context.ts'
 import {forgetRoot} from './forgettable-loop.ts'
 import {
   isAssignmentOperator,
@@ -331,28 +341,20 @@ function preName(root: string, analysis: Analysis): string {
 }
 
 function pathFrame(parent: InterpreterFrame, env: Map<string, Value>): InterpreterFrame {
-  const hooks = parent.hooks == null ? null : claimSilentHooks(parent.hooks)
-  return {
-    program: parent.program,
+  const hooks = parent.policy.hooks == null ? null : claimSilentHooks(parent.policy.hooks)
+  return deriveFrame(parent, {
     env,
-    issues: [],
-    effects: [],
-    audits: [],
-    stack: parent.stack,
-    activeCalls: new Set(parent.activeCalls),
-    localBindings: new Set(parent.localBindings),
-    loopStack: [...parent.loopStack],
-    conditionalDepth: parent.conditionalDepth,
-    assumptions: [...parent.assumptions],
-    ...(hooks == null ? {} : {hooks}),
-    suppressChecks: true,
-  }
+    stateCases: null,
+    output: emptyInterpreterOutput(),
+    policy: interpreterPolicy(hooks ?? undefined, 'suppress'),
+    objectPath: null,
+  })
 }
 
 // Path runs keep call and path interception (value semantics) but drop claim
 // and loop reporting; the single reporting pass fires those once.
-function claimSilentHooks(hooks: NonNullable<InterpreterFrame['hooks']>): NonNullable<InterpreterFrame['hooks']> {
-  const silent: NonNullable<InterpreterFrame['hooks']> = {}
+function claimSilentHooks(hooks: InterpreterHooks): InterpreterHooks {
+  const silent: InterpreterHooks = {}
   if (hooks.evaluateCall != null) silent.evaluateCall = hooks.evaluateCall
   if (hooks.evaluatePath != null) silent.evaluatePath = hooks.evaluatePath
   return silent
@@ -993,20 +995,11 @@ function narrowedResultInsideHulls(result: LoopResult, hulls: Map<string, Value>
 // checked against values that hold at every iteration.
 function runReportingPass(analysis: Analysis, hulls: Map<string, Value>) {
   const parent = analysis.realFrame
-  const frame: InterpreterFrame = {
-    program: parent.program,
+  const frame = deriveFrame(parent, {
     env: generalizedEnv(analysis, hulls),
-    issues: parent.issues,
-    effects: parent.effects,
-    audits: parent.audits,
-    stack: parent.stack,
-    activeCalls: new Set(parent.activeCalls),
-    localBindings: new Set(parent.localBindings),
+    stateCases: null,
     loopStack: [...parent.loopStack, {source: analysis.loop.source, sourceExpr: analysis.loop.sourceExpr, mode: 'symbolic', appends: []}],
-    conditionalDepth: parent.conditionalDepth,
-    assumptions: [...parent.assumptions],
-    ...(parent.hooks == null ? {} : {hooks: parent.hooks}),
-  }
+  })
   analysis.loop.bindIteration(frame)
   for (const statement of analysis.loop.body.statements) {
     const flow = analysis.context.evaluateStatement(statement, frame)

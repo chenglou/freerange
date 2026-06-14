@@ -106,6 +106,10 @@ Function and variable identity comes from TypeScript bindings, not identifier te
 
 Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The execution frame keeps live object references because a later argument can mutate an earlier one. Contract checking derives its localized parameter environment from those same values instead of evaluating source expressions again. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.
 
+## Interpreter Runs Separate State From Findings
+
+An interpreter request supplies the starting program, environment, assumptions, stack, and optional hooks. Frames keep mutable execution state flat, but share one immutable run policy and one append-only output unless an internal analysis pass explicitly isolates them. Results return final state separately from issues, effects, and audits. Create child, imported, branch, state-case, audit, and loop frames through the same derivation helper so each one says what it copies, shares, clears, or replaces.
+
 ## Control-Flow Truth Versus Proof Truth
 
 A failed universal comparison over case-split values does not make an `if` branch impossible. Mixed cases stay `maybe`. If two of the eight branch states satisfy `width > 0` and six don't, the branch is still reachable — proof has to handle the joined set, not declare the branch dead.
