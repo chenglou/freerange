@@ -245,7 +245,7 @@ TODO: this section.
 return.width > 0 && !(return.height <= 0)
 ```
 
-Supported checks can be combined with `&&` and negated with `!`. `||` is not supported yet.
+Supported checks can be combined with `&&` and negated with `!`. TODO: `||` is not supported yet.
 
 ### Built-Ins
 
