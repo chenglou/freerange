@@ -144,8 +144,8 @@ import {
   type FunctionEffects,
 } from './function-effects.ts'
 import {
-  platformGlobalEffect,
-  platformMethodEffect,
+  classifyPlatformGlobalCall,
+  classifyPlatformMethodCall,
   retainedArgumentIndexes,
   type PlatformCallbackEffect,
   type PlatformCallEffect,
@@ -2367,10 +2367,12 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
   const defaultLibraryMethod = ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, frame.program)
+  let platformRejectionReason: string | null = null
   if (defaultLibraryMethod) {
     const owner = defaultLibraryOwner(target, frame.program)
-    const effect = platformMethodEffect(owner, target.name.text, expression.arguments.length)
-    if (effect != null) {
+    const classification = classifyPlatformMethodCall(owner, target.name.text, expression.arguments.length)
+    if (classification.kind === 'supported') {
+      const effect = classification.effect
       const operands = evaluatePlatformMethodOperands(expression, target, frame)
       if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
       const receiver = operands.receiver?.value
@@ -2383,6 +2385,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       if (typed?.kind === 'object' || typed?.kind === 'array') return typed
       return noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
     }
+    if (classification.kind === 'unsupported') platformRejectionReason = classification.reason
   }
   if (isInlineFunction(target)) {
     const operands = evaluateInvocationOperands(expression.arguments, frame)
@@ -2410,19 +2413,19 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     return evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
   if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback(), frame)
-  // Calls into real platform globals (console.log, JSON.stringify, ...) read
-  // but never write caller state; everything else unseen gets the unknown-call
-  // treatment.
+  // Supported platform globals use their shared effect description. Deliberate
+  // rejections and calls we cannot classify receive the unknown-call treatment.
   const platformGlobal = ts.isPropertyAccessExpression(target)
     && ts.isIdentifier(target.expression)
     && isDefaultLibrarySymbol(target.expression, frame.program)
     && isDefaultLibraryMemberAccess(target, frame.program)
-    ? platformGlobalEffect(target.expression.text, target.name.text, expression.arguments.length)
-    : null
-  const factPreservingGlobal = platformGlobal != null
-    && !platformGlobal.mutatesReceiver
-    && platformGlobal.mutatesArgumentIndexes.length === 0
-    && platformGlobal.callbacks.length === 0
+    ? classifyPlatformGlobalCall(target.expression.text, target.name.text, expression.arguments.length)
+    : {kind: 'unrecognized'} as const
+  if (platformGlobal.kind === 'unsupported') platformRejectionReason = platformGlobal.reason
+  const factPreservingGlobal = platformGlobal.kind === 'supported'
+    && !platformGlobal.effect.mutatesReceiver
+    && platformGlobal.effect.mutatesArgumentIndexes.length === 0
+    && platformGlobal.effect.callbacks.length === 0
   const platformNamespace = ts.isPropertyAccessExpression(target)
     && ts.isIdentifier(target.expression)
     && isDefaultLibrarySymbol(target.expression, frame.program)
@@ -2456,9 +2459,12 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
   const argumentValues = operands.arguments.map(argument => argument.value)
   if (!factPreservingGlobal) applyUnknownCallEffects(expression, target, argumentValues, receiver, frame)
+  const platformRejection = platformRejectionReason == null
+    ? null
+    : noteUnsupported(frame, platformRejectionReason, expression)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
-  return noteUnsupported(frame, resolved.reason, expression)
+  return platformRejection ?? noteUnsupported(frame, resolved.reason, expression)
 }
 
 function evaluateKnownPlatformMethod(

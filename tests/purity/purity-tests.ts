@@ -32,14 +32,14 @@ void importedNamespacePure
 void importedNamedCallbackKeepsSourceProgram
 void importedPrimitivePure
 
-function purityOf(name: string, source: string): Purity['kind'] {
+function purityOf(name: string, source: string): Purity {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
   const fn = program.functions.get(name)
   if (fn == null) throw new Error(`no function ${name} in source`)
-  return functionPurity(functionImplementationReference(program, fn.node)).kind
+  return functionPurity(functionImplementationReference(program, fn.node))
 }
 
-const cases: {label: string; source: string; kind: Purity['kind']}[] = [
+const cases: {label: string; source: string; kind: Purity['kind']; reasonIncludes?: string}[] = [
   // --- pure ---
   {label: 'arithmetic on params', kind: 'pure', source: `function f(x: number) { return x * 2 + 1 }`},
   {label: 'local array build with push', kind: 'pure', source: `function f(x: number) { const ys: number[] = []; ys.push(x); return ys.length }`},
@@ -100,11 +100,15 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'source setter effects stay unknown at the call boundary', kind: 'unknown', source: `let total = 0\nclass Counter { set value(next: number) { total = next } }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
   {label: 'empty source setter stays unknown', kind: 'unknown', source: `class Counter { set value(next: number) {} }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
   {label: 'computed source getter stays unknown', kind: 'unknown', source: `class Counter { get value() { return 1 } }\nfunction f(counter: Counter) { return counter['value'] }`},
-  {label: 'Array.from iterator behavior stays unknown', kind: 'unknown', source: `function f(xs: number[]) { return Array.from(xs).length }`},
-  {label: 'JSON getter behavior stays unknown', kind: 'unknown', source: `function f(value: {x: number}) { return JSON.stringify(value).length }`},
-  {label: 'Object.values getter behavior stays unknown', kind: 'unknown', source: `function f(value: {x: number}) { return Object.values(value).length }`},
-  {label: 'Date.parse environment behavior stays unknown', kind: 'unknown', source: `function f(value: string) { return Date.parse(value) }`},
-  {label: 'sort without a comparator stays unknown', kind: 'unknown', source: `function f(xs: number[]) { return xs.toSorted()[0] ?? 0 }`},
+  {label: 'Array.from iterator behavior stays unknown', kind: 'unknown', reasonIncludes: 'Array.from is unsupported because it can call an iterator or mapper supplied by user code', source: `function f(xs: number[]) { return Array.from(xs).length }`},
+  {label: 'platform rejection reason propagates through helpers', kind: 'unknown', reasonIncludes: 'Array.from is unsupported because it can call an iterator or mapper supplied by user code', source: `function copy(xs: number[]) { return Array.from(xs) }\nfunction f(xs: number[]) { return copy(xs).length }`},
+  {label: 'JSON parse behavior stays unknown', kind: 'unknown', reasonIncludes: 'JSON.parse is unsupported because its result values are not modeled and its optional callback can run user code', source: `function f(value: string) { return JSON.parse(value) }`},
+  {label: 'JSON getter behavior stays unknown', kind: 'unknown', reasonIncludes: 'JSON.stringify is unsupported because it can run getters or toJSON methods', source: `function f(value: {x: number}) { return JSON.stringify(value).length }`},
+  {label: 'Object.entries getter behavior stays unknown', kind: 'unknown', reasonIncludes: 'Object.entries is unsupported because reading property values can run getters', source: `function f(value: {x: number}) { return Object.entries(value).length }`},
+  {label: 'Object.values getter behavior stays unknown', kind: 'unknown', reasonIncludes: 'Object.values is unsupported because reading property values can run getters', source: `function f(value: {x: number}) { return Object.values(value).length }`},
+  {label: 'Date.parse environment behavior stays unknown', kind: 'unknown', reasonIncludes: "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats", source: `function f(value: string) { return Date.parse(value) }`},
+  {label: 'sort without a comparator stays unknown', kind: 'unknown', reasonIncludes: 'Array.sort without a comparator is unsupported because default sorting converts elements to strings and can run user code', source: `function f(xs: number[]) { return xs.sort()[0] ?? 0 }`},
+  {label: 'toSorted without a comparator stays unknown', kind: 'unknown', reasonIncludes: 'Array.toSorted without a comparator is unsupported because default sorting converts elements to strings and can run user code', source: `function f(xs: number[]) { return xs.toSorted()[0] ?? 0 }`},
   {label: 'unavailable constructor is unknown', kind: 'unknown', source: `declare class Counter {}\nfunction f() { return new Counter() }`},
   {label: 'calls an unresolved function', kind: 'unknown', source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
   {label: 'map with an unresolvable callback parameter', kind: 'unknown', source: `function f(xs: number[], cb: (n: number) => number) { return xs.map(cb)[0] ?? 0 }`},
@@ -116,10 +120,13 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
 ]
 
 let failures = 0
-for (const {label, source, kind} of cases) {
+for (const {label, source, kind, reasonIncludes} of cases) {
   const actual = purityOf('f', source)
-  if (actual !== kind) {
-    console.error(`purity: expected ${kind} but got ${actual} for "${label}"`)
+  if (
+    actual.kind !== kind
+    || (reasonIncludes != null && (!('reason' in actual) || !actual.reason.includes(reasonIncludes)))
+  ) {
+    console.error(`purity: expected ${kind}${reasonIncludes == null ? '' : ` with "${reasonIncludes}"`} but got ${JSON.stringify(actual)} for "${label}"`)
     failures += 1
   }
 }

@@ -17,9 +17,9 @@ import {
 } from '../function-shape.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 import {
+  classifyPlatformGlobalCall,
+  classifyPlatformMethodCall,
   isPlatformGlobalNamespace,
-  platformGlobalEffect,
-  platformMethodEffect,
   retainedArgumentIndexes,
   type PlatformCallbackEffect,
   type PlatformCallEffect,
@@ -59,9 +59,12 @@ export type FunctionEffects = {
   // that differs across runs with the same inputs
   observesEnvironment: boolean
   // calls something the analysis cannot resolve to a known function or method,
-  // so it could do anything and the function cannot be proved pure
-  callsUnknown: boolean
+  // so it could do anything and the function cannot be proved pure. Keep the
+  // reasons so deliberate platform boundaries survive through helper calls.
+  unknownCallReasons: Set<string>
 }
+
+const unknownCallBodyReason = 'calls a function whose body cannot be analyzed'
 
 const noMutationTargets = (): MutationTargets => ({
   outerBindings: new Map(),
@@ -76,7 +79,7 @@ const noEffects = (): FunctionEffects => ({
   },
   mutableOuterReads: new Map(),
   observesEnvironment: false,
-  callsUnknown: false,
+  unknownCallReasons: new Set(),
 })
 
 // A function is pure when it changes nothing observable, reads no mutable
@@ -106,7 +109,8 @@ export function functionPurity(implementation: FunctionImplementationRef): Purit
   }
   if (effects.mutableOuterReads.size > 0) return {kind: 'impure', reason: 'reads mutable outside state'}
   if (effects.observesEnvironment) return {kind: 'impure', reason: 'observes the environment (I/O, the clock, or randomness)'}
-  if (effects.callsUnknown) return {kind: 'unknown', reason: 'calls a function whose body cannot be analyzed'}
+  const unknownCallReason = effects.unknownCallReasons.values().next().value
+  if (unknownCallReason != null) return {kind: 'unknown', reason: unknownCallReason}
   return {kind: 'pure'}
 }
 
@@ -208,9 +212,11 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
     into.observesEnvironment = true
     changed = true
   }
-  if (callee.callsUnknown && !into.callsUnknown) {
-    into.callsUnknown = true
-    changed = true
+  for (const reason of callee.unknownCallReasons) {
+    if (!into.unknownCallReasons.has(reason)) {
+      into.unknownCallReasons.add(reason)
+      changed = true
+    }
   }
   if (callee.mutations.certain.thisValue) add(into.mutations.certain, edge.receiverRoots)
   if (callee.mutations.certain.paramIndexes.size > 0) {
@@ -373,17 +379,17 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
     }
     if (ts.isCallExpression(current)) {
       const target = unwrapExpression(current.expression)
-      const effect = ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, program)
-        ? platformMethodEffect(
+      const classification = ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, program)
+        ? classifyPlatformMethodCall(
           defaultLibraryOwner(target, program),
           target.name.text,
           current.arguments.length,
         )
-        : null
-      if (ts.isPropertyAccessExpression(target) && effect != null) {
+        : {kind: 'unrecognized'} as const
+      if (ts.isPropertyAccessExpression(target) && classification.kind === 'supported') {
         const base = pathWriteBaseBinding(target.expression, program)
         if (base != null) {
-          for (const index of retainedArgumentIndexes(effect, current.arguments.length)) {
+          for (const index of retainedArgumentIndexes(classification.effect, current.arguments.length)) {
             const argument = current.arguments[index]
             if (argument == null) continue
             const expression = ts.isSpreadElement(argument) ? argument.expression : argument
@@ -710,6 +716,9 @@ function collectWrites(
   const addUncertainMutation = (roots: RootKind[]) => {
     addMutationRoots(member.effects.mutations.uncertain, roots)
   }
+  const addUnknownCall = (reason = unknownCallBodyReason) => {
+    member.effects.unknownCallReasons.add(reason)
+  }
   const classifyExpressionRoots = (expression: ts.Expression): RootKind[] =>
     expressionRootBindings(expression, program).flatMap(root => classifiers.reach(root))
   const addResolvedEdge = (
@@ -738,7 +747,7 @@ function collectWrites(
     if (argument == null) return
     const fn = functionValuedArgument(argument, program)
     if (fn == null) {
-      if (expressionMayBeCallable(argument, program)) member.effects.callsUnknown = true
+      if (expressionMayBeCallable(argument, program)) addUnknownCall()
       return
     }
     member.edges.push({
@@ -798,7 +807,7 @@ function collectWrites(
       if (assignment == null || assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
         if (propertyAccessHasSourceAccessor(current, 'get', program)) {
           addUncertainMutation(classifyExpressionRoots(current.expression))
-          member.effects.callsUnknown = true
+          addUnknownCall()
         }
       }
       if (assignment != null || increment) {
@@ -806,7 +815,7 @@ function collectWrites(
         if (propertyAccessHasSourceAccessor(current, 'set', program)) {
           addUncertainMutation(classifyExpressionRoots(current.expression))
           if (value != null && expressionHasMutableType(value, program)) addUncertainMutation(classifyExpressionRoots(value))
-          member.effects.callsUnknown = true
+          addUnknownCall()
         }
       }
     }
@@ -823,13 +832,13 @@ function collectWrites(
         && elementAccessHasSourceAccessor(current, 'get', program)
       ) {
         addUncertainMutation(classifyExpressionRoots(current.expression))
-        member.effects.callsUnknown = true
+        addUnknownCall()
       }
       if ((assignment != null || increment) && elementAccessHasSourceAccessor(current, 'set', program)) {
         addUncertainMutation(classifyExpressionRoots(current.expression))
         const value = assignment?.right
         if (value != null && expressionHasMutableType(value, program)) addUncertainMutation(classifyExpressionRoots(value))
-        member.effects.callsUnknown = true
+        addUnknownCall()
       }
     }
     if ((ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current))
@@ -856,12 +865,12 @@ function collectWrites(
         && isDefaultLibrarySymbol(base, program)
         && defaultLibraryMember
       if (defaultLibraryGlobal) {
-        const effect = platformGlobalEffect(base.text, target.name.text, call.arguments.length)
-        if (effect == null) {
+        const classification = classifyPlatformGlobalCall(base.text, target.name.text, call.arguments.length)
+        if (classification.kind !== 'supported') {
           addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
-          member.effects.callsUnknown = true
+          addUnknownCall(classification.kind === 'unsupported' ? classification.reason : undefined)
         } else {
-          applyPlatformCallEffect(call, effect, [], source => {
+          applyPlatformCallEffect(call, classification.effect, [], source => {
             if (source.kind !== 'argument') return []
             const argument = call.arguments[source.index]
             return argument == null || ts.isSpreadElement(argument) ? [] : classifyExpressionRoots(argument)
@@ -885,19 +894,19 @@ function collectWrites(
       const receiverElementRoots = receiverBase != null
         ? classifiers.reach(receiverBase)
         : classifyExpressionRoots(target.expression)
-      const effect = defaultLibraryMember
-        ? platformMethodEffect(
+      const classification = defaultLibraryMember
+        ? classifyPlatformMethodCall(
           defaultLibraryOwner(target, program),
           target.name.text,
           call.arguments.length,
         )
-        : null
-      if (effect == null) {
+        : {kind: 'unrecognized'} as const
+      if (classification.kind !== 'supported') {
         addUncertainMutation(receiverElementRoots)
         addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
-        member.effects.callsUnknown = true
+        addUnknownCall(classification.kind === 'unsupported' ? classification.reason : undefined)
       } else {
-        applyPlatformCallEffect(call, effect, receiverContainerRoots, source => {
+        applyPlatformCallEffect(call, classification.effect, receiverContainerRoots, source => {
           switch (source.kind) {
             case 'receiver':
               return receiverContainerRoots
@@ -924,14 +933,14 @@ function collectWrites(
     // A call we cannot see: every mutable argument may be written or retained,
     // and the callee could do anything (write globals, I/O, nondeterminism).
     addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
-    member.effects.callsUnknown = true
+    addUnknownCall()
   }
 
   const collectNew = (expression: ts.NewExpression) => {
     const name = ts.isIdentifier(expression.expression) ? expression.expression.text : null
     if (name === 'Date' && isDefaultLibrarySymbol(expression.expression, program)) {
       if ((expression.arguments?.length ?? 0) === 0) member.effects.observesEnvironment = true
-      else member.effects.callsUnknown = true
+      else addUnknownCall()
       return
     }
     if (
@@ -948,7 +957,7 @@ function collectWrites(
     // initializers, and dynamic class behavior. Until those execute through one
     // complete model, source-backed and declaration-only classes share the same
     // conservative boundary.
-    member.effects.callsUnknown = true
+    addUnknownCall()
   }
 
   ts.forEachChild(node, visit)

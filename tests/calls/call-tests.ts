@@ -421,6 +421,81 @@ if (
   console.log('calls: unsupported spread and binding defaults reported')
 }
 
+const unsupportedPlatformProgram = buildFitSourceFile('unsupported-platform-calls.ts', `
+function arrayFrom(values: number[]) {
+  return Array.from(values).length
+}
+
+function jsonParse(value: string) {
+  return JSON.parse(value)
+}
+
+function jsonStringify(value: {x: number}) {
+  return JSON.stringify(value).length
+}
+
+function objectEntries(value: {x: number}) {
+  return Object.entries(value).length
+}
+
+function objectValues(value: {x: number}) {
+  return Object.values(value).length
+}
+
+function dateParse(value: string) {
+  return Date.parse(value)
+}
+
+function sortWithoutComparator(values: number[]) {
+  values.sort()
+  return values.length
+}
+
+function toSortedWithoutComparator(values: number[]) {
+  return values.toSorted().length
+}
+
+function sortWithComparator(values: number[]) {
+  values.sort((left, right) => left - right)
+  return values.length
+}
+
+function toSortedWithComparator(values: number[]) {
+  return values.toSorted((left, right) => left - right).length
+}
+`, readTopLevelGlobal)
+
+const unsupportedPlatformMessages = new Map([
+  ['arrayFrom', 'Array.from is unsupported because it can call an iterator or mapper supplied by user code'],
+  ['jsonParse', 'JSON.parse is unsupported because its result values are not modeled and its optional callback can run user code'],
+  ['jsonStringify', 'JSON.stringify is unsupported because it can run getters or toJSON methods'],
+  ['objectEntries', 'Object.entries is unsupported because reading property values can run getters'],
+  ['objectValues', 'Object.values is unsupported because reading property values can run getters'],
+  ['dateParse', "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats"],
+  ['sortWithoutComparator', 'Array.sort without a comparator is unsupported because default sorting converts elements to strings and can run user code'],
+  ['toSortedWithoutComparator', 'Array.toSorted without a comparator is unsupported because default sorting converts elements to strings and can run user code'],
+])
+const unsupportedPlatformFailures: {functionName: string; messages: string[]}[] = []
+for (const [functionName, expectedMessage] of unsupportedPlatformMessages) {
+  const result = evaluateInterpreterFunction({program: unsupportedPlatformProgram, functionName})
+  const messages = result.output.issues.map(issue => issue.message)
+  if (!messages.includes(expectedMessage)) unsupportedPlatformFailures.push({functionName, messages})
+}
+const supportedSortFailures = ['sortWithComparator', 'toSortedWithComparator'].flatMap(functionName => {
+  const result = evaluateInterpreterFunction({program: unsupportedPlatformProgram, functionName})
+  const messages = result.output.issues.map(issue => issue.message)
+  return messages.some(message => message.includes('without a comparator'))
+    ? [{functionName, messages}]
+    : []
+})
+if (unsupportedPlatformFailures.length > 0 || supportedSortFailures.length > 0) {
+  console.error('expected deliberate platform boundaries to report their shared specific reasons')
+  console.error({unsupportedPlatformFailures, supportedSortFailures})
+  process.exitCode = 1
+} else {
+  console.log('calls: deliberate platform boundaries report specific reasons')
+}
+
 const callbackBoundaryProgram = buildFitSourceFile('callback-boundaries.ts', `
 function localCallbackIsRejected(values: number[]) {
   let count = 0

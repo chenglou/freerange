@@ -19,6 +19,11 @@ export type PlatformCallEffect = {
   observesEnvironment: boolean
 }
 
+export type PlatformCallClassification =
+  | {kind: 'supported'; effect: PlatformCallEffect}
+  | {kind: 'unsupported'; reason: string}
+  | {kind: 'unrecognized'}
+
 const noPlatformEffects: PlatformCallEffect = {
   mutatesReceiver: false,
   mutatesArgumentIndexes: [],
@@ -158,35 +163,53 @@ const globalEffects = new Map<string, Map<string, PlatformCallEffect>>([
   ])],
 ])
 
-export function platformMethodEffect(
+const unsupportedGlobalCallReasons = new Map<string, string>([
+  ['Array.from', 'Array.from is unsupported because it can call an iterator or mapper supplied by user code'],
+  ['JSON.parse', 'JSON.parse is unsupported because its result values are not modeled and its optional callback can run user code'],
+  ['JSON.stringify', 'JSON.stringify is unsupported because it can run getters or toJSON methods'],
+  ['Object.entries', 'Object.entries is unsupported because reading property values can run getters'],
+  ['Object.values', 'Object.values is unsupported because reading property values can run getters'],
+  ['Date.parse', "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats"],
+])
+
+export function classifyPlatformMethodCall(
   owner: DefaultLibraryOwner,
   name: string,
   argumentCount: number,
-): PlatformCallEffect | null {
+): PlatformCallClassification {
+  if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'sort' || name === 'toSorted') && argumentCount === 0) {
+    return {
+      kind: 'unsupported',
+      reason: `Array.${name} without a comparator is unsupported because default sorting converts elements to strings and can run user code`,
+    }
+  }
   const effects = switchMethodEffects(owner)
   const effect = effects?.get(name) ?? null
-  if (effect == null) return null
-  if ((name === 'sort' || name === 'toSorted') && argumentCount === 0) return null
-  return effect
+  return effect == null ? {kind: 'unrecognized'} : {kind: 'supported', effect}
 }
 
 export function isPlatformGlobalNamespace(name: string): boolean {
   return platformGlobalNamespaces.has(name)
 }
 
-export function platformGlobalEffect(
+export function classifyPlatformGlobalCall(
   base: string,
   member: string,
   _argumentCount: number,
-): PlatformCallEffect | null {
+): PlatformCallClassification {
   if (base === 'Math') {
-    return member === 'random'
-      ? {...noPlatformEffects, observesEnvironment: true}
-      : noPlatformEffects
+    return {
+      kind: 'supported',
+      effect: member === 'random'
+        ? {...noPlatformEffects, observesEnvironment: true}
+        : noPlatformEffects,
+    }
   }
   const members = globalEffects.get(base)
   const effect = members?.get(member) ?? members?.get('*')
-  return effect ?? null
+  if (effect != null) return {kind: 'supported', effect}
+  const reason = unsupportedGlobalCallReasons.get(`${base}.${member}`)
+  return reason == null ? {kind: 'unrecognized'} : {kind: 'unsupported', reason}
 }
 
 export function retainedArgumentIndexes(

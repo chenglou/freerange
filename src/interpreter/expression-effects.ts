@@ -10,7 +10,7 @@ import {
   resolveCallTarget,
 } from './call-targets.ts'
 import {functionPurity} from './function-effects.ts'
-import {platformGlobalEffect, platformMethodEffect} from './platform-effects.ts'
+import {classifyPlatformGlobalCall, classifyPlatformMethodCall, type PlatformCallEffect} from './platform-effects.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 
 // True only when evaluating the expression again cannot mutate visible state,
@@ -93,18 +93,18 @@ function callIsRepeatable(call: ts.CallExpression, program: Program): boolean {
     && isDefaultLibrarySymbol(target.expression, program)
     && isDefaultLibraryMemberAccess(target, program)
   ) {
-    const effect = platformGlobalEffect(target.expression.text, target.name.text, call.arguments.length)
-    return effect != null && platformEffectIsRepeatable(call, effect, program)
+    const classification = classifyPlatformGlobalCall(target.expression.text, target.name.text, call.arguments.length)
+    return classification.kind === 'supported' && platformEffectIsRepeatable(call, classification.effect, program)
   }
 
   if (ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, program)) {
     if (!expressionIsRepeatable(target.expression, program)) return false
-    const effect = platformMethodEffect(
+    const classification = classifyPlatformMethodCall(
       defaultLibraryOwner(target, program),
       target.name.text,
       call.arguments.length,
     )
-    return effect != null && platformEffectIsRepeatable(call, effect, program)
+    return classification.kind === 'supported' && platformEffectIsRepeatable(call, classification.effect, program)
   }
 
   const resolved = resolveCallTarget(target, program)
@@ -115,7 +115,7 @@ function callIsRepeatable(call: ts.CallExpression, program: Program): boolean {
 
 function platformEffectIsRepeatable(
   call: ts.CallExpression,
-  effect: NonNullable<ReturnType<typeof platformMethodEffect>>,
+  effect: PlatformCallEffect,
   program: Program,
 ): boolean {
   if (effect.mutatesReceiver || effect.mutatesArgumentIndexes.length > 0 || effect.observesEnvironment) return false
