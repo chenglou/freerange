@@ -2,7 +2,6 @@
 
 - **Arbitrary-pair non-overlap** for freely-positioned 2D boxes (the predictive-keyframes case). Outside the linear-plus-adjacent vocabulary. Either accept as outside, or add a small targeted decision procedure (small-array exhaustive, transitive closure, or SMT).
 - **`reduce` recognition** for summing arbitrary numbers. The 0|1 counting case is covered by `filter(p).length`; `reduce` would cover summing widths, weights, totals.
-- **Views via pure code**: users transform their field names with `arr.map(item => ({start, size}))` before calling catalog items. Confirm this works for the layouts that currently can't use `top/height/bottom` directly. Segmented-stack still hardcodes those names; revisit when a real case demands it.
 - **Open-ended range spellings** (`int 1..`, `0..`). Hold off until the noise from spelling `Infinity` becomes annoying. If added, exclusion markers attach only to a written bound (`5<..` is strictly above 5); a bare `<..10` collides with the inline `< expr` comparison shorthand and stays out.
 - **A `-Infinity<..Infinity` lint.** Strict at one infinity, inclusive at the other is almost always a misread of `-Infinity<..<Infinity` (the inclusive end still admits Infinity). Worth a warning when a range mixes an exclusive infinite endpoint with an inclusive one.
 
@@ -29,6 +28,4 @@ The `pure` @fit directive ships (checked against the effect summary, not by eval
 
 ## Maintenance
 
-- Reject obvious bad `given` lines early (empty ranges, direct contradictions) before proof runs.
 - Report lines name where each fact came from. Missing pieces name the smaller relation when possible (`scale >= 0`, `count > 0`) instead of the whole failed comparison.
-- Vacuity warnings for inconsistent assumptions.
