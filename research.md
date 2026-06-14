@@ -82,7 +82,7 @@ A checker that understands locals, loops, arrays, object literals, `?.`, `??`, a
 - `throw` guards are normal control flow. Post-guard code inherits the surviving path's facts. This is the boring source answer for positive-step and validated-input helpers.
 - Append-only loops infer length, scalar-array element shape, cursor recurrence, `spaced`, `nondecreasing`, and per-item field ranges.
 - Conditional push proves `rows.length <= items.length`, not equal length. Source order can come when a fact needs it.
-- Mutation (`sort`, `reverse`, `splice`, indexed assignment) kills sequence facts unless summarized. Unsupported loop bodies are still useful when they only touch roots Freerange can forget.
+- Mutation keeps only the facts covered by the operation's written rule. `reverse()` and `sort(compare)` preserve basic array facts but discard ordering and spacing. Unsupported loop forms are rejected instead of partially interpreted.
 
 ## `Infinity` Is A Real Bound
 
@@ -121,6 +121,8 @@ A source-backed free function has one effect description: outside reads, receive
 Platform calls use one table with the same information. Callback entries name the callback argument, what each callback parameter can reach, and the `thisArg`. Mutation and retention entries name the receiver or exact argument positions. The interpreter may know more about a supported result, such as the length of `items.map(...)`, but it still gets call effects from this table.
 
 Unknown behavior is a supported outcome, not a request for another recognizer. Class member calls and user construction are unknown even when source is visible because runtime dispatch, base constructors, and field initializers are larger than one selected body. Function-scoped function values are unknown until their callable identity is represented. Platform operations with hidden iteration, property reads, conversion, or default ordering stay unknown until the whole family has a written effect rule. Mutable module objects and arrays are outside state; only immutable primitive bindings are stable reads.
+
+When a platform call is deliberately unsupported, its classification carries the explanation. Evaluation, purity checks, contract helper checks, and calls through other helpers use that same explanation. A broad TypeScript return type does not make the call supported: Freerange may preserve that type while still reporting that the call's behavior is unknown.
 
 Expression repeatability is narrower than function purity but derives from the same descriptions. A branch condition or loop bound may be read again only when that expression has no mutation, environment observation, accessor call, or unknown call. Calls still evaluate the callable, receiver, and arguments once in JavaScript order before support is decided, so rejecting a call cannot erase effects that already happened.
 
@@ -237,7 +239,7 @@ Before adding a built-in like `spaced` or `inside`:
 - report template
 - at least three non-demo use cases
 
-`spaced`, `inside`, `partitions`, `sourceOrder`, `sameSource` are promising. `goodRows`, `chatLayout`, and app-specific names are not.
+Reject app-specific names. Add a built-in only when the general operation and its limits are clear.
 
 ## Intrinsic Versus Extrinsic
 

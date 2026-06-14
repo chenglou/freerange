@@ -1,6 +1,6 @@
 # Vocabulary
 
-What `@fit` claims freerange will try to decide. Everything outside this list is rejected with a clear message — no best-effort guessing.
+What `@fit` claims Freerange will try to decide. Everything outside this list is rejected with a clear message.
 
 ## Core
 
@@ -71,6 +71,28 @@ spaced(rows, 0) && rows[].height > 0
 
 `&&`, `||`, `!`, `==` between any of the above.
 
+### Purity
+
+```ts
+/** @fit
+ * pure
+ */
+function widthWithPadding(width: number, padding: number) {
+  return width + padding * 2
+}
+```
+
+`pure` is a function-level claim. It means calling the function:
+
+- does not change its arguments, `this`, or outside state
+- does not read outside state that other code can change
+- does not perform I/O or read the clock or randomness
+- does not call code whose behavior Freerange cannot inspect
+
+Creating and changing local values is allowed. The annotation does not make a function pure; it asks Freerange to check the promise.
+
+A source-backed free function may also be called from another `@fit` expression when Freerange proves it pure. The helper does not need its own `pure` line. A definite effect makes the claim fail. A call whose behavior is unavailable leaves the claim unknown.
+
 ## Named catalog
 
 Decidable claims with documented rules. Users call these like functions; the analyzer queries facts rather than re-deriving them.
@@ -104,6 +126,7 @@ These appear in code bodies (and in `@fit` text) and reduce to vocabulary claims
 - `arr.some(item => P(item))` — equivalent to existence (the dual of `every` under negation).
 - `arr.filter(P).length` — count of items satisfying `P`. Bounded by `arr.length`; tightens when `P` is decidable on the element summary.
 - `arr.map(item => …)` — preserves length, summarizes the new element type.
+- `arr.reverse()` and `arr.sort(compare)` — preserve basic array facts but discard ordering and spacing facts.
 
 No special `count(...)`, `forall(...)`, `exists(...)` syntax. Users write the array methods they already know.
 
@@ -115,8 +138,7 @@ Listed explicitly. The analyzer reports these as unsupported rather than guessin
 - **General polynomial inequalities**: `dx*dx + dy*dy <= r*r` and similar.
 - **Transcendental shape claims**: bounds on `Math.sin(x)`, `Math.cos(x)`, `Math.pow(x, y)` beyond the trivial interval `[-1, 1]` or monotonic cases.
 - **Set cardinality beyond catalog**: claims about cardinalities of intersections, unions, multisets that don't reduce to a `filter(p).length` form.
-- **Mutation reasoning**: arrays passed through `sort`, `reverse`, `splice`, indexed assignment. Sequence facts are dropped after these.
-- **Effect claims**: read/write sets, purity. Possible future addition as a separate small layer; not in vocabulary today.
+- **Calls and mutations without a written rule**: `sort()` without a comparison function is unsupported. Other operations Freerange cannot summarize leave the affected facts unknown.
 
 ## How to read a failure
 
