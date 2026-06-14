@@ -1958,7 +1958,7 @@ export function totalExtentOfCountedItems(count: number, size: number) {
  */
 export function pureClampToHundred(x: number): number {
   // builds a local array and uses Math: no observable effect, deterministic.
-  const limits = [0, 100]
+  const limits = [0, 100] as const
   return Math.min(Math.max(x, limits[0]!), limits[1]!)
 }
 

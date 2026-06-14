@@ -1,5 +1,7 @@
 import * as ts from 'typescript'
 import {
+  arrayLength,
+  arraySummary,
   literalValue,
   unknown,
   type ArrayValue,
@@ -47,7 +49,7 @@ export function evaluateBuiltinCall(context: BuiltinContext): Value | null {
 }
 
 export function extentEndSummaryValue(array: ArrayValue, emptyExpr: string): NumberValue | null {
-  const extentEnds = array.summary?.extentEnds ?? []
+  const extentEnds = arraySummary(array)?.extentEnds ?? []
   const fact = extentEnds.find(candidate => sameExpressionText(candidate.emptyExpr, emptyExpr))
   return fact == null ? null : blessedRowEnd(fact)
 }
@@ -96,7 +98,7 @@ function evaluateLastEndCall(context: BuiltinContext): Value {
   const target = context.evaluateExpression(targetExpression)
   if (target.kind !== 'array') return unknown('lastEnd expected an array')
   if (ambiguousRowAxes(target)) return unknown(`lastEnd(...) is ambiguous: ${ambiguousAxesReason}`)
-  const lastEnd = blessedRowEnd(target.summary?.lastEnd ?? null)
+  const lastEnd = blessedRowEnd(arraySummary(target)?.lastEnd ?? null)
   return lastEnd ?? unknown(lastEndFailureReason(context.expressionText(targetExpression), target))
 }
 
@@ -107,7 +109,7 @@ function evaluateNoOverlapCall(context: BuiltinContext): Value {
   const arr = context.evaluateExpression(args[0]!)
   if (arr.kind !== 'array') return unknown('noOverlap expected an array')
   if (ambiguousRowAxes(arr)) return unknown(`noOverlap(...) is ambiguous: ${ambiguousAxesReason}`)
-  const summary = arr.summary
+  const summary = arraySummary(arr)
   if (summary == null) return unknown(noOverlapFailureReason(text, arr, null))
   const rowExtentShapes = spacedShapesFromRelations(summary.relations).filter(isRowExtentShape)
   for (const shape of rowExtentShapes) {
@@ -165,9 +167,10 @@ function evaluateExtentEndCall(context: BuiltinContext): Value {
   const empty = context.evaluateExpression(emptyExpression)
   if (empty.kind !== 'number' || empty.expr == null) return unknown('extentEnd expected a known empty value')
 
-  if (target.length.max === 0) return empty
-  const lastEnd = blessedRowEnd(target.summary?.lastEnd ?? null)
-  if (target.length.min >= 1 && lastEnd != null) return lastEnd
+  const length = arrayLength(target)
+  if (length.max === 0) return empty
+  const lastEnd = blessedRowEnd(arraySummary(target)?.lastEnd ?? null)
+  if (length.min >= 1 && lastEnd != null) return lastEnd
   return extentEndSummaryValue(target, empty.expr) ?? unknown(extentEndFailureReason(context.expressionText(targetExpression), empty.expr, target))
 }
 
@@ -211,7 +214,7 @@ export function nondecreasingFailureReason(text: string, target: {array: ArrayVa
     `need: every next .${target.prop} >= previous .${target.prop}`,
   ]
   const known: string[] = []
-  const advance = target.array.summary?.advances.find(fact => fact.prop === target.prop)
+  const advance = arraySummary(target.array)?.advances.find(fact => fact.prop === target.prop)
   if (advance != null) known.push(`row advance for .${target.prop}: ${formatRange(advance.value)}`)
   known.push(`sequence facts: ${formatArraySummary(target.array)}`)
   lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
@@ -231,7 +234,8 @@ function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
     `need: every next row top == previous top + previous height + ${publicGapExpr}`,
   ]
   const known: string[] = []
-  const spacing = rows.summary == null ? null : spacedShapesFromRelations(rows.summary.relations)[0] ?? null
+  const summary = arraySummary(rows)
+  const spacing = summary == null ? null : spacedShapesFromRelations(summary.relations)[0] ?? null
   if (spacing != null) {
     const advance = publicFitText(spacing.advanceExpr)
     const size = publicFitText(spacing.heightExpr)
@@ -256,12 +260,13 @@ function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
 }
 
 function lastEndFailureReason(targetText: string, target: ArrayValue) {
-  const missing = target.length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
+  const length = arrayLength(target)
+  const missing = length.min >= 1 ? 'pushed row height for lastEnd' : 'row height and non-empty length for lastEnd'
   const publicTargetText = publicFitText(targetText)
   const lines = [
     `lastEnd(${publicTargetText}) was not inferred`,
     'need: a non-empty append-only row loop that pushes height',
-    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+    `known:\n  rows length: ${formatRange(length)}\n  sequence facts: ${formatArraySummary(target)}`,
   ]
   lines.push(`missing: ${missing}`)
   return lines.join('\n')
@@ -273,7 +278,7 @@ function extentEndFailureReason(targetText: string, emptyExpr: string, target: A
   const lines = [
     `extentEnd(${publicTargetText}, ${publicEmptyExpr}) was not inferred`,
     'need: an append-only row loop plus the empty fallback used by the source',
-    `known:\n  rows length: ${formatRange(target.length)}\n  sequence facts: ${formatArraySummary(target)}`,
+    `known:\n  rows length: ${formatRange(arrayLength(target))}\n  sequence facts: ${formatArraySummary(target)}`,
   ]
   lines.push('missing: empty-safe row end')
   return lines.join('\n')

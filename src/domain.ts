@@ -44,7 +44,14 @@ export {
   withinGridWindow,
 } from './number-domain.ts'
 export {
+  arrayAsCollection,
+  arrayElement,
+  arrayLength,
+  arraySummary,
+  arrayValueAtKnownIndex,
+  collectionValue,
   finiteLiteralSetValues,
+  fixedTupleValue,
   freshReferenceIds,
   joinValues,
   literalKey,
@@ -65,11 +72,11 @@ export {
 } from './value-domain.ts'
 export type {
   Assumption,
-  ArrayLayout,
   ArrayOrigin,
   ArraySummary,
   ArrayValue,
   BranchArm,
+  CollectionValue,
   ConstraintSource,
   LinearConstraint,
   LiteralPrimitive,
@@ -82,6 +89,7 @@ export type {
   NumberComputation,
   NumberValue,
   ObjectValue,
+  FixedTupleValue,
   SequenceExpression,
   SequenceAddition,
   SequenceRelation,

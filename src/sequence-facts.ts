@@ -1,5 +1,7 @@
 import {
   addNumbers,
+  arrayElement,
+  arraySummary,
   numberValue,
   type ArrayValue,
   type NumberValue,
@@ -45,7 +47,7 @@ export function rowAxisUnionTypeText(): string {
 // An element carrying both vocabularies makes spaced/lastEnd/extentEnd/
 // noOverlap ambiguous; the caller should map to a single axis first.
 export function ambiguousRowAxes(array: ArrayValue): boolean {
-  const element = array.element
+  const element = arrayElement(array)
   if (element == null || element.kind !== 'object') return false
   const present = rowAxes.filter(axis =>
     element.props.has(axis.position) && (element.props.has(axis.size) || element.props.has(axis.end)))
@@ -128,7 +130,7 @@ export type AdjacentComparison =
     }
 
 export function proveAdjacentComparison(array: ArrayValue, target: AdjacentComparison, resolve: AddendResolver | null = null) {
-  return array.summary?.relations.some(relation => relationImplies(relation, target, resolve)) === true
+  return arraySummary(array)?.relations.some(relation => relationImplies(relation, target, resolve)) === true
 }
 
 export function hasNondecreasingProp(array: ArrayValue, prop: string) {
@@ -145,7 +147,7 @@ export function hasNondecreasingProp(array: ArrayValue, prop: string) {
 // next == previous + gap. A recurrence on any other object field pair says
 // nothing about row spacing.
 export function provedSpacing(array: ArrayValue, gapExpr: string, resolve: AddendResolver | null = null) {
-  return array.summary?.relations.find(relation => {
+  return arraySummary(array)?.relations.find(relation => {
     const shape = spacedShapeFromRelation(relation)
     return shape != null && addendSumsEqual(shape.gapExpr === '0' ? [] : [shape.gapExpr], gapExpr === '0' ? [] : [gapExpr], resolve)
   }) ?? null

@@ -4,6 +4,8 @@ import {
   publicFitText,
 } from './parser.ts'
 import {
+  arrayElement,
+  arrayLength,
   finiteNumberSet,
   type NumberValue,
   type Value,
@@ -161,9 +163,10 @@ function addFactsFromValue(inventory: FactInventory, path: string, value: Value)
     return
   }
 
-  inventory.addMany(numberFacts(`${path}.length`, value.length), {kind: 'source'}, publicFitText(`${path}.length`))
-  if (value.element != null) addFactsFromValue(inventory, `${path}[]`, value.element)
-  if (value.summary != null) {
+  inventory.addMany(numberFacts(`${path}.length`, arrayLength(value)), {kind: 'source'}, publicFitText(`${path}.length`))
+  const element = arrayElement(value)
+  if (element != null) addFactsFromValue(inventory, `${path}[]`, element)
+  if (value.layout === 'collection' && value.summary != null) {
     if (value.summary.origin != null) {
       const sourcePath = publicFitText(value.summary.origin.sourceExpr)
       inventory.add({

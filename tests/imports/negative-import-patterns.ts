@@ -125,7 +125,7 @@ export function negativeImportedTypeFieldArrayElement(): NegativeImportedTypeFie
 /** @fit
  * return[4] >= 0
  */
-export function negativeImportedTupleSummaryDoesNotApplyToEverySlot(value: number) {
+export function negativeImportedTupleSummaryDoesNotApplyToEverySlot(value: number): [string, number, number, number, number] {
   const [, , offsetX, offsetY] = importedTupleWithOneOffset(value)
   return ['path', 0, 0, offsetX, offsetY]
 }

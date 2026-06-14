@@ -1,6 +1,7 @@
 import {createFunctionContractCache, inferFitFiles, readTopLevelGlobal, verifyFitProgramWithCallsites} from '../../src/check-core.ts'
 import {
   addNumbers,
+  arraySummary,
   binaryNumberComputation,
   divideNumbers,
   joinValues,
@@ -14,6 +15,7 @@ import {
   subtractNumbers,
   type ArraySummary,
   type ArrayValue,
+  type CollectionValue,
   type SequenceRelation,
 } from '../../src/domain.ts'
 import {linearVariable} from '../../src/linear.ts'
@@ -296,13 +298,12 @@ const baseArraySummary: ArraySummary = {
   lastEnd: {value: summaryEnd, positionPath: ['y'], sizePath: ['height']},
   extentEnds: [{emptyExpr: 'top', value: summaryEnd, positionPath: ['y'], sizePath: ['height']}],
 }
-function arrayWithSummary(summary: ArraySummary): ArrayValue {
+function arrayWithSummary(summary: ArraySummary): CollectionValue {
   return {
     kind: 'array',
     referenceIds: [],
     layout: 'collection',
     length: numberValue(0, 10, 0, 'rows.length', linearVariable('rows.length')),
-    elements: null,
     element: null,
     expr: 'rows',
     summary,
@@ -364,32 +365,32 @@ const incompatibleAccumulation = mergeArraySummary(baseArraySummary, {
 })
 if (
   reorderedSummaryJoin.kind !== 'array'
-  || reorderedSummaryJoin.summary?.relations.length !== 2
+  || arraySummary(reorderedSummaryJoin)?.relations.length !== 2
   || mismatchedSummaryJoin.kind !== 'array'
-  || mismatchedSummaryJoin.summary?.relations.length !== 0
+  || arraySummary(mismatchedSummaryJoin)?.relations.length !== 0
   || reverseMismatchedSummaryJoin.kind !== 'array'
-  || reverseMismatchedSummaryJoin.summary?.relations.length !== 0
+  || arraySummary(reverseMismatchedSummaryJoin)?.relations.length !== 0
   || mismatchedEndSummaryJoin.kind !== 'array'
-  || mismatchedEndSummaryJoin.summary?.lastEnd != null
-  || mismatchedEndSummaryJoin.summary?.extentEnds.length !== 0
+  || arraySummary(mismatchedEndSummaryJoin)?.lastEnd != null
+  || arraySummary(mismatchedEndSummaryJoin)?.extentEnds.length !== 0
   || joinedAdvanceSummary.kind !== 'array'
-  || joinedAdvanceSummary.summary?.advances[0]?.value.min !== 0
-  || joinedAdvanceSummary.summary.advances[0]?.value.max !== 10
+  || arraySummary(joinedAdvanceSummary)?.advances[0]?.value.min !== 0
+  || arraySummary(joinedAdvanceSummary)?.advances[0]?.value.max !== 10
   || reverseJoinedAdvanceSummary.kind !== 'array'
-  || reverseJoinedAdvanceSummary.summary?.advances[0]?.value.min !== 0
-  || reverseJoinedAdvanceSummary.summary.advances[0]?.value.max !== 10
+  || arraySummary(reverseJoinedAdvanceSummary)?.advances[0]?.value.min !== 0
+  || arraySummary(reverseJoinedAdvanceSummary)?.advances[0]?.value.max !== 10
   || sharedGuaranteeSummaryJoin.kind !== 'array'
-  || sharedGuaranteeSummaryJoin.summary?.relations[0]?.op !== '>='
+  || arraySummary(sharedGuaranteeSummaryJoin)?.relations[0]?.op !== '>='
   || commutedRelationSummaryJoin.kind !== 'array'
-  || commutedRelationSummaryJoin.summary?.relations.length !== 1
+  || arraySummary(commutedRelationSummaryJoin)?.relations.length !== 1
   || structuralEndSummaryJoin.kind !== 'array'
-  || structuralEndSummaryJoin.summary?.lastEnd?.value.min !== 0
-  || structuralEndSummaryJoin.summary.lastEnd.value.max !== 100
-  || structuralEndSummaryJoin.summary.extentEnds[0]?.value.min !== 0
-  || structuralEndSummaryJoin.summary.extentEnds[0]?.value.max !== 100
+  || arraySummary(structuralEndSummaryJoin)?.lastEnd?.value.min !== 0
+  || arraySummary(structuralEndSummaryJoin)?.lastEnd?.value.max !== 100
+  || arraySummary(structuralEndSummaryJoin)?.extentEnds[0]?.value.min !== 0
+  || arraySummary(structuralEndSummaryJoin)?.extentEnds[0]?.value.max !== 100
   || emptyBranchSummaryJoin.kind !== 'array'
-  || emptyBranchSummaryJoin.summary?.relations.length !== 1
-  || emptyBranchSummaryJoin.summary.lastEnd != null
+  || arraySummary(emptyBranchSummaryJoin)?.relations.length !== 1
+  || arraySummary(emptyBranchSummaryJoin)?.lastEnd != null
   || incompatibleAccumulation?.lastEnd != null
 ) {
   console.error('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends')

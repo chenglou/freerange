@@ -1,15 +1,16 @@
 import * as ts from 'typescript'
 import {
+  arrayElement,
+  arrayLength,
+  arrayValueAtKnownIndex,
+  collectionValue,
   joinValues,
-  mergeElementValue,
-  numberValue,
+  maxArrayLength,
   referenceIdsOverlap,
-  tupleElements,
   unknown,
   type Value,
   integerValued,
 } from '../domain.ts'
-import {linearConstant} from '../linear.ts'
 import {expressionRootName} from '../source-expressions.ts'
 import {noteUnsupported, type InterpreterFrame} from './context.ts'
 
@@ -52,7 +53,7 @@ export function readPath(path: ValuePath, frame: InterpreterFrame, node?: ts.Nod
   return readPathSegments(root, path.segments)
 }
 
-export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame) {
+export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame, node?: ts.Node) {
   if (path.segments.length === 0) {
     frame.env.set(path.root, value)
     return
@@ -65,6 +66,7 @@ export function writePath(path: ValuePath, value: Value, frame: InterpreterFrame
   const containerPath = path.segments.slice(0, -1)
   const oldContainer = readPathSegments(current, containerPath)
   const updated = setPathSegments(current, path.segments, value, path.root)
+  if (updated.kind === 'unknown' && node != null) noteUnsupported(frame, updated.reason, node)
   const newContainer = readPathSegments(updated, containerPath)
   if (oldContainer.kind === 'object' || oldContainer.kind === 'array') {
     for (const [name, envValue] of frame.env) {
@@ -104,13 +106,13 @@ export function replaceValueEverywhere(env: Map<string, Value>, current: Value, 
 
 export function readPropertyValue(target: Value, name: string, expr: string): Value {
   if (target.kind === 'object') return target.props.get(name) ?? unknown(`${expr} was not inferred`)
-  if (target.kind === 'array' && name === 'length') return target.length
+  if (target.kind === 'array' && name === 'length') return arrayLength(target)
   if (target.kind === 'nullable') return readPropertyValue(target.present, name, expr)
   return unknown(`${expr} expected an object`)
 }
 
 export function readArrayIndexValue(target: Value, index: number, expr: string): Value {
-  if (target.kind === 'array') return tupleElements(target)?.[index] ?? target.element ?? unknown(`${expr} was not inferred`)
+  if (target.kind === 'array') return arrayValueAtKnownIndex(target, index, expr)
   if (target.kind === 'nullable') return readArrayIndexValue(target.present, index, expr)
   return unknown(`${expr} expected an array`)
 }
@@ -144,7 +146,9 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value, 
   const segment = segments[0]
   if (segment == null) return value
   if (segment.kind === 'prop') {
-    if (current.kind === 'array' && segment.name === 'length' && value.kind === 'number') return {...current, length: value}
+    if (current.kind === 'array' && segment.name === 'length' && value.kind === 'number') {
+      return collectionValue(value, null, current.expr, current.referenceIds, null)
+    }
     if (current.kind !== 'object') return unknown(`${expr}.${segment.name} expected an object`)
     const props = new Map(current.props)
     const nextExpr = `${expr}.${segment.name}`
@@ -155,21 +159,19 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value, 
     return {...current, props}
   }
   if (current.kind !== 'array') return unknown(`${expr}[${segment.index}] expected an array`)
-  const elements = current.elements == null ? [] : [...current.elements]
-  while (elements.length <= segment.index) elements.push(unknown(`${expr}[${elements.length}] was not inferred`))
   const nextExpr = `${expr}[${segment.index}]`
-  elements[segment.index] = elements[segment.index]!.kind === 'unknown' && segments.length > 1
-    ? unknown(`${nextExpr} was not inferred before nested assignment`)
-    : setPathSegments(elements[segment.index]!, segments.slice(1), value, nextExpr)
-  let element: Value | null = null
-  for (const item of elements) element = mergeElementValue(element, item)
-  return {
-    ...current,
-    layout: 'tuple',
-    elements,
-    element,
-    length: numberValue(elements.length, elements.length, 0, `${expr}.length`, linearConstant(elements.length)),
+  if (segment.index < 0 || segment.index >= maxArrayLength) {
+    return unknown(`Array index ${segment.index} is not a JavaScript array index`)
   }
+  if (current.layout === 'collection') {
+    return unknown(`Indexed writes to collections are unsupported: ${nextExpr}`)
+  }
+  if (segment.index >= current.elements.length) {
+    return unknown(`Fixed tuple ${expr} has no element at index ${segment.index}`)
+  }
+  const elements = [...current.elements]
+  elements[segment.index] = setPathSegments(elements[segment.index]!, segments.slice(1), value, nextExpr)
+  return {...current, elements}
 }
 
 function replaceSharedValue(value: Value, from: Value, to: Value): Value {
@@ -180,7 +182,16 @@ function replaceSharedValue(value: Value, from: Value, to: Value): Value {
   ) {
     const sameReferences = value.referenceIds.length === from.referenceIds.length
       && value.referenceIds.every(referenceId => from.referenceIds.includes(referenceId))
-    return sameReferences ? to : joinValues(value, to)
+    if (!sameReferences) return joinValues(value, to)
+    if (value.kind === 'array' && value.layout === 'collection' && to.kind === 'array' && to.layout === 'tuple') {
+      return collectionValue(
+        arrayLength(to),
+        arrayElement(to),
+        value.expr,
+        value.referenceIds,
+      )
+    }
+    return to
   }
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
@@ -193,11 +204,14 @@ function replaceSharedValue(value: Value, from: Value, to: Value): Value {
     return changed ? {...value, props} : value
   }
   if (value.kind === 'array') {
-    const elements = value.elements == null ? null : value.elements.map(element => replaceSharedValue(element, from, to))
+    if (value.layout === 'tuple') {
+      const elements = value.elements.map(element => replaceSharedValue(element, from, to))
+      return elements.some((item, index) => item !== value.elements[index])
+        ? {...value, elements}
+        : value
+    }
     const element = value.element == null ? null : replaceSharedValue(value.element, from, to)
-    const changed = element !== value.element
-      || (elements != null && value.elements != null && elements.some((item, index) => item !== value.elements![index]))
-    return changed ? {...value, elements, element} : value
+    return element === value.element ? value : {...value, element}
   }
   if (value.kind === 'nullable') {
     const present = replaceSharedValue(value.present, from, to)

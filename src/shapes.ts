@@ -1,8 +1,8 @@
 import * as ts from 'typescript'
 import {
   finiteNumberValue,
+  fixedTupleValue,
   joinValues,
-  linearNameForExpression,
   literalValue,
   mergeNullishKind,
   nullableValue,
@@ -15,7 +15,7 @@ import {
   type NullishKind,
   type Value,
 } from './domain.ts'
-import {linearVariable} from './linear.ts'
+import {linearConstant} from './linear.ts'
 import type {FitDomainPathSegment} from './parser.ts'
 
 export type ShapePathSegment =
@@ -33,20 +33,23 @@ export type ShapeProgram = {
 
 export function valueFromNodeType(expr: string, node: ts.Node, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
-  return checker == null ? null : valueFromTsType(expr, checker.getTypeAtLocation(node), checker, node)
+  return checker == null ? null : valueFromResolvedType(expr, checker.getTypeAtLocation(node), checker, node)
 }
 
 export function valueFromTypeNode(expr: string, node: ts.TypeNode | undefined, program: ShapeProgram): Value | null {
-  const checker = program.typeChecker
   if (node == null) return null
-  return checker == null ? valueFromTypeNodeSyntax(expr, node) : valueFromTsType(expr, checker.getTypeFromTypeNode(node), checker, node)
+  if (typeNodeContainsUnsupportedTuple(node, program.typeChecker)) {
+    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+  }
+  const checker = program.typeChecker
+  return checker == null ? valueFromTypeNodeSyntax(expr, node) : valueFromResolvedType(expr, checker.getTypeFromTypeNode(node), checker, node)
 }
 
 export function valueFromFunctionReturnType(expr: string, fn: ts.SignatureDeclaration, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
   if (checker == null) return null
   const signature = checker.getSignatureFromDeclaration(fn)
-  return signature == null ? null : valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, fn)
+  return signature == null ? null : valueFromResolvedType(expr, checker.getReturnTypeOfSignature(signature), checker, fn)
 }
 
 export function valueFromProjectCallReturnType(expr: string, call: ts.CallExpression, program: ShapeProgram): Value | null {
@@ -54,14 +57,14 @@ export function valueFromProjectCallReturnType(expr: string, call: ts.CallExpres
   if (checker == null) return null
   const signature = checker.getResolvedSignature(call)
   if (signature == null || !signatureBelongsToProject(signature, program)) return null
-  return valueFromTsType(expr, checker.getReturnTypeOfSignature(signature), checker, call)
+  return valueFromResolvedType(expr, checker.getReturnTypeOfSignature(signature), checker, call)
 }
 
 export function valueFromClassInstanceType(expr: string, classNode: ts.ClassDeclaration, program: ShapeProgram): Value | null {
   const checker = program.typeChecker
   if (checker == null || classNode.name == null) return null
   const symbol = checker.getSymbolAtLocation(classNode.name)
-  return symbol == null ? null : valueFromTsType(expr, checker.getDeclaredTypeOfSymbol(symbol), checker, classNode)
+  return symbol == null ? null : valueFromResolvedType(expr, checker.getDeclaredTypeOfSymbol(symbol), checker, classNode)
 }
 
 export function valueFromTypePath(
@@ -115,6 +118,32 @@ function signatureBelongsToProject(signature: ts.Signature, program: ShapeProgra
   return declaration != null && program.project?.filesBySourceFile.has(declaration.getSourceFile()) === true
 }
 
+export function typeNodeContainsUnsupportedTuple(
+  node: ts.TypeNode,
+  checker: ts.TypeChecker | null,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  if (seen.has(node)) return false
+  seen.add(node)
+  if (ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return true
+  if (ts.isNamedTupleMember(node)) {
+    return node.questionToken != null
+      || node.dotDotDotToken != null
+      || typeNodeContainsUnsupportedTuple(node.type, checker, seen)
+  }
+  if (ts.isTupleTypeNode(node)) {
+    return node.elements.some(element => typeNodeContainsUnsupportedTuple(element, checker, seen))
+  }
+  if (ts.isTypeReferenceNode(node) && checker != null) {
+    const symbol = checker.getSymbolAtLocation(node.typeName)
+    if (symbol?.declarations?.some(declaration =>
+      ts.isTypeAliasDeclaration(declaration)
+      && typeNodeContainsUnsupportedTuple(declaration.type, checker, seen)) === true) return true
+  }
+  return node.getChildren().some(child =>
+    ts.isTypeNode(child) && typeNodeContainsUnsupportedTuple(child, checker, seen))
+}
+
 function valueFromTypePathInternal(
   expr: string,
   type: ts.Type,
@@ -122,7 +151,7 @@ function valueFromTypePathInternal(
   checker: ts.TypeChecker,
   location: ts.Node,
 ): Value | null {
-  if (segments.length === 0) return valueFromTsType(expr, type, checker, location)
+  if (segments.length === 0) return valueFromResolvedType(expr, type, checker, location)
 
   if (type.isUnion()) {
     const nullish = unionNullishKind(type.types)
@@ -136,11 +165,19 @@ function valueFromTypePathInternal(
     return value
   }
 
+  if (checker.isTupleType(type) && fixedTupleElementTypes(type, checker) == null) {
+    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+  }
+
   const [segment, ...rest] = segments
-  if (segment == null) return valueFromTsType(expr, type, checker, location)
+  if (segment == null) return valueFromResolvedType(expr, type, checker, location)
   if (segment.kind === 'prop') {
     if (segment.name === 'length' && isArrayLikeType(type, checker)) {
-      return rest.length === 0 ? arrayLengthValue(expr, type) : null
+      if (rest.length !== 0) return null
+      const members = fixedTupleElementTypes(type, checker)
+      return members == null
+        ? arrayLengthValue(expr)
+        : numberValue(members.length, members.length, 0, expr, linearConstant(members.length))
     }
     const next = propertyType(type, segment.name, checker, location)
     return next == null ? null : valueFromTypePathInternal(`${expr}.${segment.name}`, next, rest, checker, location)
@@ -151,7 +188,7 @@ function valueFromTypePathInternal(
     return next == null ? null : valueFromTypePathInternal(`${expr}[${segment.index}]`, next, rest, checker, location)
   }
 
-  const tupleMembers = tupleElementTypes(type, checker)
+  const tupleMembers = fixedTupleElementTypes(type, checker)
   if (tupleMembers != null) {
     let value: Value | null = null
     for (const member of tupleMembers) {
@@ -171,24 +208,47 @@ function propertyType(type: ts.Type, name: string, checker: ts.TypeChecker, loca
   return property == null ? null : checker.getTypeOfSymbolAtLocation(property, property.valueDeclaration ?? location)
 }
 
-function arrayElementType(type: ts.Type, checker: ts.TypeChecker): ts.Type | null {
+export function arrayElementType(type: ts.Type, checker: ts.TypeChecker): ts.Type | null {
   if (checker.isArrayType(type)) return checker.getTypeArguments(type as ts.TypeReference)[0] ?? null
   return type.getNumberIndexType() ?? checker.getIndexTypeOfType(type, ts.IndexKind.Number) ?? null
 }
 
 function indexedElementType(type: ts.Type, index: number, checker: ts.TypeChecker): ts.Type | null {
-  const tupleMembers = tupleElementTypes(type, checker)
-  if (tupleMembers != null) return tupleMembers[index] ?? null
+  if (checker.isTupleType(type)) return fixedTupleElementTypes(type, checker)?.[index] ?? null
   return arrayElementType(type, checker)
 }
 
-function tupleElementTypes(type: ts.Type, checker: ts.TypeChecker): readonly ts.Type[] | null {
+export function fixedTupleElementTypes(type: ts.Type, checker: ts.TypeChecker): readonly ts.Type[] | null {
   if (!checker.isTupleType(type)) return null
-  const members = checker.getTypeArguments(type as ts.TypeReference)
-  return members.length === 0 ? null : members
+  const tuple = type as ts.TupleTypeReference
+  if (tuple.target.elementFlags.some(flag => flag !== ts.ElementFlags.Required)) return null
+  return checker.getTypeArguments(tuple)
 }
 
-function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node): Value | null {
+export function resolvedTypeContainsUnsupportedTuple(
+  type: ts.Type,
+  checker: ts.TypeChecker,
+  seen: Set<ts.Type> = new Set(),
+): boolean {
+  if (seen.has(type)) return false
+  seen.add(type)
+  if (checker.isTupleType(type)) {
+    const members = fixedTupleElementTypes(type, checker)
+    return members == null || members.some(member => resolvedTypeContainsUnsupportedTuple(member, checker, seen))
+  }
+  if (type.isUnionOrIntersection()) {
+    return type.types.some(member => resolvedTypeContainsUnsupportedTuple(member, checker, seen))
+  }
+  const element = arrayElementType(type, checker)
+  return element != null
+    && element !== type
+    && resolvedTypeContainsUnsupportedTuple(element, checker, seen)
+}
+
+export function valueFromResolvedType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node): Value | null {
+  if (resolvedTypeContainsUnsupportedTuple(type, checker)) {
+    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+  }
   if (type.isUnion()) return valueFromUnionType(expr, type.types, checker, location)
   if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
   const literal = literalValueFromTsType(expr, type)
@@ -197,7 +257,15 @@ function valueFromTsType(expr: string, type: ts.Type, checker: ts.TypeChecker, l
   if (checker.isTypeAssignableTo(type, checker.getNumberType())) return unknownNumber(expr)
   if (checker.isTypeAssignableTo(type, checker.getBooleanType())) return literalValue([false, true], expr)
   if (checker.isTypeAssignableTo(type, checker.getStringType())) return unknown(`String values are not in the static layout subset: ${expr}`)
-  if (isArrayLikeType(type, checker)) return unknownArray(expr, arrayLengthValue(expr, type))
+  if (checker.isTupleType(type)) {
+    const members = fixedTupleElementTypes(type, checker)
+    if (members == null) return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    const elements = members.map((member, index) =>
+      valueFromResolvedType(`${expr}[${index}]`, member, checker, location)
+      ?? unknown(`${expr}[${index}] was not inferred from its tuple type`))
+    return fixedTupleValue(elements, expr)
+  }
+  if (checker.isArrayLikeType(type)) return unknownArray(expr, arrayLengthValue(expr))
   if ((type.flags & ts.TypeFlags.Object) !== 0) return unknownObject(expr)
   return type.getProperties().length === 0 ? null : unknownObject(expr)
 }
@@ -222,7 +290,20 @@ function valueFromTypeNodeSyntax(expr: string, node: ts.TypeNode): Value | null 
     return nullish == null ? value : nullableValue(value, expr, nullish)
   }
   if (ts.isLiteralTypeNode(node)) return literalValueFromTypeNode(expr, node)
-  if (ts.isArrayTypeNode(node) || ts.isTupleTypeNode(node)) return unknownArray(expr)
+  if (ts.isArrayTypeNode(node)) return unknownArray(expr)
+  if (ts.isTupleTypeNode(node)) {
+    if (node.elements.some(element =>
+      ts.isOptionalTypeNode(element)
+      || ts.isRestTypeNode(element)
+      || (ts.isNamedTupleMember(element) && (element.questionToken != null || element.dotDotDotToken != null)))) {
+      return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    }
+    return fixedTupleValue(node.elements.map((element, index) => {
+      const type = ts.isNamedTupleMember(element) ? element.type : element
+      return valueFromTypeNodeSyntax(`${expr}[${index}]`, type)
+        ?? unknown(`${expr}[${index}] was not inferred from its tuple type`)
+    }), expr)
+  }
   switch (node.kind) {
     case ts.SyntaxKind.NumberKeyword:
       return unknownNumber(expr)
@@ -256,7 +337,7 @@ function valueFromUnionType(expr: string, types: readonly ts.Type[], checker: ts
   if (members.length === 0) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
   let value: Value | null = null
   for (const member of members) {
-    const next = valueFromTsType(expr, member, checker, location)
+    const next = valueFromResolvedType(expr, member, checker, location)
     if (next == null) return null
     value = value == null ? next : joinValues(value, next)
   }
@@ -289,29 +370,16 @@ function unionNullishKind(types: readonly ts.Type[]): NullishKind | null {
   return result
 }
 
-function tsNullishKind(type: ts.Type): NullishKind | null {
+export function tsNullishKind(type: ts.Type): NullishKind | null {
   if ((type.flags & ts.TypeFlags.Null) !== 0) return 'null'
   if ((type.flags & (ts.TypeFlags.Undefined | ts.TypeFlags.Void)) !== 0) return 'undefined'
   return null
 }
 
-function arrayLengthValue(expr: string, type: ts.Type) {
-  if (isTupleTypeReference(type)) {
-    const maxLength = (type.target.combinedFlags & ts.ElementFlags.Variable) === 0 ? type.target.fixedLength : Number.POSITIVE_INFINITY
-    return tupleLengthValue(expr, type.target.minLength, maxLength)
-  }
+function arrayLengthValue(expr: string) {
   return unknownArrayLength(expr)
 }
 
-function isArrayLikeType(type: ts.Type, checker: ts.TypeChecker) {
+export function isArrayLikeType(type: ts.Type, checker: ts.TypeChecker) {
   return checker.isTupleType(type) || checker.isArrayLikeType(type)
-}
-
-function isTupleTypeReference(type: ts.Type): type is ts.TupleTypeReference {
-  return (type as Partial<ts.TupleTypeReference>).target?.elementFlags != null
-}
-
-function tupleLengthValue(expr: string, minLength: number, maxLength: number) {
-  const lengthExpr = `${expr}.length`
-  return numberValue(minLength, maxLength, 0, lengthExpr, linearVariable(linearNameForExpression(lengthExpr)))
 }

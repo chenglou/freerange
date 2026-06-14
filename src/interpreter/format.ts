@@ -1,4 +1,6 @@
 import {
+  arrayElement,
+  arrayLength,
   tupleElements,
   type ArrayValue,
   type ObjectValue,
@@ -62,14 +64,15 @@ function formatObject(value: ObjectValue, path: string): string[] {
 }
 
 function formatArray(value: ArrayValue, path: string): string[] {
-  const lines = formatValue(value.length, `${path}.length`)
+  const lines = formatValue(arrayLength(value), `${path}.length`)
   const elements = tupleElements(value)
   if (elements != null) {
     for (let index = 0; index < elements.length; index++) {
       lines.push(...formatValue(elements[index]!, `${path}[${index}]`))
     }
   }
-  if (value.element != null) lines.push(...formatValue(value.element, `${path}[]`))
+  const element = arrayElement(value)
+  if (element != null) lines.push(...formatValue(element, `${path}[]`))
   return lines
 }
 

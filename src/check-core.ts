@@ -50,6 +50,9 @@ import {
 } from './check-types.ts'
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
+  arrayElement,
+  arrayLength,
+  arrayValueAtKnownIndex,
   unknown,
   type Assumption,
   type Value,
@@ -816,9 +819,9 @@ function valueHasSeparateBranchLoss(value: Value): boolean {
     return [...value.props.values()].some(valueHasSeparateBranchLoss)
   }
   if (value.kind === 'array') {
-    return valueHasSeparateBranchLoss(value.length)
-      || value.elements?.some(valueHasSeparateBranchLoss) === true
-      || (value.element != null && valueHasSeparateBranchLoss(value.element))
+    const element = arrayElement(value)
+    return valueHasSeparateBranchLoss(arrayLength(value))
+      || (element != null && valueHasSeparateBranchLoss(element))
   }
   if (value.kind === 'nullable') return valueHasSeparateBranchLoss(value.present)
   return false
@@ -969,13 +972,13 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
     if (value.kind === 'unknown') return value
     if (segment.kind === 'prop') {
       if (value.kind === 'array' && segment.name === 'length') {
-        value = value.length
+        value = arrayLength(value)
       } else if (value.kind === 'object') {
         value = value.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
       } else if (value.kind === 'nullable') {
         value = value.present
         if (value.kind === 'object') value = value.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
-        else if (value.kind === 'array' && segment.name === 'length') value = value.length
+        else if (value.kind === 'array' && segment.name === 'length') value = arrayLength(value)
         else return unknown(`${expr}.${segment.name} expected an object`)
       } else {
         return unknown(`${expr}.${segment.name} expected an object`)
@@ -985,12 +988,12 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
     }
     if (segment.kind === 'index') {
       if (value.kind !== 'array') return unknown(`${expr}[${segment.index}] expected an array`)
-      value = value.elements?.[segment.index] ?? value.element ?? unknown(`${expr}[${segment.index}] was not inferred`)
+      value = arrayValueAtKnownIndex(value, segment.index, `${expr}[${segment.index}]`)
       expr += `[${segment.index}]`
       continue
     }
     if (value.kind !== 'array') return unknown(`${expr}[] expected an array`)
-    value = value.element ?? unknown(`${expr}[] was not inferred`)
+    value = arrayElement(value) ?? unknown(`${expr}[] was not inferred`)
     expr += '[]'
   }
   return value

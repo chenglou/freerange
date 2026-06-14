@@ -6,6 +6,7 @@ import {
   type InterpreterStateCase,
 } from './context.ts'
 import {
+  type ArraySummary,
   unknown,
   valueWithAssumptions,
   type Assumption,
@@ -272,16 +273,23 @@ function valueFingerprint(value: Value): string {
           .sort(([left], [right]) => String(left).localeCompare(String(right))),
       })
     case 'array':
-      return JSON.stringify({
-        kind: value.kind,
-        referenceIds: [...value.referenceIds].sort((left, right) => left - right),
-        layout: value.layout,
-        length: valueFingerprint(value.length),
-        elements: value.elements?.map(valueFingerprint) ?? null,
-        element: value.element == null ? null : valueFingerprint(value.element),
-        expr: value.expr,
-        summary: summaryFingerprint(value.summary),
-      })
+      return value.layout === 'tuple'
+        ? JSON.stringify({
+            kind: value.kind,
+            referenceIds: [...value.referenceIds].sort((left, right) => left - right),
+            layout: value.layout,
+            elements: value.elements.map(valueFingerprint),
+            expr: value.expr,
+          })
+        : JSON.stringify({
+            kind: value.kind,
+            referenceIds: [...value.referenceIds].sort((left, right) => left - right),
+            layout: value.layout,
+            length: valueFingerprint(value.length),
+            element: value.element == null ? null : valueFingerprint(value.element),
+            expr: value.expr,
+            summary: summaryFingerprint(value.summary),
+          })
     case 'null':
       return JSON.stringify({kind: value.kind, expr: value.expr})
     case 'nullable':
@@ -309,7 +317,7 @@ function computationFingerprint(value: NumberValue): unknown {
       }
 }
 
-function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary']): unknown {
+function summaryFingerprint(summary: ArraySummary | null): unknown {
   if (summary == null) return null
   return {
     ...summary,

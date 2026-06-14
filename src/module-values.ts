@@ -1,8 +1,8 @@
 import * as ts from 'typescript'
 import {
+  fixedTupleValue,
   freshReferenceIds,
   literalValue,
-  mergeElementValue,
   nullValue,
   numberValue,
   type NumberValue,
@@ -13,12 +13,15 @@ import {
   linearConstant,
   numericLiteralValue,
 } from './linear.ts'
-import {localizeValue} from './value-localize.ts'
+import {valueAtNodeTypeBoundary} from './type-boundaries.ts'
 
-export function readTopLevelGlobal(declaration: ts.VariableDeclaration): {name: string; value: Value} | null {
+export function readTopLevelGlobal(
+  declaration: ts.VariableDeclaration,
+  checker: ts.TypeChecker | null,
+): {name: string; value: Value} | null {
   if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) return null
   if ((ts.getCombinedNodeFlags(declaration.parent) & ts.NodeFlags.Const) === 0) return null
-  const value = topLevelLiteralValue(declaration.initializer, declaration.name.text)
+  const value = topLevelLiteralValue(declaration.initializer, declaration.name.text, checker)
   if (value == null) return null
   return {
     name: declaration.name.text,
@@ -26,10 +29,10 @@ export function readTopLevelGlobal(declaration: ts.VariableDeclaration): {name: 
   }
 }
 
-function topLevelLiteralValue(expression: ts.Expression, expr: string): Value | null {
-  if (ts.isParenthesizedExpression(expression)) return topLevelLiteralValue(expression.expression, expr)
+function topLevelLiteralValue(expression: ts.Expression, expr: string, checker: ts.TypeChecker | null): Value | null {
+  if (ts.isParenthesizedExpression(expression)) return topLevelLiteralValue(expression.expression, expr, checker)
   if (ts.isAsExpression(expression) || ts.isSatisfiesExpression(expression) || ts.isTypeAssertionExpression(expression)) {
-    return topLevelLiteralValue(expression.expression, expr)
+    return topLevelLiteralValue(expression.expression, expr, checker)
   }
   const numeric = numericLiteralValue(expression)
   if (numeric != null) return numberValue(numeric, numeric, gridOfNumber(numeric), expr, linearConstant(numeric))
@@ -37,57 +40,53 @@ function topLevelLiteralValue(expression: ts.Expression, expr: string): Value | 
   if (expression.kind === ts.SyntaxKind.TrueKeyword) return literalValue([true], expr)
   if (expression.kind === ts.SyntaxKind.FalseKeyword) return literalValue([false], expr)
   if (expression.kind === ts.SyntaxKind.NullKeyword) return nullValue(expr)
-  if (ts.isObjectLiteralExpression(expression)) return topLevelObjectLiteralValue(expression, expr)
-  if (ts.isArrayLiteralExpression(expression)) return topLevelArrayLiteralValue(expression, expr)
+  if (ts.isObjectLiteralExpression(expression)) return topLevelObjectLiteralValue(expression, expr, checker)
+  if (ts.isArrayLiteralExpression(expression)) return topLevelArrayLiteralValue(expression, expr, checker)
   return null
 }
 
-function topLevelObjectLiteralValue(expression: ts.ObjectLiteralExpression, expr: string): Value | null {
+function topLevelObjectLiteralValue(expression: ts.ObjectLiteralExpression, expr: string, checker: ts.TypeChecker | null): Value | null {
   const props = new Map<string, Value>()
   for (const property of expression.properties) {
     if (!ts.isPropertyAssignment(property)) return null
     const name = propertyNameText(property.name)
     if (name == null) return null
-    const value = topLevelLiteralValue(property.initializer, `${expr}.${name}`)
+    const value = topLevelLiteralValue(property.initializer, `${expr}.${name}`, checker)
     if (value == null) return null
     props.set(name, value)
   }
   return {kind: 'object', referenceIds: freshReferenceIds(), props, expr}
 }
 
-function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: string): Value | null {
-  let elementValue: Value | null = null
+function topLevelArrayLiteralValue(expression: ts.ArrayLiteralExpression, expr: string, checker: ts.TypeChecker | null): Value | null {
   const elements: Value[] = []
   for (let index = 0; index < expression.elements.length; index++) {
     const element = expression.elements[index]!
     if (ts.isSpreadElement(element)) return null
-    const value = topLevelLiteralValue(element, `${expr}[${index}]`)
+    const value = topLevelLiteralValue(element, `${expr}[${index}]`, checker)
     if (value == null) return null
     elements.push(value)
-    elementValue = mergeElementValue(elementValue, localizeValue(value, `${expr}[]`, {preserveLinear: true}))
   }
-  const length = numberValue(expression.elements.length, expression.elements.length, 0, `${expr}.length`, linearConstant(expression.elements.length))
-  return {
-    kind: 'array',
-    referenceIds: freshReferenceIds(),
-    layout: 'collection',
-    length,
-    elements,
-    element: elementValue == null ? null : valueWithoutNumberCases(elementValue),
-    expr,
-    summary: null,
-  }
+  const value = fixedTupleValue(elements, expr)
+  return checker == null
+    ? value
+    : valueWithoutNumberCases(valueAtNodeTypeBoundary(value, expr, expression, {
+      sourceId: expression.getSourceFile().fileName,
+      sourceFile: expression.getSourceFile(),
+      typeChecker: checker,
+    }))
 }
 
 function valueWithoutNumberCases(value: Value): Value {
   if (value.kind === 'number') return {...value, cases: null}
   if (value.kind === 'array') {
-    return {
-      ...value,
-      length: valueWithoutNumberCases(value.length) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(valueWithoutNumberCases),
-      element: value.element == null ? null : valueWithoutNumberCases(value.element),
-    }
+    return value.layout === 'tuple'
+      ? {...value, elements: value.elements.map(valueWithoutNumberCases)}
+      : {
+          ...value,
+          length: valueWithoutNumberCases(value.length) as NumberValue,
+          element: value.element == null ? null : valueWithoutNumberCases(value.element),
+        }
   }
   if (value.kind === 'object') {
     const props = new Map<string, Value>()

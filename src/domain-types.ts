@@ -92,18 +92,25 @@ export type ObjectValue = {
   expr: string | null
 }
 
-export type ArrayLayout = 'collection' | 'tuple'
-
-export type ArrayValue = {
+type ArrayValueBase = {
   kind: 'array'
   referenceIds: ReferenceIds
-  layout: ArrayLayout
-  length: NumberValue
-  elements: Value[] | null
-  element: Value | null
   expr: string | null
+}
+
+export type CollectionValue = ArrayValueBase & {
+  layout: 'collection'
+  length: NumberValue
+  element: Value | null
   summary: ArraySummary | null
 }
+
+export type FixedTupleValue = ArrayValueBase & {
+  layout: 'tuple'
+  elements: Value[]
+}
+
+export type ArrayValue = CollectionValue | FixedTupleValue
 
 export type NullValue = {
   kind: 'null'

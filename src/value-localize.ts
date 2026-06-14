@@ -32,13 +32,18 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
     return {...value, props, expr}
   }
   if (value.kind === 'array') {
-    return {
-      ...value,
-      length: localizeValue(value.length, `${expr}.length`, options) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map((element, index) => localizeValue(element, `${expr}[${index}]`, options)),
-      element: value.element == null ? null : localizeValue(value.element, `${expr}[]`, options),
-      expr,
-    }
+    return value.layout === 'tuple'
+      ? {
+          ...value,
+          elements: value.elements.map((element, index) => localizeValue(element, `${expr}[${index}]`, options)),
+          expr,
+        }
+      : {
+          ...value,
+          length: localizeValue(value.length, `${expr}.length`, options) as NumberValue,
+          element: value.element == null ? null : localizeValue(value.element, `${expr}[]`, options),
+          expr,
+        }
   }
   return value
 }

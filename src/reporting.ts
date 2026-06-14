@@ -35,7 +35,8 @@ export type ReportLinearConstraint = {
 export type ConstraintSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
 export type ReportArrayValue = {
-  summary: {
+  kind?: 'array'
+  summary?: {
     relations: SequenceRelation[]
     advances: {prop: string; value: ReportNumberValue}[]
     lastEnd: {value: ReportNumberValue} | null

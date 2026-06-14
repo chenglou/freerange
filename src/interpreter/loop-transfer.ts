@@ -1,7 +1,10 @@
 import * as ts from 'typescript'
 import {
   addNumbers,
+  arrayElement,
+  arrayLength,
   binaryNumberComputation,
+  collectionValue,
   gridJoin,
   maxArrayLength,
   gridOfNumber,
@@ -344,13 +347,13 @@ function generalizedRootValue(root: string, current: Value, hull: Value | null, 
     return numberValue(bounds?.min ?? -Infinity, bounds?.max ?? Infinity, bounds?.grid ?? null, root, linearVariable(preName(root, analysis)))
   }
   if (current.kind === 'array') {
-    return {
-      ...current,
-      length: numberValue(Math.max(0, current.length.min), maxArrayLength, 0, `${root}.length`, linearVariable(preName(`${root}.length`, analysis))),
-      elements: null,
-      element: current.element,
-      summary: null,
-    }
+    const length = arrayLength(current)
+    return collectionValue(
+      numberValue(Math.max(0, length.min), maxArrayLength, 0, `${root}.length`, linearVariable(preName(`${root}.length`, analysis))),
+      arrayElement(current),
+      current.expr,
+      current.referenceIds,
+    )
   }
   return unknown(`${root} varies across loop iterations`)
 }
@@ -418,9 +421,12 @@ function collectNumericLeafNames(value: Value, names: Map<string, NumberValue>) 
     return
   }
   if (value.kind === 'array') {
-    names.set(linearNameForExpression(`${value.expr ?? 'items'}.length`), value.length)
-    if (value.element != null) collectNumericLeafNames(value.element, names)
-    for (const element of value.elements ?? []) collectNumericLeafNames(element, names)
+    names.set(linearNameForExpression(`${value.expr ?? 'items'}.length`), arrayLength(value))
+    if (value.layout === 'tuple') {
+      for (const element of value.elements) collectNumericLeafNames(element, names)
+    } else if (value.element != null) {
+      collectNumericLeafNames(value.element, names)
+    }
     return
   }
   if (value.kind === 'nullable') collectNumericLeafNames(value.present, names)
@@ -1190,12 +1196,13 @@ function finalizeArrays(result: LoopResult, analysis: Analysis, preHulls: Map<st
       .filter(append => append.arrayName === arrayName)
       .map(append => append.element))
 
-    const startedEmpty = base.length.min === 0 && base.length.max === 0
+    const baseLength = arrayLength(base)
+    const startedEmpty = baseLength.min === 0 && baseLength.max === 0
     const leafValues = uniformLeafValues(sites, analysis)
     const leafForms = new Map([...leafValues].map(([key, value]) => [key, value.linear!]))
     const renames = new Map<string, LinearExpr>()
     const exprOverrides = startedEmpty ? leafExprOverrides(arrayName, leafForms, leafValues, analysis) : new Map<string, string>()
-    let element = base.element
+    let element = arrayElement(base)
     for (const pathSites of sites) {
       for (const pushed of pathSites) {
         if (pushed == null) continue
@@ -1217,13 +1224,11 @@ function finalizeArrays(result: LoopResult, analysis: Analysis, preHulls: Map<st
       liftElementAssumptions(renames, analysis)
     }
 
-    writeMutationPath({root: arrayName, segments: []}, {
-      ...base,
-      length,
-      elements: null,
-      element,
-      summary,
-    }, frame)
+    writeMutationPath(
+      {root: arrayName, segments: []},
+      collectionValue(length, element, base.expr, base.referenceIds, summary),
+      frame,
+    )
 
     if (startedEmpty && maxPerIteration <= 1 && conditional) {
       const fact = comparisonConstraint(length, '<=', count, `${length.expr ?? arrayName + '.length'} <= ${count.expr ?? 'loop length'}`)
@@ -1243,15 +1248,16 @@ function finalizeArrays(result: LoopResult, analysis: Analysis, preHulls: Map<st
 }
 
 function pushLengthValue(arrayName: string, base: ArrayValue, count: NumberValue, minPerIteration: number, maxPerIteration: number): NumberValue {
-  const startedEmpty = base.length.min === 0 && base.length.max === 0
+  const baseLength = arrayLength(base)
+  const startedEmpty = baseLength.min === 0 && baseLength.max === 0
   if (startedEmpty && minPerIteration === 1 && maxPerIteration === 1) return count
   if (minPerIteration === maxPerIteration) {
-    const total = addNumbers(base.length, multiplyCount(count, minPerIteration))
+    const total = addNumbers(baseLength, multiplyCount(count, minPerIteration))
     return numberValue(Math.max(0, total.min), Math.max(0, total.max), 0, `${arrayName}.length`, total.linear)
   }
-  if (minPerIteration === 0 && maxPerIteration === 1) return conditionalPushLength(arrayName, count, base.length)
-  const low = base.length.min + count.min * minPerIteration
-  const high = base.length.max + count.max * maxPerIteration
+  if (minPerIteration === 0 && maxPerIteration === 1) return conditionalPushLength(arrayName, count, baseLength)
+  const low = baseLength.min + count.min * minPerIteration
+  const high = baseLength.max + count.max * maxPerIteration
   return numberValue(low, high, 0, `${arrayName}.length`, linearVariable(linearNameForExpression(`${arrayName}.length`)))
 }
 
@@ -1276,12 +1282,18 @@ function rebaseElementValue(value: Value, arrayName: string, path: string[], exp
     return {...value, props, expr: elementPathExpression(arrayName, path)}
   }
   if (value.kind === 'array') {
-    return {
-      ...value,
-      expr: elementPathExpression(arrayName, path),
-      elements: value.elements == null ? null : value.elements.map(item => rebaseElementValue(item, arrayName, [...path, '[]'], exprOverrides)),
-      element: value.element == null ? null : rebaseElementValue(value.element, arrayName, [...path, '[]'], exprOverrides),
-    }
+    const expr = elementPathExpression(arrayName, path)
+    return value.layout === 'tuple'
+      ? {
+        ...value,
+        expr,
+        elements: value.elements.map(item => rebaseElementValue(item, arrayName, [...path, '[]'], exprOverrides)),
+      }
+      : {
+        ...value,
+        expr,
+        element: value.element == null ? null : rebaseElementValue(value.element, arrayName, [...path, '[]'], exprOverrides),
+      }
   }
   if (value.kind === 'nullable') return {...value, present: rebaseElementValue(value.present, arrayName, path, exprOverrides)}
   return value

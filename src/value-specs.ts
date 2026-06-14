@@ -31,7 +31,10 @@ export function createFitValueSpecTypeEnv(program: Program, spec: FitValueSpec):
 }
 
 export function fitValueSpecTupleElementType(node: ts.TypeNode | ts.NamedTupleMember): ts.TypeNode | null {
-  if (ts.isNamedTupleMember(node) || ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
+  if (ts.isNamedTupleMember(node)) {
+    return node.questionToken == null && node.dotDotDotToken == null ? node.type : null
+  }
+  if (ts.isOptionalTypeNode(node) || ts.isRestTypeNode(node)) return null
   return node
 }
 

@@ -1,5 +1,6 @@
 // Conservative invalidation for state that may have changed.
 import {
+  collectionValue,
   unknown,
   unknownArrayLength,
   unknownNumber,
@@ -14,7 +15,12 @@ import {replaceRootValueEverywhere} from './value-path.ts'
 export function forgetRoot(env: Map<string, Value>, root: string) {
   const current = env.get(root)
   if (current?.kind === 'array') {
-    replaceRootValueEverywhere(env, root, {...current, length: unknownArrayLength(current.expr ?? root), elements: null, element: null, summary: null})
+    replaceRootValueEverywhere(env, root, collectionValue(
+      unknownArrayLength(current.expr ?? root),
+      null,
+      current.expr,
+      current.referenceIds,
+    ))
   } else if (current?.kind === 'object') {
     replaceRootValueEverywhere(env, root, unknownObject(root))
   } else if (current?.kind === 'number') {

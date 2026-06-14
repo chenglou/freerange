@@ -45,14 +45,16 @@ export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings |
     return {...value, props, expr: maybeCallSiteText(value.expr, bindings)}
   }
   if (value.kind === 'array') {
-    return {
-      ...value,
-      length: numberWithCallSiteText(value.length, bindings),
-      elements: value.elements == null ? null : value.elements.map(element => valueWithCallSiteText(element, bindings)),
-      element: value.element == null ? null : valueWithCallSiteText(value.element, bindings),
-      expr: maybeCallSiteText(value.expr, bindings),
-      summary: arraySummaryWithCallSiteText(value.summary, bindings),
-    }
+    const expr = maybeCallSiteText(value.expr, bindings)
+    return value.layout === 'tuple'
+      ? {...value, elements: value.elements.map(element => valueWithCallSiteText(element, bindings)), expr}
+      : {
+          ...value,
+          length: numberWithCallSiteText(value.length, bindings),
+          element: value.element == null ? null : valueWithCallSiteText(value.element, bindings),
+          expr,
+          summary: arraySummaryWithCallSiteText(value.summary, bindings),
+        }
   }
   if (value.kind === 'nullable') {
     return {...value, present: valueWithCallSiteText(value.present, bindings), expr: maybeCallSiteText(value.expr, bindings)}

@@ -4,7 +4,7 @@ import {
   forEachArrayBindingElement,
 } from './binding-patterns.ts'
 import {
-  tupleElements,
+  arrayValueAtKnownIndex,
   nullableValue,
   unknown,
   type Value,
@@ -111,9 +111,7 @@ export function unknownResultValue(): Value {
 
 export function arrayPatternElementValue(value: Value, index: number): Value {
   if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
-  return tupleElements(value)?.[index]
-    ?? value.element
-    ?? unknown(`${value.expr ?? 'array'}[${index}] was not inferred`)
+  return arrayValueAtKnownIndex(value, index, `${value.expr ?? 'array'}[${index}]`)
 }
 
 function valueWithTypeFallback(value: Value, typed: Value | null): Value {

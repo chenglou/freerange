@@ -225,7 +225,29 @@ Array elements require homogeneous (aka the same) contracts. To have differing c
 
 ### Tuple
 
-TODO: this section.
+```ts
+type Size = [width: number, height: number]
+
+/** @fit
+ * given size[0]: 1..2000
+ * given size[1]: 1..2000
+ * return[0] == size[1]
+ * return[1] == size[0]
+ */
+function rotateSize(size: Size): [number, number] {
+  return [size[1], size[0]]
+}
+```
+
+Freerange supports TypeScript tuples, aka fixed-length arrays whose items can have different properties. Empty, named, mutable and readonly tuples are supported too; optional and rest elements inside tuples aren't supported.
+Tuple facts follow the type used at each boundary. For example, `values` below becomes a regular array:
+
+```ts
+const size: [number, number] = [100, 80]
+const values: number[] = size
+```
+
+Writing to an existing tuple position is supported. After `push`, `reverse`, or `sort`, Freerange treats it as a regular array. After `splice`, the mutated array becomes unknown.
 
 ### Boolean
 
@@ -305,7 +327,7 @@ Here, Freerange reads the `given` contract line plus the function body itself, a
 
 Freerange inferred lots of facts! Here's what we infer:
 - Input facts, aka `given`s, are not proven from the function body. Freerange trusts them in the function, then checks them at visible call sites. Boolean givens like `given isValidLayout(input)` are kept as that exact fact. A few known built-ins, e.g. `given spaced(rows, gap)`, also add their documented row/order facts.
-- Source calls follow JavaScript order: evaluate the receiver, then each written argument from left to right, once. Parameter defaults run in the called function only when the argument is omitted or `undefined`; a later default can read or change an earlier identifier or destructured binding. Exact tuple spreads and rest parameters are supported; unknown-length spreads and defaults inside destructuring parameters are reported as unsupported.
+- Source calls follow JavaScript order: evaluate the receiver, then each written argument from left to right, once. Parameter defaults run in the called function only when the argument is omitted or `undefined`; a later default can read or change an earlier identifier or destructured binding. Exact tuple call spreads and function rest parameters are supported. Rest elements inside tuple types, unknown-length call spreads, and defaults inside destructuring parameters are reported as unsupported.
 - Loop facts follow the values used when each expression ran. E.g. a segmented row loop may compute `bottom = top + height`, reset `height`, then set `nextTop = bottom + gap`; Freerange still derives the row-bottom identity and spacing from the captured values.
 - Rechecking the same numeric operation still works after a branch narrows an input. Swapping the two operands of numeric `+` or `*` also names the same result; regrouping nested operations does not.
 - Every returned field that's a number, be it array of numbers or object with nested number fields, gets their inferred range and number type, e.g. `0..<10` or `int 5..20`, and disjoint union values if applicable, e.g. `1 | 3 | 5` if the returned value is one of those 3 numbers inferred from some if-else in the function body.

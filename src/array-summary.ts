@@ -19,14 +19,17 @@ import {
 } from './sequence-relation.ts'
 
 export function mapOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
-  const origin = source.summary?.origin
+  const origin = source.layout === 'collection' ? source.summary?.origin : null
   if (origin?.kind === 'subsequence') return {kind: 'subsequence', sourceExpr: origin.sourceExpr}
   if (origin?.kind === 'identity') return {kind: 'identity', sourceExpr: origin.sourceExpr}
   return {kind: 'identity', sourceExpr}
 }
 
 export function filterOrigin(source: ArrayValue, sourceExpr: string): ArrayOrigin {
-  return {kind: 'subsequence', sourceExpr: source.summary?.origin?.sourceExpr ?? sourceExpr}
+  return {
+    kind: 'subsequence',
+    sourceExpr: source.layout === 'collection' ? source.summary?.origin?.sourceExpr ?? sourceExpr : sourceExpr,
+  }
 }
 
 export function emptyArraySummary(origin: ArrayOrigin | null): ArraySummary {
@@ -52,6 +55,7 @@ export function mergeArraySummary(left: ArraySummary | null, right: ArraySummary
 }
 
 export function joinArraySummary(left: ArrayValue, right: ArrayValue): ArraySummary | null {
+  if (left.layout !== 'collection' || right.layout !== 'collection') return null
   const emptySummary = summaryWithEmptyBranch(left, right) ?? summaryWithEmptyBranch(right, left)
   if (emptySummary != null) return emptySummary
   if (left.summary == null || right.summary == null) return null
@@ -65,12 +69,13 @@ export function joinArraySummary(left: ArrayValue, right: ArrayValue): ArraySumm
 }
 
 export function isDefinitelyEmptyArray(value: ArrayValue) {
-  return value.length.max === 0
-    && value.element == null
-    && (value.elements == null || value.elements.length === 0)
+  return value.layout === 'tuple'
+    ? value.elements.length === 0
+    : value.length.max === 0
 }
 
 function summaryWithEmptyBranch(emptyCandidate: ArrayValue, other: ArrayValue): ArraySummary | null {
+  if (emptyCandidate.layout !== 'collection' || other.layout !== 'collection') return null
   if (!isDefinitelyEmptyArray(emptyCandidate) || isDefinitelyEmptyArray(other) || other.summary == null) return null
   return canonicalArraySummary({
     ...other.summary,

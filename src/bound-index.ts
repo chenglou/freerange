@@ -9,6 +9,7 @@ import {
   type FitRangeCheckSpec,
 } from './parser.ts'
 import {
+  arrayLength,
   type ArrayValue,
   type Assumption,
   type SequenceAddition,
@@ -316,7 +317,7 @@ function proveSameIndexCollectionLengths(
     for (const other of collections.slice(1)) {
       const otherArray = context.evaluateDomainPath(other.collectionPath)
       if (otherArray.kind !== 'array') return {status: 'unknown', reason: `${other.collectionText} expected an array`}
-      const status = proveComparison(firstArray.length, '==', otherArray.length, context.assumptions)
+      const status = proveComparison(arrayLength(firstArray), '==', arrayLength(otherArray), context.assumptions)
       if (status.status !== 'pass') {
         return {
           status: 'unknown',

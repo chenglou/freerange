@@ -1,6 +1,8 @@
 import {rationalEquals, rationalOne} from './rational.ts'
 import {
   addNumbers,
+  arrayLength,
+  arraySummary,
   numberValue,
   unknownNumber,
   withNumberCases,
@@ -31,7 +33,7 @@ export function adjacentElementAccessFacts(
   accessExpr: string,
   assumptions: Assumption[],
 ): LinearConstraint[] {
-  const summary = target.summary
+  const summary = arraySummary(target)
   if (summary == null || summary.relations.length === 0) return []
   const zero = numberValue(0, 0, 0, '0', linearConstant(0))
   const one = numberValue(1, 1, 0, '1', linearConstant(1))
@@ -45,7 +47,7 @@ export function adjacentElementAccessFacts(
   }
 
   const nextIndex = addNumbers(index, one)
-  const hasNext = proveComparison(nextIndex, '<', target.length, assumptions)
+  const hasNext = proveComparison(nextIndex, '<', arrayLength(target), assumptions)
   if (hasNext.status === 'pass') {
     for (const nextAccessExpr of neighborAccessExprs(sourceName, index, indexText, 1)) {
       facts.push(...instantiateAdjacentFacts(nextAccessExpr, accessExpr, summary.relations))
@@ -117,13 +119,19 @@ export function valueWithRebasedElementPath(
   if (value.kind === 'literal') return {...value, expr: rebaseElementExpr(value.expr, sourceElementExpr, accessExpr)}
   if (value.kind === 'object') return objectWithRebasedElementPath(value, sourceElementExpr, accessExpr, branchSuffix)
   if (value.kind === 'array') {
-    return {
-      ...value,
-      length: numberWithRebasedElementPath(value.length, sourceElementExpr, accessExpr, branchSuffix),
-      elements: value.elements == null ? null : value.elements.map(element => valueWithRebasedElementPath(element, sourceElementExpr, accessExpr, branchSuffix)),
-      element: value.element == null ? null : valueWithRebasedElementPath(value.element, sourceElementExpr, accessExpr, branchSuffix),
-      expr: rebaseElementExpr(value.expr, sourceElementExpr, accessExpr),
-    }
+    const expr = rebaseElementExpr(value.expr, sourceElementExpr, accessExpr)
+    return value.layout === 'tuple'
+      ? {
+          ...value,
+          elements: value.elements.map(element => valueWithRebasedElementPath(element, sourceElementExpr, accessExpr, branchSuffix)),
+          expr,
+        }
+      : {
+          ...value,
+          length: numberWithRebasedElementPath(value.length, sourceElementExpr, accessExpr, branchSuffix),
+          element: value.element == null ? null : valueWithRebasedElementPath(value.element, sourceElementExpr, accessExpr, branchSuffix),
+          expr,
+        }
   }
   if (value.kind === 'nullable') {
     return {...value, present: valueWithRebasedElementPath(value.present, sourceElementExpr, accessExpr, branchSuffix), expr: rebaseElementExpr(value.expr, sourceElementExpr, accessExpr)}

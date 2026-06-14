@@ -6,6 +6,9 @@ import {
 } from './bound-index.ts'
 import {nondecreasingFailureReason} from './builtins.ts'
 import {
+  arrayElement,
+  arrayLength,
+  arraySummary,
   finiteNumberSet,
   isDefinitelyEmptyArray,
   literalKey,
@@ -32,6 +35,10 @@ import {
   mergeBranchArms,
 } from './branch-context.ts'
 import {linearConstant} from './linear.ts'
+import {
+  directFiniteElementAccess,
+  fixedArrayElementContractCheck,
+} from './domain-paths.ts'
 import {
   fitExpressionScopeSourceId,
   fitExpressionParsed,
@@ -144,6 +151,24 @@ export function verifyCheckSpecWithProof(
   const boundIndexContext = specBoundIndexContext(context, hooks)
 
   if (spec.kind === 'range') {
+    const directElement = directFiniteElementAccess(fitExpressionParsed(spec.expression).expression)
+    if (directElement != null) {
+      const checked = fixedArrayElementContractCheck(
+        context.env.get(directElement.root),
+        publicFitText(directElement.root),
+        directElement.index,
+      )
+      if ('reason' in checked) {
+        return checkProof({
+          file,
+          ...(spec.line == null ? {} : {line: spec.line}),
+          functionName,
+          text: spec.text,
+          status: 'unknown',
+          reason: checked.reason,
+        }, 'shape', 'fixed-tuple-index', 'checked fixed-index contract placement', [], context.assumptions)
+      }
+    }
     const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
     if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
       return checkProof({
@@ -357,12 +382,13 @@ function proveObjectSpec(value: Value, members: ts.NodeArray<ts.TypeElement>, en
 function proveArraySpec(value: Value, element: ts.TypeNode, env: FitValueSpecTypeEnv, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
   if (value.kind === 'unknown') return {status: 'unknown', reason: value.reason, values: [value], matched: 0}
   if (value.kind !== 'array') return {status: 'unknown', reason: `${path} expected an array`, values: [value], matched: 0}
-  if (value.element == null) {
+  const item = arrayElement(value)
+  if (item == null) {
     return isDefinitelyEmptyArray(value)
       ? {status: 'pass', values: [value], matched: 1}
       : {status: 'unknown', reason: `${path}[] was not inferred`, values: [value], matched: 0}
   }
-  return proveValueTypeSpec(value.element, element, env, context, hooks, `${path}[]`)
+  return proveValueTypeSpec(item, element, env, context, hooks, `${path}[]`)
 }
 
 function proveTupleSpec(value: Value, node: ts.TupleTypeNode, env: FitValueSpecTypeEnv, context: EvalContext, hooks: CheckSpecHooks, path: string): ValueSpecProof {
@@ -372,8 +398,8 @@ function proveTupleSpec(value: Value, node: ts.TupleTypeNode, env: FitValueSpecT
   if (elements.length !== node.elements.length) return {status: 'unknown', reason: `${path} used unsupported tuple value spec syntax`, values: [value], matched: 0}
   const length = proveTupleLength(value, elements.length, path)
   if (length.status !== 'pass') return length
-  if (value.elements == null) return {status: 'unknown', reason: `${path} elements were not inferred as a tuple`, values: [value], matched: length.matched}
-  return combineValueSpecProofs(elements.map((element, index) => proveValueTypeSpec(value.elements![index]!, element, env, context, hooks, `${path}[${index}]`)))
+  if (value.layout !== 'tuple') return {status: 'unknown', reason: `${path} was not inferred as a fixed tuple`, values: [value], matched: length.matched}
+  return combineValueSpecProofs(elements.map((element, index) => proveValueTypeSpec(value.elements[index]!, element, env, context, hooks, `${path}[${index}]`)))
 }
 
 function parseBroadNumberRange() {
@@ -389,11 +415,12 @@ function exactNumberRange(value: number) {
 }
 
 function proveTupleLength(value: ArrayValue, expected: number, path: string): ValueSpecProof {
-  if (value.length.min === expected && value.length.max === expected) return {status: 'pass', values: [value.length], matched: 1}
-  if (value.length.max < expected || value.length.min > expected) {
-    return {status: 'fail', reason: `${path}.length was ${value.length.min}..${value.length.max}, expected ${expected}`, values: [value.length], matched: 0}
+  const length = arrayLength(value)
+  if (length.min === expected && length.max === expected) return {status: 'pass', values: [length], matched: 1}
+  if (length.max < expected || length.min > expected) {
+    return {status: 'fail', reason: `${path}.length was ${length.min}..${length.max}, expected ${expected}`, values: [length], matched: 0}
   }
-  return {status: 'unknown', reason: `${path}.length was not proven to be ${expected}`, values: [value.length], matched: 0}
+  return {status: 'unknown', reason: `${path}.length was not proven to be ${expected}`, values: [length], matched: 0}
 }
 
 function combineValueSpecProofs(proofs: ValueSpecProof[]): ValueSpecProof {
@@ -1229,7 +1256,7 @@ function verifyBooleanExpressionSpec(
 }
 
 function adjacentComparisonFailureReason(text: string, collectionText: string, rows: ArrayValue) {
-  const knownRelations = rows.summary?.relations
+  const knownRelations = arraySummary(rows)?.relations
     .filter(relation => relation.op === '==')
     .map(relation => sequenceRelationText(collectionText, relation)) ?? []
   const known = [

@@ -115,7 +115,10 @@ export type FitCallAlias =
       exportedName: string
     }
 
-export type TopLevelGlobalReader<TGlobal> = (declaration: ts.VariableDeclaration) => {name: string; value: TGlobal} | null
+export type TopLevelGlobalReader<TGlobal> = (
+  declaration: ts.VariableDeclaration,
+  checker: ts.TypeChecker | null,
+) => {name: string; value: TGlobal} | null
 
 export class TypeScriptUserlandError extends Error {
   constructor(readonly diagnostics: readonly ts.Diagnostic[]) {
@@ -376,7 +379,7 @@ function parseFitFile<TGlobal>(
           collectCallAlias(alias.localName, {kind: 'math', name: alias.exportedName}, isConst, callAliases, unsupportedCallAliases)
         }
       }
-      const global = readGlobal(declaration)
+      const global = readGlobal(declaration, typeChecker)
       if (global == null) continue
       globals.set(global.name, global.value)
     }

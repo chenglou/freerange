@@ -13,6 +13,8 @@ import {
   proveBooleanTrue,
 } from './boolean-claims.ts'
 import {
+  arrayElement,
+  arrayLength,
   finiteNumberValue,
   linearNameForExpression,
   numberWithBounds,
@@ -30,8 +32,11 @@ import {
   gridMeet,
 } from './domain.ts'
 import {
+  directFiniteElementAccess,
+  fixedArrayElementContractCheck,
   parsePrintedNumber,
   setCheckedDomainPathValue,
+  setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
 import {linearConstraints} from './assumptions.ts'
 import {
@@ -338,6 +343,18 @@ export function collectGivenAssumptions(
     syncEvaluationFacts()
     if (given.kind === 'range') {
       const spec = given.spec
+      const directElement = directFiniteElementGiven(spec)
+      if (directElement != null) {
+        const checked = fixedArrayElementContractCheck(
+          env.get(directElement.root),
+          directElement.root,
+          directElement.index,
+        )
+        if ('reason' in checked) {
+          checks.push(invalidGivenCheck(file, functionName, spec, checked.reason))
+          continue
+        }
+      }
       const value = evaluateGivenNumber(file, functionName, spec, spec.expression, context, evaluators)
       if (value.kind === 'invalid') {
         checks.push(value.check)
@@ -656,6 +673,7 @@ function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGive
     if (arrayRoot == null) return `Unsupported given expression target: ${publicFitText(spec.text)}`
     const array = env.get(arrayRoot)
     if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${arrayRoot}`
+    if (array.layout !== 'collection') return `Given ${publicFitText(spec.text)} requires a collection, not a fixed tuple`
     const gapText = args[1]!.getText()
     const updated = arrayWithSpacedRelation(array, gapText)
     if (updated === 'ambiguous') return `Given ${publicFitText(spec.text)} is ambiguous: the elements carry both y/height and x/width; map to one axis first`
@@ -668,6 +686,7 @@ function projectGivenExpression(env: Map<string, Value>, spec: FitExpressionGive
     if (propPath == null) return `Unsupported given expression target: ${publicFitText(spec.text)}`
     const array = env.get(propPath.root)
     if (array == null || array.kind !== 'array') return `Given ${publicFitText(spec.text)} expected an array named ${propPath.root}`
+    if (array.layout !== 'collection') return `Given ${publicFitText(spec.text)} requires a collection, not a fixed tuple`
     const updated = arrayWithNondecreasingRelation(array, propPath.path)
     env.set(propPath.root, updated)
     return null
@@ -691,9 +710,9 @@ function nondecreasingPropPath(expression: ts.Expression): {root: string; path: 
   return null
 }
 
-function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue | 'ambiguous' {
+function arrayWithSpacedRelation(array: Extract<ArrayValue, {layout: 'collection'}>, gapText: string): ArrayValue | 'ambiguous' {
   if (ambiguousRowAxes(array)) return 'ambiguous'
-  if (array.element?.kind === 'number') {
+  if (arrayElement(array)?.kind === 'number') {
     const previous: SequenceAddition = {kind: 'term', term: {item: 'previous', path: []}}
     const relation: SequenceRelation = {
       kind: 'adjacent-addition',
@@ -729,13 +748,13 @@ function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue
 }
 
 function detectedRowAxes(array: ArrayValue): RowAxis[] {
-  const element = array.element
+  const element = arrayElement(array)
   if (element == null || element.kind !== 'object') return rowAxes
   const present = rowAxes.filter(axis => element.props.has(axis.position))
   return present.length > 0 ? present : rowAxes
 }
 
-function arrayWithNondecreasingRelation(array: ArrayValue, path: string[]): ArrayValue {
+function arrayWithNondecreasingRelation(array: Extract<ArrayValue, {layout: 'collection'}>, path: string[]): ArrayValue {
   const relation: SequenceRelation = {
     kind: 'adjacent-comparison',
     left: {item: 'next', path},
@@ -768,6 +787,14 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   }
 
   const expression = spec.expression.parsed.expression
+  const directElement = directFiniteElementGiven(spec)
+  if (directElement != null) {
+    env.set(
+      directElement.root,
+      setCheckedFiniteArrayElementValue(env.get(directElement.root), directElement.root, directElement.index, value),
+    )
+    return
+  }
   if (ts.isIdentifier(expression)) {
     env.set(expression.text, value)
     return
@@ -783,9 +810,9 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
         value,
         value.min,
         value.max,
-        gridMeet(value.grid, target.length.grid),
+        gridMeet(value.grid, arrayLength(target).grid),
       )
-      env.set(lengthRoot, {...target, length})
+      if (target.layout === 'collection') env.set(lengthRoot, {...target, length})
       return
     }
   }
@@ -793,6 +820,10 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
   const domainPath = parseDomainPathText(expressionText)
   if (domainPath == null || domainPath.segments.length === 0) return
   env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+}
+
+function directFiniteElementGiven(spec: FitRangeGivenSpec): {root: string; index: number} | null {
+  return directFiniteElementAccess(spec.expression.parsed.expression)
 }
 
 function unionEnvelopeFacts(value: NumberValue, cases: EvaluatedRangeCase[], text: string, source: ConstraintSource): LinearConstraint[] {
@@ -854,8 +885,8 @@ function narrowComparisonSide(env: Map<string, Value>, side: FitExpression, op: 
   if (lengthRoot != null) {
     const target = env.get(lengthRoot)
     if (target?.kind !== 'array') return
-    const met = metNumber(target.length, lower, upper)
-    if (met != null) env.set(lengthRoot, {...target, length: met})
+    const met = metNumber(arrayLength(target), lower, upper)
+    if (met != null && target.layout === 'collection') env.set(lengthRoot, {...target, length: met})
   }
 }
 

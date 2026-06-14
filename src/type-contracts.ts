@@ -25,6 +25,7 @@ import {
 } from './parser.ts'
 import {type FitFunction} from './modules.ts'
 import {type Program} from './check-types.ts'
+import {fitValueSpecTupleElementType} from './value-specs.ts'
 
 type TypeContractSpec = FitCheckSpec | FitGivenSpec
 
@@ -241,6 +242,27 @@ function collectTypeContractSpecs(
     return collectTypeContractSpecs(program, type.type, root, role, seen)
   }
   if (ts.isArrayTypeNode(type)) return collectTypeContractSpecs(program, type.elementType, `${root}[]`, role, seen)
+  if (ts.isTupleTypeNode(type)) {
+    const results: TypeContractResult<TypeContractSpec>[] = []
+    for (const [index, element] of type.elements.entries()) {
+      const elementType = fitValueSpecTupleElementType(element)
+      if (elementType == null) {
+        return {
+          specs: [],
+          unsupported: uniqueLines([
+            ...typeAttachedCommentLines(type.getSourceFile().text, type),
+            ...typeAttachedCommentLines(element.getSourceFile().text, element),
+          ]).map(line => ({
+            text: typeCommentBody(line),
+            reason: 'Optional and rest tuple elements are unsupported',
+            line: line.line,
+          })),
+        }
+      }
+      results.push(collectTypeContractSpecs(program, elementType, `${root}[${index}]`, role, seen))
+    }
+    return mergeResults(results)
+  }
   if (ts.isIntersectionTypeNode(type)) {
     return mergeResults(type.types.map(member => collectTypeContractSpecs(program, member, root, role, seen)))
   }

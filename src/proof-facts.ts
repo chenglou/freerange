@@ -6,6 +6,10 @@ import {
   formatKnownProofFact,
   knownValueFacts,
 } from './reporting.ts'
+import {
+  arrayElement,
+  arrayLength,
+} from './domain.ts'
 import type {
   Assumption,
   LinearConstraint,
@@ -25,10 +29,11 @@ function proofFactsFromValue(value: Value): string[] {
   if (value.kind === 'number') return proofFactsFromNumber(value)
   if (value.kind === 'literal') return proofFactsFromLiteral(value)
   if (value.kind === 'array') {
+    const element = arrayElement(value)
     return [
       `sequence facts: ${formatArraySummary(value)}`,
-      ...proofFactsFromNumber(value.length),
-      ...(value.element == null ? [] : proofFactsFromValue(value.element)),
+      ...proofFactsFromNumber(arrayLength(value)),
+      ...(element == null ? [] : proofFactsFromValue(element)),
     ]
   }
   if (value.kind === 'object') return [...value.props.values()].flatMap(proofFactsFromValue)

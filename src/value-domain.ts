@@ -1,4 +1,4 @@
-import {linearVariable} from './linear.ts'
+import {linearConstant, linearVariable} from './linear.ts'
 import {joinArraySummary} from './array-summary.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {mergeBranchArms} from './branch-context.ts'
@@ -13,8 +13,11 @@ import {
 } from './number-domain.ts'
 import type {
   Assumption,
+  ArraySummary,
   ArrayValue,
   BranchArm,
+  CollectionValue,
+  FixedTupleValue,
   LiteralPrimitive,
   LiteralValue,
   NullableValue,
@@ -93,15 +96,87 @@ export function unknownArray(name: string, length: NumberValue = unknownArrayLen
     referenceIds: freshReferenceIds(),
     layout: 'collection',
     length,
-    elements: null,
     element,
     expr: name,
     summary: null,
   }
 }
 
+export function fixedTupleValue(
+  elements: Value[],
+  expr: string | null,
+  referenceIds: ReferenceIds = freshReferenceIds(),
+): FixedTupleValue {
+  return {
+    kind: 'array',
+    referenceIds,
+    layout: 'tuple',
+    elements,
+    expr,
+  }
+}
+
+export function collectionValue(
+  length: NumberValue,
+  element: Value | null,
+  expr: string | null,
+  referenceIds: ReferenceIds = freshReferenceIds(),
+  summary: ArraySummary | null = null,
+): CollectionValue {
+  return {
+    kind: 'array',
+    referenceIds,
+    layout: 'collection',
+    length,
+    element,
+    expr,
+    summary,
+  }
+}
+
+export function arrayLength(value: ArrayValue): NumberValue {
+  if (value.layout === 'collection') return value.length
+  const length = value.elements.length
+  return numberValue(length, length, 0, String(length), linearConstant(length))
+}
+
+export function arrayElement(value: ArrayValue): Value | null {
+  if (value.layout === 'collection') return value.element
+  let element: Value | null = null
+  for (const item of value.elements) element = mergeElementValue(element, item)
+  return element
+}
+
+export function arrayValueAtKnownIndex(value: ArrayValue, index: number, expr: string): Value {
+  if (value.layout === 'tuple') {
+    return value.elements[index] ?? unknown(`${expr} was not inferred`)
+  }
+  if (index < 0 || index >= maxArrayLength) {
+    return unknown(`Array index ${index} is not a JavaScript array index`)
+  }
+  if (index >= value.length.max) return nullValue('undefined')
+  if (value.element == null) return unknown(`${expr} was not inferred`)
+  return index < value.length.min
+    ? value.element
+    : nullableValue(value.element, expr, 'undefined')
+}
+
 export function tupleElements(value: ArrayValue): Value[] | null {
   return value.layout === 'tuple' ? value.elements : null
+}
+
+export function arraySummary(value: ArrayValue): ArraySummary | null {
+  return value.layout === 'collection' ? value.summary : null
+}
+
+export function arrayAsCollection(value: ArrayValue): CollectionValue {
+  return collectionValue(
+    arrayLength(value),
+    arrayElement(value),
+    value.expr,
+    value.referenceIds,
+    arraySummary(value),
+  )
 }
 
 export function nullValue(expr: string | null = 'null'): NullValue {
@@ -150,17 +225,23 @@ export function valueWithAssumptions(
     return {...value, props}
   }
   if (value.kind === 'array') {
+    if (value.layout === 'tuple') {
+      return {
+        ...value,
+        elements: value.elements.map(element => valueWithAssumptions(element, assumptions, branches)),
+      }
+    }
+    const summary = value.summary == null ? null : {
+      ...value.summary,
+      advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
+      lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithAssumptions(value.summary.lastEnd.value, assumptions, branches) as NumberValue},
+      extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
+    }
     return {
       ...value,
       length: valueWithAssumptions(value.length, assumptions, branches) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(element => valueWithAssumptions(element, assumptions, branches)),
       element: value.element == null ? null : valueWithAssumptions(value.element, assumptions, branches),
-      summary: value.summary == null ? null : {
-        ...value.summary,
-        advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
-        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithAssumptions(value.summary.lastEnd.value, assumptions, branches) as NumberValue},
-        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
-      },
+      summary,
     }
   }
   if (value.kind === 'nullable') {
@@ -202,25 +283,19 @@ export function joinValues(left: Value, right: Value): Value {
     }
   }
   if (left.kind === 'array' && right.kind === 'array') {
-    const length = joinValues(left.length, right.length)
+    const length = joinValues(arrayLength(left), arrayLength(right))
     if (length.kind !== 'number') return unknown('Array branches had incompatible lengths')
     const elements = left.layout === 'tuple'
       && right.layout === 'tuple'
-      && left.elements != null
-      && right.elements != null
       && left.elements.length === right.elements.length
       ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements![index]!))
       : null
-    return {
-      kind: 'array',
-      referenceIds: mergedReferenceIds(left.referenceIds, right.referenceIds),
-      layout: elements == null ? 'collection' : 'tuple',
-      length,
-      elements,
-      element: mergeElementValue(left.element, right.element),
-      expr: left.expr != null && left.expr === right.expr ? left.expr : null,
-      summary: joinArraySummary(left, right),
-    }
+    const referenceIds = mergedReferenceIds(left.referenceIds, right.referenceIds)
+    const expr = left.expr != null && left.expr === right.expr ? left.expr : null
+    const summary = joinArraySummary(left, right)
+    return elements == null
+      ? collectionValue(length, mergeElementValue(arrayElement(left), arrayElement(right)), expr, referenceIds, summary)
+      : fixedTupleValue(elements, expr, referenceIds)
   }
   if (left.kind === 'null' && right.kind === 'null') return nullValue(left.expr ?? right.expr)
   if (left.kind === 'nullable' && right.kind === 'null') return {...left, absent: mergeNullishKind(left.absent, 'null')}

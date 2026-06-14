@@ -5,9 +5,12 @@ import {
   type FitDomainPathSegment,
 } from './parser.ts'
 import {
+  arrayElement,
+  arrayLength,
   unknown,
   unknownArray,
   unknownObject,
+  type FixedTupleValue,
   type Value,
 } from './domain.ts'
 import {
@@ -30,6 +33,7 @@ export function setCheckedDomainPathValue(current: Value | undefined, expr: stri
 
   if (segment.kind === 'prop') {
     if (current?.kind === 'array' && segment.name === 'length') {
+      if (current.layout === 'tuple') return current
       const length = setCheckedDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
       return length.kind === 'number' ? {...current, length} : current
     }
@@ -44,10 +48,14 @@ export function setCheckedDomainPathValue(current: Value | undefined, expr: stri
   const base = current?.kind === 'array'
     ? current
     : unknownArray(expr, objectLength?.kind === 'number' ? objectLength : undefined)
-  return {
-    ...base,
-    element: setCheckedDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value),
+  if (base.layout === 'tuple') {
+    return {
+      ...base,
+      elements: base.elements.map((element, index) =>
+        setCheckedDomainPathValue(element, `${expr}[${index}]`, segments.slice(1), value)),
+    }
   }
+  return {...base, element: setCheckedDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value)}
 }
 
 export function evaluateDomainPathValue(domainPath: FitDomainPath, env: Map<string, Value>): Value {
@@ -61,12 +69,12 @@ function evaluateDomainPathSegments(current: Value, expr: string, segments: FitD
 
   if (segment.kind === 'item') {
     if (current.kind !== 'array') return unknown(`${expr} expected an array`)
-    const item = current.element ?? unknown(`${expr}[] was not inferred`)
+    const item = arrayElement(current) ?? unknown(`${expr}[] was not inferred`)
     return evaluateDomainPathSegments(item, `${expr}[]`, segments.slice(1))
   }
 
   if (current.kind === 'array' && segment.name === 'length') {
-    return evaluateDomainPathSegments(current.length, `${expr}.length`, segments.slice(1))
+    return evaluateDomainPathSegments(arrayLength(current), `${expr}.length`, segments.slice(1))
   }
   if (current.kind === 'object') {
     const prop = current.props.get(segment.name) ?? unknown(`${expr}.${segment.name} was not inferred`)
@@ -84,13 +92,30 @@ export function finiteElementAccessRoot(expression: ts.Expression): {root: strin
   return root == null ? null : {root, index}
 }
 
+export function directFiniteElementAccess(expression: ts.Expression): {root: string; index: number} | null {
+  const current = unwrapExpression(expression)
+  if (!ts.isElementAccessExpression(current) || !ts.isIdentifier(unwrapExpression(current.expression))) return null
+  return finiteElementAccessRoot(current)
+}
+
 // Caller must already have checked the finite element path with TypeScript or a proven helper contract.
 export function setCheckedFiniteArrayElementValue(current: Value | undefined, expr: string, index: number, value: Value): Value {
-  const base = current?.kind === 'array' ? current : unknownArray(expr)
-  const elements = base.elements == null ? [] : [...base.elements]
-  while (elements.length <= index) {
-    elements.push(base.element ?? unknown(`${expr}[${elements.length}] was not inferred`))
-  }
+  const checked = fixedArrayElementContractCheck(current, expr, index)
+  if ('reason' in checked) return unknown(checked.reason)
+  const elements = [...checked.tuple.elements]
   elements[index] = value
-  return {...base, layout: 'tuple', elements}
+  return {...checked.tuple, elements}
+}
+
+export function fixedArrayElementContractCheck(
+  current: Value | undefined,
+  expr: string,
+  index: number,
+): {tuple: FixedTupleValue} | {reason: string} {
+  if (current?.kind !== 'array' || current.layout !== 'tuple') {
+    return {reason: `Fixed index contract ${expr}[${index}] requires a fixed tuple type`}
+  }
+  return index >= current.elements.length
+    ? {reason: `Fixed tuple ${expr} has no element at index ${index}`}
+    : {tuple: current}
 }

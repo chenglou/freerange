@@ -49,11 +49,11 @@ function readWholePatternDefault({value}: {value: number} = {value: 2}) {
   return value
 }
 
-function readRestBinding(...[left, right]: number[]) {
+function readRestBinding(...[left, right]: [number, number]) {
   return left * 10 + right
 }
 
-function total(...values: number[]) {
+function total(...values: [number, number]) {
   return values[0]! + values[1]!
 }
 
@@ -273,6 +273,426 @@ if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 25) {
   process.exitCode = 1
 } else {
   console.log('calls: operands and parameters prepared once')
+}
+
+const arrayTupleBoundaryChecks = verifyFitSource('array-tuple-boundaries.ts', `
+function throughArray(values: number[]) {
+  return values
+}
+
+function throughTuple(values: [number, number]) {
+  return values
+}
+
+function takeBox(box: {values: number[]}) {
+  return box.values
+}
+
+function returnsArray(): number[] {
+  return [10, 20] as const
+}
+
+function throughReadonlyArray(values: readonly number[]) {
+  return values
+}
+
+type ReadonlyPair = readonly [number, number]
+
+function throughReadonlyTuple(values: ReadonlyPair) {
+  return values
+}
+
+/** @fit
+ * given values[0]: 0..10
+ * return: 0..10
+ */
+function fixedIndexGivenOnCollectionIsUnsupported(values: number[]) {
+  return values[0] ?? 0
+}
+
+/** @fit
+ * given pair[0]: 0..10
+ * return: 0..10
+ */
+function fixedIndexGivenOnTupleIsSupported(pair: [number, number]) {
+  return pair[0]
+}
+
+/** @fit
+ * return[0]: 0..10
+ */
+function fixedIndexReturnOnCollectionIsUnsupported(values: number[]): number[] {
+  return values
+}
+
+/** @fit
+ * given values.length: int 1..10
+ * given values[]: 0..10
+ * return: 0..10
+ */
+function collectionReadWithLengthProof(values: number[]) {
+  return values[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function explicitTupleKeepsFirstPosition() {
+  return throughTuple([10, 20])[0]
+}
+
+/** @fit
+ * return == 10
+ */
+function constAssertionKeepsFirstPosition() {
+  return ([10, 20] as const)[0]
+}
+
+/** @fit
+ * return == 20
+ */
+function readonlyTupleAliasKeepsSecondPosition() {
+  return throughReadonlyTuple([10, 20])[1]
+}
+
+/** @fit
+ * return.length == 0
+ */
+function emptyTupleHasExactLength(): [] {
+  return []
+}
+
+/** @fit
+ * return == 20
+ */
+function namedTupleKeepsSecondPosition() {
+  const pair: [left: number, right: number] = [10, 20]
+  return pair[1]
+}
+
+/** @fit
+ * return[0] == 30
+ * return.length == 2
+ */
+function tupleWriteUpdatesOnePosition(): [number, number] {
+  const pair: [number, number] = [10, 20]
+  pair[0] = 30
+  return pair
+}
+
+/** @fit
+ * return == 3
+ */
+function tuplePushBecomesCollection() {
+  const pair: [number, number] = [10, 20]
+  pair.push(30)
+  const runtimeLength: number = pair.length
+  return runtimeLength
+}
+
+/** @fit
+ * return == 3
+ */
+function widenedAliasPushInvalidatesTupleLength() {
+  const pair: [number, number] = [10, 20]
+  const values: number[] = pair
+  values.push(30)
+  const runtimeLength: number = pair.length
+  return runtimeLength
+}
+
+/** @fit
+ * return == 30
+ */
+function tupleWriteDoesNotGiveArrayAliasPositions() {
+  const pair: [number, number] = [10, 20]
+  const values: number[] = pair
+  pair[0] = 30
+  return values[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function arrayParameterDoesNotKeepFirstPosition() {
+  return throughArray([10, 20])[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function arrayReturnDoesNotKeepFirstPosition() {
+  return returnsArray()[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function nestedArrayBoundaryDoesNotKeepFirstPosition() {
+  const pair: [10, 20] = [10, 20]
+  return takeBox({values: pair})[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function assignmentToArrayDoesNotKeepFirstPosition() {
+  const pair: [10, 20] = [10, 20]
+  let values: number[] = []
+  values = pair
+  return values[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function assertionToArrayDoesNotKeepFirstPosition() {
+  const pair: [10, 20] = [10, 20]
+  return (pair as number[])[0]!
+}
+
+/** @fit
+ * return == 10
+ */
+function readonlyArrayDoesNotKeepFirstPosition() {
+  return throughReadonlyArray([10, 20] as const)[0]!
+}
+
+/** @fit
+ * given values[]: 0..10
+ * return: 0..10
+ */
+function collectionReadWithoutLengthProof(values: number[]) {
+  return values[0] ?? -1
+}
+
+/** @fit
+ * given values[]: 0..10
+ * return: 0..10
+ */
+function collectionDestructureWithoutLengthProof(values: number[]) {
+  const [first] = values
+  return first ?? -1
+}
+
+/** @fit
+ * given values.length: int 1..10
+ * given values[]: 0..10
+ * return: 0..10
+ */
+function negativeCollectionIndexIsNotAnItem(values: number[]) {
+  return values[-1] ?? -1
+}
+
+/** @fit
+ * given values.length: int 1..10
+ * given values[]: 0..10
+ * return: 0..10
+ */
+function nonArrayIndexIsNotAnItem(values: number[]) {
+  return values[4294967295] ?? -1
+}
+
+/** @fit
+ * return >= 20
+ */
+function equalLengthTupleUnionKeepsPositions(flag: boolean) {
+  const pair: [10, 20] | [30, 40] = flag ? [10, 20] : [30, 40]
+  return pair[1]
+}
+
+/** @fit
+ * return == 10
+ */
+function differentLengthTupleUnionDoesNotKeepPositions(flag: boolean) {
+  const values: [10] | [10, 20] = flag ? [10] : [10, 20]
+  return values[0]
+}
+
+/** @fit
+ * return[0] == 10
+ */
+function assertionCannotCreateTuple(values: number[]) {
+  return values as [number, number]
+}
+
+/** @fit
+ * return.length >= 0
+ */
+function optionalTupleIsUnsupported(values: [number, number?]) {
+  return values
+}
+
+/** @fit
+ * return.length >= 1
+ */
+function restTupleIsUnsupported(values: [number, ...number[]]) {
+  return values
+}
+
+type OptionalPair = [number, number?]
+
+/** @fit
+ * return.length >= 1
+ */
+function optionalTupleAliasIsUnsupported(values: OptionalPair) {
+  return values
+}
+
+type OptionalOrFixedPair = [number, number?] | [number, number]
+
+/** @fit
+ * return.length >= 1
+ */
+function optionalTupleUnionIsUnsupported(values: OptionalOrFixedPair) {
+  return values
+}
+
+type RestOrFixedPair = [number, ...number[]] | [number, number]
+
+/** @fit
+ * return.length >= 1
+ */
+function restTupleUnionIsUnsupported(values: RestOrFixedPair) {
+  return values
+}
+
+/** @fit
+ * return == 2
+ */
+function indexedCollectionWriteIsUnsupported() {
+  const values: number[] = [1, 2]
+  values[0] = 3
+  return values.length
+}
+
+/** @fit
+ * return == 1
+ */
+function nestedCollectionWriteIsUnsupported() {
+  const values: {width: number}[] = [{width: 1}]
+  values[0]!.width = 2
+  return values.length
+}
+
+/** @fit
+ * return.length == 2
+ */
+function negativeTupleIndexWriteIsUnsupported() {
+  const pair: [number, number] = [1, 2]
+  void ((pair as number[])[-1] = 3)
+  return pair
+}
+`)
+const boundaryStatus = (name: string) =>
+  arrayTupleBoundaryChecks.find(check => check.functionName === name)
+const expectedBoundaryPasses = [
+  'fixedIndexGivenOnTupleIsSupported',
+  'collectionReadWithLengthProof',
+  'explicitTupleKeepsFirstPosition',
+  'constAssertionKeepsFirstPosition',
+  'readonlyTupleAliasKeepsSecondPosition',
+  'emptyTupleHasExactLength',
+  'namedTupleKeepsSecondPosition',
+  'tupleWriteUpdatesOnePosition',
+  'tuplePushBecomesCollection',
+  'widenedAliasPushInvalidatesTupleLength',
+  'equalLengthTupleUnionKeepsPositions',
+]
+const expectedBoundaryUnknowns = [
+  'arrayParameterDoesNotKeepFirstPosition',
+  'fixedIndexGivenOnCollectionIsUnsupported',
+  'fixedIndexReturnOnCollectionIsUnsupported',
+  'arrayReturnDoesNotKeepFirstPosition',
+  'nestedArrayBoundaryDoesNotKeepFirstPosition',
+  'assignmentToArrayDoesNotKeepFirstPosition',
+  'assertionToArrayDoesNotKeepFirstPosition',
+  'readonlyArrayDoesNotKeepFirstPosition',
+  'tupleWriteDoesNotGiveArrayAliasPositions',
+  'collectionReadWithoutLengthProof',
+  'collectionDestructureWithoutLengthProof',
+  'negativeCollectionIndexIsNotAnItem',
+  'nonArrayIndexIsNotAnItem',
+  'differentLengthTupleUnionDoesNotKeepPositions',
+]
+if (
+  expectedBoundaryPasses.some(name =>
+    arrayTupleBoundaryChecks.filter(check => check.functionName === name).some(check => check.status !== 'pass'))
+  || expectedBoundaryUnknowns.some(name => boundaryStatus(name)?.status === 'pass')
+  || boundaryStatus('assertionCannotCreateTuple')?.status !== 'unknown'
+  || !boundaryStatus('optionalTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryStatus('restTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryStatus('optionalTupleAliasIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryStatus('optionalTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryStatus('restTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryStatus('fixedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
+  || !boundaryStatus('fixedIndexReturnOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
+  || boundaryStatus('indexedCollectionWriteIsUnsupported')?.status === 'pass'
+  || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status === 'pass'
+  || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status === 'pass'
+) {
+  console.error('expected arrays and fixed tuples to keep separate guarantees at every type boundary')
+  console.error(JSON.stringify(arrayTupleBoundaryChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('calls: arrays and fixed tuples keep separate guarantees')
+}
+
+const arrayTupleBoundaryProgram = buildFitSourceFile('array-tuple-boundary-interpreter.ts', `
+function assertionCannotCreateTuple(values: number[]) {
+  return values as [number, number]
+}
+
+function indexedCollectionWriteIsUnsupported() {
+  const values: number[] = [1, 2]
+  values[0] = 3
+  return values.length
+}
+
+function nestedCollectionWriteIsUnsupported() {
+  const values: {width: number}[] = [{width: 1}]
+  values[0]!.width = 2
+  return values.length
+}
+
+function negativeTupleIndexWriteIsUnsupported() {
+  const pair: [number, number] = [1, 2]
+  void ((pair as number[])[-1] = 3)
+  return pair
+}
+`, readTopLevelGlobal)
+const assertionBoundary = evaluateInterpreterFunction({
+  program: arrayTupleBoundaryProgram,
+  functionName: 'assertionCannotCreateTuple',
+})
+const indexedWriteBoundary = evaluateInterpreterFunction({
+  program: arrayTupleBoundaryProgram,
+  functionName: 'indexedCollectionWriteIsUnsupported',
+})
+const nestedIndexedWriteBoundary = evaluateInterpreterFunction({
+  program: arrayTupleBoundaryProgram,
+  functionName: 'nestedCollectionWriteIsUnsupported',
+})
+const negativeTupleIndexWriteBoundary = evaluateInterpreterFunction({
+  program: arrayTupleBoundaryProgram,
+  functionName: 'negativeTupleIndexWriteIsUnsupported',
+})
+if (
+  !assertionBoundary.output.issues.some(issue => issue.message.includes('fixed tuple'))
+  || !indexedWriteBoundary.output.issues.some(issue => issue.message.includes('Indexed writes to collections are unsupported'))
+  || !nestedIndexedWriteBoundary.output.issues.some(issue => issue.message.includes('Indexed writes to collections are unsupported'))
+  || !negativeTupleIndexWriteBoundary.output.issues.some(issue => issue.message.includes('not a JavaScript array index'))
+) {
+  console.error('expected unsupported tuple assertions and collection writes to report their actual boundary')
+  console.error({
+    assertion: assertionBoundary.output.issues.map(issue => issue.message),
+    indexedWrite: indexedWriteBoundary.output.issues.map(issue => issue.message),
+    nestedIndexedWrite: nestedIndexedWriteBoundary.output.issues.map(issue => issue.message),
+    negativeTupleIndexWrite: negativeTupleIndexWriteBoundary.output.issues.map(issue => issue.message),
+  })
+  process.exitCode = 1
+} else {
+  console.log('calls: unsupported tuple assertions and collection writes report directly')
 }
 
 const finalBindingNegativeChecks = verifyFitSource('final-binding-negative.ts', `

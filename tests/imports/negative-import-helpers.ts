@@ -59,6 +59,6 @@ export type NegativeImportedTypeFieldRows = {
  * return.length == 4
  * return[2] >= 0
  */
-export function importedTupleWithOneOffset(value: number) {
+export function importedTupleWithOneOffset(value: number): [number, number, number, number] {
   return [0, 0, Math.abs(value), value]
 }
