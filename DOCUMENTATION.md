@@ -216,9 +216,12 @@ width: 0..1000
 index: int 0..<items.length
 width * 2 + gap <= containerWidth
 focusedIndex < items.length
+columns: 5 | 6 | 7
 ```
 
 This includes addition, subtraction, multiplication by a known value, and division when the required facts about the divisor are known. Floating-point arithmetic follows JS evaluation and respects floating-point imprecision.
+
+Freerange keeps up to 8 exact numeric alternatives. Beyond that, it keeps their overall range. E.g. `1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9` becomes `1..9`. Checks that only need the range can still pass. Checks that need the individual choices become `unknown` and report that the numeric-alternative limit was exceeded.
 
 ### Array
 
@@ -327,25 +330,37 @@ It also understands useful `Math.*` calls. For example, it can prove `Math.floor
 
 #### Branches
 
-The Inference of results that contain `|` is more nuanced to handle, due to state explosions. But generally, it works this way:
+Freerange keeps values from the same if-else and ternary branches together when their relationship matters:
 
 ```ts
 function layout(pinned: boolean) {
   let left = 0
   let width = 100
+
   if (pinned) {
     left = 20
     width = 80
   }
+
   return {left, width}
 }
 ```
 
-This infers as `{left: 0, width: 100} | {left: 20, width: 80}`
+This infers `{left: 0, width: 100} | {left: 20, width: 80}` instead of broadening each field separately to `{left: 0..20, width: 80..100}`.
 
-Freerange currently keeps up to 8 reachable branch states from code. If code needs more than that, it keeps facts that are identical in every branch, forgets facts that vary by branch, and reports that it hit the branch-state budget. Checks that need the forgotten facts become `unknown`. That 8-case budget is for inferred code branches, which isn't necessarily the same as the number of alternations of output like `1 | 2 | 3`.
+Choices made by the same simple numeric comparison also stay together:
 
-(TypeScript avoids this problem by widening to `{left: number; width: number}`, which avoids needing to track branches, but this isn't good enough for Freerange)
+```ts
+const columns = availableWidth < 600 ? 2 : 3
+const gap = availableWidth < 600 ? 16 : 24
+return columns + gap
+```
+
+The result is `18 | 27`, not every possible pairing of `columns` and `gap`.
+
+Freerange keeps up to 8 branch states. Beyond that, it reports that the branch-state limit was exceeded, then only keeps facts that are uniformly true in every branch. This is to avoid combinatorial explosion of states later on.
+
+Note: taking the false branch of `value >= 0` does not prove `value < 0`. The value could be `NaN`, for which both `value >= 0` and `value < 0` are false.
 
 #### Loops
 
