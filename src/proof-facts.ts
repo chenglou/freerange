@@ -6,17 +6,21 @@ import {
   formatKnownProofFact,
   knownValueFacts,
 } from './reporting.ts'
+import {isLinearConstraint} from './assumptions.ts'
 import type {
+  Assumption,
   LinearConstraint,
   LiteralValue,
   NumberValue,
   Value,
 } from './domain-types.ts'
 
-export function proofFactsFromValues(values: Value[], assumptions: LinearConstraint[]) {
+export function proofFactsFromValues(values: Value[], assumptions: Assumption[]) {
   const facts: string[] = []
   for (const value of values) facts.push(...proofFactsFromValue(value))
-  for (const assumption of assumptions) facts.push(formatAssumptionFact(assumption))
+  for (const assumption of assumptions) {
+    if (isLinearConstraint(assumption)) facts.push(formatAssumptionFact(assumption))
+  }
   return [...new Set(facts)]
 }
 
@@ -52,4 +56,3 @@ function proofFactsFromOrigin(origin: string[]) {
 function formatAssumptionFact(assumption: LinearConstraint): string {
   return formatKnownProofFact(assumption)
 }
-

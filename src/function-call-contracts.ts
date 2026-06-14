@@ -22,6 +22,7 @@ import {
   numberWithBounds,
   numberValue,
   unknown,
+  withCombinedNumberCaseInfo,
   withNumberCases,
   type LiteralValue,
   type NumberCase,
@@ -31,7 +32,6 @@ import {
   integerValued,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
-import {assumptionsAreReachable} from './constraint-reachability.ts'
 import {
   finiteElementAccessRoot,
   parsePrintedNumber,
@@ -71,6 +71,7 @@ import {
   type FitSpec,
   type FitValueSpec,
 } from './parser.ts'
+import {assumptionsAreReachable} from './proof.ts'
 import {
   createFitValueSpecTypeEnv,
   fitValueSpecTupleElementType,
@@ -586,19 +587,27 @@ function summaryRangeValue(
       null,
       mergeOrigin(current, rangeValue, origin),
     )
-    return withNumberCases(
-      envelope,
-      summaryRangeCases(current, rangeValue, expr, linear, origin),
+    return withCombinedNumberCaseInfo(
+      withNumberCases(
+        envelope,
+        summaryRangeCases(current, rangeValue, expr, linear, origin),
+      ),
+      current,
+      rangeValue,
     )
   }
-  return numberValue(
-    Math.max(current.min, rangeValue.min),
-    Math.min(current.max, rangeValue.max),
-    gridMeet(current.grid, rangeValue.grid),
-    expr,
-    linear,
-    null,
-    mergeOrigin(current, rangeValue, origin),
+  return withCombinedNumberCaseInfo(
+    numberValue(
+      Math.max(current.min, rangeValue.min),
+      Math.min(current.max, rangeValue.max),
+      gridMeet(current.grid, rangeValue.grid),
+      expr,
+      linear,
+      null,
+      mergeOrigin(current, rangeValue, origin),
+    ),
+    current,
+    rangeValue,
   )
 }
 
@@ -725,7 +734,15 @@ function applySummaryComparisonToPath(
   switch (op) {
     case '==': {
       const narrowed = numberWithBounds(current, other.min, other.max, other.grid, other.cases)
-      setSummaryPathValue(env, path, withSummaryFact({...narrowed, expr: other.expr, linear: other.linear, origin}))
+      setSummaryPathValue(
+        env,
+        path,
+        withSummaryFact(withCombinedNumberCaseInfo(
+          {...narrowed, expr: other.expr, linear: other.linear, origin},
+          current,
+          other,
+        )),
+      )
       return
     }
     case '>=':

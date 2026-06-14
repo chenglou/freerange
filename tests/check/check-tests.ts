@@ -80,7 +80,7 @@ if (positiveReport.phase !== 'ready') {
 }
 
 const photoGalleryReport = await verifyFitFiles(['photo-gallery/index.ts'])
-if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 38 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
+if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 40 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
   console.error('expected photo-gallery literal data to stay summarized')
   console.error(photoGalleryReport.phase === 'ready'
     ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.requires} requires, ${photoGalleryReport.summary.unknown} unknown`
@@ -137,6 +137,50 @@ if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.
   process.exitCode = 1
 } else {
   console.log('domain: unbounded difference')
+}
+
+const numericAlternativeBudgetChecks = verifyFitSource('numeric-alternative-budget.ts', `function choice(n: number) {
+  return n === 0 ? 0
+    : n === 1 ? 1
+      : n === 2 ? 2
+        : n === 3 ? 3
+          : n === 4 ? 4
+            : n === 5 ? 5
+              : n === 6 ? 6
+                : n === 7 ? 7
+                  : 8
+}
+
+/** @fit
+ * given n: int 0..8
+ * return: 0..8
+ */
+function broad(n: number) {
+  return choice(n)
+}
+
+/** @fit
+ * given n: int 0..8
+ * return: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8
+ */
+function exact(n: number) {
+  return choice(n)
+}
+`)
+const broadNumericAlternatives = numericAlternativeBudgetChecks.find(check =>
+  check.functionName === 'broad' && check.text === 'return: 0..8')
+const exactNumericAlternatives = numericAlternativeBudgetChecks.find(check =>
+  check.functionName === 'exact' && check.text.includes('0 | 1 | 2'))
+if (
+  broadNumericAlternatives?.status !== 'pass'
+  || exactNumericAlternatives?.status !== 'unknown'
+  || exactNumericAlternatives.reason?.includes('Numeric alternative budget exceeded') !== true
+) {
+  console.error('expected numeric alternative overflow to keep its range and report lost exact choices')
+  console.error(JSON.stringify(numericAlternativeBudgetChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('domain: numeric alternative budget reports lost choices')
 }
 
 const computationLeft = numberValue(0, 1000, null, 'left', linearVariable('left'))

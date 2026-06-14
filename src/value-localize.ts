@@ -9,7 +9,7 @@ import type {LocalizeOptions} from './check-types.ts'
 
 export function localizeValue(value: Value, expr: string, options: LocalizeOptions = {}): Value {
   if (value.kind === 'number') {
-    return numberValue(
+    const localized = numberValue(
       value.min,
       value.max,
       value.grid,
@@ -19,6 +19,14 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
       value.origin,
       value.computation,
     )
+    return {
+      ...localized,
+      ...(value.neverNaN === true ? {neverNaN: true as const} : {}),
+      ...(options.preserveLinear === true && value.caseSource != null
+        ? {caseSource: value.caseSource}
+        : {}),
+      ...(value.caseLoss == null ? {} : {caseLoss: value.caseLoss}),
+    }
   }
   if (value.kind === 'literal') return {...value, expr}
   if (value.kind === 'object') {

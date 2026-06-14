@@ -10,7 +10,7 @@ import {
 } from './parser.ts'
 import {
   type ArrayValue,
-  type LinearConstraint,
+  type Assumption,
   type SequenceAddition,
   type SequenceExpression,
   type SequenceTerm,
@@ -34,7 +34,7 @@ type BoundPathExpression = BoundIndexUse & {
 }
 
 export type BoundIndexContext = {
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
   evaluateDomainPath: (domainPath: FitDomainPath) => Value
   evaluateSpecExpression: (text: FitExpressionLike) => Value
   nondecreasingFailureReason: (text: string, target: {array: ArrayValue; prop: string}) => string

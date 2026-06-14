@@ -3,8 +3,8 @@ import type {Program} from '../check-types.ts'
 import {
   joinValues,
   unknown,
+  type Assumption,
   type ArrayValue,
-  type LinearConstraint,
   type Value,
 } from '../domain.ts'
 import type {PreparedCall} from '../prepared-call.ts'
@@ -53,13 +53,13 @@ export type InterpreterFrame = {
   activeCalls: Set<string>
   loopStack: LoopFrame[]
   conditionalDepth: number
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
   objectPath?: string[]
 }
 
 export type InterpreterState = {
   env: Map<string, Value>
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
 }
 
 export type InterpreterStateCase = InterpreterState & {
@@ -123,7 +123,7 @@ export type InterpreterStart = {
   program: Program
   env: Map<string, Value>
   stack: string[]
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
   objectPath?: string[]
 }
 
@@ -168,7 +168,7 @@ type DerivedFrameOptions = {
   activeCalls?: Set<string>
   loopStack?: LoopFrame[]
   conditionalDepth?: number
-  assumptions?: LinearConstraint[]
+  assumptions?: Assumption[]
   objectPath?: string[] | null
   output?: InterpreterOutput
   policy?: InterpreterPolicy

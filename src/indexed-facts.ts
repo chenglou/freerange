@@ -1,10 +1,13 @@
 import {rationalEquals, rationalOne} from './rational.ts'
 import {
   addNumbers,
+  linearNameForExpression,
   numberValue,
   unknownNumber,
   withNumberCases,
+  type Assumption,
   type ArrayValue,
+  type BranchChoiceOperand,
   type LinearConstraint,
   type NumberValue,
   type ObjectValue,
@@ -14,7 +17,14 @@ import {
   type SequenceTerm,
   type Value,
 } from './domain.ts'
-import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.ts'
+import {isBranchChoice} from './assumptions.ts'
+import {
+  expressionKeyFromText,
+  linearConstant,
+  linearFromExpressionText,
+  linearVariable,
+  type LinearExpr,
+} from './linear.ts'
 import {comparisonConstraint, proveComparison} from './proof.ts'
 import {sequenceAdditionText} from './sequence-relation.ts'
 
@@ -24,7 +34,7 @@ export function adjacentElementAccessFacts(
   sourceName: string,
   indexText: string,
   accessExpr: string,
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
 ): LinearConstraint[] {
   const summary = target.summary
   if (summary == null || summary.relations.length === 0) return []
@@ -130,27 +140,90 @@ function objectWithRebasedElementPath(value: ObjectValue, sourceElementExpr: str
 
 function numberWithRebasedElementPath(value: NumberValue, sourceElementExpr: string, accessExpr: string): NumberValue {
   const expr = rebaseElementExpr(value.expr, sourceElementExpr, accessExpr)
-  const rebased = numberValue(
-    value.min,
-    value.max,
-    value.grid,
-    expr,
-    expr === value.expr ? value.linear : null,
-    null,
-    value.origin,
-  )
+  const rebased = {
+    ...numberValue(
+      value.min,
+      value.max,
+      value.grid,
+      expr,
+      expr === value.expr ? value.linear : null,
+      null,
+      value.origin,
+    ),
+    ...(value.neverNaN === true ? {neverNaN: true as const} : {}),
+    ...(value.caseSource == null
+      ? {}
+      : {caseSource: {condition: rebaseElementText(value.caseSource.condition, sourceElementExpr, accessExpr)}}),
+    ...(value.caseLoss == null
+      ? {}
+      : {
+          caseLoss: value.caseLoss.kind === 'branch'
+            ? {...value.caseLoss, condition: rebaseElementText(value.caseLoss.condition, sourceElementExpr, accessExpr)}
+            : value.caseLoss,
+        }),
+  }
   if (value.cases == null) return rebased
   return withNumberCases(rebased, value.cases.map(branch => ({
     value: numberWithRebasedElementPath(branch.value, sourceElementExpr, accessExpr),
-    assumptions: branch.assumptions,
+    assumptions: branch.assumptions.map(assumption =>
+      rebaseElementAssumption(assumption, sourceElementExpr, accessExpr)),
   })))
 }
 
+function rebaseElementAssumption(
+  assumption: Assumption,
+  sourceElementExpr: string,
+  accessExpr: string,
+): Assumption {
+  if (isBranchChoice(assumption)) {
+    return {
+      ...assumption,
+      left: assumption.left.kind === 'linear'
+        ? rebaseBranchChoiceLinearOperand(assumption.left, sourceElementExpr, accessExpr)
+        : {...assumption.left, text: rebaseElementText(assumption.left.text, sourceElementExpr, accessExpr)},
+      right: assumption.right.kind === 'linear'
+        ? rebaseBranchChoiceLinearOperand(assumption.right, sourceElementExpr, accessExpr)
+        : {...assumption.right, text: rebaseElementText(assumption.right.text, sourceElementExpr, accessExpr)},
+    }
+  }
+  const leftExpr = assumption.leftExpr == null
+    ? undefined
+    : rebaseElementText(assumption.leftExpr, sourceElementExpr, accessExpr)
+  const rightExpr = assumption.rightExpr == null
+    ? undefined
+    : rebaseElementText(assumption.rightExpr, sourceElementExpr, accessExpr)
+  const expressionChanged = leftExpr !== assumption.leftExpr
+    || rightExpr !== assumption.rightExpr
+  return {
+    ...assumption,
+    diff: expressionChanged ? null : assumption.diff,
+    ...(leftExpr == null ? {} : {leftExpr}),
+    ...(rightExpr == null ? {} : {rightExpr}),
+  }
+}
+
+function rebaseBranchChoiceLinearOperand(
+  operand: Extract<BranchChoiceOperand, {kind: 'linear'}>,
+  sourceElementExpr: string,
+  accessExpr: string,
+): Extract<BranchChoiceOperand, {kind: 'linear'}> {
+  if (operand.text == null) return operand
+  const text = rebaseElementText(operand.text, sourceElementExpr, accessExpr)
+  if (text === operand.text) return operand
+  return {
+    ...operand,
+    text,
+    value: linearFromExpressionText(text)
+      ?? linearVariable(linearNameForExpression(text)),
+  }
+}
+
 function rebaseElementExpr(expr: string | null, sourceElementExpr: string, accessExpr: string) {
-  if (expr == null) return null
-  if (expr === sourceElementExpr) return accessExpr
-  if (expr.startsWith(`${sourceElementExpr}.`)) return `${accessExpr}${expr.slice(sourceElementExpr.length)}`
-  return expr
+  return expr == null ? null : rebaseElementText(expr, sourceElementExpr, accessExpr)
+}
+
+function rebaseElementText(text: string, sourceElementExpr: string, accessExpr: string) {
+  return text.replaceAll(sourceElementExpr, accessExpr)
 }
 
 function sequenceExpressionExpr(accessExpr: string, previousAccessExpr: string, expression: SequenceExpression): string {

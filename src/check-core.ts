@@ -51,7 +51,7 @@ import {
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
   unknown,
-  type LinearConstraint,
+  type Assumption,
   type Value,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
@@ -749,7 +749,7 @@ function verifyCheckSpec(
   result: Value,
   spec: FitCheckSpec,
   checks: FitCheck[],
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
   booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
   boundary?: CheckBoundary,
@@ -775,7 +775,7 @@ function verifyCheckSpecForResultCases(
   returnCases: InterpreterReturnCase[] | undefined,
   spec: FitCheckSpec,
   checks: FitCheck[],
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
   booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
 ): FitCheck {
@@ -836,7 +836,7 @@ function evaluateFunctionBody(fn: FitFunction, context: EvalContext): Value {
   return evaluateFunctionBodyState(fn, context).result
 }
 
-function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: LinearConstraint[]; returnCases?: InterpreterReturnCase[]} {
+function evaluateFunctionBodyState(fn: FitFunction, context: EvalContext): {result: Value; env: Map<string, Value>; assumptions: Assumption[]; returnCases?: InterpreterReturnCase[]} {
   const result = evaluateInterpreterFunctionBody({...interpreterInput(context), fn})
   context.assumptions = result.state.assumptions
   if (context.inferUnsupported != null) {

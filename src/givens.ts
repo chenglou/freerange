@@ -20,6 +20,7 @@ import {
   withNumberCases,
   type ArraySummary,
   type ArrayValue,
+  type Assumption,
   type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
@@ -32,6 +33,7 @@ import {
   parsePrintedNumber,
   setCheckedDomainPathValue,
 } from './domain-paths.ts'
+import {linearConstraints} from './assumptions.ts'
 import {
   cleanLinear,
   linearScaleExact,
@@ -316,8 +318,8 @@ export function collectGivenAssumptions(
   contractCache: Map<string, FunctionContractProof>,
   evaluators: GivenEvaluators,
   stack: string[] = [functionName],
-): {assumptions: LinearConstraint[]; booleanAssumptions: Map<string, boolean>; checks: FitCheck[]} {
-  const assumptions: LinearConstraint[] = []
+): {assumptions: Assumption[]; booleanAssumptions: Map<string, boolean>; checks: FitCheck[]} {
+  const assumptions: Assumption[] = []
   const booleanAssumptions = new Map<string, boolean>()
   const checks: FitCheck[] = []
   const context: EvalContext = {program, file, env, inputRoots, stack, checks: [], assumptions, booleanAssumptions, contractCache}
@@ -362,7 +364,7 @@ export function collectGivenAssumptions(
         // a fact: at least the smallest case lower, at most the largest case
         // upper, strict only when every case at that extremum excludes it.
         const facts = unionEnvelopeFacts(value.value, evaluatedCases, spec.text, given.source)
-        const contradiction = givenRangeContradictionReason(facts, assumptions)
+        const contradiction = givenRangeContradictionReason(facts, linearConstraints(assumptions))
         if (contradiction != null) {
           checks.push({
             file,
@@ -390,7 +392,7 @@ export function collectGivenAssumptions(
         continue
       }
       const facts = constraintsFromRange(value.value, lower.value, rangeCase.lowerInclusive, upper.value, rangeCase.upperInclusive, spec.text, given.source)
-      const contradiction = givenRangeContradictionReason(facts, assumptions)
+      const contradiction = givenRangeContradictionReason(facts, linearConstraints(assumptions))
       if (contradiction != null) {
         checks.push({
           file,
@@ -448,7 +450,7 @@ export function collectGivenAssumptions(
 
     const fact = comparisonConstraint(comparison.left, spec.op, comparison.right, spec.text, given.source)
     if (fact != null) {
-      const contradiction = givenComparisonContradictionReason(fact, assumptions)
+      const contradiction = givenComparisonContradictionReason(fact, linearConstraints(assumptions))
       if (contradiction != null) {
         checks.push({
           file,
@@ -777,7 +779,12 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
     if (target?.kind === 'array') {
       // The given refines what the array already guarantees: a length is an
       // integer whether or not the range says `int`.
-      const length = numberValue(value.min, value.max, gridMeet(value.grid, target.length.grid), value.expr, value.linear, value.cases, value.origin)
+      const length = numberWithBounds(
+        value,
+        value.min,
+        value.max,
+        gridMeet(value.grid, target.length.grid),
+      )
       env.set(lengthRoot, {...target, length})
       return
     }
@@ -859,10 +866,12 @@ function metNumber(current: NumberValue, lower: number, upper: number): NumberVa
   // that, so don't manufacture an inverted hull here.
   if (!(min <= max)) return null
   if (min === current.min && max === current.max) return current
-  const cases = current.cases?.map(numberCase => ({
-    ...numberCase,
-    value: metNumber(numberCase.value, lower, upper) ?? numberCase.value,
-  }))
+  const cases = current.cases
+    ?.map(numberCase => {
+      const value = metNumber(numberCase.value, lower, upper)
+      return value == null ? null : {...numberCase, value}
+    })
+    .filter((numberCase): numberCase is NonNullable<typeof numberCase> => numberCase != null)
   return numberWithBounds(current, min, max, current.grid, cases)
 }
 

@@ -516,6 +516,179 @@ export function conditionalExpressionPrunesContradictoryNumericCases(n: number) 
 }
 
 /** @fit
+ * given availableWidth: int 320..1200
+ * return: 152..<390
+ */
+export function guardedColumnWidthKeepsInputRange(availableWidth: number) {
+  const columns = availableWidth >= 600 ? 3 : 2
+  const gap = 16
+  return (availableWidth - gap * (columns - 1)) / columns
+}
+
+/** @fit
+ * given value: int -10..10
+ * return: 0..10
+ */
+export function guardedDivisorAlternativesExcludeZero(value: number) {
+  const divisor = value >= 0 ? 1 : -1
+  return value / divisor
+}
+
+/** @fit
+ * given width: int 320..1200
+ * return: 600..1200
+ */
+export function numericAlternativeRefinesOriginalGuard(width: number) {
+  const columns = width >= 600 ? 3 : 2
+  if (columns === 3) return width
+  return 600
+}
+
+/** @fit
+ * given width: int 320..1200
+ * return: 320..<600
+ */
+export function numericAlternativeRefinesNegatedEquality(width: number) {
+  const columns = width >= 600 ? 3 : 2
+  if (columns !== 3) return width
+  return 320
+}
+
+/** @fit
+ * given n: int 0..10
+ * return: 1
+ */
+export function correlatedNumericAlternativesDecideComparison(n: number) {
+  const left = n > 4 ? 1 : 2
+  const right = n > 4 ? 10 : 20
+  return left < right ? 1 : 0
+}
+
+/** @fit
+ * given n: int 0..10
+ * return: 11 | 13
+ */
+export function compoundAdditionPreservesNumericAlternatives(n: number) {
+  const increment = n > 4 ? 1 : 3
+  let total = 10
+  total += increment
+  return total
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function repeatedNumericGuardKeepsNaNBranchCorrelated(value: number) {
+  const left = value > 0 ? 1 : 100
+  const right = value > 0 ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function equivalentNumericGuardSpellingsStayCorrelated(value: number) {
+  const left = value > 0 ? 1 : 100
+  const right = 0 < value ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function negatedNumericGuardStaysCorrelated(value: number) {
+  const left = value > 0 ? 1 : 100
+  const right = !(value > 0) ? 200 : 10
+  return left - right
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function repeatedSelfEqualityKeepsNaNBranchCorrelated(value: number) {
+  const left = value === value ? 1 : 100
+  const right = value === value ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return: -199 | -100 | -9 | 90
+ */
+export function independentNumericGuardsKeepEveryCombination(a: number, b: number) {
+  const left = a > 0 ? 1 : 100
+  const right = b > 0 ? 10 : 200
+  return left - right
+}
+
+/** @fit return: 1 | 100 */
+function guardedLeft(value: number) {
+  return value > 0 ? 1 : 100
+}
+
+/** @fit return: 10 | 200 */
+function guardedRight(value: number) {
+  return value > 0 ? 10 : 200
+}
+
+function guardedLinearLeft(linear: number) {
+  return linear > 0 ? 1 : 100
+}
+
+function guardedLinearRight(linear: number) {
+  return linear > 0 ? 10 : 200
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function helperCallsCorrelateTheSameNumericGuard(value: number) {
+  return guardedLeft(value) - guardedRight(value)
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function helperParameterNamedLinearDoesNotCollide(value: number) {
+  return guardedLinearLeft(value) - guardedLinearRight(value)
+}
+
+/** @fit
+ * return: -199 | -100 | -9 | 90
+ */
+export function helperCallsKeepIndependentArgumentsIndependent(a: number, b: number) {
+  return guardedLeft(a) - guardedRight(b)
+}
+
+/** @fit
+ * return: -199 | -100 | 90
+ */
+export function assignmentDoesNotReuseAnOldNumericGuard(value: number) {
+  const left = value > 0 ? 1 : 100
+  value = -value
+  const right = value > 0 ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return: 22 | 33
+ */
+export function stateAndNumericCasesShareTheSameGuard(value: number) {
+  const columns = value > 0 ? 3 : 2
+  let gap = 20
+  if (value > 0) gap = 30
+  return columns + gap
+}
+
+/** @fit
+ * return: 1
+ */
+export function booleanGuardComparisonPassesWhenEveryPairPasses(flag: boolean) {
+  const left = flag ? 1 : 2
+  const right = flag ? 10 : 20
+  return left < right ? 1 : 0
+}
+
+/** @fit
  * given a: int 0..1
  * given b: int 0..1
  * given c: int 0..1

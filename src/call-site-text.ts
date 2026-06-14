@@ -6,14 +6,24 @@ import {
   forEachArrayBindingElement,
 } from './binding-patterns.ts'
 import {
+  linearNameForExpression,
   type ArraySummary,
-  type LinearConstraint,
+  type Assumption,
+  type NumberComputation,
   type NumberValue,
   type Value,
 } from './domain.ts'
+import {isBranchChoice} from './assumptions.ts'
 import type {PreparedCallSite} from './prepared-call.ts'
 import {formatNumber} from './reporting.ts'
 import {mapSequenceAddition} from './sequence-relation.ts'
+import {
+  cleanLinear,
+  linearFromExpressionText,
+  linearVariable,
+  type LinearExpr,
+} from './linear.ts'
+import {rationalAdd, rationalMultiply} from './rational.ts'
 
 type MutableCallSiteBindings = Map<string, string>
 
@@ -100,11 +110,60 @@ function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings):
   return {
     ...value,
     expr: maybeCallSiteText(value.expr, bindings),
+    linear: linearWithCallSiteText(value.linear, bindings),
+    computation: computationWithCallSiteText(value.computation, bindings),
+    ...(value.caseSource == null
+      ? {}
+      : {caseSource: {...value.caseSource, condition: callSiteText(value.caseSource.condition, bindings)}}),
+    ...(value.caseLoss?.kind === 'branch'
+      ? {caseLoss: {...value.caseLoss, condition: callSiteText(value.caseLoss.condition, bindings)}}
+      : {}),
     cases: value.cases == null ? null : value.cases.map(choice => ({
       value: numberWithCallSiteText(choice.value, bindings),
       assumptions: choice.assumptions.map(assumption => constraintWithCallSiteText(assumption, bindings)),
     })),
   }
+}
+
+function computationWithCallSiteText(
+  computation: NumberComputation | null,
+  bindings: CallSiteBindings,
+): NumberComputation | null {
+  if (computation == null) return null
+  return computation.kind === 'unary'
+    ? {...computation, operand: numberWithCallSiteText(computation.operand, bindings)}
+    : {
+        ...computation,
+        left: numberWithCallSiteText(computation.left, bindings),
+        right: numberWithCallSiteText(computation.right, bindings),
+      }
+}
+
+function linearWithCallSiteText(
+  linear: LinearExpr | null,
+  bindings: CallSiteBindings,
+): LinearExpr | null {
+  if (linear == null) return null
+  let constant = linear.constant
+  const terms = new Map<string, LinearExpr['constant']>()
+  for (const [name, coefficient] of linear.terms) {
+    const text = callSiteText(name, bindings)
+    const replacement = linearFromExpressionText(text)
+      ?? linearVariable(linearNameForExpression(text))
+    constant = rationalAdd(
+      constant,
+      rationalMultiply(coefficient, replacement.constant),
+    )
+    for (const [replacementName, replacementCoefficient] of replacement.terms) {
+      const scaled = rationalMultiply(coefficient, replacementCoefficient)
+      const previous = terms.get(replacementName)
+      terms.set(
+        replacementName,
+        previous == null ? scaled : rationalAdd(previous, scaled),
+      )
+    }
+  }
+  return cleanLinear({constant, terms})
 }
 
 function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: CallSiteBindings): ArraySummary | null {
@@ -130,9 +189,29 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
   }
 }
 
-function constraintWithCallSiteText(assumption: LinearConstraint, bindings: CallSiteBindings): LinearConstraint {
+function constraintWithCallSiteText(assumption: Assumption, bindings: CallSiteBindings): Assumption {
+  if (isBranchChoice(assumption)) {
+    return {
+      ...assumption,
+      left: assumption.left.kind === 'expression'
+        ? {...assumption.left, text: callSiteText(assumption.left.text, bindings)}
+        : {
+            ...assumption.left,
+            value: linearWithCallSiteText(assumption.left.value, bindings)!,
+            text: maybeCallSiteText(assumption.left.text, bindings),
+          },
+      right: assumption.right.kind === 'expression'
+        ? {...assumption.right, text: callSiteText(assumption.right.text, bindings)}
+        : {
+            ...assumption.right,
+            value: linearWithCallSiteText(assumption.right.value, bindings)!,
+            text: maybeCallSiteText(assumption.right.text, bindings),
+          },
+    }
+  }
   return {
     ...assumption,
+    diff: linearWithCallSiteText(assumption.diff, bindings),
     ...(assumption.leftExpr == null ? {} : {leftExpr: callSiteText(assumption.leftExpr, bindings)}),
     ...(assumption.rightExpr == null ? {} : {rightExpr: callSiteText(assumption.rightExpr, bindings)}),
   }

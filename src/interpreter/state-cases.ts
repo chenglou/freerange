@@ -6,51 +6,25 @@ import {
   type InterpreterStateCase,
 } from './context.ts'
 import {
-  maxNumberCases,
-  numberBranches,
   unknown,
   valueWithAssumptions,
-  type LinearConstraint,
-  type NumberCase,
+  type Assumption,
   type NumberValue,
   type Value,
 } from '../domain.ts'
 import {linearKey} from '../linear.ts'
-import {mergeAssumptions} from '../assumptions.ts'
-import {assumptionsAreReachable} from '../constraint-reachability.ts'
+import {isBranchChoice, sharedAssumptions} from '../assumptions.ts'
+import {assumptionsAreReachable} from '../proof.ts'
 import {sequenceRelationKey} from '../sequence-relation.ts'
 
 export const maxStateCases = 8
-
-export function combineNumberCases(
-  left: NumberValue,
-  right: NumberValue,
-  evaluate: (left: NumberValue, right: NumberValue) => Value,
-): NumberCase[] | null {
-  if (left.cases == null && right.cases == null) return null
-  const cases: NumberCase[] = []
-  for (const leftCase of numberBranches(left)) {
-    for (const rightCase of numberBranches(right)) {
-      const value = evaluate(leftCase.value, rightCase.value)
-      if (value.kind !== 'number') return null
-      const assumptions = mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
-      if (!assumptionsAreReachable(assumptions)) continue
-      cases.push({
-        value,
-        assumptions,
-      })
-      if (cases.length > maxNumberCases) return null
-    }
-  }
-  return cases
-}
 
 export type StateCaseSetResult =
   | {kind: 'ok'}
   | {kind: 'overflow'; count: number; limit: number}
 
 export function hasStateCases(frame: InterpreterFrame) {
-  return frame.stateCases != null && frame.stateCases.length > 0
+  return frame.stateCases != null
 }
 
 export function consumeStateCases(frame: InterpreterFrame): InterpreterStateCase[] {
@@ -88,6 +62,10 @@ export function setStateCases(frame: InterpreterFrame, cases: InterpreterStateCa
   }
   frame.env = joinStateCaseEnvs(reachable)
   frame.assumptions = sharedStateCaseAssumptions(reachable)
+  if (reachable.length === 0) {
+    frame.stateCases = []
+    return {kind: 'ok'}
+  }
   if (reachable.length <= 1) {
     delete frame.stateCases
     if (reachable[0] != null) {
@@ -109,6 +87,10 @@ export function adoptJoinedState(frame: InterpreterFrame, cases: InterpreterStat
   }
   frame.env = joinStateCaseEnvs(reachable)
   frame.assumptions = sharedStateCaseAssumptions(reachable)
+  if (reachable.length === 0) {
+    frame.stateCases = []
+    return {kind: 'ok'}
+  }
   delete frame.stateCases
   return {kind: 'ok'}
 }
@@ -130,8 +112,7 @@ export function summarizeOverBudgetReturnCases(cases: InterpreterReturnCase[], r
 }
 
 export function reachableStateCases<T extends InterpreterStateCase>(cases: T[]): T[] {
-  const reachable = cases.filter(stateCaseIsReachable)
-  return reachable.length === 0 ? cases : reachable
+  return cases.filter(stateCaseIsReachable)
 }
 
 export function joinStateCaseEnvs(cases: InterpreterStateCase[]): Map<string, Value> {
@@ -144,13 +125,11 @@ export function joinStateCaseEnvs(cases: InterpreterStateCase[]): Map<string, Va
   return joined
 }
 
-export function sharedStateCaseAssumptions(cases: InterpreterStateCase[]): LinearConstraint[] {
-  const [first, ...rest] = cases
-  if (first == null) return []
-  return first.assumptions.filter(assumption => rest.every(stateCase => stateCase.assumptions.some(item => sameAssumptionKey(item, assumption))))
+export function sharedStateCaseAssumptions(cases: InterpreterStateCase[]): Assumption[] {
+  return sharedAssumptions(cases.map(stateCase => stateCase.assumptions))
 }
 
-export function envWithAssumptions(env: Map<string, Value>, assumptions: LinearConstraint[]): Map<string, Value> {
+export function envWithAssumptions(env: Map<string, Value>, assumptions: Assumption[]): Map<string, Value> {
   const next = new Map<string, Value>()
   for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions))
   return next
@@ -197,6 +176,8 @@ function valueFingerprint(value: Value): string {
           value: valueFingerprint(stateCase.value),
           assumptions: stateCase.assumptions.map(assumptionFingerprint).sort(),
         })) ?? null,
+        caseSource: value.caseSource ?? null,
+        caseLoss: value.caseLoss ?? null,
         origin: [...value.origin].sort(),
       })
     case 'literal':
@@ -267,7 +248,19 @@ function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary'])
   }
 }
 
-function assumptionFingerprint(assumption: LinearConstraint) {
+function assumptionFingerprint(assumption: Assumption) {
+  if (isBranchChoice(assumption)) {
+    const operand = (value: typeof assumption.left) => value.kind === 'linear'
+      ? {kind: value.kind, value: linearKey(value.value), text: value.text}
+      : {kind: value.kind, text: value.text}
+    return JSON.stringify({
+      kind: assumption.kind,
+      op: assumption.op,
+      left: operand(assumption.left),
+      right: operand(assumption.right),
+      outcome: assumption.outcome,
+    })
+  }
   return JSON.stringify({
     op: assumption.op,
     text: assumption.text ?? null,
@@ -282,15 +275,4 @@ function assumptionFingerprint(assumption: LinearConstraint) {
 
 function stateCaseIsReachable(stateCase: InterpreterStateCase) {
   return assumptionsAreReachable(stateCase.assumptions)
-}
-
-function sameAssumptionKey(left: LinearConstraint, right: LinearConstraint) {
-  return left.op === right.op
-    && (left.text ?? null) === (right.text ?? null)
-    && (left.leftExpr ?? null) === (right.leftExpr ?? null)
-    && (left.rightExpr ?? null) === (right.rightExpr ?? null)
-    && left.source === right.source
-    && left.fromRange === right.fromRange
-    && left.integerStrict === right.integerStrict
-    && (left.diff == null ? null : linearKey(left.diff)) === (right.diff == null ? null : linearKey(right.diff))
 }

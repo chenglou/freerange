@@ -54,6 +54,7 @@ function springGoToEnd(config: Spring): void {
 // === generic helpers
 /** @fit
  * given max >= min
+ * given v == v
  * return >= min
  * return <= max
  */

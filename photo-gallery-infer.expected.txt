@@ -54,6 +54,7 @@ checked:
   return <= max
 assumptions:
   given max >= min
+  given v == v
 
 function colsBoxMaxSizeXF
 return:
@@ -75,17 +76,17 @@ redundant:
 
 function isDebug
 unsupported:
-  unsupported isDebug line 107: Unknown identifier debug
+  unsupported isDebug line 108: Unknown identifier debug
 
 function springForEach
 unsupported:
-  unsupported springForEach line 168: Unknown identifier data
-  unsupported springForEach line 168: for..of expected an array source, but data is not proven array-valued
+  unsupported springForEach line 169: Unknown identifier data
+  unsupported springForEach line 169: for..of expected an array source, but data is not proven array-valued
 
 function stepSprings
 unsupported:
-  unsupported stepSprings line 174: Unknown identifier data
-  unsupported stepSprings line 174: for..of expected an array source, but data is not proven array-valued
+  unsupported stepSprings line 175: Unknown identifier data
+  unsupported stepSprings line 175: for..of expected an array source, but data is not proven array-valued
 
 function stepSpring
 assumptions:
@@ -93,7 +94,7 @@ assumptions:
   given s.b > 0
   given steps: int 0..Infinity
 unsupported:
-  unsupported stepSpring line 188: Indexed for loops support block bodies only
+  unsupported stepSpring line 189: Indexed for loops support block bodies only
 
 function hitTest2DMode
 assumptions:
@@ -115,7 +116,7 @@ assumptions:
   given data[].fxFactor.k > 0
   given data[].fxFactor.b > 0
 unsupported:
-  unsupported hitTest2DMode line 219: Loop control flow is unsupported: return i
+  unsupported hitTest2DMode line 220: Loop control flow is unsupported: return i
 
 function hitTest1DMode
 assumptions:
@@ -139,6 +140,6 @@ assumptions:
 
 function render
 unsupported:
-  unsupported render line 233: Unknown identifier events
-  unsupported render line 249: Unknown identifier debug
+  unsupported render line 234: Unknown identifier events
+  unsupported render line 250: Unknown identifier debug
   Unsupported branch condition: debug

@@ -8,6 +8,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
+import {assumptionMentionsRoot} from '../assumptions.ts'
 import {replaceRootValueEverywhere} from './value-path.ts'
 
 export function forgetRoot(env: Map<string, Value>, root: string) {
@@ -53,8 +54,19 @@ function forgetSymbolicReferences(env: Map<string, Value>, root: string) {
     }
     const exprStale = value.expr != null && mentionsRoot.test(value.expr)
     const computationStale = computationMentionsRoot(value.computation, mentionsRoot)
-    if (linearStale || exprStale || computationStale) {
-      env.set(name, {...value, linear: null, expr: null, computation: null})
+    const casesStale = value.cases?.some(choice =>
+      numberMentionsRoot(choice.value, mentionsRoot)
+      || choice.assumptions.some(assumption => assumptionMentionsRoot(assumption, mentionsRoot))) === true
+    if (linearStale || exprStale || computationStale || casesStale) {
+      const next: NumberValue = {
+        ...value,
+        linear: linearStale ? null : value.linear,
+        expr: exprStale ? null : value.expr,
+        computation: computationStale ? null : value.computation,
+        cases: casesStale ? null : value.cases,
+      }
+      if (casesStale) delete next.caseSource
+      env.set(name, next)
     }
   }
 }
@@ -73,5 +85,8 @@ function numberMentionsRoot(value: NumberValue, pattern: RegExp): boolean {
       if (pattern.test(term)) return true
     }
   }
+  if (value.cases?.some(choice =>
+    numberMentionsRoot(choice.value, pattern)
+    || choice.assumptions.some(assumption => assumptionMentionsRoot(assumption, pattern))) === true) return true
   return computationMentionsRoot(value.computation, pattern)
 }

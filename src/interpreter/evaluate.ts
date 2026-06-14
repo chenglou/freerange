@@ -34,7 +34,6 @@ import {
   moduloNumbers,
   multiplyNumbers,
   negateNumber,
-  numberBranches,
   numberWithComputation,
   nullValue,
   nullableValue,
@@ -48,8 +47,10 @@ import {
   unknownObject,
   valueWithAssumptions,
   valueWithDefaultedUndefined,
-  withNumberCases,
+  valueWithNumberCaseSource,
+  withCombinedNumberCaseInfo,
   unaryNumberComputation,
+  type Assumption,
   type ArraySummary,
   type ArrayValue,
   type LinearConstraint,
@@ -57,8 +58,7 @@ import {
   type NumberValue,
   type Value,
 } from '../domain.ts'
-import {mergeAssumptions} from '../assumptions.ts'
-import {combineNumberCases} from './state-cases.ts'
+import {additionalAssumptions, assumptionMentionsRoot, branchChoicesConflict, isBranchChoice, linearConstraints, mergeAssumptions} from '../assumptions.ts'
 import {
   adjacentElementAccessFacts,
   valueWithRebasedElementPath,
@@ -157,13 +157,14 @@ import {
   compareNumbers,
   isComparisonOperator,
 } from './refine.ts'
-import {admitsNaN, comparisonConstraint, mayBeInfinite, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints} from '../proof.ts'
+import {admitsNaN, comparisonConstraint, mayBeInfinite, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints, reachableNumberCasePairs, reachableNumberCases} from '../proof.ts'
 import {formatRange} from '../reporting.ts'
 import {
   forgetRoot,
   rootMentionPattern,
 } from './forget.ts'
 import {evaluateMathCall, evaluateMathProperty} from './math.ts'
+import {evaluateNumberCasePairs} from './number-cases.ts'
 import {
   defaultLibraryOwner,
   elementAccessHasSourceAccessor,
@@ -865,7 +866,7 @@ function labeledStateCase(stateCase: InterpreterStateCase, label: string): Inter
   }
 }
 
-function flowWithAssumptions(flow: InterpreterFlow, assumptions: LinearConstraint[]): InterpreterFlow {
+function flowWithAssumptions(flow: InterpreterFlow, assumptions: Assumption[]): InterpreterFlow {
   if (flow.kind === 'return') return {kind: 'return', value: valueWithAssumptions(flow.value, assumptions)}
   if (flow.kind === 'return-cases') {
     return {
@@ -1128,6 +1129,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
       sourceRoots: expressionRootNames(statement.expression, []),
       sourceKind: 'collection',
       count: source.length,
+      iterationAssumptions: [],
       bindIteration: target => bindForOfInitializer(statement.initializer, item, target),
       iterationRoots,
     }, frame, loopAnalysisContext)
@@ -1172,7 +1174,6 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const length = indexedLoopLength(bound.length, bound.expression, frame)
   const indexValue = indexedElementPathValue(shape.indexName, length)
-  frame.assumptions = mergeAssumptions(frame.assumptions, indexedElementAssumptions(indexValue, length))
   const loop = indexedForLoopContext(bound, length, frame)
   try {
     const outcome = evaluateSymbolicLoop({
@@ -1186,6 +1187,7 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
       ),
       sourceKind: bound.origin == null ? 'count' : 'collection',
       count: length,
+      iterationAssumptions: indexedElementAssumptions(indexValue, length),
       bindIteration: target => {
         target.env.set(shape.indexName, indexValue)
       },
@@ -1532,12 +1534,12 @@ function finiteArrayElementAccess(target: Value, index: Value, expression: ts.El
   const elements = target.kind === 'array' ? tupleElements(target) : null
   if (elements == null || index.kind !== 'number' || index.cases == null) return null
   let result: Value | null = null
-  for (const branch of numberBranches(index)) {
+  for (const branch of reachableNumberCases(index, frame.assumptions)) {
     const choice = exactInteger(branch.value)
     if (choice == null) return null
     const value = elements[choice]
     if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`, expression.argumentExpression ?? expression)
-    const branchValue = valueWithAssumptions(value, branch.assumptions)
+    const branchValue = valueWithAssumptions(value, branch.caseAssumptions)
     result = result == null ? branchValue : joinValues(result, branchValue)
   }
   return result
@@ -1666,11 +1668,14 @@ function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.Po
   const old = readPath(path, frame, expression)
   const one = numberValue(1, 1, 0, '1', linearConstant(1))
   const next = old.kind === 'number'
-    ? computedBinary(
-        expression.operator === ts.SyntaxKind.PlusPlusToken ? '+' : '-',
-        expression.operator === ts.SyntaxKind.PlusPlusToken ? addNumbers(old, one) : subtractNumbers(old, one),
+    ? evaluateNumberBinary(
+        expression.operator === ts.SyntaxKind.PlusPlusToken
+          ? ts.SyntaxKind.PlusToken
+          : ts.SyntaxKind.MinusToken,
         old,
         one,
+        frame,
+        expression,
       )
     : noteUnsupported(frame, `Update ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (assignmentHasExternalEffect(path, expression.operand, frame)) {
@@ -1791,10 +1796,32 @@ function evaluateNumberBinary(
   frame: InterpreterFrame,
   expression: ts.Expression,
 ): Value {
-  const plain = evaluatePlainNumberBinary(kind, left, right, frame, expression)
-  if (plain.kind !== 'number') return plain
-  return withNumberCases(plain, combineNumberCases(left, right, (leftCase, rightCase) =>
-    evaluatePlainNumberBinary(kind, leftCase, rightCase, frame, expression)))
+  const cases = evaluateNumberCasePairs(
+    left,
+    right,
+    frame.assumptions,
+    (leftCase, rightCase, assumptions) => {
+      const caseFrame = deriveFrame(frame, {
+        env: frame.env,
+        stateCases: null,
+        assumptions,
+      })
+      const value = evaluatePlainNumberBinary(kind, leftCase, rightCase, caseFrame, expression)
+      return valueWithAssumptions(
+        value,
+        additionalAssumptions(assumptions, caseFrame.assumptions),
+      )
+    },
+  )
+  if (cases != null) {
+    return cases.kind === 'number'
+      ? withCombinedNumberCaseInfo(cases, left, right)
+      : cases
+  }
+  const result = evaluatePlainNumberBinary(kind, left, right, frame, expression)
+  return result.kind === 'number'
+    ? withCombinedNumberCaseInfo(result, left, right)
+    : result
 }
 
 function computedBinary(
@@ -1892,11 +1919,11 @@ function publishRoundedMonotoneFacts(result: Value, op: '+' | '-', left: NumberV
   if (facts.length > 0) frame.assumptions = mergeAssumptions(frame.assumptions, facts)
 }
 
-function signFromFacts(left: NumberValue, right: NumberValue, assumptions: LinearConstraint[]): boolean {
+function signFromFacts(left: NumberValue, right: NumberValue, assumptions: Assumption[]): boolean {
   if (left.min >= right.max) return true
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null) return false
-  return proveNonNegativeFromConstraints(diff, false, assumptions.flatMap(nonNegativeConstraints))
+  return proveNonNegativeFromConstraints(diff, false, linearConstraints(assumptions).flatMap(nonNegativeConstraints))
 }
 
 function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
@@ -2050,16 +2077,8 @@ function arrayElementReferenceIds(frame: InterpreterFrame, expression: ts.Expres
 function forgetRootAssumptions(frame: InterpreterFrame, root: string) {
   if (frame.assumptions.length === 0) return
   const mentionsRoot = rootMentionPattern(root)
-  const kept = frame.assumptions.filter(constraint => !constraintMentionsRoot(constraint, mentionsRoot))
+  const kept = frame.assumptions.filter(constraint => !assumptionMentionsRoot(constraint, mentionsRoot))
   if (kept.length !== frame.assumptions.length) frame.assumptions = kept
-}
-
-function constraintMentionsRoot(constraint: LinearConstraint, mentionsRoot: RegExp): boolean {
-  if (constraint.diff != null) {
-    for (const name of constraint.diff.terms.keys()) if (mentionsRoot.test(name)) return true
-  }
-  return (constraint.leftExpr != null && mentionsRoot.test(constraint.leftExpr))
-    || (constraint.rightExpr != null && mentionsRoot.test(constraint.rightExpr))
 }
 
 // Callee bodies evaluate in their own environment; what they change in the
@@ -2228,7 +2247,7 @@ function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, fra
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
   const left = readPath(path, frame, expression)
   if (left.kind !== 'number' || right.kind !== 'number') return stringishCompoundPlus(left, right, expression) ?? noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
-  return computedBinary('+', addNumbers(left, right), left, right)
+  return evaluateNumberBinary(ts.SyntaxKind.PlusToken, left, right, frame, expression)
 }
 
 function stringishCompoundPlus(left: Value, right: Value, expression: ts.Expression): Value | null {
@@ -2258,10 +2277,15 @@ function evaluateComparisonExpression(expression: ts.BinaryExpression, frame: In
 function provedNumberComparison(left: NumberValue, right: NumberValue, kind: ts.SyntaxKind, frame: InterpreterFrame): boolean | null {
   const op = comparisonOperatorFromKind(kind)
   if (op == null) return null
-  const direct = proveComparisonPlain(left, op.op, right, frame.assumptions)
-  if (direct.status === 'pass') return op.negated ? false : true
-  if (direct.status === 'fail') return op.negated ? true : false
-  return null
+  let result: boolean | null = null
+  for (const pair of reachableNumberCasePairs(left, right, frame.assumptions)) {
+    const proof = proveComparisonPlain(pair.left, op.op, pair.right, pair.assumptions)
+    if (proof.status === 'unknown') return null
+    const current = op.negated ? proof.status === 'fail' : proof.status === 'pass'
+    if (result != null && result !== current) return null
+    result = current
+  }
+  return result
 }
 
 function comparisonOperatorFromKind(kind: ts.SyntaxKind): {op: '==' | '>=' | '<=' | '>' | '<'; negated: boolean} | null {
@@ -2325,7 +2349,21 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
   ) {
     frame.env = joinBranchFrameEnvs(trueFrame, falseFrame)
   }
-  return joinValues(trueValue, falseValue)
+  const joined = joinValues(trueValue, falseValue)
+  if (branchAssumptionsConflict(trueFrame.assumptions, falseFrame.assumptions)) return joined
+  return valueWithNumberCaseSource(joined, {
+    condition: nodeText(expression.condition, frame),
+  })
+}
+
+function branchAssumptionsConflict(left: Assumption[], right: Assumption[]) {
+  for (const leftAssumption of left) {
+    if (!isBranchChoice(leftAssumption)) continue
+    for (const rightAssumption of right) {
+      if (isBranchChoice(rightAssumption) && branchChoicesConflict(leftAssumption, rightAssumption)) return true
+    }
+  }
+  return false
 }
 
 function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {

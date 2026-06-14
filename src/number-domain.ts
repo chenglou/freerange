@@ -27,6 +27,8 @@ import {
 import type {
   LiteralValue,
   NumberCase,
+  NumberCaseLoss,
+  NumberCaseSource,
   NumberComputation,
   NumberValue,
   UnknownValue,
@@ -34,6 +36,15 @@ import type {
 } from './domain-types.ts'
 
 export const maxNumberCases = 8
+
+export function numberCaseLossMessage(loss: NumberCaseLoss) {
+  switch (loss.kind) {
+    case 'limit':
+      return `Numeric alternative budget exceeded: ${loss.count} alternatives exceed limit ${loss.limit}`
+    case 'branch':
+      return `Numeric alternatives from ${loss.condition} could not be correlated through this computation`
+  }
+}
 
 export function linearNameForExpression(text: string) {
   const domainPath = parseDomainPathText(text)
@@ -239,7 +250,10 @@ export function mergeOrigin(...items: (NumberValue | LiteralValue | string[])[])
 }
 
 export function plainNumber(value: NumberValue): NumberValue {
-  return value.cases == null ? value : {...value, cases: null}
+  if (value.cases == null) return value
+  const plain = {...value, cases: null}
+  delete plain.caseSource
+  return plain
 }
 
 export function numberBranches(value: NumberValue): NumberCase[] {
@@ -247,7 +261,11 @@ export function numberBranches(value: NumberValue): NumberCase[] {
 }
 
 export function joinNumberValues(left: NumberValue, right: NumberValue): NumberValue {
-  const joined = mergePlainNumberValues(left, right)
+  const joined = withInheritedNumberCaseSource(
+    withInheritedNumberCaseLoss(mergePlainNumberValues(left, right), left, right),
+    left,
+    right,
+  )
   if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
   return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
 }
@@ -257,8 +275,73 @@ export function withNumberCases(value: NumberValue, cases: NumberCase[] | null):
   const plainCases = cases.map(choice => ({value: plainNumber(choice.value), assumptions: choice.assumptions}))
   const normalized = normalizeNumberCases(plainCases)
   if (normalized.length === 1 && sameNumberShape(value, normalized[0]!.value) && normalized[0]!.assumptions.length === 0) return value
-  if (normalized.length > maxNumberCases) return value
+  if (normalized.length > maxNumberCases) {
+    return {
+      ...value,
+      cases: null,
+      caseLoss: {kind: 'limit', count: normalized.length, limit: maxNumberCases},
+    }
+  }
   return {...value, cases: normalized}
+}
+
+export function withNumberCaseLoss(
+  value: NumberValue,
+  loss: NumberCaseLoss,
+): NumberValue {
+  return value.caseLoss == null ? {...value, caseLoss: loss} : value
+}
+
+export function withNumberCaseSource(
+  value: NumberValue,
+  source: NumberCaseSource,
+): NumberValue {
+  return value.caseSource == null ? {...value, caseSource: source} : value
+}
+
+export function withInheritedNumberCaseLoss(
+  value: NumberValue,
+  ...sources: NumberValue[]
+): NumberValue {
+  const loss = sources.find(source => source.caseLoss != null)?.caseLoss
+  return loss == null || value.caseLoss != null
+    ? value
+    : {...value, caseLoss: loss}
+}
+
+export function withInheritedNumberCaseSource(
+  value: NumberValue,
+  ...sources: NumberValue[]
+): NumberValue {
+  const source = sources.find(item => item.caseSource != null)?.caseSource
+  return source == null || value.caseSource != null
+    ? value
+    : {...value, caseSource: source}
+}
+
+export function withCombinedNumberCaseInfo(
+  value: NumberValue,
+  left: NumberValue,
+  right: NumberValue,
+): NumberValue {
+  const loss = numberCaseCombinationLoss(left, right)
+  const withLoss = loss == null ? value : withNumberCaseLoss(value, loss)
+  if (withLoss.caseLoss != null) return withLoss
+  return withInheritedNumberCaseSource(withLoss, left, right)
+}
+
+export function numberCaseCombinationLoss(
+  left: NumberValue,
+  right: NumberValue,
+): NumberCaseLoss | null {
+  const inherited = left.caseLoss ?? right.caseLoss
+  if (inherited != null) return inherited
+  const leftHasAlternatives = left.cases != null && left.cases.length > 1
+  const rightHasAlternatives = right.cases != null && right.cases.length > 1
+  const uncertainSource = left.caseSource ?? right.caseSource
+  return leftHasAlternatives && rightHasAlternatives && uncertainSource != null
+    ? {kind: 'branch', condition: uncertainSource.condition}
+    : null
 }
 
 function normalizeNumberCases(cases: NumberCase[]): NumberCase[] {
@@ -318,6 +401,24 @@ function sameNumberShape(left: NumberValue, right: NumberValue) {
     && (left.expr ?? null) === (right.expr ?? null)
     && ((left.linear == null && right.linear == null) || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)))
     && sameNumberComputation(left.computation, right.computation)
+    && sameNumberCaseSource(left.caseSource, right.caseSource)
+    && sameNumberCaseLoss(left.caseLoss, right.caseLoss)
+}
+
+function sameNumberCaseSource(left: NumberCaseSource | undefined, right: NumberCaseSource | undefined) {
+  if (left == null || right == null) return left == null && right == null
+  return left.condition === right.condition
+}
+
+function sameNumberCaseLoss(left: NumberCaseLoss | undefined, right: NumberCaseLoss | undefined) {
+  if (left == null || right == null) return left == null && right == null
+  if (left.kind !== right.kind) return false
+  switch (left.kind) {
+    case 'limit':
+      return right.kind === 'limit' && left.count === right.count && left.limit === right.limit
+    case 'branch':
+      return right.kind === 'branch' && left.condition === right.condition
+  }
 }
 
 export function sameNumberComputation(left: NumberComputation | null, right: NumberComputation | null): boolean {
@@ -407,7 +508,13 @@ export function numberWithBounds(
   grid = value.grid,
   cases = value.cases,
 ): NumberValue {
-  const bounded = numberValue(min, max, grid, value.expr, value.linear, cases, value.origin, value.computation)
+  const bounded = withInheritedNumberCaseSource(
+    withInheritedNumberCaseLoss(
+      numberValue(min, max, grid, value.expr, value.linear, cases, value.origin, value.computation),
+      value,
+    ),
+    value,
+  )
   return value.neverNaN === true
     && bounded.min === Number.NEGATIVE_INFINITY
     && bounded.max === Number.POSITIVE_INFINITY
@@ -599,9 +706,12 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
 
 // Unary minus is a sign-bit flip: exact for every double, grid preserved.
 export function negateNumber(value: NumberValue, expr: string | null): NumberValue {
-  const plain = neverNaNResult(
-    numberValue(-value.max, -value.min, value.grid, expr, linearScale(value.linear, -1), null, value.origin),
-    !possiblyNaN(value),
+  const plain = withInheritedNumberCaseSource(
+    withInheritedNumberCaseLoss(neverNaNResult(
+      numberValue(-value.max, -value.min, value.grid, expr, linearScale(value.linear, -1), null, value.origin),
+      !possiblyNaN(value),
+    ), value),
+    value,
   )
   if (value.cases == null) return plain
   return withNumberCases(plain, value.cases.map(branch => ({

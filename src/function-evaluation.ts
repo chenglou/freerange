@@ -4,7 +4,7 @@ import type {
   FunctionContractProof,
   Program,
 } from './check-types.ts'
-import type {LinearConstraint, Value} from './domain.ts'
+import type {Assumption, Value} from './domain.ts'
 import {
   collectGivenAssumptions,
   type GivenEvaluators,
@@ -25,7 +25,7 @@ export type FunctionEvaluationSetup = {
   givenChecks: FitCheck[]
   typeChecks: FitCheck[]
   assumptionChecks: FitCheck[]
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
   booleanAssumptions: Map<string, boolean>
 }
 

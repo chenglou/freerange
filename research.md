@@ -134,6 +134,23 @@ An interpreter request supplies the starting program, environment, assumptions, 
 
 A failed universal comparison over case-split values does not make an `if` branch impossible. Mixed cases stay `maybe`. If two of the eight branch states satisfy `width > 0` and six don't, the branch is still reachable — proof has to handle the joined set, not declare the branch dead.
 
+## Numeric Alternatives Keep Their Guards
+
+A numeric conditional keeps its alternatives together with the comparison outcome that selected each one:
+
+```ts
+const columns = width >= 600 ? 3 : 2
+const gap = width >= 600 ? 24 : 16
+```
+
+Arithmetic, comparisons, helper calls, dynamic range bounds, tuple indexing, and contract checks all enumerate the same reachable alternatives. Opposite outcomes of the same normalized numeric comparison cannot be combined, including across helper parameters rebased to the same caller expression. `width > 0` and `0 < width` are the same selector; `width > 0` and `height > 0` are independent.
+
+The selector is separate from numeric facts. The false side of `width > 0` cannot generally add `width <= 0`, because `NaN` also takes the false branch. It can still remember that later values came from the same false outcome without pretending that `NaN` obeys an inverted comparison.
+
+Contract proof and control-flow truth consume the cases differently. A contract fails when any genuinely reachable case violates it. An `if` condition is known only when every reachable case agrees. If exact alternatives exceed the fixed budget, the hull remains usable but claims that need the lost choices report unknown.
+
+Only normalized numeric comparisons have a reusable selector. Boolean flags and compound conditions still produce valid alternatives individually, but if later arithmetic needs their relationship, report unknown rather than inventing a cross-product failure. Supporting those generally needs stable identity for arbitrary expressions and bindings, not another text recognizer.
+
 ## Tuple/Product Versus Collection
 
 Symbolic index precision belongs to tuple/product values: typed slots, fixed length, per-slot shape. Normal arrays stay summarized collections, with element-domain facts and length facts but no per-slot precision. Annotating a value as a tuple is how the user asks for slot-level reasoning.

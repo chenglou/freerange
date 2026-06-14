@@ -9,15 +9,17 @@ import {
   numberBranches,
   numberValue,
   withNumberCases,
+  withNumberCaseSource,
 } from './number-domain.ts'
 import type {
+  Assumption,
   ArrayValue,
-  LinearConstraint,
   LiteralPrimitive,
   LiteralValue,
   NullableValue,
   NullishKind,
   NullValue,
+  NumberCaseSource,
   NumberValue,
   ObjectValue,
   ReferenceIds,
@@ -128,7 +130,7 @@ export function unknown(reason: string): UnknownValue {
   return {kind: 'unknown', reason}
 }
 
-export function valueWithAssumptions(value: Value, assumptions: LinearConstraint[]): Value {
+export function valueWithAssumptions(value: Value, assumptions: Assumption[]): Value {
   if (assumptions.length === 0) return value
   if (value.kind === 'number') {
     return withNumberCases(value, numberBranches(value).map(branch => ({
@@ -158,6 +160,37 @@ export function valueWithAssumptions(value: Value, assumptions: LinearConstraint
   }
   if (value.kind === 'nullable') {
     return {...value, present: valueWithAssumptions(value.present, assumptions)}
+  }
+  return value
+}
+
+export function valueWithNumberCaseSource(value: Value, source: NumberCaseSource): Value {
+  if (value.kind === 'number') {
+    return value.cases != null && value.cases.length > 1
+      ? withNumberCaseSource(value, source)
+      : value
+  }
+  if (value.kind === 'object') {
+    const props = new Map<string, Value>()
+    for (const [name, prop] of value.props) props.set(name, valueWithNumberCaseSource(prop, source))
+    return {...value, props}
+  }
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      length: valueWithNumberCaseSource(value.length, source) as NumberValue,
+      elements: value.elements == null ? null : value.elements.map(element => valueWithNumberCaseSource(element, source)),
+      element: value.element == null ? null : valueWithNumberCaseSource(value.element, source),
+      summary: value.summary == null ? null : {
+        ...value.summary,
+        advances: value.summary.advances.map(fact => ({...fact, value: valueWithNumberCaseSource(fact.value, source) as NumberValue})),
+        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithNumberCaseSource(value.summary.lastEnd.value, source) as NumberValue},
+        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithNumberCaseSource(fact.value, source) as NumberValue})),
+      },
+    }
+  }
+  if (value.kind === 'nullable') {
+    return {...value, present: valueWithNumberCaseSource(value.present, source)}
   }
   return value
 }

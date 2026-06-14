@@ -13,7 +13,6 @@ import {
   withNumberCases,
   numberBranches,
   type ArrayValue,
-  type LinearConstraint,
   type LiteralPrimitive,
   type NumberCase,
   type NumberValue,
@@ -21,9 +20,11 @@ import {
   gridMeet,
   gridOfNumber,
   integerValued,
+  maxNumberCases,
+  numberCaseLossMessage,
+  type Assumption,
 } from './domain.ts'
-import {mergeAssumptions} from './assumptions.ts'
-import {assumptionsAreReachable} from './constraint-reachability.ts'
+import {linearConstraints, mergeAssumptions} from './assumptions.ts'
 import {linearConstant} from './linear.ts'
 import {
   fitExpressionScopeSourceId,
@@ -52,7 +53,7 @@ import {
   withResolvedFitValueSpecTypeReference,
   type FitValueSpecTypeEnv,
 } from './value-specs.ts'
-import {comparisonCounterexample, proveComparison, proveComparisonWithStep} from './proof.ts'
+import {assumptionsAreReachable, comparisonCounterexample, proveComparison, proveComparisonWithStep, reachableNumberCases} from './proof.ts'
 import {rationalToNumber, type Rational} from './rational.ts'
 import {
   booleanExpressionIsAssumed,
@@ -409,7 +410,7 @@ type EvaluatedRangeCase = {
   source: FitRangeCase
   lower: NumberValue
   upper: NumberValue
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
 }
 
 type EvaluatedRangeCases =
@@ -445,8 +446,12 @@ function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckS
   return {kind: 'cases', cases}
 }
 
-function expandedEvaluatedRangeCases(cases: EvaluatedRangeCase[]): EvaluatedRangeCase[] {
-  return cases.flatMap(expandedEvaluatedRangeCase)
+type ExpandedRangeAlternative = {
+  cases: EvaluatedRangeCase[]
+}
+
+function expandedEvaluatedRangeCases(cases: EvaluatedRangeCase[]): ExpandedRangeAlternative[] {
+  return cases.map(rangeCase => ({cases: expandedEvaluatedRangeCase(rangeCase)}))
 }
 
 function expandedEvaluatedRangeCase(rangeCase: EvaluatedRangeCase): EvaluatedRangeCase[] {
@@ -465,7 +470,6 @@ function expandedEvaluatedRangeCase(rangeCase: EvaluatedRangeCase): EvaluatedRan
   const cases: EvaluatedRangeCase[] = []
   for (const lower of numberBranches(rangeCase.lower)) {
     for (const upper of numberBranches(rangeCase.upper)) {
-      if (lower.value.min > upper.value.max) continue
       const assumptions = mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
       if (!assumptionsAreReachable(assumptions)) continue
       cases.push({source: rangeCase.source, lower: lower.value, upper: upper.value, assumptions})
@@ -522,52 +526,219 @@ function mergeRangeOrigin(...items: (NumberValue | string[])[]) {
   return [...new Set(lines)]
 }
 
+type RangeProblem = {
+  value: NumberValue
+  cases: EvaluatedRangeCase[]
+  proof: Exclude<RangeCasesProof, {kind: 'pass'}>
+  assumptions: Assumption[]
+  uncorrelated: boolean
+}
+
 function proveNumberInsideRangeCases(
   value: NumberValue,
   range: FitRange,
-  cases: EvaluatedRangeCase[],
-  assumptions: LinearConstraint[],
+  alternatives: ExpandedRangeAlternative[],
+  assumptions: Assumption[],
 ): {status: FitCheckStatus; reason?: string} {
   if (range.finiteValues != null) {
-    const finite = proveFiniteRangeSpec(value, range)
-    if (finite.status === 'pass' || cases.length === range.finiteValues.length) return finite
+    const finite = proveFiniteRangeSpec(value, range, assumptions)
+    if (finite.status === 'pass' || alternatives.length === range.finiteValues.length) return finite
   }
-  if (cases.length === 0) return {status: 'fail', reason: emptyRangeSpecFailureReason(value, range)}
-
-  const joined = proveNumberInsideAnyRangeCase(value, range, cases, assumptions)
-  if (joined.kind === 'pass') return {status: 'pass'}
-
-  let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus; assumptions: LinearConstraint[]} | null = null
-  for (const branch of numberBranches(value)) {
-    const branchAssumptions = [...assumptions, ...branch.assumptions]
-    const branchProof = proveNumberInsideAnyRangeCase(branch.value, range, cases, branchAssumptions)
-    if (branchProof.kind === 'pass') continue
-    if (branchProof.kind === 'unknown') {
-      unknown ??= {case: branchProof.case, status: branchProof.status, assumptions: branchAssumptions}
-      continue
+  const worlds = evaluatedRangeWorlds(alternatives, assumptions)
+  if (worlds.kind === 'overflow') {
+    return {
+      status: 'unknown',
+      reason: `Numeric alternative budget exceeded: more than ${maxNumberCases} reachable dynamic range combinations`,
     }
-    return {status: 'fail', reason: rangeSpecFailureReasonForCases(branch.value, range, cases, branchAssumptions, branchProof.status, branchProof.case)}
   }
-  if (unknown != null) {
-    const reason = rangeSpecFailureReasonForCases(value, range, cases, assumptions, unknown.status, unknown.case)
-    // Unproven but fact-anchored: search the fact polytope for a valuation
-    // that violates the claim, with the value's own branch facts included (a
-    // checked helper contract rides on the value). Finding one upgrades to a
-    // disproof the report can show; finding none keeps the honest unknown.
-    if (cases.length === 1) {
-      const witness = rangeCaseCounterexample(value, unknown.case, unknown.status, unknown.assumptions)
-      if (witness != null) return {status: 'fail', reason: `${reason}\n${witness}`}
+  if (worlds.worlds.length === 0) return {status: 'fail', reason: emptyRangeSpecFailureReason(value, range)}
+  if (value.caseLoss != null) {
+    return proveNumberInsideRangeCasesAfterLoss(
+      value,
+      value.caseLoss,
+      range,
+      worlds.worlds,
+      assumptions,
+    )
+  }
+
+  let unknownProblem: RangeProblem | null = null
+  const valueHasAlternatives = numberBranches(value).length > 1
+  for (const branch of reachableNumberCases(value, assumptions)) {
+    let passCount = 0
+    let failCount = 0
+    let unknownCount = 0
+    let branchProblem: RangeProblem | null = null
+    for (const world of worlds.worlds) {
+      const branchAssumptions = mergeAssumptions(branch.assumptions, world.assumptions)
+      const projected = reachableNumberCases(branch.value, branchAssumptions)
+      if (projected.length === 0) continue
+      const branchProof = proveNumberInsideAnyRangeCase(
+        projected[0]!.value,
+        range,
+        world.cases,
+        branchAssumptions,
+      )
+      if (branchProof.kind === 'pass') {
+        passCount++
+        continue
+      }
+      if (branchProof.kind === 'fail') failCount++
+      else unknownCount++
+      branchProblem ??= {
+        value: projected[0]!.value,
+        cases: world.cases,
+        proof: branchProof,
+        assumptions: branchAssumptions,
+        uncorrelated: false,
+      }
     }
-    return {status: 'unknown', reason}
+    if (passCount === 0 && failCount === 0 && unknownCount === 0) {
+      return {status: 'unknown', reason: 'No reachable value and dynamic range combination was available'}
+    }
+    if (
+      failCount > 0
+      && unknownCount === 0
+      && branchProblem != null
+      && (!valueHasAlternatives || passCount === 0)
+    ) {
+      const reason = rangeProblemReason(branchProblem.value, range, branchProblem.cases, branchProblem.proof, branchProblem.assumptions)
+      return {status: 'fail', reason}
+    }
+    if (failCount > 0 || unknownCount > 0) {
+      if (branchProblem != null && passCount > 0) branchProblem.uncorrelated = true
+      unknownProblem ??= branchProblem
+    }
   }
-  return {status: 'pass'}
+  if (unknownProblem == null) return {status: 'pass'}
+  const reason = rangeProblemReason(
+    unknownProblem.value,
+    range,
+    unknownProblem.cases,
+    unknownProblem.proof,
+    unknownProblem.assumptions,
+  )
+  return {
+    status: 'unknown',
+    reason: unknownProblem.uncorrelated
+      ? `Dynamic range alternatives could not be correlated with the returned value\n${reason}`
+      : reason,
+  }
+}
+
+function proveNumberInsideRangeCasesAfterLoss(
+  value: NumberValue,
+  loss: NonNullable<NumberValue['caseLoss']>,
+  range: FitRange,
+  worlds: EvaluatedRangeWorld[],
+  assumptions: Assumption[],
+): {status: FitCheckStatus; reason?: string} {
+  let passCount = 0
+  let failCount = 0
+  let unknownCount = 0
+  let firstProblem: RangeProblem | null = null
+  for (const branch of reachableNumberCases(value, assumptions)) {
+    for (const world of worlds) {
+      const branchAssumptions = mergeAssumptions(branch.assumptions, world.assumptions)
+      const projected = reachableNumberCases(branch.value, branchAssumptions)
+      if (projected.length === 0) continue
+      const proof = proveNumberInsideAnyRangeCase(
+        projected[0]!.value,
+        range,
+        world.cases,
+        branchAssumptions,
+      )
+      if (proof.kind === 'pass') {
+        passCount++
+        continue
+      }
+      if (proof.kind === 'fail') failCount++
+      else unknownCount++
+      firstProblem ??= {
+        value: projected[0]!.value,
+        cases: world.cases,
+        proof,
+        assumptions: branchAssumptions,
+        uncorrelated: true,
+      }
+    }
+  }
+  if (passCount === 0 && failCount === 0 && unknownCount === 0) {
+    return {status: 'unknown', reason: 'No reachable value and dynamic range combination was available'}
+  }
+  if (failCount > 0 && passCount === 0 && unknownCount === 0 && firstProblem != null) {
+    return {
+      status: 'fail',
+      reason: rangeProblemReason(
+        firstProblem.value,
+        range,
+        firstProblem.cases,
+        firstProblem.proof,
+        firstProblem.assumptions,
+      ),
+    }
+  }
+  if (passCount > 0 && failCount === 0 && unknownCount === 0) return {status: 'pass'}
+  return {status: 'unknown', reason: numberCaseLossMessage(loss)}
+}
+
+function rangeProblemReason(
+  value: NumberValue,
+  range: FitRange,
+  cases: EvaluatedRangeCase[],
+  proof: Exclude<RangeCasesProof, {kind: 'pass'}>,
+  assumptions: Assumption[],
+) {
+  const reason = rangeSpecFailureReasonForCases(
+    value,
+    range,
+    cases,
+    assumptions,
+    proof.status,
+    proof.case,
+  )
+  if (proof.kind !== 'fail' || cases.length !== 1) return reason
+  const witness = rangeCaseCounterexample(value, proof.case, proof.status, assumptions)
+  return witness == null ? reason : `${reason}\n${witness}`
+}
+
+type EvaluatedRangeWorld = {
+  cases: EvaluatedRangeCase[]
+  assumptions: Assumption[]
+}
+
+function evaluatedRangeWorlds(
+  alternatives: ExpandedRangeAlternative[],
+  assumptions: Assumption[],
+): {kind: 'worlds'; worlds: EvaluatedRangeWorld[]} | {kind: 'overflow'} {
+  let worlds: EvaluatedRangeWorld[] = [{cases: [], assumptions: []}]
+  for (const alternative of alternatives) {
+    const next: EvaluatedRangeWorld[] = []
+    for (const world of worlds) {
+      for (const rangeCase of alternative.cases) {
+        const combined = mergeAssumptions(
+          assumptions,
+          world.assumptions,
+          rangeCase.assumptions,
+        )
+        if (!assumptionsAreReachable(combined)) continue
+        next.push({
+          cases: [...world.cases, rangeCase],
+          assumptions: mergeAssumptions(world.assumptions, rangeCase.assumptions),
+        })
+        if (next.length > maxNumberCases) return {kind: 'overflow'}
+      }
+    }
+    worlds = next
+  }
+  return {kind: 'worlds', worlds}
 }
 
 function rangeCaseCounterexample(
   value: NumberValue,
   rangeCase: EvaluatedRangeCase,
   status: RangeCaseStatus,
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
 ): string | null {
   const proofAssumptions = mergeAssumptions(assumptions, rangeCase.assumptions)
   const sides: {proof: {status: string}; op: ComparisonOperator; bound: NumberValue}[] = [
@@ -601,7 +772,7 @@ function proveNumberInsideAnyRangeCase(
   value: NumberValue,
   range: FitRange,
   cases: EvaluatedRangeCase[],
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
 ): RangeCasesProof {
   let unknown: {case: EvaluatedRangeCase; status: RangeCaseStatus} | null = null
   for (const rangeCase of cases) {
@@ -629,7 +800,7 @@ function proveNumberInsideRangeCase(
   value: NumberValue,
   range: FitRange,
   rangeCase: EvaluatedRangeCase,
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
 ): RangeCaseStatus {
   const proofAssumptions = mergeAssumptions(assumptions, rangeCase.assumptions)
   const lower = proveComparison(value, rangeCase.source.lowerInclusive ? '>=' : '>', rangeCase.lower, proofAssumptions)
@@ -656,19 +827,22 @@ function rangeSpecFailureReasonForCases(
   value: NumberValue,
   range: FitRange,
   cases: EvaluatedRangeCase[],
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
   status: RangeCaseStatus,
   rangeCase: EvaluatedRangeCase,
 ) {
   if (cases.length === 1) {
-    return rangeSpecFailureReason(value, range, rangeCase.lower, rangeCase.upper, mergeAssumptions(assumptions, rangeCase.assumptions), {
+    return rangeSpecFailureReason(value, range, rangeCase.lower, rangeCase.upper, linearConstraints(mergeAssumptions(assumptions, rangeCase.assumptions)), {
       lower: status.lower.status !== 'pass',
       upper: status.upper.status !== 'pass',
       integer: status.integer.status !== 'pass',
     })
   }
   const lines = [`range was ${formatRange(value)}, expected inside ${formatRangeSpec(range)}`]
-  const known = knownProofContextMany([value, ...cases.flatMap(item => [item.lower, item.upper])], assumptions)
+  const known = knownProofContextMany(
+    [value, ...cases.flatMap(item => [item.lower, item.upper])],
+    linearConstraints(assumptions),
+  )
   if (known.length > 0) lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)
   lines.push(`missing: ${value.expr ?? formatRange(value)} in ${formatRangeSpec(range)}`)
   return lines.join('\n')
@@ -681,15 +855,33 @@ function emptyRangeSpecFailureReason(value: NumberValue, range: FitRange) {
   ].join('\n')
 }
 
-function proveFiniteRangeSpec(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
+function proveFiniteRangeSpec(
+  value: NumberValue,
+  range: FitRange,
+  assumptions: Assumption[],
+): {status: FitCheckStatus; reason?: string} {
   const expected = range.finiteValues ?? []
-  const produced = finiteNumberSet(value)
+  const branches = reachableNumberCases(value, assumptions)
+  const produced = finiteNumberSetFromBranches(branches.map(branch => branch.value))
   if (produced != null && produced.every(choice => expected.includes(choice))) return {status: 'pass'}
+  if (value.caseLoss != null) {
+    return {status: 'unknown', reason: numberCaseLossMessage(value.caseLoss)}
+  }
   return {
     // A value that cannot be enumerated is unproven, not disproven.
     status: produced == null ? 'unknown' : 'fail',
     reason: finiteRangeSpecFailureReason(value, range, produced),
   }
+}
+
+function finiteNumberSetFromBranches(branches: NumberValue[]): number[] | null {
+  const values: number[] = []
+  for (const branch of branches) {
+    const finite = finiteNumberSet(branch)
+    if (finite == null) return null
+    values.push(...finite)
+  }
+  return [...new Set(values)].sort((left, right) => left - right)
 }
 
 function rangeBoundNumberReason(bound: 'lower' | 'upper', value: Exclude<Value, NumberValue>, text: string) {

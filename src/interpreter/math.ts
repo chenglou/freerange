@@ -13,22 +13,31 @@ import {
   powerNumbers,
   unaryNumberComputation,
   unknown,
+  valueWithAssumptions,
+  type Assumption,
   withNumberCases,
+  withCombinedNumberCaseInfo,
+  withInheritedNumberCaseLoss,
+  withInheritedNumberCaseSource,
   type LinearConstraint,
   type NumberValue,
   type NumberCase,
   type Value,
 } from '../domain.ts'
-import {mergeAssumptions} from '../assumptions.ts'
+import {additionalAssumptions, mergeAssumptions} from '../assumptions.ts'
 import {linearAdd, linearConstant, linearScale, linearVariable} from '../linear.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {
   comparisonConstraint,
   proveComparisonPlain,
+  reachableNumberCasePairs,
 } from '../proof.ts'
-import {combineNumberCases} from './state-cases.ts'
-import {noteUnsupported, type InterpreterFrame} from './context.ts'
+import {deriveFrame, noteUnsupported, type InterpreterFrame} from './context.ts'
 import {auditMathSelector} from './audit.ts'
+import {
+  evaluateNumberCasePairs,
+  evaluateNumberCases,
+} from './number-cases.ts'
 
 const int32Min = -2147483648
 const int32Max = 2147483647
@@ -157,11 +166,11 @@ function selectorMath(kind: 'min' | 'max'): MathCallEvaluator {
 }
 
 function unaryMath(evaluate: UnaryNumberEvaluator): MathCallEvaluator {
-  return (name, values, frame) => evaluateUnaryMath(name, values, value => evaluate(value, frame, name))
+  return (name, values, frame) => evaluateUnaryMath(name, values, frame, evaluate)
 }
 
 function binaryMath(evaluate: BinaryNumberEvaluator): MathCallEvaluator {
-  return (name, values, frame) => evaluateBinaryMath(name, values, (left, right) => evaluate(left, right, frame, name))
+  return (name, values, frame) => evaluateBinaryMath(name, values, frame, evaluate)
 }
 
 function monotoneMath(
@@ -179,31 +188,67 @@ function evaluateMathMinMax(kind: 'min' | 'max', values: NumberValue[], frame: I
   }, values[0]!)
 }
 
-function evaluateUnaryMath(name: string, values: NumberValue[], evaluate: (value: NumberValue) => Value): Value {
+function evaluateUnaryMath(
+  name: string,
+  values: NumberValue[],
+  frame: InterpreterFrame,
+  evaluate: UnaryNumberEvaluator,
+): Value {
   if (values.length !== 1) return unknown(`Math.${name} expected one argument`)
-  return evaluateNumberUnary(values[0]!, evaluate)
-}
-
-function evaluateBinaryMath(name: string, values: NumberValue[], evaluate: (left: NumberValue, right: NumberValue) => Value): Value {
-  if (values.length !== 2) return unknown(`Math.${name} expected two arguments`)
-  const plain = evaluate(values[0]!, values[1]!)
-  if (plain.kind !== 'number') return plain
-  return withNumberCases(plain, combineNumberCases(values[0]!, values[1]!, evaluate))
-}
-
-function evaluateNumberUnary(value: NumberValue, evaluate: (value: NumberValue) => Value): Value {
-  const plain = evaluate(plainNumber(value))
-  if (plain.kind !== 'number') return plain
-  if (value.cases == null) return plain
-
-  const cases: NumberCase[] = []
-  for (const valueCase of value.cases) {
-    const caseResult = evaluate(valueCase.value)
-    if (caseResult.kind !== 'number') return plain
-    cases.push({value: caseResult, assumptions: valueCase.assumptions})
-    if (cases.length > maxNumberCases) return plain
+  const value = values[0]!
+  const cases = evaluateNumberCases(value, frame.assumptions, (current, assumptions) => {
+    const caseFrame = mathCaseFrame(frame, assumptions)
+    const result = evaluate(current, caseFrame, name)
+    return valueWithAssumptions(
+      result,
+      additionalAssumptions(assumptions, caseFrame.assumptions),
+    )
+  })
+  if (cases != null) {
+    return cases.kind === 'number'
+      ? withInheritedNumberCaseSource(withInheritedNumberCaseLoss(cases, value), value)
+      : cases
   }
-  return withNumberCases(plain, cases)
+  const result = evaluate(value, frame, name)
+  return result.kind === 'number'
+    ? withInheritedNumberCaseSource(withInheritedNumberCaseLoss(result, value), value)
+    : result
+}
+
+function evaluateBinaryMath(
+  name: string,
+  values: NumberValue[],
+  frame: InterpreterFrame,
+  evaluate: BinaryNumberEvaluator,
+): Value {
+  if (values.length !== 2) return unknown(`Math.${name} expected two arguments`)
+  const left = values[0]!
+  const right = values[1]!
+  const cases = evaluateNumberCasePairs(left, right, frame.assumptions, (leftCase, rightCase, assumptions) => {
+    const caseFrame = mathCaseFrame(frame, assumptions)
+    const result = evaluate(leftCase, rightCase, caseFrame, name)
+    return valueWithAssumptions(
+      result,
+      additionalAssumptions(assumptions, caseFrame.assumptions),
+    )
+  })
+  if (cases != null) {
+    return cases.kind === 'number'
+      ? withCombinedNumberCaseInfo(cases, left, right)
+      : cases
+  }
+  const result = evaluate(left, right, frame, name)
+  return result.kind === 'number'
+    ? withCombinedNumberCaseInfo(result, left, right)
+    : result
+}
+
+function mathCaseFrame(frame: InterpreterFrame, assumptions: Assumption[]) {
+  return deriveFrame(frame, {
+    env: frame.env,
+    stateCases: null,
+    assumptions,
+  })
 }
 
 function floorNumber(value: NumberValue): NumberValue {
@@ -300,8 +345,15 @@ function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
   const plain = plainNumber(value)
   if (plain.min >= 0) return withNumberCases(plain, value.cases)
   if (plain.max <= 0) {
-    const result = evaluateNumberUnary(value, current => numberValue(-current.max, -current.min, current.grid, current.expr == null ? null : `abs(${current.expr})`, linearScale(current.linear, -1), null, current.origin))
-    return result.kind === 'number' ? result : numberValue(-plain.max, -plain.min, plain.grid, plain.expr == null ? null : `abs(${plain.expr})`, linearScale(plain.linear, -1), null, plain.origin)
+    return numberValue(
+      -plain.max,
+      -plain.min,
+      plain.grid,
+      plain.expr == null ? null : `abs(${plain.expr})`,
+      linearScale(plain.linear, -1),
+      null,
+      plain.origin,
+    )
   }
 
   const max = Math.max(Math.abs(plain.min), Math.abs(plain.max))
@@ -379,43 +431,50 @@ function choiceNumberPair(
   }
 
   const cases: NumberCase[] = []
-  for (const leftCase of numberBranches(left)) {
-    for (const rightCase of numberBranches(right)) {
-      const baseAssumptions = mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions)
-      const leftWins = proveComparisonPlain(leftCase.value, leftOp, rightCase.value, baseAssumptions)
-      const rightWins = proveComparisonPlain(rightCase.value, rightOp, leftCase.value, baseAssumptions)
+  for (const pair of reachableNumberCasePairs(left, right, assumptions)) {
+      const leftWins = proveComparisonPlain(pair.left, leftOp, pair.right, pair.assumptions)
+      const rightWins = proveComparisonPlain(pair.right, rightOp, pair.left, pair.assumptions)
 
       if (leftWins.status !== 'fail') {
-        const fact = comparisonConstraint(leftCase.value, leftOp, rightCase.value, undefined, 'branch')
+        const fact = comparisonConstraint(pair.left, leftOp, pair.right, undefined, 'branch')
         if (leftWins.status === 'pass') {
           cases.push({
-            value: leftCase.value,
-            assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions),
+            value: pair.left,
+            assumptions: pair.caseAssumptions,
           })
         } else if (fact != null) {
           cases.push({
-            value: leftCase.value,
-            assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions, [fact]),
+            value: pair.left,
+            assumptions: mergeAssumptions(pair.caseAssumptions, [fact]),
           })
         }
       }
       if (rightWins.status !== 'fail') {
-        const fact = comparisonConstraint(rightCase.value, rightOp, leftCase.value, undefined, 'branch')
+        const fact = comparisonConstraint(pair.right, rightOp, pair.left, undefined, 'branch')
         if (rightWins.status === 'pass') {
           cases.push({
-            value: rightCase.value,
-            assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions),
+            value: pair.right,
+            assumptions: pair.caseAssumptions,
           })
         } else if (fact != null) {
           cases.push({
-            value: rightCase.value,
-            assumptions: mergeAssumptions(leftCase.assumptions, rightCase.assumptions, [fact]),
+            value: pair.right,
+            assumptions: mergeAssumptions(pair.caseAssumptions, [fact]),
           })
         }
       }
-      if (cases.length > maxNumberCases) return joined
-    }
+      if (cases.length > maxNumberCases) {
+        return withCombinedNumberCaseInfo(
+          withNumberCases(joined, cases),
+          left,
+          right,
+        )
+      }
   }
 
-  return withNumberCases(joined, cases)
+  return withCombinedNumberCaseInfo(
+    withNumberCases(joined, cases),
+    left,
+    right,
+  )
 }

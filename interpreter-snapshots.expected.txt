@@ -16,7 +16,7 @@ case matrix explicit undefined defaults: tests/interpreter-matrix/interpreter-ma
   return.k: int 290..290
   return.b: int 30..30
 case matrix if refines nonnegative: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
-  return: 0..Infinity
+  return: any number
 case matrix ternary literal join: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
   return: int 3..7
 case matrix filter/map literal booleans: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixFilterMapLiteralBooleans
@@ -70,7 +70,7 @@ case matrix Math clamp columns: tests/interpreter-matrix/interpreter-matrix-patt
 case matrix else-if continuation: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixElseIfContinuation
   return: int -1..1
 case matrix throw guard narrows positive: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
-  return: 0..Infinity
+  return: any number
 case matrix switch finite literal: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchFiniteLiteral
   return: int 0..1 | 4
 case matrix switch continuation: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchContinuation

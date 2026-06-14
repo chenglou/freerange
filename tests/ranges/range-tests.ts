@@ -230,11 +230,12 @@ function outside(flag: boolean) {
 const insideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'inside' && check.text === 'return: 0..limit(flag)')
 const outsideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(flag)')
 if (
-  insideAnnotatedHelperBoundCheck?.status !== 'pass'
+  insideAnnotatedHelperBoundCheck?.status !== 'unknown'
+  || insideAnnotatedHelperBoundCheck.reason?.includes('Dynamic range alternatives could not be correlated') !== true
   || outsideAnnotatedHelperBoundCheck?.status !== 'fail'
-  || outsideAnnotatedHelperBoundCheck.reason?.includes('21 in 0..limit(flag)') !== true
+  || outsideAnnotatedHelperBoundCheck.reason?.includes('21 <= int 5..5') !== true
 ) {
-  console.error('expected annotated helper range alternatives to work as dynamic range bounds')
+  console.error('expected uncorrelated annotated helper bounds to stay unknown')
   console.error(JSON.stringify(annotatedHelperBoundChecks, null, 2))
   process.exitCode = 1
 } else {
@@ -288,18 +289,53 @@ const insideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => che
 const outsideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideLow' && check.text === 'return: lower(flag)..upper(flag)')
 const outsideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideHigh' && check.text === 'return: lower(flag)..upper(flag)')
 if (
-  insideLowTwoSidedBoundCheck?.status !== 'pass'
-  || insideHighTwoSidedBoundCheck?.status !== 'pass'
+  insideLowTwoSidedBoundCheck?.status !== 'fail'
+  || insideHighTwoSidedBoundCheck?.status !== 'fail'
   || outsideLowTwoSidedBoundCheck?.status !== 'fail'
   || outsideHighTwoSidedBoundCheck?.status !== 'fail'
-  || outsideLowTwoSidedBoundCheck.reason?.includes('5 in lower(flag)..upper(flag)') !== true
-  || outsideHighTwoSidedBoundCheck.reason?.includes('26 in lower(flag)..upper(flag)') !== true
+  || outsideLowTwoSidedBoundCheck.reason?.includes('5 >= int 10..10') !== true
+  || outsideHighTwoSidedBoundCheck.reason?.includes('26 <= int 20..20') !== true
 ) {
-  console.error('expected two-sided helper range alternatives to work as dynamic range bounds')
+  console.error('expected impossible two-sided helper ranges to fail')
   console.error(JSON.stringify(twoSidedHelperBoundChecks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('range contracts: two-sided helper alternative bounds')
+  console.log('range contracts: impossible two-sided helper ranges fail')
+}
+
+const correlatedDynamicBoundChecks = verifyFitSource('correlated-dynamic-range-bounds.ts', `function limit(n: number) {
+  return n > 4 ? 5 : 20
+}
+
+/** @fit
+ * given n: int 0..10
+ * return: 0..limit(n)
+ */
+function inside(n: number) {
+  return n > 4 ? 4 : 20
+}
+
+/** @fit
+ * given n: int 0..10
+ * return: 0..limit(n)
+ */
+function outside(n: number) {
+  return 10
+}
+`)
+const correlatedInside = correlatedDynamicBoundChecks.find(check =>
+  check.functionName === 'inside' && check.text === 'return: 0..limit(n)')
+const correlatedOutside = correlatedDynamicBoundChecks.find(check =>
+  check.functionName === 'outside' && check.text === 'return: 0..limit(n)')
+if (
+  correlatedInside?.status !== 'pass'
+  || correlatedOutside?.status !== 'fail'
+) {
+  console.error('expected preserved numeric guards to correlate dynamic bounds')
+  console.error(JSON.stringify(correlatedDynamicBoundChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: preserved numeric guards correlate dynamic bounds')
 }
 
 const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}

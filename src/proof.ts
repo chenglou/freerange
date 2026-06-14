@@ -26,15 +26,25 @@ import {
   linearNameForExpression,
   literalKey,
   numberBranches,
+  numberCaseCombinationLoss,
+  numberCaseLossMessage,
+  numberWithBounds,
   numberValue,
   sameNumberComputation,
   unknownNumber,
+  type Assumption,
   type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
   type Value,
 } from './domain.ts'
-import {mergeAssumptions} from './assumptions.ts'
+import {
+  assumptionsKey,
+  branchChoiceKey,
+  isBranchChoice,
+  linearConstraints,
+  mergeAssumptions,
+} from './assumptions.ts'
 import {
   binaryExpression,
   cleanLinear,
@@ -87,11 +97,27 @@ export type ComparisonProof = {
   step: ComparisonProofStep
 }
 
-export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+export type ReachableNumberCase = {
+  value: NumberValue
+  caseAssumptions: Assumption[]
+  assumptions: Assumption[]
+}
+
+export type ReachableNumberCasePair = {
+  left: NumberValue
+  right: NumberValue
+  caseAssumptions: Assumption[]
+  assumptions: Assumption[]
+}
+
+const caseReachabilityCache = new Map<string, boolean>()
+const caseReachabilityCacheLimit = 4096
+
+export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: Assumption[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
   return proofStatus(proveComparisonWithStep(left, op, right, assumptions))
 }
 
-export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: LinearConstraint[]): ComparisonProof {
+export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: Assumption[]): ComparisonProof {
   const literalEquality = proveLiteralEquality(left, op, right)
   if (literalEquality != null) return literalEquality
   const structuralEquality = proveStructuralEquality(left, op, right)
@@ -105,22 +131,52 @@ export function proveComparisonWithStep(left: Value, op: ComparisonOperator, rig
   if (left.cases != null || right.cases != null) {
     const joinedStatus = proveComparisonPlain(left, op, right, assumptions)
     if (joinedStatus.status === 'pass') return {...joinedStatus, step: comparisonProofStepPlain(left, op, right, assumptions)}
-    let unknownStatus: {status: 'pass' | 'fail' | 'unknown'; reason?: string} | null = null
-    for (const leftCase of numberBranches(left)) {
-      for (const rightCase of numberBranches(right)) {
-        const status = proveComparisonPlain(
-          leftCase.value,
-          op,
-          rightCase.value,
-          mergeAssumptions(assumptions, leftCase.assumptions, rightCase.assumptions),
-        )
-        if (status.status === 'fail') return {...status, step: branchComparisonStep()}
-        if (status.status === 'unknown') unknownStatus = status
+    let passStatus: {status: 'pass'} | null = null
+    let failStatus: {status: 'fail'; reason?: string} | null = null
+    let unknownStatus: {status: 'unknown'; reason?: string} | null = null
+    const pairs = reachableNumberCasePairs(left, right, assumptions)
+    if (pairs.length === 0) {
+      return {status: 'unknown', reason: 'No reachable numeric alternatives were available', step: branchComparisonStep()}
+    }
+    for (const pair of pairs) {
+      const status = proveComparisonPlain(pair.left, op, pair.right, pair.assumptions)
+      switch (status.status) {
+        case 'pass':
+          passStatus = {status: 'pass'}
+          break
+        case 'fail':
+          failStatus = status.reason == null
+            ? {status: 'fail'}
+            : {status: 'fail', reason: status.reason}
+          break
+        case 'unknown':
+          unknownStatus = status.reason == null
+            ? {status: 'unknown'}
+            : {status: 'unknown', reason: status.reason}
+          break
       }
     }
-    return {...(unknownStatus ?? {status: 'pass'}), step: branchComparisonStep()}
+    const loss = numberCaseCombinationLoss(left, right)
+    if (loss != null && (
+      unknownStatus != null
+      || (passStatus != null && failStatus != null)
+    )) {
+      return {status: 'unknown', reason: numberCaseLossMessage(loss), step: branchComparisonStep()}
+    }
+    if (failStatus != null) return {...failStatus, step: branchComparisonStep()}
+    return {
+      ...(unknownStatus ?? {status: 'pass' as const}),
+      step: branchComparisonStep(),
+    }
   }
-  return {...proveComparisonPlain(left, op, right, assumptions), step: comparisonProofStepPlain(left, op, right, assumptions)}
+  const plain = proveComparisonPlain(left, op, right, assumptions)
+  const loss = left.caseLoss ?? right.caseLoss
+  return {
+    ...(plain.status === 'unknown' && loss != null
+      ? {status: 'unknown' as const, reason: numberCaseLossMessage(loss)}
+      : plain),
+    step: comparisonProofStepPlain(left, op, right, assumptions),
+  }
 }
 
 function proofStatus(proof: ComparisonProof): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
@@ -184,7 +240,7 @@ function structuralExpr(value: Value): string | null {
   return value.expr
 }
 
-export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
   // Same-expression == needs NaN excluded: NaN !== NaN, and a value is
   // NaN-free once anything constrains it (NaN fails every comparison, so a
   // recorded fact about it is a non-NaN certificate).
@@ -197,17 +253,17 @@ export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, 
   if (mathTruth === 'true') return {status: 'pass'}
   const truth = compareRanges(left, op, right, admitsNaN(left, assumptions) || admitsNaN(right, assumptions))
   if (truth === 'true') return {status: 'pass'}
-  if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
+  if (truth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, linearConstraints(assumptions), 'is false', missingComparisonFact(left, op, right, assumptions))}
   const linearTruth = compareLinear(left, op, right, assumptions)
   if (linearTruth === 'true') return {status: 'pass'}
-  if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
+  if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, linearConstraints(assumptions), 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
   if (sameComputation && (op === '<' || op === '>')) {
-    return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
+    return {status: 'fail', reason: comparisonFailureReason(left, right, linearConstraints(assumptions), 'is false', missingComparisonFact(left, op, right, assumptions))}
   }
-  return {status: 'unknown', reason: comparisonFailureReason(left, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
+  return {status: 'unknown', reason: comparisonFailureReason(left, right, linearConstraints(assumptions), 'was not proven', missingComparisonFact(left, op, right, assumptions))}
 }
 
-function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): ComparisonProofStep {
+function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]): ComparisonProofStep {
   if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) {
     return {domain: 'source', rule: 'same-expression', message: 'matched the same source expression'}
   }
@@ -235,11 +291,11 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
 // NaN has no representation in the domain: any recorded comparison fact
 // mentioning a value is false of NaN at runtime, so it certifies non-NaN the
 // same way a finite hull bound does.
-export function admitsNaN(value: NumberValue, assumptions: LinearConstraint[]): boolean {
+export function admitsNaN(value: NumberValue, assumptions: Assumption[]): boolean {
   if (!possiblyNaN(value)) return false
   const atom = singleUnitAtom(value.linear) ?? value.expr
   if (atom == null) return true
-  for (const assumption of assumptions) {
+  for (const assumption of linearConstraints(assumptions)) {
     // Only trusted or observed facts certify: a given is caller-checked and a
     // branch fact was tested at runtime, both false of NaN. A 'code' fact
     // (e.g. a published rounding bracket) may itself have assumed too much.
@@ -254,11 +310,11 @@ export function admitsNaN(value: NumberValue, assumptions: LinearConstraint[]): 
 // The hull side is infinite and no trusted fact pins a finite constant bound
 // there, so the value can actually reach that infinity at runtime (a range
 // given like `x <= 1000` is false of +Infinity and excludes it).
-export function mayBeInfinite(value: NumberValue, side: 'positive' | 'negative', assumptions: LinearConstraint[]): boolean {
+export function mayBeInfinite(value: NumberValue, side: 'positive' | 'negative', assumptions: Assumption[]): boolean {
   if (side === 'positive' ? value.max !== Number.POSITIVE_INFINITY : value.min !== Number.NEGATIVE_INFINITY) return false
   const atom = singleUnitAtom(value.linear) ?? value.expr
   if (atom == null) return true
-  for (const assumption of assumptions) {
+  for (const assumption of linearConstraints(assumptions)) {
     if (assumption.source === 'code') continue
     for (const fact of nonNegativeConstraints(assumption)) {
       if (fact.diff.terms.size !== 1) continue
@@ -305,11 +361,11 @@ function compareRangesPlain(left: NumberValue, op: ComparisonOperator, right: Nu
   }
 }
 
-function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
+function proveMathLemma(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]): Truth {
   return evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))?.status === 'pass' ? 'true' : 'maybe'
 }
 
-function provesExprNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[], nanHazard = false): boolean {
+function provesExprNonNegative(expression: string, strict: boolean, assumptions: Assumption[], nanHazard = false): boolean {
   if (hasComparisonFact(expression, strict ? '>' : '>=', '0', assumptions)) return true
   const linear = linearFromExpressionText(expression)
   if (linear != null && provesNonNegative(linear, strict, assumptions)) return true
@@ -321,7 +377,7 @@ function provesExprNonNegative(expression: string, strict: boolean, assumptions:
 // rounding to nearest cannot cross, so even strict sign carries through + and
 // -; products and quotients keep >= 0 but can underflow a strict sign to
 // zero.
-function roundedSignNonNegative(expression: string, strict: boolean, assumptions: LinearConstraint[], nanHazard: boolean): boolean {
+function roundedSignNonNegative(expression: string, strict: boolean, assumptions: Assumption[], nanHazard: boolean): boolean {
   const sum = binaryExpression(expression, '+')
   if (sum != null) {
     // Two proven-nonnegative addends cannot mix infinities, so the sum is
@@ -360,25 +416,25 @@ function roundedSignNonNegative(expression: string, strict: boolean, assumptions
   return false
 }
 
-function proofRulesContext(assumptions: LinearConstraint[]): ProofRulesContext {
+function proofRulesContext(assumptions: Assumption[]): ProofRulesContext {
   return {
-    assumptions,
+    assumptions: linearConstraints(assumptions),
     hasComparisonFact: (leftExpr, op, rightExpr, offsets) => hasComparisonFact(leftExpr, op, rightExpr, assumptions, offsets),
     provesExprNonNegative: (expression, strict, nanHazard) => provesExprNonNegative(expression, strict, assumptions, nanHazard),
     provesLinearNonNegative: (diff, strict) => provesNonNegative(diff, strict, assumptions),
   }
 }
 
-function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: LinearConstraint[], offsets?: ReductionOffsets) {
+function hasComparisonFact(leftExpr: string, op: ComparisonOperator, rightExpr: string, assumptions: Assumption[], offsets?: ReductionOffsets) {
   const leftOffset = offsets?.left ?? 0
   const rightOffset = offsets?.right ?? 0
   if (leftOffset === 0 && rightOffset === 0) {
-    for (const assumption of assumptions) {
+    for (const assumption of linearConstraints(assumptions)) {
       if (assumption.leftExpr == null || assumption.rightExpr == null) continue
       if (sameExpressionText(assumption.leftExpr, leftExpr) && sameExpressionText(assumption.rightExpr, rightExpr) && comparisonImplies(assumption.op, op)) return true
       if (sameExpressionText(assumption.leftExpr, rightExpr) && sameExpressionText(assumption.rightExpr, leftExpr) && comparisonImplies(flipComparison(assumption.op), op)) return true
     }
-    if (symbolicComparisonProves(leftExpr, op, rightExpr, assumptions)) return true
+    if (symbolicComparisonProves(leftExpr, op, rightExpr, linearConstraints(assumptions))) return true
   }
 
   const leftLinear = offsetLinear(linearFromExpressionText(leftExpr), leftOffset)
@@ -422,7 +478,7 @@ export function flipComparison(op: ComparisonOperator): ComparisonOperator {
   }
 }
 
-function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
+function missingComparisonFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]) {
   const strictSelf = strictSelfComparisonMissing(left, op, right)
   if (strictSelf != null) return strictSelf
   const rulesMissing = comparisonRulesMissing({left, op, right}, proofRulesContext(assumptions))
@@ -445,11 +501,11 @@ function strictSelfComparisonMissing(left: NumberValue, op: ComparisonOperator, 
   return null
 }
 
-function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]) {
+function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]) {
   const diff = comparisonDiff(left, op, right)
   if (diff == null) return null
   const target = cleanLinear(diff)
-  for (const fact of assumptions.filter(assumption => assumption.fromRange !== true).flatMap(nonNegativeConstraints)) {
+  for (const fact of linearConstraints(assumptions).filter(assumption => assumption.fromRange !== true).flatMap(nonNegativeConstraints)) {
     for (const scale of singleFactScales(target, fact.diff)) {
       const scaledFact = linearScaleExact(fact.diff, scale)
       const remainder = linearSubtract(target, scaledFact)
@@ -535,11 +591,58 @@ function extremeDouble(sign: 1 | -1): NumberValue {
   return numberValue(value, value, gridOfNumber(value), String(value), linearConstant(value))
 }
 
-export function comparisonFactContradictedByAssumptions(fact: LinearConstraint, assumptions: LinearConstraint[]) {
+export function comparisonFactContradictedByAssumptions(fact: LinearConstraint, assumptions: Assumption[]) {
   if (fact.leftExpr == null || fact.rightExpr == null) return false
   const left = unknownNumber(fact.leftExpr)
   const right = unknownNumber(fact.rightExpr)
   return contradictoryComparisons(fact.op).some(op => proveComparisonPlain(left, op, right, assumptions).status === 'pass')
+}
+
+export function assumptionsAreReachable(assumptions: Assumption[]) {
+  const branchChoices = new Map<string, boolean>()
+  for (const assumption of assumptions) {
+    if (!isBranchChoice(assumption)) continue
+    const key = branchChoiceKey(assumption)
+    const existing = branchChoices.get(key)
+    if (existing != null && existing !== assumption.outcome) return false
+    branchChoices.set(key, assumption.outcome)
+  }
+  const earlier: Assumption[] = []
+  for (const assumption of assumptions) {
+    if (!isBranchChoice(assumption)
+      && comparisonFactContradictedByAssumptions(assumption, earlier)) return false
+    earlier.push(assumption)
+  }
+  return true
+}
+
+function caseAssumptionsAreReachable(
+  base: Assumption[],
+  added: Assumption[],
+) {
+  if (added.length === 0) return true
+  const branchChoices = new Map<string, boolean>()
+  for (const assumption of base) {
+    if (isBranchChoice(assumption)) {
+      branchChoices.set(branchChoiceKey(assumption), assumption.outcome)
+    }
+  }
+  for (const assumption of added) {
+    if (!isBranchChoice(assumption)) continue
+    const key = branchChoiceKey(assumption)
+    const existing = branchChoices.get(key)
+    if (existing != null && existing !== assumption.outcome) return false
+    branchChoices.set(key, assumption.outcome)
+  }
+  const key = assumptionsKey(added)
+  const cached = caseReachabilityCache.get(key)
+  if (cached != null) return cached
+  const reachable = assumptionsAreReachable(added)
+  if (caseReachabilityCache.size >= caseReachabilityCacheLimit) {
+    caseReachabilityCache.clear()
+  }
+  caseReachabilityCache.set(key, reachable)
+  return reachable
 }
 
 function contradictoryComparisons(op: ComparisonOperator): ComparisonOperator[] {
@@ -572,7 +675,7 @@ export function constraintsFromRange(
   ].filter(fact => fact != null).map(fact => ({...fact, fromRange: true}))
 }
 
-function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): Truth {
+function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]): Truth {
   const diff = linearSubtract(left.linear, right.linear)
   if (diff == null) return 'maybe'
 
@@ -598,8 +701,8 @@ function compareLinear(left: NumberValue, op: ComparisonOperator, right: NumberV
   }
 }
 
-function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: LinearConstraint[]) {
-  const facts = assumptions.flatMap(nonNegativeConstraints)
+function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: Assumption[]) {
+  const facts = linearConstraints(assumptions).flatMap(nonNegativeConstraints)
   return proveNonNegativeFromConstraints(diff, strict, facts)
 }
 
@@ -626,7 +729,7 @@ export function comparisonCounterexample(
   left: NumberValue,
   op: ComparisonOperator,
   right: NumberValue,
-  assumptions: LinearConstraint[],
+  assumptions: Assumption[],
 ): FactCounterexample | null {
   // A value without a linear form still has a name and an interval; for the
   // search it acts as one bounded variable.
@@ -640,7 +743,7 @@ export function comparisonCounterexample(
   const violation = cleanLinear(linearScaleExact(satisfied, rationalNegate(rationalOne)))
   if (violation.terms.size === 0) return null
   const facts = [
-    ...assumptions.flatMap(nonNegativeConstraints),
+    ...linearConstraints(assumptions).flatMap(nonNegativeConstraints),
     ...intervalConstraints({...left, linear: leftLinear}),
     ...intervalConstraints({...right, linear: rightLinear}),
   ]
@@ -650,7 +753,7 @@ export function comparisonCounterexample(
   // interval over-approximates its trajectory, so a point inside it need not
   // be reachable).
   const anchored = new Set<string>()
-  for (const assumption of assumptions) {
+  for (const assumption of linearConstraints(assumptions)) {
     if (assumption.source === 'code' || assumption.source === 'branch') continue
     for (const fact of nonNegativeConstraints(assumption)) {
       for (const name of fact.diff.terms.keys()) anchored.add(name)
@@ -681,9 +784,9 @@ export function comparisonCounterexample(
 // The best constant bounds the published facts prove for a value, found with
 // the same simplex the counterexample search uses: the interval the polytope
 // projects onto, intersected with the value's own interval.
-export function provableBounds(value: NumberValue, assumptions: LinearConstraint[]): {min: number; max: number} {
+export function provableBounds(value: NumberValue, assumptions: Assumption[]): {min: number; max: number} {
   if (value.linear == null || value.linear.terms.size === 0) return {min: value.min, max: value.max}
-  const facts = assumptions.flatMap(nonNegativeConstraints)
+  const facts = linearConstraints(assumptions).flatMap(nonNegativeConstraints)
   const anchored = new Set<string>()
   for (const fact of facts) for (const name of fact.diff.terms.keys()) anchored.add(name)
   for (const name of value.linear.terms.keys()) {
@@ -698,6 +801,105 @@ export function provableBounds(value: NumberValue, assumptions: LinearConstraint
   const lower = linearMaximum(linearScaleExact(value.linear, rationalNegate(rationalOne)), facts)
   if (lower.kind === 'optimum') min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
   return min <= max ? {min, max} : {min: value.min, max: value.max}
+}
+
+export function reachableNumberCases(
+  value: NumberValue,
+  assumptions: Assumption[],
+): ReachableNumberCase[] {
+  const cases: ReachableNumberCase[] = []
+  for (const branch of numberBranches(value)) {
+    const effectiveAssumptions = branch.assumptions.length === 0
+      ? assumptions
+      : mergeAssumptions(assumptions, branch.assumptions)
+    if (!caseAssumptionsAreReachable(assumptions, branch.assumptions)) continue
+    const projected = projectReachableNumberValues([branch.value], effectiveAssumptions)
+    if (projected == null) continue
+    cases.push({
+      value: projected[0]!,
+      caseAssumptions: branch.assumptions,
+      assumptions: effectiveAssumptions,
+    })
+  }
+  return cases
+}
+
+export function reachableNumberCasePairs(
+  left: NumberValue,
+  right: NumberValue,
+  assumptions: Assumption[],
+): ReachableNumberCasePair[] {
+  const pairs: ReachableNumberCasePair[] = []
+  for (const leftCase of numberBranches(left)) {
+    for (const rightCase of numberBranches(right)) {
+      const caseAssumptions = mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
+      const effectiveAssumptions = caseAssumptions.length === 0
+        ? assumptions
+        : mergeAssumptions(assumptions, caseAssumptions)
+      if (!caseAssumptionsAreReachable(assumptions, caseAssumptions)) continue
+      const projected = projectReachableNumberValues(
+        [leftCase.value, rightCase.value],
+        effectiveAssumptions,
+      )
+      if (projected == null) continue
+      pairs.push({
+        left: projected[0]!,
+        right: projected[1]!,
+        caseAssumptions,
+        assumptions: effectiveAssumptions,
+      })
+    }
+  }
+  return pairs
+}
+
+export function projectReachableNumberValues(
+  values: NumberValue[],
+  assumptions: Assumption[],
+): NumberValue[] | null {
+  const numericAssumptions = linearConstraints(assumptions)
+  if (numericAssumptions.length === 0) return values
+  const valueNames = new Set(
+    values.flatMap(value => value.linear == null ? [] : [...value.linear.terms.keys()]),
+  )
+  const exceptional = values.some(value =>
+    !Number.isFinite(value.min) || !Number.isFinite(value.max))
+  const projectionAssumptions = exceptional
+    ? numericAssumptions.filter(assumption => assumption.source !== 'code')
+    : numericAssumptions
+  const facts = [
+    ...projectionAssumptions.flatMap(nonNegativeConstraints),
+    ...values.flatMap(intervalConstraints),
+  ]
+  const feasibility = linearMaximum(linearConstant(0)!, facts)
+  if (feasibility.kind === 'infeasible') return null
+  if (valueNames.size === 0 || !numericAssumptions.some(assumption =>
+    assumption.diff != null
+    && [...assumption.diff.terms.keys()].some(name => valueNames.has(name)))) {
+    return values
+  }
+  return values.map(value => numberWithProjectedBounds(value, facts))
+}
+
+function numberWithProjectedBounds(
+  value: NumberValue,
+  facts: NonNegativeConstraint[],
+): NumberValue {
+  if (value.linear == null || value.linear.terms.size === 0) return value
+  let min = value.min
+  let max = value.max
+  const upper = linearMaximum(value.linear, facts)
+  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumberCeil(upper.value))
+  const lower = linearMaximum(
+    linearScaleExact(value.linear, rationalNegate(rationalOne)),
+    facts,
+  )
+  if (lower.kind === 'optimum') {
+    min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
+  }
+  return min === value.min && max === value.max
+    ? value
+    : numberWithBounds(value, min, max)
 }
 
 // The value's own interval is sound knowledge the fact set may not spell out.

@@ -30,6 +30,7 @@ import {
   type Value,
 } from '../domain.ts'
 import {filterOrigin, mapOrigin} from '../array-summary.ts'
+import {isLinearConstraint} from '../assumptions.ts'
 import {
   cleanLinear,
   isZeroLinear,
@@ -115,6 +116,7 @@ export type SymbolicLoop = {
   // times, so pushed arrays cannot claim to follow anything by index.
   sourceKind: 'collection' | 'count'
   count: NumberValue
+  iterationAssumptions: LinearConstraint[]
   bindIteration: (frame: InterpreterFrame) => void
   iterationRoots: string[]
 }
@@ -298,7 +300,19 @@ function runBodyPaths(analysis: Analysis, hulls: Map<string, Value> | null): Wal
   analysis.invariantCache.clear()
 
   const env = generalizedEnv(analysis, hulls)
-  const frame = pathFrame(analysis.realFrame, env)
+  const frame = deriveFrame(analysis.realFrame, {
+    env,
+    stateCases: null,
+    output: emptyInterpreterOutput(),
+    policy: interpreterPolicy(
+      analysis.realFrame.policy.hooks == null
+        ? undefined
+        : claimSilentHooks(analysis.realFrame.policy.hooks),
+      'suppress',
+    ),
+    objectPath: null,
+    assumptions: analysisAssumptions(analysis),
+  })
   analysis.loop.bindIteration(frame)
   registerIterationNames(analysis, frame)
   analysis.iterationFrame = frame
@@ -1117,6 +1131,7 @@ function runReportingPass(analysis: Analysis, hulls: Map<string, Value>) {
     env: generalizedEnv(analysis, hulls),
     stateCases: null,
     loopStack: [...parent.loopStack, {source: analysis.loop.source, sourceExpr: analysis.loop.sourceExpr, mode: 'symbolic', appends: []}],
+    assumptions: analysisAssumptions(analysis),
   })
   analysis.loop.bindIteration(frame)
   for (const statement of analysis.loop.body.statements) {
@@ -1419,7 +1434,8 @@ function renamedElementLinear(linear: LinearExpr, arrayName: string, renames: Ma
 // the element renaming covers.
 function liftElementAssumptions(renames: Map<string, LinearExpr>, analysis: Analysis) {
   const lifted: LinearConstraint[] = []
-  for (const assumption of analysis.realFrame.assumptions) {
+  for (const assumption of analysisAssumptions(analysis)) {
+    if (!isLinearConstraint(assumption)) continue
     if (assumption.diff == null) continue
     let touchesRename = false
     let liftable = true
@@ -1970,7 +1986,7 @@ function computedAdvanceIsNonnegative(
 function numberIsNonnegative(value: NumberValue, analysis: Analysis): boolean {
   if (value.min >= 0) return true
   const zero = numberValue(0, 0, 0, '0', linearConstant(0))
-  return proveComparison(value, '>=', zero, analysis.realFrame.assumptions).status === 'pass'
+  return proveComparison(value, '>=', zero, analysisAssumptions(analysis)).status === 'pass'
 }
 
 function provedNonnegativeResidue(residue: LinearExpr, analysis: Analysis): boolean {
@@ -1978,7 +1994,14 @@ function provedNonnegativeResidue(residue: LinearExpr, analysis: Analysis): bool
   if (bounds != null && bounds.min >= 0) return true
   const value = numberValue(bounds?.min ?? -Infinity, bounds?.max ?? Infinity, null, null, residue)
   const zero = numberValue(0, 0, 0, '0', linearConstant(0))
-  return proveComparison(value, '>=', zero, analysis.realFrame.assumptions).status === 'pass'
+  return proveComparison(value, '>=', zero, analysisAssumptions(analysis)).status === 'pass'
+}
+
+function analysisAssumptions(analysis: Analysis) {
+  return mergeAssumptions(
+    analysis.realFrame.assumptions,
+    analysis.loop.iterationAssumptions,
+  )
 }
 
 // Bounds accumulate in exact rationals: residue coefficients (e.g. thirds

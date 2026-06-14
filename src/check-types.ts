@@ -1,6 +1,6 @@
 import type {
+  Assumption,
   ConstraintSource,
-  LinearConstraint,
   Value,
 } from './domain.ts'
 import type {FitInferFact} from './facts.ts'
@@ -143,7 +143,7 @@ export type EvalContext = {
   inputRoots: string[]
   stack: string[]
   checks: FitCheck[]
-  assumptions: LinearConstraint[]
+  assumptions: Assumption[]
   booleanAssumptions?: Map<string, boolean>
   contractCache: Map<string, FunctionContractProof>
   callObligations?: 'record' | 'silent'

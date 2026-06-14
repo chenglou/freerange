@@ -328,6 +328,97 @@ export function negativeConditionalExpressionDoesNotInventNumericCrossProduct(n:
 }
 
 /** @fit
+ * given availableWidth: int 320..1200
+ * return >= 400
+ */
+export function negativeGuardedColumnWidthRejectsWrongBound(availableWidth: number) {
+  const columns = availableWidth >= 600 ? 3 : 2
+  const gap = 16
+  return (availableWidth - gap * (columns - 1)) / columns
+}
+
+/** @fit
+ * return >= 0
+ */
+export function negativeNaNCapableFalseGuardStaysUnknown(value: number) {
+  return value >= 0 ? value : -value
+}
+
+/** @fit
+ * return <= 0
+ */
+export function negativeMixedNumericGuardOutcomesFailContract(value: number) {
+  const left = value > 0 ? 1 : 100
+  const right = value > 0 ? 200 : 10
+  return left - right
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function negativeCompoundNumericGuardCorrelationStaysUnknown(value: number) {
+  const left = value > 0 && value < 10 ? 1 : 100
+  const right = value > 0 && value < 10 ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return: -100..-9
+ */
+export function negativeBooleanGuardArithmeticStaysUnknown(flag: boolean) {
+  const left = flag ? 1 : 100
+  const right = flag ? 10 : 200
+  return left - right
+}
+
+/** @fit
+ * return.left < return.right
+ */
+export function negativeBooleanGuardComparisonStaysUnknown(flag: boolean) {
+  return {
+    left: flag ? 1 : 100,
+    right: flag ? 10 : 200,
+  }
+}
+
+/** @fit return: 1 | 100 */
+function booleanGuardLeft(flag: boolean) {
+  return flag ? 1 : 100
+}
+
+/** @fit return: 10 | 200 */
+function booleanGuardRight(flag: boolean) {
+  return flag ? 10 : 200
+}
+
+/** @fit
+ * return: -100..-9
+ */
+export function negativeBooleanGuardHelperCorrelationStaysUnknown(flag: boolean) {
+  return booleanGuardLeft(flag) - booleanGuardRight(flag)
+}
+
+/** @fit
+ * return: 1 | 100
+ */
+export function negativeBooleanGuardMathMinStaysUnknown(flag: boolean) {
+  const left = flag ? 1 : 100
+  const right = flag ? 10 : 200
+  return Math.min(left, right)
+}
+
+/** @fit
+ * return[].value: -100..-9
+ */
+export function negativeBooleanGuardMapCorrelationStaysUnknown(items: {flag: boolean}[]) {
+  return items.map(item => {
+    const left = item.flag ? 1 : 100
+    const right = item.flag ? 10 : 200
+    return {value: left - right}
+  })
+}
+
+/** @fit
  * given a: int 0..1
  * given b: int 0..1
  * given c: int 0..1
