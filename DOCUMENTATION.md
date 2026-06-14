@@ -28,21 +28,6 @@ clampTest.ts:10:<top-level>
   missing: 10 <= 3
 ```
 
-## Commands
-
-```zsh
-Usage:
-  fr check [--annotations-only] [--audit] [file.ts ...]
-  fr infer [--function name] [--annotations-only] [--all] file.ts ...
-  fr infer --all
-```
-
-`fr check` checks your project for `@fit` contract correctness (you can also pass it one or more files to check). It reuses your existing TypeScript, so it understands `tsconfig.json`. Normal TypeScript errors are printed in TypeScript's usual format before any contract proving. Everything in the comments are type checked as well. If a contract has a TypeScript error, Freerange reports it and does not use that contract as an assumption or proof. A function with such an error is not proved from the remaining lines; unrelated top-level annotations are still checked.
-
-Use `fr check --annotations-only` to check annotated places and skip the broader scan of unannotated code that calls annotated functions. Use `--audit` for cleanup advice: redundant `Math.min/max` choices, `if` branches, `??` fallbacks, etc.
-
-`fr infer file.ts` shows the facts Freerange deduced for that file. It's like TypeScript's inferred-type hover, except for the layout facts in the file. Pass `--function funcName` to focus on just that function. Use `fr infer --all` for a project summary, or `fr infer --all file.ts` for the detailed all-function view of that file.
-
 ## Features Overview
 
 ```ts
@@ -99,7 +84,7 @@ Block comments need to be above the function, type, and loop scope.
 At top level, attached value/field comments and supported loop blocks work the same way as inside a function. Contracts inside a nested callback or other nested function are rejected instead of being silently skipped.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure: they don't mutate inputs or outside state, read mutable outside state, depend on I/O, the clock, or randomness, or call code Freerange can't inspect. Local allocation and mutation are fine. You don't need to annotate a function as `pure` to use it in a contract; Freerange infers this. The optional `pure` line records your intent so a later refactor is checked too, including every function called by the body. Function identity follows TypeScript bindings through imports, renames, and re-exports; a function-scoped callback or arrow that Freerange cannot inspect is unknown instead of borrowing the purity of a same-named top-level function.
+**You can call your regular TS functions in the `@fit` contract**! As long as they're considered "pure" by Freerange (see Purity section below) and can be interpreted.
 `pure` belongs only in the `@fit` block above a function. Putting it on a loop is rejected because it describes the whole function's behavior, not a value to prove at one program point. If a called function has no available body, Freerange reports the purity claim as unknown instead of guessing.
 An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
 
@@ -205,7 +190,7 @@ A function marked as `pure` is checked for purity:
 
 Local mutations are allowed.
 
-The purity check is **transitive**, aka every function that the annotated `pure` function calls, is checked too. These latter functions themselves don't need to be annotated; Freerange will just check them for you.
+The purity check is **transitive**, aka every function that the annotated `pure` function calls, is checked too. These latter functions themselves don't need to be annotated; Freerange will just check them for you. In fact, you don't need to annotate a function as `pure` at all, unless you want to guarantee that it should stay so, when others modify that function in the future and make impure mistakes.
 
 ### Numerics
 
@@ -278,6 +263,7 @@ function layoutPhotos() {
 ```
 
 Freerange lets you invoke your own pure boolean functions in contracts! A call passes when Freerange proves it returns `true`, fails when it proves `false`, and remains unknown when Freerange cannot decide.
+Not every pure function can be checked. Freerange reports `unknown` when the function uses an operation it cannot interpret yet, e.g. `includes`, `reduce`, or a `while` loop.
 
 ### Types
 
@@ -330,7 +316,7 @@ It also understands useful `Math.*` calls. For example, it can prove `Math.floor
 
 #### Branches
 
-Freerange keeps values from the same if-else and ternary branches together when their relationship matters:
+Freerange keeps values from the same if-else/ternary/switch branches together when their relationship matters:
 
 ```ts
 function layout(pinned: boolean) {
@@ -348,16 +334,6 @@ function layout(pinned: boolean) {
 
 This infers `{left: 0, width: 100} | {left: 20, width: 80}` instead of broadening each field separately to `{left: 0..20, width: 80..100}`.
 
-Choices made by the same simple numeric comparison also stay together:
-
-```ts
-const columns = availableWidth < 600 ? 2 : 3
-const gap = availableWidth < 600 ? 16 : 24
-return columns + gap
-```
-
-The result is `18 | 27`, not every possible pairing of `columns` and `gap`.
-
 Freerange keeps up to 8 branch states. Beyond that, it reports that the branch-state limit was exceeded, then only keeps facts that are uniformly true in every branch. This is to avoid combinatorial explosion of states later on.
 
 Note: taking the false branch of `value >= 0` does not prove `value < 0`. The value could be `NaN`, for which both `value >= 0` and `value < 0` are false.
@@ -365,6 +341,40 @@ Note: taking the false branch of `value >= 0` does not prove `value < 0`. The va
 #### Loops
 
 Freerange tracks your loop and the consequences of each variable that the loop body affect. **TODO**: there's something about 32 ifs limit here. Document.
+
+## Commands
+
+```zsh
+Usage:
+  fr check [--annotations-only] [--audit] [file.ts ...]
+  fr infer [--function name] [--annotations-only] [--all] file.ts ...
+  fr infer --all
+```
+
+`fr check` checks your project for `@fit` contract correctness (you can also pass it one or more files to check). It reuses your existing TypeScript, so it understands `tsconfig.json`. Normal TypeScript errors are printed in TypeScript's usual format before any contract proving. Everything in the comments are type checked as well. If a contract has a TypeScript error, Freerange reports it and does not use that contract as an assumption or proof. A function with such an error is not proved from the remaining lines; unrelated top-level annotations are still checked.
+
+Use `fr check --annotations-only` to check annotated places and skip the broader scan of unannotated code that calls annotated functions. Use `--audit` for cleanup advice: redundant `Math.min/max` choices, `if` branches, `??` fallbacks, etc.
+
+`fr infer file.ts` shows the facts Freerange deduced for that file. It's like TypeScript's inferred-type hover, except for the layout facts in the file. Pass `--function funcName` to focus on just that function. Use `fr infer --all` for a project summary, or `fr infer --all file.ts` for the detailed all-function view of that file.
+
+### Check Results
+
+`fr check` reports four outcomes:
+
+- `PASS`: Freerange proved the claim for every input allowed by its `given` lines.
+- `FAIL`: Freerange proved the claim false. At a call, this also means the written arguments definitely violate a `given`.
+- `REQUIRES`: a call needs a fact that its caller has not proved. Add a caller `given`, validate before the call, or pass a narrower value.
+- `UNKNOWN`: Freerange could neither prove nor disprove the claim.
+
+For example, given:
+
+```ts
+function hasPositiveWidth(box: {width: number}) {
+  return box.width > 0
+}
+```
+
+`hasPositiveWidth({width: 0})` fails. But `hasPositiveWidth({width})`, where `width` is only known to be a number (but no more info), is `unknown`.
 
 ## Glossary
 
