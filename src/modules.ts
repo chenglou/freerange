@@ -10,20 +10,19 @@ import {
   createTypeContractTemplateIndex,
   type TypeContractTemplateIndex,
 } from './type-contracts.ts'
+import {
+  classMemberFunctionName,
+  isClassFunctionNode,
+  isFunctionImplementation,
+  isInlineFunction,
+  type FunctionImplementationNode,
+  type InlineFunctionNode,
+} from './function-shape.ts'
 import {formatTypeScriptDiagnostics} from './ts-diagnostics.ts'
-
-export type FitFunctionNode =
-  | ts.FunctionDeclaration
-  | ts.FunctionExpression
-  | ts.ArrowFunction
-  | ts.MethodDeclaration
-  | ts.ConstructorDeclaration
-  | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration
 
 export type FitFunction = {
   name: string
-  node: FitFunctionNode
+  node: FunctionImplementationNode
   specNode: ts.Node
   explicitSpecs: FitSpec[]
   bodySpecs: FitBodySpecIndex
@@ -338,7 +337,7 @@ function parseFitFile<TGlobal>(
 
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement)) {
-      if (statement.body == null) continue
+      if (!isFunctionImplementation(statement)) continue
       const isDefaultExport = hasModifier(statement, ts.SyntaxKind.DefaultKeyword)
       const functionName = statement.name?.text ?? (isDefaultExport ? 'default' : null)
       if (functionName == null) continue
@@ -398,13 +397,7 @@ function collectClassMemberFunctions(
   functions: Map<string, FitFunction>,
 ) {
   for (const member of declaration.members) {
-    if (
-      !ts.isMethodDeclaration(member)
-      && !ts.isConstructorDeclaration(member)
-      && !ts.isGetAccessorDeclaration(member)
-      && !ts.isSetAccessorDeclaration(member)
-    ) continue
-    if (member.body == null) continue
+    if (!isClassFunctionNode(member) || !isFunctionImplementation(member)) continue
     const memberName = classMemberFunctionName(declaration.name!.text, member)
     if (memberName == null) continue
     collectFitFunction(sourceText, file, memberName, member, member, functions)
@@ -415,7 +408,7 @@ function collectFitFunction(
   sourceText: string,
   file: string,
   name: string,
-  node: FitFunctionNode,
+  node: FunctionImplementationNode,
   specNode: ts.Node,
   functions: Map<string, FitFunction>,
 ) {
@@ -426,19 +419,8 @@ function collectFitFunction(
   functions.set(fn.name, fn)
 }
 
-function classMemberFunctionName(
-  className: string,
-  member: ts.MethodDeclaration | ts.ConstructorDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-): string | null {
-  if (ts.isConstructorDeclaration(member)) return `${className}.constructor`
-  if (!ts.isIdentifier(member.name)) return null
-  const owner = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
-  if (ts.isSetAccessorDeclaration(member)) return `${owner}.set.${member.name.text}`
-  return `${owner}.${member.name.text}`
-}
-
-function supportedFunctionInitializer(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {
-  return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression) ? expression : null
+function supportedFunctionInitializer(expression: ts.Expression): InlineFunctionNode | null {
+  return isInlineFunction(expression) ? expression : null
 }
 
 function isConstVariableStatement(statement: ts.VariableStatement) {

@@ -1,6 +1,10 @@
 import * as ts from 'typescript'
 import type {ImportedBinding, Program} from '../check-types.ts'
 import type {FitFunction} from '../modules.ts'
+import {
+  classMemberFunctionName,
+  functionImplementationForDeclaration,
+} from '../function-shape.ts'
 import type {InterpreterFrame} from './context.ts'
 
 export type InterpreterCallTarget =
@@ -8,11 +12,12 @@ export type InterpreterCallTarget =
   | {
       kind: 'function'
       program: Program
-      functionName: string
       fn: FitFunction
       imported?: {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>}
     }
   | {kind: 'unresolved'; reason: string}
+
+export type ResolvedFunctionTarget = Extract<InterpreterCallTarget, {kind: 'function'}>
 
 export function resolveCallTarget(target: ts.Expression, program: Program): InterpreterCallTarget {
   const source = sourceFunctionTarget(target, program)
@@ -42,31 +47,15 @@ function sourceFunctionTarget(
   const symbol = resolvedSymbol(checker.getSymbolAtLocation(symbolNode), checker)
   if (symbol == null) return null
   for (const declaration of symbol.declarations ?? []) {
-    const node = functionNodeForDeclaration(declaration)
+    const node = functionImplementationForDeclaration(declaration)
     if (node == null) continue
     const targetProgram = programForSourceFile(node.getSourceFile(), program)
     if (targetProgram == null || targetProgram !== program || !('functions' in targetProgram)) continue
-    for (const [functionName, fn] of targetProgram.functions) {
-      if (fn.node === node) return {kind: 'function', program: targetProgram, functionName, fn}
+    for (const fn of targetProgram.functions.values()) {
+      if (fn.node === node) return {kind: 'function', program: targetProgram, fn}
     }
   }
   return null
-}
-
-function functionNodeForDeclaration(declaration: ts.Declaration): FitFunction['node'] | null {
-  if (
-    ts.isFunctionDeclaration(declaration)
-    || ts.isMethodDeclaration(declaration)
-    || ts.isConstructorDeclaration(declaration)
-    || ts.isGetAccessorDeclaration(declaration)
-    || ts.isSetAccessorDeclaration(declaration)
-  ) {
-    return declaration.body == null ? null : declaration
-  }
-  if (!ts.isVariableDeclaration(declaration) || declaration.initializer == null) return null
-  return ts.isArrowFunction(declaration.initializer) || ts.isFunctionExpression(declaration.initializer)
-    ? declaration.initializer
-    : null
 }
 
 function identifierAllowsIndexedFallback(identifier: ts.Identifier, program: Program): boolean {
@@ -107,7 +96,7 @@ function isTopLevelValueDeclaration(declaration: ts.Declaration) {
 
 function resolveIdentifierCallTarget(name: string, program: Program, seen = new Set<string>()): InterpreterCallTarget {
   const local = program.functions.get(name)
-  if (local != null) return {kind: 'function', program, functionName: name, fn: local}
+  if (local != null) return {kind: 'function', program, fn: local}
 
   const key = `${program.sourceId}#${name}`
   if (seen.has(key)) return {kind: 'unresolved', reason: `Cyclic call alias at ${program.file}#${name}`}
@@ -168,14 +157,16 @@ export function classMemberFunctionForPropertyAccess(
   const program = programForClassMember(member.declaration, frame)
   if (program == null) return null
   const className = member.className
-  const functionName = classMemberFunctionName(className, access.name.text, member.declaration)
+  const functionName = member.declaration == null
+    ? `${className}.${access.name.text}`
+    : classMemberFunctionName(className, member.declaration)
+  if (functionName == null) return null
   const fn = program.functions.get(functionName)
   if (fn == null) return null
   const imported = program === frame.program ? null : importedClassBinding(className, program, frame.program)
   return {
     kind: 'function',
     program,
-    functionName,
     fn,
     ...(imported == null ? {} : {imported}),
   }
@@ -194,7 +185,7 @@ export function classMemberFunctionForPropertyAccessInProgram(
     || !ts.isClassDeclaration(declaration.parent)
     || declaration.parent.name == null
   ) return null
-  return classFunctionTarget(declaration, access.name.text, program)
+  return classFunctionTarget(declaration, program)
 }
 
 export function classAccessorFunctionForPropertyAccessInProgram(
@@ -218,21 +209,21 @@ export function classAccessorFunctionForPropertyAccessInProgram(
     || !ts.isClassDeclaration(declaration.parent)
     || declaration.parent.name == null
   ) return null
-  return classFunctionTarget(declaration, access.name.text, program)
+  return classFunctionTarget(declaration, program)
 }
 
 function classFunctionTarget(
   declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
-  memberName: string,
   program: Program,
 ): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
   const parent = declaration.parent
   if (!ts.isClassDeclaration(parent) || parent.name == null) return null
   const memberProgram = programForSourceFile(declaration.getSourceFile(), program)
   if (memberProgram == null) return null
-  const functionName = classMemberFunctionName(parent.name.text, memberName, declaration)
+  const functionName = classMemberFunctionName(parent.name.text, declaration)
+  if (functionName == null) return null
   const fn = memberProgram.functions.get(functionName)
-  return fn == null ? null : {kind: 'function', program: memberProgram, functionName, fn}
+  return fn == null ? null : {kind: 'function', program: memberProgram, fn}
 }
 
 export function constructorFunctionForNewExpression(
@@ -245,9 +236,8 @@ export function constructorFunctionForNewExpression(
   if (constructor?.body == null) return null
   const constructorProgram = programForSourceFile(declaration.getSourceFile(), program)
   if (constructorProgram == null) return null
-  const functionName = `${declaration.name.text}.constructor`
-  const fn = constructorProgram.functions.get(functionName)
-  return fn == null ? null : {kind: 'function', program: constructorProgram, functionName, fn}
+  const fn = constructorProgram.functions.get(`${declaration.name.text}.constructor`)
+  return fn == null ? null : {kind: 'function', program: constructorProgram, fn}
 }
 
 export function classDeclarationForNewExpression(expression: ts.NewExpression, program: Program): ts.ClassDeclaration | null {
@@ -271,16 +261,6 @@ export function isDefaultLibraryMemberAccess(access: ts.PropertyAccessExpression
   return isDefaultLibrarySymbol(access.name, program)
 }
 
-function classMemberFunctionName(
-  className: string,
-  memberName: string,
-  declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration | null,
-) {
-  const owner = declaration != null && hasModifier(declaration, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
-  if (declaration != null && ts.isSetAccessorDeclaration(declaration)) return `${owner}.set.${memberName}`
-  return `${owner}.${memberName}`
-}
-
 function symbolDeclaration(symbol: ts.Symbol | undefined, checker: ts.TypeChecker | null): ts.Declaration | undefined {
   const resolved = checker == null ? symbol : resolvedSymbol(symbol, checker)
   if (resolved == null) return undefined
@@ -295,10 +275,6 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
     current = checker.getAliasedSymbol(current)
   }
   return current
-}
-
-function hasModifier(node: ts.Node, kind: ts.SyntaxKind) {
-  return ts.canHaveModifiers(node) && ts.getModifiers(node)?.some(modifier => modifier.kind === kind) === true
 }
 
 function classMemberForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {className: string; declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null} | null {

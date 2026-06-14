@@ -108,7 +108,7 @@ Top-level executable code uses the same prepared body data as functions. Annotat
 
 Resolve helper bindings at the call site and rebase parameter names to caller-side expressions there. Don't carry alias logic into every proof rule. Reports get to say `cols - w >= 0`, not a private helper parameter name.
 
-Function and variable identity comes from TypeScript bindings, not identifier text. Keep symbols while tracking reads, writes, and aliases; keep the implementation node while caching or composing a function's effects. Convert those identities back to source names only for reports and interpreter root invalidation. If a function-scoped value cannot be resolved to a body, report it as unknown rather than matching a same-named top-level function.
+Function and variable identity comes from TypeScript bindings, not identifier text. Keep symbols while tracking reads, writes, and aliases; keep one body-bearing implementation-node family while caching or composing a function's effects. A resolved function carries its source program with that implementation, including when it is passed as a callback; import provenance stays separate because it belongs to the caller-facing route. Convert identities back to source names only for reports and interpreter root invalidation. If a function-scoped value cannot be resolved to a body, report it as unknown rather than matching a same-named top-level function.
 
 ## Calls Have One Preparation Point
 

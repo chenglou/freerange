@@ -3,14 +3,58 @@ import type {Program} from './check-types.ts'
 import type {FitFunction} from './modules.ts'
 import {bindingNames} from './binding-patterns.ts'
 
-export function isFunctionLikeWithBody(node: ts.Node): boolean {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
+export type InlineFunctionNode = ts.FunctionExpression | ts.ArrowFunction
+
+export type ClassFunctionNode =
+  | ts.MethodDeclaration
+  | ts.ConstructorDeclaration
+  | ts.GetAccessorDeclaration
+  | ts.SetAccessorDeclaration
+
+export type FunctionImplementationNode =
+  | (ts.FunctionDeclaration & {body: ts.Block})
+  | InlineFunctionNode
+  | (ts.MethodDeclaration & {body: ts.Block})
+  | (ts.ConstructorDeclaration & {body: ts.Block})
+  | (ts.GetAccessorDeclaration & {body: ts.Block})
+  | (ts.SetAccessorDeclaration & {body: ts.Block})
+
+export type FunctionImplementationRef = {
+  program: Program
+  node: FunctionImplementationNode
+}
+
+export function isFunctionImplementation(node: ts.Node): node is FunctionImplementationNode {
+  return (
+    ts.isFunctionDeclaration(node)
+    || isInlineFunction(node)
+    || isClassFunctionNode(node)
+  ) && node.body != null
+}
+
+export function isInlineFunction(node: ts.Node): node is InlineFunctionNode {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node)
+}
+
+export function isClassFunctionNode(node: ts.Node): node is ClassFunctionNode {
+  return ts.isMethodDeclaration(node)
     || ts.isConstructorDeclaration(node)
     || ts.isGetAccessorDeclaration(node)
     || ts.isSetAccessorDeclaration(node)
+}
+
+export function functionImplementationForDeclaration(declaration: ts.Declaration): FunctionImplementationNode | null {
+  if (isFunctionImplementation(declaration)) return declaration
+  if (!ts.isVariableDeclaration(declaration) || declaration.initializer == null) return null
+  return isInlineFunction(declaration.initializer) ? declaration.initializer : null
+}
+
+export function classMemberFunctionName(className: string, member: ClassFunctionNode): string | null {
+  if (ts.isConstructorDeclaration(member)) return `${className}.constructor`
+  if (!ts.isIdentifier(member.name)) return null
+  const owner = hasModifier(member, ts.SyntaxKind.StaticKeyword) ? `${className}.static` : className
+  if (ts.isSetAccessorDeclaration(member)) return `${owner}.set.${member.name.text}`
+  return `${owner}.${member.name.text}`
 }
 
 export function functionInputRoots(program: Program, fn: FitFunction): string[] {
@@ -23,11 +67,7 @@ export function functionInputRoots(program: Program, fn: FitFunction): string[] 
 }
 
 export function functionHasInstanceThisInput(fn: FitFunction): boolean {
-  return (ts.isMethodDeclaration(fn.node)
-    || ts.isConstructorDeclaration(fn.node)
-    || ts.isGetAccessorDeclaration(fn.node)
-    || ts.isSetAccessorDeclaration(fn.node))
-    && !hasModifier(fn.node, ts.SyntaxKind.StaticKeyword)
+  return isClassFunctionNode(fn.node) && !hasModifier(fn.node, ts.SyntaxKind.StaticKeyword)
 }
 
 function hasModifier(node: ts.Node, kind: ts.SyntaxKind): boolean {

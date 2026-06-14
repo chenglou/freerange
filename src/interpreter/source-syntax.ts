@@ -1,5 +1,6 @@
 import * as ts from 'typescript'
 import {numericLiteralValue} from '../linear.ts'
+import {isFunctionImplementation} from '../function-shape.ts'
 
 export type IndexedForLoopShape = {
   indexName: string
@@ -105,7 +106,7 @@ export function referencesIdentifier(node: ts.Node, name: string): boolean {
       found = true
       return
     }
-    if (current !== node && isFunctionLikeWithBody(current)) return
+    if (current !== node && isFunctionImplementation(current)) return
     ts.forEachChild(current, visit)
   }
   visit(node)
@@ -226,15 +227,4 @@ function scalarUpdateLiteralTotal(update: ScalarUpdate): number | null {
     total += term.negate ? -literal : literal
   }
   return total
-}
-
-function isFunctionLikeWithBody(node: ts.Node): node is ts.FunctionLikeDeclaration {
-  return (ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isConstructorDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
-    || ts.isSetAccessorDeclaration(node))
-    && node.body != null
 }

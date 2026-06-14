@@ -9,7 +9,7 @@ import type {
   FitCheckDetail,
   FitCheckStatus,
   FunctionContractProof,
-  FunctionContractSource,
+  ContractSummarySource,
   ImportedBinding,
   Program,
 } from './check-types.ts'
@@ -378,7 +378,7 @@ export function valueWithFunctionContractSummary(
   specs: FitSpec[],
   prepared: PreparedCall,
   contractCache: Map<string, FunctionContractProof>,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   result: Value,
   callSiteBindings: CallSiteBindings | undefined,
   evaluators: CallContractEvaluators,
@@ -418,7 +418,7 @@ function applySummaryValueSpec(
   expression: FitExpressionLike,
   text: string,
   context: EvalContext,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
   const rootPath = simpleResultPathText(expression)
@@ -437,7 +437,7 @@ function valueSpecRangeValues(
   path: string,
   text: string,
   context: EvalContext,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ): Map<string, Value> {
   if (ts.isParenthesizedTypeNode(node)) return valueSpecRangeValues(node.type, env, path, text, context, source, evaluators)
@@ -502,7 +502,7 @@ function valueSpecMemberRangeValues(
   path: string,
   text: string,
   context: EvalContext,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
   return mergeValueSpecRangeMaps(members.map(member => {
@@ -551,7 +551,7 @@ function applySummaryRangeSpec(
   env: Map<string, Value>,
   spec: FitRangeCheckSpec,
   context: EvalContext,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
   if (simpleResultPathText(spec.expression) == null) return
@@ -568,7 +568,7 @@ function applySummaryRangeSpec(
 function summaryRangeValue(
   current: Value,
   rangeValue: NumberValue,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   text: string,
 ): NumberValue {
   const origin = [checkedContractFact(source, text)]
@@ -638,7 +638,7 @@ function applySummaryComparisonSpec(
   env: Map<string, Value>,
   spec: FitComparisonCheckSpec,
   context: EvalContext,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
   const leftPath = simpleResultPathText(spec.left)
@@ -680,7 +680,7 @@ function applySummaryLiteralEqualityToPath(
 function applySummaryExpressionSpec(
   env: Map<string, Value>,
   spec: FitExpressionCheckSpec,
-  source: FunctionContractSource,
+  source: ContractSummarySource,
 ) {
   const path = simpleResultPathText(spec.expression)
   if (path == null) return
@@ -746,7 +746,7 @@ function numberWithSummaryConstraint(value: NumberValue, summaryConstraint: Summ
   })))
 }
 
-function checkedContractFact(source: FunctionContractSource, text: string) {
+function checkedContractFact(source: ContractSummarySource, text: string) {
   const kind = source.kind === 'local' ? 'checked helper contract' : 'checked imported contract'
   return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }

@@ -4,7 +4,6 @@ import {
   ambientPropertyBound,
 } from '../ambient-bounds.ts'
 import type {
-  ArrayCallbackFunction,
   Program,
 } from '../check-types.ts'
 import {
@@ -73,9 +72,15 @@ import {
   evaluateBuiltinCall,
   extentEndSummaryValue,
 } from '../builtins.ts'
-import {functionHasInstanceThisInput} from '../function-shape.ts'
+import {
+  functionHasInstanceThisInput,
+  isInlineFunction,
+  type FunctionImplementationRef,
+  type FunctionImplementationNode,
+  type InlineFunctionNode,
+} from '../function-shape.ts'
 import {bindFunctionCallInputs} from '../function-inputs.ts'
-import {type FitFunction, type FitFunctionNode} from '../modules.ts'
+import {type FitFunction} from '../modules.ts'
 import type {PreparedCall, PreparedParameter} from '../prepared-call.ts'
 import {programGlobalEnv} from '../program-env.ts'
 import {
@@ -137,7 +142,6 @@ import {
   lengthBearingConstructorNames,
   mutationOuterRoots,
   type FunctionEffects,
-  type FunctionLikeNode,
 } from './function-effects.ts'
 import {evaluateSymbolicLoop, type LoopAnalysisContext} from './loop-transfer.ts'
 import {
@@ -391,7 +395,7 @@ function classInstanceThisValue(fn: FitFunction, program: Program): Value | null
 
 function invokeInlineFunction(
   name: string,
-  fn: ArrayCallbackFunction,
+  fn: InlineFunctionNode,
   argumentValues: (Value | undefined)[],
   caller: InterpreterFrame,
 ): Value {
@@ -409,7 +413,7 @@ function invokeInlineFunction(
 
 function evaluateFunctionNodeBody(
   name: string,
-  fn: FitFunctionNode | ArrayCallbackFunction,
+  fn: FunctionImplementationNode,
   frame: InterpreterFrame,
 ): Value {
   return evaluateFunctionNodeBodyResult(name, fn, frame).value
@@ -417,11 +421,10 @@ function evaluateFunctionNodeBody(
 
 function evaluateFunctionNodeBodyResult(
   name: string,
-  fn: FitFunctionNode | ArrayCallbackFunction,
+  fn: FunctionImplementationNode,
   frame: InterpreterFrame,
 ): {value: Value; returnCases?: InterpreterReturnCase[]} {
   if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) return {value: evaluateReturnExpression(fn.body, fn, frame)}
-  if (fn.body == null) return {value: noteUnsupported(frame, `Function ${name} has no body`, fn)}
   if (!ts.isBlock(fn.body)) return {value: noteUnsupported(frame, `Function ${name} body is unsupported`, fn.body)}
   const flow = evaluateStatements(fn.body.statements, frame)
   if (flow.kind === 'return' || flow.kind === 'return-cases') {
@@ -442,7 +445,7 @@ type PreparedFunctionNodeInvocation =
 
 function prepareFunctionNodeInvocation(
   name: string,
-  fn: FitFunctionNode | ArrayCallbackFunction,
+  fn: FunctionImplementationNode,
   arguments_: (PreparedParameter | null)[],
   frame: InterpreterFrame,
   missingRequired: 'invalid' | 'unknown',
@@ -1355,12 +1358,9 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
     const hooked = evaluateHookedCall({
       expression,
       callName: expression.getText(frame.program.sourceFile),
-      program: getter.program,
-      functionName: getter.functionName,
-      fn: getter.fn,
+      target: getter,
       prepared: prepared.prepared,
       fallback,
-      ...(getter.imported == null ? {} : {imported: getter.imported}),
       thisValue: receiver,
     }, frame)
     if (hooked != null) {
@@ -2041,9 +2041,9 @@ function applyFunctionCallEffects(
 // Inline callbacks run per element on a copy of the caller's environment, so
 // reads stay precise; writes to captured locals and mutations of the elements
 // fed through the callback's parameters are applied here instead.
-function applyInlineCallbackEffects(callbackFn: FunctionLikeNode, receiverExpression: ts.Expression | null, frame: InterpreterFrame): FunctionEffects {
-  const effects = functionEffects(callbackFn, frame.program)
-  applyFunctionCallEffects(effects, [], callbackFn.parameters, null, frame)
+function applyCallbackEffects(callback: FunctionImplementationRef, receiverExpression: ts.Expression | null, frame: InterpreterFrame): FunctionEffects {
+  const effects = functionEffects(callback.node, callback.program)
+  applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
   if ((effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) && receiverExpression != null) {
     havocArrayElementAliases(frame, receiverExpression)
   }
@@ -2091,10 +2091,10 @@ function applyUnknownCallEffects(
   havocAllInputs()
   for (const argument of expression.arguments) {
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
-    const callback = passedFunctionNode(argumentExpression, frame)
+    const callback = passedFunctionReference(argumentExpression, frame)
     if (callback == null) continue
-    const callbackEffects = functionEffects(callback, frame.program)
-    applyFunctionCallEffects(callbackEffects, [], callback.parameters, null, frame)
+    const callbackEffects = functionEffects(callback.node, callback.program)
+    applyFunctionCallEffects(callbackEffects, [], callback.node.parameters, null, frame)
     if (callbackEffects.mutations.certain.paramIndexes.size > 0 || callbackEffects.mutations.uncertain.paramIndexes.size > 0) {
       havocAllInputs()
       // The callback mutates the elements it runs over; forget the bindings that
@@ -2113,25 +2113,25 @@ function applyFactPreservingGlobalCallbackEffects(expression: ts.CallExpression,
   let mutatesData = false
   for (const argument of expression.arguments) {
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
-    const callback = passedFunctionNode(argumentExpression, frame)
+    const callback = passedFunctionReference(argumentExpression, frame)
     if (callback == null) continue
-    const effects = functionEffects(callback, frame.program)
-    applyFunctionCallEffects(effects, [], callback.parameters, null, frame)
+    const effects = functionEffects(callback.node, callback.program)
+    applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
     if (effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) mutatesData = true
   }
   if (!mutatesData) return
   for (const argument of expression.arguments) {
     const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
-    if (passedFunctionNode(argumentExpression, frame) != null) continue
+    if (passedFunctionReference(argumentExpression, frame) != null) continue
     havocArrayElementAliases(frame, argumentExpression)
   }
 }
 
-function passedFunctionNode(expression: ts.Expression, frame: InterpreterFrame): FunctionLikeNode | null {
-  if (isInlineFunction(expression)) return expression
+function passedFunctionReference(expression: ts.Expression, frame: InterpreterFrame): FunctionImplementationRef | null {
+  if (isInlineFunction(expression)) return {program: frame.program, node: expression}
   if (!ts.isIdentifier(expression)) return null
   const resolved = resolveCallTarget(expression, frame.program)
-  return resolved.kind === 'function' ? resolved.fn.node : null
+  return resolved.kind === 'function' ? {program: resolved.program, node: resolved.fn.node} : null
 }
 
 function userBindingForCallTarget(target: ts.Expression, frame: InterpreterFrame): boolean {
@@ -2357,7 +2357,6 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), {
         kind: 'function',
         program: member.program,
-        functionName: member.functionName,
         fn: member.fn,
         ...(member.imported == null ? {} : {imported: member.imported}),
       }, fallback(), frame, receiver, target.expression)
@@ -2452,9 +2451,9 @@ function evaluateResolvedFunctionCallResult(
     return fallback ?? unsupported
   }
   const resolvedThisValue = operands.receiver?.value
-  const callKey = `${target.program.sourceId}#${target.functionName}`
+  const callKey = `${target.program.sourceId}#${target.fn.name}`
   if (frame.activeCalls.has(callKey)) {
-    const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.functionName}`, expression)
+    const unsupported = noteUnsupported(frame, `Recursive helper inlining is unsupported at ${target.fn.name}`, expression)
     return fallback ?? unsupported
   }
   const prepared = prepareFitFunctionInvocation(
@@ -2471,12 +2470,9 @@ function evaluateResolvedFunctionCallResult(
   const hooked = evaluateHookedCall({
     expression,
     callName,
-    program: target.program,
-    functionName: target.functionName,
-    fn: target.fn,
+    target,
     prepared: prepared.prepared,
     fallback,
-    ...(target.imported == null ? {} : {imported: target.imported}),
     ...(resolvedThisValue == null ? {} : {thisValue: resolvedThisValue}),
   }, frame)
   if (hooked != null) return hooked
@@ -2571,8 +2567,8 @@ function applyUnresolvedArrayCallbackEffects(
   callback: ts.Expression | undefined,
   frame: InterpreterFrame,
 ) {
-  const callbackNode = callback == null ? null : passedFunctionNode(unwrapExpression(callback), frame)
-  if (callbackNode != null) applyInlineCallbackEffects(callbackNode, target.expression, frame)
+  const callbackRef = callback == null ? null : passedFunctionReference(unwrapExpression(callback), frame)
+  if (callbackRef != null) applyCallbackEffects(callbackRef, target.expression, frame)
   else havocArrayElementAliases(frame, target.expression)
 }
 
@@ -2592,7 +2588,7 @@ function evaluateEverySomeCall(
   }
   const text = expression.getText(frame.program.sourceFile)
   if (source.length.max === 0) return literalValue([kind === 'every'], text)
-  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
   const effectiveSource = sourceAfterCallback(source, callbackEffects)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const item = effectiveSource.element ?? unknown(`${sourceExpr}[] was not inferred`)
@@ -2626,7 +2622,7 @@ function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAcces
   // Apply captured-write effects before the representative element run: later
   // iterations observe earlier mutations, so the representative must read the
   // already-forgotten state.
-  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
   const effectiveSource = sourceAfterCallback(source, callbackEffects)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const abstractElement = evaluateMapElement(effectiveSource, sourceExpr, callbackFn, frame)
@@ -2652,7 +2648,7 @@ type RenamePair = {inputPath: string[]; outputPath: string[]}
 // every property initializer is a property chain on the element parameter
 // (recursively through nested object literals). Computed fields are simply
 // unmapped; a spread hides the field set, so nothing maps.
-function pureRenamePairs(callbackFn: FunctionLikeNode): RenamePair[] | null {
+function pureRenamePairs(callbackFn: FunctionImplementationNode): RenamePair[] | null {
   const parameter = callbackFn.parameters[0]
   if (parameter == null || !ts.isIdentifier(parameter.name)) return null
   const body = ts.isArrowFunction(callbackFn) && ts.isExpression(callbackFn.body)
@@ -2689,13 +2685,13 @@ function parameterPropertyChain(expression: ts.Expression, parameterName: string
   return parent == null ? null : [...parent, current.name.text]
 }
 
-function singleReturnExpression(callbackFn: FunctionLikeNode): ts.Expression | null {
-  if (callbackFn.body == null || !ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
+function singleReturnExpression(callbackFn: FunctionImplementationNode): ts.Expression | null {
+  if (!ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
   const statement = callbackFn.body.statements[0]!
   return ts.isReturnStatement(statement) ? statement.expression ?? null : null
 }
 
-function projectSummaryThroughRename(summary: ArraySummary | null, callbackFn: FunctionLikeNode): ArraySummary | null {
+function projectSummaryThroughRename(summary: ArraySummary | null, callbackFn: FunctionImplementationNode): ArraySummary | null {
   if (summary == null) return null
   const pairs = pureRenamePairs(callbackFn)
   if (pairs == null || pairs.length === 0) return null
@@ -2741,7 +2737,7 @@ function samePathParts(left: string[], right: string[]) {
   return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
-function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
+function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: InlineFunctionNode, frame: InterpreterFrame): Value | null {
   const item = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`mapIndex(${sourceExpr})`, source.length)
   const value = invokeInlineFunction(
@@ -2766,7 +2762,7 @@ function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAc
     applyUnresolvedArrayCallbackEffects(target, callback, frame)
     return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
   }
-  const callbackEffects = applyInlineCallbackEffects(callbackFn, target.expression, frame)
+  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
   const effectiveSource = sourceAfterCallback(source, callbackEffects)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const element = filteredElement(effectiveSource, sourceExpr, callbackFn, frame)
@@ -2791,7 +2787,7 @@ function addLengthAtMostSourceFact(length: NumberValue, sourceLength: NumberValu
   if (fact != null) frame.assumptions = mergeAssumptions(frame.assumptions, [fact])
 }
 
-function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame, text: string): NumberValue {
+function filteredLength(source: ArrayValue, callbackFn: InlineFunctionNode, frame: InterpreterFrame, text: string): NumberValue {
   const fallback = numberValue(0, source.length.max, 0, `${text}.length`)
   if (source.length.max === 0) return numberValue(0, 0, 0, `${text}.length`)
   const sourceExpr = source.expr ?? text
@@ -2810,7 +2806,7 @@ function filteredLength(source: ArrayValue, callbackFn: ArrayCallbackFunction, f
   return fallback
 }
 
-function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: ArrayCallbackFunction, frame: InterpreterFrame): Value | null {
+function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: InlineFunctionNode, frame: InterpreterFrame): Value | null {
   const predicate = callbackPredicateExpression(callbackFn)
   if (predicate == null || !isSideEffectFreeExpression(predicate)) return source.element
   const element = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
@@ -2830,14 +2826,14 @@ function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: Arr
   return refined == null ? source.element : valueWithAssumptions(refined, trueFrame.assumptions)
 }
 
-function callbackPredicateExpression(callbackFn: ArrayCallbackFunction): ts.Expression | null {
+function callbackPredicateExpression(callbackFn: InlineFunctionNode): ts.Expression | null {
   if (ts.isArrowFunction(callbackFn) && ts.isExpression(callbackFn.body)) return callbackFn.body
-  if (callbackFn.body == null || !ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
+  if (!ts.isBlock(callbackFn.body) || callbackFn.body.statements.length !== 1) return null
   const statement = callbackFn.body.statements[0]!
   return ts.isReturnStatement(statement) ? statement.expression ?? null : null
 }
 
-function firstIdentifierParameterName(callbackFn: ArrayCallbackFunction): string | null {
+function firstIdentifierParameterName(callbackFn: InlineFunctionNode): string | null {
   const first = callbackFn.parameters[0]
   return first != null && ts.isIdentifier(first.name) ? first.name.text : null
 }
@@ -2900,10 +2896,6 @@ function evaluatedArguments(args: ts.NodeArray<ts.Expression>, frame: Interprete
 
 function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame): ValuePath | null {
   return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
-}
-
-function isInlineFunction(expression: ts.Expression): expression is ArrayCallbackFunction {
-  return ts.isArrowFunction(expression) || ts.isFunctionExpression(expression)
 }
 
 function nodeText(node: ts.Node, frame: InterpreterFrame) {

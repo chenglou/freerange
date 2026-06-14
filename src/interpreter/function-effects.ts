@@ -9,6 +9,11 @@ import {
   isDefaultLibrarySymbol,
   resolveCallTarget,
 } from './call-targets.ts'
+import {
+  isFunctionImplementation,
+  type FunctionImplementationRef,
+  type FunctionImplementationNode,
+} from '../function-shape.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 
 // What a call can change in its caller's world, beyond returning a value.
@@ -75,7 +80,7 @@ export type Purity =
   | {kind: 'impure'; reason: string}
   | {kind: 'unknown'; reason: string}
 
-export function functionPurity(node: FunctionLikeNode, program: Program): Purity {
+export function functionPurity(node: FunctionImplementationNode, program: Program): Purity {
   const effects = functionEffects(node, program)
   const mutatedParam = effects.mutations.certain.paramIndexes.values().next().value
   if (mutatedParam != null) {
@@ -93,15 +98,6 @@ export function functionPurity(node: FunctionLikeNode, program: Program): Purity
   if (effects.callsUnknown) return {kind: 'unknown', reason: 'calls a function whose body cannot be analyzed'}
   return {kind: 'pure'}
 }
-
-export type FunctionLikeNode =
-  | ts.FunctionDeclaration
-  | ts.FunctionExpression
-  | ts.ArrowFunction
-  | ts.MethodDeclaration
-  | ts.ConstructorDeclaration
-  | ts.GetAccessorDeclaration
-  | ts.SetAccessorDeclaration
 
 function firstOuterRoot(targets: MutationTargets): string | null {
   return targets.outerBindings.values().next().value?.root ?? null
@@ -196,7 +192,7 @@ type OuterBinding = {
 }
 
 type CallEdge = {
-  callee: FunctionLikeNode
+  callee: FunctionImplementationNode
   // classified roots per caller argument position; `null` marks a spread
   // argument whose positions cannot be mapped
   argumentRoots: (RootKind[] | null)[]
@@ -213,10 +209,10 @@ type MemberInfo = {
 
 const effectsCache = new WeakMap<ts.Node, FunctionEffects>()
 
-export function functionEffects(node: FunctionLikeNode, program: Program): FunctionEffects {
+export function functionEffects(node: FunctionImplementationNode, program: Program): FunctionEffects {
   const cached = effectsCache.get(node)
   if (cached != null) return cached
-  const members = new Map<FunctionLikeNode, MemberInfo>()
+  const members = new Map<FunctionImplementationNode, MemberInfo>()
   collectMember(node, program, members)
   for (let changed = true; changed;) {
     changed = false
@@ -330,7 +326,7 @@ function addMutableOuterRead(effects: FunctionEffects, binding: OuterBinding): b
   return true
 }
 
-function collectMember(node: FunctionLikeNode, program: Program, members: Map<FunctionLikeNode, MemberInfo>) {
+function collectMember(node: FunctionImplementationNode, program: Program, members: Map<FunctionImplementationNode, MemberInfo>) {
   if (members.has(node) || effectsCache.has(node)) return
   const member: MemberInfo = {
     effects: noEffects(),
@@ -356,7 +352,7 @@ type Scope = {
 // Methods that store their arguments inside the receiver.
 const retainingMethodNames = new Set(['push', 'unshift', 'splice', 'fill'])
 
-function buildScope(node: FunctionLikeNode, program: Program): Scope {
+function buildScope(node: FunctionImplementationNode, program: Program): Scope {
   const paramIndexByBinding = new Map<BindingKey, number>()
   node.parameters.forEach((parameter, index) => {
     for (const binding of bindingKeys(parameter.name, program)) paramIndexByBinding.set(binding, index)
@@ -380,7 +376,7 @@ function buildScope(node: FunctionLikeNode, program: Program): Scope {
     if (ts.isClassDeclaration(current) && current.name != null) {
       localBindings.add(bindingKey(current.name, program))
     }
-    if (current !== node && isFunctionLike(current)) return
+    if (current !== node && isFunctionImplementation(current)) return
     if (ts.isCatchClause(current) && current.variableDeclaration != null) {
       for (const binding of bindingKeys(current.variableDeclaration.name, program)) localBindings.add(binding)
     }
@@ -665,11 +661,11 @@ function classElementAccessSymbol(access: ts.ElementAccessExpression, checker: t
 }
 
 function collectWrites(
-  node: FunctionLikeNode,
+  node: FunctionImplementationNode,
   program: Program,
   member: MemberInfo,
   classifiers: Classifiers,
-  members: Map<FunctionLikeNode, MemberInfo>,
+  members: Map<FunctionImplementationNode, MemberInfo>,
 ) {
   const addMutation = (roots: RootKind[]) => {
     addMutationRoots(member.effects.mutations.certain, roots)
@@ -698,7 +694,7 @@ function collectWrites(
   }
 
   const visit = (current: ts.Node) => {
-    if (isFunctionLike(current)) return
+    if (isFunctionImplementation(current)) return
     if (ts.isIdentifier(current)) {
       const binding = mutableOuterRead(current, classifiers, program)
       if (binding != null) addMutableOuterRead(member.effects, binding)
@@ -882,7 +878,7 @@ export const lengthBearingConstructorNames = new Set([
   'BigInt64Array', 'BigUint64Array',
 ])
 
-function functionValuedArgument(argument: ts.Expression, program: Program): {node: FunctionLikeNode; program: Program} | null {
+function functionValuedArgument(argument: ts.Expression, program: Program): FunctionImplementationRef | null {
   const current = unwrapExpression(argument)
   if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) return {node: current, program}
   if (ts.isIdentifier(current)) {
@@ -992,7 +988,7 @@ function expressionRootBindings(expression: ts.Expression, program: Program): Bi
   const visit = (current: ts.Node) => {
     // Type positions name types, not values; nothing flows through them.
     if (ts.isTypeNode(current)) return
-    if (isFunctionLike(current)) return
+    if (isFunctionImplementation(current)) return
     if (ts.isExpression(current) && !expressionHasMutableType(current, program)) return
     if (ts.isIdentifier(current)) {
       roots.push(bindingKey(current, program))
@@ -1030,14 +1026,4 @@ function expressionRootBindings(expression: ts.Expression, program: Program): Bi
   }
   visit(expression)
   return [...new Set(roots)]
-}
-
-function isFunctionLike(node: ts.Node): node is FunctionLikeNode {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isConstructorDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
-    || ts.isSetAccessorDeclaration(node)
 }

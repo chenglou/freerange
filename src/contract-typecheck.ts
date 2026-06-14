@@ -8,6 +8,7 @@ import {
   type TypeContractTemplate,
 } from './type-contracts.ts'
 import type {FitFunction} from './modules.ts'
+import {isFunctionImplementation} from './function-shape.ts'
 import {formatTypeScriptDiagnostics} from './ts-diagnostics.ts'
 import {rowAxisUnionTypeText} from './sequence-facts.ts'
 import {
@@ -233,7 +234,7 @@ class VirtualContractTypeCheckBuilder {
     const bodyStartSpecs = contractSpecs.filter(spec => !specMentionsReturn(spec))
     const returnSpecs = contractSpecs.filter(spec => specMentionsReturn(spec))
 
-    if (body != null && bodyStartSpecs.length > 0) {
+    if (bodyStartSpecs.length > 0) {
       if (ts.isBlock(body)) {
         this.addInsertion(
           body.getStart(this.program.sourceFile) + 1,
@@ -242,14 +243,14 @@ class VirtualContractTypeCheckBuilder {
       }
     }
 
-    if (body != null && ts.isBlock(body)) {
+    if (ts.isBlock(body)) {
       this.addFunctionBodySpecs(fn, returnType)
       this.addFunctionTypeBoundaryChecks(fn, returnType)
       for (const statement of returnStatementsIn(body)) {
         if (statement.expression == null) continue
         this.addReturnReplacement(fn, fn.name, statement, returnSpecs, returnType)
       }
-    } else if (body != null && ts.isArrowFunction(fn.node) && ts.isExpression(body)) {
+    } else if (ts.isArrowFunction(fn.node) && ts.isExpression(body)) {
       const inlineReturnSpecs = fn.bodySpecs.returnSpecsByNode.get(fn.node) ?? []
       const blocks = [
         ...blocksForSpecs(this.program, fn, fn.name, bodyStartSpecs, this.lowerOptions()),
@@ -1056,7 +1057,7 @@ function contractDiagnosticLocation(span: Span): {start: number; length: number}
 function returnStatementsIn(body: ts.Block): ts.ReturnStatement[] {
   const result: ts.ReturnStatement[] = []
   const visit = (node: ts.Node) => {
-    if (node !== body && isFunctionLikeWithBody(node)) return
+    if (node !== body && isFunctionImplementation(node)) return
     if (ts.isReturnStatement(node)) {
       result.push(node)
       return
@@ -1065,14 +1066,6 @@ function returnStatementsIn(body: ts.Block): ts.ReturnStatement[] {
   }
   visit(body)
   return result
-}
-
-function isFunctionLikeWithBody(node: ts.Node): boolean {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
 }
 
 function containingStatement(node: ts.Node): ts.Statement | null {

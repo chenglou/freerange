@@ -16,6 +16,7 @@ import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
+import {isFunctionImplementation} from '../../src/function-shape.ts'
 
 const positiveFiles = ['tests/patterns/patterns.ts', 'tests/patterns/loop-patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
 const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/patterns/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
@@ -23,6 +24,41 @@ const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('../..', import.meta.url).pathname
 const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
+
+const callableFamilyProgram = buildFitSourceFile('callable-family.ts', `
+export default () => 1
+export const arrow = () => 1
+export function declared() { return 1 }
+class Box {
+  constructor() {}
+  method() { return 1 }
+  static method() { return 1 }
+  get value() { return 1 }
+  set value(next: number) { void next }
+}
+`, readTopLevelGlobal)
+const expectedCallableNames = [
+  'default',
+  'arrow',
+  'declared',
+  'Box.constructor',
+  'Box.method',
+  'Box.static.method',
+  'Box.value',
+  'Box.set.value',
+]
+const callableFamilyNames = [...callableFamilyProgram.functions.keys()]
+if (
+  expectedCallableNames.some(name => !callableFamilyNames.includes(name))
+  || callableFamilyNames.some(name => !expectedCallableNames.includes(name))
+  || [...callableFamilyProgram.functions.values()].some(fn => !isFunctionImplementation(fn.node))
+) {
+  console.error('expected every supported function implementation to share one indexed declaration family')
+  console.error(JSON.stringify(callableFamilyNames))
+  process.exitCode = 1
+} else {
+  console.log('functions: one implementation family and canonical class-member names')
+}
 
 function verifyFitSourceWithCallsites(file: string, sourceText: string) {
   const program = buildFitSourceFile(file, sourceText, readTopLevelGlobal)

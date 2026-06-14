@@ -7,8 +7,8 @@ import {
   type LinearConstraint,
   type Value,
 } from '../domain.ts'
-import type {FitFunction} from '../modules.ts'
 import type {PreparedCall} from '../prepared-call.ts'
+import type {ResolvedFunctionTarget} from './call-targets.ts'
 
 export type InterpreterIssue = {
   kind: 'unsupported'
@@ -86,15 +86,9 @@ export type InterpreterClaim =
 export type InterpreterCall = {
   expression: ts.CallExpression | ts.PropertyAccessExpression
   callName: string
-  program: Program
-  functionName: string
-  fn: FitFunction
+  target: ResolvedFunctionTarget
   prepared: PreparedCall
   fallback: Value | null
-  imported?: {
-    localName: string
-    binding: Extract<import('../check-types.ts').ImportedBinding, {kind: 'resolved'}>
-  }
   thisValue?: Value
 }
 

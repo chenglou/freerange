@@ -1,4 +1,5 @@
 import * as ts from 'typescript'
+import {isFunctionImplementation} from './function-shape.ts'
 
 export type FitDomainPath = {
   root: string
@@ -439,7 +440,7 @@ function collectBodyFitSpecIndex(
   ignoredFunctions: Set<ts.Node> = new Set(),
 ) {
   const visit = (node: ts.Node) => {
-    if (node !== root && isFunctionLikeWithBodyNode(node)) {
+    if (node !== root && isFunctionImplementation(node)) {
       if (ignoredFunctions.has(node)) return
       collectUnsupportedNestedFitComments(sourceText, node, index)
       return
@@ -514,16 +515,6 @@ function topLevelDeclarationOnly(statement: ts.Statement) {
     || ts.isTypeAliasDeclaration(statement)
     || ts.isModuleDeclaration(statement)
     || ts.isEnumDeclaration(statement)
-}
-
-function isFunctionLikeWithBodyNode(node: ts.Node) {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isConstructorDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
-    || ts.isSetAccessorDeclaration(node)
 }
 
 function fitCommentLines(sourceText: string, node: ts.Node): FitCommentLine[][] {

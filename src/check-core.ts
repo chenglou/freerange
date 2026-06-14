@@ -47,7 +47,6 @@ import {
   type FitInferSummary,
   type FunctionContractProof,
   type Program,
-  type ResolvedCallTarget,
 } from './check-types.ts'
 import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
@@ -104,7 +103,7 @@ import {
   type CheckBoundary,
 } from './source-boundary.ts'
 import {programGlobalEnv} from './program-env.ts'
-import {functionInputRoots} from './function-shape.ts'
+import {functionInputRoots, isFunctionImplementation} from './function-shape.ts'
 import {
   arrayPatternElementValue,
   unknownResultValue,
@@ -625,7 +624,7 @@ function findVariableDeclaration(node: ts.Node | undefined, name: string): ts.Va
   let found: ts.VariableDeclaration | null = null
   const visit = (current: ts.Node) => {
     if (found != null) return
-    if (current !== node && isFunctionLike(current)) return
+    if (current !== node && isFunctionImplementation(current)) return
     if (ts.isVariableDeclaration(current) && ts.isIdentifier(current.name) && current.name.text === name) {
       found = current
       return
@@ -634,15 +633,6 @@ function findVariableDeclaration(node: ts.Node | undefined, name: string): ts.Va
   }
   visit(node)
   return found
-}
-
-function isFunctionLike(node: ts.Node) {
-  return ts.isFunctionDeclaration(node)
-    || ts.isFunctionExpression(node)
-    || ts.isArrowFunction(node)
-    || ts.isMethodDeclaration(node)
-    || ts.isGetAccessorDeclaration(node)
-    || ts.isConstructorDeclaration(node)
 }
 
 function contextForScopedFitExpression(expression: FitExpressionLike, context: EvalContext): EvalContext {
@@ -983,15 +973,16 @@ function evaluateStaticPathValue(envValue: Value, path: StaticPath): Value {
 }
 
 function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame, rootContext: EvalContext): Value | null {
+  const resolvedTarget = call.target
   if (rootContext.callObligations == null) return null
   if (rootContext.contractExpression === true && rootContext.contractExpressionProblems != null) {
-    const purity = functionPurity(call.fn.node, call.program)
+    const purity = functionPurity(resolvedTarget.fn.node, resolvedTarget.program)
     switch (purity.kind) {
       case 'pure':
         break
       case 'impure':
       case 'unknown': {
-        const reason = `helper ${call.functionName} is not pure: ${purity.reason}`
+        const reason = `helper ${resolvedTarget.fn.name} is not pure: ${purity.reason}`
         rootContext.contractExpressionProblems.push(reason)
         return call.fallback ?? unknown(reason)
       }
@@ -1006,22 +997,17 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
   const callLine = lineNumberForNode(frame.program.sourceFile, call.expression)
   const target = ts.isCallExpression(call.expression) ? unwrapExpression(call.expression.expression) : call.expression
   const receiverText = ts.isPropertyAccessExpression(target) ? target.expression.getText() : undefined
-  const callSiteBindings = callSiteBindingsFor(call.fn, call.prepared.parameters, receiverText)
-  if (call.program === frame.program) {
-    return evaluateLocalFunctionCall(call.functionName, call.fn, call.prepared, callContext, {
+  const callSiteBindings = callSiteBindingsFor(resolvedTarget.fn, call.prepared.parameters, receiverText)
+  if (resolvedTarget.program === frame.program) {
+    return evaluateLocalFunctionCall(resolvedTarget.fn.name, resolvedTarget.fn, call.prepared, callContext, {
       callText,
       callLine,
       fallback: call.fallback,
       callSiteBindings,
     })
   }
-  if (call.imported == null) return null
-  return evaluateImportedFunctionCall(call.callName, {
-    kind: 'function',
-    program: call.program,
-    functionName: call.functionName,
-    imported: call.imported,
-  }, call.fn, call.prepared, callText, callLine, callContext, call.fallback, callSiteBindings)
+  if (resolvedTarget.imported == null) return null
+  return evaluateImportedFunctionCall(call.callName, resolvedTarget, call.prepared, callText, callLine, callContext, call.fallback, callSiteBindings)
 }
 
 function evaluateInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext, evaluate: () => Value): Value {
@@ -1413,8 +1399,7 @@ function evaluateLocalFunctionCall(
 
 function evaluateImportedFunctionCall(
   callName: string,
-  target: Extract<ResolvedCallTarget, {kind: 'function'}>,
-  fn: FitFunction,
+  target: import('./interpreter/call-targets.ts').ResolvedFunctionTarget,
   prepared: PreparedCall,
   callText: string,
   callLine: number,
@@ -1422,19 +1407,20 @@ function evaluateImportedFunctionCall(
   returnTypeFallback: Value | null,
   callSiteBindings: CallSiteBindings,
 ): Value {
+  const fn = target.fn
   const contractSpecs = preparedFunctionContracts(target.program, fn).contractSpecs
-  const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${target.functionName}Result`, fn.node, target.program)
+  const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${fn.name}Result`, fn.node, target.program)
   if (target.imported == null) return resolvedReturnTypeFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
   if (contractSpecs.length === 0) {
     return resolvedReturnTypeFallback ?? unknown(importedContractUnavailableReason(
       callName,
       target.imported.binding,
-      `resolved to ${target.program.file}#${target.functionName}, but that function has no @fit contract`,
+      `resolved to ${target.program.file}#${fn.name}, but that function has no @fit contract`,
     ))
   }
-  if (!shouldRecordCallObligations(context)) return resolvedReturnTypeFallback ?? unknown(`Imported call ${target.functionName} contract was not used outside a @fit claim`)
+  if (!shouldRecordCallObligations(context)) return resolvedReturnTypeFallback ?? unknown(`Imported call ${fn.name} contract was not used outside a @fit claim`)
 
-  const proof = verifyFunctionContract(target.program, target.functionName, context.contractCache)
+  const proof = verifyFunctionContract(target.program, fn.name, context.contractCache)
   if (proof.status !== 'pass') return unknown(importedContractFailureReason(callName, target.imported.binding, proof))
 
   const obligations = verifyCallGivenSpecs(
@@ -1446,7 +1432,7 @@ function evaluateImportedFunctionCall(
     {record: true, callLine, callSiteBindings},
     callContractEvaluators,
   )
-  if (obligations !== 'pass') return unknown(`Imported call ${target.functionName} precondition was not proven`)
+  if (obligations !== 'pass') return unknown(`Imported call ${fn.name} precondition was not proven`)
 
   return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, prepared, context.contractCache, {
     kind: 'imported',

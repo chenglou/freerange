@@ -14,7 +14,7 @@ import {
   type TypeContractResult,
   type TypeContractUnsupported,
 } from './type-contracts.ts'
-import {isFunctionLikeWithBody} from './function-shape.ts'
+import {isFunctionImplementation} from './function-shape.ts'
 
 export type BodyTypeContractIndex = {
   variables: Map<ts.VariableDeclaration, TypeContractResult<FitCheckSpec>>
@@ -92,7 +92,6 @@ function buildFunctionContractSource(program: Program, fn: FitFunction): Functio
 function collectFunctionBodyTypeContracts(program: Program, fn: FitFunction): BodyTypeContractIndex {
   const index = emptyBodyTypeContractIndex()
   const body = fn.node.body
-  if (body == null) return index
   if (ts.isArrowFunction(fn.node) && ts.isExpression(body)) {
     addReturnTypeContract(index, fn.node, typeCheckContractForExpressionBoundary(program, body, fitReturnPublicRoot))
     return index
@@ -104,7 +103,7 @@ function collectFunctionBodyTypeContracts(program: Program, fn: FitFunction): Bo
 function collectTopLevelBodyTypeContracts(program: Program): BodyTypeContractIndex {
   const index = emptyBodyTypeContractIndex()
   const visit = (node: ts.Node) => {
-    if (isFunctionLikeWithBody(node)) return
+    if (isFunctionImplementation(node)) return
     addVariableTypeContract(program, node, index)
     ts.forEachChild(node, visit)
   }
@@ -114,7 +113,7 @@ function collectTopLevelBodyTypeContracts(program: Program): BodyTypeContractInd
 
 function collectBodyTypeContracts(program: Program, root: ts.Node, index: BodyTypeContractIndex) {
   const visit = (node: ts.Node) => {
-    if (node !== root && isFunctionLikeWithBody(node)) return
+    if (node !== root && isFunctionImplementation(node)) return
     addVariableTypeContract(program, node, index)
     if (ts.isReturnStatement(node) && node.expression != null) {
       addReturnTypeContract(index, node, typeCheckContractForExpressionBoundary(program, node.expression, fitReturnPublicRoot))

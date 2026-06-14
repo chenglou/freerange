@@ -1,6 +1,7 @@
 import {
   importedImpure as noisy,
   importedPure as identity,
+  importedPureCallback,
 } from './imported-barrel.ts'
 import * as importedHelpers from './imported-barrel.ts'
 import importedDefaultPure from './imported-helper.ts'
@@ -51,5 +52,20 @@ export function contractUsesImportedAlias() {
  * return <= noisy()
  */
 export function contractRejectsImportedAlias() {
+  return 0
+}
+
+/** @fit
+ * return >= 0
+ */
+export function importedNamedCallbackKeepsSourceProgram(values: number[]) {
+  values.map(importedPureCallback)
+  return values.length
+}
+
+/** @fit
+ * return <= importedPureCallback(0)
+ */
+export function contractUsesImportedCallbackAfterMap() {
   return 0
 }

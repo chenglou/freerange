@@ -7,21 +7,25 @@ import {buildFitSourceFile} from '../../src/modules.ts'
 import {verifyFitFiles} from '../../src/reports.ts'
 import {
   contractRejectsImportedAlias,
+  contractUsesImportedCallbackAfterMap,
   contractUsesImportedAlias,
   importedAliasImpure,
   importedAliasPure,
   importedDefaultAliasPure,
   importedNamespaceImpure,
   importedNamespacePure,
+  importedNamedCallbackKeepsSourceProgram,
 } from './imported-caller.ts'
 
 void contractRejectsImportedAlias
+void contractUsesImportedCallbackAfterMap
 void contractUsesImportedAlias
 void importedAliasImpure
 void importedAliasPure
 void importedDefaultAliasPure
 void importedNamespaceImpure
 void importedNamespacePure
+void importedNamedCallbackKeepsSourceProgram
 
 function purityOf(name: string, source: string): Purity['kind'] {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
@@ -116,6 +120,7 @@ const impureNamespaceClaim = importedPurity.checks.find(check => check.functionN
 const defaultClaim = importedPurity.checks.find(check => check.functionName === 'importedDefaultAliasPure' && check.text === 'pure')
 const pureContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedAlias' && check.text === 'return <= identity()')
 const impureContract = importedPurity.checks.find(check => check.functionName === 'contractRejectsImportedAlias' && check.text === 'return <= noisy()')
+const callbackContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedCallbackAfterMap' && check.text === 'return <= importedPureCallback(0)')
 if (
   pureClaim?.status !== 'pass'
   || impureClaim?.status !== 'fail'
@@ -124,13 +129,14 @@ if (
   || defaultClaim?.status !== 'pass'
   || pureContract?.status !== 'pass'
   || impureContract?.status !== 'unknown'
+  || callbackContract?.status !== 'pass'
   || impureClaim.reason?.includes('observes the environment') !== true
   || impureNamespaceClaim.reason?.includes('observes the environment') !== true
   || impureContract.reason?.includes('helper importedImpure is not pure: observes the environment') !== true
 ) {
-  console.error('purity: expected imports, aliases, and re-exports to share binding identity')
+  console.error('purity: expected imports, aliases, callbacks, and re-exports to keep source identity')
   console.error(JSON.stringify(importedPurity.checks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('purity: imported aliases and contract helpers share binding identity')
+  console.log('purity: imported aliases, callbacks, and contract helpers share source identity')
 }

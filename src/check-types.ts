@@ -1,4 +1,3 @@
-import type * as ts from 'typescript'
 import type {
   ConstraintSource,
   LinearConstraint,
@@ -133,25 +132,6 @@ export type Program = FitFile<Value>
 
 export type ImportedBinding = FitImportBinding<Program>
 
-export type ResolvedCallTarget =
-  | {
-      kind: 'math'
-      name: string
-    }
-  | {
-      kind: 'function'
-      program: Program
-      functionName: string
-      imported?: {
-        localName: string
-        binding: Extract<ImportedBinding, {kind: 'resolved'}>
-      }
-    }
-  | {
-      kind: 'unresolved'
-      reason: string
-    }
-
 export type FunctionContractProof =
   | {status: 'verifying'}
   | {status: FitProofStatus; checks: FitCheck[]}
@@ -175,8 +155,6 @@ export type EvalContext = {
   insideLoop?: true
 }
 
-export type ArrayCallbackFunction = ts.ArrowFunction | ts.FunctionExpression
-
 export type LocalizeOptions = {
   preserveLinear?: boolean
 }
@@ -191,6 +169,6 @@ export type ImportedContractSource = {
   sourceFunctionName: string
 }
 
-export type FunctionContractSource = ImportedContractSource & {
+export type ContractSummarySource = ImportedContractSource & {
   kind: 'imported' | 'local'
 }
