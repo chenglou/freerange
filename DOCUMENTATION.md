@@ -123,7 +123,7 @@ function layoutPhotoGrid(availableWidth: number, photos: {naturalWidth: number}[
 }
 ```
 
-Given the input TS types and Freerange's extra specs, the function bodies and calls are analyzed through "abstract interpretation", then checked against those specs.
+Given the input TS types and Freerange's extra specs, the function bodies and calls are analyzed through "abstract interpretation" and "symbolic execution", then checked against those specs.
 
 Let's run `fr infer gallery.ts`. Look at how much information Freerange captures, statically, for you and AI agents to verify:
 
