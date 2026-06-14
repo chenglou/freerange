@@ -33,6 +33,7 @@ import {
   sameNumberComputation,
   unknownNumber,
   type Assumption,
+  type BranchArm,
   type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
@@ -40,11 +41,15 @@ import {
 } from './domain.ts'
 import {
   assumptionsKey,
-  branchChoiceKey,
-  isBranchChoice,
   linearConstraints,
   mergeAssumptions,
+  sharedAssumptions,
 } from './assumptions.ts'
+import {
+  branchRelationship,
+  branchesConflict,
+  mergeBranchArms,
+} from './branch-context.ts'
 import {
   binaryExpression,
   cleanLinear,
@@ -100,24 +105,43 @@ export type ComparisonProof = {
 export type ReachableNumberCase = {
   value: NumberValue
   caseAssumptions: Assumption[]
+  caseBranches: BranchArm[]
   assumptions: Assumption[]
+  branches: BranchArm[]
 }
 
 export type ReachableNumberCasePair = {
   left: NumberValue
   right: NumberValue
   caseAssumptions: Assumption[]
+  caseBranches: BranchArm[]
   assumptions: Assumption[]
+  branches: BranchArm[]
+  separateBranches: boolean
 }
 
+// Repeated checks of the same case assumptions dominated demo verification.
+// Their identity is stable, and the bounded cache is only an acceleration.
 const caseReachabilityCache = new Map<string, boolean>()
 const caseReachabilityCacheLimit = 4096
 
-export function proveComparison(left: Value, op: ComparisonOperator, right: Value, assumptions: Assumption[]): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
-  return proofStatus(proveComparisonWithStep(left, op, right, assumptions))
+export function proveComparison(
+  left: Value,
+  op: ComparisonOperator,
+  right: Value,
+  assumptions: Assumption[],
+  branches: BranchArm[] = [],
+): {status: 'pass' | 'fail' | 'unknown'; reason?: string} {
+  return proofStatus(proveComparisonWithStep(left, op, right, assumptions, branches))
 }
 
-export function proveComparisonWithStep(left: Value, op: ComparisonOperator, right: Value, assumptions: Assumption[]): ComparisonProof {
+export function proveComparisonWithStep(
+  left: Value,
+  op: ComparisonOperator,
+  right: Value,
+  assumptions: Assumption[],
+  branches: BranchArm[] = [],
+): ComparisonProof {
   const literalEquality = proveLiteralEquality(left, op, right)
   if (literalEquality != null) return literalEquality
   const structuralEquality = proveStructuralEquality(left, op, right)
@@ -134,7 +158,8 @@ export function proveComparisonWithStep(left: Value, op: ComparisonOperator, rig
     let passStatus: {status: 'pass'} | null = null
     let failStatus: {status: 'fail'; reason?: string} | null = null
     let unknownStatus: {status: 'unknown'; reason?: string} | null = null
-    const pairs = reachableNumberCasePairs(left, right, assumptions)
+    const pairs = reachableNumberCasePairs(left, right, assumptions, branches)
+    const separateBranches = pairs.some(pair => pair.separateBranches)
     if (pairs.length === 0) {
       return {status: 'unknown', reason: 'No reachable numeric alternatives were available', step: branchComparisonStep()}
     }
@@ -156,7 +181,9 @@ export function proveComparisonWithStep(left: Value, op: ComparisonOperator, rig
           break
       }
     }
-    const loss = numberCaseCombinationLoss(left, right)
+    const loss = separateBranches
+      ? {kind: 'separate-branches' as const}
+      : numberCaseCombinationLoss(left, right)
     if (loss != null && (
       unknownStatus != null
       || (passStatus != null && failStatus != null)
@@ -599,45 +626,20 @@ export function comparisonFactContradictedByAssumptions(fact: LinearConstraint, 
 }
 
 export function assumptionsAreReachable(assumptions: Assumption[]) {
-  const branchChoices = new Map<string, boolean>()
-  for (const assumption of assumptions) {
-    if (!isBranchChoice(assumption)) continue
-    const key = branchChoiceKey(assumption)
-    const existing = branchChoices.get(key)
-    if (existing != null && existing !== assumption.outcome) return false
-    branchChoices.set(key, assumption.outcome)
-  }
   const earlier: Assumption[] = []
   for (const assumption of assumptions) {
-    if (!isBranchChoice(assumption)
-      && comparisonFactContradictedByAssumptions(assumption, earlier)) return false
+    if (comparisonFactContradictedByAssumptions(assumption, earlier)) return false
     earlier.push(assumption)
   }
   return true
 }
 
-function caseAssumptionsAreReachable(
-  base: Assumption[],
-  added: Assumption[],
-) {
-  if (added.length === 0) return true
-  const branchChoices = new Map<string, boolean>()
-  for (const assumption of base) {
-    if (isBranchChoice(assumption)) {
-      branchChoices.set(branchChoiceKey(assumption), assumption.outcome)
-    }
-  }
-  for (const assumption of added) {
-    if (!isBranchChoice(assumption)) continue
-    const key = branchChoiceKey(assumption)
-    const existing = branchChoices.get(key)
-    if (existing != null && existing !== assumption.outcome) return false
-    branchChoices.set(key, assumption.outcome)
-  }
-  const key = assumptionsKey(added)
+function caseAssumptionsAreReachable(assumptions: Assumption[]) {
+  if (assumptions.length === 0) return true
+  const key = assumptionsKey(assumptions)
   const cached = caseReachabilityCache.get(key)
   if (cached != null) return cached
-  const reachable = assumptionsAreReachable(added)
+  const reachable = assumptionsAreReachable(assumptions)
   if (caseReachabilityCache.size >= caseReachabilityCacheLimit) {
     caseReachabilityCache.clear()
   }
@@ -806,19 +808,24 @@ export function provableBounds(value: NumberValue, assumptions: Assumption[]): {
 export function reachableNumberCases(
   value: NumberValue,
   assumptions: Assumption[],
+  branches: BranchArm[] = [],
 ): ReachableNumberCase[] {
   const cases: ReachableNumberCase[] = []
-  for (const branch of numberBranches(value)) {
-    const effectiveAssumptions = branch.assumptions.length === 0
+  for (const numberCase of numberBranches(value)) {
+    const effectiveBranches = mergeBranchArms(branches, numberCase.branches)
+    if (branchesConflict(effectiveBranches)) continue
+    const effectiveAssumptions = numberCase.assumptions.length === 0
       ? assumptions
-      : mergeAssumptions(assumptions, branch.assumptions)
-    if (!caseAssumptionsAreReachable(assumptions, branch.assumptions)) continue
-    const projected = projectReachableNumberValues([branch.value], effectiveAssumptions)
+      : mergeAssumptions(assumptions, numberCase.assumptions)
+    if (!caseAssumptionsAreReachable(numberCase.assumptions)) continue
+    const projected = projectReachableNumberValues([numberCase.value], effectiveAssumptions)
     if (projected == null) continue
     cases.push({
       value: projected[0]!,
-      caseAssumptions: branch.assumptions,
+      caseAssumptions: numberCase.assumptions,
+      caseBranches: numberCase.branches,
       assumptions: effectiveAssumptions,
+      branches: effectiveBranches,
     })
   }
   return cases
@@ -828,25 +835,55 @@ export function reachableNumberCasePairs(
   left: NumberValue,
   right: NumberValue,
   assumptions: Assumption[],
+  branches: BranchArm[] = [],
 ): ReachableNumberCasePair[] {
   const pairs: ReachableNumberCasePair[] = []
   for (const leftCase of numberBranches(left)) {
     for (const rightCase of numberBranches(right)) {
-      const caseAssumptions = mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
-      const effectiveAssumptions = caseAssumptions.length === 0
-        ? assumptions
-        : mergeAssumptions(assumptions, caseAssumptions)
-      if (!caseAssumptionsAreReachable(assumptions, caseAssumptions)) continue
-      const projected = projectReachableNumberValues(
-        [leftCase.value, rightCase.value],
-        effectiveAssumptions,
+      const relationship = branchRelationship(
+        branches,
+        leftCase.branches,
+        rightCase.branches,
       )
+      if (relationship === 'conflict') continue
+      const separate = relationship === 'separate'
+      const caseAssumptions = separate
+        ? sharedAssumptions([leftCase.assumptions, rightCase.assumptions])
+        : mergeAssumptions(leftCase.assumptions, rightCase.assumptions)
+      const effectiveAssumptions = mergeAssumptions(assumptions, caseAssumptions)
+      let projected: NumberValue[] | null
+      if (separate) {
+        if (
+          !caseAssumptionsAreReachable(leftCase.assumptions)
+          || !caseAssumptionsAreReachable(rightCase.assumptions)
+        ) continue
+        const projectedLeft = projectReachableNumberValues(
+          [leftCase.value],
+          mergeAssumptions(assumptions, leftCase.assumptions),
+        )
+        const projectedRight = projectReachableNumberValues(
+          [rightCase.value],
+          mergeAssumptions(assumptions, rightCase.assumptions),
+        )
+        projected = projectedLeft == null || projectedRight == null
+          ? null
+          : [projectedLeft[0]!, projectedRight[0]!]
+      } else {
+        if (!caseAssumptionsAreReachable(caseAssumptions)) continue
+        projected = projectReachableNumberValues(
+          [leftCase.value, rightCase.value],
+          effectiveAssumptions,
+        )
+      }
       if (projected == null) continue
       pairs.push({
         left: projected[0]!,
         right: projected[1]!,
         caseAssumptions,
+        caseBranches: mergeBranchArms(leftCase.branches, rightCase.branches),
         assumptions: effectiveAssumptions,
+        branches: mergeBranchArms(branches, leftCase.branches, rightCase.branches),
+        separateBranches: separate,
       })
     }
   }

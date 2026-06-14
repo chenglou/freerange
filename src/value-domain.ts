@@ -1,6 +1,7 @@
 import {linearVariable} from './linear.ts'
 import {joinArraySummary} from './array-summary.ts'
 import {mergeAssumptions} from './assumptions.ts'
+import {mergeBranchArms} from './branch-context.ts'
 import {
   joinNumberValues,
   linearNameForExpression,
@@ -9,17 +10,16 @@ import {
   numberBranches,
   numberValue,
   withNumberCases,
-  withNumberCaseSource,
 } from './number-domain.ts'
 import type {
   Assumption,
   ArrayValue,
+  BranchArm,
   LiteralPrimitive,
   LiteralValue,
   NullableValue,
   NullishKind,
   NullValue,
-  NumberCaseSource,
   NumberValue,
   ObjectValue,
   ReferenceIds,
@@ -130,67 +130,41 @@ export function unknown(reason: string): UnknownValue {
   return {kind: 'unknown', reason}
 }
 
-export function valueWithAssumptions(value: Value, assumptions: Assumption[]): Value {
-  if (assumptions.length === 0) return value
+export function valueWithAssumptions(
+  value: Value,
+  assumptions: Assumption[],
+  branches: BranchArm[] = [],
+): Value {
+  if (assumptions.length === 0 && branches.length === 0) return value
   if (value.kind === 'number') {
     return withNumberCases(value, numberBranches(value).map(branch => ({
       value: branch.value,
       assumptions: mergeAssumptions(branch.assumptions, assumptions),
+      branches: mergeBranchArms(branch.branches, branches),
     })))
   }
   if (value.kind === 'literal') return value
   if (value.kind === 'object') {
     const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, valueWithAssumptions(prop, assumptions))
+    for (const [name, prop] of value.props) props.set(name, valueWithAssumptions(prop, assumptions, branches))
     return {...value, props}
   }
   if (value.kind === 'array') {
     return {
       ...value,
-      length: valueWithAssumptions(value.length, assumptions) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(element => valueWithAssumptions(element, assumptions)),
-      element: value.element == null ? null : valueWithAssumptions(value.element, assumptions),
+      length: valueWithAssumptions(value.length, assumptions, branches) as NumberValue,
+      elements: value.elements == null ? null : value.elements.map(element => valueWithAssumptions(element, assumptions, branches)),
+      element: value.element == null ? null : valueWithAssumptions(value.element, assumptions, branches),
       summary: value.summary == null ? null : {
         ...value.summary,
-        advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
-        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithAssumptions(value.summary.lastEnd.value, assumptions) as NumberValue},
-        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions) as NumberValue})),
+        advances: value.summary.advances.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
+        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithAssumptions(value.summary.lastEnd.value, assumptions, branches) as NumberValue},
+        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithAssumptions(fact.value, assumptions, branches) as NumberValue})),
       },
     }
   }
   if (value.kind === 'nullable') {
-    return {...value, present: valueWithAssumptions(value.present, assumptions)}
-  }
-  return value
-}
-
-export function valueWithNumberCaseSource(value: Value, source: NumberCaseSource): Value {
-  if (value.kind === 'number') {
-    return value.cases != null && value.cases.length > 1
-      ? withNumberCaseSource(value, source)
-      : value
-  }
-  if (value.kind === 'object') {
-    const props = new Map<string, Value>()
-    for (const [name, prop] of value.props) props.set(name, valueWithNumberCaseSource(prop, source))
-    return {...value, props}
-  }
-  if (value.kind === 'array') {
-    return {
-      ...value,
-      length: valueWithNumberCaseSource(value.length, source) as NumberValue,
-      elements: value.elements == null ? null : value.elements.map(element => valueWithNumberCaseSource(element, source)),
-      element: value.element == null ? null : valueWithNumberCaseSource(value.element, source),
-      summary: value.summary == null ? null : {
-        ...value.summary,
-        advances: value.summary.advances.map(fact => ({...fact, value: valueWithNumberCaseSource(fact.value, source) as NumberValue})),
-        lastEnd: value.summary.lastEnd == null ? null : {...value.summary.lastEnd, value: valueWithNumberCaseSource(value.summary.lastEnd.value, source) as NumberValue},
-        extentEnds: value.summary.extentEnds.map(fact => ({...fact, value: valueWithNumberCaseSource(fact.value, source) as NumberValue})),
-      },
-    }
-  }
-  if (value.kind === 'nullable') {
-    return {...value, present: valueWithNumberCaseSource(value.present, source)}
+    return {...value, present: valueWithAssumptions(value.present, assumptions, branches)}
   }
   return value
 }

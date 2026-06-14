@@ -38,10 +38,8 @@ export {
   unknownNumber,
   withNumberCases,
   withInheritedNumberCaseLoss,
-  withInheritedNumberCaseSource,
   withCombinedNumberCaseInfo,
   withNumberCaseLoss,
-  withNumberCaseSource,
   numberCaseLossMessage,
   withinGridWindow,
 } from './number-domain.ts'
@@ -63,7 +61,6 @@ export {
   unknownArrayLength,
   unknownObject,
   valueWithAssumptions,
-  valueWithNumberCaseSource,
   valueWithDefaultedUndefined,
 } from './value-domain.ts'
 export type {
@@ -72,8 +69,7 @@ export type {
   ArrayOrigin,
   ArraySummary,
   ArrayValue,
-  BranchChoice,
-  BranchChoiceOperand,
+  BranchArm,
   ConstraintSource,
   LinearConstraint,
   LiteralPrimitive,
@@ -83,7 +79,6 @@ export type {
   NullValue,
   NumberCase,
   NumberCaseLoss,
-  NumberCaseSource,
   NumberComputation,
   NumberValue,
   ObjectValue,

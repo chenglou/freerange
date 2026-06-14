@@ -6,7 +6,6 @@ import {
   formatKnownProofFact,
   knownValueFacts,
 } from './reporting.ts'
-import {isLinearConstraint} from './assumptions.ts'
 import type {
   Assumption,
   LinearConstraint,
@@ -18,9 +17,7 @@ import type {
 export function proofFactsFromValues(values: Value[], assumptions: Assumption[]) {
   const facts: string[] = []
   for (const value of values) facts.push(...proofFactsFromValue(value))
-  for (const assumption of assumptions) {
-    if (isLinearConstraint(assumption)) facts.push(formatAssumptionFact(assumption))
-  }
+  for (const assumption of assumptions) facts.push(formatAssumptionFact(assumption))
   return [...new Set(facts)]
 }
 

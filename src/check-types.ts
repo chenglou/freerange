@@ -144,6 +144,7 @@ export type EvalContext = {
   stack: string[]
   checks: FitCheck[]
   assumptions: Assumption[]
+  branchIds?: {next: number}
   booleanAssumptions?: Map<string, boolean>
   contractCache: Map<string, FunctionContractProof>
   callObligations?: 'record' | 'silent'

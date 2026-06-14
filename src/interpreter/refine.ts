@@ -3,8 +3,6 @@ import {
   literalValue,
   numberWithBounds,
   withNumberCases,
-  type BranchChoice,
-  type BranchChoiceOperand,
   type NullishKind,
   type NumberCase,
   type NumberValue,
@@ -111,7 +109,6 @@ function refineLogicalCondition(frame: InterpreterFrame, expression: ts.BinaryEx
 
 function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression) {
   if (refinePresenceGuard(frame, expression, truth, evaluateExpression)) return
-  addNumericBranchChoice(frame, expression, truth, evaluateExpression)
   const comparison = comparisonForSyntax(expression.operatorToken.kind, truth)
   if (comparison != null && (truth || comparisonOperandsExcludeNaN(frame, expression, evaluateExpression))) {
     addNumberComparisonAssumption(frame, expression.left, comparison, expression.right, evaluateExpression)
@@ -128,73 +125,6 @@ function refineBinaryCondition(frame: InterpreterFrame, expression: ts.BinaryExp
     if (refineLiteralEquality(frame, expression.left, expression.right, equalityTruth, evaluateExpression)) return
     refineLiteralEquality(frame, expression.right, expression.left, equalityTruth, evaluateExpression)
   }
-}
-
-function addNumericBranchChoice(
-  frame: InterpreterFrame,
-  expression: ts.BinaryExpression,
-  truth: boolean,
-  evaluateExpression: EvaluateRefinementExpression,
-) {
-  const comparison = branchChoiceComparison(expression.operatorToken.kind, truth)
-  if (comparison == null) return
-  const left = evaluateExpression(expression.left, frame)
-  const right = evaluateExpression(expression.right, frame)
-  if (left.kind !== 'number' || right.kind !== 'number') return
-  const leftIdentity = numberBranchChoiceIdentity(left)
-  const rightIdentity = numberBranchChoiceIdentity(right)
-  if (leftIdentity == null || rightIdentity == null) return
-
-  const normalized = normalizeBranchChoiceComparison(
-    comparison.op,
-    leftIdentity,
-    rightIdentity,
-  )
-  frame.assumptions = mergeAssumptions(frame.assumptions, [{
-    kind: 'branch-choice',
-    ...normalized,
-    outcome: comparison.outcome,
-  } satisfies BranchChoice])
-}
-
-function branchChoiceComparison(
-  kind: ts.SyntaxKind,
-  truth: boolean,
-): {op: ComparisonOperator; outcome: boolean} | null {
-  switch (kind) {
-    case ts.SyntaxKind.EqualsEqualsEqualsToken:
-    case ts.SyntaxKind.EqualsEqualsToken:
-      return {op: '==', outcome: truth}
-    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
-    case ts.SyntaxKind.ExclamationEqualsToken:
-      return {op: '==', outcome: !truth}
-    case ts.SyntaxKind.LessThanToken:
-      return {op: '<', outcome: truth}
-    case ts.SyntaxKind.LessThanEqualsToken:
-      return {op: '<=', outcome: truth}
-    case ts.SyntaxKind.GreaterThanToken:
-      return {op: '>', outcome: truth}
-    case ts.SyntaxKind.GreaterThanEqualsToken:
-      return {op: '>=', outcome: truth}
-    default:
-      return null
-  }
-}
-
-function normalizeBranchChoiceComparison(
-  op: ComparisonOperator,
-  left: BranchChoiceOperand,
-  right: BranchChoiceOperand,
-): Pick<BranchChoice, 'op' | 'left' | 'right'> {
-  if (op === '>') return {op: '<', left: right, right: left}
-  if (op === '>=') return {op: '<=', left: right, right: left}
-  return {op: op as BranchChoice['op'], left, right}
-}
-
-function numberBranchChoiceIdentity(value: NumberValue): BranchChoiceOperand | null {
-  if (value.linear != null) return {kind: 'linear', value: value.linear, text: value.expr}
-  if (value.expr != null) return {kind: 'expression', text: value.expr}
-  return null
 }
 
 function comparisonOperandsExcludeNaN(
@@ -340,6 +270,7 @@ function refineNumberPathCases(
     cases.push({
       value: pair.left,
       assumptions: mergeAssumptions(pair.caseAssumptions, fact == null ? [] : [fact]),
+      branches: pair.caseBranches,
     })
   }
   if (cases.length === 0) return false
@@ -371,6 +302,7 @@ function refineNumberCaseEquality(
     cases.push({
       value: pair.left,
       assumptions: mergeAssumptions(pair.caseAssumptions, fact == null ? [] : [fact]),
+      branches: pair.caseBranches,
     })
   }
   if (cases.length === 0) return false

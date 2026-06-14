@@ -47,18 +47,21 @@ import {
   unknownObject,
   valueWithAssumptions,
   valueWithDefaultedUndefined,
-  valueWithNumberCaseSource,
   withCombinedNumberCaseInfo,
+  withNumberCaseLoss,
+  withNumberCases,
   unaryNumberComputation,
   type Assumption,
   type ArraySummary,
   type ArrayValue,
+  type BranchArm,
   type LinearConstraint,
   type LiteralPrimitive,
   type NumberValue,
   type Value,
 } from '../domain.ts'
-import {additionalAssumptions, assumptionMentionsRoot, branchChoicesConflict, isBranchChoice, linearConstraints, mergeAssumptions} from '../assumptions.ts'
+import {additionalAssumptions, assumptionMentionsRoot, linearConstraints, mergeAssumptions} from '../assumptions.ts'
+import {mergeBranchArms} from '../branch-context.ts'
 import {
   adjacentElementAccessFacts,
   valueWithRebasedElementPath,
@@ -189,6 +192,7 @@ import {
   envWithAssumptions,
   frameForStateCase,
   hasStateCases,
+  joinStateCaseEnvs,
   reachableStateCases,
   setStateCases,
   stateCaseBudget,
@@ -215,6 +219,14 @@ type InterpreterTopLevelResult = {
 
 type InterpreterExecutionInput = InterpreterStart & {
   hooks?: InterpreterHooks
+}
+
+function freshBranchId(frame: InterpreterFrame) {
+  return frame.branchIds.next++
+}
+
+function branchArm(branchId: number, arm: number): BranchArm {
+  return {branchId, arm}
 }
 
 type IndexedForLoopBound = {
@@ -296,6 +308,10 @@ function interpreterState(frame: InterpreterFrame): InterpreterState {
   return {
     env: frame.env,
     assumptions: frame.assumptions,
+    branches: frame.branches,
+    caseAssumptions: frame.caseAssumptions,
+    changedRoots: frame.changedRoots,
+    separateBranches: frame.separateBranches,
   }
 }
 
@@ -749,6 +765,10 @@ function returnFlow(value: Value, frame: InterpreterFrame): InterpreterFlow {
       value,
       env: new Map(frame.env),
       assumptions: [...frame.assumptions],
+      branches: [...frame.branches],
+      caseAssumptions: [...frame.caseAssumptions],
+      changedRoots: new Set(frame.changedRoots),
+      separateBranches: frame.separateBranches,
     }],
   }
 }
@@ -801,80 +821,143 @@ function evaluateIfStatement(
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
   const repeatable = expressionIsRepeatable(statement.expression, frame.program)
-  const thenFrame = repeatable
-    ? branchFrame(frame, statement.expression, true, '<if-true>', evaluateExpression)
-    : childFrame(frame, new Map(frame.env), '<if-true>')
-  const elseFrame = repeatable
-    ? branchFrame(frame, statement.expression, false, '<if-false>', evaluateExpression)
-    : childFrame(frame, new Map(frame.env), '<if-false>')
+  const branchId = freshBranchId(frame)
+  const thenFrame = controlFlowBranchFrame(
+    frame,
+    statement.expression,
+    true,
+    '<if-true>',
+    branchArm(branchId, 0),
+    repeatable,
+  )
+  const elseFrame = controlFlowBranchFrame(
+    frame,
+    statement.expression,
+    false,
+    '<if-false>',
+    branchArm(branchId, 1),
+    repeatable,
+  )
+  const thenEntryEnv = new Map(thenFrame.env)
+  const elseEntryEnv = new Map(elseFrame.env)
   const thenFlow = evaluateConditionalBranchWithContinuation(statement.thenStatement, thenFrame, continuation, nextIndex)
   const elseFlow: InterpreterFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'}
     : evaluateConditionalBranchWithContinuation(statement.elseStatement, elseFrame, continuation, nextIndex)
   if (thenFlow.kind !== 'fallthrough' && elseFlow.kind !== 'fallthrough') {
-    return joinCompletedFlows(flowWithAssumptions(thenFlow, thenFrame.assumptions), flowWithAssumptions(elseFlow, elseFrame.assumptions), frame)
+    return joinCompletedFlows(flowWithFrameContext(thenFlow, thenFrame), flowWithFrameContext(elseFlow, elseFrame), frame)
   }
   if (continuation != null) {
     if (thenFlow.kind !== 'fallthrough') {
-      return joinCompletedFlows(flowWithAssumptions(thenFlow, thenFrame.assumptions), flowWithAssumptions(evaluateStatements(continuation, elseFrame, nextIndex), elseFrame.assumptions), frame)
+      return joinCompletedFlows(flowWithFrameContext(thenFlow, thenFrame), flowWithFrameContext(evaluateStatements(continuation, elseFrame, nextIndex), elseFrame), frame)
     }
     if (elseFlow.kind !== 'fallthrough') {
-      return joinCompletedFlows(flowWithAssumptions(evaluateStatements(continuation, thenFrame, nextIndex), thenFrame.assumptions), flowWithAssumptions(elseFlow, elseFrame.assumptions), frame)
+      return joinCompletedFlows(flowWithFrameContext(evaluateStatements(continuation, thenFrame, nextIndex), thenFrame), flowWithFrameContext(elseFlow, elseFrame), frame)
     }
   }
   if (thenFlow.kind !== 'fallthrough') {
-    const adopted = adoptFrameState(frame, elseFrame)
+    const adopted = setStateCases(
+      frame,
+      closedBranchStateCases(frame, elseFrame, elseEntryEnv, '<if-false>'),
+    )
     if (adopted.kind === 'overflow') noteStateCaseBudget(frame, adopted)
     return {kind: 'fallthrough'}
   }
   if (elseFlow.kind !== 'fallthrough') {
-    const adopted = adoptFrameState(frame, thenFrame)
+    const adopted = setStateCases(
+      frame,
+      closedBranchStateCases(frame, thenFrame, thenEntryEnv, '<if-true>'),
+    )
     if (adopted.kind === 'overflow') noteStateCaseBudget(frame, adopted)
     return {kind: 'fallthrough'}
   }
   if (frame.loopStack.length > 0) {
-    frame.env = joinBranchFrameEnvs(thenFrame, elseFrame)
+    frame.env = joinStateCaseEnvs([
+      ...closedBranchStateCases(frame, thenFrame, thenEntryEnv, '<if-true>'),
+      ...closedBranchStateCases(frame, elseFrame, elseEntryEnv, '<if-false>'),
+    ])
     return {kind: 'fallthrough'}
   }
   const applied = setStateCases(frame, [
-    ...stateCasesFromFrame(thenFrame).map(stateCase => labeledStateCase(stateCase, '<if-true>')),
-    ...stateCasesFromFrame(elseFrame).map(stateCase => labeledStateCase(stateCase, '<if-false>')),
+    ...closedBranchStateCases(frame, thenFrame, thenEntryEnv, '<if-true>'),
+    ...closedBranchStateCases(frame, elseFrame, elseEntryEnv, '<if-false>'),
   ])
   if (applied.kind === 'overflow') noteStateCaseBudget(frame, applied)
   return {kind: 'fallthrough'}
+}
+
+function closedBranchStateCases(
+  parent: InterpreterFrame,
+  branch: InterpreterFrame,
+  entryEnv: Map<string, Value>,
+  label: string,
+): InterpreterStateCase[] {
+  return stateCasesFromFrame(branch).map(stateCase => {
+    const env = new Map(stateCase.env)
+    const changedRoots = new Set(stateCase.changedRoots)
+    for (const [name, entryValue] of entryEnv) {
+      if (stateCase.env.get(name) !== entryValue) {
+        changedRoots.add(name)
+        continue
+      }
+      const parentValue = parent.env.get(name)
+      if (parentValue != null) env.set(name, parentValue)
+    }
+    return {
+      ...stateCase,
+      env,
+      assumptions: [...parent.assumptions],
+      caseAssumptions: mergeAssumptions(
+        stateCase.caseAssumptions,
+        additionalAssumptions(parent.assumptions, stateCase.assumptions),
+      ),
+      changedRoots,
+      separateBranches: stateCase.separateBranches || parent.partitioned,
+      label: stateCase.label ?? label,
+    }
+  })
+}
+
+function controlFlowBranchFrame(
+  frame: InterpreterFrame,
+  condition: ts.Expression,
+  truth: boolean,
+  name: string,
+  arm: BranchArm,
+  refine: boolean,
+) {
+  const branch = refine
+    ? branchFrame(frame, condition, truth, name, evaluateExpression)
+    : childFrame(frame, new Map(frame.env), name)
+  branch.caseAssumptions = mergeAssumptions(
+    frame.caseAssumptions,
+    additionalAssumptions(frame.assumptions, branch.assumptions),
+  )
+  branch.branches = mergeBranchArms(branch.branches, [arm])
+  return branch
 }
 
 function joinBranchFrameEnvs(left: InterpreterFrame, right: InterpreterFrame): Map<string, Value> {
   return joinFrameEnvs(envWithAssumptions(left.env, left.assumptions), envWithAssumptions(right.env, right.assumptions))
 }
 
-function adoptFrameState(target: InterpreterFrame, source: InterpreterFrame): StateCaseSetResult {
-  if (hasStateCases(source)) {
-    return setStateCases(target, stateCasesFromFrame(source))
+function flowWithFrameContext(flow: InterpreterFlow, frame: InterpreterFrame): InterpreterFlow {
+  if (flow.kind === 'return') {
+    return {
+      kind: 'return',
+      value: valueWithAssumptions(flow.value, frame.assumptions, frame.branches),
+    }
   }
-  target.env = source.env
-  target.assumptions = source.assumptions
-  delete target.stateCases
-  return {kind: 'ok'}
-}
-
-function labeledStateCase(stateCase: InterpreterStateCase, label: string): InterpreterStateCase {
-  return {
-    env: stateCase.env,
-    assumptions: stateCase.assumptions,
-    label: stateCase.label ?? label,
-  }
-}
-
-function flowWithAssumptions(flow: InterpreterFlow, assumptions: Assumption[]): InterpreterFlow {
-  if (flow.kind === 'return') return {kind: 'return', value: valueWithAssumptions(flow.value, assumptions)}
   if (flow.kind === 'return-cases') {
     return {
       kind: 'return-cases',
       cases: flow.cases.map(stateCase => ({
         ...stateCase,
-        value: valueWithAssumptions(stateCase.value, assumptions),
-        assumptions: mergeAssumptions(stateCase.assumptions, assumptions),
+        value: valueWithAssumptions(
+          stateCase.value,
+          mergeAssumptions(stateCase.assumptions, stateCase.caseAssumptions),
+          stateCase.branches,
+        ),
       })),
     }
   }
@@ -902,6 +985,10 @@ function returnCasesFromFlow(flow: InterpreterFlow, frame: InterpreterFrame): In
       value: flow.value,
       env: new Map(frame.env),
       assumptions: [...frame.assumptions],
+      branches: [...frame.branches],
+      caseAssumptions: [...frame.caseAssumptions],
+      changedRoots: new Set(frame.changedRoots),
+      separateBranches: frame.separateBranches,
     }]
   }
   if (flow.kind === 'return-cases') return flow.cases
@@ -909,6 +996,10 @@ function returnCasesFromFlow(flow: InterpreterFlow, frame: InterpreterFrame): In
     value: unknown(`Function ${frame.stack.at(-1) ?? '<unknown>'} did not return`),
     env: new Map(frame.env),
     assumptions: [...frame.assumptions],
+    branches: [...frame.branches],
+    caseAssumptions: [...frame.caseAssumptions],
+    changedRoots: new Set(frame.changedRoots),
+    separateBranches: frame.separateBranches,
   }]
 }
 
@@ -927,8 +1018,50 @@ function returnFlowFromCases(cases: InterpreterReturnCase[], frame: InterpreterF
 function joinedReturnCaseValue(cases: InterpreterReturnCase[]): Value | null {
   const [first, ...rest] = cases
   if (first == null) return null
-  let value = valueWithAssumptions(first.value, first.assumptions)
-  for (const stateCase of rest) value = joinValues(value, valueWithAssumptions(stateCase.value, stateCase.assumptions))
+  let value = valueWithAssumptions(
+    first.value,
+    mergeAssumptions(first.assumptions, first.caseAssumptions),
+    first.branches,
+  )
+  for (const stateCase of rest) {
+    value = joinValues(
+      value,
+      valueWithAssumptions(
+        stateCase.value,
+        mergeAssumptions(stateCase.assumptions, stateCase.caseAssumptions),
+        stateCase.branches,
+      ),
+    )
+  }
+  return cases.some(stateCase => stateCase.separateBranches)
+    ? valueWithSeparateBranchLoss(value)
+    : value
+}
+
+function valueWithSeparateBranchLoss(value: Value): Value {
+  if (value.kind === 'number') {
+    return withNumberCaseLoss(value, {kind: 'separate-branches'})
+  }
+  if (value.kind === 'object') {
+    return {
+      ...value,
+      props: new Map([...value.props].map(([name, prop]) => [
+        name,
+        valueWithSeparateBranchLoss(prop),
+      ])),
+    }
+  }
+  if (value.kind === 'array') {
+    return {
+      ...value,
+      length: valueWithSeparateBranchLoss(value.length) as NumberValue,
+      elements: value.elements?.map(valueWithSeparateBranchLoss) ?? null,
+      element: value.element == null ? null : valueWithSeparateBranchLoss(value.element),
+    }
+  }
+  if (value.kind === 'nullable') {
+    return {...value, present: valueWithSeparateBranchLoss(value.present)}
+  }
   return value
 }
 
@@ -973,6 +1106,8 @@ function evaluateSwitchStatement(
   const remaining = new Map(discriminant.values.map(value => [literalKey(value), value]))
   let pendingValues: LiteralPrimitive[] = []
   let joined: InterpreterFlow | null = null
+  const branchId = freshBranchId(frame)
+  let nextArm = 0
 
   for (const clause of statement.caseBlock.clauses) {
     if (ts.isCaseClause(clause)) {
@@ -986,7 +1121,12 @@ function evaluateSwitchStatement(
     pendingValues = []
     if (branchValues.length === 0) continue
 
-    const branch = switchLiteralFrame(frame, statement.expression, branchValues)
+    const branch = switchLiteralFrame(
+      frame,
+      statement.expression,
+      branchValues,
+      branchArm(branchId, nextArm++),
+    )
     const flow = evaluateSwitchClauseStatements(clause.statements, branch)
     if (flow.kind === 'fallthrough') {
       return {kind: 'return', value: noteUnsupported(frame, `Switch fallthrough is not supported: ${statement.expression.getText(frame.program.sourceFile)}`, clause)}
@@ -1003,7 +1143,20 @@ function evaluateSwitchStatement(
   if (continuation == null || nextIndex >= continuation.length) {
     return {kind: 'return', value: noteUnsupported(frame, `Switch did not cover every finite literal case: ${statement.expression.getText(frame.program.sourceFile)}`, statement.expression)}
   }
-  return joinCompletedFlows(joined, evaluateStatements(continuation, switchLiteralFrame(frame, statement.expression, [...remaining.values()]), nextIndex), frame)
+  return joinCompletedFlows(
+    joined,
+    evaluateStatements(
+      continuation,
+      switchLiteralFrame(
+        frame,
+        statement.expression,
+        [...remaining.values()],
+        branchArm(branchId, nextArm),
+      ),
+      nextIndex,
+    ),
+    frame,
+  )
 }
 
 function switchCaseLiteralValues(statement: ts.SwitchStatement, frame: InterpreterFrame): Map<ts.CaseClause, LiteralPrimitive> | {error: string} {
@@ -1061,8 +1214,14 @@ function uniqueLiteralValues(values: LiteralPrimitive[]): LiteralPrimitive[] {
   return result
 }
 
-function switchLiteralFrame(frame: InterpreterFrame, expression: ts.Expression, values: LiteralPrimitive[]): InterpreterFrame {
+function switchLiteralFrame(
+  frame: InterpreterFrame,
+  expression: ts.Expression,
+  values: LiteralPrimitive[],
+  arm: BranchArm,
+): InterpreterFrame {
   const branch = childFrame(frame, new Map(frame.env), '<switch>')
+  branch.branches = mergeBranchArms(branch.branches, [arm])
   const path = pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, branch))
   if (path == null) return branch
   const current = readPath(path, branch, expression)
@@ -1442,6 +1601,20 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
   const exactIndex = exactInteger(index)
   if (exactIndex == null) return symbolicArrayElementAccess(target, index, expression, frame)
   const text = expression.getText(frame.program.sourceFile)
+  if (
+    target.kind === 'array'
+    && target.layout === 'collection'
+    && target.elements == null
+    && target.element != null
+  ) {
+    const sourceName = target.expr ?? expression.expression.getText(frame.program.sourceFile)
+    return valueWithRebasedElementPath(
+      target.element,
+      `${sourceName}[]`,
+      text,
+      `${target.referenceIds.join(',')}[${exactIndex}]`,
+    )
+  }
   return valueWithTypeFallback(readArrayIndexValue(target, exactIndex, text), valueFromNodeType(text, expression, frame.program))
 }
 
@@ -2335,35 +2508,40 @@ function evaluateConditionalExpression(expression: ts.ConditionalExpression, fra
   if (truth === true) return evaluateExpression(expression.whenTrue, frame)
   if (truth === false) return evaluateExpression(expression.whenFalse, frame)
   const repeatable = expressionIsRepeatable(expression.condition, frame.program)
-  const trueFrame = repeatable
-    ? branchFrame(frame, expression.condition, true, '<conditional-true>', evaluateExpression)
-    : childFrame(frame, new Map(frame.env), '<conditional-true>')
-  const falseFrame = repeatable
-    ? branchFrame(frame, expression.condition, false, '<conditional-false>', evaluateExpression)
-    : childFrame(frame, new Map(frame.env), '<conditional-false>')
-  const trueValue = valueWithAssumptions(evaluateExpression(expression.whenTrue, trueFrame), trueFrame.assumptions)
-  const falseValue = valueWithAssumptions(evaluateExpression(expression.whenFalse, falseFrame), falseFrame.assumptions)
+  const branchId = freshBranchId(frame)
+  const trueFrame = controlFlowBranchFrame(
+    frame,
+    expression.condition,
+    true,
+    '<conditional-true>',
+    branchArm(branchId, 0),
+    repeatable,
+  )
+  const falseFrame = controlFlowBranchFrame(
+    frame,
+    expression.condition,
+    false,
+    '<conditional-false>',
+    branchArm(branchId, 1),
+    repeatable,
+  )
+  const trueValue = valueWithAssumptions(
+    evaluateExpression(expression.whenTrue, trueFrame),
+    trueFrame.caseAssumptions,
+    trueFrame.branches,
+  )
+  const falseValue = valueWithAssumptions(
+    evaluateExpression(expression.whenFalse, falseFrame),
+    falseFrame.caseAssumptions,
+    falseFrame.branches,
+  )
   if (
     !expressionIsRepeatable(expression.whenTrue, frame.program)
     || !expressionIsRepeatable(expression.whenFalse, frame.program)
   ) {
     frame.env = joinBranchFrameEnvs(trueFrame, falseFrame)
   }
-  const joined = joinValues(trueValue, falseValue)
-  if (branchAssumptionsConflict(trueFrame.assumptions, falseFrame.assumptions)) return joined
-  return valueWithNumberCaseSource(joined, {
-    condition: nodeText(expression.condition, frame),
-  })
-}
-
-function branchAssumptionsConflict(left: Assumption[], right: Assumption[]) {
-  for (const leftAssumption of left) {
-    if (!isBranchChoice(leftAssumption)) continue
-    for (const rightAssumption of right) {
-      if (isBranchChoice(rightAssumption) && branchChoicesConflict(leftAssumption, rightAssumption)) return true
-    }
-  }
-  return false
+  return joinValues(trueValue, falseValue)
 }
 
 function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
@@ -2703,11 +2881,25 @@ function evaluateResolvedFunctionCallResult(
     fallback,
     ...(resolvedThisValue == null ? {} : {thisValue: resolvedThisValue}),
   }, frame)
-  if (hooked != null) return hooked
+  if (hooked != null) return withFreshCallAlternatives(hooked, frame)
   return valueWithTypeFallback(
     evaluateFunctionNodeBody(target.fn.name, target.fn.node, prepared.frame),
     fallback,
   )
+}
+
+function withFreshCallAlternatives(value: Value, frame: InterpreterFrame): Value {
+  if (
+    value.kind !== 'number'
+    || value.cases == null
+    || value.cases.length <= 1
+    || value.cases.some(numberCase => numberCase.branches.length > 0)
+  ) return value
+  const branchId = freshBranchId(frame)
+  return withNumberCases(value, value.cases.map((numberCase, arm) => ({
+    ...numberCase,
+    branches: [branchArm(branchId, arm)],
+  })))
 }
 
 function evaluateHookedCall(call: InterpreterCall, frame: InterpreterFrame): Value | null {

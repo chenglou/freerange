@@ -2,6 +2,7 @@ import {
   joinValues,
   unknown,
   valueWithAssumptions,
+  withNumberCaseLoss,
   type Assumption,
   type NumberValue,
   type Value,
@@ -22,6 +23,7 @@ export function evaluateNumberCases(
     const evaluated = valueWithAssumptions(
       evaluate(current.value, current.assumptions),
       current.caseAssumptions,
+      current.caseBranches,
     )
     result = result == null ? evaluated : joinValues(result, evaluated)
   }
@@ -40,12 +42,18 @@ export function evaluateNumberCasePairs(
 ): Value | null {
   if (left.cases == null && right.cases == null) return null
   let result: Value | null = null
+  let separateBranches = false
   for (const pair of reachableNumberCasePairs(left, right, assumptions)) {
+    separateBranches ||= pair.separateBranches
     const evaluated = valueWithAssumptions(
       evaluate(pair.left, pair.right, pair.assumptions),
       pair.caseAssumptions,
+      pair.caseBranches,
     )
     result = result == null ? evaluated : joinValues(result, evaluated)
   }
-  return result ?? unknown('No reachable numeric alternatives were available')
+  if (result == null) return unknown('No reachable numeric alternatives were available')
+  return separateBranches && result.kind === 'number'
+    ? withNumberCaseLoss(result, {kind: 'separate-branches'})
+    : result
 }

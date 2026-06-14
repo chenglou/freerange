@@ -319,12 +319,87 @@ export function negativeBranchStateDoesNotInventCrossProduct(flag: boolean) {
 
 /** @fit
  * given n: int 0..10
- * return.total: 12 | 21
+ * return.total: 11 | 22
  */
-export function negativeConditionalExpressionDoesNotInventNumericCrossProduct(n: number) {
+export function negativeSeparateConditionalExpressionsDoNotReconnect(n: number) {
   const x = n > 4 ? 1 : 2
   const y = n > 4 ? 10 : 20
   return {total: x + y}
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function negativeEquivalentComparisonsDoNotReconnect(value: number) {
+  const left = value > 0 ? 1 : 100
+  const right = 0 < value ? 10 : 200
+  return left - right
+}
+
+/** @fit return: 1 | 100 */
+function separateGuardLeft(value: number) {
+  return value > 0 ? 1 : 100
+}
+
+/** @fit return: 10 | 200 */
+function separateGuardRight(value: number) {
+  return value > 0 ? 10 : 200
+}
+
+/** @fit
+ * return: -100 | -9
+ */
+export function negativeSeparateHelperCallsDoNotReconnect(value: number) {
+  return separateGuardLeft(value) - separateGuardRight(value)
+}
+
+/** @fit
+ * return.value: 4 | 20
+ * return.bound: 5 | 20
+ */
+function separateGroupedValueAndBound(flag: boolean) {
+  return flag
+    ? {value: 4, bound: 5}
+    : {value: 20, bound: 20}
+}
+
+/** @fit
+ * return.value <= return.bound
+ */
+export function negativeSeparateGroupedHelperCallsDoNotReconnect(flag: boolean) {
+  const first = separateGroupedValueAndBound(flag)
+  const second = separateGroupedValueAndBound(flag)
+  return {value: first.value, bound: second.bound}
+}
+
+/** @fit
+ * return: 22 | 33
+ */
+export function negativeConditionalAndIfDoNotReconnect(value: number) {
+  const columns = value > 0 ? 3 : 2
+  let gap = 20
+  if (value > 0) gap = 30
+  return columns + gap
+}
+
+/** @fit
+ * return: 22 | 33
+ */
+export function negativeSeparateIfStatementsDoNotReconnect(flag: boolean) {
+  let columns = 2
+  if (flag) columns = 3
+  let gap = 20
+  if (flag) gap = 30
+  return columns + gap
+}
+
+/** @fit
+ * given items.length: 2
+ * return: 2 | 4
+ */
+export function negativeDifferentCollectionSlotsDoNotReconnect(items: {flag: boolean}[]) {
+  const values = items.map(item => item.flag ? 1 : 2)
+  return values[0]! + values[1]!
 }
 
 /** @fit
@@ -347,7 +422,7 @@ export function negativeNaNCapableFalseGuardStaysUnknown(value: number) {
 /** @fit
  * return <= 0
  */
-export function negativeMixedNumericGuardOutcomesFailContract(value: number) {
+export function negativeSeparateNumericGuardOutcomesStayUnknown(value: number) {
   const left = value > 0 ? 1 : 100
   const right = value > 0 ? 200 : 10
   return left - right

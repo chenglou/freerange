@@ -22,9 +22,6 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
     return {
       ...localized,
       ...(value.neverNaN === true ? {neverNaN: true as const} : {}),
-      ...(options.preserveLinear === true && value.caseSource != null
-        ? {caseSource: value.caseSource}
-        : {}),
       ...(value.caseLoss == null ? {} : {caseLoss: value.caseLoss}),
     }
   }

@@ -18,9 +18,23 @@ const root = rootFrame({
   stack: ['f'],
   assumptions: [],
 }, policy)
-root.stateCases = [{env: new Map([['branch', {kind: 'unknown', reason: 'branch'}]]), assumptions: []}]
+root.stateCases = [{
+  env: new Map([['branch', {kind: 'unknown', reason: 'branch'}]]),
+  assumptions: [],
+  branches: [],
+  caseAssumptions: [],
+  changedRoots: new Set(),
+  separateBranches: false,
+}]
 const child = deriveFrame(root, {env: new Map(root.env), stateCases: null})
-const stateCase = frameForStateCase(child, {env: new Map(child.env), assumptions: []})
+const stateCase = frameForStateCase(child, {
+  env: new Map(child.env),
+  assumptions: [],
+  branches: [],
+  caseAssumptions: [],
+  changedRoots: new Set(),
+  separateBranches: false,
+})
 const activeCall = frameWithActiveCall(root, 'frame-policy.ts#f')
 if (
   child.output !== root.output

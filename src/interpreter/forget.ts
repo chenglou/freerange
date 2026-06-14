@@ -65,7 +65,6 @@ function forgetSymbolicReferences(env: Map<string, Value>, root: string) {
         computation: computationStale ? null : value.computation,
         cases: casesStale ? null : value.cases,
       }
-      if (casesStale) delete next.caseSource
       env.set(name, next)
     }
   }

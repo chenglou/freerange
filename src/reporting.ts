@@ -13,7 +13,7 @@ export type ReportNumberValue = {
   grid: number | null
   expr: string | null
   linear: ReportLinearExpr | null
-  cases?: {value: ReportNumberValue; assumptions: unknown[]}[] | null
+  cases?: {value: ReportNumberValue; assumptions: unknown[]; branches?: unknown[]}[] | null
   origin?: string[]
 }
 
@@ -144,10 +144,30 @@ function formatNumberValueRange(value: ReportNumberValue) {
   // branch-specific condition on one case makes the plain `a | b` listing
   // misleading. Compare by identity — tagging shares the constraint objects.
   const sharedByAll = (assumption: unknown) => cases.every(item => item.assumptions.includes(assumption))
-  if (cases.length > 1 && cases.every(item => item.assumptions.every(sharedByAll))) {
-    return [...new Set(cases.map(item => formatNumberRangePart(item.value)))].join(' | ')
+  const structuralAlternatives = cases.every(item =>
+    (item.branches?.length ?? 0) > 0
+    && item.value.min === item.value.max)
+  if (
+    cases.length > 1
+    && (structuralAlternatives || cases.every(item => item.assumptions.every(sharedByAll)))
+  ) {
+    const alternatives = cases
+      .map(item => item.value)
+      .filter((candidate, index, values) =>
+        !values.some((other, otherIndex) =>
+          otherIndex !== index
+          && numberRangeContains(other, candidate)
+          && (!numberRangeContains(candidate, other) || otherIndex < index)))
+      .sort((left, right) => left.min - right.min || left.max - right.max)
+    return [...new Set(alternatives.map(formatNumberRangePart))].join(' | ')
   }
   return formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)
+}
+
+function numberRangeContains(container: ReportNumberValue, contained: ReportNumberValue) {
+  if (container.min > contained.min || container.max < contained.max) return false
+  if (container.grid == null) return true
+  return contained.grid != null && contained.grid >= container.grid
 }
 
 function formatNumberRangePart(value: ReportNumberValue) {

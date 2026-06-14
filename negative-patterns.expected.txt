@@ -67,16 +67,16 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFiniteLiteralDiscriminantWro
     inferred from code: (panelX + 300) >= 300
     inferred from code: ((panelX + 300) - (panelX + 100)) <= (panelX + 300)
   missing fact: (panelX + 100) > (panelX + 300)
-FAIL tests/patterns/negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresholdX < return.uThresholdX
-  result: is false by exact linear facts
+UNKNOWN tests/patterns/negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresholdX < return.uThresholdX
   known:
     (panelX + 300): 300..1300
+    (panelX + 100): 100..1100
     assumed from input: given panelX: 0..1000
     inferred from code: (panelX + 300) >= panelX
     inferred from code: (panelX + 300) >= 300
     inferred from code: (panelX + 100) >= panelX
     inferred from code: (panelX + 100) >= 100
-  missing: strict comparison cannot hold when both sides are (panelX + 300)
+  missing fact: (panelX + 300) < (panelX + 100)
 UNKNOWN tests/patterns/negative-patterns.ts:negativePairedObjectReturnShape: return: {x: 0, width: 100} | {x: 20, width: 80}
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(141,4): error TS2322: Type '{ readonly x: 20; readonly width: 81; }' is not assignable to type '{ x: 0; width: 100; } | { x: 20; width: 80; }'.
@@ -136,8 +136,6 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound
     assumed from input: given cellSize: int 1..100
     assumed from input: given count: int 1..10
     inferred from branch: -(count * cellSize) + pointer >= 0
-    inferred from code: floor((pointer / cellSize)) <= (pointer / cellSize)
-    inferred from code: floor((pointer / cellSize)) > (pointer / cellSize) - 1
   missing: (pointer / cellSize) < count
 UNKNOWN tests/patterns/negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled <= return.limit
   known:
@@ -193,10 +191,20 @@ FAIL tests/patterns/negative-patterns.ts:negativeBranchStateDoesNotInventCrossPr
   value was int 11..11 as (1 + 10), expected one of 12 | 21
   branches produced 11
   missing: (1 + 10) in {12, 21}
-FAIL tests/patterns/negative-patterns.ts:negativeConditionalExpressionDoesNotInventNumericCrossProduct: return.total: 12 | 21
-  value was int 11..22, expected one of 12 | 21
-  branches produced 11, 22
-  missing: int 11..22 in {12, 21}
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateConditionalExpressionsDoNotReconnect: return.total: 11 | 22
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeEquivalentComparisonsDoNotReconnect: return: -100 | -9
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateHelperCallsDoNotReconnect: return: -100 | -9
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateGroupedHelperCallsDoNotReconnect: return.value <= return.bound
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeConditionalAndIfDoNotReconnect: return: 22 | 33
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateIfStatementsDoNotReconnect: return: 22 | 33
+  Numeric alternatives came from separate branch constructs and are not assumed to match
+UNKNOWN tests/patterns/negative-patterns.ts:negativeDifferentCollectionSlotsDoNotReconnect: return: 2 | 4
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 FAIL tests/patterns/negative-patterns.ts:negativeGuardedColumnWidthRejectsWrongBound: return >= 400
   result: is false
   known:
@@ -208,23 +216,20 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeNaNCapableFalseGuardStaysUnk
   known:
     -value: any number
   missing fact: -value >= 0
-FAIL tests/patterns/negative-patterns.ts:negativeMixedNumericGuardOutcomesFailContract: return <= 0
-  result: is false
-  known:
-    (100 - 10): int 90..90
-  missing fact: (100 - 10) <= 0
+UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateNumericGuardOutcomesStayUnknown: return <= 0
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeCompoundNumericGuardCorrelationStaysUnknown: return: -100 | -9
-  Numeric alternatives from value > 0 && value < 10 could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeBooleanGuardArithmeticStaysUnknown: return: -100..-9
-  Numeric alternatives from flag could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeBooleanGuardComparisonStaysUnknown: return.left < return.right
-  Numeric alternatives from flag could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeBooleanGuardHelperCorrelationStaysUnknown: return: -100..-9
-  Numeric alternatives from flag could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeBooleanGuardMathMinStaysUnknown: return: 1 | 100
-  Numeric alternatives from flag could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeBooleanGuardMapCorrelationStaysUnknown: return[].value: -100..-9
-  Numeric alternatives from item.flag could not be correlated through this computation
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeStatePartitionBudgetDoesNotSilentlyPass: return: int 0..15
   State partition budget exceeded: 16 branch states exceed limit 8; Freerange refuses to summarize branch states silently
 UNKNOWN tests/patterns/negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
@@ -348,7 +353,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeGuardedFlushCannotMixSameArr
   missing: recognized adjacent row spacing
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(return.rows) == return.bottom
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(682,4): error TS2322: Type '{ y: number; source: number; }' is not assignable to type '{ y: number; height: number; } | { x: number; width: number; } | { top: number; height: number; } | { start: number; size: number; }'.
+  tests/patterns/negative-patterns.ts(757,4): error TS2322: Type '{ y: number; source: number; }' is not assignable to type '{ y: number; height: number; } | { x: number; width: number; } | { top: number; height: number; } | { start: number; size: number; }'.
     Property 'height' is missing in type '{ y: number; source: number; }' but required in type '{ y: number; height: number; }'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeObjectFieldDomainTooWide: return.height >= 0
   known:
@@ -366,7 +371,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayIdentityNeedsSameSource
   Non-number equality is only proven for the same source expression
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(726,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
+  tests/patterns/negative-patterns.ts(801,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
   range was any number as items[index]!.height, expected inside 0..40
   known:
@@ -486,7 +491,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeCallbackFitPlacementIsReport
   Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTrailingCommentBelongsToItsOwnDeclaration: annotated == 99
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1041,46): error TS2367: This comparison appears to be unintentional because the types '1' and '99' have no overlap.
+  tests/patterns/negative-patterns.ts(1116,46): error TS2367: This comparison appears to be unintentional because the types '1' and '99' have no overlap.
 FAIL tests/patterns/negative-patterns.ts:negativeFloatSumIsNotItsDecimalLook: return == 0.3
   result: is false
   known:
@@ -698,17 +703,8 @@ FAIL tests/patterns/negative-patterns.ts:negativeTypeRelationArrayPathReturnChec
   missing fact: 1 >= 4
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTypeRelationOptional: >= 0
   type @fit on optional fields is not supported yet
-FAIL tests/patterns/negative-patterns.ts:negativeIfClampCanReturnMax: return < max
-  result: is false by exact linear facts
-  known:
-    max: -1000..1000
-    assumed from input: given min: -1000..1000
-    assumed from input: given value: -1000..1000
-    assumed from input: given max: -1000..1000
-    assumed from input: given max >= min
-    inferred from branch: -min + value >= 0
-    inferred from branch: -max + value > 0
-  missing: strict comparison cannot hold when both sides are max
+UNKNOWN tests/patterns/negative-patterns.ts:negativeIfClampCanReturnMax: return < max
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 FAIL tests/patterns/negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols: int 1..6
   range was 7, expected inside int 1..6
   known:
@@ -750,27 +746,27 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementHelperPreconditi
   missing fact: (extent[1][0] - width) >= extent[0][0]
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementPathCannotHideDynamicIndex: given _items[_index][0]: 0..10
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1550,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1625,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
-  tests/patterns/negative-patterns.ts(1550,4): error TS2532: Object is possibly 'undefined'.
+  tests/patterns/negative-patterns.ts(1625,4): error TS2532: Object is possibly 'undefined'.
 FAIL tests/patterns/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
   result: is false
   missing fact: 10 <= 2
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1566,4): error TS2322: Type 'number | null' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1641,4): error TS2322: Type 'number | null' is not assignable to type 'number'.
     Type 'null' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
   Nullable value {targetIndex: focused - 1} was not proven present
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1587,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1662,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
   Math.max expected number arguments
 UNKNOWN tests/patterns/negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: return: 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1598,18): error TS2322: Type 'string' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1673,18): error TS2322: Type 'string' is not assignable to type 'number'.
 FAIL tests/patterns/negative-patterns.ts:negativeObjectMutationForgetsInputPath: return >= 0
   result: is false
   known:
@@ -1007,10 +1003,10 @@ FAIL tests/patterns/negative-patterns.ts:negativeInlineParamComparison: given ma
   no input can satisfy this with the earlier given lines; they already rule out max: 100..200
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1963,4): error TS2322: Type 'string' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(2038,4): error TS2322: Type 'string' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1972,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(2047,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
   Array.at(-2) expected length >= 2
@@ -1074,7 +1070,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeBranchLocalReturnNeedsStrict
   missing: (focused - 1) >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(2069,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
+  tests/patterns/negative-patterns.ts(2144,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   rows not found in this contract scope
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
@@ -1300,7 +1296,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeUnionTieIsNotStrict: return 
   missing fact: x > 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1442,2): error TS2304: Cannot find name 'row'.
+  tests/patterns/negative-patterns.ts(1517,2): error TS2304: Cannot find name 'row'.
 FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
   caller passed: container: 3, containee: 4
   missing: 3 >= 4

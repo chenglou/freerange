@@ -231,7 +231,7 @@ const insideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check =>
 const outsideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(flag)')
 if (
   insideAnnotatedHelperBoundCheck?.status !== 'unknown'
-  || insideAnnotatedHelperBoundCheck.reason?.includes('Dynamic range alternatives could not be correlated') !== true
+  || insideAnnotatedHelperBoundCheck.reason?.includes('came from separate branch constructs') !== true
   || outsideAnnotatedHelperBoundCheck?.status !== 'fail'
   || outsideAnnotatedHelperBoundCheck.reason?.includes('21 <= int 5..5') !== true
 ) {
@@ -289,21 +289,23 @@ const insideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => che
 const outsideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideLow' && check.text === 'return: lower(flag)..upper(flag)')
 const outsideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideHigh' && check.text === 'return: lower(flag)..upper(flag)')
 if (
-  insideLowTwoSidedBoundCheck?.status !== 'fail'
-  || insideHighTwoSidedBoundCheck?.status !== 'fail'
+  insideLowTwoSidedBoundCheck?.status !== 'unknown'
+  || insideLowTwoSidedBoundCheck.reason?.includes('came from separate branch constructs') !== true
+  || insideHighTwoSidedBoundCheck?.status !== 'unknown'
+  || insideHighTwoSidedBoundCheck.reason?.includes('came from separate branch constructs') !== true
   || outsideLowTwoSidedBoundCheck?.status !== 'fail'
   || outsideHighTwoSidedBoundCheck?.status !== 'fail'
   || outsideLowTwoSidedBoundCheck.reason?.includes('5 >= int 10..10') !== true
   || outsideHighTwoSidedBoundCheck.reason?.includes('26 <= int 20..20') !== true
 ) {
-  console.error('expected impossible two-sided helper ranges to fail')
+  console.error('expected separate two-sided helper bounds to preserve definite failures and leave mixed cases unknown')
   console.error(JSON.stringify(twoSidedHelperBoundChecks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('range contracts: impossible two-sided helper ranges fail')
+  console.log('range contracts: separate two-sided helper bounds')
 }
 
-const correlatedDynamicBoundChecks = verifyFitSource('correlated-dynamic-range-bounds.ts', `function limit(n: number) {
+const separateDynamicBoundChecks = verifyFitSource('separate-dynamic-range-bounds.ts', `function limit(n: number) {
   return n > 4 ? 5 : 20
 }
 
@@ -323,19 +325,74 @@ function outside(n: number) {
   return 10
 }
 `)
-const correlatedInside = correlatedDynamicBoundChecks.find(check =>
+const separateInside = separateDynamicBoundChecks.find(check =>
   check.functionName === 'inside' && check.text === 'return: 0..limit(n)')
-const correlatedOutside = correlatedDynamicBoundChecks.find(check =>
+const separateOutside = separateDynamicBoundChecks.find(check =>
   check.functionName === 'outside' && check.text === 'return: 0..limit(n)')
 if (
-  correlatedInside?.status !== 'pass'
-  || correlatedOutside?.status !== 'fail'
+  separateInside?.status !== 'unknown'
+  || separateInside.reason?.includes('came from separate branch constructs') !== true
+  || separateOutside?.status !== 'fail'
 ) {
-  console.error('expected preserved numeric guards to correlate dynamic bounds')
-  console.error(JSON.stringify(correlatedDynamicBoundChecks, null, 2))
+  console.error('expected separate returned values and helper bounds not to reconnect')
+  console.error(JSON.stringify(separateDynamicBoundChecks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('range contracts: preserved numeric guards correlate dynamic bounds')
+  console.log('range contracts: separate returned values and helper bounds')
+}
+
+const dynamicRangeBudgetChecks = verifyFitSource('dynamic-range-budget.ts', `/** @fit
+ * return: 0 | 1 | 2
+ */
+function lower(choice: number) {
+  return choice === 0 ? 0 : choice === 1 ? 1 : 2
+}
+
+/** @fit
+ * return: 10 | 11 | 12
+ */
+function upper(choice: number) {
+  return choice === 0 ? 10 : choice === 1 ? 11 : 12
+}
+
+/** @fit
+ * return: lower(a)..upper(b)
+ */
+function alwaysInside(a: number, b: number) {
+  return 5
+}
+
+/** @fit
+ * return: lower(a)..upper(b)
+ */
+function alwaysOutside(a: number, b: number) {
+  return -1
+}
+
+/** @fit
+ * return: lower(a)..upper(b)
+ */
+function mixed(a: number, b: number) {
+  return 1
+}
+`)
+const budgetInside = dynamicRangeBudgetChecks.find(check =>
+  check.functionName === 'alwaysInside' && check.text === 'return: lower(a)..upper(b)')
+const budgetOutside = dynamicRangeBudgetChecks.find(check =>
+  check.functionName === 'alwaysOutside' && check.text === 'return: lower(a)..upper(b)')
+const budgetMixed = dynamicRangeBudgetChecks.find(check =>
+  check.functionName === 'mixed' && check.text === 'return: lower(a)..upper(b)')
+if (
+  budgetInside?.status !== 'pass'
+  || budgetOutside?.status !== 'fail'
+  || budgetMixed?.status !== 'unknown'
+  || budgetMixed.reason?.includes('Numeric alternative budget exceeded') !== true
+) {
+  console.error('expected broad dynamic bounds to decide obvious over-budget cases')
+  console.error(JSON.stringify(dynamicRangeBudgetChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('range contracts: over-budget dynamic bounds')
 }
 
 const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}

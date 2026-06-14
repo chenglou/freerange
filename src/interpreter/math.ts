@@ -16,9 +16,9 @@ import {
   valueWithAssumptions,
   type Assumption,
   withNumberCases,
+  withNumberCaseLoss,
   withCombinedNumberCaseInfo,
   withInheritedNumberCaseLoss,
-  withInheritedNumberCaseSource,
   type LinearConstraint,
   type NumberValue,
   type NumberCase,
@@ -206,12 +206,12 @@ function evaluateUnaryMath(
   })
   if (cases != null) {
     return cases.kind === 'number'
-      ? withInheritedNumberCaseSource(withInheritedNumberCaseLoss(cases, value), value)
+      ? withInheritedNumberCaseLoss(cases, value)
       : cases
   }
   const result = evaluate(value, frame, name)
   return result.kind === 'number'
-    ? withInheritedNumberCaseSource(withInheritedNumberCaseLoss(result, value), value)
+    ? withInheritedNumberCaseLoss(result, value)
     : result
 }
 
@@ -371,12 +371,14 @@ function absNumber(value: NumberValue, frame: InterpreterFrame): NumberValue {
       cases.push({
         value: valueCase.value,
         assumptions: positiveStatus.status === 'pass' ? valueCase.assumptions : mergeAssumptions(valueCase.assumptions, [nonNegative]),
+        branches: valueCase.branches,
       })
     }
     if (negativeStatus.status !== 'fail') {
       cases.push({
         value: numberValue(-valueCase.value.max, -valueCase.value.min, valueCase.value.grid, valueCase.value.expr == null ? null : `abs(${valueCase.value.expr})`, linearScale(valueCase.value.linear, -1), null, valueCase.value.origin),
         assumptions: negativeStatus.status === 'pass' ? valueCase.assumptions : mergeAssumptions(valueCase.assumptions, [nonPositive]),
+        branches: valueCase.branches,
       })
     }
     if (cases.length > maxNumberCases) return joined
@@ -431,7 +433,9 @@ function choiceNumberPair(
   }
 
   const cases: NumberCase[] = []
+  let separateBranches = false
   for (const pair of reachableNumberCasePairs(left, right, assumptions)) {
+      separateBranches ||= pair.separateBranches
       const leftWins = proveComparisonPlain(pair.left, leftOp, pair.right, pair.assumptions)
       const rightWins = proveComparisonPlain(pair.right, rightOp, pair.left, pair.assumptions)
 
@@ -441,11 +445,13 @@ function choiceNumberPair(
           cases.push({
             value: pair.left,
             assumptions: pair.caseAssumptions,
+            branches: pair.caseBranches,
           })
         } else if (fact != null) {
           cases.push({
             value: pair.left,
             assumptions: mergeAssumptions(pair.caseAssumptions, [fact]),
+            branches: pair.caseBranches,
           })
         }
       }
@@ -455,26 +461,34 @@ function choiceNumberPair(
           cases.push({
             value: pair.right,
             assumptions: pair.caseAssumptions,
+            branches: pair.caseBranches,
           })
         } else if (fact != null) {
           cases.push({
             value: pair.right,
             assumptions: mergeAssumptions(pair.caseAssumptions, [fact]),
+            branches: pair.caseBranches,
           })
         }
       }
       if (cases.length > maxNumberCases) {
-        return withCombinedNumberCaseInfo(
+        const result = withCombinedNumberCaseInfo(
           withNumberCases(joined, cases),
           left,
           right,
         )
+        return separateBranches
+          ? withNumberCaseLoss(result, {kind: 'separate-branches'})
+          : result
       }
   }
 
-  return withCombinedNumberCaseInfo(
+  const result = withCombinedNumberCaseInfo(
     withNumberCases(joined, cases),
     left,
     right,
   )
+  return separateBranches
+    ? withNumberCaseLoss(result, {kind: 'separate-branches'})
+    : result
 }

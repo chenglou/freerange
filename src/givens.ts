@@ -934,5 +934,6 @@ function rangeCasesValue(range: FitRange, expressionText: string, cases: {min: n
     : withNumberCases(value, cases.map(rangeCase => ({
       value: numberValue(rangeCase.min, rangeCase.max, range.valueKind === 'int' ? 0 : null, expressionText, linear),
       assumptions: [],
+      branches: [],
     })))
 }

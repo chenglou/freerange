@@ -30,7 +30,6 @@ import {
   type Value,
 } from '../domain.ts'
 import {filterOrigin, mapOrigin} from '../array-summary.ts'
-import {isLinearConstraint} from '../assumptions.ts'
 import {
   cleanLinear,
   isZeroLinear,
@@ -1435,7 +1434,6 @@ function renamedElementLinear(linear: LinearExpr, arrayName: string, renames: Ma
 function liftElementAssumptions(renames: Map<string, LinearExpr>, analysis: Analysis) {
   const lifted: LinearConstraint[] = []
   for (const assumption of analysisAssumptions(analysis)) {
-    if (!isLinearConstraint(assumption)) continue
     if (assumption.diff == null) continue
     let touchesRename = false
     let liftable = true

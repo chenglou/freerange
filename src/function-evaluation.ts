@@ -93,6 +93,7 @@ export function functionEvalContext(
     stack: [fn.name],
     checks: options.checks ?? [],
     assumptions: setup.assumptions,
+    branchIds: {next: 1},
     booleanAssumptions: setup.booleanAssumptions,
     contractCache,
     ...(options.callObligations == null ? {} : {callObligations: options.callObligations}),

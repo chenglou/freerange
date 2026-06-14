@@ -134,22 +134,32 @@ An interpreter request supplies the starting program, environment, assumptions, 
 
 A failed universal comparison over case-split values does not make an `if` branch impossible. Mixed cases stay `maybe`. If two of the eight branch states satisfy `width > 0` and six don't, the branch is still reachable — proof has to handle the joined set, not declare the branch dead.
 
-## Numeric Alternatives Keep Their Guards
+## Numeric Alternatives Follow One Branch Construct
 
-A numeric conditional keeps its alternatives together with the comparison outcome that selected each one:
+One execution of an `if`/`else`, `switch`, or conditional expression may produce several values that must stay together. Put those values in one result, or assign them inside the same branch:
+
+```ts
+const layout = width >= 600
+  ? {columns: 3, gap: 24}
+  : {columns: 2, gap: 16}
+```
+
+The object fields came from one decision, so arithmetic, comparisons, helper returns, dynamic range bounds, and tuple indexing may combine only the matching alternatives. The same rule applies when one branch assigns both local variables.
+
+Separate branch constructs do not recover that relationship from matching text:
 
 ```ts
 const columns = width >= 600 ? 3 : 2
 const gap = width >= 600 ? 24 : 16
 ```
 
-Arithmetic, comparisons, helper calls, dynamic range bounds, tuple indexing, and contract checks all enumerate the same reachable alternatives. Opposite outcomes of the same normalized numeric comparison cannot be combined, including across helper parameters rebased to the same caller expression. `width > 0` and `0 < width` are the same selector; `width > 0` and `height > 0` are independent.
+Those are two decisions. Freerange does not assume they chose matching sides, even when the conditions are textually identical, mathematically equivalent, or use the same input. Two calls to the same helper are also separate executions. For a mapped collection, reading the same output slot twice keeps that slot's choice; reading two different slots does not assume the source items made the same choice.
 
-The selector is separate from numeric facts. The false side of `width > 0` cannot generally add `width <= 0`, because `NaN` also takes the false branch. It can still remember that later values came from the same false outcome without pretending that `NaN` obeys an inverted comparison.
+Branch identity and numeric facts are separate data. A branch arm records which decision produced a value. A numeric assumption records a fact such as `width >= 600`. The false side of `width > 0` cannot generally add `width <= 0`, because `NaN` also takes the false branch.
 
-Contract proof and control-flow truth consume the cases differently. A contract fails when any genuinely reachable case violates it. An `if` condition is known only when every reachable case agrees. If exact alternatives exceed the fixed budget, the hull remains usable but claims that need the lost choices report unknown.
+When separate choices are combined, Freerange still uses conclusions that hold for every combination. A broad bound may pass, and a value outside every possible dynamic range may fail. If some combinations pass and others fail, the result is unknown because deciding it would require the missing relationship.
 
-Only normalized numeric comparisons have a reusable selector. Boolean flags and compound conditions still produce valid alternatives individually, but if later arithmetic needs their relationship, report unknown rather than inventing a cross-product failure. Supporting those generally needs stable identity for arbitrary expressions and bindings, not another text recognizer.
+Exact alternatives have a fixed budget of eight. When a computation exceeds that budget, its overall numeric bounds remain usable, but a claim that needs the individual choices reports unknown and names the limit.
 
 ## Tuple/Product Versus Collection
 

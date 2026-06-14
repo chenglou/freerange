@@ -11,6 +11,7 @@ import {
   literalKey,
   numberValue,
   withNumberCases,
+  withNumberCaseLoss,
   numberBranches,
   type ArrayValue,
   type LiteralPrimitive,
@@ -23,8 +24,13 @@ import {
   maxNumberCases,
   numberCaseLossMessage,
   type Assumption,
+  type BranchArm,
 } from './domain.ts'
-import {linearConstraints, mergeAssumptions} from './assumptions.ts'
+import {linearConstraints, mergeAssumptions, sharedAssumptions} from './assumptions.ts'
+import {
+  branchRelationship,
+  mergeBranchArms,
+} from './branch-context.ts'
 import {linearConstant} from './linear.ts'
 import {
   fitExpressionScopeSourceId,
@@ -53,7 +59,13 @@ import {
   withResolvedFitValueSpecTypeReference,
   type FitValueSpecTypeEnv,
 } from './value-specs.ts'
-import {assumptionsAreReachable, comparisonCounterexample, proveComparison, proveComparisonWithStep, reachableNumberCases} from './proof.ts'
+import {
+  assumptionsAreReachable,
+  comparisonCounterexample,
+  proveComparison,
+  proveComparisonWithStep,
+  reachableNumberCases,
+} from './proof.ts'
 import {rationalToNumber, type Rational} from './rational.ts'
 import {
   booleanExpressionIsAssumed,
@@ -111,6 +123,7 @@ export function verifyCheckSpecWithProof(
   assumptions: EvalContext['assumptions'],
   booleanAssumptions: EvalContext['booleanAssumptions'],
   contractCache: Map<string, FunctionContractProof>,
+  branchIds: {next: number},
   hooks: CheckSpecHooks,
 ): CheckSpecProof {
   const env = new Map(baseEnv)
@@ -124,6 +137,7 @@ export function verifyCheckSpecWithProof(
     stack: [functionName],
     checks,
     assumptions,
+    branchIds,
     ...(booleanAssumptions == null ? {} : {booleanAssumptions}),
     contractCache,
   }
@@ -411,6 +425,8 @@ type EvaluatedRangeCase = {
   lower: NumberValue
   upper: NumberValue
   assumptions: Assumption[]
+  branches: BranchArm[]
+  separateBranches: boolean
 }
 
 type EvaluatedRangeCases =
@@ -431,7 +447,10 @@ export function evaluateRangeValue(
   const min = Math.min(...cases.map(item => item.value.min))
   const max = Math.max(...cases.map(item => item.value.max))
   const value = numberValue(min, max, range.valueKind === 'int' || cases.every(item => integerValued(item.value)) ? 0 : null, expr, null, null, origin)
-  return withNumberCases(value, cases)
+  const withCases = withNumberCases(value, cases)
+  return evaluated.cases.some(rangeCase => rangeBoundsComeFromSeparateBranches(rangeCase))
+    ? withNumberCaseLoss(withCases, {kind: 'separate-branches'})
+    : withCases
 }
 
 function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckSpecHooks): EvaluatedRangeCases {
@@ -441,7 +460,14 @@ function evaluateRangeCases(range: FitRange, context: EvalContext, hooks: CheckS
     if (lower.kind !== 'number') return {kind: 'invalid', bound: 'lower', value: lower, text: rangeCase.lower.text}
     const upper = evaluateRangeBound(rangeCase.upper, context, hooks)
     if (upper.kind !== 'number') return {kind: 'invalid', bound: 'upper', value: upper, text: rangeCase.upper.text}
-    cases.push({source: rangeCase, lower, upper, assumptions: []})
+    cases.push({
+      source: rangeCase,
+      lower,
+      upper,
+      assumptions: [],
+      branches: [],
+      separateBranches: false,
+    })
   }
   return {kind: 'cases', cases}
 }
@@ -464,15 +490,38 @@ function expandedEvaluatedRangeCase(rangeCase: EvaluatedRangeCase): EvaluatedRan
       lower: branch.value,
       upper: branch.value,
       assumptions: mergeAssumptions(rangeCase.assumptions, branch.assumptions),
+      branches: mergeBranchArms(rangeCase.branches, branch.branches),
+      separateBranches: rangeCase.separateBranches,
     }))
   }
 
   const cases: EvaluatedRangeCase[] = []
   for (const lower of numberBranches(rangeCase.lower)) {
     for (const upper of numberBranches(rangeCase.upper)) {
-      const assumptions = mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
-      if (!assumptionsAreReachable(assumptions)) continue
-      cases.push({source: rangeCase.source, lower: lower.value, upper: upper.value, assumptions})
+      const relationship = branchRelationship(
+        rangeCase.branches,
+        lower.branches,
+        upper.branches,
+      )
+      if (relationship === 'conflict') continue
+      const separateBranches = rangeCase.separateBranches
+        || relationship === 'separate'
+      const assumptions = separateBranches
+        ? mergeAssumptions(
+            rangeCase.assumptions,
+            sharedAssumptions([lower.assumptions, upper.assumptions]),
+          )
+        : mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
+      if (!separateBranches && lower.value.min > upper.value.max) continue
+      if (!separateBranches && !assumptionsAreReachable(assumptions)) continue
+      cases.push({
+        source: rangeCase.source,
+        lower: lower.value,
+        upper: upper.value,
+        assumptions,
+        branches: mergeBranchArms(rangeCase.branches, lower.branches, upper.branches),
+        separateBranches,
+      })
     }
   }
   return cases
@@ -495,14 +544,28 @@ function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase
         mergeRangeOrigin(branch.value, origin),
       ),
       assumptions: mergeAssumptions(rangeCase.assumptions, branch.assumptions),
+      branches: mergeBranchArms(rangeCase.branches, branch.branches),
     }))
   }
   const cases: NumberCase[] = []
   for (const lower of numberBranches(rangeCase.lower)) {
     for (const upper of numberBranches(rangeCase.upper)) {
-      if (lower.value.min > upper.value.max) continue
-      const assumptions = mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
-      if (!assumptionsAreReachable(assumptions)) continue
+      const relationship = branchRelationship(
+        rangeCase.branches,
+        lower.branches,
+        upper.branches,
+      )
+      if (relationship === 'conflict') continue
+      const separateBranches = rangeCase.separateBranches
+        || relationship === 'separate'
+      const assumptions = separateBranches
+        ? mergeAssumptions(
+            rangeCase.assumptions,
+            sharedAssumptions([lower.assumptions, upper.assumptions]),
+          )
+        : mergeAssumptions(rangeCase.assumptions, lower.assumptions, upper.assumptions)
+      if (!separateBranches && lower.value.min > upper.value.max) continue
+      if (!separateBranches && !assumptionsAreReachable(assumptions)) continue
       cases.push({
         value: numberValue(
           lower.value.min,
@@ -514,10 +577,28 @@ function evaluatedRangeCaseValues(range: FitRange, rangeCase: EvaluatedRangeCase
           mergeRangeOrigin(lower.value, upper.value, origin),
         ),
         assumptions,
+        branches: mergeBranchArms(rangeCase.branches, lower.branches, upper.branches),
       })
     }
   }
   return cases
+}
+
+function rangeBoundsComeFromSeparateBranches(rangeCase: EvaluatedRangeCase) {
+  const exactSameExpression = rangeCase.source.lowerInclusive
+    && rangeCase.source.upperInclusive
+    && rangeCase.source.lower.text === rangeCase.source.upper.text
+  if (exactSameExpression) return false
+  for (const lower of numberBranches(rangeCase.lower)) {
+    for (const upper of numberBranches(rangeCase.upper)) {
+      if (branchRelationship(
+        rangeCase.branches,
+        lower.branches,
+        upper.branches,
+      ) === 'separate') return true
+    }
+  }
+  return false
 }
 
 function mergeRangeOrigin(...items: (NumberValue | string[])[]) {
@@ -546,10 +627,7 @@ function proveNumberInsideRangeCases(
   }
   const worlds = evaluatedRangeWorlds(alternatives, assumptions)
   if (worlds.kind === 'overflow') {
-    return {
-      status: 'unknown',
-      reason: `Numeric alternative budget exceeded: more than ${maxNumberCases} reachable dynamic range combinations`,
-    }
+    return proveNumberInsideRangeCasesAfterWorldLimit(value, range, alternatives, assumptions)
   }
   if (worlds.worlds.length === 0) return {status: 'fail', reason: emptyRangeSpecFailureReason(value, range)}
   if (value.caseLoss != null) {
@@ -570,8 +648,27 @@ function proveNumberInsideRangeCases(
     let unknownCount = 0
     let branchProblem: RangeProblem | null = null
     for (const world of worlds.worlds) {
-      const branchAssumptions = mergeAssumptions(branch.assumptions, world.assumptions)
-      const projected = reachableNumberCases(branch.value, branchAssumptions)
+      const relationship = branchRelationship(
+        [],
+        branch.caseBranches,
+        world.branches,
+      )
+      if (relationship === 'conflict') continue
+      const separateBranches = world.separateBranches
+        || relationship === 'separate'
+      const branchAssumptions = separateBranches
+        ? mergeAssumptions(
+            assumptions,
+            sharedAssumptions([branch.caseAssumptions, world.assumptions]),
+          )
+        : mergeAssumptions(branch.assumptions, world.assumptions)
+      const projected = reachableNumberCases(
+        branch.value,
+        separateBranches
+          ? mergeAssumptions(assumptions, branch.caseAssumptions)
+          : branchAssumptions,
+        branch.branches,
+      )
       if (projected.length === 0) continue
       const branchProof = proveNumberInsideAnyRangeCase(
         projected[0]!.value,
@@ -590,7 +687,7 @@ function proveNumberInsideRangeCases(
         cases: world.cases,
         proof: branchProof,
         assumptions: branchAssumptions,
-        uncorrelated: false,
+        uncorrelated: separateBranches,
       }
     }
     if (passCount === 0 && failCount === 0 && unknownCount === 0) {
@@ -600,6 +697,7 @@ function proveNumberInsideRangeCases(
       failCount > 0
       && unknownCount === 0
       && branchProblem != null
+      && !(branchProblem.uncorrelated && passCount > 0)
       && (!valueHasAlternatives || passCount === 0)
     ) {
       const reason = rangeProblemReason(branchProblem.value, range, branchProblem.cases, branchProblem.proof, branchProblem.assumptions)
@@ -621,7 +719,7 @@ function proveNumberInsideRangeCases(
   return {
     status: 'unknown',
     reason: unknownProblem.uncorrelated
-      ? `Dynamic range alternatives could not be correlated with the returned value\n${reason}`
+      ? `Dynamic range choices and the returned value came from separate branch constructs, so Freerange does not assume they match\n${reason}`
       : reason,
   }
 }
@@ -639,8 +737,27 @@ function proveNumberInsideRangeCasesAfterLoss(
   let firstProblem: RangeProblem | null = null
   for (const branch of reachableNumberCases(value, assumptions)) {
     for (const world of worlds) {
-      const branchAssumptions = mergeAssumptions(branch.assumptions, world.assumptions)
-      const projected = reachableNumberCases(branch.value, branchAssumptions)
+      const relationship = branchRelationship(
+        [],
+        branch.caseBranches,
+        world.branches,
+      )
+      if (relationship === 'conflict') continue
+      const separateBranches = world.separateBranches
+        || relationship === 'separate'
+      const branchAssumptions = separateBranches
+        ? mergeAssumptions(
+            assumptions,
+            sharedAssumptions([branch.caseAssumptions, world.assumptions]),
+          )
+        : mergeAssumptions(branch.assumptions, world.assumptions)
+      const projected = reachableNumberCases(
+        branch.value,
+        separateBranches
+          ? mergeAssumptions(assumptions, branch.caseAssumptions)
+          : branchAssumptions,
+        branch.branches,
+      )
       if (projected.length === 0) continue
       const proof = proveNumberInsideAnyRangeCase(
         projected[0]!.value,
@@ -682,6 +799,77 @@ function proveNumberInsideRangeCasesAfterLoss(
   return {status: 'unknown', reason: numberCaseLossMessage(loss)}
 }
 
+function proveNumberInsideRangeCasesAfterWorldLimit(
+  value: NumberValue,
+  range: FitRange,
+  alternatives: ExpandedRangeAlternative[],
+  assumptions: Assumption[],
+): {status: FitCheckStatus; reason?: string} {
+  const guaranteedCases = alternatives
+    .map(alternative => guaranteedRangeCase(alternative.cases))
+    .filter(rangeCase => rangeCase != null)
+  if (
+    guaranteedCases.length > 0
+    && proveNumberInsideAnyRangeCase(value, range, guaranteedCases, assumptions).kind === 'pass'
+  ) {
+    return {status: 'pass'}
+  }
+
+  const possibleCases = alternatives
+    .map(alternative => possibleRangeCase(alternative.cases))
+    .filter(rangeCase => rangeCase != null)
+  if (possibleCases.length > 0) {
+    const proof = proveNumberInsideAnyRangeCase(value, range, possibleCases, assumptions)
+    if (proof.kind === 'fail') {
+      return {
+        status: 'fail',
+        reason: rangeProblemReason(value, range, possibleCases, proof, assumptions),
+      }
+    }
+  }
+
+  return {
+    status: 'unknown',
+    reason: `Numeric alternative budget exceeded: more than ${maxNumberCases} reachable dynamic range combinations`,
+  }
+}
+
+function guaranteedRangeCase(cases: EvaluatedRangeCase[]): EvaluatedRangeCase | null {
+  const first = cases[0]
+  if (first == null) return null
+  return {
+    source: first.source,
+    lower: exactRangeBound(Math.max(...cases.map(rangeCase => rangeCase.lower.max))),
+    upper: exactRangeBound(Math.min(...cases.map(rangeCase => rangeCase.upper.min))),
+    assumptions: [],
+    branches: [],
+    separateBranches: false,
+  }
+}
+
+function possibleRangeCase(cases: EvaluatedRangeCase[]): EvaluatedRangeCase | null {
+  const first = cases[0]
+  if (first == null) return null
+  return {
+    source: first.source,
+    lower: exactRangeBound(Math.min(...cases.map(rangeCase => rangeCase.lower.min))),
+    upper: exactRangeBound(Math.max(...cases.map(rangeCase => rangeCase.upper.max))),
+    assumptions: [],
+    branches: [],
+    separateBranches: false,
+  }
+}
+
+function exactRangeBound(value: number) {
+  return numberValue(
+    value,
+    value,
+    gridOfNumber(value),
+    String(value),
+    Number.isFinite(value) ? linearConstant(value) : null,
+  )
+}
+
 function rangeProblemReason(
   value: NumberValue,
   range: FitRange,
@@ -705,26 +893,51 @@ function rangeProblemReason(
 type EvaluatedRangeWorld = {
   cases: EvaluatedRangeCase[]
   assumptions: Assumption[]
+  branches: BranchArm[]
+  separateBranches: boolean
 }
 
 function evaluatedRangeWorlds(
   alternatives: ExpandedRangeAlternative[],
   assumptions: Assumption[],
 ): {kind: 'worlds'; worlds: EvaluatedRangeWorld[]} | {kind: 'overflow'} {
-  let worlds: EvaluatedRangeWorld[] = [{cases: [], assumptions: []}]
+  let worlds: EvaluatedRangeWorld[] = [{
+    cases: [],
+    assumptions: [],
+    branches: [],
+    separateBranches: false,
+  }]
   for (const alternative of alternatives) {
     const next: EvaluatedRangeWorld[] = []
     for (const world of worlds) {
       for (const rangeCase of alternative.cases) {
-        const combined = mergeAssumptions(
-          assumptions,
-          world.assumptions,
-          rangeCase.assumptions,
+        const relationship = branchRelationship(
+          [],
+          world.branches,
+          rangeCase.branches,
         )
-        if (!assumptionsAreReachable(combined)) continue
+        if (relationship === 'conflict') continue
+        const separateBranches = world.separateBranches
+          || rangeCase.separateBranches
+          || relationship === 'separate'
+        const combined = separateBranches
+          ? mergeAssumptions(
+              assumptions,
+              sharedAssumptions([world.assumptions, rangeCase.assumptions]),
+            )
+          : mergeAssumptions(
+              assumptions,
+              world.assumptions,
+              rangeCase.assumptions,
+            )
+        if (!separateBranches && !assumptionsAreReachable(combined)) continue
         next.push({
           cases: [...world.cases, rangeCase],
-          assumptions: mergeAssumptions(world.assumptions, rangeCase.assumptions),
+          assumptions: separateBranches
+            ? sharedAssumptions([world.assumptions, rangeCase.assumptions])
+            : mergeAssumptions(world.assumptions, rangeCase.assumptions),
+          branches: mergeBranchArms(world.branches, rangeCase.branches),
+          separateBranches,
         })
         if (next.length > maxNumberCases) return {kind: 'overflow'}
       }

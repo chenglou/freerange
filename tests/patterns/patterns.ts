@@ -509,10 +509,55 @@ export function branchStateKeepsCorrelatedAssignments(flag: boolean) {
  * given n: int 0..10
  * return.total: 11 | 22
  */
-export function conditionalExpressionPrunesContradictoryNumericCases(n: number) {
-  const x = n > 4 ? 1 : 2
-  const y = n > 4 ? 10 : 20
-  return {total: x + y}
+export function conditionalExpressionKeepsOneResultTogether(n: number) {
+  const pair = n > 4
+    ? {x: 1, y: 10}
+    : {x: 2, y: 20}
+  return {total: pair.x + pair.y}
+}
+
+/** @fit
+ * return: 11 | 22
+ */
+export function conditionalTupleKeepsOneResultTogether(flag: boolean) {
+  const pair = flag
+    ? [1, 10] as const
+    : [2, 20] as const
+  return pair[0] + pair[1]
+}
+
+/** @fit
+ * return.value: 4 | 20
+ * return.bound: 5 | 20
+ */
+function groupedValueAndBound(flag: boolean) {
+  return flag
+    ? {value: 4, bound: 5}
+    : {value: 20, bound: 20}
+}
+
+/** @fit
+ * return.value <= return.bound
+ */
+export function oneGroupedHelperCallKeepsItsResultTogether(flag: boolean) {
+  return groupedValueAndBound(flag)
+}
+
+function switchLayout(kind: 'compact' | 'wide') {
+  switch (kind) {
+    case 'compact':
+      return {columns: 2, gap: 16}
+    case 'wide':
+      return {columns: 3, gap: 24}
+  }
+}
+
+/** @fit
+ * return: 18 | 27
+ */
+export function switchKeepsOneResultTogether(kind: 'compact' | 'wide') {
+  const layout = switchLayout(kind)
+  return layout.columns + layout.gap
 }
 
 /** @fit
@@ -576,42 +621,6 @@ export function compoundAdditionPreservesNumericAlternatives(n: number) {
 }
 
 /** @fit
- * return: -100 | -9
- */
-export function repeatedNumericGuardKeepsNaNBranchCorrelated(value: number) {
-  const left = value > 0 ? 1 : 100
-  const right = value > 0 ? 10 : 200
-  return left - right
-}
-
-/** @fit
- * return: -100 | -9
- */
-export function equivalentNumericGuardSpellingsStayCorrelated(value: number) {
-  const left = value > 0 ? 1 : 100
-  const right = 0 < value ? 10 : 200
-  return left - right
-}
-
-/** @fit
- * return: -100 | -9
- */
-export function negatedNumericGuardStaysCorrelated(value: number) {
-  const left = value > 0 ? 1 : 100
-  const right = !(value > 0) ? 200 : 10
-  return left - right
-}
-
-/** @fit
- * return: -100 | -9
- */
-export function repeatedSelfEqualityKeepsNaNBranchCorrelated(value: number) {
-  const left = value === value ? 1 : 100
-  const right = value === value ? 10 : 200
-  return left - right
-}
-
-/** @fit
  * return: -199 | -100 | -9 | 90
  */
 export function independentNumericGuardsKeepEveryCombination(a: number, b: number) {
@@ -630,28 +639,6 @@ function guardedRight(value: number) {
   return value > 0 ? 10 : 200
 }
 
-function guardedLinearLeft(linear: number) {
-  return linear > 0 ? 1 : 100
-}
-
-function guardedLinearRight(linear: number) {
-  return linear > 0 ? 10 : 200
-}
-
-/** @fit
- * return: -100 | -9
- */
-export function helperCallsCorrelateTheSameNumericGuard(value: number) {
-  return guardedLeft(value) - guardedRight(value)
-}
-
-/** @fit
- * return: -100 | -9
- */
-export function helperParameterNamedLinearDoesNotCollide(value: number) {
-  return guardedLinearLeft(value) - guardedLinearRight(value)
-}
-
 /** @fit
  * return: -199 | -100 | -9 | 90
  */
@@ -660,23 +647,12 @@ export function helperCallsKeepIndependentArgumentsIndependent(a: number, b: num
 }
 
 /** @fit
- * return: -199 | -100 | 90
+ * given items.length: 2
+ * return: 2 | 4
  */
-export function assignmentDoesNotReuseAnOldNumericGuard(value: number) {
-  const left = value > 0 ? 1 : 100
-  value = -value
-  const right = value > 0 ? 10 : 200
-  return left - right
-}
-
-/** @fit
- * return: 22 | 33
- */
-export function stateAndNumericCasesShareTheSameGuard(value: number) {
-  const columns = value > 0 ? 3 : 2
-  let gap = 20
-  if (value > 0) gap = 30
-  return columns + gap
+export function repeatedCollectionSlotKeepsItsOwnChoice(items: {flag: boolean}[]) {
+  const values = items.map(item => item.flag ? 1 : 2)
+  return values[0]! + values[0]!
 }
 
 /** @fit

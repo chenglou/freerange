@@ -13,7 +13,6 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
-import {isBranchChoice} from './assumptions.ts'
 import type {PreparedCallSite} from './prepared-call.ts'
 import {formatNumber} from './reporting.ts'
 import {mapSequenceAddition} from './sequence-relation.ts'
@@ -112,15 +111,10 @@ function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings):
     expr: maybeCallSiteText(value.expr, bindings),
     linear: linearWithCallSiteText(value.linear, bindings),
     computation: computationWithCallSiteText(value.computation, bindings),
-    ...(value.caseSource == null
-      ? {}
-      : {caseSource: {...value.caseSource, condition: callSiteText(value.caseSource.condition, bindings)}}),
-    ...(value.caseLoss?.kind === 'branch'
-      ? {caseLoss: {...value.caseLoss, condition: callSiteText(value.caseLoss.condition, bindings)}}
-      : {}),
     cases: value.cases == null ? null : value.cases.map(choice => ({
       value: numberWithCallSiteText(choice.value, bindings),
       assumptions: choice.assumptions.map(assumption => constraintWithCallSiteText(assumption, bindings)),
+      branches: choice.branches,
     })),
   }
 }
@@ -190,25 +184,6 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
 }
 
 function constraintWithCallSiteText(assumption: Assumption, bindings: CallSiteBindings): Assumption {
-  if (isBranchChoice(assumption)) {
-    return {
-      ...assumption,
-      left: assumption.left.kind === 'expression'
-        ? {...assumption.left, text: callSiteText(assumption.left.text, bindings)}
-        : {
-            ...assumption.left,
-            value: linearWithCallSiteText(assumption.left.value, bindings)!,
-            text: maybeCallSiteText(assumption.left.text, bindings),
-          },
-      right: assumption.right.kind === 'expression'
-        ? {...assumption.right, text: callSiteText(assumption.right.text, bindings)}
-        : {
-            ...assumption.right,
-            value: linearWithCallSiteText(assumption.right.value, bindings)!,
-            text: maybeCallSiteText(assumption.right.text, bindings),
-          },
-    }
-  }
   return {
     ...assumption,
     diff: linearWithCallSiteText(assumption.diff, bindings),

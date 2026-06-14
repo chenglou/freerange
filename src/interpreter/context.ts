@@ -5,6 +5,7 @@ import {
   unknown,
   type Assumption,
   type ArrayValue,
+  type BranchArm,
   type Value,
 } from '../domain.ts'
 import type {PreparedCall} from '../prepared-call.ts'
@@ -54,12 +55,22 @@ export type InterpreterFrame = {
   loopStack: LoopFrame[]
   conditionalDepth: number
   assumptions: Assumption[]
+  branches: BranchArm[]
+  caseAssumptions: Assumption[]
+  changedRoots: Set<string>
+  partitioned: boolean
+  separateBranches: boolean
+  branchIds: {next: number}
   objectPath?: string[]
 }
 
 export type InterpreterState = {
   env: Map<string, Value>
   assumptions: Assumption[]
+  branches: BranchArm[]
+  caseAssumptions: Assumption[]
+  changedRoots: Set<string>
+  separateBranches: boolean
 }
 
 export type InterpreterStateCase = InterpreterState & {
@@ -124,6 +135,7 @@ export type InterpreterStart = {
   env: Map<string, Value>
   stack: string[]
   assumptions: Assumption[]
+  branchIds?: {next: number}
   objectPath?: string[]
 }
 
@@ -156,6 +168,12 @@ export function rootFrame(start: InterpreterStart, policy = interpreterPolicy())
     loopStack: [],
     conditionalDepth: 0,
     assumptions: [...start.assumptions],
+    branches: [],
+    caseAssumptions: [],
+    changedRoots: new Set(),
+    partitioned: false,
+    separateBranches: false,
+    branchIds: start.branchIds ?? {next: 1},
     ...(start.objectPath == null ? {} : {objectPath: [...start.objectPath]}),
   }
 }
@@ -169,6 +187,11 @@ type DerivedFrameOptions = {
   loopStack?: LoopFrame[]
   conditionalDepth?: number
   assumptions?: Assumption[]
+  branches?: BranchArm[]
+  caseAssumptions?: Assumption[]
+  changedRoots?: Set<string>
+  partitioned?: boolean
+  separateBranches?: boolean
   objectPath?: string[] | null
   output?: InterpreterOutput
   policy?: InterpreterPolicy
@@ -187,6 +210,12 @@ export function deriveFrame(parent: InterpreterFrame, options: DerivedFrameOptio
     loopStack: options.loopStack ?? [...parent.loopStack],
     conditionalDepth: options.conditionalDepth ?? parent.conditionalDepth,
     assumptions: options.assumptions ?? [...parent.assumptions],
+    branches: options.branches ?? [...parent.branches],
+    caseAssumptions: options.caseAssumptions ?? [...parent.caseAssumptions],
+    changedRoots: options.changedRoots ?? new Set(parent.changedRoots),
+    partitioned: options.partitioned ?? parent.partitioned,
+    separateBranches: options.separateBranches ?? parent.separateBranches,
+    branchIds: parent.branchIds,
     ...(objectPath == null ? {} : {objectPath: [...objectPath]}),
   }
 }

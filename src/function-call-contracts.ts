@@ -24,6 +24,7 @@ import {
   unknown,
   withCombinedNumberCaseInfo,
   withNumberCases,
+  type BranchArm,
   type LiteralValue,
   type NumberCase,
   type NumberValue,
@@ -32,6 +33,7 @@ import {
   integerValued,
 } from './domain.ts'
 import {mergeAssumptions} from './assumptions.ts'
+import {mergeBranchArms} from './branch-context.ts'
 import {
   finiteElementAccessRoot,
   parsePrintedNumber,
@@ -379,6 +381,7 @@ export function valueWithFunctionContractSummary(
   specs: FitSpec[],
   prepared: PreparedCall,
   contractCache: Map<string, FunctionContractProof>,
+  branchIds: {next: number},
   source: ContractSummarySource,
   result: Value,
   callSiteBindings: CallSiteBindings | undefined,
@@ -395,6 +398,7 @@ export function valueWithFunctionContractSummary(
     stack: [functionName],
     checks: [],
     assumptions: [],
+    branchIds,
     contractCache,
   }
 
@@ -410,7 +414,27 @@ export function valueWithFunctionContractSummary(
   }
 
   const summary = env.get(fitReturnInternalRoot) ?? unknown(`Imported function ${functionName} contract did not describe return`)
-  return valueWithCallSiteText(summary, callSiteBindings)
+  return withFreshContractAlternatives(
+    valueWithCallSiteText(summary, callSiteBindings),
+    branchIds,
+  )
+}
+
+function withFreshContractAlternatives(
+  value: Value,
+  branchIds: {next: number},
+): Value {
+  if (
+    value.kind !== 'number'
+    || value.cases == null
+    || value.cases.length <= 1
+    || value.cases.some(numberCase => numberCase.branches.length > 0)
+  ) return value
+  const branchId = branchIds.next++
+  return withNumberCases(value, value.cases.map((numberCase, arm) => ({
+    ...numberCase,
+    branches: [{branchId, arm} satisfies BranchArm],
+  })))
 }
 
 function applySummaryValueSpec(
@@ -637,6 +661,7 @@ function summaryRangeCases(
           mergeOrigin(currentBranch.value, rangeBranch.value, origin),
         ),
         assumptions,
+        branches: mergeBranchArms(currentBranch.branches, rangeBranch.branches),
       })
     }
   }
@@ -760,6 +785,7 @@ function numberWithSummaryConstraint(value: NumberValue, summaryConstraint: Summ
   return withNumberCases(value, numberBranches(value).map(branch => ({
     value: branch.value,
     assumptions: mergeAssumptions(branch.assumptions, [summaryConstraint]),
+    branches: branch.branches,
   })))
 }
 

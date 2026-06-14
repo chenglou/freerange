@@ -9,11 +9,16 @@ import {
   unknown,
   valueWithAssumptions,
   type Assumption,
+  type BranchArm,
   type NumberValue,
   type Value,
 } from '../domain.ts'
 import {linearKey} from '../linear.ts'
-import {isBranchChoice, sharedAssumptions} from '../assumptions.ts'
+import {sharedAssumptions} from '../assumptions.ts'
+import {
+  branchesConflict,
+  sharedBranchArms,
+} from '../branch-context.ts'
 import {assumptionsAreReachable} from '../proof.ts'
 import {sequenceRelationKey} from '../sequence-relation.ts'
 
@@ -38,10 +43,24 @@ export function stateCasesFromFrame(frame: InterpreterFrame): InterpreterStateCa
 }
 
 export function frameForStateCase(parent: InterpreterFrame, stateCase: InterpreterStateCase): InterpreterFrame {
+  const env = new Map<string, Value>()
+  for (const [name, value] of stateCase.env) {
+    env.set(
+      name,
+      stateCase.changedRoots.has(name)
+        ? valueWithAssumptions(value, stateCase.caseAssumptions, stateCase.branches)
+        : value,
+    )
+  }
   return deriveFrame(parent, {
-    env: new Map(stateCase.env),
+    env,
     stateCases: null,
     assumptions: [...stateCase.assumptions],
+    branches: [...stateCase.branches],
+    caseAssumptions: [...stateCase.caseAssumptions],
+    changedRoots: new Set(stateCase.changedRoots),
+    partitioned: true,
+    separateBranches: stateCase.separateBranches,
   })
 }
 
@@ -49,6 +68,10 @@ export function snapshotStateCase(frame: InterpreterFrame, label?: string): Inte
   return {
     env: new Map(frame.env),
     assumptions: [...frame.assumptions],
+    branches: [...frame.branches],
+    caseAssumptions: [...frame.caseAssumptions],
+    changedRoots: new Set(frame.changedRoots),
+    separateBranches: frame.separateBranches,
     ...(label == null ? {} : {label}),
   }
 }
@@ -62,6 +85,10 @@ export function setStateCases(frame: InterpreterFrame, cases: InterpreterStateCa
   }
   frame.env = joinStateCaseEnvs(reachable)
   frame.assumptions = sharedStateCaseAssumptions(reachable)
+  frame.branches = sharedStateCaseBranches(reachable)
+  frame.caseAssumptions = sharedStateCaseCaseAssumptions(reachable)
+  frame.changedRoots = sharedChangedRoots(reachable)
+  frame.separateBranches = reachable.some(stateCase => stateCase.separateBranches)
   if (reachable.length === 0) {
     frame.stateCases = []
     return {kind: 'ok'}
@@ -71,6 +98,10 @@ export function setStateCases(frame: InterpreterFrame, cases: InterpreterStateCa
     if (reachable[0] != null) {
       frame.env = new Map(reachable[0].env)
       frame.assumptions = [...reachable[0].assumptions]
+      frame.branches = [...reachable[0].branches]
+      frame.caseAssumptions = [...reachable[0].caseAssumptions]
+      frame.changedRoots = new Set(reachable[0].changedRoots)
+      frame.separateBranches = reachable[0].separateBranches
     }
     return {kind: 'ok'}
   }
@@ -87,6 +118,10 @@ export function adoptJoinedState(frame: InterpreterFrame, cases: InterpreterStat
   }
   frame.env = joinStateCaseEnvs(reachable)
   frame.assumptions = sharedStateCaseAssumptions(reachable)
+  frame.branches = sharedStateCaseBranches(reachable)
+  frame.caseAssumptions = sharedStateCaseCaseAssumptions(reachable)
+  frame.changedRoots = sharedChangedRoots(reachable)
+  frame.separateBranches = reachable.some(stateCase => stateCase.separateBranches)
   if (reachable.length === 0) {
     frame.stateCases = []
     return {kind: 'ok'}
@@ -118,9 +153,9 @@ export function reachableStateCases<T extends InterpreterStateCase>(cases: T[]):
 export function joinStateCaseEnvs(cases: InterpreterStateCase[]): Map<string, Value> {
   const first = cases[0]
   if (first == null) return new Map()
-  let joined = envWithAssumptions(first.env, first.assumptions)
+  let joined = envWithCaseContext(first)
   for (const stateCase of cases.slice(1)) {
-    joined = joinFrameEnvs(joined, envWithAssumptions(stateCase.env, stateCase.assumptions))
+    joined = joinFrameEnvs(joined, envWithCaseContext(stateCase))
   }
   return joined
 }
@@ -129,16 +164,52 @@ export function sharedStateCaseAssumptions(cases: InterpreterStateCase[]): Assum
   return sharedAssumptions(cases.map(stateCase => stateCase.assumptions))
 }
 
-export function envWithAssumptions(env: Map<string, Value>, assumptions: Assumption[]): Map<string, Value> {
+export function envWithAssumptions(
+  env: Map<string, Value>,
+  assumptions: Assumption[],
+  branches: BranchArm[] = [],
+): Map<string, Value> {
   const next = new Map<string, Value>()
-  for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions))
+  for (const [name, value] of env) next.set(name, valueWithAssumptions(value, assumptions, branches))
   return next
+}
+
+function envWithCaseContext(stateCase: InterpreterStateCase): Map<string, Value> {
+  const next = new Map<string, Value>()
+  for (const [name, value] of stateCase.env) {
+    next.set(
+      name,
+      stateCase.changedRoots.has(name)
+        ? valueWithAssumptions(value, stateCase.caseAssumptions, stateCase.branches)
+        : value,
+    )
+  }
+  return next
+}
+
+function sharedStateCaseBranches(cases: InterpreterStateCase[]) {
+  return sharedBranchArms(cases.map(stateCase => stateCase.branches))
+}
+
+function sharedStateCaseCaseAssumptions(cases: InterpreterStateCase[]) {
+  return sharedAssumptions(cases.map(stateCase => stateCase.caseAssumptions))
+}
+
+function sharedChangedRoots(cases: InterpreterStateCase[]) {
+  const [first, ...rest] = cases
+  if (first == null) return new Set<string>()
+  return new Set([...first.changedRoots].filter(root =>
+    rest.every(stateCase => stateCase.changedRoots.has(root))))
 }
 
 function applyOverBudgetStateSummary(frame: InterpreterFrame, cases: InterpreterStateCase[], reason: string) {
   const summary = overBudgetStateSummary(cases, reason)
   frame.env = summary.env
   frame.assumptions = summary.assumptions
+  frame.branches = summary.branches
+  frame.caseAssumptions = summary.caseAssumptions
+  frame.changedRoots = summary.changedRoots
+  frame.separateBranches = summary.separateBranches
   delete frame.stateCases
 }
 
@@ -149,6 +220,10 @@ function overBudgetStateSummary(cases: InterpreterStateCase[], reason: string): 
   return {
     env,
     assumptions: sharedStateCaseAssumptions(cases),
+    branches: sharedStateCaseBranches(cases),
+    caseAssumptions: sharedStateCaseCaseAssumptions(cases),
+    changedRoots: sharedChangedRoots(cases),
+    separateBranches: cases.some(stateCase => stateCase.separateBranches),
   }
 }
 
@@ -175,8 +250,8 @@ function valueFingerprint(value: Value): string {
         cases: value.cases?.map(stateCase => ({
           value: valueFingerprint(stateCase.value),
           assumptions: stateCase.assumptions.map(assumptionFingerprint).sort(),
+          branches: stateCase.branches,
         })) ?? null,
-        caseSource: value.caseSource ?? null,
         caseLoss: value.caseLoss ?? null,
         origin: [...value.origin].sort(),
       })
@@ -249,18 +324,6 @@ function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary'])
 }
 
 function assumptionFingerprint(assumption: Assumption) {
-  if (isBranchChoice(assumption)) {
-    const operand = (value: typeof assumption.left) => value.kind === 'linear'
-      ? {kind: value.kind, value: linearKey(value.value), text: value.text}
-      : {kind: value.kind, text: value.text}
-    return JSON.stringify({
-      kind: assumption.kind,
-      op: assumption.op,
-      left: operand(assumption.left),
-      right: operand(assumption.right),
-      outcome: assumption.outcome,
-    })
-  }
   return JSON.stringify({
     op: assumption.op,
     text: assumption.text ?? null,
@@ -274,5 +337,6 @@ function assumptionFingerprint(assumption: Assumption) {
 }
 
 function stateCaseIsReachable(stateCase: InterpreterStateCase) {
-  return assumptionsAreReachable(stateCase.assumptions)
+  return !branchesConflict(stateCase.branches)
+    && assumptionsAreReachable(stateCase.assumptions)
 }

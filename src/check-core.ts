@@ -462,7 +462,7 @@ function verifyFunctionSpecsDetailed(
       checks.push(verifyPureSpec(file, functionName, fn, program, spec))
       continue
     }
-    checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, context.booleanAssumptions, contractCache))
+    checks.push(verifyCheckSpecForResultCases(file, program, functionName, env, result, state.returnCases, spec, checks, context.assumptions, context.booleanAssumptions, contractCache, context.branchIds ??= {next: 1}))
   }
 
   return {
@@ -503,6 +503,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
     state.assumptions,
     context.booleanAssumptions,
     contractCache,
+    context.branchIds ??= {next: 1},
   ))
   const unsupported = [
     ...setup.typeChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
@@ -752,11 +753,12 @@ function verifyCheckSpec(
   assumptions: Assumption[],
   booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
+  branchIds: {next: number},
   boundary?: CheckBoundary,
   obligationBoundary: FitObligationBoundary = 'function-contract',
 ): FitCheck {
   const obligation = obligationForSpec(file, functionName, spec, obligationBoundary, boundary)
-  const proof = verifyParsedCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache, checkSpecHooks)
+  const proof = verifyParsedCheckSpecWithProof(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache, branchIds, checkSpecHooks)
   const check = boundary == null ? proof.check : {...proof.check, ...boundary}
   return proveObligation({
     obligation,
@@ -778,13 +780,15 @@ function verifyCheckSpecForResultCases(
   assumptions: Assumption[],
   booleanAssumptions: Map<string, boolean> | undefined,
   contractCache: Map<string, FunctionContractProof>,
+  branchIds: {next: number},
 ): FitCheck {
   if (returnCases == null || returnCases.length <= 1) {
-    return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache)
+    return verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache, branchIds)
   }
 
-  const joinedCheck = verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache)
+  const joinedCheck = verifyCheckSpec(file, program, functionName, baseEnv, result, spec, checks, assumptions, booleanAssumptions, contractCache, branchIds)
   if (joinedCheck.status === 'pass') return joinedCheck
+  if (valueHasSeparateBranchLoss(result)) return joinedCheck
 
   const caseChecks = returnCases.map(returnCase => verifyCheckSpec(
     file,
@@ -797,12 +801,27 @@ function verifyCheckSpecForResultCases(
     mergeAssumptions(assumptions, returnCase.assumptions),
     booleanAssumptions,
     contractCache,
+    branchIds,
   ))
   if (caseChecks.every(check => check.status === 'pass')) return {...caseChecks[0]!, status: 'pass'}
   return caseChecks.find(check => check.status === 'fail')
     ?? caseChecks.find(check => check.status === 'unknown')
     ?? caseChecks.find(check => check.status === 'requires')
     ?? caseChecks[0]!
+}
+
+function valueHasSeparateBranchLoss(value: Value): boolean {
+  if (value.kind === 'number') return value.caseLoss?.kind === 'separate-branches'
+  if (value.kind === 'object') {
+    return [...value.props.values()].some(valueHasSeparateBranchLoss)
+  }
+  if (value.kind === 'array') {
+    return valueHasSeparateBranchLoss(value.length)
+      || value.elements?.some(valueHasSeparateBranchLoss) === true
+      || (value.element != null && valueHasSeparateBranchLoss(value.element))
+  }
+  if (value.kind === 'nullable') return valueHasSeparateBranchLoss(value.present)
+  return false
 }
 
 function proveRangeSpec(value: Value, range: FitRange, context: EvalContext): {status: FitCheckStatus; reason?: string} {
@@ -859,6 +878,7 @@ function interpreterInput(context: EvalContext) {
     env: context.env,
     stack: context.stack,
     assumptions: context.assumptions,
+    branchIds: context.branchIds ??= {next: 1},
     hooks: interpreterHooks(context),
     ...(context.objectPath == null ? {} : {objectPath: context.objectPath}),
   }
@@ -1169,6 +1189,7 @@ function verifyCheckSpecsWithResult(
       context.assumptions,
       context.booleanAssumptions,
       context.contractCache,
+      context.branchIds ??= {next: 1},
       boundary,
       obligationBoundary,
     ))
@@ -1327,6 +1348,7 @@ function verifyLocalLoopSpecs(specs: FitLoopSpec[], context: EvalContext) {
       context.assumptions,
       context.booleanAssumptions,
       context.contractCache,
+      context.branchIds ??= {next: 1},
       undefined,
       'loop-contract',
     ))
@@ -1374,6 +1396,7 @@ function evaluateLocalFunctionCall(
     stack: [...context.stack, functionName],
     checks: shouldRecordCallObligations(context) ? context.checks : [],
     assumptions: context.assumptions,
+    branchIds: context.branchIds ??= {next: 1},
     ...(context.booleanAssumptions == null ? {} : {booleanAssumptions: context.booleanAssumptions}),
     contractCache: context.contractCache,
     ...(context.callObligations == null ? {} : {callObligations: context.callObligations}),
@@ -1394,7 +1417,7 @@ function evaluateLocalFunctionCall(
   const proof = verifyFunctionContract(context.program, functionName, context.contractCache)
   if (proof.status !== 'pass') return callSiteFallbackResult
 
-  return valueWithFunctionContractSummary(functionName, context.program, fn, contractSpecs, prepared, context.contractCache, {
+  return valueWithFunctionContractSummary(functionName, context.program, fn, contractSpecs, prepared, context.contractCache, context.branchIds ??= {next: 1}, {
     kind: 'local',
     sourceFile: context.program.file,
     sourceFunctionName: functionName,
@@ -1438,7 +1461,7 @@ function evaluateImportedFunctionCall(
   )
   if (obligations !== 'pass') return unknown(`Imported call ${fn.name} precondition was not proven`)
 
-  return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, prepared, context.contractCache, {
+  return valueWithFunctionContractSummary(callName, target.program, fn, contractSpecs, prepared, context.contractCache, context.branchIds ??= {next: 1}, {
     kind: 'imported',
     sourceFile: target.program.file,
     sourceFunctionName: fn.name,

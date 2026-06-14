@@ -12,19 +12,13 @@ export type LinearConstraint = {
   integerStrict?: true
 }
 
-export type BranchChoiceOperand =
-  | {kind: 'linear'; value: LinearExpr; text: string | null}
-  | {kind: 'expression'; text: string}
-
-export type BranchChoice = {
-  kind: 'branch-choice'
-  op: '==' | '<' | '<='
-  left: BranchChoiceOperand
-  right: BranchChoiceOperand
-  outcome: boolean
+export type BranchArm = {
+  branchId: number
+  arm: number
+  path?: string[]
 }
 
-export type Assumption = LinearConstraint | BranchChoice
+export type Assumption = LinearConstraint
 
 export type ConstraintSource = 'function-given' | 'loop-given' | 'code' | 'branch' | 'contract'
 
@@ -59,18 +53,13 @@ export type NumberValue = {
   // calculations leave this null.
   computation: NumberComputation | null
   cases: NumberCase[] | null
-  caseSource?: NumberCaseSource
   caseLoss?: NumberCaseLoss
   origin: string[]
 }
 
-export type NumberCaseSource = {
-  condition: string
-}
-
 export type NumberCaseLoss =
   | {kind: 'limit'; count: number; limit: number}
-  | {kind: 'branch'; condition: string}
+  | {kind: 'separate-branches'}
 
 export type NumberComputation =
   | {
@@ -186,4 +175,5 @@ export type UnknownValue = {
 export type NumberCase = {
   value: NumberValue
   assumptions: Assumption[]
+  branches: BranchArm[]
 }
