@@ -2,18 +2,20 @@
 
 Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. Use [README.md](./README.md) as the short project front door. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes.
 
+- This project is private. Do NOT consider legacy and interop when refactoring.
+- Add positive and negative tests.
+
+**Important:** when a small general family is visible, implement the family. If supporting `total += row.height` naturally includes `total = total + row.height` and guarded additions, define that invariant and reject the unsafe cases. Say what belongs in the family and what stays out.
+
+**Important:** do NOT monkey-patch. If you found yourself solving the symptom instead of the root cause, reconsider and do a proper fix.
+
 Do `bun install` if you're in a fresh checkout/worktree.
 
-- This project is private. Do NOT consider legacy and interop when refactoring.
-- Add positive and negative tests. Prefer making the implementation less ad hoc over adding public syntax.
-
 Avoid invented compound word jargons like: -shaped, -owned. Don't use jargons unless they're known, established terms in the domains. Do NOT try to be concise or over-compress words.
-
-**Important:** when a small general family is visible, implement the family. If supporting `total += row.height` naturally includes `total = total + row.height` and guarded additions, define that invariant and reject the unsafe cases. Before coding, say what belongs in the family and what stays out.
-
-**Important:** do NOT monkey-patch. If you found yourself solving the symptom instead of the root cause, reconsider and do a proper fix, then YELL **I SOLVED THE ROOT CAUSE NOT THE SYMPTOM** with a brief summary.
+For commit messages, include the important nuances of the discussion that amounted to that decision.
 
 ## Docs Tone
+
 - Preserve the author's tone in docs and drafts. Prefer concise, slightly personal phrasing over generic explanatory filler.
 - Ground abstract explanations in examples (and shorten explanations length this way). Make sure the examples can be understood without excessive context and that the naming aren't abstract either:
   - write docs guidelines like this: "Colocate lifetimes. Instead of a `personAge: number | null` and a `personName: string | null`, put them into a `type Person = { age: number, name: string } | null`"
