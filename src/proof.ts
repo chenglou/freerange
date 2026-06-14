@@ -27,6 +27,7 @@ import {
   literalKey,
   numberBranches,
   numberValue,
+  sameNumberComputation,
   unknownNumber,
   type ConstraintSource,
   type LinearConstraint,
@@ -188,6 +189,10 @@ export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, 
   // NaN-free once anything constrains it (NaN fails every comparison, so a
   // recorded fact about it is a non-NaN certificate).
   if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr && !admitsNaN(left, assumptions)) return {status: 'pass'}
+  const sameComputation = left.computation != null
+    && right.computation != null
+    && sameNumberComputation(left.computation, right.computation)
+  if (sameComputation && op !== '<' && op !== '>' && (!admitsNaN(left, assumptions) || !admitsNaN(right, assumptions))) return {status: 'pass'}
   const mathTruth = proveMathLemma(left, op, right, assumptions)
   if (mathTruth === 'true') return {status: 'pass'}
   const truth = compareRanges(left, op, right, admitsNaN(left, assumptions) || admitsNaN(right, assumptions))
@@ -196,12 +201,21 @@ export function proveComparisonPlain(left: NumberValue, op: ComparisonOperator, 
   const linearTruth = compareLinear(left, op, right, assumptions)
   if (linearTruth === 'true') return {status: 'pass'}
   if (linearTruth === 'false') return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false by exact linear facts', missingComparisonFact(left, op, right, assumptions))}
+  if (sameComputation && (op === '<' || op === '>')) {
+    return {status: 'fail', reason: comparisonFailureReason(left, right, assumptions, 'is false', missingComparisonFact(left, op, right, assumptions))}
+  }
   return {status: 'unknown', reason: comparisonFailureReason(left, right, assumptions, 'was not proven', missingComparisonFact(left, op, right, assumptions))}
 }
 
 function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: LinearConstraint[]): ComparisonProofStep {
   if (op === '==' && left.expr != null && right.expr != null && left.expr === right.expr) {
     return {domain: 'source', rule: 'same-expression', message: 'matched the same source expression'}
+  }
+  const sameComputation = left.computation != null
+    && right.computation != null
+    && sameNumberComputation(left.computation, right.computation)
+  if (sameComputation && op !== '<' && op !== '>' && (!admitsNaN(left, assumptions) || !admitsNaN(right, assumptions))) {
+    return {domain: 'numeric', rule: 'same-computation', message: 'matched the same evaluated numeric operation'}
   }
   const ruleResult = evaluateComparisonRules({left, op, right}, proofRulesContext(assumptions))
   if (ruleResult?.status === 'pass') return {domain: 'numeric', rule: ruleResult.rule, message: ruleResult.message}
@@ -212,6 +226,7 @@ function comparisonProofStepPlain(left: NumberValue, op: ComparisonOperator, rig
   const linearTruth = compareLinear(left, op, right, assumptions)
   if (linearTruth !== 'maybe') return {domain: 'numeric', rule: 'linear-comparison', message: 'checked comparison from exact linear facts'}
 
+  if (sameComputation) return {domain: 'numeric', rule: 'same-computation', message: 'matched the same evaluated numeric operation'}
   if (ruleResult != null) return {domain: 'numeric', rule: ruleResult.rule, message: ruleResult.message}
 
   return {domain: 'numeric', rule: 'comparison', message: 'checked comparison claim'}

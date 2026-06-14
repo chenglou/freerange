@@ -39,8 +39,10 @@ export type NumberValue = {
   neverNaN?: true
   expr: string | null
   linear: LinearExpr | null
-  // Actual source arithmetic keeps the operand values read at evaluation
-  // time. Abstract range calculations leave this null.
+  // Actual source arithmetic keeps the operand identities and facts read at
+  // evaluation time. Refinement may change an operand's bounds without
+  // changing its identity; branch joins merge those facts. Abstract range
+  // calculations leave this null.
   computation: NumberComputation | null
   cases: NumberCase[] | null
   origin: string[]

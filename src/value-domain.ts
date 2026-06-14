@@ -1,18 +1,14 @@
-import {
-  linearVariable,
-  sameLinear,
-} from './linear.ts'
+import {linearVariable} from './linear.ts'
 import {joinArraySummary} from './array-summary.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {
+  joinNumberValues,
   linearNameForExpression,
   maxNumberCases,
   mergeOrigin,
   numberBranches,
   numberValue,
-  sameNumberComputation,
   withNumberCases,
-  gridJoin,
 } from './number-domain.ts'
 import type {
   ArrayValue,
@@ -175,20 +171,7 @@ export function mergeElementValue(left: Value | null, right: Value | null): Valu
 export function joinValues(left: Value, right: Value): Value {
   if (left.kind === 'unknown') return left
   if (right.kind === 'unknown') return right
-  if (left.kind === 'number' && right.kind === 'number') {
-    const joined = numberValue(
-      Math.min(left.min, right.min),
-      Math.max(left.max, right.max),
-      gridJoin(left.grid, right.grid),
-      left.expr != null && right.expr != null && left.expr === right.expr ? left.expr : null,
-      left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
-      null,
-      mergeOrigin(left, right),
-      sameNumberComputation(left.computation, right.computation) ? left.computation : null,
-    )
-    if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
-    return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
-  }
+  if (left.kind === 'number' && right.kind === 'number') return joinNumberValues(left, right)
   if (left.kind === 'literal' && right.kind === 'literal') {
     return literalValue(
       [...left.values, ...right.values],
@@ -250,22 +233,4 @@ export function joinValues(left: Value, right: Value): Value {
   if (left.kind === 'null') return nullableValue(right, right.expr)
   if (right.kind === 'null') return nullableValue(left, left.expr)
   return unknown('Branches returned incompatible value shapes')
-}
-
-function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, joined: NumberValue) {
-  if (left.cases != null || right.cases != null) return true
-  const sameRange = left.min === right.min && left.max === right.max && left.grid === right.grid
-  const sameExpr = (left.expr ?? null) === (right.expr ?? null)
-  const sameLinearity = (left.linear == null && right.linear == null)
-    || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
-  const sameComputation = sameNumberComputation(left.computation, right.computation)
-  if (sameRange && sameExpr && sameLinearity && sameComputation) return false
-  return isUsefulNumberCase(left) && isUsefulNumberCase(right) && isUsefulNumberCase(joined)
-}
-
-function isUsefulNumberCase(value: NumberValue) {
-  return value.expr != null
-    || value.linear != null
-    || value.min !== Number.NEGATIVE_INFINITY
-    || value.max !== Number.POSITIVE_INFINITY
 }

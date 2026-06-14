@@ -246,6 +246,12 @@ export function numberBranches(value: NumberValue): NumberCase[] {
   return value.cases ?? [{value: plainNumber(value), assumptions: []}]
 }
 
+export function joinNumberValues(left: NumberValue, right: NumberValue): NumberValue {
+  const joined = mergePlainNumberValues(left, right)
+  if (!shouldKeepJoinedNumberCases(left, right, joined)) return joined
+  return withNumberCases(joined, [...numberBranches(left), ...numberBranches(right)])
+}
+
 export function withNumberCases(value: NumberValue, cases: NumberCase[] | null): NumberValue {
   if (cases == null || cases.length === 0) return value
   const plainCases = cases.map(choice => ({value: plainNumber(choice.value), assumptions: choice.assumptions}))
@@ -285,26 +291,30 @@ function numberValueContains(container: NumberValue, item: NumberValue) {
 }
 
 function mergeNumberCaseValues(left: NumberValue, right: NumberValue): NumberValue {
-  if (numberValueContains(left, right)) return left
-  if (numberValueContains(right, left)) return right
-  const expr = left.expr != null && left.expr === right.expr ? left.expr : null
-  const linear = left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null
-  return numberValue(
+  return mergePlainNumberValues(left, right)
+}
+
+function mergePlainNumberValues(left: NumberValue, right: NumberValue): NumberValue {
+  const merged = numberValue(
     Math.min(left.min, right.min),
     Math.max(left.max, right.max),
     gridJoin(left.grid, right.grid),
-    expr,
-    linear,
+    left.expr != null && left.expr === right.expr ? left.expr : null,
+    left.linear != null && right.linear != null && sameLinear(left.linear, right.linear) ? left.linear : null,
     null,
     mergeOrigin(left, right),
-    sameNumberComputation(left.computation, right.computation) ? left.computation : null,
+    mergeNumberComputation(left.computation, right.computation),
   )
+  return !possiblyNaN(left) && !possiblyNaN(right) && possiblyNaN(merged)
+    ? {...merged, neverNaN: true}
+    : merged
 }
 
 function sameNumberShape(left: NumberValue, right: NumberValue) {
   return left.min === right.min
     && left.max === right.max
     && left.grid === right.grid
+    && possiblyNaN(left) === possiblyNaN(right)
     && (left.expr ?? null) === (right.expr ?? null)
     && ((left.linear == null && right.linear == null) || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)))
     && sameNumberComputation(left.computation, right.computation)
@@ -315,19 +325,60 @@ export function sameNumberComputation(left: NumberComputation | null, right: Num
   if (left == null || right == null || left.kind !== right.kind || left.op !== right.op) return false
   if (left.kind === 'unary' && right.kind === 'unary') return sameComputationOperand(left.operand, right.operand)
   if (left.kind === 'binary' && right.kind === 'binary') {
-    return sameComputationOperand(left.left, right.left) && sameComputationOperand(left.right, right.right)
+    if (sameComputationOperand(left.left, right.left) && sameComputationOperand(left.right, right.right)) return true
+    return computationIsCommutative(left.op)
+      && sameComputationOperand(left.left, right.right)
+      && sameComputationOperand(left.right, right.left)
   }
   return false
 }
 
 export function sameComputationOperand(left: NumberValue, right: NumberValue): boolean {
   if (left === right) return true
-  if (left.min !== right.min || left.max !== right.max || left.grid !== right.grid) return false
   if (left.computation != null || right.computation != null) {
     return sameNumberComputation(left.computation, right.computation)
   }
   if (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)) return true
   return false
+}
+
+function mergeNumberComputation(
+  left: NumberComputation | null,
+  right: NumberComputation | null,
+): NumberComputation | null {
+  if (left === right) return left
+  if (left == null || right == null || left.kind !== right.kind || left.op !== right.op) return null
+  if (left.kind === 'unary' && right.kind === 'unary') {
+    const operand = mergeComputationOperand(left.operand, right.operand)
+    return operand == null ? null : {kind: 'unary', op: left.op, operand}
+  }
+  if (left.kind === 'binary' && right.kind === 'binary') {
+    const direct = mergeBinaryComputationOperands(left, right, false)
+    if (direct != null) return {kind: 'binary', op: left.op, ...direct}
+    if (!computationIsCommutative(left.op)) return null
+    const swapped = mergeBinaryComputationOperands(left, right, true)
+    return swapped == null ? null : {kind: 'binary', op: left.op, ...swapped}
+  }
+  return null
+}
+
+function mergeBinaryComputationOperands(
+  left: Extract<NumberComputation, {kind: 'binary'}>,
+  right: Extract<NumberComputation, {kind: 'binary'}>,
+  swapped: boolean,
+): {left: NumberValue; right: NumberValue} | null {
+  const mergedLeft = mergeComputationOperand(left.left, swapped ? right.right : right.left)
+  if (mergedLeft == null) return null
+  const mergedRight = mergeComputationOperand(left.right, swapped ? right.left : right.right)
+  return mergedRight == null ? null : {left: mergedLeft, right: mergedRight}
+}
+
+function mergeComputationOperand(left: NumberValue, right: NumberValue): NumberValue | null {
+  return sameComputationOperand(left, right) ? mergePlainNumberValues(left, right) : null
+}
+
+function computationIsCommutative(op: Extract<NumberComputation, {kind: 'binary'}>['op']) {
+  return op === '+' || op === '*'
 }
 
 export function binaryNumberComputation(
@@ -362,6 +413,24 @@ export function numberWithBounds(
     && bounded.max === Number.POSITIVE_INFINITY
     ? {...bounded, neverNaN: true}
     : bounded
+}
+
+function shouldKeepJoinedNumberCases(left: NumberValue, right: NumberValue, joined: NumberValue) {
+  if (left.cases != null || right.cases != null) return true
+  const sameRange = left.min === right.min && left.max === right.max && left.grid === right.grid
+  const sameExpr = (left.expr ?? null) === (right.expr ?? null)
+  const sameLinearity = (left.linear == null && right.linear == null)
+    || (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear))
+  const sameComputation = sameNumberComputation(left.computation, right.computation)
+  if (sameRange && sameExpr && sameLinearity && sameComputation) return false
+  return isUsefulNumberCase(left) && isUsefulNumberCase(right) && isUsefulNumberCase(joined)
+}
+
+function isUsefulNumberCase(value: NumberValue) {
+  return value.expr != null
+    || value.linear != null
+    || value.min !== Number.NEGATIVE_INFINITY
+    || value.max !== Number.POSITIVE_INFINITY
 }
 
 // Adding a pinned zero returns the other operand under JS == (only the sign

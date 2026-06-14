@@ -8,9 +8,11 @@ import {
   numberValue,
   numberWithBounds,
   numberWithComputation,
+  sameComputationOperand,
   sameNumberComputation,
   subtractNumbers,
 } from '../../src/domain.ts'
+import {linearVariable} from '../../src/linear.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
@@ -133,9 +135,9 @@ if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.
   console.log('domain: unbounded difference')
 }
 
-const computationLeft = numberValue(0, 1000, null, 'left')
-const computationHeight = numberValue(0, 40, null, 'height')
-const computationGap = numberValue(0, 10, null, 'gap')
+const computationLeft = numberValue(0, 1000, null, 'left', linearVariable('left'))
+const computationHeight = numberValue(0, 40, null, 'height', linearVariable('height'))
+const computationGap = numberValue(0, 10, null, 'gap', linearVariable('gap'))
 const computedAdd = (left: typeof computationLeft, right: typeof computationLeft) =>
   numberWithComputation(addNumbers(left, right), binaryNumberComputation('+', left, right))
 const computationBottom = computedAdd(computationLeft, computationHeight)
@@ -145,22 +147,83 @@ const computationRegrouped = computedAdd(computationLeft, computedAdd(computatio
 const sameComputationJoin = joinValues(computationNext, computationNextAgain)
 const regroupedComputationJoin = joinValues(computationNext, computationRegrouped)
 const narrowedComputation = numberWithBounds(computationNext, 0, 100)
+const refinedComputationLeft = numberWithBounds(computationLeft, 100, 500, 0)
+const refinedOperandJoin = joinValues(computationBottom, computedAdd(refinedComputationLeft, computationHeight))
+const reverseRefinedOperandJoin = joinValues(computedAdd(refinedComputationLeft, computationHeight), computationBottom)
+const commutedAdd = binaryNumberComputation('+', computationHeight, computationLeft)
+const commutedMultiply = binaryNumberComputation('*', computationHeight, computationLeft)
+const unrelatedContainedJoin = joinValues(
+  numberValue(0, 100, null, 'broad', linearVariable('broad')),
+  numberValue(20, 30, null, 'other', linearVariable('other')),
+)
+const unrelatedContainedCasesRetainIdentity = unrelatedContainedJoin.kind === 'number'
+  && unrelatedContainedJoin.cases?.some(branch => branch.value.linear != null || branch.value.computation != null) === true
 if (
   computationNext.computation == null
   || computationRegrouped.computation == null
   || !sameNumberComputation(computationNext.computation, computationNextAgain.computation)
+  || !sameNumberComputation(computationBottom.computation, commutedAdd)
+  || !sameNumberComputation(binaryNumberComputation('*', computationLeft, computationHeight), commutedMultiply)
+  || sameNumberComputation(binaryNumberComputation('-', computationLeft, computationHeight), binaryNumberComputation('-', computationHeight, computationLeft))
+  || sameNumberComputation(binaryNumberComputation('/', computationLeft, computationHeight), binaryNumberComputation('/', computationHeight, computationLeft))
+  || sameNumberComputation(binaryNumberComputation('%', computationLeft, computationHeight), binaryNumberComputation('%', computationHeight, computationLeft))
+  || sameNumberComputation(binaryNumberComputation('**', computationLeft, computationHeight), binaryNumberComputation('**', computationHeight, computationLeft))
   || sameNumberComputation(computationNext.computation, computationRegrouped.computation)
+  || !sameComputationOperand(computationLeft, refinedComputationLeft)
   || sameComputationJoin.kind !== 'number'
   || sameComputationJoin.computation == null
   || regroupedComputationJoin.kind !== 'number'
   || regroupedComputationJoin.computation != null
   || narrowedComputation.computation == null
   || !sameNumberComputation(computationNext.computation, narrowedComputation.computation)
+  || refinedOperandJoin.kind !== 'number'
+  || refinedOperandJoin.computation?.kind !== 'binary'
+  || refinedOperandJoin.computation.left.min !== 0
+  || refinedOperandJoin.computation.left.max !== 1000
+  || reverseRefinedOperandJoin.kind !== 'number'
+  || !sameNumberComputation(refinedOperandJoin.computation, reverseRefinedOperandJoin.computation)
+  || unrelatedContainedCasesRetainIdentity
 ) {
-  console.error('expected numeric computations to preserve operand snapshots, grouping, and range refinement')
+  console.error('expected numeric computation identity to ignore refinement, merge facts, preserve grouping, and support commutativity')
   process.exitCode = 1
 } else {
-  console.log('domain: numeric computations preserve grouping across joins')
+  console.log('domain: numeric computation identity and facts stay separate')
+}
+
+const computationIdentityChecks = verifyFitSource('computation-identity.ts', `
+/** @fit
+ * given left: -100..100
+ * given right: -100..100
+ * return.sum == right + left
+ * return.product == right * left
+ */
+function commutative(left: number, right: number) {
+  return {sum: left + right, product: left * right}
+}
+`)
+const computationIdentityFailures = computationIdentityChecks.filter(check => check.status !== 'pass')
+if (computationIdentityFailures.length > 0 || computationIdentityChecks.length !== 2) {
+  console.error('expected commutative computations to retain runtime identity')
+  console.error(JSON.stringify(computationIdentityChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('domain: commutative computations prove')
+}
+
+const nanComputationIdentityChecks = verifyFitSource('nan-computation-identity.ts', `
+/** @fit
+ * return == right + left
+ */
+function nanCapableCommutative(left: number, right: number) {
+  return left + right
+}
+`)
+if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'unknown') {
+  console.error('expected matching computations to remain unproved when they can produce NaN')
+  console.error(JSON.stringify(nanComputationIdentityChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('domain: NaN-capable computation equality stays unknown')
 }
 
 const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
@@ -1120,6 +1183,31 @@ if (Bun.argv.includes('--update')) {
   } else {
     console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
   }
+}
+
+const lateRefinementChecks = verifyFitSource('late-refinement.ts', `
+/** @fit
+ * given items[].height: -100..100
+ * given top: 0..1000
+ * return.rows[].bottom == return.rows[].top + return.rows[].height
+ */
+function lateRefinement(items: {height: number}[], top: number) {
+  const rows = []
+  for (const item of items) {
+    const height = item.height
+    const bottom = top + height
+    if (height < 0) continue
+    rows.push({top, height, bottom})
+  }
+  return {rows}
+}
+`)
+if (lateRefinementChecks.length !== 1 || lateRefinementChecks[0]?.status !== 'pass') {
+  console.error('expected a computation to retain operand identity after a later range refinement')
+  console.error(JSON.stringify(lateRefinementChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('domain: late-refined computation operands prove')
 }
 
 const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
