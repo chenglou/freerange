@@ -37,8 +37,6 @@ import {
   setCheckedDomainPathValue,
   setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
-import {functionContractSpecs} from './function-contracts.ts'
-import {filterTypeCheckedSpecs} from './contract-typecheck.ts'
 import {functionInputRoots} from './function-shape.ts'
 import {
   linearVariable,
@@ -81,6 +79,7 @@ import {
 import {
   callPreconditionObligation,
 } from './obligations.ts'
+import {preparedFunctionContracts} from './prepared-contracts.ts'
 import {
   comparisonConstraint,
   flipComparison,
@@ -120,7 +119,7 @@ export function verifyCallGivenSpecs(
   options: {record: boolean; callLine?: number | undefined; callSiteBindings?: CallSiteBindings | undefined},
   evaluators: CallContractEvaluators,
 ) {
-  const contractSpecs = filterTypeCheckedSpecs(calleeProgram, functionContractSpecs(calleeProgram, fn))
+  const contractSpecs = preparedFunctionContracts(calleeProgram, fn).contractSpecs
   const env = new Map(prepared.analysisEnv)
   let statusSummary: FitCheckStatus = 'pass'
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}

@@ -258,6 +258,14 @@ export function evaluateInterpreterTopLevel(input: InterpreterExecutionInput): I
   return {state: interpreterState(frame), output: frame.output}
 }
 
+export function evaluateInterpreterTopLevelAnnotations(input: InterpreterExecutionInput): InterpreterTopLevelResult {
+  const frame = interpreterFrame(input)
+  for (const statement of topLevelExecutableStatements(input.program.sourceFile.statements)) {
+    evaluateStatement(statement, frame)
+  }
+  return {state: interpreterState(frame), output: frame.output}
+}
+
 export function evaluateInterpreterExpression(input: InterpreterExecutionInput & {
   expression: ts.Expression
 }): InterpreterValueResult {

@@ -134,11 +134,6 @@ export function unknownResultValue(): Value {
   return unknown(`Return value was not evaluated`)
 }
 
-export function valueWithBindingTypeFallback(name: ts.BindingName, value: Value, type: ts.TypeNode | undefined, program: Program): Value {
-  if (!ts.isIdentifier(name)) return value
-  return valueWithTypeFallback(value, valueFromTypeNode(name.text, type, program) ?? valueFromNodeType(name.text, name, program))
-}
-
 export function arrayPatternElementValue(value: Value, index: number): Value {
   if (value.kind !== 'array') return unknown(`Array destructuring expected an array`)
   return tupleElements(value)?.[index]

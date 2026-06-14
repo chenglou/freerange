@@ -21,6 +21,7 @@ import {
   type FitGivenSpec,
   type FitRange,
   type FitSpecRole,
+  type FitTypeCheckOrigin,
 } from './parser.ts'
 import {type FitFunction} from './modules.ts'
 import {type Program} from './check-types.ts'
@@ -44,21 +45,23 @@ export type TypeContractTemplate =
   | {
       kind: 'range'
       scopeSourceId?: string
-      typeCheckKey?: string
+      typeCheckOrigin?: FitTypeCheckOrigin
       text: string
       expression: FitExpression
       range: FitRange
       line?: number
+      pos?: number
     }
   | {
       kind: 'comparison'
       scopeSourceId?: string
-      typeCheckKey?: string
+      typeCheckOrigin?: FitTypeCheckOrigin
       text: string
       left: FitExpression
       op: ComparisonOperator
       right: FitExpression
       line?: number
+      pos?: number
     }
 
 export type TypeContractTemplateResult = {
@@ -78,7 +81,7 @@ type TypeScope = {
 
 type ParsedTypeContractTemplate = TypeContractTemplate extends infer Template
   ? Template extends TypeContractTemplate
-    ? Omit<Template, 'scopeSourceId' | 'typeCheckKey' | 'text'>
+    ? Omit<Template, 'scopeSourceId' | 'typeCheckOrigin' | 'text' | 'line' | 'pos'>
     : never
   : never
 
@@ -197,7 +200,8 @@ function setTypeContractTemplates(index: TypeContractTemplateIndex, node: ts.Nod
     unsupported: result.unsupported,
     templates: result.templates.map(template => {
       const scoped = {...template, scopeSourceId}
-      return {...scoped, typeCheckKey: typeContractTemplateKey(scoped)}
+      const typeCheckOrigin = template.pos == null ? undefined : {sourceId: scopeSourceId, pos: template.pos}
+      return {...scoped, ...(typeCheckOrigin == null ? {} : {typeCheckOrigin})}
     }),
   })
 }
@@ -366,7 +370,7 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
         expression,
         range,
         text,
-        ...(template.typeCheckKey == null ? {} : {typeCheckKey: template.typeCheckKey}),
+        ...(template.typeCheckOrigin == null ? {} : {typeCheckOrigin: template.typeCheckOrigin}),
         ...(template.scopeSourceId == null ? {} : {typeCheckSourceId: template.scopeSourceId}),
         ...(template.line == null ? {} : {line: template.line}),
       }
@@ -382,7 +386,7 @@ function instantiateTypeContractTemplate(template: TypeContractTemplate, root: s
         op: template.op,
         right,
         text,
-        ...(template.typeCheckKey == null ? {} : {typeCheckKey: template.typeCheckKey}),
+        ...(template.typeCheckOrigin == null ? {} : {typeCheckOrigin: template.typeCheckOrigin}),
         ...(template.scopeSourceId == null ? {} : {typeCheckSourceId: template.scopeSourceId}),
         ...(template.line == null ? {} : {line: template.line}),
       }
@@ -474,7 +478,7 @@ function parseTypeCommentTemplateLines(
       unsupported.push({text: body, reason: parsed.unsupported, line: line.line})
       continue
     }
-    templates.push({...parsed.template, text: body, line: line.line})
+    templates.push({...parsed.template, text: body, line: line.line, pos: line.pos})
   }
   return {templates, unsupported}
 }
@@ -793,9 +797,6 @@ function commentLineKey(line: FitCommentLine) {
   return `${line.line}:${line.text}`
 }
 
-function typeContractTemplateKey(template: TypeContractTemplate) {
-  return `${template.scopeSourceId ?? ''}\0${template.line ?? ''}\0${template.kind}\0${template.text}`
-}
 
 function escapeRegExp(text: string) {
   return text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')

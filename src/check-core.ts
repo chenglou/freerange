@@ -11,8 +11,6 @@ import {
   fitSpecIsAssumption,
   fitSpecIsProof,
   fitExpressionScopeSourceId,
-  fitExpressionParsed,
-  fitValueSpecExpressions,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
   instantiateInlineFitTemplates,
@@ -98,7 +96,6 @@ import {
   verifyCallGivenSpecs,
 } from './function-call-contracts.ts'
 import {
-  typeCheckContractForTypeNode,
   type TypeContractUnsupported,
 } from './type-contracts.ts'
 import {
@@ -109,21 +106,8 @@ import {
 import {programGlobalEnv} from './program-env.ts'
 import {functionInputRoots} from './function-shape.ts'
 import {
-  emptyTypeContract,
-  functionContractSpecs,
-  functionHasExplicitSpecs,
-  functionHasBodyFitComment,
-  functionHasBodyTypeBoundary,
-  functionHasTypeContracts,
-  functionTypeUnsupported,
-  hasTypeContractWork,
-  mergeTypeContracts,
-  typeCheckContractForExpressionBoundary,
-} from './function-contracts.ts'
-import {
   arrayPatternElementValue,
   unknownResultValue,
-  valueWithBindingTypeFallback,
 } from './function-inputs.ts'
 import {
   functionEvalContext,
@@ -134,10 +118,10 @@ import {
   validateGivenSpecs,
 } from './givens.ts'
 import {
-  contractTypeChecksForTopLevel,
-  filterTypeCheckedInlineTemplates,
-  filterTypeCheckedSpecs,
-} from './contract-typecheck.ts'
+  preparedFunctionContracts,
+  preparedProgramContracts,
+  type PreparedBodyContracts,
+} from './prepared-contracts.ts'
 import {
   evaluateDomainPathValue,
   parsePrintedNumber,
@@ -150,6 +134,7 @@ import {
   evaluateInterpreterExpression,
   evaluateInterpreterFunctionBody,
   evaluateInterpreterTopLevel,
+  evaluateInterpreterTopLevelAnnotations,
 } from './interpreter/evaluate.ts'
 import {
   auditObligation,
@@ -211,7 +196,11 @@ export function inferFitFiles(paths: string[], options: {functionName?: string; 
   for (const program of project.entries) {
     for (const [functionName, fn] of program.functions) {
       if (options.functionName != null && functionName !== options.functionName) continue
-      if (options.functionName == null && options.all !== true && !functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+      if (
+        options.functionName == null
+        && options.all !== true
+        && !preparedFunctionContracts(program, fn).hasAnnotationSurface
+      ) continue
       functions.push(inferFunctionFacts(program, fn, contractCache))
     }
   }
@@ -237,7 +226,7 @@ export function createFunctionContractCache(): Map<string, FunctionContractProof
 export function verifyFitProgram(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
   const checks: FitCheck[] = []
   for (const fn of program.functions.values()) {
-    if (!functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+    if (!preparedFunctionContracts(program, fn).hasAnnotationSurface) continue
     checks.push(...verifyFunctionSpecs(program.file, program, fn, contractCache))
   }
   checks.push(...verifyTopLevelInlineSpecs(program, contractCache))
@@ -254,7 +243,7 @@ export function verifyFitProgramWithCallsites(
   const functionsWithRecordedCallsites = new Set<string>()
 
   for (const fn of program.functions.values()) {
-    if (!functionHasExplicitSpecs(fn) && !functionHasBodyFitComment(fn) && !functionHasTypeContracts(program, fn)) continue
+    if (!preparedFunctionContracts(program, fn).hasAnnotationSurface) continue
     const result = verifyFunctionSpecsDetailed(program.file, program, fn, contractCache)
     annotationChecks.push(...result.checks)
     if (result.recordedCallsites) {
@@ -293,7 +282,7 @@ function reachableProgramHasCallPreconditions(program: Program, seen = new Set<s
 }
 
 function functionHasCallPreconditionSpecs(program: Program, fn: FitFunction) {
-  return filterTypeCheckedSpecs(program, functionContractSpecs(program, fn)).some(fitSpecIsAssumption)
+  return preparedFunctionContracts(program, fn).hasCallPreconditions
 }
 
 
@@ -312,9 +301,7 @@ export function auditSelectorsInProgram(
 }
 
 function functionHasAuditAnnotationSurface(program: Program, fn: FitFunction) {
-  return functionHasExplicitSpecs(fn)
-    || functionHasBodyFitComment(fn)
-    || functionHasTypeContracts(program, fn)
+  return preparedFunctionContracts(program, fn).hasAnnotationSurface
 }
 
 function auditTopLevelSelectors(program: Program, contractCache: Map<string, FunctionContractProof>): FitAudit[] {
@@ -422,27 +409,12 @@ function dedupeCallsiteChecks(checks: FitCheck[]) {
 }
 
 function verifyTopLevelInlineSpecs(program: Program, contractCache: Map<string, FunctionContractProof>): FitCheck[] {
+  const prepared = preparedProgramContracts(program).topLevel
   const context = topLevelEvalContext(program, contractCache)
-  const typeChecks = contractTypeChecksForTopLevel(program)
-  context.checks.push(...typeChecks)
-  const allowInlineSpecs = typeChecks.every(check => check.status === 'pass')
-  for (const statement of program.sourceFile.statements) {
-    if (!ts.isVariableStatement(statement)) continue
-    const statementChecksStart = context.checks.length
-    const specs = allowInlineSpecs
-      ? filterTypeCheckedSpecs(program, program.topLevelBodySpecs.localSpecsByStatement.get(statement) ?? [])
-      : []
-    bindVariableStatement(statement, context, specs)
-    if (checksAddedNonPass(context.checks, statementChecksStart)) return context.checks
-  }
+  context.checks.push(...prepared.typeChecks)
+  pushUnsupportedPlacements(context.checks, program.file, '<top-level>', prepared.body.unsupportedPlacements)
+  evaluateInterpreterTopLevelAnnotations(interpreterInput(context))
   return context.checks
-}
-
-function checksAddedNonPass(checks: FitCheck[], start: number): boolean {
-  for (let index = start; index < checks.length; index++) {
-    if (checks[index]!.status !== 'pass') return true
-  }
-  return false
 }
 
 function verifyFunctionSpecs(
@@ -461,38 +433,28 @@ function verifyFunctionSpecsDetailed(
   contractCache: Map<string, FunctionContractProof>,
 ): {checks: FitCheck[]; callsiteChecks: FitCheck[]; recordedCallsites: boolean} {
   const functionName = fn.name
+  const prepared = preparedFunctionContracts(program, fn)
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
-  const {contractSpecs, env} = setup
+  const {env} = setup
   const checks = [...setup.typeChecks, ...setup.givenChecks]
-  for (const placement of fn.bodySpecs.unsupportedPlacements) {
-    checks.push({
-      file,
-      functionName,
-      line: placement.line,
-      text: placement.text,
-      status: 'unknown',
-      reason: placement.reason,
-    })
-  }
+  pushUnsupportedPlacements(checks, file, functionName, prepared.body.unsupportedPlacements)
   if (setup.typeChecks.some(check => check.status !== 'pass')) {
     return {checks, callsiteChecks: [], recordedCallsites: false}
   }
-  checks.push(...typeUnsupportedChecks(file, functionName, functionTypeUnsupported(program, fn)))
+  checks.push(...typeUnsupportedChecks(file, functionName, prepared.typeUnsupported))
 
   checks.push(...setup.assumptionChecks)
-  const recordsCallsites = functionHasBodyClaims(contractSpecs)
-  const hasBodyClaims = recordsCallsites || functionHasBodyFitComment(fn) || functionHasBodyTypeBoundary(program, fn)
+  const recordsCallsites = prepared.recordsCallsites
   const context = functionEvalContext(program, fn, setup, contractCache, {
     callObligations: recordsCallsites ? 'record' : 'silent',
   })
-  const state = hasBodyClaims
+  const state = prepared.needsBodyEvaluation
     ? evaluateFunctionBodyState(fn, context)
     : {result: unknown('No body claim requested'), env: context.env, assumptions: context.assumptions}
   const result = state.result
-  if (hasBodyClaims) checks.push(...context.checks)
+  if (prepared.needsBodyEvaluation) checks.push(...context.checks)
 
-  for (const spec of contractSpecs) {
-    if (!fitSpecIsProof(spec)) continue
+  for (const spec of prepared.proofs) {
     if (spec.kind === 'pure') {
       checks.push(verifyPureSpec(file, functionName, fn, program, spec))
       continue
@@ -503,20 +465,17 @@ function verifyFunctionSpecsDetailed(
   return {
     checks,
     callsiteChecks: recordsCallsites ? callChecks(context) : [],
-    recordedCallsites: hasBodyClaims && recordsCallsites,
+    recordedCallsites: prepared.needsBodyEvaluation && recordsCallsites,
   }
-}
-
-function functionHasBodyClaims(specs: FitSpec[]) {
-  return specs.some(fitSpecIsProof)
 }
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
   const functionName = fn.name
+  const prepared = preparedFunctionContracts(program, fn)
   const loops: FitInferLoopReport[] = []
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
-  const typeContractChecks = typeUnsupportedChecks(program.file, functionName, functionTypeUnsupported(program, fn))
+  const typeContractChecks = typeUnsupportedChecks(program.file, functionName, prepared.typeUnsupported)
   const inferUnsupported: string[] = []
   const context = functionEvalContext(program, fn, setup, contractCache, {inferLoops: loops, inferUnsupported})
   const state = evaluateFunctionBodyState(fn, context)
@@ -573,6 +532,24 @@ function typeUnsupportedChecks(file: string, functionName: string, unsupported: 
     reason: problem.reason,
     ...(problem.line == null ? {} : {line: problem.line}),
   }))
+}
+
+function pushUnsupportedPlacements(
+  checks: FitCheck[],
+  file: string,
+  functionName: string,
+  placements: PreparedBodyContracts['unsupportedPlacements'],
+) {
+  for (const placement of placements) {
+    checks.push({
+      file,
+      functionName,
+      line: placement.line,
+      text: placement.text,
+      status: 'unknown',
+      reason: placement.reason,
+    })
+  }
 }
 
 function pushTypeUnsupportedChecks(context: EvalContext, unsupported: TypeContractUnsupported[], boundary?: CheckBoundary) {
@@ -700,19 +677,6 @@ function isLoadedProgram(file: FitProjectFile<Value>): file is Program {
   return 'globals' in file && 'functions' in file && 'imports' in file
 }
 
-function evaluateCheckedExpression(expression: ts.Expression, context: EvalContext): Value {
-  if (context.contractExpression === true) return evaluateContractExpression(expression, context)
-  const originalEnv = context.env
-  const result = evaluateInterpreterExpression({
-    ...interpreterInput(context),
-    expression,
-  })
-  replaceEnvEntries(originalEnv, result.state.env)
-  context.env = originalEnv
-  context.assumptions = result.state.assumptions
-  return result.value
-}
-
 function evaluateContractExpression(expression: ts.Expression, context: EvalContext): Value {
   const problems = context.contractExpressionProblems ?? []
   const problemStart = problems.length
@@ -760,13 +724,6 @@ function isHardContractExpressionIssue(issue: InterpreterIssue) {
     || issue.message.startsWith('Unknown identifier ')
     || issue.message.startsWith('Call arity mismatch')
     || issue.message.includes('mutable helper alias')
-}
-
-function evaluateInterpreterExpressionWithObjectPath(expression: ts.Expression, context: EvalContext, objectPath: string[]): Value {
-  const scopedContext = {...context, objectPath}
-  const value = evaluateCheckedExpression(expression, scopedContext)
-  context.assumptions = scopedContext.assumptions
-  return value
 }
 
 function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value>) {
@@ -1075,18 +1032,13 @@ function evaluateInterpreterClaim(claim: InterpreterClaim, frame: InterpreterFra
 function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: InterpreterFrame, rootContext: EvalContext) {
   if (!shouldRecordInterpreterClaim(frame, rootContext)) return
   const context = interpreterEvalContext(frame, rootContext)
-  const bodySpecs = bodySpecsForStack(frame.program, frame.stack)
+  const body = preparedBodyForStack(frame.program, frame.stack)
 
   if (claim.kind === 'variable') {
-    const localSpecs = filterTypeCheckedSpecs(frame.program, bodySpecs?.localSpecsByStatement.get(claim.statement) ?? [])
+    const localSpecs = body?.localSpecsByStatement.get(claim.statement) ?? []
     verifyLocalFitSpecs(localSpecs, context)
-    if (!ts.isIdentifier(claim.declaration.name)) return
-    const typeContract = mergeTypeContracts([
-      typeCheckContractForTypeNode(frame.program, claim.declaration.type, claim.declaration.name.text),
-      claim.declaration.initializer == null
-        ? emptyTypeContract<FitCheckSpec>()
-        : typeCheckContractForExpressionBoundary(frame.program, claim.declaration.initializer, claim.declaration.name.text),
-    ])
+    const typeContract = body?.variableTypes.get(claim.declaration)
+    if (typeContract == null) return
     const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.declaration)
     pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
     verifyCheckSpecsWithResult(typeContract.specs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
@@ -1094,16 +1046,18 @@ function afterInterpreterClaim(claim: InterpreterClaim, value: Value, frame: Int
   }
 
   if (claim.kind === 'return') {
-    const specs = filterTypeCheckedSpecs(frame.program, bodySpecs?.returnSpecsByNode.get(claim.node) ?? [])
-    const typeContract = typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot)
+    const specs = body?.returnSpecsByNode.get(claim.node) ?? []
+    const typeContract = body?.returnTypes.get(claim.node)
     verifyInlineSpecsForValue(specs, value, context)
-    const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
-    pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
-    verifyCheckSpecsWithResult(typeContract.specs, value, context, boundary, 'type-boundary')
+    if (typeContract != null) {
+      const boundary = checkBoundaryForNode(frame.program.sourceFile, claim.node)
+      pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
+      verifyCheckSpecsWithResult(typeContract.specs, value, context, boundary, 'type-boundary')
+    }
     return
   }
 
-  const templates = filterTypeCheckedInlineTemplates(frame.program, bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? [])
+  const templates = body?.objectPropertyTemplatesByNode.get(claim.property) ?? []
   const specs = instantiateInlineFitTemplates(templates, objectPathText(claim.path), 'prove')
   verifyInlineSpecsForValue(specs, value, context)
 }
@@ -1117,46 +1071,42 @@ function evaluateInterpreterLoop(
   if (!shouldRecordInterpreterClaim(frame, rootContext)) return evaluate()
   const context = interpreterEvalContext(frame, rootContext)
   const checksStart = rootContext.checks.length
-  const rawLocalSpecs = bodySpecsForStack(frame.program, frame.stack)?.loopSpecsByStatement.get(claim.statement) ?? []
-  const checkedRawLocalSpecs = filterTypeCheckedSpecs(frame.program, rawLocalSpecs)
-  const {validSpecs: localSpecs, resultSpecs} = splitLoopSpecs(checkedRawLocalSpecs)
-  reportLoopResultSpecs(resultSpecs, context)
+  const loop = preparedBodyForStack(frame.program, frame.stack)?.loopsByStatement.get(claim.statement)
+  const loopSpecs = loop?.specs ?? []
+  const localSpecs = loop?.localSpecs ?? []
+  reportLoopResultSpecs(loop?.resultSpecs ?? [], context)
   applyLocalGivenSpecs(localSpecs, context)
   frame.assumptions = context.assumptions
-  const flow = withCallObligationRecordingWhen(rootContext, functionHasBodyClaims(localSpecs), evaluate)
+  const flow = withCallObligationRecordingWhen(rootContext, loop?.recordsCalls === true, evaluate)
   context.assumptions = frame.assumptions
   verifyLocalLoopSpecs(localSpecs, context)
-  recordInferLoop(claim.statement, claim.kind, checkedRawLocalSpecs, context, checksStart, claim.factRoots)
+  recordInferLoop(claim.statement, claim.kind, loopSpecs, context, checksStart, claim.factRoots)
   frame.assumptions = context.assumptions
   return flow
 }
 
 function interpreterClaimRecordsCalls(claim: InterpreterClaim, frame: InterpreterFrame, rootContext: EvalContext) {
   if (rootContext.callObligations === 'record') return true
-  const bodySpecs = bodySpecsForStack(frame.program, frame.stack)
+  const body = preparedBodyForStack(frame.program, frame.stack)
   if (claim.kind === 'variable') {
-    if ((bodySpecs?.localSpecsByStatement.get(claim.statement) ?? []).length > 0) return true
-    if (!ts.isIdentifier(claim.declaration.name)) return false
-    return hasTypeContractWork(mergeTypeContracts([
-      typeCheckContractForTypeNode(frame.program, claim.declaration.type, claim.declaration.name.text),
-      claim.declaration.initializer == null
-        ? emptyTypeContract<FitCheckSpec>()
-        : typeCheckContractForExpressionBoundary(frame.program, claim.declaration.initializer, claim.declaration.name.text),
-    ]))
+    return (body?.localSpecsByStatement.get(claim.statement) ?? []).length > 0
+      || body?.variableTypes.has(claim.declaration) === true
   }
   if (claim.kind === 'return') {
-    return (bodySpecs?.returnSpecsByNode.get(claim.node) ?? []).length > 0
-      || hasTypeContractWork(typeCheckContractForExpressionBoundary(frame.program, claim.expression, fitReturnPublicRoot))
+    return (body?.returnSpecsByNode.get(claim.node) ?? []).length > 0
+      || body?.returnTypes.has(claim.node) === true
   }
-  return filterTypeCheckedInlineTemplates(frame.program, bodySpecs?.objectPropertyTemplatesByNode.get(claim.property) ?? []).length > 0
+  return (body?.objectPropertyTemplatesByNode.get(claim.property) ?? []).length > 0
 }
 
-function bodySpecsForStack(program: Program, stack: string[]) {
+function preparedBodyForStack(program: Program, stack: string[]) {
+  const prepared = preparedProgramContracts(program)
   for (let index = stack.length - 1; index >= 0; index--) {
     const name = stack[index]!
-    if (name === '<top-level>') return program.topLevelBodySpecs
-    const bodySpecs = program.functions.get(name)?.bodySpecs
-    if (bodySpecs != null) return bodySpecs
+    if (name === '<top-level>') return prepared.topLevel.body
+    const fn = program.functions.get(name)
+    if (fn == null) continue
+    return prepared.functions.get(fn)?.body
   }
   return undefined
 }
@@ -1206,35 +1156,6 @@ function contextForInterpreterFrame(
   return context
 }
 
-function bindVariableDeclaration(declaration: ts.VariableDeclaration, context: EvalContext, options: {claim?: boolean} = {}) {
-  if (declaration.initializer == null) {
-    bindUninitializedName(declaration.name, context)
-    return
-  }
-  const typeContract = ts.isIdentifier(declaration.name)
-    ? mergeTypeContracts([
-      typeCheckContractForTypeNode(context.program, declaration.type, declaration.name.text),
-      typeCheckContractForExpressionBoundary(context.program, declaration.initializer, declaration.name.text),
-    ])
-    : emptyTypeContract<FitCheckSpec>()
-  const typeSpecs = typeContract.specs
-  const evaluate = () => ts.isIdentifier(declaration.name)
-    ? evaluateInterpreterExpressionWithObjectPath(declaration.initializer!, context, [declaration.name.text])
-    : evaluateCheckedExpression(declaration.initializer!, context)
-  const value = options.claim === true || hasTypeContractWork(typeContract) ? withCallObligationRecording(context, evaluate) : evaluate()
-  bindName(declaration.name, valueWithBindingTypeFallback(declaration.name, value, declaration.type, context.program), context)
-  const boundary = checkBoundaryForNode(context.program.sourceFile, declaration)
-  pushTypeUnsupportedChecks(context, typeContract.unsupported, boundary)
-  verifyCheckSpecsWithResult(typeSpecs, unknown('Inline @fit checks do not use return'), context, boundary, 'type-boundary')
-}
-
-function bindVariableStatement(statement: ts.VariableStatement, context: EvalContext, specs: FitCheckSpec[]) {
-  for (const declaration of statement.declarationList.declarations) {
-    bindVariableDeclaration(declaration, context, {claim: specs.length > 0})
-  }
-  verifyLocalFitSpecs(filterTypeCheckedSpecs(context.program, specs), context)
-}
-
 function verifyLocalFitSpecs(specs: FitCheckSpec[], context: EvalContext) {
   verifyCheckSpecsWithResult(specs, unknown('Inline @fit checks do not use return'), context)
 }
@@ -1246,9 +1167,7 @@ function verifyCheckSpecsWithResult(
   boundary?: CheckBoundary,
   obligationBoundary: FitObligationBoundary = 'inline-check',
 ) {
-  const checkedSpecs = filterTypeCheckedSpecs(context.program, specs)
-  if (checkedSpecs.length === 0) return
-  for (const spec of checkedSpecs) {
+  for (const spec of specs) {
     context.checks.push(verifyCheckSpec(
       context.file,
       context.program,
@@ -1364,16 +1283,6 @@ function loopHeaderText(statement: ts.ForOfStatement | ts.ForStatement | ts.Whil
   return header.replace(/\s+/g, ' ').trim()
 }
 
-function splitLoopSpecs(specs: FitLoopSpec[]): {validSpecs: FitLoopSpec[]; resultSpecs: FitLoopSpec[]} {
-  const validSpecs: FitLoopSpec[] = []
-  const resultSpecs: FitLoopSpec[] = []
-  for (const spec of specs) {
-    if (specMentionsRoot(spec, fitReturnInternalRoot)) resultSpecs.push(spec)
-    else validSpecs.push(spec)
-  }
-  return {validSpecs, resultSpecs}
-}
-
 function reportLoopResultSpecs(specs: FitLoopSpec[], context: EvalContext) {
   if (specs.length === 0) return
   const functionName = `${context.stack.at(-1) ?? '<unknown>'} > loop`
@@ -1387,39 +1296,6 @@ function reportLoopResultSpecs(specs: FitLoopSpec[], context: EvalContext) {
       reason: 'loop @fit specs do not have return; name local values directly',
     })
   }
-}
-
-function specMentionsRoot(spec: FitSpec, root: string) {
-  return specExpressionTexts(spec).some(text => expressionTextMentionsRoot(text, root))
-}
-
-function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
-  switch (spec.kind) {
-    case 'range':
-      return [spec.expression]
-    case 'value':
-      return [spec.expression, ...fitValueSpecExpressions(spec.value)]
-    case 'comparison':
-      return [spec.left, spec.right]
-    case 'expression':
-      return [spec.expression]
-    case 'pure':
-      return []
-  }
-}
-
-function expressionTextMentionsRoot(text: FitExpressionLike, root: string) {
-  const parsed = fitExpressionParsed(text)
-  if ([...parsed.domainPaths.values()].some(domainPath => domainPath.root === root)) return true
-  return expressionMentionsIdentifier(parsed.expression, root)
-}
-
-function expressionMentionsIdentifier(expression: ts.Expression, name: string): boolean {
-  if (ts.isIdentifier(expression) && expression.text === name) return true
-  for (const child of expression.getChildren()) {
-    if (ts.isExpression(child) && expressionMentionsIdentifier(child, name)) return true
-  }
-  return false
 }
 
 function applyLocalGivenSpecs(specs: FitSpec[], context: EvalContext) {
@@ -1521,7 +1397,7 @@ function evaluateLocalFunctionCall(
     ? returnTypeFallback ?? result
     : result
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)
-  const contractSpecs = filterTypeCheckedSpecs(context.program, functionContractSpecs(context.program, fn))
+  const contractSpecs = preparedFunctionContracts(context.program, fn).contractSpecs
   if (contractSpecs.length === 0) return callSiteFallbackResult
   if (obligations !== 'pass') return callSiteFallbackResult
 
@@ -1546,7 +1422,7 @@ function evaluateImportedFunctionCall(
   returnTypeFallback: Value | null,
   callSiteBindings: CallSiteBindings,
 ): Value {
-  const contractSpecs = filterTypeCheckedSpecs(target.program, functionContractSpecs(target.program, fn))
+  const contractSpecs = preparedFunctionContracts(target.program, fn).contractSpecs
   const resolvedReturnTypeFallback = returnTypeFallback ?? valueFromFunctionReturnType(`${target.functionName}Result`, fn.node, target.program)
   if (target.imported == null) return resolvedReturnTypeFallback ?? unknown(`Call target ${callName} resolved outside the current module without an import binding`)
   if (contractSpecs.length === 0) {
@@ -1581,10 +1457,6 @@ function evaluateImportedFunctionCall(
 
 function shouldRecordCallObligations(context: EvalContext) {
   return context.callObligations !== 'silent'
-}
-
-function withCallObligationRecording<T>(context: EvalContext, fn: () => T): T {
-  return withCallObligationRecordingWhen(context, true, fn)
 }
 
 function withCallObligationRecordingWhen<T>(context: EvalContext, enabled: boolean, fn: () => T): T {
@@ -1635,7 +1507,7 @@ function verifyFunctionContract(program: Program, functionName: string, contract
     return proof
   }
 
-  const contractSpecs = filterTypeCheckedSpecs(program, functionContractSpecs(program, fn))
+  const contractSpecs = preparedFunctionContracts(program, fn).contractSpecs
   if (contractSpecs.length === 0) {
     const proof: FunctionContractProof = {
       status: 'unknown',

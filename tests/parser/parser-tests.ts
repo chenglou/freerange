@@ -1,6 +1,8 @@
 import ts from 'typescript'
 import {
   fitExpressionText,
+  fitReturnInternalRoot,
+  fitSpecMentionsRoot,
   fitValueSpecExpressions,
   lowerFitValueSpecTextForTypeScript,
   parseFitSpecLine,
@@ -200,6 +202,13 @@ function layout(availableWidth: number) {
   expectEqual(index.localSpecsByStatement.size, 1, 'expected one local inline spec')
   expectEqual(index.objectPropertyTemplatesByNode.size, 2, 'expected two object property inline specs')
   expectEqual(index.returnSpecsByNode.size, 0, 'expected no return inline spec')
+}
+
+{
+  const stringLiteral = parseFitSpecLine('label == "return"', 1)
+  const returnReference = parseFitSpecLine('return == label', 2)
+  expect(!fitSpecMentionsRoot(stringLiteral, fitReturnInternalRoot), 'expected a string literal containing return not to become a return claim')
+  expect(fitSpecMentionsRoot(returnReference, fitReturnInternalRoot), 'expected the parsed return identifier to be recognized')
 }
 
 {

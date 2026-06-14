@@ -1,14 +1,10 @@
 import * as ts from 'typescript'
 import type {FitCheck, Program} from './check-types.ts'
 import {
-  emptyTypeContract,
-  functionContractSpecs,
-  mergeTypeContracts,
-  typeCheckContractForExpressionBoundary,
+  functionContractSource,
 } from './function-contracts.ts'
 import {
   instantiateTypeContractTemplateForCheck,
-  typeCheckContractForTypeNode,
   type TypeContractTemplate,
 } from './type-contracts.ts'
 import type {FitFunction} from './modules.ts'
@@ -20,6 +16,7 @@ import {
   fitExpressionText,
   fitRangeCases,
   fitReturnInternalRoot,
+  fitSpecMentionsRoot,
   fitValueSpecExpressions,
   parseDomainPathText,
   type FitBodySpecIndex,
@@ -32,7 +29,8 @@ import {
 } from './parser.ts'
 
 type ContractTypeCheckEntry = {
-  key?: string
+  identity?: object
+  owner: FitFunction | '<top-level>' | '<type>'
   sourceFile: ts.SourceFile
   file: string
   functionName: string
@@ -66,8 +64,8 @@ type VirtualTypeCheckSource = {
 }
 
 type ContractTypeCheckResult = {
-  checks: FitCheck[]
-  failedKeys: Set<string>
+  checksByOwner: Map<ContractTypeCheckEntry['owner'], FitCheck[]>
+  rejected: Set<object>
 }
 
 type DeclarationTypeCheckPlan = {
@@ -119,21 +117,25 @@ const typePrinter = ts.createPrinter({removeComments: true})
 let generatedId = 0
 
 export function contractTypeChecksForFunction(program: Program, fn: FitFunction): FitCheck[] {
-  return contractTypeCheckResult(program).checks.filter(check => check.functionName === fn.name || check.functionName.startsWith(`${fn.name} >`))
+  return contractTypeCheckResult(program).checksByOwner.get(fn) ?? []
 }
 
 export function contractTypeChecksForTopLevel(program: Program): FitCheck[] {
-  return contractTypeCheckResult(program).checks.filter(check => check.functionName === '<top-level>' || check.functionName === '<type>')
+  const result = contractTypeCheckResult(program)
+  return [
+    ...(result.checksByOwner.get('<top-level>') ?? []),
+    ...(result.checksByOwner.get('<type>') ?? []),
+  ]
 }
 
-export function filterTypeCheckedSpecs<T extends FitSpec>(program: Program, specs: T[]): T[] {
-  const failed = contractTypeCheckResult(program).failedKeys
-  return specs.filter(spec => !failed.has(specKey(spec)))
-}
-
-export function filterTypeCheckedInlineTemplates<T extends FitInlineSpecTemplate>(program: Program, templates: T[]): T[] {
-  const failed = contractTypeCheckResult(program).failedKeys
-  return templates.filter(template => !failed.has(inlineTemplateKey(template)))
+export function contractPassesTypeCheck(
+  program: Program,
+  contract: FitSpec | FitInlineSpecTemplate,
+) {
+  const identity = 'typeCheckOrigin' in contract && contract.typeCheckOrigin != null
+    ? contract.typeCheckOrigin
+    : contract
+  return !contractTypeCheckResult(program).rejected.has(identity)
 }
 
 function contractTypeCheckResult(program: Program): ContractTypeCheckResult {
@@ -227,12 +229,17 @@ class VirtualContractTypeCheckBuilder {
   addFunction(fn: FitFunction) {
     const body = fn.node.body
     const returnType = returnContextType(fn, this.program.sourceFile)
-    const contractSpecs = functionContractSpecs(this.program, fn)
+    const contractSpecs = functionContractSource(this.program, fn).specs
     const bodyStartSpecs = contractSpecs.filter(spec => !specMentionsReturn(spec))
     const returnSpecs = contractSpecs.filter(spec => specMentionsReturn(spec))
 
     if (body != null && bodyStartSpecs.length > 0) {
-      if (ts.isBlock(body)) this.addInsertion(body.getStart(this.program.sourceFile) + 1, blocksForSpecs(this.program, fn.name, bodyStartSpecs, this.lowerOptions()))
+      if (ts.isBlock(body)) {
+        this.addInsertion(
+          body.getStart(this.program.sourceFile) + 1,
+          blocksForSpecs(this.program, fn, fn.name, bodyStartSpecs, this.lowerOptions()),
+        )
+      }
     }
 
     if (body != null && ts.isBlock(body)) {
@@ -240,19 +247,21 @@ class VirtualContractTypeCheckBuilder {
       this.addFunctionTypeBoundaryChecks(fn, returnType)
       for (const statement of returnStatementsIn(body)) {
         if (statement.expression == null) continue
-        this.addReturnReplacement(fn.name, statement, returnSpecs, returnType)
+        this.addReturnReplacement(fn, fn.name, statement, returnSpecs, returnType)
       }
     } else if (body != null && ts.isArrowFunction(fn.node) && ts.isExpression(body)) {
+      const inlineReturnSpecs = fn.bodySpecs.returnSpecsByNode.get(fn.node) ?? []
       const blocks = [
-        ...blocksForSpecs(this.program, fn.name, bodyStartSpecs, this.lowerOptions()),
-        ...blocksForSpecs(this.program, fn.name, returnSpecs, this.lowerOptions()),
+        ...blocksForSpecs(this.program, fn, fn.name, bodyStartSpecs, this.lowerOptions()),
+        ...blocksForSpecs(this.program, fn, fn.name, returnSpecs, this.lowerOptions()),
+        ...blocksForSpecs(this.program, fn, fn.name, inlineReturnSpecs, this.lowerOptions()),
       ]
-      if (blocks.length > 0) this.replaceArrowExpressionBody(fn.name, body, blocks, returnType)
+      if (blocks.length > 0) this.replaceArrowExpressionBody(fn, fn.name, body, blocks, returnType)
     }
   }
 
   addTopLevel() {
-    this.addBodySpecIndex('<top-level>', this.program.topLevelBodySpecs)
+    this.addBodySpecIndex('<top-level>', '<top-level>', this.program.topLevelBodySpecs)
   }
 
   build(extraEdits: Edit[] = []): {text: string; spans: Span[]} {
@@ -260,67 +269,81 @@ class VirtualContractTypeCheckBuilder {
   }
 
   private addFunctionBodySpecs(fn: FitFunction, returnType: string | null) {
-    this.addBodySpecIndex(fn.name, fn.bodySpecs, returnType)
+    this.addBodySpecIndex(fn, fn.name, fn.bodySpecs, returnType)
   }
 
-  private addBodySpecIndex(functionName: string, index: FitBodySpecIndex, returnType: string | null = null) {
+  private addBodySpecIndex(
+    owner: ContractTypeCheckEntry['owner'],
+    functionName: string,
+    index: FitBodySpecIndex,
+    returnType: string | null = null,
+  ) {
     for (const [statement, specs] of index.localSpecsByStatement) {
-      this.addInsertion(statement.end, blocksForSpecs(this.program, functionName, specs, this.lowerOptions()))
+      this.addInsertion(statement.end, blocksForSpecs(this.program, owner, functionName, specs, this.lowerOptions()))
     }
     for (const [node, specs] of index.returnSpecsByNode) {
       if (ts.isReturnStatement(node) && node.expression != null) {
-        this.addReturnReplacement(functionName, node, specs, returnType)
+        this.addReturnReplacement(owner, functionName, node, specs, returnType)
       }
     }
     for (const [statement, specs] of index.loopSpecsByStatement) {
       const loopName = `${functionName} > loop`
-      this.addInsertion(statement.end, blocksForSpecs(this.program, loopName, specs.filter(spec => !specMentionsReturn(spec)), this.lowerOptions()))
+      this.addInsertion(
+        statement.end,
+        blocksForSpecs(this.program, owner, loopName, specs.filter(spec => !specMentionsReturn(spec)), this.lowerOptions()),
+      )
     }
     for (const [property, templates] of index.objectPropertyTemplatesByNode) {
       const statement = containingStatement(property)
       if (statement == null) continue
       const valueText = propertyValueExpressionText(property, this.program.sourceFile)
       if (valueText == null) continue
-      const blocks = blocksForInlineTemplates(this.program, functionName, templates, valueText)
+      const blocks = blocksForInlineTemplates(this.program, owner, functionName, templates, valueText)
       this.addInsertion(statement.getStart(this.program.sourceFile), blocks)
     }
   }
 
   private addFunctionTypeBoundaryChecks(fn: FitFunction, returnType: string | null) {
-    if (fn.node.body == null || !ts.isBlock(fn.node.body)) return
-    const visit = (node: ts.Node) => {
-      if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-        const typeContract = mergeTypeContracts([
-          typeCheckContractForTypeNode(this.program, node.type, node.name.text),
-          node.initializer == null
-            ? emptyTypeContract()
-            : typeCheckContractForExpressionBoundary(this.program, node.initializer, node.name.text),
-        ])
-        if (typeContract.specs.length > 0) {
-          const statement = containingStatement(node)
-          if (statement != null) this.addInsertion(statement.end, blocksForSpecs(this.program, fn.name, typeContract.specs, this.lowerOptions()))
-        }
+    const bodyTypes = functionContractSource(this.program, fn).bodyTypes
+    for (const [declaration, contract] of bodyTypes.variables) {
+      const statement = containingStatement(declaration)
+      if (statement != null) {
+        this.addInsertion(
+          statement.end,
+          blocksForSpecs(this.program, fn, fn.name, contract.specs, this.lowerOptions()),
+        )
       }
-      if (ts.isReturnStatement(node) && node.expression != null) {
-        const typeContract = typeCheckContractForExpressionBoundary(this.program, node.expression, returnValueName)
-        if (typeContract.specs.length > 0) this.addReturnReplacement(fn.name, node, typeContract.specs, returnType)
-      }
-      ts.forEachChild(node, visit)
     }
-    visit(fn.node.body)
+    for (const [node, contract] of bodyTypes.returns) {
+      if (ts.isReturnStatement(node) && node.expression != null) {
+        this.addReturnReplacement(fn, fn.name, node, contract.specs, returnType)
+      }
+    }
   }
 
-  private addReturnReplacement(functionName: string, statement: ts.ReturnStatement, specs: FitSpec[], returnType: string | null) {
+  private addReturnReplacement(
+    owner: ContractTypeCheckEntry['owner'],
+    functionName: string,
+    statement: ts.ReturnStatement,
+    specs: FitSpec[],
+    returnType: string | null,
+  ) {
     if (statement.expression == null || specs.length === 0) return
     const expression = statement.expression.getText(this.program.sourceFile)
-    const blocks = blocksForSpecs(this.program, functionName, specs, this.lowerOptions())
+    const blocks = blocksForSpecs(this.program, owner, functionName, specs, this.lowerOptions())
     if (blocks.length === 0) return
-    const edit = this.returnEdits.get(statement) ?? this.createReturnReplacement(functionName, statement, expression, returnType)
+    const edit = this.returnEdits.get(statement)
+      ?? this.createReturnReplacement(owner, functionName, statement, expression, returnType)
     edit.blocks.push(...blocks)
   }
 
-  private createReturnReplacement(functionName: string, statement: ts.ReturnStatement, expression: string, returnType: string | null): Edit {
+  private createReturnReplacement(
+    owner: ContractTypeCheckEntry['owner'],
+    functionName: string,
+    statement: ts.ReturnStatement,
+    expression: string,
+    returnType: string | null,
+  ): Edit {
     const line = lineNumberForNode(this.program.sourceFile, statement)
     const originalReturn = statement.getText(this.program.sourceFile)
     const edit: Edit = {
@@ -328,7 +351,7 @@ class VirtualContractTypeCheckBuilder {
       end: statement.end,
       blocks: [{
         text: `\n{\nconst ${returnValueName} = ${contextualReturnExpression(expression, returnType)}; void ${returnValueName};\n`,
-        entry: {sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line, ignore: true},
+        entry: {owner, sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line, ignore: true},
       }],
       replacementSuffix: `${originalReturn}\n}\n`,
     }
@@ -337,14 +360,20 @@ class VirtualContractTypeCheckBuilder {
     return edit
   }
 
-  private replaceArrowExpressionBody(functionName: string, body: ts.Expression, blocks: GeneratedBlock[], returnType: string | null) {
+  private replaceArrowExpressionBody(
+    owner: ContractTypeCheckEntry['owner'],
+    functionName: string,
+    body: ts.Expression,
+    blocks: GeneratedBlock[],
+    returnType: string | null,
+  ) {
     const expression = body.getText(this.program.sourceFile)
     this.edits.push({
       start: body.getStart(this.program.sourceFile),
       end: body.end,
       blocks: [{
         text: `{ const ${returnValueName} = ${contextualReturnExpression(expression, returnType)}; void ${returnValueName};\n`,
-        entry: {sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line: lineNumberForNode(this.program.sourceFile, body), ignore: true},
+        entry: {owner, sourceFile: this.program.sourceFile, file: this.program.file, functionName, text: '<return value>', line: lineNumberForNode(this.program.sourceFile, body), ignore: true},
       }, ...blocks],
       replacementSuffix: `return ${returnValueName} }`,
     })
@@ -362,9 +391,9 @@ class VirtualContractTypeCheckBuilder {
 
 function declarationTypeCheckPlan(source: TypeCheckSource): DeclarationTypeCheckPlan {
   const edits: Edit[] = []
-  const checks: FitCheck[] = []
-  const failedKeys = new Set<string>()
-  const rejectedKeys = new Set<string>()
+  const checksByOwner: ContractTypeCheckResult['checksByOwner'] = new Map()
+  const rejected = new Set<object>()
+  const reported = new Set<object>()
   for (const [node, result] of source.typeContracts.byNode) {
     if (result.templates.length === 0) continue
     const statement = containingStatement(node)
@@ -373,13 +402,11 @@ function declarationTypeCheckPlan(source: TypeCheckSource): DeclarationTypeCheck
     if (context == null) continue
     if (context.kind === 'unsupported') {
       for (const template of result.templates) {
-        const key = template.typeCheckKey
-        if (key != null) {
-          failedKeys.add(key)
-          if (rejectedKeys.has(key)) continue
-          rejectedKeys.add(key)
-        }
-        checks.push({
+        const identity = template.typeCheckOrigin ?? template
+        rejected.add(identity)
+        if (reported.has(identity)) continue
+        reported.add(identity)
+        addOwnedCheck(checksByOwner, '<type>', {
           file: source.file,
           functionName: '<type>',
           text: `type @fit ${template.text}`,
@@ -394,7 +421,7 @@ function declarationTypeCheckPlan(source: TypeCheckSource): DeclarationTypeCheck
     if (blocks.length === 0) continue
     edits.push({start: statement.end, end: statement.end, blocks})
   }
-  return {edits, result: {checks, failedKeys}}
+  return {edits, result: {checksByOwner, rejected}}
 }
 
 function declarationTypeCheckBlock(
@@ -417,11 +444,12 @@ function declarationTypeCheckBlock(
     ...(context.ownerType == null || context.ownerType === context.selfType ? [] : [`void ${ownerName};`]),
   ]
   return functionBlockForEntry({
+    owner: '<type>',
     sourceFile: source.sourceFile,
     file: source.file,
     functionName: '<type>',
     text: `type @fit ${template.text}`,
-    ...(template.typeCheckKey == null ? {} : {key: template.typeCheckKey}),
+    identity: template.typeCheckOrigin ?? template,
     ...(template.line == null ? {} : {line: template.line}),
   }, checkName, typeParameters, parameters, [...uses, ...statements])
 }
@@ -568,16 +596,23 @@ function contextualReturnExpression(expression: string, returnType: string | nul
   return returnType == null ? `(${expression})` : `((${expression}) satisfies ${returnType})`
 }
 
-function blocksForSpecs(program: Program, functionName: string, specs: FitSpec[], options: LowerOptions): GeneratedBlock[] {
+function blocksForSpecs(
+  program: Program,
+  owner: ContractTypeCheckEntry['owner'],
+  functionName: string,
+  specs: FitSpec[],
+  options: LowerOptions,
+): GeneratedBlock[] {
   return specs.flatMap(spec => {
-    if (spec.typeCheckKey != null) {
+    if (spec.typeCheckOrigin != null) {
       if (spec.typeCheckSourceId != null) options.typeContractSourceIds?.add(spec.typeCheckSourceId)
       return []
     }
     const statements = statementsForSpec(spec, options)
     if (statements.length === 0) return []
     return [blockForEntry({
-      key: specKey(spec),
+      identity: spec,
+      owner,
       sourceFile: program.sourceFile,
       file: program.file,
       functionName,
@@ -589,6 +624,7 @@ function blocksForSpecs(program: Program, functionName: string, specs: FitSpec[]
 
 function blocksForInlineTemplates(
   program: Program,
+  owner: ContractTypeCheckEntry['owner'],
   functionName: string,
   templates: FitInlineSpecTemplate[],
   valueText: string,
@@ -612,7 +648,8 @@ function blocksForInlineTemplates(
       statements.push(...target.prelude, target.statement, ...right.prelude, right.statement)
     }
     return [blockForEntry({
-      key: inlineTemplateKey(template),
+      identity: template,
+      owner,
       sourceFile: program.sourceFile,
       file: program.file,
       functionName,
@@ -901,31 +938,7 @@ function domainPathItemText(segment: Extract<FitDomainPathSegment, {kind: 'item'
 }
 
 function specMentionsReturn(spec: FitSpec): boolean {
-  return specExpressionTexts(spec).some(expression => fitExpressionText(expression).includes(fitReturnInternalRoot))
-}
-
-function specExpressionTexts(spec: FitSpec): FitExpressionLike[] {
-  switch (spec.kind) {
-    case 'range':
-      return [spec.expression]
-    case 'value':
-      return [spec.expression, ...fitValueSpecExpressions(spec.value)]
-    case 'comparison':
-      return [spec.left, spec.right]
-    case 'expression':
-      return [spec.expression]
-    case 'pure':
-      return []
-  }
-}
-
-function specKey(spec: FitSpec) {
-  if (spec.typeCheckKey != null) return spec.typeCheckKey
-  return `${spec.line ?? ''}\0${spec.role}\0${spec.kind}\0${spec.text}`
-}
-
-function inlineTemplateKey(template: FitInlineSpecTemplate) {
-  return `${template.line ?? ''}\0inline\0${template.kind}\0${inlineTemplateText(template)}`
+  return fitSpecMentionsRoot(spec, fitReturnInternalRoot)
 }
 
 function inlineTemplateText(template: FitInlineSpecTemplate) {
@@ -954,17 +967,18 @@ function checksFromDiagnostics(diagnostics: readonly ts.Diagnostic[], spans: Spa
     diagnosticsBySpan.set(span, list)
   }
 
-  const failedKeys = new Set<string>()
-  const checks: FitCheck[] = []
+  const rejected = new Set<object>()
+  const checksByOwner: ContractTypeCheckResult['checksByOwner'] = new Map()
   const seenChecks = new Set<string>()
   for (const [span, spanDiagnostics] of diagnosticsBySpan) {
     if (span.ignore === true) continue
-    if (span.key != null) failedKeys.add(span.key)
+    if (span.identity != null) rejected.add(span.identity)
     const reason = typeCheckReason(spanDiagnostics, span)
-    const key = `${span.functionName}\0${span.line ?? ''}\0${span.text}\0${reason}`
+    const ownerName = typeof span.owner === 'string' ? span.owner : span.owner.name
+    const key = `${ownerName}\0${span.functionName}\0${span.line ?? ''}\0${span.text}\0${reason}`
     if (seenChecks.has(key)) continue
     seenChecks.add(key)
-    checks.push({
+    addOwnedCheck(checksByOwner, span.owner, {
       file: span.file,
       ...(span.line == null ? {} : {line: span.line}),
       functionName: span.functionName,
@@ -973,23 +987,36 @@ function checksFromDiagnostics(diagnostics: readonly ts.Diagnostic[], spans: Spa
       reason,
     })
   }
-  return {checks, failedKeys}
+  return {checksByOwner, rejected}
 }
 
 function mergeContractTypeCheckResults(results: ContractTypeCheckResult[]): ContractTypeCheckResult {
-  const checks: FitCheck[] = []
-  const failedKeys = new Set<string>()
+  const checksByOwner: ContractTypeCheckResult['checksByOwner'] = new Map()
+  const rejected = new Set<object>()
   const seenChecks = new Set<string>()
   for (const result of results) {
-    for (const key of result.failedKeys) failedKeys.add(key)
-    for (const check of result.checks) {
-      const key = `${check.file}\0${check.functionName}\0${check.line ?? ''}\0${check.text}\0${check.reason ?? ''}`
-      if (seenChecks.has(key)) continue
-      seenChecks.add(key)
-      checks.push(check)
+    for (const identity of result.rejected) rejected.add(identity)
+    for (const [owner, checks] of result.checksByOwner) {
+      const ownerName = typeof owner === 'string' ? owner : owner.name
+      for (const check of checks) {
+        const key = `${ownerName}\0${check.file}\0${check.functionName}\0${check.line ?? ''}\0${check.text}\0${check.reason ?? ''}`
+        if (seenChecks.has(key)) continue
+        seenChecks.add(key)
+        addOwnedCheck(checksByOwner, owner, check)
+      }
     }
   }
-  return {checks, failedKeys}
+  return {checksByOwner, rejected}
+}
+
+function addOwnedCheck(
+  checksByOwner: ContractTypeCheckResult['checksByOwner'],
+  owner: ContractTypeCheckEntry['owner'],
+  check: FitCheck,
+) {
+  const checks = checksByOwner.get(owner) ?? []
+  checks.push(check)
+  checksByOwner.set(owner, checks)
 }
 
 function typeCheckReason(diagnostics: readonly ts.Diagnostic[], span: Span) {

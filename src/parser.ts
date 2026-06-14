@@ -47,12 +47,17 @@ export type FitValueSpec = {
 
 export type FitSpecRole = 'assume' | 'prove'
 
+export type FitTypeCheckOrigin = {
+  sourceId: string
+  pos: number
+}
+
 type FitSpecBase<R extends FitSpecRole, K extends string> = {
   role: R
   kind: K
   text: string
   line?: number
-  typeCheckKey?: string
+  typeCheckOrigin?: FitTypeCheckOrigin
   typeCheckSourceId?: string
 }
 
@@ -216,6 +221,40 @@ export function fitValueSpecExpressions(spec: FitValueSpec): FitExpressionLike[]
   return fitValueTypeExpressions(spec.typeNode, spec.ranges)
 }
 
+export function fitSpecMentionsRoot(spec: FitSpec, root: string) {
+  return fitSpecExpressions(spec).some(expression => fitExpressionMentionsRoot(expression, root))
+}
+
+function fitSpecExpressions(spec: FitSpec): FitExpressionLike[] {
+  switch (spec.kind) {
+    case 'range':
+      return [spec.expression]
+    case 'value':
+      return [spec.expression, ...fitValueSpecExpressions(spec.value)]
+    case 'comparison':
+      return [spec.left, spec.right]
+    case 'expression':
+      return [spec.expression]
+    case 'pure':
+      return []
+  }
+}
+
+function fitExpressionMentionsRoot(expression: FitExpressionLike, root: string) {
+  const parsed = fitExpressionParsed(expression)
+  if ([...parsed.domainPaths.values()].some(domainPath => domainPath.root === root)) return true
+  return nodeMentionsIdentifier(parsed.expression, root)
+}
+
+function nodeMentionsIdentifier(node: ts.Node, name: string): boolean {
+  if (ts.isIdentifier(node) && node.text === name) return true
+  let found = false
+  ts.forEachChild(node, child => {
+    if (!found && nodeMentionsIdentifier(child, name)) found = true
+  })
+  return found
+}
+
 function fitValueTypeExpressions(node: ts.TypeNode, ranges: Map<string, FitRange>): FitExpressionLike[] {
   if (ts.isParenthesizedTypeNode(node)) return fitValueTypeExpressions(node.type, ranges)
   if (ts.isTypeOperatorNode(node)) return fitValueTypeExpressions(node.type, ranges)
@@ -367,15 +406,6 @@ export function emptyFitBodySpecIndex(): FitBodySpecIndex {
   }
 }
 
-export function fitBodySpecIndexHasWork(index: FitBodySpecIndex | undefined) {
-  return index != null
-    && (index.localSpecsByStatement.size > 0
-      || index.returnSpecsByNode.size > 0
-      || index.objectPropertyTemplatesByNode.size > 0
-      || index.loopSpecsByStatement.size > 0
-      || index.unsupportedPlacements.length > 0)
-}
-
 export function parseFunctionBodyFitSpecIndex(sourceText: string, fn: ts.FunctionLikeDeclaration): FitBodySpecIndex {
   const index = emptyFitBodySpecIndex()
   if (ts.isArrowFunction(fn) && ts.isExpression(fn.body)) {
@@ -389,18 +419,28 @@ export function parseFunctionBodyFitSpecIndex(sourceText: string, fn: ts.Functio
   return index
 }
 
-export function parseTopLevelFitSpecIndex(sourceText: string, sourceFile: ts.SourceFile): FitBodySpecIndex {
+export function parseTopLevelFitSpecIndex(
+  sourceText: string,
+  sourceFile: ts.SourceFile,
+  functionNodes: Set<ts.Node> = new Set(),
+): FitBodySpecIndex {
   const index = emptyFitBodySpecIndex()
   for (const statement of sourceFile.statements) {
     if (topLevelDeclarationOnly(statement)) continue
-    collectBodyFitSpecIndexForNode(sourceText, statement, index)
+    collectBodyFitSpecIndex(sourceText, statement, index, functionNodes)
   }
   return index
 }
 
-function collectBodyFitSpecIndex(sourceText: string, root: ts.Node, index: FitBodySpecIndex) {
+function collectBodyFitSpecIndex(
+  sourceText: string,
+  root: ts.Node,
+  index: FitBodySpecIndex,
+  ignoredFunctions: Set<ts.Node> = new Set(),
+) {
   const visit = (node: ts.Node) => {
     if (node !== root && isFunctionLikeWithBodyNode(node)) {
+      if (ignoredFunctions.has(node)) return
       collectUnsupportedNestedFitComments(sourceText, node, index)
       return
     }

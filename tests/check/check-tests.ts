@@ -3,6 +3,7 @@ import {divideNumbers, multiplyNumbers, numberValue, subtractNumbers} from '../.
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
+import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 
 const positiveFiles = ['tests/patterns/patterns.ts', 'tests/patterns/loop-patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
@@ -403,6 +404,80 @@ if (inlineNonNumberEqualityFailures.length > 0) {
   process.exitCode = 1
 } else {
   console.log('inline contracts: non-number equality type-checks')
+}
+
+const preparedContractProgram = buildFitSourceFile('prepared-contracts.ts', `/** @fit
+ * given input: 0..10
+ * return: 0..10
+ */
+function bounded(input: number) {
+  return {
+    bad: 'wide', // @fit 0..10
+    good: 5, // @fit 0..10
+  }.good
+}
+`, readTopLevelGlobal)
+const preparedContracts = preparedProgramContracts(preparedContractProgram)
+const preparedContractsAgain = preparedProgramContracts(preparedContractProgram)
+const preparedBoundedFunction = preparedContractProgram.functions.get('bounded')!
+const preparedBounded = preparedContracts.functions.get(preparedBoundedFunction)!
+const preparedPropertyTemplateCounts = [...preparedBounded.body.objectPropertyTemplatesByNode.values()].map(templates => templates.length)
+if (
+  preparedContracts !== preparedContractsAgain
+  || preparedBounded.assumptions.length !== 1
+  || preparedBounded.proofs.length !== 1
+  || preparedBounded.typeChecks.length !== 1
+  || preparedPropertyTemplateCounts.length !== 2
+  || preparedPropertyTemplateCounts.filter(count => count === 1).length !== 1
+  || preparedPropertyTemplateCounts.filter(count => count === 0).length !== 1
+) {
+  console.error('expected contracts to be prepared once and rejected by exact contract identity')
+  console.error(JSON.stringify({
+    assumptions: preparedBounded.assumptions.map(spec => spec.text),
+    proofs: preparedBounded.proofs.map(spec => spec.text),
+    typeChecks: preparedBounded.typeChecks,
+    preparedPropertyTemplateCounts,
+  }, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract preparation: stable index and exact rejection identity')
+}
+
+const topLevelContractChecks = verifyFitSource('top-level-contracts.ts', `const layout = {
+  width: 5, // @fit 0..10
+  bad: 'wide', // @fit 0..10
+}
+
+let total = 0
+/** @fit
+ * total: 0..10
+ */
+for (const value of [1, 2]) {
+  total += value
+}
+
+const mapped = [1].map(value => {
+  const doubled = value * 2 // @fit 0..10
+  return doubled
+})
+void layout
+void mapped
+`)
+const topPropertyPass = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === 'layout.width: 0..10' && check.status === 'pass')
+const topPropertyTypeError = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === '@fit 0..10' && check.status === 'unknown')
+const topLoopPass = topLevelContractChecks.find(check => check.functionName === '<top-level> > loop' && check.text === 'total: 0..10')
+const topNestedPlacement = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === '@fit 0..10' && check.reason?.includes('nested function'))
+if (
+  topPropertyPass == null
+  || topPropertyTypeError?.reason?.includes("Type 'string' is not assignable to type 'number'") !== true
+  || topLoopPass?.status !== 'pass'
+  || topNestedPlacement?.status !== 'unknown'
+) {
+  console.error('expected top-level properties, loops, and nested placements to use the prepared body index')
+  console.error(JSON.stringify(topLevelContractChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('top-level contracts: properties, loops, and nested placements')
 }
 
 const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {

@@ -37,7 +37,7 @@ Usage:
   fr infer --all
 ```
 
-`fr check` checks your project for `@fit` contract correctness (you can also pass it one or more files to check). It reuses your existing TypeScript, so it understands `tsconfig.json`. Normal TypeScript errors are printed in TypeScript's usual format before any contract proving. Everything in the comments are type checked as well; if a contract has a TypeScript error, Freerange reports it there and stops proving that function or top-level block.
+`fr check` checks your project for `@fit` contract correctness (you can also pass it one or more files to check). It reuses your existing TypeScript, so it understands `tsconfig.json`. Normal TypeScript errors are printed in TypeScript's usual format before any contract proving. Everything in the comments are type checked as well. If a contract has a TypeScript error, Freerange reports it and does not use that contract as an assumption or proof. A function with such an error is not proved from the remaining lines; unrelated top-level annotations are still checked.
 
 Use `fr check --annotations-only` to check annotated places and skip the broader scan of unannotated code that calls annotated functions. Use `--audit` for cleanup advice: redundant `Math.min/max` choices, `if` branches, `??` fallbacks, etc.
 
@@ -96,6 +96,7 @@ type PhotoGrid = {
 `given` lines are input assumptions. All other lines are for Freerange to prove to be true. `return` refers to the return value.
 Inline `//` comments need to be on the same line as the type/value field, the function parameter, or the value declaration.
 Block comments need to be above the function, type, and loop scope.
+At top level, attached value/field comments and supported loop blocks work the same way as inside a function. Contracts inside a nested callback or other nested function are rejected instead of being silently skipped.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
 **You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure: they don't mutate inputs or outside state, read mutable outside state, depend on I/O, the clock, or randomness, or call code Freerange can't inspect. Local allocation and mutation are fine. You don't need to annotate a function as `pure` to use it in a contract; Freerange infers this. The optional `pure` line records your intent so a later refactor is checked too, including every function called by the body. Function identity follows TypeScript bindings through imports, renames, and re-exports; a function-scoped callback or arrow that Freerange cannot inspect is unknown instead of borrowing the purity of a same-named top-level function.

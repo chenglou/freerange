@@ -383,7 +383,11 @@ function parseFitFile<TGlobal>(
     }
   }
 
-  const topLevelBodySpecs = parseTopLevelFitSpecIndex(sourceText, sourceFile)
+  const topLevelBodySpecs = parseTopLevelFitSpecIndex(
+    sourceText,
+    sourceFile,
+    new Set([...functions.values()].map(fn => fn.node)),
+  )
   return {project, sourceId, file, sourceFile, sourceText, typeChecker, globals, functions, callAliases, unsupportedCallAliases, topLevelBodySpecs, typeContracts, imports}
 }
 

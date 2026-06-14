@@ -10,18 +10,11 @@ import {
   type GivenEvaluators,
   validateGivenSpecs,
 } from './givens.ts'
-import {
-  functionContractSpecs,
-  functionInputSpecs,
-} from './function-contracts.ts'
-import {
-  contractTypeChecksForFunction,
-  filterTypeCheckedSpecs,
-} from './contract-typecheck.ts'
 import {bindFunctionInputParameters} from './function-inputs.ts'
 import {functionInputRoots} from './function-shape.ts'
 import type {FitFunction} from './modules.ts'
 import type {FitSpec} from './parser.ts'
+import {preparedFunctionContracts} from './prepared-contracts.ts'
 import {programGlobalEnv} from './program-env.ts'
 
 export type FunctionEvaluationSetup = {
@@ -42,9 +35,10 @@ export function prepareFunctionEvaluation(
   contractCache: Map<string, FunctionContractProof>,
   evaluators: GivenEvaluators,
 ): FunctionEvaluationSetup {
-  const typeChecks = contractTypeChecksForFunction(program, fn)
-  const inputSpecs = filterTypeCheckedSpecs(program, functionInputSpecs(program, fn))
-  const contractSpecs = filterTypeCheckedSpecs(program, functionContractSpecs(program, fn))
+  const prepared = preparedFunctionContracts(program, fn)
+  const typeChecks = prepared.typeChecks
+  const inputSpecs = prepared.assumptions
+  const contractSpecs = prepared.contractSpecs
   const env = programGlobalEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 

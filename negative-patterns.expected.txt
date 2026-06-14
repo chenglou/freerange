@@ -1333,6 +1333,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeUnionTieIsNotStrict: return 
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1310,2): error TS2304: Cannot find name 'row'.
+FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
+  caller passed: container: 3, containee: 4
+  missing: 3 >= 4
 FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
   result: is false
   missing fact: -1 > 0

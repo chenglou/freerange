@@ -1,7 +1,6 @@
 import * as ts from 'typescript'
 import {
   fitReturnPublicRoot,
-  fitBodySpecIndexHasWork,
   type FitCheckSpec,
   type FitGivenSpec,
   type FitSpec,
@@ -13,93 +12,47 @@ import {
   typeInputGivenContractForFunction,
   typeReturnCheckContractForFunction,
   type TypeContractResult,
+  type TypeContractUnsupported,
 } from './type-contracts.ts'
 import {isFunctionLikeWithBody} from './function-shape.ts'
 
-export function functionHasBodyFitComment(fn: FitFunction) {
-  return fitBodySpecIndexHasWork(fn.bodySpecs)
+export type BodyTypeContractIndex = {
+  variables: Map<ts.VariableDeclaration, TypeContractResult<FitCheckSpec>>
+  returns: Map<ts.Node, TypeContractResult<FitCheckSpec>>
+  hasWork: boolean
 }
 
-export function functionHasExplicitSpecs(fn: FitFunction) {
-  return fn.explicitSpecs.length > 0
+export type FunctionContractSource = {
+  specs: FitSpec[]
+  unsupported: TypeContractUnsupported[]
+  bodyTypes: BodyTypeContractIndex
+  hasTypeContracts: boolean
 }
 
-export function functionHasTypeContracts(program: Program, fn: FitFunction) {
-  return hasTypeContractWork(functionTypeGivenContract(program, fn))
-    || hasTypeContractWork(functionTypeReturnContract(program, fn))
-    || functionHasBodyTypeBoundary(program, fn)
+export type ProgramContractSource = {
+  functions: Map<FitFunction, FunctionContractSource>
+  topLevelBodyTypes: BodyTypeContractIndex
 }
 
-export function functionContractSpecs(program: Program, fn: FitFunction): FitSpec[] {
-  return [
-    ...functionTypeGivenSpecs(program, fn),
-    ...fn.explicitSpecs,
-    ...functionTypeReturnSpecs(program, fn),
-  ]
-}
+const programContractSourceCache = new WeakMap<Program, ProgramContractSource>()
 
-export function functionInputSpecs(program: Program, fn: FitFunction): FitSpec[] {
-  return [
-    ...functionTypeGivenSpecs(program, fn),
-    ...fn.explicitSpecs,
-  ]
-}
-
-function functionTypeGivenSpecs(program: Program, fn: FitFunction): FitGivenSpec[] {
-  return functionTypeGivenContract(program, fn).specs
-}
-
-function functionTypeReturnSpecs(program: Program, fn: FitFunction): FitCheckSpec[] {
-  return functionTypeReturnContract(program, fn).specs
-}
-
-function functionTypeGivenContract(program: Program, fn: FitFunction): TypeContractResult<FitGivenSpec> {
-  return typeInputGivenContractForFunction(program, fn)
-}
-
-function functionTypeReturnContract(program: Program, fn: FitFunction): TypeContractResult<FitCheckSpec> {
-  return typeReturnCheckContractForFunction(program, fn)
-}
-
-export function functionTypeUnsupported(program: Program, fn: FitFunction) {
-  return [
-    ...functionTypeGivenContract(program, fn).unsupported,
-    ...functionTypeReturnContract(program, fn).unsupported,
-  ]
-}
-
-export function hasTypeContractWork<T extends FitCheckSpec | FitGivenSpec>(contract: TypeContractResult<T>) {
-  return contract.specs.length > 0 || contract.unsupported.length > 0
-}
-
-export function functionHasBodyTypeBoundary(program: Program, fn: FitFunction) {
-  if (fn.node.body == null) return false
-  let found = false
-  const visit = (node: ts.Node) => {
-    if (found) return
-    if (node !== fn.node.body && isFunctionLikeWithBody(node)) return
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
-      if (hasTypeContractWork(typeCheckContractForTypeNode(program, node.type, node.name.text))) {
-        found = true
-        return
-      }
-      if (node.initializer != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.initializer, node.name.text))) {
-        found = true
-        return
-      }
-    }
-    if (ts.isReturnStatement(node) && node.expression != null && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node.expression, fitReturnPublicRoot))) {
-      found = true
-      return
-    }
-    if (node === fn.node.body && ts.isExpression(node) && hasTypeContractWork(typeCheckContractForExpressionBoundary(program, node, fitReturnPublicRoot))) {
-      found = true
-      return
-    }
-    ts.forEachChild(node, visit)
+export function programContractSource(program: Program): ProgramContractSource {
+  const cached = programContractSourceCache.get(program)
+  if (cached != null) return cached
+  const functions = new Map<FitFunction, FunctionContractSource>()
+  for (const fn of program.functions.values()) functions.set(fn, buildFunctionContractSource(program, fn))
+  const built = {
+    functions,
+    topLevelBodyTypes: collectTopLevelBodyTypeContracts(program),
   }
-  visit(fn.node.body)
-  return found
+  programContractSourceCache.set(program, built)
+  return built
+}
+
+export function functionContractSource(program: Program, fn: FitFunction): FunctionContractSource {
+  const source = programContractSource(program).functions.get(fn)
+  if (source == null) throw new Error(`Missing contract source for ${fn.name}`)
+  return source
 }
 
 export function typeCheckContractForExpressionBoundary(program: Program, expression: ts.Expression, root: string): TypeContractResult<FitCheckSpec> {
@@ -115,6 +68,90 @@ export function mergeTypeContracts<T extends FitCheckSpec | FitGivenSpec>(contra
   return {
     specs: contracts.flatMap(contract => contract.specs),
     unsupported: contracts.flatMap(contract => contract.unsupported),
+  }
+}
+
+export function hasTypeContractWork<T extends FitCheckSpec | FitGivenSpec>(contract: TypeContractResult<T>) {
+  return contract.specs.length > 0 || contract.unsupported.length > 0
+}
+
+function buildFunctionContractSource(program: Program, fn: FitFunction): FunctionContractSource {
+  const typeGiven = typeInputGivenContractForFunction(program, fn)
+  const typeReturn = typeReturnCheckContractForFunction(program, fn)
+  const bodyTypes = collectFunctionBodyTypeContracts(program, fn)
+  return {
+    specs: [...typeGiven.specs, ...fn.explicitSpecs, ...typeReturn.specs],
+    unsupported: [...typeGiven.unsupported, ...typeReturn.unsupported],
+    bodyTypes,
+    hasTypeContracts: hasTypeContractWork(typeGiven)
+      || hasTypeContractWork(typeReturn)
+      || bodyTypes.hasWork,
+  }
+}
+
+function collectFunctionBodyTypeContracts(program: Program, fn: FitFunction): BodyTypeContractIndex {
+  const index = emptyBodyTypeContractIndex()
+  const body = fn.node.body
+  if (body == null) return index
+  if (ts.isArrowFunction(fn.node) && ts.isExpression(body)) {
+    addReturnTypeContract(index, fn.node, typeCheckContractForExpressionBoundary(program, body, fitReturnPublicRoot))
+    return index
+  }
+  collectBodyTypeContracts(program, body, index)
+  return index
+}
+
+function collectTopLevelBodyTypeContracts(program: Program): BodyTypeContractIndex {
+  const index = emptyBodyTypeContractIndex()
+  const visit = (node: ts.Node) => {
+    if (isFunctionLikeWithBody(node)) return
+    addVariableTypeContract(program, node, index)
+    ts.forEachChild(node, visit)
+  }
+  for (const statement of program.sourceFile.statements) visit(statement)
+  return index
+}
+
+function collectBodyTypeContracts(program: Program, root: ts.Node, index: BodyTypeContractIndex) {
+  const visit = (node: ts.Node) => {
+    if (node !== root && isFunctionLikeWithBody(node)) return
+    addVariableTypeContract(program, node, index)
+    if (ts.isReturnStatement(node) && node.expression != null) {
+      addReturnTypeContract(index, node, typeCheckContractForExpressionBoundary(program, node.expression, fitReturnPublicRoot))
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(root)
+}
+
+function addVariableTypeContract(program: Program, node: ts.Node, index: BodyTypeContractIndex) {
+  if (!ts.isVariableDeclaration(node) || !ts.isIdentifier(node.name)) return
+  const contract = mergeTypeContracts([
+    typeCheckContractForTypeNode(program, node.type, node.name.text),
+    node.initializer == null
+      ? emptyTypeContract<FitCheckSpec>()
+      : typeCheckContractForExpressionBoundary(program, node.initializer, node.name.text),
+  ])
+  if (!hasTypeContractWork(contract)) return
+  index.variables.set(node, contract)
+  index.hasWork = true
+}
+
+function addReturnTypeContract(
+  index: BodyTypeContractIndex,
+  node: ts.Node,
+  contract: TypeContractResult<FitCheckSpec>,
+) {
+  if (!hasTypeContractWork(contract)) return
+  index.returns.set(node, contract)
+  index.hasWork = true
+}
+
+function emptyBodyTypeContractIndex(): BodyTypeContractIndex {
+  return {
+    variables: new Map(),
+    returns: new Map(),
+    hasWork: false,
   }
 }
 
