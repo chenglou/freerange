@@ -2,10 +2,15 @@ import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {importedArgumentRunsOnce, importedDefaultRunsOnce} from './imported-caller.ts'
+import {
+  importedArgumentRunsOnce,
+  importedDefaultRunsOnce,
+  importedDestructuredDefaultUsesFinalBinding,
+} from './imported-caller.ts'
 
 void importedArgumentRunsOnce
 void importedDefaultRunsOnce
+void importedDestructuredDefaultUsesFinalBinding
 
 const sourceCallChecks = verifyFitSource('source-call-evaluation.ts', `
 function id(value: number) {
@@ -22,6 +27,30 @@ function choose(left: number, right: number | undefined = left++) {
 
 function readBox(box: {value: number}, ignored: number) {
   return box.value
+}
+
+function readObjectBinding({box}: {box: {value: number}}, ignored = box.value++) {
+  return box.value
+}
+
+function readRenamedBinding({value: renamed}: {value: number}, ignored = renamed = 2) {
+  return renamed
+}
+
+function readArrayBinding([, value]: [number, number], ignored = value = 2) {
+  return value
+}
+
+function readNestedBinding({outer: {value}}: {outer: {value: number}}, ignored = value = 2) {
+  return value
+}
+
+function readWholePatternDefault({value}: {value: number} = {value: 2}) {
+  return value
+}
+
+function readRestBinding(...[left, right]: number[]) {
+  return left * 10 + right
 }
 
 function total(...values: number[]) {
@@ -91,6 +120,48 @@ function earlierObjectArgumentSurvivesNestedCall() {
 }
 
 /** @fit
+ * return == 1
+ */
+function laterDefaultMutatesObjectBinding() {
+  return readObjectBinding({box: {value: 0}})
+}
+
+/** @fit
+ * return == 2
+ */
+function laterDefaultMutatesRenamedBinding() {
+  return readRenamedBinding({value: 1})
+}
+
+/** @fit
+ * return == 2
+ */
+function laterDefaultMutatesArrayBinding() {
+  return readArrayBinding([0, 1])
+}
+
+/** @fit
+ * return == 2
+ */
+function laterDefaultMutatesNestedBinding() {
+  return readNestedBinding({outer: {value: 1}})
+}
+
+/** @fit
+ * return == 2
+ */
+function wholePatternDefaultBindsOnce() {
+  return readWholePatternDefault()
+}
+
+/** @fit
+ * return == 12
+ */
+function restPatternBindsFinalValues() {
+  return readRestBinding(1, 2)
+}
+
+/** @fit
  * return == 2
  */
 function methodReceiverStaysLive(box: Box) {
@@ -114,12 +185,36 @@ function restParameterCollectsArguments() {
 `)
 
 const sourceCallFailures = sourceCallChecks.filter(check => check.status !== 'pass')
-if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 10) {
+if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 16) {
   console.error('expected source calls to prepare operands and parameters once')
   console.error(JSON.stringify(sourceCallChecks, null, 2))
   process.exitCode = 1
 } else {
   console.log('calls: operands and parameters prepared once')
+}
+
+const finalBindingNegativeChecks = verifyFitSource('final-binding-negative.ts', `
+function read({value}: {value: number}, ignored = value = 2) {
+  return value
+}
+
+/** @fit
+ * return == 1
+ */
+function staleDestructuredValueMustNotPass() {
+  return read({value: 1})
+}
+`)
+if (
+  finalBindingNegativeChecks.length !== 1
+  || finalBindingNegativeChecks[0]?.status !== 'fail'
+  || !finalBindingNegativeChecks[0].reason?.includes('is false')
+) {
+  console.error('expected false claims to see final destructured parameter bindings')
+  console.error(JSON.stringify(finalBindingNegativeChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('calls: stale destructured parameter values cannot prove claims')
 }
 
 const sameParameterNameChecks = verifyFitSource('same-parameter-name.ts', `
@@ -245,7 +340,7 @@ if (
 }
 
 const importedReport = await verifyFitFiles(['tests/calls/imported-caller.ts'])
-if (importedReport.phase !== 'ready' || importedReport.summary.pass !== 2) {
+if (importedReport.phase !== 'ready' || importedReport.summary.pass !== 4) {
   console.error('expected imported calls to share prepared invocation semantics')
   console.error(JSON.stringify(importedReport, null, 2))
   process.exitCode = 1

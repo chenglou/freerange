@@ -121,7 +121,7 @@ export function verifyCallGivenSpecs(
   evaluators: CallContractEvaluators,
 ) {
   const contractSpecs = preparedFunctionContracts(calleeProgram, fn).contractSpecs
-  const env = new Map(prepared.analysisEnv)
+  const env = new Map(prepared.entryEnv)
   let statusSummary: FitCheckStatus = 'pass'
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
 
@@ -383,7 +383,7 @@ export function valueWithFunctionContractSummary(
   callSiteBindings: CallSiteBindings | undefined,
   evaluators: CallContractEvaluators,
 ): Value {
-  const env = new Map(prepared.analysisEnv)
+  const env = new Map(prepared.entryEnv)
   env.set(fitReturnInternalRoot, result)
 
   const context: EvalContext = {

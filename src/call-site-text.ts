@@ -11,7 +11,7 @@ import {
   type NumberValue,
   type Value,
 } from './domain.ts'
-import type {PreparedParameter} from './prepared-call.ts'
+import type {PreparedCallSite} from './prepared-call.ts'
 import {formatNumber} from './reporting.ts'
 
 type MutableCallSiteBindings = Map<string, string>
@@ -53,17 +53,16 @@ export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings |
 
 export function callSiteBindingsFor(
   fn: FitFunction,
-  parameters: readonly PreparedParameter[],
+  callSite: PreparedCallSite,
   thisText?: string,
 ): CallSiteBindings {
   const bindings: MutableCallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
-    const input = parameters[i]
-    if (input == null || input.sourceText == null) continue
-    const sourceText = input.sourceText
+    const sourceText = callSite.parameterSourceTexts[i]
+    if (sourceText == null) continue
     const rebasedSourceText = callSiteTextWhileBuilding(sourceText, bindings)
-    bindCallSitePattern(fn.node.parameters[i]!.name, callSiteArgumentText(rebasedSourceText, input.value, bindings), bindings)
+    bindCallSitePattern(fn.node.parameters[i]!.name, rebasedSourceText, callSite.boundValues, bindings)
   }
   return new Map(bindings)
 }
@@ -137,15 +136,22 @@ function maybeCallSiteText(text: string | null, bindings: CallSiteBindings) {
   return text == null ? null : callSiteText(text, bindings)
 }
 
-function callSiteArgumentText(sourceText: string, value: Value, bindings: MutableCallSiteBindings) {
-  if (value.kind !== 'number') return sourceText
-  if (value.min === value.max) return formatNumber(value.min)
-  return value.expr == null ? sourceText : callSiteTextWhileBuilding(value.expr, bindings)
+function callSiteArgumentText(sourceText: string, value: Value, bindingName: string, bindings: MutableCallSiteBindings) {
+  if (value.kind === 'number' && value.min === value.max) return formatNumber(value.min)
+  if (value.kind === 'unknown' || value.expr == null || value.expr === bindingName) return sourceText
+  return callSiteTextWhileBuilding(value.expr, bindings)
 }
 
-function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings: MutableCallSiteBindings) {
+function bindCallSitePattern(
+  name: ts.BindingName,
+  sourceText: string,
+  boundValues: ReadonlyMap<string, Value>,
+  bindings: MutableCallSiteBindings,
+) {
   if (ts.isIdentifier(name)) {
-    bindings.set(name.text, callSiteValueText(sourceText))
+    const value = boundValues.get(name.text)
+    const text = value == null ? sourceText : callSiteArgumentText(sourceText, value, name.text, bindings)
+    bindings.set(name.text, callSiteValueText(text))
     return
   }
   if (ts.isObjectBindingPattern(name)) {
@@ -154,14 +160,14 @@ function bindCallSitePattern(name: ts.BindingName, sourceText: string, bindings:
       if (element.dotDotDotToken != null) continue
       const propertyName = bindingElementPropertyName(element)
       if (propertyName == null) continue
-      bindCallSitePattern(element.name, `${base}.${propertyName}`, bindings)
+      bindCallSitePattern(element.name, `${base}.${propertyName}`, boundValues, bindings)
     }
     return
   }
   if (ts.isArrayBindingPattern(name)) {
     const base = callSitePropertyBaseText(sourceText)
     forEachArrayBindingElement(name, (elementName, index, isRest) => {
-      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, bindings)
+      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, boundValues, bindings)
     })
   }
 }

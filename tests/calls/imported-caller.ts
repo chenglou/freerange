@@ -1,4 +1,4 @@
-import {choose, keep} from './imported-helper.ts'
+import {choose, chooseDestructured, keep} from './imported-helper.ts'
 
 /** @fit
  * return == 1
@@ -14,4 +14,11 @@ export function importedArgumentRunsOnce() {
  */
 export function importedDefaultRunsOnce() {
   return choose(0)
+}
+
+/** @fit
+ * return == 2
+ */
+export function importedDestructuredDefaultUsesFinalBinding() {
+  return chooseDestructured({value: 1})
 }

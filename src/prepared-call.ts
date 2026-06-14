@@ -1,11 +1,16 @@
 import type {Value} from './domain.ts'
 
-export type PreparedParameter = {
+export type EvaluatedOperand = Readonly<{
   value: Value
   sourceText: string | null
-}
+}>
 
-export type PreparedCall = {
-  analysisEnv: Map<string, Value>
-  parameters: PreparedParameter[]
-}
+export type PreparedCallSite = Readonly<{
+  parameterSourceTexts: readonly (string | null)[]
+  boundValues: ReadonlyMap<string, Value>
+}>
+
+export type PreparedCall = Readonly<{
+  entryEnv: ReadonlyMap<string, Value>
+  callSite: PreparedCallSite
+}>

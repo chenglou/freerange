@@ -7,7 +7,6 @@ import {
   tupleElements,
   nullableValue,
   unknown,
-  unknownObject,
   type Value,
 } from './domain.ts'
 import {functionHasInstanceThisInput} from './function-shape.ts'
@@ -29,30 +28,6 @@ export function bindFunctionInputParameters(fn: FitFunction, program: Program, e
       continue
     }
     bindPatternFromValue(param.name, unknownParamPatternValue(param, program), env, {}, program)
-  }
-}
-
-export function bindFunctionArgumentParameters(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, options: LocalizeOptions = {}) {
-  for (let i = 0; i < fn.node.parameters.length; i++) {
-    const param = fn.node.parameters[i]!
-    const value = argumentValues[i] ?? unknown(`Missing argument ${i} for ${fn.name}`)
-    bindPatternFromValue(param.name, parameterArgumentValue(param, value, program), env, options, program)
-  }
-}
-
-export function parameterArgumentValue(param: ts.ParameterDeclaration, value: Value, program: Program): Value {
-  const expr = ts.isIdentifier(param.name) ? param.name.text : 'param'
-  return valueWithTypeFallback(value, valueFromTypeNode(expr, param.type, program))
-}
-
-export function bindFunctionCallInputs(fn: FitFunction, argumentValues: Value[], env: Map<string, Value>, program: Program, thisValue?: Value) {
-  bindFunctionThisInput(fn, env, thisValue)
-  bindFunctionArgumentParameters(fn, argumentValues, env, program, {preserveLinear: true})
-}
-
-export function bindFunctionThisInput(fn: FitFunction, env: Map<string, Value>, thisValue?: Value) {
-  if (functionHasInstanceThisInput(fn)) {
-    env.set('this', localizeValue(thisValue ?? unknownObject('this'), 'this', {preserveLinear: true}))
   }
 }
 

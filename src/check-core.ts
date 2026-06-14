@@ -1001,7 +1001,7 @@ function evaluateInterpreterCall(call: InterpreterCall, frame: InterpreterFrame,
   const callLine = lineNumberForNode(frame.program.sourceFile, call.expression)
   const target = ts.isCallExpression(call.expression) ? unwrapExpression(call.expression.expression) : call.expression
   const receiverText = ts.isPropertyAccessExpression(target) ? target.expression.getText() : undefined
-  const callSiteBindings = callSiteBindingsFor(resolvedTarget.fn, call.prepared.parameters, receiverText)
+  const callSiteBindings = callSiteBindingsFor(resolvedTarget.fn, call.prepared.callSite, receiverText)
   if (resolvedTarget.program === frame.program) {
     return evaluateLocalFunctionCall(resolvedTarget.fn.name, resolvedTarget.fn, call.prepared, callContext, {
       callText,
@@ -1369,7 +1369,7 @@ function evaluateLocalFunctionCall(
   const result = evaluateFunctionBody(fn, {
     program: context.program,
     file: context.file,
-    env: new Map(prepared.analysisEnv),
+    env: new Map(prepared.entryEnv),
     inputRoots: functionInputRoots(context.program, fn),
     stack: [...context.stack, functionName],
     checks: shouldRecordCallObligations(context) ? context.checks : [],

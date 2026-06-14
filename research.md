@@ -112,7 +112,7 @@ Function and variable identity comes from TypeScript bindings, not identifier te
 
 ## Calls Have One Preparation Point
 
-Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The execution frame keeps live object references because a later argument can mutate an earlier one. Contract checking derives its localized parameter environment from those same values instead of evaluating source expressions again. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.
+Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The finalized entry environment is the semantic source of truth, including when a later default mutates an earlier identifier or destructured binding. Contract checking localizes those final bindings instead of projecting them again from argument values. Caller source text and the final bound leaves stay separate as report provenance. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.
 
 ## Interpreter Runs Separate State From Findings
 

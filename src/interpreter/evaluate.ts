@@ -7,6 +7,7 @@ import type {
   Program,
 } from '../check-types.ts'
 import {
+  bindingNames,
   bindingElementPropertyName,
   forEachArrayBindingElement,
 } from '../binding-patterns.ts'
@@ -80,9 +81,8 @@ import {
   type FunctionImplementationNode,
   type InlineFunctionNode,
 } from '../function-shape.ts'
-import {bindFunctionCallInputs} from '../function-inputs.ts'
 import {type FitFunction} from '../modules.ts'
-import type {PreparedCall, PreparedParameter} from '../prepared-call.ts'
+import type {EvaluatedOperand, PreparedCall} from '../prepared-call.ts'
 import {programGlobalEnv} from '../program-env.ts'
 import {
   valueFromClassInstanceType,
@@ -341,7 +341,7 @@ function invokeFitFunction(
 
 function prepareFitFunctionInvocation(
   fn: FitFunction,
-  arguments_: PreparedParameter[],
+  arguments_: EvaluatedOperand[],
   caller: InterpreterFrame,
   program: Program,
   thisValue?: Value,
@@ -356,20 +356,25 @@ function prepareFitFunctionInvocation(
     'invalid',
   )
   if (prepared.kind === 'invalid') return prepared
-  const contractEnv = new Map(prepared.frame.env)
-  bindFunctionCallInputs(
-    fn,
-    prepared.parameters.map(parameter => parameter.value),
-    contractEnv,
-    program,
-    thisValue,
-  )
+  const entryEnv = new Map(prepared.frame.env)
+  const boundValues = new Map<string, Value>()
+  for (const param of fn.node.parameters) {
+    for (const name of bindingNames(param.name)) {
+      const value = prepared.frame.env.get(name)
+      if (value == null) throw new Error(`Missing final parameter binding ${name} in ${fn.name}`)
+      boundValues.set(name, value)
+      entryEnv.set(name, localizeValue(value, name, {preserveLinear: true}))
+    }
+  }
   return {
     kind: 'valid',
     frame: prepared.frame,
     prepared: {
-      analysisEnv: contractEnv,
-      parameters: prepared.parameters,
+      entryEnv,
+      callSite: {
+        parameterSourceTexts: prepared.parameterSourceTexts,
+        boundValues,
+      },
     },
   }
 }
@@ -441,23 +446,23 @@ function evaluateFunctionNodeBodyResult(
 }
 
 type PreparedFunctionNodeInvocation =
-  | {kind: 'valid'; frame: InterpreterFrame; parameters: PreparedParameter[]}
+  | {kind: 'valid'; frame: InterpreterFrame; parameterSourceTexts: (string | null)[]}
   | {kind: 'invalid'; reason: string}
 
 function prepareFunctionNodeInvocation(
   name: string,
   fn: FunctionImplementationNode,
-  arguments_: (PreparedParameter | null)[],
+  arguments_: (EvaluatedOperand | null)[],
   frame: InterpreterFrame,
   missingRequired: 'invalid' | 'unknown',
 ): PreparedFunctionNodeInvocation {
-  const parameters: PreparedParameter[] = []
+  const parameterSourceTexts: (string | null)[] = []
   let argumentIndex = 0
   for (const param of fn.parameters) {
     if (bindingPatternHasUnsupportedParameterParts(param.name)) {
       return {kind: 'invalid', reason: `Unsupported parameter binding in ${name}: ${param.name.getText(frame.program.sourceFile)}`}
     }
-    let input: PreparedParameter
+    let input: EvaluatedOperand
     if (param.dotDotDotToken != null) {
       const restValues: Value[] = []
       const restSourceTexts: string[] = []
@@ -481,23 +486,17 @@ function prepareFunctionNodeInvocation(
       input = initialized.input
     }
     bindPattern(param.name, parameterValue(param, input.value, frame), frame)
-    parameters.push(input)
+    parameterSourceTexts.push(input.sourceText)
   }
-  for (let index = 0; index < parameters.length; index++) {
-    const nameNode = fn.parameters[index]!.name
-    if (!ts.isIdentifier(nameNode)) continue
-    const current = frame.env.get(nameNode.text)
-    if (current != null) parameters[index] = {...parameters[index]!, value: current}
-  }
-  return {kind: 'valid', frame, parameters}
+  return {kind: 'valid', frame, parameterSourceTexts}
 }
 
 function initializeParameterInput(
-  argument: PreparedParameter | null,
+  argument: EvaluatedOperand | null,
   param: ts.ParameterDeclaration,
   frame: InterpreterFrame,
   missingRequired: 'invalid' | 'unknown',
-): {kind: 'valid'; input: PreparedParameter} | {kind: 'invalid'; reason: string} {
+): {kind: 'valid'; input: EvaluatedOperand} | {kind: 'invalid'; reason: string} {
   if (argument == null) {
     if (param.initializer != null) {
       return {
@@ -2864,13 +2863,13 @@ function sourceExpression(source: ArrayValue, expression: ts.Expression, frame: 
 }
 
 type EvaluatedInvocationOperands =
-  | {kind: 'valid'; receiver: PreparedParameter | null; arguments: PreparedParameter[]}
+  | {kind: 'valid'; receiver: EvaluatedOperand | null; arguments: EvaluatedOperand[]}
   | {kind: 'invalid'; reason: string}
 
 function evaluateInvocationOperands(
   args: ts.NodeArray<ts.Expression>,
   frame: InterpreterFrame,
-  receiver: PreparedParameter | null = null,
+  receiver: EvaluatedOperand | null = null,
 ): EvaluatedInvocationOperands {
   const captured: {root: string; sourceText: string | null; receiver: boolean}[] = []
   let nextOperandIndex = 0
@@ -2898,8 +2897,8 @@ function evaluateInvocationOperands(
     for (let index = 0; index < elements.length; index++) capture(elements[index]!, `${spreadText}[${index}]`)
   }
 
-  let resolvedReceiver: PreparedParameter | null = null
-  const arguments_: PreparedParameter[] = []
+  let resolvedReceiver: EvaluatedOperand | null = null
+  const arguments_: EvaluatedOperand[] = []
   for (const operand of captured) {
     const value = frame.env.get(operand.root)
     frame.env.delete(operand.root)
