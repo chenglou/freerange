@@ -409,7 +409,7 @@ Small pure subset:
 - same-index labels in comparisons; adjacent `$i + 1` backed by inferred sequence facts
 - shared-factor arithmetic when the factor sign is proven
 - conservative invalidation for `reverse`, `sort`, `splice`, indexed assignment
-- conservative skipping of unsupported loop forms whose conditions and bodies are read-only except for forgettable roots
+- explicit rejection of unsupported loop forms
 
 Anything outside this should be `unknown`, not a fake pass.
 

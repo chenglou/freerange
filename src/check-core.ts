@@ -102,7 +102,7 @@ import {
   lineNumberForNode,
   type CheckBoundary,
 } from './source-boundary.ts'
-import {programGlobalEnv} from './program-env.ts'
+import {programFunctionEnv, programGlobalEnv} from './program-env.ts'
 import {
   functionImplementationReference,
   functionInputRoots,
@@ -653,7 +653,7 @@ function contextWithDeclarationScope(scopeProgram: Program, context: EvalContext
     ...context,
     program: scopeProgram,
     file: scopeProgram.file,
-    env: programGlobalEnv(scopeProgram),
+    env: programFunctionEnv(scopeProgram),
   }
 }
 

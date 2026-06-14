@@ -121,24 +121,6 @@ export function referencesIdentifier(node: ts.Node, name: string): boolean {
   return found
 }
 
-export function isSideEffectFreeExpression(expression: ts.Expression): boolean {
-  const current = unwrapExpression(expression)
-  if (ts.isIdentifier(current)) return true
-  if (ts.isPropertyAccessExpression(current)) return isSideEffectFreeExpression(current.expression)
-  if (ts.isElementAccessExpression(current)) return current.argumentExpression != null
-    && isSideEffectFreeExpression(current.expression)
-    && isSideEffectFreeExpression(current.argumentExpression)
-  if (ts.isNumericLiteral(current) || ts.isStringLiteral(current) || current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) return true
-  if (ts.isPrefixUnaryExpression(current)) {
-    return readOnlyPrefixOperators.has(current.operator) && isSideEffectFreeExpression(current.operand)
-  }
-  if (ts.isBinaryExpression(current)) return !isAssignmentOperator(current.operatorToken.kind)
-    && isSideEffectFreeExpression(current.left)
-    && isSideEffectFreeExpression(current.right)
-  if (ts.isParenthesizedExpression(current) || ts.isNonNullExpression(current)) return isSideEffectFreeExpression(current.expression)
-  return false
-}
-
 export function isPushCallExpression(expression: ts.Expression): expression is ts.CallExpression & {expression: ts.PropertyAccessExpression} {
   return ts.isCallExpression(expression)
     && ts.isPropertyAccessExpression(expression.expression)
@@ -157,12 +139,6 @@ export function unwrapExpression(expression: ts.Expression): ts.Expression {
   return expression
 }
 
-const readOnlyPrefixOperators = new Set<ts.SyntaxKind>([
-  ts.SyntaxKind.PlusToken,
-  ts.SyntaxKind.MinusToken,
-  ts.SyntaxKind.ExclamationToken,
-  ts.SyntaxKind.TildeToken,
-])
 
 // All assignment operators, by TypeScript's own enumeration: =, the arithmetic/bitwise
 // compounds, and the logical compounds (&&=, ||=, ??=).

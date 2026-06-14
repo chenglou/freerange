@@ -9,6 +9,8 @@ export function importedImpure() {
   return Math.random()
 }
 
+export const importedStable = 10
+
 function increment(value: number) {
   return value + 1
 }

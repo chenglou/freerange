@@ -1,6 +1,6 @@
 // Imported helper pattern specimen. Cross-file calls use @fit contracts as summaries.
 
-import defaultImportedClampWidth, {ImportedClassBox, importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedDynamicRange, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter, importedValueSpecRows} from './import-pattern-helpers'
+import defaultImportedClampWidth, {importedAddGap as addImportedGap, importedBox, importedChromeX, importedClampWidth, importedDynamicRange, importedLiteralSpringData, importedNestedLiteralSpringData, importedRows, importedTupleCenter, importedValueSpecRows} from './import-pattern-helpers'
 import * as importedShapes from './import-pattern-helpers'
 import type {ImportedPickedRows, ImportedScopedTypeWidth, ImportedShapeRows, ImportedTypeFieldRows, ImportedTypeFieldSpring} from './import-pattern-helpers'
 import {importedClampWidth as aliasImportedClampWidth} from '@fit-fixtures/import-pattern-helpers'
@@ -138,24 +138,6 @@ export function importedNumericConstantContract(width: number) {
  */
 export function importedHelperWildcardContract(items: {height: number}[]) {
   return importedRows(items)
-}
-
-/** @fit
- * given box.top: 0..1000
- * given box.height: 0..1000
- * return >= box.top
- */
-export function importedClassGetterContract(box: ImportedClassBox) {
-  return box.bottom
-}
-
-/** @fit
- * given box.width: 0..1000
- * given box.height: 0..1000
- * return >= 0
- */
-export function importedClassMethodContract(box: ImportedClassBox) {
-  return box.area()
 }
 
 /** @fit

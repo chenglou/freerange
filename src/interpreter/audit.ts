@@ -6,10 +6,8 @@ import {
 import {sameExpressionText} from '../linear.ts'
 import {type ComparisonOperator} from '../parser.ts'
 import {proveComparison} from '../proof.ts'
-import {
-  isSideEffectFreeExpression,
-  unwrapExpression,
-} from './source-syntax.ts'
+import {unwrapExpression} from './source-syntax.ts'
+import {expressionIsRepeatable} from './expression-effects.ts'
 import {
   noteAudit,
   type InterpreterFrame,
@@ -40,10 +38,10 @@ export function auditConditionalSelector(
   if (!ts.isBinaryExpression(condition)) return
   const op = comparisonOperator(condition.operatorToken.kind)
   if (op == null) return
-  if (!isSideEffectFreeExpression(condition.left)
-    || !isSideEffectFreeExpression(condition.right)
-    || !isSideEffectFreeExpression(expression.whenTrue)
-    || !isSideEffectFreeExpression(expression.whenFalse)) return
+  if (!expressionIsRepeatable(condition.left, frame.program)
+    || !expressionIsRepeatable(condition.right, frame.program)
+    || !expressionIsRepeatable(expression.whenTrue, frame.program)
+    || !expressionIsRepeatable(expression.whenFalse, frame.program)) return
 
   const shape = conditionalSelectorShape(condition.left, condition.right, expression.whenTrue, expression.whenFalse, frame.program.sourceFile)
   if (shape == null) return
@@ -85,7 +83,8 @@ export function auditBranchCondition(
   if (!ts.isBinaryExpression(condition)) return
   const op = comparisonOperator(condition.operatorToken.kind)
   if (op == null) return
-  if (!isSideEffectFreeExpression(condition.left) || !isSideEffectFreeExpression(condition.right)) return
+  if (!expressionIsRepeatable(condition.left, frame.program)
+    || !expressionIsRepeatable(condition.right, frame.program)) return
 
   const left = evaluateExpression(condition.left, frame)
   const right = evaluateExpression(condition.right, frame)

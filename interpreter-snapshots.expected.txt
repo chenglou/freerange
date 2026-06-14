@@ -1,11 +1,11 @@
 case matrix nested iife/map/defaults: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
-  return.length: int 2..2
-  return[].length: int 1..2
-  return[][].spring.pos: int 4..12
+  return.length: int 0..4294967295
+  return[].length: int 0..4294967295
+  return[][].spring.pos: any number
   return[][].spring.k: int 290..290
   return[][].spring.b: int 30..30
-  return[][].index: int 0..1
-  fact return[] follows matrixInput.groups[].items by index
+  return[][].index: int 0..4294967294
+  fact return[] follows group.items by index
   fact return follows matrixInput.groups by index
 case matrix default param order: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixDefaultParamOrder
   return.pos: int 0..0
@@ -97,8 +97,10 @@ case matrix local Math alias: tests/interpreter-matrix/interpreter-matrix-patter
   return: 10..Infinity
 case matrix property access call shape: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
   return: object
+  unsupported matrixPropertyAccessCallShape line 350: Unknown identifier matrixShapeApi
 case matrix class method this: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixClassMethodThis
-  return: any number
+  return: unknown (Unsupported call box.area)
+  unsupported matrixClassMethodThis line 365: Unsupported call box.area
 case negative default value surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias
@@ -114,19 +116,15 @@ case negative conditional else count surface: tests/interpreter-matrix/interpret
 case negative mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
   return: any number
 case negative indexed loop starts at one surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
-  return: unknown (Unsupported for loop body: {
-    values.push(i)
-  })
-  unsupported negativeMatrixIndexedLoopStartsAtOne line 59: Unsupported for loop body: {
-    values.push(i)
-  }
+  return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
+  unsupported negativeMatrixIndexedLoopStartsAtOne line 59: Indexed for loops support for (let i = 0; i < limit; i++) style loops
 case negative indexed array guarded else surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
   return.length: int 0..4294967295
   return[]: any number
   fact return follows items by index
 case negative indexed array pushes into source surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
-  return: unknown (Loop body mutates its own source array)
-  unsupported negativeMatrixIndexedArrayPushesIntoSource line 76: Loop body mutates its own source array
+  return: unknown (Loop body mutates a value used by its iteration bound)
+  unsupported negativeMatrixIndexedArrayPushesIntoSource line 76: Loop body mutates a value used by its iteration bound
 case negative indexed cursor update before push surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedCursorUpdateBeforePush
   return.length: int 0..4294967295
   return[]: int 2..8589934590
@@ -139,13 +137,9 @@ case negative guarded unsafe reset surface: tests/interpreter-matrix/interpreter
   return.rows.length: int 0..4294967295
   return.rows[].height: int 0..1
   fact return.rows is an order-preserving subset of items
-case negative forgettable impure read surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixForgettableLoopImpureRead
-  return: unknown (Unsupported for loop body: {
-    scratch += negativeMatrixImpureLoopApi.touch()
-  })
-  unsupported negativeMatrixForgettableLoopImpureRead line 133: Unsupported for loop body: {
-    scratch += negativeMatrixImpureLoopApi.touch()
-  }
+case negative unsupported loop impure read surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixUnsupportedLoopImpureRead
+  return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
+  unsupported negativeMatrixUnsupportedLoopImpureRead line 133: Indexed for loops support for (let i = 0; i < limit; i++) style loops
 case negative try/catch surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
   return: unknown (Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1

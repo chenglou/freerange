@@ -1,4 +1,4 @@
-summary: 9 files, 78 pass, 0 fail, 0 requires, 0 unknown
+summary: 9 files, 67 pass, 0 fail, 0 requires, 0 unknown
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:10:center: return == (container - containee) / 2
 PASS ../vibescript/demos/draggable-cards/swap-layout.ts:27:stackLayout: return.length == rowSizes.length
 PASS ../vibescript/demos/gesture-flick-snap-target/snap-layout.ts:10:getCorners: return.length == 4
@@ -44,17 +44,6 @@ PASS ../vibescript/demos/photo-gallery/layout.ts:235:lineBoxMaxSizes: return.box
 PASS ../vibescript/demos/photo-gallery/layout.ts:236:lineBoxMaxSizes: return.box1DMaxSizeX: 16..1696
 PASS ../vibescript/demos/photo-gallery/layout.ts:237:lineBoxMaxSizes: return.box1DMaxSizeY == windowSizeY - windowPaddingTop - boxes1DGapY
 PASS ../vibescript/demos/photo-gallery/layout.ts:238:lineBoxMaxSizes: return.box1DMaxSizeY: 252..1932
-PASS ../vibescript/demos/photo-gallery/layout.ts:285:getLineLayout: return.leftHitArea.box.x == 0
-PASS ../vibescript/demos/photo-gallery/layout.ts:286:getLineLayout: return.leftHitArea.box.y == scrollY
-PASS ../vibescript/demos/photo-gallery/layout.ts:287:getLineLayout: return.leftHitArea.box.sizeX == hitArea1DSizeX
-PASS ../vibescript/demos/photo-gallery/layout.ts:288:getLineLayout: return.leftHitArea.box.sizeY == windowSizeY
-PASS ../vibescript/demos/photo-gallery/layout.ts:290:getLineLayout: return.leftHitArea.targetIndex >= 0
-PASS ../vibescript/demos/photo-gallery/layout.ts:291:getLineLayout: return.leftHitArea.targetIndex == focused - 1
-PASS ../vibescript/demos/photo-gallery/layout.ts:295:getLineLayout: return.rightHitArea.box.x == windowSizeX - hitArea1DSizeX
-PASS ../vibescript/demos/photo-gallery/layout.ts:296:getLineLayout: return.rightHitArea.box.y == scrollY
-PASS ../vibescript/demos/photo-gallery/layout.ts:297:getLineLayout: return.rightHitArea.box.sizeX == hitArea1DSizeX
-PASS ../vibescript/demos/photo-gallery/layout.ts:298:getLineLayout: return.rightHitArea.box.sizeY == windowSizeY
-PASS ../vibescript/demos/photo-gallery/layout.ts:300:getLineLayout: return.rightHitArea.targetIndex < layoutSources.length
 PASS ../vibescript/demos/photo-gallery/layout.ts:320:makeItemLayoutGeometry: imageBox.sizeX == imageSizeX
 PASS ../vibescript/demos/photo-gallery/layout.ts:321:makeItemLayoutGeometry: imageBox.sizeY == imageSizeY
 PASS ../vibescript/demos/photo-gallery/layout.ts:327:makeItemLayoutGeometry: layoutBox.sizeY == imageSizeY + promptLayout.visibleHeight + promptPaddingBottom

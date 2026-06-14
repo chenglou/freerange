@@ -127,7 +127,7 @@ declare const negativeMatrixImpureLoopApi: {
   touch(): number
 }
 
-export function negativeMatrixForgettableLoopImpureRead(items: number[], value: number): number {
+export function negativeMatrixUnsupportedLoopImpureRead(items: number[], value: number): number {
   let scratch = 0
   const kept = value
   for (let i = 1; i < items.length; i++) {

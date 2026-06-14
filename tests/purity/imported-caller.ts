@@ -2,6 +2,7 @@ import {
   importedImpure as noisy,
   importedPure as identity,
   importedPureCallback,
+  importedStable,
 } from './imported-barrel.ts'
 import * as importedHelpers from './imported-barrel.ts'
 import importedDefaultPure from './imported-helper.ts'
@@ -39,6 +40,20 @@ export function importedNamespaceImpure() {
  */
 export function importedDefaultAliasPure() {
   return importedDefaultPure()
+}
+
+/** @fit
+ * pure
+ */
+export function importedPrimitivePure() {
+  return importedStable
+}
+
+/** @fit
+ * pure
+ */
+export function importedNamespacePrimitivePure() {
+  return importedHelpers.importedStable
 }
 
 /** @fit

@@ -72,7 +72,6 @@ import {
 import {
   builtinCallName,
   evaluateBuiltinCall,
-  extentEndSummaryValue,
 } from '../builtins.ts'
 import {
   functionImplementationReference,
@@ -84,7 +83,7 @@ import {
 } from '../function-shape.ts'
 import {type FitFunction} from '../modules.ts'
 import type {EvaluatedOperand, PreparedCall} from '../prepared-call.ts'
-import {programGlobalEnv} from '../program-env.ts'
+import {programFunctionEnv} from '../program-env.ts'
 import {
   valueFromClassInstanceType,
   valueFromFunctionReturnType,
@@ -123,9 +122,9 @@ import {
   readArrayIndexValue,
   readPath,
   readPropertyValue,
+  replaceValueEverywhere,
   valueExpr,
   valuePathExpression,
-  writeMutationPath,
   writePath,
   type ValuePath,
 } from './value-path.ts'
@@ -133,7 +132,6 @@ import {
   compoundAssignmentOperator,
   indexedForLoopShape,
   isAssignmentOperator,
-  isSideEffectFreeExpression,
   propertyNameText,
   unwrapExpression,
   type IndexedForLoopShape,
@@ -141,12 +139,19 @@ import {
 import {expressionRootNames} from '../source-expressions.ts'
 import {
   functionEffects,
-  isFactPreservingGlobalMemberCall,
   lengthBearingConstructorNames,
-  mutationOuterRoots,
+  mutationRootsForProgram,
   type FunctionEffects,
 } from './function-effects.ts'
+import {
+  platformGlobalEffect,
+  platformMethodEffect,
+  retainedArgumentIndexes,
+  type PlatformCallbackEffect,
+  type PlatformCallEffect,
+} from './platform-effects.ts'
 import {evaluateSymbolicLoop, type LoopAnalysisContext} from './loop-transfer.ts'
+import {expressionIsRepeatable} from './expression-effects.ts'
 import {
   branchFrame,
   compareNumbers,
@@ -156,17 +161,15 @@ import {admitsNaN, comparisonConstraint, mayBeInfinite, nonNegativeConstraints, 
 import {formatRange} from '../reporting.ts'
 import {
   forgetRoot,
-  forgetRoots,
-  forgettableMutationRoots,
-  isForgettableForStatement,
-  isForgettableReadExpression,
   rootMentionPattern,
-} from './forgettable-loop.ts'
+} from './forget.ts'
 import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {
-  classMemberFunctionForPropertyAccess,
+  defaultLibraryOwner,
+  elementAccessHasSourceAccessor,
   isDefaultLibraryMemberAccess,
   isDefaultLibrarySymbol,
+  propertyAccessHasSourceAccessor,
   resolveCallTarget,
   type InterpreterCallTarget,
 } from './call-targets.ts'
@@ -231,7 +234,7 @@ export function evaluateInterpreterFunction(input: {
   const {program, functionName} = input
   const frame = interpreterFrame({
     program,
-    env: programGlobalEnv(program),
+    env: programFunctionEnv(program),
     stack: [],
     assumptions: [],
   })
@@ -348,7 +351,7 @@ function prepareFitFunctionInvocation(
   program: Program,
   thisValue?: Value,
 ): {kind: 'valid'; frame: InterpreterFrame; prepared: PreparedCall} | {kind: 'invalid'; reason: string} {
-  const env = programGlobalEnv(program)
+  const env = programFunctionEnv(program)
   bindInstanceThis(fn, program, env, thisValue)
   const prepared = prepareFunctionNodeInvocation(
     fn.name,
@@ -690,7 +693,9 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   }
   if (ts.isForOfStatement(statement)) return evaluateForOfStatement(statement, frame)
   if (ts.isForStatement(statement)) return evaluateForStatement(statement, frame)
-  if (ts.isWhileStatement(statement) || ts.isDoStatement(statement)) return evaluateForgettableWhileStatement(statement, frame)
+  if (ts.isWhileStatement(statement) || ts.isDoStatement(statement)) {
+    return {kind: 'return', value: noteUnsupported(frame, 'While and do loops are unsupported', statement)}
+  }
   if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
@@ -794,8 +799,13 @@ function evaluateIfStatement(
   if (truth === true) return evaluateConditionalBranch(statement.thenStatement, frame)
   if (truth === false) return statement.elseStatement == null ? {kind: 'fallthrough'} : evaluateConditionalBranch(statement.elseStatement, frame)
 
-  const thenFrame = branchFrame(frame, statement.expression, true, '<if-true>', evaluateExpression)
-  const elseFrame = branchFrame(frame, statement.expression, false, '<if-false>', evaluateExpression)
+  const repeatable = expressionIsRepeatable(statement.expression, frame.program)
+  const thenFrame = repeatable
+    ? branchFrame(frame, statement.expression, true, '<if-true>', evaluateExpression)
+    : childFrame(frame, new Map(frame.env), '<if-true>')
+  const elseFrame = repeatable
+    ? branchFrame(frame, statement.expression, false, '<if-false>', evaluateExpression)
+    : childFrame(frame, new Map(frame.env), '<if-false>')
   const thenFlow = evaluateConditionalBranchWithContinuation(statement.thenStatement, thenFrame, continuation, nextIndex)
   const elseFlow: InterpreterFlow = statement.elseStatement == null
     ? {kind: 'fallthrough'}
@@ -999,13 +1009,21 @@ function switchCaseLiteralValues(statement: ts.SwitchStatement, frame: Interpret
   const values = new Map<ts.CaseClause, LiteralPrimitive>()
   for (const clause of statement.caseBlock.clauses) {
     if (!ts.isCaseClause(clause)) continue
-    const value = evaluateExpression(clause.expression, frame)
-    if (value.kind !== 'literal' || value.values.length !== 1) {
+    const value = switchCaseLiteralValue(clause.expression)
+    if (value == null) {
       return {error: `Switch case expected a finite literal: ${clause.expression.getText(frame.program.sourceFile)}`}
     }
-    values.set(clause, value.values[0]!)
+    values.set(clause, value)
   }
   return values
+}
+
+function switchCaseLiteralValue(expression: ts.Expression): LiteralPrimitive | null {
+  const current = unwrapExpression(expression)
+  if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) return current.text
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return true
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return false
+  return null
 }
 
 function switchDefaultValues(
@@ -1107,7 +1125,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
       body,
       source,
       sourceExpr,
-      sourceRoot: pathFromExpression(statement.expression, frame)?.root ?? null,
+      sourceRoots: expressionRootNames(statement.expression, []),
       sourceKind: 'collection',
       count: source.length,
       bindIteration: target => bindForOfInitializer(statement.initializer, item, target),
@@ -1137,8 +1155,14 @@ function evaluateForStatement(statement: ts.ForStatement, frame: InterpreterFram
 
 function evaluateForStatementCore(statement: ts.ForStatement, frame: InterpreterFrame, claim: InterpreterLoopClaim): InterpreterFlow {
   const shape = indexedForLoopShape(statement)
-  if (shape == null) return evaluateForgettableForStatement(statement, frame)
+  if (shape == null) {
+    return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops', statement)}
+  }
   if (!ts.isBlock(statement.statement)) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support block bodies only', statement.statement)}
+  const boundExpression = shape.source.kind === 'array' ? shape.source.lengthExpression : shape.source.expression
+  if (!expressionIsRepeatable(boundExpression, frame.program)) {
+    return {kind: 'return', value: noteUnsupported(frame, `Indexed loop bound has effects or unknown behavior: ${boundExpression.getText(frame.program.sourceFile)}`, boundExpression)}
+  }
   const bound = evaluateIndexedForLoopBound(shape, frame)
   if ('error' in bound) return {kind: 'return', value: bound.error}
   if (!integerValued(bound.length) || bound.length.min < 0) return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loop limit expected a non-negative integer', statement.condition ?? statement)}
@@ -1156,7 +1180,10 @@ function evaluateForStatementCore(statement: ts.ForStatement, frame: Interpreter
       body,
       source: loop.source,
       sourceExpr: loop.sourceExpr,
-      sourceRoot: bound.origin == null ? null : pathFromExpression(shape.source.kind === 'array' ? shape.source.expression : bound.expression, frame)?.root ?? null,
+      sourceRoots: expressionRootNames(
+        shape.source.kind === 'array' ? shape.source.expression : bound.expression,
+        [],
+      ),
       sourceKind: bound.origin == null ? 'count' : 'collection',
       count: length,
       bindIteration: target => {
@@ -1175,26 +1202,6 @@ function indexedElementAssumptions(value: NumberValue, length: NumberValue): Lin
   const lower = comparisonConstraint(value, '>=', numberValue(0, 0, 0, '0', linearConstant(0)))
   const upper = comparisonConstraint(value, '<', length)
   return [lower, upper].filter((fact): fact is LinearConstraint => fact != null)
-}
-
-function evaluateForgettableForStatement(statement: ts.ForStatement, frame: InterpreterFrame): InterpreterFlow {
-  if (!isForgettableForStatement(statement)) {
-    return {kind: 'return', value: noteUnsupported(frame, 'Indexed for loops support for (let i = 0; i < limit; i++) style loops', statement)}
-  }
-  const roots = forgettableMutationRoots(statement.statement, frame.env)
-  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported for loop body: ${statement.statement.getText(frame.program.sourceFile)}`, statement.statement)}
-  forgetRoots(frame.env, roots)
-  return {kind: 'fallthrough'}
-}
-
-function evaluateForgettableWhileStatement(statement: ts.WhileStatement | ts.DoStatement, frame: InterpreterFrame): InterpreterFlow {
-  if (!isForgettableReadExpression(statement.expression)) {
-    return {kind: 'return', value: noteUnsupported(frame, `Unsupported while condition: ${statement.expression.getText(frame.program.sourceFile)}`, statement.expression)}
-  }
-  const roots = forgettableMutationRoots(statement.statement, frame.env)
-  if (roots == null) return {kind: 'return', value: noteUnsupported(frame, `Unsupported while loop body: ${statement.statement.getText(frame.program.sourceFile)}`, statement.statement)}
-  forgetRoots(frame.env, roots)
-  return {kind: 'fallthrough'}
 }
 
 function indexedForLoopContext(bound: IndexedForLoopBound, length: NumberValue, frame: InterpreterFrame): LoopFrame {
@@ -1303,9 +1310,26 @@ function evaluateNonNullExpression(expression: ts.NonNullExpression, frame: Inte
 
 function evaluateNewExpression(expression: ts.NewExpression, frame: InterpreterFrame): Value {
   const constructorName = newExpressionConstructorName(expression)
-  if (constructorName != null && lengthBearingConstructorNames.has(constructorName)) {
+  if (
+    constructorName != null
+    && lengthBearingConstructorNames.has(constructorName)
+    && isDefaultLibrarySymbol(expression.expression, frame.program)
+  ) {
     return evaluateLengthBearingNewExpression(expression, constructorName, frame)
   }
+  if (!ts.isIdentifier(unwrapExpression(expression.expression))) {
+    evaluateExpression(expression.expression, frame)
+  }
+  const arguments_ = expression.arguments ?? ts.factory.createNodeArray()
+  const operands = evaluateInvocationOperands(arguments_, frame)
+  if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
+  expression.arguments?.forEach((argument, index) => {
+    const source = ts.isSpreadElement(argument) ? argument.expression : argument
+    const value = operands.arguments[index]?.value
+    if (!valueCanBeMutated(value)) return
+    havocExpressionAliases(frame, source)
+    havocReferenceAliases(frame, valueReferenceIds(value))
+  })
   return noteUnsupported(frame, `Unsupported new expression ${expression.getText(frame.program.sourceFile)}`, expression)
 }
 
@@ -1351,42 +1375,10 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
     const ambient = ambientPropertyBound(expression, frame.program)
     if (ambient != null) return ambient
   }
-  const getter = classMemberFunctionForPropertyAccess(expression, frame)
-  if (getter != null && ts.isGetAccessorDeclaration(getter.fn.node)) {
-    const receiver = evaluateExpression(expression.expression, frame)
-    const fallback = valueFromFunctionReturnType(expression.getText(frame.program.sourceFile), getter.fn.node, getter.program)
-    const prepared = prepareFitFunctionInvocation(getter.fn, [], frame, getter.program, receiver)
-    if (prepared.kind === 'invalid') return noteUnsupported(frame, prepared.reason, expression)
-    const hooked = evaluateHookedCall({
-      expression,
-      callName: expression.getText(frame.program.sourceFile),
-      target: getter,
-      prepared: prepared.prepared,
-      fallback,
-      thisValue: receiver,
-    }, frame)
-    if (hooked != null) {
-      applyFunctionCallEffects(
-        functionEffects(functionImplementationReference(getter.program, getter.fn.node)),
-        [],
-        [],
-        expression.expression,
-        frame,
-      )
-      return hooked
-    }
-    const value = valueWithTypeFallback(
-      evaluateFunctionNodeBody(getter.fn.name, getter.fn.node, prepared.frame),
-      fallback,
-    )
-    applyFunctionCallEffects(
-      functionEffects(functionImplementationReference(getter.program, getter.fn.node)),
-      [],
-      [],
-      expression.expression,
-      frame,
-    )
-    return value
+  if (propertyAccessHasSourceAccessor(expression, 'get', frame.program)) {
+    evaluateExpression(expression.expression, frame)
+    havocExpressionAliases(frame, expression.expression)
+    return noteUnsupported(frame, `Class getter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
   }
   const target = evaluateExpression(expression.expression, frame)
   const optional = hasQuestionDotToken(expression)
@@ -1408,6 +1400,12 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
 }
 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
+  if (elementAccessHasSourceAccessor(expression, 'get', frame.program)) {
+    evaluateExpression(expression.expression, frame)
+    if (expression.argumentExpression != null) evaluateExpression(expression.argumentExpression, frame)
+    havocExpressionAliases(frame, expression.expression)
+    return noteUnsupported(frame, `Class getter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
   const target = evaluateExpression(expression.expression, frame)
   const optional = hasQuestionDotToken(expression)
   if (target.kind === 'nullable' && optional) {
@@ -1653,6 +1651,12 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
 // ++x / x++ / --x / x-- are assignments: the write must land even when the old
 // value is not numeric. Prefix forms evaluate to the new value, postfix to the old.
 function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression, frame: InterpreterFrame): Value {
+  const accessorReceiver = sourceAccessorWriteReceiver(expression.operand, frame)
+  if (accessorReceiver != null) {
+    evaluateAccessorReference(expression.operand, accessorReceiver, frame)
+    havocExpressionAliases(frame, accessorReceiver)
+    return noteUnsupported(frame, `Class setter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
   const path = pathFromExpression(expression.operand, frame)
   if (path == null) {
     const value = noteUnsupported(frame, `Unsupported update target ${expression.operand.getText(frame.program.sourceFile)}`, expression)
@@ -1715,17 +1719,22 @@ function evaluateLogicalNot(expression: ts.PrefixUnaryExpression, frame: Interpr
 }
 
 function evaluateLogicalExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
-  const leftValues = truthinessValues(evaluateExpression(expression.left, frame))
+  const left = evaluateExpression(expression.left, frame)
+  const leftValues = truthinessValues(left)
   if (leftValues == null) return noteUnsupported(frame, `Logical expression ${expression.getText(frame.program.sourceFile)} expected boolean-like values`, expression)
-  const rightValues = truthinessValues(evaluateExpression(expression.right, frame))
-  if (rightValues == null) return noteUnsupported(frame, `Logical expression ${expression.getText(frame.program.sourceFile)} expected boolean-like values`, expression)
-  const values: boolean[] = []
-  for (const left of leftValues) {
-    for (const right of rightValues) {
-      values.push(expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ? left && right : left || right)
-    }
+  const truth = singleBooleanValue(leftValues)
+  const and = expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  if (truth != null) {
+    if ((and && !truth) || (!and && truth)) return left
+    return evaluateExpression(expression.right, frame)
   }
-  return literalValue(uniqueBooleanValues(values), expression.getText(frame.program.sourceFile))
+  const skippedEnv = new Map(frame.env)
+  const rightFrame = childFrame(frame, new Map(frame.env), '<logical-right>')
+  const right = evaluateExpression(expression.right, rightFrame)
+  if (!expressionIsRepeatable(expression.right, frame.program)) {
+    frame.env = joinFrameEnvs(skippedEnv, rightFrame.env)
+  }
+  return joinValues(left, valueWithAssumptions(right, rightFrame.assumptions))
 }
 
 function isLogicalOperator(kind: ts.SyntaxKind) {
@@ -1761,7 +1770,15 @@ function uniqueBooleanValues(values: boolean[]) {
 
 function evaluateNullishCoalescing(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
   const left = evaluateExpression(expression.left, frame)
-  if (left.kind === 'nullable') return joinValues(left.present, evaluateExpression(expression.right, frame))
+  if (left.kind === 'nullable') {
+    const skippedEnv = new Map(frame.env)
+    const rightFrame = childFrame(frame, new Map(frame.env), '<nullish-right>')
+    const right = evaluateExpression(expression.right, rightFrame)
+    if (!expressionIsRepeatable(expression.right, frame.program)) {
+      frame.env = joinFrameEnvs(skippedEnv, rightFrame.env)
+    }
+    return joinValues(left.present, valueWithAssumptions(right, rightFrame.assumptions))
+  }
   if (left.kind === 'null') return evaluateExpression(expression.right, frame)
   auditNullishFallback(expression, left, frame)
   return left
@@ -1883,6 +1900,14 @@ function signFromFacts(left: NumberValue, right: NumberValue, assumptions: Linea
 }
 
 function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: InterpreterFrame): Value {
+  const accessorReceiver = sourceAccessorWriteReceiver(expression.left, frame)
+  if (accessorReceiver != null) {
+    evaluateAccessorReference(expression.left, accessorReceiver, frame)
+    const right = evaluateExpression(expression.right, frame)
+    havocExpressionAliases(frame, accessorReceiver)
+    havocReferenceAliases(frame, valueReferenceIds(right))
+    return noteUnsupported(frame, `Class setter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
   const path = pathFromExpression(expression.left, frame)
   if (path == null) {
     const value = noteUnsupported(frame, `Unsupported assignment target ${expression.left.getText(frame.program.sourceFile)}`, expression.left)
@@ -1897,6 +1922,25 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
   }
   writePath(path, value, frame)
   return value
+}
+
+function sourceAccessorWriteReceiver(expression: ts.Expression, frame: InterpreterFrame): ts.Expression | null {
+  const current = unwrapExpression(expression)
+  if (ts.isPropertyAccessExpression(current) && propertyAccessHasSourceAccessor(current, 'set', frame.program)) {
+    return current.expression
+  }
+  if (ts.isElementAccessExpression(current) && elementAccessHasSourceAccessor(current, 'set', frame.program)) {
+    return current.expression
+  }
+  return null
+}
+
+function evaluateAccessorReference(expression: ts.Expression, receiver: ts.Expression, frame: InterpreterFrame) {
+  evaluateExpression(receiver, frame)
+  const current = unwrapExpression(expression)
+  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+    evaluateExpression(current.argumentExpression, frame)
+  }
 }
 
 function assignedValue(kind: ts.SyntaxKind, path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.BinaryExpression): Value {
@@ -2047,19 +2091,31 @@ function applyFunctionCallEffects(
       havocExpressionAliases(frame, ts.isSpreadElement(argument) ? argument.expression : argument)
     }
   }
-  const certainOuterRoots = mutationOuterRoots(certain, frame.program.sourceId)
-  const uncertainOuterRoots = mutationOuterRoots(uncertain, frame.program.sourceId)
+  const certainOuterRoots = mutationRootsForProgram(certain, frame.program)
+  const uncertainOuterRoots = mutationRootsForProgram(uncertain, frame.program)
   havocRoots(frame, [...new Set([...certainOuterRoots, ...uncertainOuterRoots])])
 }
 
 // Inline callbacks run per element on a copy of the caller's environment, so
 // reads stay precise; writes to captured locals and mutations of the elements
 // fed through the callback's parameters are applied here instead.
-function applyCallbackEffects(callback: FunctionImplementationRef, receiverExpression: ts.Expression | null, frame: InterpreterFrame): FunctionEffects {
+function applyCallbackEffects(
+  callback: FunctionImplementationRef,
+  receiverExpression: ts.Expression | null,
+  thisExpression: ts.Expression | null,
+  frame: InterpreterFrame,
+  elementParamIndexes: readonly number[] = [0],
+  receiverParamIndexes: readonly number[] = [2],
+): FunctionEffects {
   const effects = functionEffects(callback)
-  applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
-  if ((effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) && receiverExpression != null) {
-    havocArrayElementAliases(frame, receiverExpression)
+  applyFunctionCallEffects(effects, [], callback.node.parameters, thisExpression, frame)
+  const mutated = new Set([
+    ...effects.mutations.certain.paramIndexes,
+    ...effects.mutations.uncertain.paramIndexes,
+  ])
+  if (receiverExpression != null) {
+    if (elementParamIndexes.some(index => mutated.has(index))) havocArrayElementAliases(frame, receiverExpression)
+    if (receiverParamIndexes.some(index => mutated.has(index))) havocExpressionAliases(frame, receiverExpression)
   }
   return effects
 }
@@ -2067,8 +2123,21 @@ function applyCallbackEffects(callback: FunctionImplementationRef, receiverExpre
 // The array value read before the callback ran: its length is still exact
 // (element mutation cannot change it), but element facts belong to the first
 // iteration only once the callback mutates its parameters.
-function sourceAfterCallback(source: ArrayValue, effects: FunctionEffects): ArrayValue {
-  if (effects.mutations.certain.paramIndexes.size === 0 && effects.mutations.uncertain.paramIndexes.size === 0) return source
+function sourceAfterCallback(
+  source: ArrayValue,
+  effects: FunctionEffects,
+  callback: PlatformCallbackEffect,
+): ArrayValue {
+  const mutated = new Set([
+    ...effects.mutations.certain.paramIndexes,
+    ...effects.mutations.uncertain.paramIndexes,
+  ])
+  const mutatesSource = callback.parameterSources.some((sources, index) =>
+    mutated.has(index) && sources.some(source => source.kind === 'receiver'))
+  if (mutatesSource) return unknownArray(source.expr ?? 'callback source')
+  const mutatesElement = callback.parameterSources.some((sources, index) =>
+    mutated.has(index) && sources.some(source => source.kind === 'receiver-elements'))
+  if (!mutatesElement) return source
   return {...source, elements: null, element: null, summary: null}
 }
 
@@ -2087,6 +2156,7 @@ function applyUnknownCallEffects(
   expression: ts.CallExpression,
   target: ts.Expression,
   argumentValues: (Value | undefined)[],
+  receiverValue: Value | null,
   frame: InterpreterFrame,
 ) {
   const receiverElementReferenceIds = ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)
@@ -2095,11 +2165,15 @@ function applyUnknownCallEffects(
   const havocAllInputs = () => {
     if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
       havocExpressionAliases(frame, target.expression)
+      havocReferenceAliases(frame, valueReferenceIds(receiverValue))
     }
     expression.arguments.forEach((argument, index) => {
       const argumentExpression = ts.isSpreadElement(argument) ? argument.expression : argument
       if (isInlineFunction(unwrapExpression(argumentExpression))) return
-      if (valueCanBeMutated(argumentValues[index])) havocExpressionAliases(frame, argumentExpression)
+      if (valueCanBeMutated(argumentValues[index])) {
+        havocExpressionAliases(frame, argumentExpression)
+        havocReferenceAliases(frame, valueReferenceIds(argumentValues[index]))
+      }
     })
   }
   havocAllInputs()
@@ -2116,28 +2190,6 @@ function applyUnknownCallEffects(
       // `const arr = [box]`).
       havocReferenceAliases(frame, receiverElementReferenceIds)
     }
-  }
-}
-
-// A fact-preserving global (Array.from, ...) writes no caller state itself, but
-// it may run a callback argument over its other arguments. Apply each
-// callback's own effects, and when a callback mutates its parameter, forget the
-// data arguments it runs against.
-function applyFactPreservingGlobalCallbackEffects(expression: ts.CallExpression, frame: InterpreterFrame) {
-  let mutatesData = false
-  for (const argument of expression.arguments) {
-    const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
-    const callback = passedFunctionReference(argumentExpression, frame)
-    if (callback == null) continue
-    const effects = functionEffects(callback)
-    applyFunctionCallEffects(effects, [], callback.node.parameters, null, frame)
-    if (effects.mutations.certain.paramIndexes.size > 0 || effects.mutations.uncertain.paramIndexes.size > 0) mutatesData = true
-  }
-  if (!mutatesData) return
-  for (const argument of expression.arguments) {
-    const argumentExpression = unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
-    if (passedFunctionReference(argumentExpression, frame) != null) continue
-    havocArrayElementAliases(frame, argumentExpression)
   }
 }
 
@@ -2252,20 +2304,28 @@ function compareLiteralSets(left: LiteralPrimitive[], right: LiteralPrimitive[],
 }
 
 function evaluateConditionalExpression(expression: ts.ConditionalExpression, frame: InterpreterFrame): Value {
-  const extentEnd = evaluateExtentEndConditional(expression, frame)
-  if (extentEnd != null) return extentEnd
   auditConditionalSelector(expression, auditReadFrame(frame), evaluateExpression)
   const truthValues = evaluateConditionTruthiness(expression.condition, frame, 'Conditional expression')
   if (truthValues == null) return unknown(`Unsupported conditional condition: ${nodeText(expression.condition, frame)}`)
   const truth = singleBooleanValue(truthValues)
   if (truth === true) return evaluateExpression(expression.whenTrue, frame)
   if (truth === false) return evaluateExpression(expression.whenFalse, frame)
-  const trueFrame = branchFrame(frame, expression.condition, true, '<conditional-true>', evaluateExpression)
-  const falseFrame = branchFrame(frame, expression.condition, false, '<conditional-false>', evaluateExpression)
-  return joinValues(
-    valueWithAssumptions(evaluateExpression(expression.whenTrue, trueFrame), trueFrame.assumptions),
-    valueWithAssumptions(evaluateExpression(expression.whenFalse, falseFrame), falseFrame.assumptions),
-  )
+  const repeatable = expressionIsRepeatable(expression.condition, frame.program)
+  const trueFrame = repeatable
+    ? branchFrame(frame, expression.condition, true, '<conditional-true>', evaluateExpression)
+    : childFrame(frame, new Map(frame.env), '<conditional-true>')
+  const falseFrame = repeatable
+    ? branchFrame(frame, expression.condition, false, '<conditional-false>', evaluateExpression)
+    : childFrame(frame, new Map(frame.env), '<conditional-false>')
+  const trueValue = valueWithAssumptions(evaluateExpression(expression.whenTrue, trueFrame), trueFrame.assumptions)
+  const falseValue = valueWithAssumptions(evaluateExpression(expression.whenFalse, falseFrame), falseFrame.assumptions)
+  if (
+    !expressionIsRepeatable(expression.whenTrue, frame.program)
+    || !expressionIsRepeatable(expression.whenFalse, frame.program)
+  ) {
+    frame.env = joinBranchFrameEnvs(trueFrame, falseFrame)
+  }
+  return joinValues(trueValue, falseValue)
 }
 
 function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
@@ -2278,40 +2338,6 @@ function auditReadFrame(frame: InterpreterFrame): InterpreterFrame {
       audits: frame.output.audits,
     },
   })
-}
-
-function evaluateExtentEndConditional(expression: ts.ConditionalExpression, frame: InterpreterFrame): NumberValue | null {
-  const condition = arrayLengthZeroCondition(expression.condition, frame)
-  if (condition == null) return null
-
-  const trueValue = evaluateExpression(expression.whenTrue, frame)
-  const falseValue = evaluateExpression(expression.whenFalse, frame)
-  if (trueValue.kind !== 'number' || falseValue.kind !== 'number') return null
-
-  const emptyValue = condition.emptyWhenTrue ? trueValue : falseValue
-  if (emptyValue.expr == null) return null
-  return extentEndSummaryValue(condition.array, emptyValue.expr)
-}
-
-function arrayLengthZeroCondition(expression: ts.Expression, frame: InterpreterFrame): {array: ArrayValue; emptyWhenTrue: boolean} | null {
-  if (!ts.isBinaryExpression(expression)) return null
-  const leftLength = arrayFromLengthExpression(expression.left, frame)
-  const rightLength = arrayFromLengthExpression(expression.right, frame)
-  const leftZero = numericLiteralValue(expression.left) === 0
-  const rightZero = numericLiteralValue(expression.right) === 0
-  const op = expression.operatorToken.kind
-
-  if (leftLength != null && rightZero && (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken)) return {array: leftLength, emptyWhenTrue: true}
-  if (rightLength != null && leftZero && (op === ts.SyntaxKind.EqualsEqualsEqualsToken || op === ts.SyntaxKind.EqualsEqualsToken)) return {array: rightLength, emptyWhenTrue: true}
-  if (leftLength != null && rightZero && op === ts.SyntaxKind.GreaterThanToken) return {array: leftLength, emptyWhenTrue: false}
-  if (rightLength != null && leftZero && op === ts.SyntaxKind.LessThanToken) return {array: rightLength, emptyWhenTrue: false}
-  return null
-}
-
-function arrayFromLengthExpression(expression: ts.Expression, frame: InterpreterFrame): ArrayValue | null {
-  if (!ts.isPropertyAccessExpression(expression) || expression.name.text !== 'length') return null
-  const value = evaluateExpression(expression.expression, frame)
-  return value.kind === 'array' ? value : null
 }
 
 function evaluateCallExpression(expression: ts.CallExpression, frame: InterpreterFrame): Value {
@@ -2341,16 +2367,23 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     return evaluateMathCall(target.name.text, evaluatedArguments(expression.arguments, frame), frame, expression)
   }
   const defaultLibraryMethod = ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, frame.program)
-  if (defaultLibraryMethod && target.name.text === 'push') return evaluatePushCall(expression, target, frame)
   if (defaultLibraryMethod) {
-    const mutation = evaluateArrayMutationCall(expression, target, frame)
-    if (mutation != null) return mutation
+    const owner = defaultLibraryOwner(target, frame.program)
+    const effect = platformMethodEffect(owner, target.name.text, expression.arguments.length)
+    if (effect != null) {
+      const operands = evaluatePlatformMethodOperands(expression, target, frame)
+      if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
+      const receiver = operands.receiver?.value
+      if (receiver == null) return noteUnsupported(frame, 'Platform method receiver was not evaluated', expression)
+      const argumentValues = operands.arguments.map(argument => argument.value)
+      const handled = evaluateKnownPlatformMethod(expression, target, owner, effect, receiver, argumentValues, frame)
+      if (handled != null) return handled
+      applyPlatformMethodRuntimeEffects(expression, target, effect, receiver, argumentValues, frame)
+      const typed = fallback()
+      if (typed?.kind === 'object' || typed?.kind === 'array') return typed
+      return noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
+    }
   }
-  if (defaultLibraryMethod && target.name.text === 'at') return evaluateArrayAtCall(expression, target, frame)
-  if (defaultLibraryMethod && target.name.text === 'map') return evaluateMapCall(expression, target, frame)
-  if (defaultLibraryMethod && target.name.text === 'filter') return evaluateFilterCall(expression, target, frame)
-  if (defaultLibraryMethod && target.name.text === 'every') return evaluateEverySomeCall(expression, target, 'every', frame)
-  if (defaultLibraryMethod && target.name.text === 'some') return evaluateEverySomeCall(expression, target, 'some', frame)
   if (isInlineFunction(target)) {
     const operands = evaluateInvocationOperands(expression.arguments, frame)
     if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
@@ -2372,18 +2405,6 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     )
     return result
   }
-  if (ts.isPropertyAccessExpression(target)) {
-    const member = classMemberFunctionForPropertyAccess(target, frame)
-    if (member != null && ts.isMethodDeclaration(member.fn.node)) {
-      const receiver = evaluateExpression(target.expression, frame)
-      return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), {
-        kind: 'function',
-        program: member.program,
-        fn: member.fn,
-        ...(member.imported == null ? {} : {imported: member.imported}),
-      }, fallback(), frame, receiver, target.expression)
-    }
-  }
   const resolved = resolveCallTarget(target, frame.program)
   if (resolved.kind === 'math') {
     return evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression)
@@ -2392,47 +2413,188 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   // Calls into real platform globals (console.log, JSON.stringify, ...) read
   // but never write caller state; everything else unseen gets the unknown-call
   // treatment.
-  const factPreservingGlobal = ts.isPropertyAccessExpression(target)
+  const platformGlobal = ts.isPropertyAccessExpression(target)
     && ts.isIdentifier(target.expression)
     && isDefaultLibrarySymbol(target.expression, frame.program)
     && isDefaultLibraryMemberAccess(target, frame.program)
-    && isFactPreservingGlobalMemberCall(target.expression.text, target.name.text)
-  const argumentValues = evaluatedArguments(expression.arguments, frame)
-  if (!factPreservingGlobal) applyUnknownCallEffects(expression, target, argumentValues, frame)
-  // A fact-preserving global can still run a callback that mutates what it maps
-  // over (Array.from(iterable, mapFn)). The global writes no caller state, but
-  // the mapper's effects must still land on the data arguments it runs against.
-  else applyFactPreservingGlobalCallbackEffects(expression, frame)
+    ? platformGlobalEffect(target.expression.text, target.name.text, expression.arguments.length)
+    : null
+  const factPreservingGlobal = platformGlobal != null
+    && !platformGlobal.mutatesReceiver
+    && platformGlobal.mutatesArgumentIndexes.length === 0
+    && platformGlobal.callbacks.length === 0
+  const platformNamespace = ts.isPropertyAccessExpression(target)
+    && ts.isIdentifier(target.expression)
+    && isDefaultLibrarySymbol(target.expression, frame.program)
+  let receiverExpression: ts.Expression | null = null
+  let receiver: Value | null = null
+  if (!platformNamespace && ts.isPropertyAccessExpression(target)) {
+    if (propertyAccessHasSourceAccessor(target, 'get', frame.program)) {
+      evaluateExpression(target, frame)
+    } else {
+      receiverExpression = target.expression
+      receiver = evaluateExpression(receiverExpression, frame)
+    }
+  } else if (ts.isElementAccessExpression(target)) {
+    if (elementAccessHasSourceAccessor(target, 'get', frame.program)) {
+      evaluateExpression(target, frame)
+    } else {
+      receiverExpression = target.expression
+      receiver = evaluateExpression(receiverExpression, frame)
+      if (target.argumentExpression != null) evaluateExpression(target.argumentExpression, frame)
+    }
+  } else if (!ts.isIdentifier(target)) {
+    evaluateExpression(target, frame)
+  }
+  const operands = evaluateInvocationOperands(
+    expression.arguments,
+    frame,
+    receiver == null || receiverExpression == null
+      ? null
+      : {value: receiver, sourceText: receiverExpression.getText(frame.program.sourceFile)},
+  )
+  if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
+  const argumentValues = operands.arguments.map(argument => argument.value)
+  if (!factPreservingGlobal) applyUnknownCallEffects(expression, target, argumentValues, receiver, frame)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
   return noteUnsupported(frame, resolved.reason, expression)
 }
 
-function evaluateArrayMutationCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value | null {
+function evaluateKnownPlatformMethod(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  owner: ReturnType<typeof defaultLibraryOwner>,
+  effect: PlatformCallEffect,
+  receiver: Value,
+  argumentValues: Value[],
+  frame: InterpreterFrame,
+): Value | null {
+  if (owner !== 'Array' && owner !== 'ReadonlyArray') return null
+  if (target.name.text === 'push') return evaluatePushCall(expression, target, receiver, argumentValues, frame)
+  const mutation = evaluateArrayMutationCall(expression, target, effect, receiver, frame)
+  if (mutation != null) return mutation
+  if (target.name.text === 'at') return evaluateArrayAtCall(expression, receiver, argumentValues, frame)
+  if (target.name.text === 'map') return evaluateMapCall(expression, target, effect, receiver, frame)
+  if (target.name.text === 'filter') return evaluateFilterCall(expression, target, effect, receiver, frame)
+  if (target.name.text === 'every') return evaluateEverySomeCall(expression, target, effect, receiver, 'every', frame)
+  if (target.name.text === 'some') return evaluateEverySomeCall(expression, target, effect, receiver, 'some', frame)
+  return null
+}
+
+function evaluatePlatformMethodOperands(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  frame: InterpreterFrame,
+): EvaluatedInvocationOperands {
+  const receiver = evaluateExpression(target.expression, frame)
+  return evaluateInvocationOperands(
+    expression.arguments,
+    frame,
+    {value: receiver, sourceText: target.expression.getText(frame.program.sourceFile)},
+    argument => {
+      const current = unwrapExpression(argument)
+      if (isInlineFunction(current) || passedFunctionReference(current, frame) != null) {
+        return unknown('Function value')
+      }
+      return evaluateExpression(argument, frame)
+    },
+  )
+}
+
+function applyPlatformMethodRuntimeEffects(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  effect: PlatformCallEffect,
+  receiver: Value,
+  argumentValues: Value[],
+  frame: InterpreterFrame,
+) {
+  if (effect.mutatesReceiver) {
+    havocExpressionAliases(frame, target.expression)
+    havocReferenceAliases(frame, valueReferenceIds(receiver))
+  }
+  for (const index of effect.mutatesArgumentIndexes) {
+    const argument = expression.arguments[index]
+    if (argument == null) continue
+    const source = ts.isSpreadElement(argument) ? argument.expression : argument
+    havocExpressionAliases(frame, source)
+    havocReferenceAliases(frame, valueReferenceIds(argumentValues[index]))
+  }
+  for (const index of retainedArgumentIndexes(effect, expression.arguments.length)) {
+    const argument = expression.arguments[index]
+    if (argument == null) continue
+    const source = ts.isSpreadElement(argument) ? argument.expression : argument
+    havocExpressionAliases(frame, source)
+    havocReferenceAliases(frame, valueReferenceIds(argumentValues[index]))
+  }
+  for (const callback of effect.callbacks) {
+    applyPlatformCallbackRuntimeEffect(expression, target, callback, frame)
+  }
+}
+
+function applyPlatformCallbackRuntimeEffect(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  callback: PlatformCallbackEffect,
+  frame: InterpreterFrame,
+): FunctionEffects | null {
+  const argument = expression.arguments[callback.argumentIndex]
+  const callbackExpression = argument == null
+    ? null
+    : unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
+  const callbackRef = callbackExpression == null ? null : passedFunctionReference(callbackExpression, frame)
+  const elementParams: number[] = []
+  const receiverParams: number[] = []
+  callback.parameterSources.forEach((sources, index) => {
+    if (sources.some(source => source.kind === 'receiver-elements')) elementParams.push(index)
+    if (sources.some(source => source.kind === 'receiver')) receiverParams.push(index)
+  })
+  const thisArgument = callback.thisSource?.kind === 'argument'
+    ? expression.arguments[callback.thisSource.index] ?? null
+    : null
+  const thisExpression = thisArgument != null && !ts.isSpreadElement(thisArgument) ? thisArgument : null
+  if (callbackRef != null) {
+    return applyCallbackEffects(
+      callbackRef,
+      target.expression,
+      thisExpression,
+      frame,
+      elementParams,
+      receiverParams,
+    )
+  }
+  if (elementParams.length > 0) havocArrayElementAliases(frame, target.expression)
+  if (receiverParams.length > 0) havocExpressionAliases(frame, target.expression)
+  if (thisExpression != null) havocExpressionAliases(frame, thisExpression)
+  return null
+}
+
+function evaluateArrayMutationCall(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  effect: PlatformCallEffect,
+  receiver: Value,
+  frame: InterpreterFrame,
+): Value | null {
   if (target.name.text !== 'reverse' && target.name.text !== 'sort' && target.name.text !== 'splice') return null
-  if (!expression.arguments.every(isSideEffectFreeExpression)) {
-    // The mutation still happens at runtime; forget the receiver before giving up.
-    havocRoots(frame, expressionRootNames(target.expression, []))
-    return noteUnsupported(frame, `Unsupported array mutation arguments: ${expression.getText(frame.program.sourceFile)}`, expression)
-  }
-  const path = pathFromExpression(target.expression, frame)
-  if (path == null) {
-    havocRoots(frame, expressionRootNames(target.expression, []))
-    return noteUnsupported(frame, `Unsupported array mutation target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
-  }
-  const current = readPath(path, frame, target.expression)
-  if (current.kind !== 'array') {
-    havocRoots(frame, expressionRootNames(target.expression, []))
+  if (receiver.kind !== 'array') {
+    havocExpressionAliases(frame, target.expression)
     return noteUnsupported(frame, `${target.name.text} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   }
-  noteEffect(frame, `${target.name.text} mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
+  if (target.name.text === 'sort') {
+    const comparator = effect.callbacks[0]
+    if (comparator != null) applyPlatformCallbackRuntimeEffect(expression, target, comparator, frame)
+  }
+  noteEffect(frame, `${target.name.text} mutates ${target.expression.getText(frame.program.sourceFile)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {
-    forgetRoot(frame.env, path.root)
-    forgetRootAssumptions(frame, path.root)
+    const next = unknownArray(target.expression.getText(frame.program.sourceFile))
+    replaceValueEverywhere(frame.env, receiver, next)
+    havocRoots(frame, expressionRootNames(target.expression, []))
     return unknownArray(expression.getText(frame.program.sourceFile))
   }
-  const next = {...current, elements: null, summary: null}
-  writeMutationPath(path, next, frame)
+  const next = {...receiver, elements: null, summary: null}
+  replaceValueEverywhere(frame.env, receiver, next)
   return next
 }
 
@@ -2508,10 +2670,9 @@ function evaluateHookedCall(call: InterpreterCall, frame: InterpreterFrame): Val
   return frame.policy.hooks?.evaluateCall?.(call, frame) ?? null
 }
 
-function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
-  const receiver = evaluateExpression(target.expression, frame)
-  if (receiver.kind !== 'array') return noteUnsupported(frame, 'Array.at expected an array', target.expression)
-  const offset = expression.arguments.length === 1 ? numericLiteralValue(expression.arguments[0]!) : null
+function evaluateArrayAtCall(expression: ts.CallExpression, receiver: Value, argumentValues: Value[], frame: InterpreterFrame): Value {
+  if (receiver.kind !== 'array') return noteUnsupported(frame, 'Array.at expected an array', expression.expression)
+  const offset = argumentValues.length === 1 ? exactInteger(argumentValues[0]!) : null
   if (offset == null || !Number.isInteger(offset) || offset >= 0) return noteUnsupported(frame, 'Array.at only supports constant negative indexes', expression.arguments[0] ?? expression)
 
   const requiredLength = -offset
@@ -2524,41 +2685,44 @@ function evaluateArrayAtCall(expression: ts.CallExpression, target: ts.PropertyA
   return receiver.element ?? noteUnsupported(frame, `Array.at(${offset}) element values are not tracked`, expression)
 }
 
-function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
-  const path = pathFromExpression(target.expression, frame)
-  if (path == null) return noteUnsupported(frame, `Unsupported push target ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
-  const current = readPath(path, frame, target.expression)
-  if (current.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
-  noteEffect(frame, `push mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
+function evaluatePushCall(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  receiver: Value,
+  values: Value[],
+  frame: InterpreterFrame,
+): Value {
+  if (receiver.kind !== 'array') return noteUnsupported(frame, `push expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
+  noteEffect(frame, `push mutates ${target.expression.getText(frame.program.sourceFile)}: ${expression.getText()}`, expression)
   const loop = currentLoop(frame)
   if (loop?.mode === 'symbolic' && expression.arguments.length !== 1) return noteUnsupported(frame, 'Abstract loop push supports one item per iteration', expression)
-  const values = evaluatedArguments(expression.arguments, frame)
-  const elements = current.elements == null ? [] : [...current.elements]
+  const elements = receiver.elements == null ? [] : [...receiver.elements]
   elements.push(...values)
-  let element: Value | null = current.element
+  let element: Value | null = receiver.element
   for (const value of values) element = mergeElementValue(element, value)
-  const symbolicLength = loop?.mode === 'symbolic' ? symbolicLoopAppendLength(current, loop) : null
-  const nextLength = current.elements == null
-    ? numberValue(current.length.min + values.length, current.length.max + values.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
-    : numberValue(elements.length, elements.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
-  const summary = loop == null || path.segments.length !== 0
+  const symbolicLength = loop?.mode === 'symbolic' ? symbolicLoopAppendLength(receiver, loop) : null
+  const nextLength = receiver.elements == null
+    ? numberValue(receiver.length.min + values.length, receiver.length.max + values.length, 0, `${receiver.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
+    : numberValue(elements.length, elements.length, 0, `${receiver.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
+  const path = pathFromSourceExpression(target.expression, () => unknown('dynamic path'))
+  const summary = loop == null || path == null || path.segments.length !== 0
     ? null
-    : loopPushSummary(current, path.root, loop, frame)
-  if (loop != null && path.segments.length === 0) {
+    : loopPushSummary(receiver, path.root, loop, frame)
+  if (loop != null && path != null && path.segments.length === 0) {
     loop.appends.push({
       arrayName: path.root,
       element: values[0] ?? null,
-      base: current,
+      base: receiver,
     })
   }
   const next: ArrayValue = {
-    ...current,
+    ...receiver,
     length: symbolicLength ?? nextLength,
     elements: loop?.mode === 'symbolic' ? null : elements,
     element,
     summary,
   }
-  writeMutationPath(path, next, frame)
+  replaceValueEverywhere(frame.env, receiver, next)
   return next.length
 }
 
@@ -2582,41 +2746,27 @@ function loopPushSummary(current: ArrayValue, arrayName: string, loop: LoopFrame
   return emptyArraySummary(origin)
 }
 
-// map/filter/every/some only model an inline callback's per-element result. A
-// callback passed by name (or any other non-inline form) still runs per element
-// at runtime, so its effects must land exactly as the inline path applies them:
-// captured writes take hold, and an element-parameter mutation forgets the
-// receiver. A callback we cannot resolve to a function could do either, so the
-// receiver is forgotten conservatively. Without this the per-element result is
-// reported unsupported while the receiver's stale facts survive a real mutation.
-function applyUnresolvedArrayCallbackEffects(
-  target: ts.PropertyAccessExpression,
-  callback: ts.Expression | undefined,
-  frame: InterpreterFrame,
-) {
-  const callbackRef = callback == null ? null : passedFunctionReference(unwrapExpression(callback), frame)
-  if (callbackRef != null) applyCallbackEffects(callbackRef, target.expression, frame)
-  else havocArrayElementAliases(frame, target.expression)
-}
-
 function evaluateEverySomeCall(
   expression: ts.CallExpression,
   target: ts.PropertyAccessExpression,
+  effect: PlatformCallEffect,
+  source: Value,
   kind: 'every' | 'some',
   frame: InterpreterFrame,
 ): Value {
-  const source = evaluateExpression(target.expression, frame)
   if (source.kind !== 'array') return noteUnsupported(frame, `${kind} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
+  const callbackEffects = effect.callbacks[0] == null
+    ? null
+    : applyPlatformCallbackRuntimeEffect(expression, target, effect.callbacks[0], frame)
   if (callbackFn == null || !isInlineFunction(callbackFn)) {
-    applyUnresolvedArrayCallbackEffects(target, callback, frame)
     return noteUnsupported(frame, `${kind} callback must be an inline function`, callback ?? expression)
   }
   const text = expression.getText(frame.program.sourceFile)
   if (source.length.max === 0) return literalValue([kind === 'every'], text)
-  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
-  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  if (callbackEffects == null) return noteUnsupported(frame, `${kind} callback effects were not resolved`, callback)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects, effect.callbacks[0]!)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const item = effectiveSource.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, effectiveSource.length)
@@ -2637,20 +2787,24 @@ function evaluateEverySomeCall(
   return literalValue([true, false], text)
 }
 
-function evaluateMapCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
-  const source = evaluateExpression(target.expression, frame)
+function evaluateMapCall(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  effect: PlatformCallEffect,
+  source: Value,
+  frame: InterpreterFrame,
+): Value {
   if (source.kind !== 'array') return noteUnsupported(frame, `map expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
+  const callbackEffects = effect.callbacks[0] == null
+    ? null
+    : applyPlatformCallbackRuntimeEffect(expression, target, effect.callbacks[0], frame)
   if (callbackFn == null || !isInlineFunction(callbackFn)) {
-    applyUnresolvedArrayCallbackEffects(target, callback, frame)
     return noteUnsupported(frame, 'map callback must be an inline function', callback ?? expression)
   }
-  // Apply captured-write effects before the representative element run: later
-  // iterations observe earlier mutations, so the representative must read the
-  // already-forgotten state.
-  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
-  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  if (callbackEffects == null) return noteUnsupported(frame, 'map callback effects were not resolved', callback)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects, effect.callbacks[0]!)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const abstractElement = evaluateMapElement(effectiveSource, sourceExpr, callbackFn, frame)
   // A pure field rename keeps the rows' adjacency story: the same facts hold
@@ -2789,17 +2943,24 @@ function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: 
   return valueWithAssumptions(value, indexedElementAssumptions(index, source.length))
 }
 
-function evaluateFilterCall(expression: ts.CallExpression, target: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
-  const source = evaluateExpression(target.expression, frame)
+function evaluateFilterCall(
+  expression: ts.CallExpression,
+  target: ts.PropertyAccessExpression,
+  effect: PlatformCallEffect,
+  source: Value,
+  frame: InterpreterFrame,
+): Value {
   if (source.kind !== 'array') return noteUnsupported(frame, `filter expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
   const callback = expression.arguments[0]
   const callbackFn = callback == null ? null : unwrapExpression(callback)
+  const callbackEffects = effect.callbacks[0] == null
+    ? null
+    : applyPlatformCallbackRuntimeEffect(expression, target, effect.callbacks[0], frame)
   if (callbackFn == null || !isInlineFunction(callbackFn)) {
-    applyUnresolvedArrayCallbackEffects(target, callback, frame)
     return noteUnsupported(frame, 'filter callback must be an inline function', callback ?? expression)
   }
-  const callbackEffects = applyCallbackEffects({program: frame.program, node: callbackFn}, target.expression, frame)
-  const effectiveSource = sourceAfterCallback(source, callbackEffects)
+  if (callbackEffects == null) return noteUnsupported(frame, 'filter callback effects were not resolved', callback)
+  const effectiveSource = sourceAfterCallback(source, callbackEffects, effect.callbacks[0]!)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const element = filteredElement(effectiveSource, sourceExpr, callbackFn, frame)
   const summary = emptyArraySummary(filterOrigin(effectiveSource, sourceExpr))
@@ -2844,7 +3005,7 @@ function filteredLength(source: ArrayValue, callbackFn: InlineFunctionNode, fram
 
 function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: InlineFunctionNode, frame: InterpreterFrame): Value | null {
   const predicate = callbackPredicateExpression(callbackFn)
-  if (predicate == null || !isSideEffectFreeExpression(predicate)) return source.element
+  if (predicate == null || !expressionIsRepeatable(predicate, frame.program)) return source.element
   const element = source.element ?? unknown(`${sourceExpr}[] was not inferred`)
   const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
   const prepared = prepareFunctionNodeInvocation(
@@ -2886,6 +3047,7 @@ function evaluateInvocationOperands(
   args: ts.NodeArray<ts.Expression>,
   frame: InterpreterFrame,
   receiver: EvaluatedOperand | null = null,
+  evaluateArgument: (argument: ts.Expression) => Value = argument => evaluateExpression(argument, frame),
 ): EvaluatedInvocationOperands {
   const captured: {root: string; sourceText: string | null; receiver: boolean}[] = []
   let nextOperandIndex = 0
@@ -2900,7 +3062,7 @@ function evaluateInvocationOperands(
   let invalidReason: string | null = null
   for (const argument of args) {
     if (!ts.isSpreadElement(argument)) {
-      capture(evaluateExpression(argument, frame), argument.getText())
+      capture(evaluateArgument(argument), argument.getText())
       continue
     }
     const spread = evaluateExpression(argument.expression, frame)

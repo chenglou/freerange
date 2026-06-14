@@ -436,6 +436,34 @@ export function negativeClassGetterSummaryNeedsThisGiven(box: NegativeClassMetho
   return box.bottom
 }
 
+class NegativeClassCallBoundary {
+  current = 0
+
+  value() {
+    return 1
+  }
+
+  set next(value: number) {
+    this.current = value
+  }
+}
+
+/** @fit
+ * return == 1
+ */
+export function negativeClassMethodCallIsUnknown(box: NegativeClassCallBoundary) {
+  return box.value()
+}
+
+/** @fit
+ * given box.current == 0
+ * return == 0
+ */
+export function negativeClassSetterCallIsUnknown(box: NegativeClassCallBoundary) {
+  box.next = 1
+  return box.current
+}
+
 /** @fit
  * given items.length: int 1..50
  * given y: 0..1000
@@ -729,12 +757,25 @@ export function negativeNamedMapCallbackMutatesElement() {
 }
 
 /** @fit
+ * return == 0
+ */
+export function negativeLocalNamedMapCallbackIsUnknown(items: number[]) {
+  let count = 0
+  const callback = (item: number) => {
+    count++
+    return item
+  }
+  items.map(callback)
+  return count
+}
+
+/** @fit
  * return == 1
  */
 export function negativeArrayFromMapperMutatesElement() {
   const boxes = [{size: 1}]
-  // Array.from is a pure global, but its mapper runs on each element; a mutating
-  // mapper changes the source elements, so their facts cannot survive.
+  // Array.from has hidden iteration and mapper calls, so Freerange rejects the
+  // call and forgets mutable inputs instead of preserving their old facts.
   Array.from(boxes, negativeGrowBox)
   return boxes[0]!.size
 }
@@ -1429,18 +1470,6 @@ export function negativeSilentHelperSummaryRequiresPrecondition() {
   }
 }
 
-function negativeLoopReadHelper(index: number) {
-  return index + 1
-}
-
-export function negativeForgettableLoopStillForgetsMutatedRoot(items: number[]) {
-  let scratch = 0
-  for (let i = 1; i < items.length - 1; i++) {
-    scratch += negativeLoopReadHelper(i)
-  }
-  return scratch // @fit 0
-}
-
 /** @fit
  * given focused: int 0..50
  * return: int 0..49
@@ -1470,16 +1499,6 @@ export function negativeOptionalNumberNeedsPresentGuard(max?: number) {
 export function negativeNullishFallbackNeedsNumericDefault(dimensions: {width?: number}, label: string) {
   // @ts-expect-error This case intentionally keeps a non-numeric fallback.
   return Math.max(dimensions?.width ?? label, 0) // @fit >= 0
-}
-
-export function negativeForgettableWhileStillForgetsMutatedRoot(items: number[]) {
-  let scratch = 0
-  let i = 0
-  while (i < items.length) {
-    scratch += items[i]!
-    i++
-  }
-  return scratch // @fit 0
 }
 
 export function negativeScalarStringishMutationForgetsMutatedRoot(items: number[]) {

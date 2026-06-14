@@ -57,12 +57,8 @@ function total(...values: number[]) {
   return values[0]! + values[1]!
 }
 
-class Box {
-  value = 1
-
-  read(ignored: number) {
-    return this.value
-  }
+function arrayIdentity(values: number[], ignored: number) {
+  return values
 }
 
 /** @fit
@@ -162,13 +158,6 @@ function restPatternBindsFinalValues() {
 }
 
 /** @fit
- * return == 2
- */
-function methodReceiverStaysLive(box: Box) {
-  return box.read(box.value = 2)
-}
-
-/** @fit
  * return == 12
  */
 function exactTupleSpread() {
@@ -182,10 +171,103 @@ function exactTupleSpread() {
 function restParameterCollectsArguments() {
   return total(1, 2)
 }
+
+/** @fit
+ * return == 1
+ */
+function platformReceiverRunsOnce() {
+  let count = 0
+  arrayIdentity([10], count++).at(-1)
+  return count
+}
+
+/** @fit
+ * return == 1
+ */
+function platformArgumentRunsOnce() {
+  let count = 0
+  ;[10].at(-++count)
+  return count
+}
+
+/** @fit
+ * return == 1
+ */
+function callbackThisArgumentRunsOnce() {
+  let count = 0
+  ;[10].map(value => value, {count: count++})
+  return count
+}
+
+/** @fit
+ * return == 2
+ */
+function nestedPushUsesReceiverAfterArgumentEffects() {
+  const values: number[] = []
+  values.push(values.push(1))
+  return values.length
+}
+
+/** @fit
+ * return == 1
+ */
+function callbackIndexReassignmentDoesNotMutateElements() {
+  const values = [{size: 1}]
+  values.map((value, index) => {
+    index = 20
+    return value
+  })
+  return values[0]!.size
+}
+
+/** @fit
+ * return == 0
+ */
+function logicalAndSkipsRight() {
+  let count = 0
+  false && count++
+  return count
+}
+
+/** @fit
+ * return == 0
+ */
+function logicalOrSkipsRight() {
+  let count = 0
+  true || count++
+  return count
+}
+
+/** @fit
+ * return: int 0..1
+ */
+function uncertainLogicalRightJoinsState(flag: boolean) {
+  let count = 0
+  flag && count++
+  return count
+}
+
+/** @fit
+ * return: int 0..1
+ */
+function uncertainConditionalJoinsState(flag: boolean) {
+  let count = 0
+  flag ? count++ : 0
+  return count
+}
+
+/** @fit
+ * return: int 0..1
+ */
+function uncertainNullishRightJoinsState(value: number | undefined) {
+  let count = 0
+  value ?? count++
+  return count
+}
 `)
 
 const sourceCallFailures = sourceCallChecks.filter(check => check.status !== 'pass')
-if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 16) {
+if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 25) {
   console.error('expected source calls to prepare operands and parameters once')
   console.error(JSON.stringify(sourceCallChecks, null, 2))
   process.exitCode = 1
@@ -337,6 +419,83 @@ if (
   process.exitCode = 1
 } else {
   console.log('calls: unsupported spread and binding defaults reported')
+}
+
+const callbackBoundaryProgram = buildFitSourceFile('callback-boundaries.ts', `
+function localCallbackIsRejected(values: number[]) {
+  let count = 0
+  const callback = (value: number) => {
+    count++
+    return value
+  }
+  values.map(callback)
+  return count
+}
+
+function callbackExpressionEffectsRun(values: number[]) {
+  let count = 0
+  values.map((count++, value => value))
+  return count
+}
+
+function sortComparatorEffectsInvalidateCapturedState(values: number[]) {
+  let count = 0
+  values.sort(() => {
+    count++
+    return 0
+  })
+  return count
+}
+
+function callbackThisMutationInvalidatesArgument() {
+  const state = {value: 0}
+  const values = [1]
+  values.map(function (this: {value: number}, value) {
+    this.value = value
+    return value
+  }, state)
+  return state.value
+}
+
+function makeCallable(state: {value: number}) {
+  state.value++
+  return (value: number) => value
+}
+
+function unknownCallableTargetStillRuns() {
+  const state = {value: 0}
+  makeCallable(state)(0)
+  return state.value
+}
+`, readTopLevelGlobal)
+
+const localCallback = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'localCallbackIsRejected'})
+const callbackExpression = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'callbackExpressionEffectsRun'})
+const sortComparator = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'sortComparatorEffectsInvalidateCapturedState'})
+const callbackThis = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'callbackThisMutationInvalidatesArgument'})
+const unknownTarget = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'unknownCallableTargetStillRuns'})
+const isExactNumber = (value: typeof callbackExpression.value, expected: number) =>
+  value.kind === 'number' && value.min === expected && value.max === expected
+if (
+  !localCallback.output.issues.some(issue => issue.message.includes('map callback must be an inline function'))
+  || !isExactNumber(callbackExpression.value, 1)
+  || !callbackExpression.output.issues.some(issue => issue.message.includes('map callback must be an inline function'))
+  || isExactNumber(sortComparator.value, 0)
+  || isExactNumber(callbackThis.value, 0)
+  || isExactNumber(unknownTarget.value, 0)
+  || unknownTarget.output.issues.length === 0
+) {
+  console.error('expected unsupported callbacks and callable targets to preserve operand effects without stale facts')
+  console.error({
+    localCallback,
+    callbackExpression,
+    sortComparator,
+    callbackThis,
+    unknownTarget,
+  })
+  process.exitCode = 1
+} else {
+  console.log('calls: unsupported callbacks and callable targets preserve operand effects')
 }
 
 const importedReport = await verifyFitFiles(['tests/calls/imported-caller.ts'])

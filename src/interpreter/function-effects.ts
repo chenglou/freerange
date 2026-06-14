@@ -1,12 +1,11 @@
 import * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
 import {
-  classAccessorFunctionForPropertyAccessInProgram,
-  classDeclarationForNewExpression,
-  classMemberFunctionForPropertyAccessInProgram,
-  constructorFunctionForNewExpression,
+  defaultLibraryOwner,
+  elementAccessHasSourceAccessor,
   isDefaultLibraryMemberAccess,
   isDefaultLibrarySymbol,
+  propertyAccessHasSourceAccessor,
   resolveCallTarget,
 } from './call-targets.ts'
 import {
@@ -17,6 +16,15 @@ import {
   type FunctionImplementationNode,
 } from '../function-shape.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
+import {
+  isPlatformGlobalNamespace,
+  platformGlobalEffect,
+  platformMethodEffect,
+  retainedArgumentIndexes,
+  type PlatformCallbackEffect,
+  type PlatformCallEffect,
+  type PlatformValueSource,
+} from './platform-effects.ts'
 
 // What a call can change in its caller's world, beyond returning a value.
 // `paramIndexes` holds parameters whose argument may be written through or
@@ -106,80 +114,19 @@ function firstOuterRoot(targets: MutationTargets): string | null {
   return targets.outerBindings.values().next().value?.root ?? null
 }
 
-export function mutationOuterRoots(targets: MutationTargets, sourceId: string): string[] {
+export function mutationRootsForProgram(targets: MutationTargets, program: Program): string[] {
   const roots = new Set<string>()
   for (const binding of targets.outerBindings.values()) {
-    if (binding.sourceId === sourceId) roots.add(binding.root)
+    if (binding.sourceId === program.sourceId) roots.add(binding.root)
+    for (const [localName, imported] of program.imports) {
+      if (imported.kind !== 'resolved') continue
+      if (imported.file.sourceId === binding.sourceId && imported.sourceName === binding.root) {
+        roots.add(localName)
+      }
+    }
   }
   return [...roots]
 }
-
-// Real platform globals whose listed members neither mutate their arguments nor
-// reach back into user module state. Anything not listed is treated as an
-// unknown call. Object.assign is deliberately absent: it mutates its target.
-const factPreservingGlobalMembers = new Map<string, 'all' | Set<string>>([
-  ['Math', 'all'],
-  ['JSON', 'all'],
-  ['console', 'all'],
-  ['Number', 'all'],
-  ['String', 'all'],
-  ['Boolean', 'all'],
-  ['Date', new Set(['now', 'parse', 'UTC'])],
-  ['performance', new Set(['now'])],
-  ['Object', new Set(['keys', 'values', 'entries', 'freeze', 'isFrozen', 'getOwnPropertyNames'])],
-  ['Array', new Set(['isArray', 'of', 'from'])],
-])
-
-export function isFactPreservingGlobalMemberCall(base: string, member: string): boolean {
-  const members = factPreservingGlobalMembers.get(base)
-  if (members == null) return false
-  return members === 'all' || members.has(member)
-}
-
-// Globals that do not mutate caller state but still break purity: console writes
-// to the outside world (I/O), and the clock and randomness return a different
-// value each run with the same inputs (nondeterminism). They stay in
-// factPreservingGlobalMembers (they corrupt no facts) but make a calling
-// function impure.
-const environmentObservingMembers = new Map<string, 'all' | Set<string>>([
-  ['console', 'all'], // every console method writes to the outside world
-  ['Date', new Set(['now'])], // parse/UTC are deterministic given their arguments
-  ['performance', new Set(['now'])],
-  ['Math', new Set(['random'])], // every other Math member is deterministic
-])
-
-function isEnvironmentObservingCall(base: string, member: string): boolean {
-  const members = environmentObservingMembers.get(base)
-  if (members == null) return false
-  return members === 'all' || members.has(member)
-}
-
-// Methods known to mutate their receiver in place (rather than returning a new
-// value). On a local the function created this is fine; on a parameter, `this`,
-// or a module root it is a caller-visible write — both handled by the receiver
-// classification. What matters for purity is that these are *known*: a method
-// not listed here and not in nonMutatingMethodNames is unanalyzable, so calling
-// it is treated as an unknown call.
-const knownMutatingMethodNames = new Set([
-  'push', 'pop', 'shift', 'unshift', 'splice', 'sort', 'reverse', 'fill', 'copyWithin',
-  'set', 'add', 'delete', 'clear',
-])
-
-// Methods that do not mutate their receiver. Mutation through their callback's
-// parameters is accounted for separately (a callback that writes its parameters
-// can reach the receiver's elements).
-const nonMutatingMethodNames = new Set([
-  'at', 'map', 'filter', 'every', 'some', 'forEach', 'reduce', 'reduceRight',
-  'slice', 'indexOf', 'lastIndexOf', 'includes', 'join', 'concat',
-  'find', 'findIndex', 'findLast', 'findLastIndex', 'flat', 'flatMap',
-  'keys', 'values', 'entries', 'toString', 'toLocaleString',
-  'toReversed', 'toSorted', 'toSpliced', 'with',
-])
-
-const callbackInvokingMethodNames = new Set([
-  'map', 'filter', 'every', 'some', 'forEach', 'reduce', 'reduceRight',
-  'find', 'findIndex', 'findLast', 'findLastIndex', 'flatMap',
-])
 
 type RootKind =
   | {kind: 'param'; index: number}
@@ -200,8 +147,6 @@ type CallEdge = {
   // argument whose positions cannot be mapped
   argumentRoots: (RootKind[] | null)[]
   receiverRoots: RootKind[]
-  // a callback whose own parameter mutations must spill onto these roots
-  callbackSpill: RootKind[] | null
   classifyBinding: Classifier
 }
 
@@ -280,7 +225,6 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
         add(into.mutations.certain, edge.argumentRoots[index] ?? [])
       }
     }
-    if (edge.callbackSpill != null) add(into.mutations.certain, edge.callbackSpill)
   }
   if (callee.mutations.uncertain.thisValue) add(into.mutations.uncertain, edge.receiverRoots)
   if (callee.mutations.uncertain.paramIndexes.size > 0) {
@@ -295,7 +239,6 @@ function composeEdge(into: FunctionEffects, edge: CallEdge, callee: FunctionEffe
         add(into.mutations.uncertain, edge.argumentRoots[index] ?? [])
       }
     }
-    if (edge.callbackSpill != null) add(into.mutations.uncertain, edge.callbackSpill)
   }
   return changed
 }
@@ -388,9 +331,6 @@ type Scope = {
   reachableSources: Map<BindingKey, Set<BindingKey>>
 }
 
-// Methods that store their arguments inside the receiver.
-const retainingMethodNames = new Set(['push', 'unshift', 'splice', 'fill'])
-
 function buildScope(node: FunctionImplementationNode, program: Program): Scope {
   const paramIndexByBinding = new Map<BindingKey, number>()
   node.parameters.forEach((parameter, index) => {
@@ -399,14 +339,17 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
   const localBindings = new Set<BindingKey>()
   const containerEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
   const reachableEdges: {target: BindingKey; sourceRoots: BindingKey[]}[] = []
+  const addValueFlow = (targets: BindingKey[], value: ts.Expression) => {
+    const retainedRoots = freshContainerRetainedRoots(value, program)
+    const edges = retainedRoots == null ? containerEdges : reachableEdges
+    const sourceRoots = retainedRoots ?? expressionRootBindings(value, program)
+    for (const target of targets) edges.push({target, sourceRoots})
+  }
   const visit = (current: ts.Node) => {
     if (ts.isVariableDeclaration(current)) {
       const bindings = bindingKeys(current.name, program)
       for (const binding of bindings) localBindings.add(binding)
-      if (current.initializer != null) {
-        const sourceRoots = expressionRootBindings(current.initializer, program)
-        for (const binding of bindings) containerEdges.push({target: binding, sourceRoots})
-      }
+      if (current.initializer != null) addValueFlow(bindings, current.initializer)
     }
     if (ts.isFunctionDeclaration(current) && current.name != null) {
       localBindings.add(bindingKey(current.name, program))
@@ -422,7 +365,7 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
       const target = unwrapExpression(current.left)
       if (ts.isIdentifier(target)) {
-        containerEdges.push({target: bindingKey(target, program), sourceRoots: expressionRootBindings(current.right, program)})
+        addValueFlow([bindingKey(target, program)], current.right)
       } else {
         const base = pathWriteBaseBinding(target, program)
         if (base != null) reachableEdges.push({target: base, sourceRoots: expressionRootBindings(current.right, program)})
@@ -430,10 +373,19 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
     }
     if (ts.isCallExpression(current)) {
       const target = unwrapExpression(current.expression)
-      if (ts.isPropertyAccessExpression(target) && retainingMethodNames.has(target.name.text)) {
+      const effect = ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, program)
+        ? platformMethodEffect(
+          defaultLibraryOwner(target, program),
+          target.name.text,
+          current.arguments.length,
+        )
+        : null
+      if (ts.isPropertyAccessExpression(target) && effect != null) {
         const base = pathWriteBaseBinding(target.expression, program)
         if (base != null) {
-          for (const argument of current.arguments) {
+          for (const index of retainedArgumentIndexes(effect, current.arguments.length)) {
+            const argument = current.arguments[index]
+            if (argument == null) continue
             const expression = ts.isSpreadElement(argument) ? argument.expression : argument
             reachableEdges.push({target: base, sourceRoots: expressionRootBindings(expression, program)})
           }
@@ -456,6 +408,26 @@ function buildScope(node: FunctionImplementationNode, program: Program): Scope {
     containerSources: closeSourceEdges(symmetricContainerEdges),
     reachableSources: closeSourceEdges(reachableEdges),
   }
+}
+
+function freshContainerRetainedRoots(expression: ts.Expression, program: Program): BindingKey[] | null {
+  const current = unwrapExpression(expression)
+  if (ts.isArrayLiteralExpression(current)) {
+    return current.elements.flatMap(element =>
+      expressionRootBindings(ts.isSpreadElement(element) ? element.expression : element, program))
+  }
+  if (ts.isObjectLiteralExpression(current)) {
+    return current.properties.flatMap(property => {
+      if (ts.isSpreadAssignment(property)) return expressionRootBindings(property.expression, program)
+      if (ts.isShorthandPropertyAssignment(property)) return [bindingKey(property.name, program)]
+      if (ts.isPropertyAssignment(property)) return expressionRootBindings(property.initializer, program)
+      return []
+    })
+  }
+  if (ts.isNewExpression(current)) {
+    return (current.arguments ?? []).flatMap(argument => expressionRootBindings(argument, program))
+  }
+  return null
 }
 
 // Flow-insensitive closure: a binding that ever received a root carries that
@@ -540,6 +512,16 @@ function bindingKey(identifier: ts.Identifier, program: Program): BindingKey {
   return symbol
 }
 
+function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | undefined {
+  let current = symbol
+  const seen = new Set<ts.Symbol>()
+  while (current != null && (current.flags & ts.SymbolFlags.Alias) !== 0 && !seen.has(current)) {
+    seen.add(current)
+    current = checker.getAliasedSymbol(current)
+  }
+  return current
+}
+
 function bindingKeys(name: ts.BindingName, program: Program): BindingKey[] {
   if (ts.isIdentifier(name)) return [bindingKey(name, program)]
   const keys: BindingKey[] = []
@@ -610,8 +592,9 @@ function isInTypeContext(node: ts.Node): boolean {
 }
 
 function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
-  if (factPreservingGlobalMembers.has(id.text) && isDefaultLibrarySymbol(id, program)) return true
+  if (isPlatformGlobalNamespace(id.text) && isDefaultLibrarySymbol(id, program)) return true
   if (isResolvedFunctionCallRead(id, program)) return true
+  if (isSafeNamespacePrimitiveRead(id, program)) return true
   const checker = program.typeChecker
   if (checker == null) return false
   let symbol = checker.getSymbolAtLocation(id)
@@ -632,6 +615,29 @@ function isSafeOuterRead(id: ts.Identifier, program: Program): boolean {
     }
   }
   return false
+}
+
+function isSafeNamespacePrimitiveRead(id: ts.Identifier, program: Program): boolean {
+  const access = id.parent
+  if (!ts.isPropertyAccessExpression(access) || access.expression !== id) return false
+  const checker = program.typeChecker
+  const namespace = program.imports.get(id.text)
+  if (checker == null || namespace?.kind !== 'namespace') return false
+  const symbol = resolvedSymbol(checker.getSymbolAtLocation(access.name), checker)
+  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
+  if (!isConstVariableDeclaration(declaration)) return false
+  try {
+    return !typeCanBeMutable(checker.getTypeAtLocation(access))
+  } catch {
+    return false
+  }
+}
+
+function isConstVariableDeclaration(declaration: ts.Declaration | undefined): declaration is ts.VariableDeclaration {
+  return declaration != null
+    && ts.isVariableDeclaration(declaration)
+    && ts.isVariableDeclarationList(declaration.parent)
+    && (declaration.parent.flags & ts.NodeFlags.Const) !== 0
 }
 
 function isResolvedFunctionCallRead(id: ts.Identifier, program: Program): boolean {
@@ -679,15 +685,7 @@ function isSafeClassOuterRead(id: ts.Identifier, checker: ts.TypeChecker): boole
   const declaration = memberSymbol?.valueDeclaration ?? memberSymbol?.declarations?.[0]
   if (declaration == null) return false
   if (ts.isMethodDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration) || ts.isSetAccessorDeclaration(declaration)) return true
-  if (!ts.isPropertyDeclaration(declaration) && !ts.isPropertySignature(declaration)) return false
-  const readonly = ts.canHaveModifiers(declaration)
-    && ts.getModifiers(declaration)?.some(modifier => modifier.kind === ts.SyntaxKind.ReadonlyKeyword) === true
-  if (!readonly) return false
-  try {
-    return !typeCanBeMutable(checker.getTypeAtLocation(access))
-  } catch {
-    return false
-  }
+  return false
 }
 
 function classElementAccessSymbol(access: ts.ElementAccessExpression, checker: ts.TypeChecker): ts.Symbol | undefined {
@@ -727,10 +725,50 @@ function collectWrites(
           ? null
           : expressionHasMutableType(argument, program) ? classifyExpressionRoots(argument) : []),
       receiverRoots,
-      callbackSpill: null,
       classifyBinding: classifiers.reach,
     })
     collectMember(callee, members)
+  }
+  const addCallbackEdge = (
+    call: ts.CallExpression,
+    callback: PlatformCallbackEffect,
+    rootsForSource: (source: PlatformValueSource) => RootKind[],
+  ) => {
+    const argument = call.arguments[callback.argumentIndex]
+    if (argument == null) return
+    const fn = functionValuedArgument(argument, program)
+    if (fn == null) {
+      if (expressionMayBeCallable(argument, program)) member.effects.callsUnknown = true
+      return
+    }
+    member.edges.push({
+      callee: fn,
+      argumentRoots: callback.parameterSources.map(sources => sources.flatMap(rootsForSource)),
+      receiverRoots: callback.thisSource == null ? [] : rootsForSource(callback.thisSource),
+      classifyBinding: classifiers.reach,
+    })
+    collectMember(fn, members)
+  }
+  const applyPlatformCallEffect = (
+    call: ts.CallExpression,
+    effect: PlatformCallEffect,
+    receiverContainerRoots: RootKind[],
+    rootsForSource: (source: PlatformValueSource) => RootKind[],
+  ) => {
+    if (effect.observesEnvironment) member.effects.observesEnvironment = true
+    if (effect.mutatesReceiver) addMutation(receiverContainerRoots)
+    for (const index of effect.mutatesArgumentIndexes) {
+      const argument = call.arguments[index]
+      if (argument != null && !ts.isSpreadElement(argument)) addMutation(classifyExpressionRoots(argument))
+    }
+    const retained = retainedArgumentIndexes(effect, call.arguments.length)
+    if (receiverContainerRoots.length > 0) {
+      for (const index of retained) {
+        const argument = call.arguments[index]
+        if (argument != null && !ts.isSpreadElement(argument)) addMutation(classifyExpressionRoots(argument))
+      }
+    }
+    for (const callback of effect.callbacks) addCallbackEdge(call, callback, rootsForSource)
   }
 
   const visit = (current: ts.Node) => {
@@ -741,10 +779,9 @@ function collectWrites(
     }
     if (ts.isBinaryExpression(current) && isAssignmentOperator(current.operatorToken.kind)) {
       const target = unwrapExpression(current.left)
-      const setter = ts.isPropertyAccessExpression(target)
-        ? classAccessorFunctionForPropertyAccessInProgram(target, 'set', program)
-        : null
-      const targetRoots = setter == null ? writeTargetRoots(current.left, classifiers, program) : []
+      const setter = (ts.isPropertyAccessExpression(target) && propertyAccessHasSourceAccessor(target, 'set', program))
+        || (ts.isElementAccessExpression(target) && elementAccessHasSourceAccessor(target, 'set', program))
+      const targetRoots = setter ? [] : writeTargetRoots(current.left, classifiers, program)
       addMutation(targetRoots)
       // Writing a value into caller-visible state lets the caller's world reach
       // it later; the value's own roots must be forgotten too (escape).
@@ -759,22 +796,48 @@ function collectWrites(
         && parent.operand === current
         && (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
       if (assignment == null || assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-        const getter = classAccessorFunctionForPropertyAccessInProgram(current, 'get', program)
-        if (getter != null) addResolvedEdge(getter, [], classifyExpressionRoots(current.expression))
+        if (propertyAccessHasSourceAccessor(current, 'get', program)) {
+          addUncertainMutation(classifyExpressionRoots(current.expression))
+          member.effects.callsUnknown = true
+        }
       }
       if (assignment != null || increment) {
-        const setter = classAccessorFunctionForPropertyAccessInProgram(current, 'set', program)
         const value = assignment?.right
-        if (setter != null) addResolvedEdge(setter, value == null ? [] : [value], classifyExpressionRoots(current.expression))
+        if (propertyAccessHasSourceAccessor(current, 'set', program)) {
+          addUncertainMutation(classifyExpressionRoots(current.expression))
+          if (value != null && expressionHasMutableType(value, program)) addUncertainMutation(classifyExpressionRoots(value))
+          member.effects.callsUnknown = true
+        }
+      }
+    }
+    if (ts.isElementAccessExpression(current)) {
+      const parent = current.parent
+      const assignment = ts.isBinaryExpression(parent) && parent.left === current && isAssignmentOperator(parent.operatorToken.kind)
+        ? parent
+        : null
+      const increment = (ts.isPrefixUnaryExpression(parent) || ts.isPostfixUnaryExpression(parent))
+        && parent.operand === current
+        && (parent.operator === ts.SyntaxKind.PlusPlusToken || parent.operator === ts.SyntaxKind.MinusMinusToken)
+      if (
+        (assignment == null || assignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken)
+        && elementAccessHasSourceAccessor(current, 'get', program)
+      ) {
+        addUncertainMutation(classifyExpressionRoots(current.expression))
+        member.effects.callsUnknown = true
+      }
+      if ((assignment != null || increment) && elementAccessHasSourceAccessor(current, 'set', program)) {
+        addUncertainMutation(classifyExpressionRoots(current.expression))
+        const value = assignment?.right
+        if (value != null && expressionHasMutableType(value, program)) addUncertainMutation(classifyExpressionRoots(value))
+        member.effects.callsUnknown = true
       }
     }
     if ((ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current))
       && (current.operator === ts.SyntaxKind.PlusPlusToken || current.operator === ts.SyntaxKind.MinusMinusToken)) {
       const target = unwrapExpression(current.operand)
-      const setter = ts.isPropertyAccessExpression(target)
-        ? classAccessorFunctionForPropertyAccessInProgram(target, 'set', program)
-        : null
-      if (setter == null) addMutation(writeTargetRoots(current.operand, classifiers, program))
+      const setter = (ts.isPropertyAccessExpression(target) && propertyAccessHasSourceAccessor(target, 'set', program))
+        || (ts.isElementAccessExpression(target) && elementAccessHasSourceAccessor(target, 'set', program))
+      if (!setter) addMutation(writeTargetRoots(current.operand, classifiers, program))
     }
     if (ts.isDeleteExpression(current)) {
       addMutation(writeTargetRoots(current.expression, classifiers, program))
@@ -792,18 +855,18 @@ function collectWrites(
       const defaultLibraryGlobal = ts.isIdentifier(base)
         && isDefaultLibrarySymbol(base, program)
         && defaultLibraryMember
-        && isFactPreservingGlobalMemberCall(base.text, target.name.text)
       if (defaultLibraryGlobal) {
-        if (isEnvironmentObservingCall(base.text, target.name.text)) member.effects.observesEnvironment = true
-        if (base.text === 'Object' && target.name.text === 'freeze' && call.arguments[0] != null) {
-          addMutation(classifyExpressionRoots(call.arguments[0]))
+        const effect = platformGlobalEffect(base.text, target.name.text, call.arguments.length)
+        if (effect == null) {
+          addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
+          member.effects.callsUnknown = true
+        } else {
+          applyPlatformCallEffect(call, effect, [], source => {
+            if (source.kind !== 'argument') return []
+            const argument = call.arguments[source.index]
+            return argument == null || ts.isSpreadElement(argument) ? [] : classifyExpressionRoots(argument)
+          })
         }
-        if (base.text === 'Array' && target.name.text === 'from') collectInvokedFunctionArguments(call, [])
-        return
-      }
-      const classMember = classMemberFunctionForPropertyAccessInProgram(target, program)
-      if (classMember != null) {
-        addResolvedEdge(classMember, call.arguments, classifyExpressionRoots(target.expression))
         return
       }
       const resolved = resolveCallTarget(target, program)
@@ -815,31 +878,37 @@ function collectWrites(
         if (resolved.name === 'random') member.effects.observesEnvironment = true
         return
       }
-      const knownNonMutating = defaultLibraryMember && nonMutatingMethodNames.has(target.name.text)
-      const knownMutating = defaultLibraryMember && knownMutatingMethodNames.has(target.name.text)
-      if (!knownNonMutating) {
-        // Mutating the container itself touches its aliases; what it retains
-        // is only reachable through later path writes (tracked in buildScope) —
-        // unless the container is caller-visible, in which case retention is an
-        // escape and the arguments must be forgotten now.
-        const containerBase = pathWriteBaseBinding(target.expression, program)
-        const containerRoots = containerBase != null
-          ? classifiers.container(containerBase)
-          : classifyExpressionRoots(target.expression)
-        if (knownMutating) addMutation(containerRoots)
-        else addUncertainMutation(containerRoots)
-        const argumentRoots = mutableArgumentRoots(call, program, classifyExpressionRoots)
-        if (!knownMutating || !retainingMethodNames.has(target.name.text) || containerRoots.length > 0) {
-          if (knownMutating) addMutation(argumentRoots)
-          else addUncertainMutation(argumentRoots)
-        }
-        // A method that is neither a known mutator nor a known non-mutating one
-        // could do anything (including I/O); treat it as an unknown call.
-        if (!knownMutating) member.effects.callsUnknown = true
-      }
-      if (defaultLibraryMember && callbackInvokingMethodNames.has(target.name.text)) {
-        if (callsUnanalyzableCallback(call, program)) member.effects.callsUnknown = true
-        collectInvokedFunctionArguments(call, classifyExpressionRoots(target.expression))
+      const receiverBase = pathWriteBaseBinding(target.expression, program)
+      const receiverContainerRoots = receiverBase != null
+        ? classifiers.container(receiverBase)
+        : classifyExpressionRoots(target.expression)
+      const receiverElementRoots = receiverBase != null
+        ? classifiers.reach(receiverBase)
+        : classifyExpressionRoots(target.expression)
+      const effect = defaultLibraryMember
+        ? platformMethodEffect(
+          defaultLibraryOwner(target, program),
+          target.name.text,
+          call.arguments.length,
+        )
+        : null
+      if (effect == null) {
+        addUncertainMutation(receiverElementRoots)
+        addUncertainMutation(mutableArgumentRoots(call, program, classifyExpressionRoots))
+        member.effects.callsUnknown = true
+      } else {
+        applyPlatformCallEffect(call, effect, receiverContainerRoots, source => {
+          switch (source.kind) {
+            case 'receiver':
+              return receiverContainerRoots
+            case 'receiver-elements':
+              return receiverElementRoots
+            case 'argument': {
+              const argument = call.arguments[source.index]
+              return argument == null || ts.isSpreadElement(argument) ? [] : classifyExpressionRoots(argument)
+            }
+          }
+        })
       }
       return
     }
@@ -858,50 +927,27 @@ function collectWrites(
     member.effects.callsUnknown = true
   }
 
-  // Function-valued arguments: their captured writes are collected by the
-  // normal descent (literals live inside this body). What needs explicit
-  // handling is a callback that mutates its own parameters — the values fed to
-  // it come from the call's receiver and arguments, so the mutation spills onto
-  // those roots.
-  const collectInvokedFunctionArguments = (call: ts.CallExpression, receiverRoots: RootKind[]) => {
-    for (const argument of call.arguments) {
-      const fn = functionValuedArgument(argument, program)
-      if (fn == null) continue
-      const spill = [
-        ...receiverRoots,
-        ...mutableArgumentRoots(call, program, classifyExpressionRoots),
-      ]
-      member.edges.push({
-        callee: fn,
-        argumentRoots: [],
-        receiverRoots: [],
-        callbackSpill: spill,
-        classifyBinding: classifiers.reach,
-      })
-      collectMember(fn, members)
-    }
-  }
-
   const collectNew = (expression: ts.NewExpression) => {
     const name = ts.isIdentifier(expression.expression) ? expression.expression.text : null
     if (name === 'Date' && isDefaultLibrarySymbol(expression.expression, program)) {
       if ((expression.arguments?.length ?? 0) === 0) member.effects.observesEnvironment = true
+      else member.effects.callsUnknown = true
       return
     }
+    if (
+      name != null
+      && zeroArgumentCollectionConstructorNames.has(name)
+      && isDefaultLibrarySymbol(expression.expression, program)
+      && (expression.arguments?.length ?? 0) === 0
+    ) return
     if (name != null && lengthBearingConstructorNames.has(name) && isDefaultLibrarySymbol(expression.expression, program)) return
-    const constructor = constructorFunctionForNewExpression(expression, program)
-    if (constructor != null) {
-      addResolvedEdge(constructor, expression.arguments ?? [], [])
-      return
-    }
-    const declaration = classDeclarationForNewExpression(expression, program)
-    const declared = declaration != null
-      && ts.canHaveModifiers(declaration)
-      && ts.getModifiers(declaration)?.some(modifier => modifier.kind === ts.SyntaxKind.DeclareKeyword) === true
-    if (declaration != null && !declared && !declaration.getSourceFile().isDeclarationFile && declaration.heritageClauses == null) return
     for (const argument of expression.arguments ?? []) {
       if (expressionHasMutableType(argument, program)) addUncertainMutation(classifyExpressionRoots(argument))
     }
+    // A user-defined construction includes base constructors, instance field
+    // initializers, and dynamic class behavior. Until those execute through one
+    // complete model, source-backed and declaration-only classes share the same
+    // conservative boundary.
     member.effects.callsUnknown = true
   }
 
@@ -918,6 +964,13 @@ export const lengthBearingConstructorNames = new Set([
   'BigInt64Array', 'BigUint64Array',
 ])
 
+const zeroArgumentCollectionConstructorNames = new Set([
+  'Map',
+  'Set',
+  'WeakMap',
+  'WeakSet',
+])
+
 function functionValuedArgument(argument: ts.Expression, program: Program): FunctionImplementationRef | null {
   const current = unwrapExpression(argument)
   if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) {
@@ -932,25 +985,14 @@ function functionValuedArgument(argument: ts.Expression, program: Program): Func
   return null
 }
 
-// A callback argument the analysis can neither inline (an arrow/function
-// expression, read by descent) nor resolve to a known function (whose effects
-// arrive through an edge): a function value passed in from outside. Invoking it
-// could do anything, so the receiving method or global is an unknown call.
-function callsUnanalyzableCallback(call: ts.CallExpression, program: Program): boolean {
+function expressionMayBeCallable(expression: ts.Expression, program: Program): boolean {
   const checker = program.typeChecker
   if (checker == null) return false
-  for (const argument of call.arguments) {
-    if (ts.isSpreadElement(argument)) continue
-    const current = unwrapExpression(argument)
-    if (ts.isArrowFunction(current) || ts.isFunctionExpression(current)) continue
-    if (functionValuedArgument(argument, program) != null) continue
-    try {
-      if (checker.getTypeAtLocation(current).getCallSignatures().length > 0) return true
-    } catch {
-      // an unresolved type query is not evidence of a callback
-    }
+  try {
+    return checker.getTypeAtLocation(unwrapExpression(expression)).getCallSignatures().length > 0
+  } catch {
+    return false
   }
-  return false
 }
 
 function mutableArgumentRoots(

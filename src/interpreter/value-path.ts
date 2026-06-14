@@ -88,12 +88,18 @@ export function writeMutationPath(path: ValuePath, value: Value, frame: Interpre
 
 export function replaceRootValueEverywhere(env: Map<string, Value>, root: string, next: Value) {
   const current = env.get(root)
-  if (current != null && (current.kind === 'object' || current.kind === 'array')) {
-    for (const [name, envValue] of env) {
-      env.set(name, replaceSharedValue(envValue, current, next))
-    }
-  }
+  if (current != null) replaceValueEverywhere(env, current, next)
   env.set(root, next)
+}
+
+export function replaceValueEverywhere(env: Map<string, Value>, current: Value, next: Value) {
+  if (
+    (current.kind !== 'object' && current.kind !== 'array')
+    || (next.kind !== 'object' && next.kind !== 'array')
+  ) return
+  for (const [name, envValue] of env) {
+    env.set(name, replaceSharedValue(envValue, current, next))
+  }
 }
 
 export function readPropertyValue(target: Value, name: string, expr: string): Value {

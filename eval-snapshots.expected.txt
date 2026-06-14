@@ -6,18 +6,17 @@ check photo-gallery spring defaults through imported data
   PASS photo-gallery/index.ts:23:<top-level>: data[].fxFactor.b > 0
 infer matrix nested iife/map/defaults
   return return.length == matrixInput.groups.length
-  return return.length: int 2..2
-  return return[].length == matrixInput.groups[].items.length
-  return return[].length: int 1..2
-  return return[][].index == mapIndex(matrixInput.groups[].items)
-  return return[][].index: int 0..1
+  return return.length: int 0..4294967295
+  return return[].length == group.items.length
+  return return[].length: int 0..4294967295
+  return return[][].index == mapIndex(group.items)
+  return return[][].index: int 0..4294967294
   return return[][].spring.b == 30
   return return[][].spring.b: int 30..30
   return return[][].spring.k == 290
   return return[][].spring.k: int 290..290
-  return return[][].spring.pos == matrixInput.groups[].items[].pos
-  return return[][].spring.pos: int 4..12
-  return return[] follows matrixInput.groups[].items by index
+  return return[][].spring.pos == item.pos
+  return return[] follows group.items by index
   return return follows matrixInput.groups by index
 infer matrix default param order
   return return.b == (10 + 1)
@@ -161,14 +160,13 @@ infer matrix indexed array cursor values
   local y: 0..3000
 infer imported literal nested map/defaults
   return return.length == importedNestedLiteralSpringData.groups.length
-  return return.length: int 2..2
-  return return[].springs.length == importedNestedLiteralSpringData.groups[].items.length
-  return return[].springs.length: int 1..2
+  return return.length: int 0..4294967295
+  return return[].springs.length == group.items.length
+  return return[].springs.length: int 0..4294967295
   return return[].springs[].b == 30
   return return[].springs[].b: int 30..30
   return return[].springs[].k == 290
   return return[].springs[].k: int 290..290
-  return return[].springs[].pos == importedNestedLiteralSpringData.groups[].items[].position
-  return return[].springs[].pos: int 4..8
-  return return[].springs follows importedNestedLiteralSpringData.groups[].items by index
+  return return[].springs[].pos == item.position
+  return return[].springs follows group.items by index
   return return follows importedNestedLiteralSpringData.groups by index

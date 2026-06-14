@@ -252,16 +252,14 @@ UNKNOWN tests/patterns/negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bo
     assumed from input: given this.height: -100..1000
     inferred from code: (this.y + this.height) >= this.height
   missing fact: (this.y + this.height) >= this.y
-UNKNOWN tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: box.bottom: requires this.height: -100..1000
-  caller passed: this.height: unknown (this.height was not inferred)
-  missing: box.height: -100..1000
 UNKNOWN tests/patterns/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
-  range was any number as (box.y + box.height), expected inside 0..2000
+  Class getter call is not analyzed: box.bottom
+UNKNOWN tests/patterns/negative-patterns.ts:negativeClassMethodCallIsUnknown: return == 1
+  Unsupported call box.value
+UNKNOWN tests/patterns/negative-patterns.ts:negativeClassSetterCallIsUnknown: return == 0
   known:
-    (box.y + box.height): any number
-    assumed from input: given box.y: 0..1000
-  missing: (box.y + box.height) >= 0
-  missing: (box.y + box.height) <= 2000
+    box.current: any number
+  missing fact: box.current == 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows, otherGap)
   spaced(return.rows, otherGap) was not inferred
   need: every next row top == previous top + previous height + otherGap
@@ -326,7 +324,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeGuardedFlushCannotMixSameArr
   missing: recognized adjacent row spacing
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(return.rows) == return.bottom
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(563,4): error TS2322: Type '{ y: number; source: number; }' is not assignable to type '{ y: number; height: number; } | { x: number; width: number; } | { top: number; height: number; } | { start: number; size: number; }'.
+  tests/patterns/negative-patterns.ts(591,4): error TS2322: Type '{ y: number; source: number; }' is not assignable to type '{ y: number; height: number; } | { x: number; width: number; } | { top: number; height: number; } | { start: number; size: number; }'.
     Property 'height' is missing in type '{ y: number; source: number; }' but required in type '{ y: number; height: number; }'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeObjectFieldDomainTooWide: return.height >= 0
   known:
@@ -345,7 +343,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayIdentityNeedsSameSource
   Non-number equality is only proven for the same source expression
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(607,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
+  tests/patterns/negative-patterns.ts(635,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
   range was any number as items[index]!.height, expected inside 0..40
   known:
@@ -376,9 +374,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeSelfReferentialAccumulatorRh
   missing: total >= 0
   missing: total <= 10
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGuardMutationIsNotPure: return == 10
-  known:
-    cap: any number
-  missing fact: cap == 10
+  Loop condition has effects or unknown behavior: --cap > 0
 FAIL tests/patterns/negative-patterns.ts:negativeCompoundAssignmentWrites: return == 10
   result: is false
   known:
@@ -467,7 +463,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeCallbackFitPlacementIsReport
   Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTrailingCommentBelongsToItsOwnDeclaration: annotated == 99
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(909,46): error TS2367: This comparison appears to be unintentional because the types '1' and '99' have no overlap.
+  tests/patterns/negative-patterns.ts(950,46): error TS2367: This comparison appears to be unintentional because the types '1' and '99' have no overlap.
 FAIL tests/patterns/negative-patterns.ts:negativeFloatSumIsNotItsDecimalLook: return == 0.3
   result: is false
   known:
@@ -724,39 +720,27 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementHelperPreconditi
   missing fact: (extent[1][0] - width) >= extent[0][0]
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementPathCannotHideDynamicIndex: given _items[_index][0]: 0..10
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1418,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1459,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
-  tests/patterns/negative-patterns.ts(1418,4): error TS2532: Object is possibly 'undefined'.
+  tests/patterns/negative-patterns.ts(1459,4): error TS2532: Object is possibly 'undefined'.
 FAIL tests/patterns/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
   result: is false
   missing fact: 10 <= 2
-UNKNOWN tests/patterns/negative-patterns.ts:negativeForgettableLoopStillForgetsMutatedRoot: return: 0
-  range was any number as scratch, expected inside 0
-  known:
-    scratch: any number
-  missing: scratch >= 0
-  missing: scratch <= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1446,4): error TS2322: Type 'number | null' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1475,4): error TS2322: Type 'number | null' is not assignable to type 'number'.
     Type 'null' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
   Nullable value {targetIndex: focused - 1} was not proven present
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1467,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1496,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
   Math.max expected number arguments
-UNKNOWN tests/patterns/negative-patterns.ts:negativeForgettableWhileStillForgetsMutatedRoot: return: 0
-  range was any number as scratch, expected inside 0
-  known:
-    scratch: any number
-  missing: scratch >= 0
-  missing: scratch <= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: return: 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1488,18): error TS2322: Type 'string' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1507,18): error TS2322: Type 'string' is not assignable to type 'number'.
 FAIL tests/patterns/negative-patterns.ts:negativeObjectMutationForgetsInputPath: return >= 0
   result: is false
   known:
@@ -846,13 +830,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeInvertedClampBounds: negativeCo
   caller passed: max: 0, min: 1
   missing: 0 >= 1
 UNKNOWN tests/patterns/negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
-  range was any number as total, expected inside 0..0
-  known:
-    total: any number
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[]: 0..10
-  missing: total >= 0
-  missing: total <= 0
+  Indexed for loops support for (let i = 0; i < limit; i++) style loops
 UNKNOWN tests/patterns/negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows.length == items.length
   known:
     rows.length: int 0..50
@@ -1008,10 +986,10 @@ FAIL tests/patterns/negative-patterns.ts:negativeInlineParamComparison: given ma
   no input can satisfy this with the earlier given lines; they already rule out max: 100..200
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1853,4): error TS2322: Type 'string' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1872,4): error TS2322: Type 'string' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1862,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
+  tests/patterns/negative-patterns.ts(1881,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
   Array.at(-2) expected length >= 2
@@ -1076,7 +1054,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPos
   counterexample within the known facts: focused = 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1959,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
+  tests/patterns/negative-patterns.ts(1978,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   rows not found in this contract scope
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
@@ -1304,7 +1282,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeUnionTieIsNotStrict: return 
   missing fact: x > 0
 UNKNOWN tests/patterns/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
-  tests/patterns/negative-patterns.ts(1310,2): error TS2304: Cannot find name 'row'.
+  tests/patterns/negative-patterns.ts(1351,2): error TS2304: Cannot find name 'row'.
 FAIL tests/patterns/negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
   caller passed: container: 3, containee: 4
   missing: 3 >= 4
@@ -1373,21 +1351,9 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperContract
     assumed from input: given width: 0..1000
   missing: importedClampWidth(width) <= 100
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsThisGiven: return >= box.top
-  imported helper contract was not proven in source before this call could use it
-  helper: box.bottom (NegativeImportedClassBox) from ./negative-import-helpers
-  failed check: tests/imports/negative-import-helpers.ts:NegativeImportedClassBox.bottom: return >= this.top
-  known:
-    (this.top + this.height): -100..2000
-    this.top: 0..1000
-    assumed from input: given this.top: 0..1000
-    assumed from input: given this.height: -100..1000
-    inferred from code: (this.top + this.height) >= this.height
-  missing fact: (this.top + this.height) >= this.top
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: box.bottom: requires this.height: 0..1000
-  caller passed: this.height: unknown (this.height was not inferred)
-  missing: box.height: 0..1000
+  Class getter call is not analyzed: box.bottom
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: return >= box.top
-  Imported call NegativeImportedClassBoxNeedsHeight.bottom precondition was not proven
+  Class getter call is not analyzed: box.bottom
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: return: 0..100
   range was 0..320 as barrelClampWidth(width), expected inside 0..100
   known:

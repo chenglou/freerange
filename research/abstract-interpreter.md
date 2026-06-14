@@ -42,7 +42,7 @@ Call evaluation has four paths:
 
 - same-file body evaluation when source is available
 - imported checked-contract summaries when source resolves locally
-- class method/getter calls with `this`
+- class method/getter bodies with `this`; calls through class values stay unknown
 - selected built-ins such as `Math`, array reads, `map`, and `filter`
 
 Default parameter initializers run in parameter order in the callee env. Omitted args and explicit `undefined` / optional args fall through to those defaults; rest params and destructured defaults stay outside the surface until real pressure earns them.
@@ -84,15 +84,17 @@ The parallel phase is over. Keep useful shared concepts, but do not preserve old
 Current core:
 
 - `src/interpreter/context.ts`: frames, issues, assumptions, claim hooks, and flow
-- `src/interpreter/source-syntax.ts`: small TypeScript syntax readers for loop shapes, guard safety, push calls, and cursor/index paths
-- `src/interpreter/forgettable-loop.ts`: read-only loop-header/body checks for conservative root invalidation when the loop itself is outside the modeled iteration surface
-- `src/interpreter/loop-effects.ts`: scalar loop-effect collection/finalization for running sums, conditional sums, extrema, and cursor checks
-- `src/interpreter/loop-values.ts`: index-derived element values, cursor replacement inside appended elements, and loop append shapes for sequence summaries
+- `src/interpreter/source-syntax.ts`: small TypeScript syntax readers for loop shapes, push calls, and cursor/index paths
+- `src/interpreter/function-effects.ts`: one source-backed function effect description for purity, calls, callbacks, and invalidation
+- `src/interpreter/platform-effects.ts`: exact supported platform-call mutation, retention, callback, and environment effects
+- `src/interpreter/expression-effects.ts`: repeatable-expression checks derived from the shared function and platform effects
+- `src/interpreter/forget.ts`: conservative root invalidation
+- `src/interpreter/loop-transfer.ts`: scalar loop effects, fixpoint transfer, pushed values, and sequence summaries
 - `src/interpreter/math.ts`: numeric `Math.*` primitives
 - `src/interpreter/refine.ts`: branch-frame creation and path/literal refinement from conditions
 - `src/interpreter/scope.ts`: loop/block scoped-name collection and environment save/restore
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
-- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased calls, ordered defaults, parameter type shapes for direct callers, class method/getter `this`, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, simple alias-preserving mutation, guarded scalar flushes, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
+- `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased free-function calls, ordered call operands and defaults, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, conservative unknown calls, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree, origin-fact, and unsupported-shape snapshots
 - `verify-interpreter-snapshots.ts`: focused tests for interpreter evolution
 

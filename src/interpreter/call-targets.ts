@@ -2,10 +2,9 @@ import * as ts from 'typescript'
 import type {ImportedBinding, Program} from '../check-types.ts'
 import type {FitFunction} from '../modules.ts'
 import {
-  classMemberFunctionName,
   functionImplementationForDeclaration,
+  isClassFunctionNode,
 } from '../function-shape.ts'
-import type {InterpreterFrame} from './context.ts'
 
 export type InterpreterCallTarget =
   | {kind: 'math'; name: string}
@@ -18,6 +17,17 @@ export type InterpreterCallTarget =
   | {kind: 'unresolved'; reason: string}
 
 export type ResolvedFunctionTarget = Extract<InterpreterCallTarget, {kind: 'function'}>
+
+export type DefaultLibraryOwner =
+  | 'Array'
+  | 'ReadonlyArray'
+  | 'Map'
+  | 'ReadonlyMap'
+  | 'Set'
+  | 'ReadonlySet'
+  | 'String'
+  | 'TypedArray'
+  | 'Other'
 
 export function resolveCallTarget(target: ts.Expression, program: Program): InterpreterCallTarget {
   const source = sourceFunctionTarget(target, program)
@@ -49,6 +59,7 @@ function sourceFunctionTarget(
   for (const declaration of symbol.declarations ?? []) {
     const node = functionImplementationForDeclaration(declaration)
     if (node == null) continue
+    if (isClassFunctionNode(node)) continue
     const targetProgram = programForSourceFile(node.getSourceFile(), program)
     if (targetProgram == null || targetProgram !== program || !('functions' in targetProgram)) continue
     for (const fn of targetProgram.functions.values()) {
@@ -148,103 +159,43 @@ function resolveImportedCallTarget(
   }
 }
 
-export function classMemberFunctionForPropertyAccess(
-  access: ts.PropertyAccessExpression,
-  frame: InterpreterFrame,
-): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
-  const member = classMemberForPropertyAccess(access, frame)
-  if (member == null) return null
-  const program = programForClassMember(member.declaration, frame)
-  if (program == null) return null
-  const className = member.className
-  const functionName = member.declaration == null
-    ? `${className}.${access.name.text}`
-    : classMemberFunctionName(className, member.declaration)
-  if (functionName == null) return null
-  const fn = program.functions.get(functionName)
-  if (fn == null) return null
-  const imported = program === frame.program ? null : importedClassBinding(className, program, frame.program)
-  return {
-    kind: 'function',
-    program,
-    fn,
-    ...(imported == null ? {} : {imported}),
-  }
-}
-
-export function classMemberFunctionForPropertyAccessInProgram(
-  access: ts.PropertyAccessExpression,
-  program: Program,
-): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
-  const checker = program.typeChecker
-  const symbol = checker?.getSymbolAtLocation(access.name)
-  const declaration = symbolDeclaration(symbol, checker)
-  if (
-    declaration == null
-    || !ts.isMethodDeclaration(declaration)
-    || !ts.isClassDeclaration(declaration.parent)
-    || declaration.parent.name == null
-  ) return null
-  return classFunctionTarget(declaration, program)
-}
-
-export function classAccessorFunctionForPropertyAccessInProgram(
+export function propertyAccessHasSourceAccessor(
   access: ts.PropertyAccessExpression,
   kind: 'get' | 'set',
   program: Program,
-): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
+): boolean {
   const checker = program.typeChecker
   const symbol = checker?.getSymbolAtLocation(access.name)
-  const declaration = symbol?.declarations?.find(candidate => {
-    switch (kind) {
-      case 'get':
-        return ts.isGetAccessorDeclaration(candidate)
-      case 'set':
-        return ts.isSetAccessorDeclaration(candidate)
-    }
-  })
-  if (
-    declaration == null
-    || (!ts.isGetAccessorDeclaration(declaration) && !ts.isSetAccessorDeclaration(declaration))
-    || !ts.isClassDeclaration(declaration.parent)
-    || declaration.parent.name == null
-  ) return null
-  return classFunctionTarget(declaration, program)
+  return symbol?.declarations?.some(declaration =>
+    kind === 'get'
+      ? ts.isGetAccessorDeclaration(declaration)
+      : ts.isSetAccessorDeclaration(declaration)) === true
 }
 
-function classFunctionTarget(
-  declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | ts.SetAccessorDeclaration,
+export function elementAccessHasSourceAccessor(
+  access: ts.ElementAccessExpression,
+  kind: 'get' | 'set',
   program: Program,
-): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
-  const parent = declaration.parent
-  if (!ts.isClassDeclaration(parent) || parent.name == null) return null
-  const memberProgram = programForSourceFile(declaration.getSourceFile(), program)
-  if (memberProgram == null) return null
-  const functionName = classMemberFunctionName(parent.name.text, declaration)
-  if (functionName == null) return null
-  const fn = memberProgram.functions.get(functionName)
-  return fn == null ? null : {kind: 'function', program: memberProgram, fn}
-}
-
-export function constructorFunctionForNewExpression(
-  expression: ts.NewExpression,
-  program: Program,
-): Extract<InterpreterCallTarget, {kind: 'function'}> | null {
-  const declaration = classDeclarationForNewExpression(expression, program)
-  if (declaration == null || declaration.name == null) return null
-  const constructor = declaration.members.find(ts.isConstructorDeclaration)
-  if (constructor?.body == null) return null
-  const constructorProgram = programForSourceFile(declaration.getSourceFile(), program)
-  if (constructorProgram == null) return null
-  const fn = constructorProgram.functions.get(`${declaration.name.text}.constructor`)
-  return fn == null ? null : {kind: 'function', program: constructorProgram, fn}
-}
-
-export function classDeclarationForNewExpression(expression: ts.NewExpression, program: Program): ts.ClassDeclaration | null {
+): boolean {
   const checker = program.typeChecker
-  const symbol = checker?.getSymbolAtLocation(expression.expression)
-  const declaration = symbolDeclaration(symbol, checker)
-  return declaration != null && ts.isClassDeclaration(declaration) ? declaration : null
+  if (checker == null) return false
+  const symbol = classElementAccessSymbol(access, checker)
+  return symbol?.declarations?.some(declaration =>
+    kind === 'get'
+      ? ts.isGetAccessorDeclaration(declaration)
+      : ts.isSetAccessorDeclaration(declaration)) === true
+}
+
+function classElementAccessSymbol(
+  access: ts.ElementAccessExpression,
+  checker: ts.TypeChecker,
+): ts.Symbol | undefined {
+  const argument = access.argumentExpression
+  if (argument == null) return undefined
+  if (ts.isStringLiteral(argument) || ts.isNumericLiteral(argument)) {
+    return checker.getPropertyOfType(checker.getTypeAtLocation(access.expression), argument.text)
+  }
+  return checker.getSymbolAtLocation(argument)
 }
 
 export function isDefaultLibrarySymbol(node: ts.Node, program: Program): boolean {
@@ -261,10 +212,22 @@ export function isDefaultLibraryMemberAccess(access: ts.PropertyAccessExpression
   return isDefaultLibrarySymbol(access.name, program)
 }
 
-function symbolDeclaration(symbol: ts.Symbol | undefined, checker: ts.TypeChecker | null): ts.Declaration | undefined {
-  const resolved = checker == null ? symbol : resolvedSymbol(symbol, checker)
-  if (resolved == null) return undefined
-  return resolved.valueDeclaration ?? resolved.declarations?.[0]
+export function defaultLibraryOwner(
+  access: ts.PropertyAccessExpression,
+  program: Program,
+): DefaultLibraryOwner {
+  const checker = program.typeChecker
+  const symbol = checker?.getSymbolAtLocation(access.name)
+  if (symbol == null || checker == null) return 'Other'
+  const resolved = resolvedSymbol(symbol, checker)
+  for (const declaration of resolved?.declarations ?? []) {
+    const owner = containingNamedDeclaration(declaration)
+    const name = owner?.name != null && ts.isIdentifier(owner.name) ? owner.name.text : null
+    if (name === 'Array' || name === 'ReadonlyArray' || name === 'Map' || name === 'ReadonlyMap'
+      || name === 'Set' || name === 'ReadonlySet' || name === 'String') return name
+    if (name != null && typedArrayNames.has(name)) return 'TypedArray'
+  }
+  return 'Other'
 }
 
 function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | undefined {
@@ -277,32 +240,27 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
   return current
 }
 
-function classMemberForPropertyAccess(access: ts.PropertyAccessExpression, frame: InterpreterFrame): {className: string; declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null} | null {
-  const checker = frame.program.typeChecker
-  const symbol = checker?.getSymbolAtLocation(access.name)
-  const declaration = symbol?.valueDeclaration ?? symbol?.declarations?.[0]
-  if (
-    declaration != null
-    && (ts.isMethodDeclaration(declaration) || ts.isGetAccessorDeclaration(declaration))
-    && ts.isClassDeclaration(declaration.parent)
-    && declaration.parent.name != null
-  ) {
-    return {className: declaration.parent.name.text, declaration}
+function containingNamedDeclaration(declaration: ts.Declaration): ts.DeclarationStatement | ts.InterfaceDeclaration | null {
+  for (let current: ts.Node | undefined = declaration.parent; current != null; current = current.parent) {
+    if (ts.isInterfaceDeclaration(current) || ts.isClassDeclaration(current)) return current
+    if (ts.isSourceFile(current)) return null
   }
-
-  if (access.expression.kind === ts.SyntaxKind.ThisKeyword) {
-    const current = frame.stack.at(-1)
-    const dot = current?.indexOf('.') ?? -1
-    if (current != null && dot > 0) return {className: current.slice(0, dot), declaration: null}
-  }
-
   return null
 }
 
-function programForClassMember(declaration: ts.MethodDeclaration | ts.GetAccessorDeclaration | null, frame: InterpreterFrame): Program | null {
-  if (declaration == null) return frame.program
-  return programForSourceFile(declaration.getSourceFile(), frame.program)
-}
+const typedArrayNames = new Set([
+  'Int8Array',
+  'Uint8Array',
+  'Uint8ClampedArray',
+  'Int16Array',
+  'Uint16Array',
+  'Int32Array',
+  'Uint32Array',
+  'Float32Array',
+  'Float64Array',
+  'BigInt64Array',
+  'BigUint64Array',
+])
 
 function programForSourceFile(sourceFile: ts.SourceFile, program: Program): Program | null {
   if (sameProgramSourceFile(program, sourceFile)) return program
@@ -323,13 +281,4 @@ function importedPrograms(program: Program): Program[] {
 
 function sameProgramSourceFile(program: Program, sourceFile: ts.SourceFile) {
   return program.sourceFile === sourceFile || program.sourceId === sourceFile.fileName
-}
-
-function importedClassBinding(className: string, classProgram: Program, callerProgram: Program): {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>} | null {
-  for (const [localName, binding] of callerProgram.imports) {
-    if (binding.kind !== 'resolved') continue
-    if (binding.file !== classProgram) continue
-    if (binding.sourceName === className || binding.importedName === className) return {localName, binding}
-  }
-  return null
 }

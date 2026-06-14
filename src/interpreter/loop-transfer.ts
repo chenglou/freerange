@@ -81,12 +81,12 @@ import {
   type InterpreterLoopClaim,
   type LoopFrame,
 } from './context.ts'
-import {forgetRoot} from './forgettable-loop.ts'
+import {forgetRoot} from './forget.ts'
+import {expressionIsRepeatable} from './expression-effects.ts'
 import {
   isAssignmentOperator,
   isIdentifierNamed,
   isPushCallExpression,
-  isSideEffectFreeExpression,
   referencesIdentifier,
   scalarUpdateFromExpression,
   type ScalarUpdate,
@@ -110,7 +110,7 @@ export type SymbolicLoop = {
   body: ts.Block
   source: ArrayValue
   sourceExpr: string
-  sourceRoot: string | null
+  sourceRoots: string[]
   // 'collection' iterates a real array; 'count' only repeats a number of
   // times, so pushed arrays cannot claim to follow anything by index.
   sourceKind: 'collection' | 'count'
@@ -208,8 +208,8 @@ export function evaluateSymbolicLoop(loop: SymbolicLoop, frame: InterpreterFrame
     if (loop.iterationRoots.some(root => analysis.writeSet.has(root))) {
       return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop item/index is reassigned in the body', loop.body)}
     }
-    if (loop.sourceRoot != null && analysis.writeSet.has(loop.sourceRoot)) {
-      return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop body mutates its own source array', loop.body)}
+    if (loop.sourceRoots.some(root => analysis.writeSet.has(root))) {
+      return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop body mutates a value used by its iteration bound', loop.body)}
     }
     const walked = runBodyPaths(analysis, null)
     if (walked.kind === 'abort') {
@@ -480,13 +480,11 @@ function walkBlock(block: ts.Block, path: PathState, restartRoots: Set<string>, 
 }
 
 function walkIfStatement(statement: ts.IfStatement, path: PathState, restartRoots: Set<string>, analysis: Analysis): WalkResult {
-  const sideEffectFree = isSideEffectFreeExpression(statement.expression)
-  if (!sideEffectFree) {
-    const before = snapshotRoots(path, analysis)
-    analysis.context.evaluateExpression(statement.expression, path.frame)
-    diffRoots(before, statement, path, restartRoots, analysis)
+  const repeatable = expressionIsRepeatable(statement.expression, path.frame.program)
+  if (!repeatable) {
+    return {kind: 'abort', reason: `Loop condition has effects or unknown behavior: ${statement.expression.getText()}`, node: statement.expression}
   }
-  const truth = sideEffectFree ? analysis.context.conditionTruth(statement.expression, path.frame) : null
+  const truth = analysis.context.conditionTruth(statement.expression, path.frame)
 
   const branches: {statement: ts.Statement | null; truth: boolean}[] = []
   if (truth !== false) branches.push({statement: statement.thenStatement, truth: true})
@@ -496,7 +494,7 @@ function walkIfStatement(statement: ts.IfStatement, path: PathState, restartRoot
   for (const branch of branches) {
     const fork = branches.length === 1
       ? path
-      : forkPath(path, sideEffectFree
+      : forkPath(path, repeatable
         ? analysis.context.refinedBranchFrame(path.frame, statement.expression, branch.truth, branch.truth ? '<loop-if-true>' : '<loop-if-false>')
         : pathFrame(path.frame, new Map(path.frame.env)))
     if (branch.statement == null) {

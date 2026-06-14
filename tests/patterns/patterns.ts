@@ -1178,36 +1178,6 @@ export function silentHelperSummaryFeedsReturnField(
   }
 }
 
-function loopReadHelper(index: number) {
-  return index + 1
-}
-
-export function forgettableLoopNamedCallPreservesUnrelated(
-  items: number[],
-  value: number, // @fit 0..10
-) {
-  let scratch = 0
-  const kept = value
-  for (let i = 1; i < items.length - 1; i++) {
-    scratch += loopReadHelper(i)
-  }
-  return kept // @fit 0..10
-}
-
-export function forgettableWhileLoopPreservesUnrelated(
-  items: number[],
-  value: number, // @fit 0..10
-) {
-  let scratch = 0
-  let i = 0
-  const kept = value
-  while (i < items.length) {
-    scratch += items[i]!
-    i++
-  }
-  return kept // @fit 0..10
-}
-
 /** @fit
  * return.length == 2
  * return[1]: 0..10
@@ -1720,24 +1690,6 @@ export class ClassMethodThisClaims {
   area() {
     return this.width * this.height
   }
-}
-
-/** @fit
- * given box.y: 0..1000
- * given box.height: 0..1000
- * return: 0..2000
- */
-export function classGetterSummary(box: ClassMethodThisClaims) {
-  return box.bottom
-}
-
-/** @fit
- * given box.width: 0..1000
- * given box.height: 0..1000
- * return: 0..1000000
- */
-export function classMethodSummary(box: ClassMethodThisClaims) {
-  return box.area()
 }
 
 /** @fit

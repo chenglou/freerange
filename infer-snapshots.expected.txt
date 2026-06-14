@@ -114,17 +114,8 @@ loop 186: for (let i = 0; i < layoutSources.length; i++)
   checked:
     rows.length <= layoutSources.length
 ../vibescript/demos/photo-gallery/layout.ts:getLineLayout
-return:
-  return.items.length == layoutSources.length
-  return.items.length: int 0..4294967295
-  return.items[].prompt.box.sizeX == items[].prompt.box.sizeX
-  return.items[].prompt.box.sizeY == items[].prompt.box.sizeY
-  return.items[].prompt.lines.length == promptLayout.lines.length
-  return.items[].prompt.lines.length: int 0..4294967295
 locals:
   box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))
   box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)
   measurements.length == layoutSources.length
   measurements.length: int 0..4294967295
-  items.length == layoutSources.length
-  items.length: int 0..4294967295

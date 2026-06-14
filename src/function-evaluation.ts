@@ -15,7 +15,7 @@ import {functionInputRoots} from './function-shape.ts'
 import type {FitFunction} from './modules.ts'
 import type {FitSpec} from './parser.ts'
 import {preparedFunctionContracts} from './prepared-contracts.ts'
-import {programGlobalEnv} from './program-env.ts'
+import {programFunctionEnv} from './program-env.ts'
 
 export type FunctionEvaluationSetup = {
   inputSpecs: FitSpec[]
@@ -39,7 +39,7 @@ export function prepareFunctionEvaluation(
   const typeChecks = prepared.typeChecks
   const inputSpecs = prepared.assumptions
   const contractSpecs = prepared.contractSpecs
-  const env = programGlobalEnv(program)
+  const env = programFunctionEnv(program)
   const inputRoots = functionInputRoots(program, fn)
 
   bindFunctionInputParameters(fn, program, env)

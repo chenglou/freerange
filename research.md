@@ -114,6 +114,16 @@ Function and variable identity comes from TypeScript bindings, not identifier te
 
 Evaluate the receiver and written arguments once, from left to right, then bind defaults in parameter order. The finalized entry environment is the semantic source of truth, including when a later default mutates an earlier identifier or destructured binding. Contract checking localizes those final bindings instead of projecting them again from argument values. Caller source text and the final bound leaves stay separate as report provenance. This keeps runtime order, body analysis, precondition checks, summaries, and report text on one call result without forcing them to share one representation.
 
+## Purity Has One Effect Description
+
+A source-backed free function has one effect description: outside reads, receiver and argument mutation, retained arguments, callback effects, environment observation, and calls whose behavior is unavailable. Direct calls, imports, callbacks, contract helper calls, expression rechecking, and loop bounds consume that description instead of maintaining smaller local definitions of pure.
+
+Platform calls use one table with the same information. Callback entries name the callback argument, what each callback parameter can reach, and the `thisArg`. Mutation and retention entries name the receiver or exact argument positions. The interpreter may know more about a supported result, such as the length of `items.map(...)`, but it still gets call effects from this table.
+
+Unknown behavior is a supported outcome, not a request for another recognizer. Class member calls and user construction are unknown even when source is visible because runtime dispatch, base constructors, and field initializers are larger than one selected body. Function-scoped function values are unknown until their callable identity is represented. Platform operations with hidden iteration, property reads, conversion, or default ordering stay unknown until the whole family has a written effect rule. Mutable module objects and arrays are outside state; only immutable primitive bindings are stable reads.
+
+Expression repeatability is narrower than function purity but derives from the same descriptions. A branch condition or loop bound may be read again only when that expression has no mutation, environment observation, accessor call, or unknown call. Calls still evaluate the callable, receiver, and arguments once in JavaScript order before support is decided, so rejecting a call cannot erase effects that already happened.
+
 ## Interpreter Runs Separate State From Findings
 
 An interpreter request supplies the starting program, environment, assumptions, stack, and optional hooks. Frames keep mutable execution state flat, but share one immutable run policy and one append-only output unless an internal analysis pass explicitly isolates them. Results return final state separately from issues, effects, and audits. Create child, imported, branch, state-case, audit, and loop frames through the same derivation helper so each one says what it copies, shares, clears, or replaces.

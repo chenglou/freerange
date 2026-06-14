@@ -14,8 +14,10 @@ import {
   importedAliasPure,
   importedDefaultAliasPure,
   importedNamespaceImpure,
+  importedNamespacePrimitivePure,
   importedNamespacePure,
   importedNamedCallbackKeepsSourceProgram,
+  importedPrimitivePure,
 } from './imported-caller.ts'
 
 void contractRejectsImportedAlias
@@ -25,8 +27,10 @@ void importedAliasImpure
 void importedAliasPure
 void importedDefaultAliasPure
 void importedNamespaceImpure
+void importedNamespacePrimitivePure
 void importedNamespacePure
 void importedNamedCallbackKeepsSourceProgram
+void importedPrimitivePure
 
 function purityOf(name: string, source: string): Purity['kind'] {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
@@ -42,9 +46,6 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'local let mutation', kind: 'pure', source: `function f(x: number) { let t = 0; t += x; return t }`},
   {label: 'Math (non-random)', kind: 'pure', source: `function f(x: number) { return Math.min(Math.abs(x), 10) }`},
   {label: 'reads module const primitive', kind: 'pure', source: `const MAX = 100\nfunction f(x: number) { return Math.min(x, MAX) }`},
-  {label: 'reads readonly static primitive', kind: 'pure', source: `class Limits { static readonly max = 100 }\nfunction f(x: number) { return Math.min(x, Limits.max) }`},
-  {label: 'calls a pure static source method', kind: 'pure', source: `class Limits { static clamp(x: number) { return Math.min(x, 100) } }\nfunction f(x: number) { return Limits.clamp(x) }`},
-  {label: 'constructs a source class with no effects', kind: 'pure', source: `class Box {}\nfunction f() { return new Box() }`},
   {label: 'map with pure inline callback', kind: 'pure', source: `function f(xs: number[]) { return xs.map(y => y * 2)[0] ?? 0 }`},
   {label: 'calls a pure helper', kind: 'pure', source: `function dbl(n: number) { return n * 2 }\nfunction f(x: number) { return dbl(x) }`},
   {label: 'calls a top-level arrow helper', kind: 'pure', source: `const dbl = (n: number) => n * 2\nfunction f(x: number) { return dbl(x) }`},
@@ -52,12 +53,12 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'pure overload implementation', kind: 'pure', source: `function helper(value: number): number\nfunction helper(value: number, extra: number): number\nfunction helper(value: number, extra?: number) { return value + (extra ?? 0) }\nfunction f() { return helper(1) }`},
   {label: 'allocates and returns a fresh object', kind: 'pure', source: `function f(x: number) { return {v: x} }`},
   {label: 'unused impure closure does not execute', kind: 'pure', source: `function f() { const noisy = () => Math.random(); return 1 }`},
-  {label: 'calls a pure source method', kind: 'pure', source: `class Counter { value() { return 1 } }\nfunction f(counter: Counter) { return counter.value() }`},
-  {label: 'same-named pure method keeps its class identity', kind: 'pure', source: `class Pure { value() { return 1 } }\nclass Impure { value() { return Math.random() } }\nfunction f(counter: Pure) { return counter.value() }`},
-  {label: 'calls a pure setter', kind: 'pure', source: `class Counter { set value(next: number) {} }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
   {label: 'block local shadows parameter by binding', kind: 'pure', source: `function f(box: {value: number}) { { const box = {value: 0}; box.value = 1 } return 1 }`},
   {label: 'callback mutation of captured local stays local', kind: 'pure', source: `function f(values: number[]) { let count = 0; values.forEach(() => count++); return count }`},
   {label: 'callback read of captured local stays local', kind: 'pure', source: `function f(values: number[]) { let offset = 1; return values.map(value => value + offset)[0] ?? 0 }`},
+  {label: 'callback index reassignment stays local', kind: 'pure', source: `function f(values: number[]) { return values.map((value, index) => { index = 20; return value })[0] ?? 0 }`},
+  {label: 'local Map retention stays local', kind: 'pure', source: `function f(value: {n: number}) { const map = new Map<string, {n: number}>(); map.set('value', value); return 1 }`},
+  {label: 'local Set retention stays local', kind: 'pure', source: `function f(value: {n: number}) { const set = new Set<{n: number}>(); set.add(value); return 1 }`},
 
   // --- impure ---
   {label: 'mutates a parameter', kind: 'impure', source: `function f(o: {v: number}) { o.v = 9; return 1 }`},
@@ -75,20 +76,35 @@ const cases: {label: string; source: string; kind: Purity['kind']}[] = [
   {label: 'Date.now is nondeterministic', kind: 'impure', source: `function f() { return Date.now() }`},
   {label: 'new Date reads the clock', kind: 'impure', source: `function f() { return new Date() }`},
   {label: 'Object.freeze mutates its argument', kind: 'impure', source: `function f(box: {value: number}) { Object.freeze(box); return box.value }`},
-  {label: 'source constructor writes outside state', kind: 'impure', source: `let total = 0\nclass Counter { constructor() { total++ } }\nfunction f() { return new Counter() }`},
-  {label: 'source getter writes outside state', kind: 'impure', source: `let total = 0\nclass Counter { get value() { return total++ } }\nfunction f(counter: Counter) { return counter.value }`},
-  {label: 'source setter writes outside state', kind: 'impure', source: `let total = 0\nclass Counter { set value(next: number) { total = next } }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
   {label: 'calls an impure helper (transitive)', kind: 'impure', source: `function noisy() { return Math.random() }\nfunction f() { return noisy() }`},
   {label: 'calls an impure top-level arrow helper', kind: 'impure', source: `const noisy = () => Math.random()\nfunction f() { return noisy() }`},
   {label: 'impure overload implementation', kind: 'impure', source: `function helper(value: number): number\nfunction helper(value: number, extra: number): number\nfunction helper(value: number, extra?: number) { return Math.random() + value + (extra ?? 0) }\nfunction f() { return helper(1) }`},
   {label: 'map with impure inline callback', kind: 'impure', source: `function f(xs: number[]) { return xs.map(() => Math.random())[0] ?? 0 }`},
   {label: 'map with a resolvable impure callback', kind: 'impure', source: `function bump(n: number) { return Math.random() + n }\nfunction f(xs: number[]) { return xs.map(bump)[0] ?? 0 }`},
-  {label: 'same-named impure method keeps its class identity', kind: 'impure', source: `class Pure { value() { return 1 } }\nclass Impure { value() { return Math.random() } }\nfunction f(counter: Impure) { return counter.value() }`},
+  {label: 'sort with an impure comparator', kind: 'impure', source: `function f(xs: number[]) { xs.sort(() => Math.random()); return xs.length }`},
+  {label: 'toSorted with an impure comparator', kind: 'impure', source: `function f(xs: number[]) { return xs.toSorted(() => Math.random())[0] ?? 0 }`},
+  {label: 'callback this mutation reaches the this argument', kind: 'impure', source: `function f(xs: number[], box: {n: number}) { xs.map(function (this: {n: number}, value) { this.n = value; return value }, box); return 1 }`},
   {label: 'block local does not hide module read', kind: 'impure', source: `let state = 1\nfunction f(flag: boolean) { const before = state; if (flag) { const state = 2; return state } return before }`},
+  {label: 'reads readonly static primitive', kind: 'impure', source: `class Limits { static readonly max = 100 }\nfunction f(x: number) { return Math.min(x, Limits.max) }`},
 
   // --- unknown ---
   {label: 'shadowed Math is not the platform global', kind: 'unknown', source: `function f(Math: {min(): number}) { return Math.min() }`},
   {label: 'user map method is not Array map', kind: 'unknown', source: `function f(service: {map(): number}) { return service.map() }`},
+  {label: 'calls a source static method', kind: 'unknown', source: `class Limits { static clamp(x: number) { return Math.min(x, 100) } }\nfunction f(x: number) { return Limits.clamp(x) }`},
+  {label: 'constructs a source class with no effects', kind: 'unknown', source: `class Box {}\nfunction f() { return new Box() }`},
+  {label: 'source constructor effects stay unknown at the call boundary', kind: 'unknown', source: `let total = 0\nclass Counter { constructor() { total++ } }\nfunction f() { return new Counter() }`},
+  {label: 'calls a source instance method', kind: 'unknown', source: `class Counter { value() { return 1 } }\nfunction f(counter: Counter) { return counter.value() }`},
+  {label: 'runtime override keeps a source method unknown', kind: 'unknown', source: `class Base { value() { return 1 } }\nclass Child extends Base { override value() { return Math.random() } }\nfunction f(counter: Base) { return counter.value() }`},
+  {label: 'same-named source method stays unknown', kind: 'unknown', source: `class Pure { value() { return 1 } }\nclass Impure { value() { return Math.random() } }\nfunction f(counter: Pure) { return counter.value() }`},
+  {label: 'source getter effects stay unknown at the call boundary', kind: 'unknown', source: `let total = 0\nclass Counter { get value() { return total++ } }\nfunction f(counter: Counter) { return counter.value }`},
+  {label: 'source setter effects stay unknown at the call boundary', kind: 'unknown', source: `let total = 0\nclass Counter { set value(next: number) { total = next } }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
+  {label: 'empty source setter stays unknown', kind: 'unknown', source: `class Counter { set value(next: number) {} }\nfunction f(counter: Counter) { counter.value = 1; return 1 }`},
+  {label: 'computed source getter stays unknown', kind: 'unknown', source: `class Counter { get value() { return 1 } }\nfunction f(counter: Counter) { return counter['value'] }`},
+  {label: 'Array.from iterator behavior stays unknown', kind: 'unknown', source: `function f(xs: number[]) { return Array.from(xs).length }`},
+  {label: 'JSON getter behavior stays unknown', kind: 'unknown', source: `function f(value: {x: number}) { return JSON.stringify(value).length }`},
+  {label: 'Object.values getter behavior stays unknown', kind: 'unknown', source: `function f(value: {x: number}) { return Object.values(value).length }`},
+  {label: 'Date.parse environment behavior stays unknown', kind: 'unknown', source: `function f(value: string) { return Date.parse(value) }`},
+  {label: 'sort without a comparator stays unknown', kind: 'unknown', source: `function f(xs: number[]) { return xs.toSorted()[0] ?? 0 }`},
   {label: 'unavailable constructor is unknown', kind: 'unknown', source: `declare class Counter {}\nfunction f() { return new Counter() }`},
   {label: 'calls an unresolved function', kind: 'unknown', source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
   {label: 'map with an unresolvable callback parameter', kind: 'unknown', source: `function f(xs: number[], cb: (n: number) => number) { return xs.map(cb)[0] ?? 0 }`},
@@ -148,6 +164,8 @@ const impureClaim = importedPurity.checks.find(check => check.functionName === '
 const namespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespacePure' && check.text === 'pure')
 const impureNamespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespaceImpure' && check.text === 'pure')
 const defaultClaim = importedPurity.checks.find(check => check.functionName === 'importedDefaultAliasPure' && check.text === 'pure')
+const primitiveClaim = importedPurity.checks.find(check => check.functionName === 'importedPrimitivePure' && check.text === 'pure')
+const namespacePrimitiveClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespacePrimitivePure' && check.text === 'pure')
 const pureContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedAlias' && check.text === 'return <= identity()')
 const impureContract = importedPurity.checks.find(check => check.functionName === 'contractRejectsImportedAlias' && check.text === 'return <= noisy()')
 const callbackContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedCallbackAfterMap' && check.text === 'return <= importedPureCallback(0)')
@@ -157,6 +175,8 @@ if (
   || namespaceClaim?.status !== 'pass'
   || impureNamespaceClaim?.status !== 'fail'
   || defaultClaim?.status !== 'pass'
+  || primitiveClaim?.status !== 'pass'
+  || namespacePrimitiveClaim?.status !== 'pass'
   || pureContract?.status !== 'pass'
   || impureContract?.status !== 'unknown'
   || callbackContract?.status !== 'pass'

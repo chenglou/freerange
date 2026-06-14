@@ -99,7 +99,13 @@ Block comments need to be above the function, type, and loop scope.
 At top level, attached value/field comments and supported loop blocks work the same way as inside a function. Contracts inside a nested callback or other nested function are rejected instead of being silently skipped.
 `items[]` means every item in an array. Use `$i` on left and right side of an operator to express matching positions across arrays. `$i + 1` works the way you think. Currently `[$i + 2]` and `[$i - 1]` aren't supported.
 For operators, we support `==` `<` `>` `<=` `>=` but not yet `!=`
-**You can use any regular TS functions in the `@fit` contract**! As long as Freerange sees that the functions are pure: they don't mutate inputs or outside state, read mutable outside state, depend on I/O, the clock, or randomness, or call code Freerange can't inspect. Local allocation and mutation are fine. You don't need to annotate a function as `pure` to use it in a contract; Freerange infers this. The optional `pure` line records your intent so a later refactor is checked too, including every function called by the body. Function identity follows TypeScript bindings through imports, renames, and re-exports; a function-scoped callback or arrow that Freerange cannot inspect is unknown instead of borrowing the purity of a same-named top-level function.
+**You can use source-backed free functions in an `@fit` contract** when Freerange proves that they are pure: they don't mutate inputs or outside state, read mutable outside state, depend on I/O, the clock, or randomness, or call code Freerange can't inspect. Local allocation and mutation are fine. You don't need to annotate a function as `pure` to use it in a contract; Freerange infers this. The optional `pure` line records your intent so a later refactor is checked too, including every function called by the body. Function identity follows TypeScript bindings through imports, renames, and re-exports.
+
+Purity uses one effect description for direct calls, imported calls, callbacks, contract helper calls, branch rechecking, and loop bounds. Supported platform calls use the same table, including which argument is a callback, what each callback parameter can reach, whether a `thisArg` can be changed, and whether an argument is retained. If Freerange cannot describe the call this way, it reports unknown instead of guessing.
+
+Class methods and getters may have their own `@fit` contracts, so their bodies are still checked. Calling a class member from another checked function is unknown, even when its source is visible, because a subclass or runtime assignment can replace that member. User constructors are unknown too: construction can run base constructors and field initializers that are not represented by one visible constructor body. A function-scoped `const callback = ...` is also unknown when Freerange cannot resolve that function value. Use an inline callback or a source-backed top-level/imported free function when the operation supports callbacks.
+
+Known platform calls are intentionally narrow. For example, `array.map`, `array.filter`, and `array.sort(compare)` have written callback and mutation rules. `Array.from`, `JSON.stringify`, `Object.values`, `Date.parse`, and `array.sort()` without a comparator are unknown because they can hide iteration, property reads, conversion, or default ordering behavior that Freerange does not model. Module `const` primitives are stable; module objects and arrays are mutable outside state and are not read as exact values.
 `pure` belongs only in the `@fit` block above a function. Putting it on a loop is rejected because it describes the whole function's behavior, not a value to prove at one program point. If a called function has no available body, Freerange reports the purity claim as unknown instead of guessing.
 An `@fit` line that's just a pure TS expression that returns a boolean, is checked by Freerange to be true, like `hasPositiveArea` and `nondecreasing` above (`nondecreasing` is a helper that comes with Freerange).
 
@@ -234,7 +240,7 @@ Freerange currently keeps up to 8 reachable branch states from code. If code nee
 
 #### Loops
 
-Freerange tracks your loop and the consequences of each variable that the loop body affect. **TODO**: there's something about 32 ifs limit here. Document.
+Freerange supports `for (const item of items)` and indexed loops in the form `for (let i = 0; i < limit; i++)`. The iteration bound must be safe to read again, and the body cannot change a value used by that bound. Other `for` shapes, `while`, and `do` loops are reported as unsupported. Inside a supported loop, Freerange tracks the values the body changes and keeps only facts that hold across every analyzed path.
 
 ## Glossary
 
@@ -311,6 +317,6 @@ array.at(-k) // k must be an inline positive integer; proves length >= k, then r
 array.map((item, index, array) => value) // returns one output item per input item
 array.filter((item, index, array) => keep) // returns an order-preserving subset
 array.reverse() // keeps length and item ranges, but drops row-order facts
-array.sort(compare) // keeps length and item ranges, but drops row-order facts
+array.sort(compare) // comparator required; keeps length and item ranges, but drops row-order facts
 array.splice(start, deleteCount, ...items) // mutates the array; Freerange makes it unknown
 ```
