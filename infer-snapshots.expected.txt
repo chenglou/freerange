@@ -26,7 +26,7 @@ return:
   return[] == rows[]
   return[]: 0..2960
   return follows items by index
-  nondecreasing(return.)
+  nondecreasing(return)
   spaced(return, step)
   return[$i + 1] == return[$i] + step
 locals:
@@ -34,7 +34,7 @@ locals:
   rows.length: int 0..50
   rows[]: 0..2960
   rows follows items by index
-  nondecreasing(rows.)
+  nondecreasing(rows)
   spaced(rows, step)
   rows[$i + 1] == rows[$i] + step
   cursor: 0..3000
@@ -75,11 +75,7 @@ return:
   return.rows follows items by index
   nondecreasing(return.rows.y)
   spaced(return.rows, gap)
-  return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + gap
-  lastEnd(return.rows) == (cursor - gap)
-  lastEnd(return.rows): -10..3500
-  extentEnd(return.rows, y) == extentEnd(rows, y)
-  extentEnd(return.rows, y): -10..3500
+  return.rows[$i + 1].y == return.rows[$i].y + (return.rows[$i].height + gap)
 locals:
   rows.length == items.length
   rows.length: int 1..50
@@ -89,12 +85,9 @@ locals:
   rows follows items by index
   nondecreasing(rows.y)
   spaced(rows, gap)
-  rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
-  lastEnd(rows) == (cursor - gap)
-  lastEnd(rows): -10..3500
-  extentEnd(rows, y): -10..3500
+  rows[$i + 1].y == rows[$i].y + (rows[$i].height + gap)
   cursor: 0..3500
-loop 475: for (const item of items)
+loop 474: for (const item of items)
   inferred:
     cursor: 0..3500
     rows.length == items.length
@@ -105,16 +98,12 @@ loop 475: for (const item of items)
     rows follows items by index
     nondecreasing(rows.y)
     spaced(rows, gap)
-    rows[$i + 1].y == rows[$i].y + rows[$i].height + gap
-    lastEnd(rows) == (cursor - gap)
-    lastEnd(rows): -10..3500
-    extentEnd(rows, y): -10..3500
+    rows[$i + 1].y == rows[$i].y + (rows[$i].height + gap)
   checked:
     rows.length == items.length
     rows[].height: 0..40
     nondecreasing(rows.y)
     spaced(rows, gap)
-    lastEnd(rows) == cursor - gap
   assumptions:
     given items[].height: 0..40
 ../vibescript/demos/photo-gallery/layout.ts:getGridLayout

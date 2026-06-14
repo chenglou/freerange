@@ -176,10 +176,11 @@ function addFactsFromValue(inventory: FactInventory, path: string, value: Value)
       }, {kind: 'loop-summary'}, publicFitText(path))
     }
     for (const prop of nondecreasingPropsFromRelations(value.summary.relations)) {
+      const target = prop.length === 0 ? path : `${path}.${prop}`
       inventory.add({
         kind: 'sequence',
         source: 'sequence',
-        text: publicFitText(`nondecreasing(${path}.${prop})`),
+        text: publicFitText(`nondecreasing(${target})`),
         fact: {kind: 'nondecreasing', path, prop},
       }, {kind: 'loop-summary'}, publicFitText(path))
     }

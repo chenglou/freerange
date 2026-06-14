@@ -34,7 +34,10 @@ export type ScalarUpdateTerm =
 export type ScalarUpdate = {
   targetName: string
   terms: ScalarUpdateTerm[]
-  node: ts.Expression
+  operation:
+    | {kind: 'increment'; amount: number}
+    | {kind: 'compound'; op: '+' | '-'; expression: ts.Expression}
+    | {kind: 'assignment'; expression: ts.Expression}
 }
 
 // Recognizes every expression whose effect is "add a target-free amount to a scalar local":
@@ -47,7 +50,8 @@ export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpd
     if (current.operator !== ts.SyntaxKind.PlusPlusToken && current.operator !== ts.SyntaxKind.MinusMinusToken) return null
     const targetName = identifierTargetName(current.operand)
     if (targetName == null) return null
-    return {targetName, terms: [{constant: current.operator === ts.SyntaxKind.PlusPlusToken ? 1 : -1}], node: current}
+    const amount = current.operator === ts.SyntaxKind.PlusPlusToken ? 1 : -1
+    return {targetName, terms: [{constant: amount}], operation: {kind: 'increment', amount}}
   }
   if (!ts.isBinaryExpression(current)) return null
   const targetName = identifierTargetName(current.left)
@@ -57,7 +61,11 @@ export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpd
     case ts.SyntaxKind.MinusEqualsToken: {
       if (referencesIdentifier(current.right, targetName)) return null
       const negate = current.operatorToken.kind === ts.SyntaxKind.MinusEqualsToken
-      return {targetName, terms: [{expression: current.right, negate}], node: current.right}
+      return {
+        targetName,
+        terms: [{expression: current.right, negate}],
+        operation: {kind: 'compound', op: negate ? '-' : '+', expression: current.right},
+      }
     }
     case ts.SyntaxKind.EqualsToken: {
       const leaves: {expression: ts.Expression; negate: boolean}[] = []
@@ -66,7 +74,7 @@ export function scalarUpdateFromExpression(expression: ts.Expression): ScalarUpd
       if (targetLeaves.length !== 1 || targetLeaves[0]!.negate) return null
       const terms = leaves.filter(leaf => leaf !== targetLeaves[0])
       if (terms.some(term => referencesIdentifier(term.expression, targetName))) return null
-      return {targetName, terms, node: current.right}
+      return {targetName, terms, operation: {kind: 'assignment', expression: current.right}}
     }
     default:
       return null

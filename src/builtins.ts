@@ -236,7 +236,13 @@ function spacedFailureReason(text: string, rows: ArrayValue, gapExpr: string) {
     const advance = publicFitText(spacing.advanceExpr)
     const size = publicFitText(spacing.heightExpr)
     const gap = publicFitText(spacing.gapExpr)
-    known.push(`loop proved: next.${advance} = previous.${size} + ${gap}`)
+    if (advance.length === 0) {
+      known.push(`loop proved: next = previous + ${gap}`)
+    } else if (size === rowAxes.find(axis => axis.position === spacing.advanceExpr)?.end) {
+      known.push(`loop proved: next.${advance} = previous.${size} + ${gap}`)
+    } else {
+      known.push(`loop proved: next.${advance} = previous.${advance} + previous.${size} + ${gap}`)
+    }
   }
   known.push(`sequence facts: ${formatArraySummary(rows)}`)
   lines.push(`known:\n${known.map(line => `  ${line}`).join('\n')}`)

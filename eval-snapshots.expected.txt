@@ -68,14 +68,14 @@ infer matrix abstract for-of cursor values
   return return.rows[] == rows[]
   return return.rows[]: 0..2960
   return return.rows follows items by index
-  return nondecreasing(return.rows.)
+  return nondecreasing(return.rows)
   return spaced(return.rows, step)
   return return.rows[$i + 1] == return.rows[$i] + step
   local rows.length == items.length
   local rows.length: int 0..50
   local rows[]: 0..2960
   local rows follows items by index
-  local nondecreasing(rows.)
+  local nondecreasing(rows)
   local spaced(rows, step)
   local rows[$i + 1] == rows[$i] + step
   local y: 0..3000
@@ -148,14 +148,14 @@ infer matrix indexed array cursor values
   return return.rows[] == rows[]
   return return.rows[]: 0..2960
   return return.rows follows items by index
-  return nondecreasing(return.rows.)
+  return nondecreasing(return.rows)
   return spaced(return.rows, step)
   return return.rows[$i + 1] == return.rows[$i] + step
   local rows.length == items.length
   local rows.length: int 0..50
   local rows[]: 0..2960
   local rows follows items by index
-  local nondecreasing(rows.)
+  local nondecreasing(rows)
   local spaced(rows, step)
   local rows[$i + 1] == rows[$i] + step
   local y: 0..3000

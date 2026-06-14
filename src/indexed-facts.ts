@@ -9,12 +9,14 @@ import {
   type NumberValue,
   type ObjectValue,
   type SequenceExpression,
+  type SequenceAddition,
   type SequenceRelation,
   type SequenceTerm,
   type Value,
 } from './domain.ts'
 import {expressionKeyFromText, linearConstant, type LinearExpr} from './linear.ts'
 import {comparisonConstraint, proveComparison} from './proof.ts'
+import {sequenceAdditionText} from './sequence-relation.ts'
 
 export function adjacentElementAccessFacts(
   target: ArrayValue,
@@ -52,16 +54,18 @@ function instantiateAdjacentFacts(nextAccessExpr: string, previousAccessExpr: st
   const facts: LinearConstraint[] = []
   for (const relation of relations) {
     if (relation.left.item !== 'next') continue
-    // A rounded == relation states the loop's computation in the loop's own
-    // grouping; restated over this text's grouping it can be off by an ulp,
-    // so only its non-strict reading survives as a fact.
-    if (relation.rounded === true && relation.op === '==') continue
     const leftExpr = sequenceTermExpr(nextAccessExpr, previousAccessExpr, relation.left)
-    const rightExpr = sequenceExpressionExpr(nextAccessExpr, previousAccessExpr, relation.right)
+    const rightExpr = relation.kind === 'adjacent-comparison'
+      ? sequenceExpressionExpr(nextAccessExpr, previousAccessExpr, relation.right)
+      : sequenceAdditionExpr(nextAccessExpr, previousAccessExpr, relation.right)
     const fact = comparisonConstraint(unknownNumber(leftExpr), relation.op, unknownNumber(rightExpr), undefined, 'code')
     if (fact != null) facts.push(fact)
   }
   return facts
+}
+
+function sequenceAdditionExpr(accessExpr: string, previousAccessExpr: string, addition: SequenceAddition): string {
+  return sequenceAdditionText(addition, term => sequenceTermExpr(accessExpr, previousAccessExpr, term))
 }
 
 function neighborAccessExprs(sourceName: string, index: NumberValue, indexText: string, offset: -1 | 1): string[] {

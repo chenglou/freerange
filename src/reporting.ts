@@ -1,5 +1,11 @@
-import {publicFitText, type ComparisonOperator, type FitRange} from './parser.ts'
+import * as ts from 'typescript'
+import {parseExpression, publicFitText, type ComparisonOperator, type FitRange} from './parser.ts'
 import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} from './rational.ts'
+import type {SequenceRelation} from './domain-types.ts'
+import {
+  nondecreasingPropsFromRelations,
+  spacedShapesFromRelations,
+} from './sequence-facts.ts'
 
 export type ReportNumberValue = {
   min: number
@@ -30,18 +36,11 @@ export type ConstraintSource = 'function-given' | 'loop-given' | 'code' | 'branc
 
 export type ReportArrayValue = {
   summary: {
-    relations: ReportSequenceRelation[]
+    relations: SequenceRelation[]
     advances: {prop: string; value: ReportNumberValue}[]
     lastEnd: {value: ReportNumberValue} | null
     extentEnds: {emptyExpr: string; value: ReportNumberValue}[]
   } | null
-}
-
-type ReportSequenceRelation = {
-  kind: 'adjacent-comparison'
-  left: {item: 'previous' | 'next'; path: string[]}
-  op: ComparisonOperator
-  right: {terms: {item: 'previous' | 'next'; path: string[]}[]; addends: string[]}
 }
 
 export function comparisonFailureReason(
@@ -113,57 +112,12 @@ export function comparisonNeed(left: ReportNumberValue, op: ComparisonOperator, 
 export function formatArraySummary(value: ReportArrayValue) {
   if (value.summary == null) return 'no sequence facts'
   const lines = new Set<string>()
-  for (const prop of nondecreasingPropsFromReportRelations(value.summary.relations)) lines.add(`nondecreasing(.${prop})`)
-  for (const fact of spacedShapesFromReportRelations(value.summary.relations)) lines.add(`spaced(${publicFitText(fact.gapExpr)})`)
+  for (const prop of nondecreasingPropsFromRelations(value.summary.relations)) {
+    lines.add(prop.length === 0 ? 'nondecreasing(values)' : `nondecreasing(.${prop})`)
+  }
+  for (const fact of spacedShapesFromRelations(value.summary.relations)) lines.add(`spaced(${publicFitText(fact.gapExpr)})`)
   if (value.summary.lastEnd != null) lines.add(`lastEnd = ${formatRange(value.summary.lastEnd.value)}`)
   return lines.size === 0 ? 'no sequence facts' : [...lines].join(', ')
-}
-
-function nondecreasingPropsFromReportRelations(relations: ReportSequenceRelation[]): string[] {
-  const props = new Set<string>()
-  for (const relation of relations) {
-    if (relation.kind !== 'adjacent-comparison') continue
-    if (relation.op !== '>=' && relation.op !== '==') continue
-    if (relation.left.item !== 'next') continue
-    if (relation.right.addends.length > 0) continue
-    if (relation.right.terms.length !== 1) continue
-    const term = relation.right.terms[0]!
-    if (term.item !== 'previous') continue
-    if (!samePathParts(relation.left.path, term.path)) continue
-    props.add(relation.left.path.join('.'))
-  }
-  return [...props].sort()
-}
-
-function spacedShapesFromReportRelations(relations: ReportSequenceRelation[]) {
-  const shapes: {gapExpr: string; heightExpr: string; advanceExpr: string}[] = []
-  const seen = new Set<string>()
-  for (const relation of relations) {
-    if (relation.kind !== 'adjacent-comparison' || relation.op !== '==') continue
-    if (relation.left.item !== 'next') continue
-    const terms = relation.right.terms
-    if (terms.length === 0 || !terms.every(term => term.item === 'previous')) continue
-    if (terms.length > 2) continue
-    const advanceExpr = relation.left.path.join('.')
-    const gapExpr = relation.right.addends.length === 0 ? '0' : relation.right.addends.join(' + ')
-    let heightExpr: string
-    if (terms.length === 1) {
-      heightExpr = terms[0]!.path.join('.')
-    } else {
-      const other = terms.find(term => !samePathParts(term.path, relation.left.path))
-      if (other == null) continue
-      heightExpr = other.path.join('.')
-    }
-    const key = `${advanceExpr}|${gapExpr}`
-    if (seen.has(key)) continue
-    seen.add(key)
-    shapes.push({gapExpr, heightExpr, advanceExpr})
-  }
-  return shapes
-}
-
-function samePathParts(left: string[], right: string[]) {
-  return left.length === right.length && left.every((part, index) => part === right[index])
 }
 
 export function formatRange(value: ReportNumberValue) {
@@ -287,8 +241,22 @@ function formatLinearTerm(coefficient: Rational, name: string, first: boolean) {
   const sign = rationalIsNegative(coefficient) ? '-' : '+'
   // Display rounds; proofs never do.
   const amount = Math.abs(rationalToNumber(coefficient))
-  const body = name.length === 0 ? formatNumber(amount) : amount === 1 ? name : `${formatNumber(amount)} * ${name}`
+  const formattedName = formattedLinearName(name)
+  const body = name.length === 0 ? formatNumber(amount) : amount === 1 ? formattedName : `${formatNumber(amount)} * ${formattedName}`
   return first ? (sign === '-' ? `-${body}` : body) : `${sign} ${body}`
+}
+
+function formattedLinearName(name: string): string {
+  const text = publicFitText(name)
+  if (name.length === 0) return text
+  try {
+    const expression = parseExpression(name)
+    return ts.isBinaryExpression(expression) || ts.isConditionalExpression(expression)
+      ? `(${text})`
+      : text
+  } catch {
+    return text
+  }
 }
 
 export function formatNumber(value: number) {

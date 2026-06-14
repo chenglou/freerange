@@ -823,7 +823,7 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
         prelude: [
           checkedConst(`${id}_rows`, 'readonly unknown[]', lowerRawExpressionText(rows.getText(), options)),
           checkedConst(`${id}_gap`, 'number', lowerRawExpressionText(gap.getText(), options)),
-          checkedConst(`${id}_axis`, rowAxisUnionTypeText(), `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
+          checkedConst(`${id}_element`, `number | ${rowAxisUnionTypeText()}`, `${lowerRawExpressionText(rows.getText(), options)}[0]!`),
         ],
       }
     }

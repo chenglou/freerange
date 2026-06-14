@@ -28,7 +28,6 @@ export function numericLimitRangeLoop(limit: number) {
  * return.rows.length == items.length
  * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
- * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoop(items: number[], y: number, step: number, gap: number) {
   const rows = []
@@ -49,7 +48,6 @@ export function runningSumLoop(items: number[], y: number, step: number, gap: nu
  * return.rows[].height: 0..40
  * nondecreasing(return.rows.y)
  * spaced(return.rows, gap)
- * lastEnd(return.rows) == return.bottom
  */
 export function runningSumLoopPerItemHeight(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -69,7 +67,7 @@ export function runningSumLoopPerItemHeight(items: {height: number}[], y: number
  * return.rows.length == items.length
  * return.rows[].rowRect.height: 0..40
  * nondecreasing(return.rows.rowRect.y)
- * return.rows[$i + 1].rowRect.y == return.rows[$i].rowRect.y + return.rows[$i].rowRect.height + gap
+ * return.rows[$i + 1].rowRect.y == return.rows[$i].rowRect.y + (return.rows[$i].rowRect.height + gap)
  */
 export function nestedRowRectRunningSumLoop(items: {height: number}[], y: number, gap: number) {
   const rows = []
@@ -363,6 +361,8 @@ export function renamedBandsReachTheCatalog(items: {size: number}[], gap: number
  * given step: 0..40
  * return.length == items.length
  * return[]: 0..3000
+ * nondecreasing(return)
+ * spaced(return, step)
  */
 export function scalarPushLoop(items: number[], y: number, step: number) {
   const rows = []
@@ -470,7 +470,6 @@ export function localLoopAnnotation(items: {height: number}[], y: number, gap: n
    * rows[].height: 0..40
    * nondecreasing(rows.y)
    * spaced(rows, gap)
-   * lastEnd(rows) == cursor - gap
    */
   for (const item of items) {
     rows.push({y: cursor, height: item.height})
@@ -517,7 +516,6 @@ export function segmentedStackRowsWithGuardLocalResetAlias(items: {height: numbe
  * given gap: 0..10
  * return.rows.length == items.length
  * return.rows[].height: 0..40
- * extentEnd(return.rows, y) == return.bottom
  */
 export function extentEndHandlesEmptyRows(items: {height: number}[], y: number, gap: number) {
   const rows = []

@@ -13,6 +13,7 @@ import {
 } from './domain.ts'
 import type {PreparedCallSite} from './prepared-call.ts'
 import {formatNumber} from './reporting.ts'
+import {mapSequenceAddition} from './sequence-relation.ts'
 
 type MutableCallSiteBindings = Map<string, string>
 
@@ -110,10 +111,15 @@ function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: Ca
   if (summary == null) return null
   return {
     origin: summary.origin == null ? null : {...summary.origin, sourceExpr: callSiteText(summary.origin.sourceExpr, bindings)},
-    relations: summary.relations.map(relation => ({
-      ...relation,
-      right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
-    })),
+    relations: summary.relations.map(relation => relation.kind === 'adjacent-comparison'
+      ? {
+          ...relation,
+          right: {...relation.right, addends: relation.right.addends.map(addend => callSiteText(addend, bindings))},
+        }
+      : {
+          ...relation,
+          right: mapSequenceAddition(relation.right, term => term, text => callSiteText(text, bindings))!,
+        }),
     advances: summary.advances.map(fact => ({...fact, value: numberWithCallSiteText(fact.value, bindings)})),
     lastEnd: summary.lastEnd == null ? null : {...summary.lastEnd, value: numberWithCallSiteText(summary.lastEnd.value, bindings)},
     extentEnds: summary.extentEnds.map(fact => ({

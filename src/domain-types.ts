@@ -130,13 +130,13 @@ export type SequenceRelation = {
   left: SequenceTerm
   op: ComparisonOperator
   right: SequenceExpression
-  // The relation states the loop's own computation (the addends name the
-  // amounts the code added, in whatever grouping it used), not a
-  // real-arithmetic identity: rounding separates the two by ulps, so no
-  // consumer may turn a rounded relation back into algebra. Sequence builtins
-  // like spaced read it as provenance; an exact relation (integer data) keeps
-  // the full identity.
-  rounded?: true
+} | {
+  kind: 'adjacent-addition'
+  left: SequenceTerm
+  op: '=='
+  // The exact binary addition tree the source evaluated. Immediate children
+  // may commute, but nesting never changes.
+  right: SequenceAddition
 }
 
 export type SequenceTerm = {
@@ -148,6 +148,11 @@ export type SequenceExpression = {
   terms: SequenceTerm[]
   addends: string[]
 }
+
+export type SequenceAddition =
+  | {kind: 'term'; term: SequenceTerm}
+  | {kind: 'invariant'; text: string}
+  | {kind: 'add'; left: SequenceAddition; right: SequenceAddition}
 
 export type UnknownValue = {
   kind: 'unknown'

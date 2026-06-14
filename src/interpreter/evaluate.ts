@@ -14,6 +14,7 @@ import {
 import {
   emptyArraySummary,
   filterOrigin,
+  isDefinitelyEmptyArray,
   mapOrigin,
 } from '../array-summary.ts'
 import {
@@ -92,6 +93,7 @@ import {
   valueFromTypeNode,
 } from '../shapes.ts'
 import {localizeContainerLiteralValue, localizeValue} from '../value-localize.ts'
+import {mapSequenceAddition} from '../sequence-relation.ts'
 import {
   childFrame,
   deriveFrame,
@@ -2539,7 +2541,10 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
   const nextLength = current.elements == null
     ? numberValue(current.length.min + values.length, current.length.max + values.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`)
     : numberValue(elements.length, elements.length, 0, `${current.expr ?? target.expression.getText(frame.program.sourceFile)}.length`, linearConstant(elements.length))
-  if (loop?.mode === 'symbolic' && path.segments.length === 0) {
+  const summary = loop == null || path.segments.length !== 0
+    ? null
+    : loopPushSummary(current, path.root, loop, frame)
+  if (loop != null && path.segments.length === 0) {
     loop.appends.push({
       arrayName: path.root,
       element: values[0] ?? null,
@@ -2551,7 +2556,7 @@ function evaluatePushCall(expression: ts.CallExpression, target: ts.PropertyAcce
     length: symbolicLength ?? nextLength,
     elements: loop?.mode === 'symbolic' ? null : elements,
     element,
-    summary: mergeArraySummary(current.summary, currentLoopPushSummary(frame)),
+    summary,
   }
   writeMutationPath(path, next, frame)
   return next.length
@@ -2566,10 +2571,12 @@ function currentLoop(frame: InterpreterFrame) {
   return frame.loopStack.at(-1) ?? null
 }
 
-function currentLoopPushSummary(frame: InterpreterFrame) {
-  const loop = currentLoop(frame)
-  if (loop == null) return null
-  const origin = frame.conditionalDepth > 0
+function loopPushSummary(current: ArrayValue, arrayName: string, loop: LoopFrame, frame: InterpreterFrame): ArraySummary | null {
+  const firstAppend = loop.appends.find(append => append.arrayName === arrayName)
+  const startedEmpty = isDefinitelyEmptyArray(firstAppend?.base ?? current)
+  if (!startedEmpty || (firstAppend != null && current.summary?.origin == null)) return null
+  const filtered = frame.conditionalDepth > 0 || current.summary?.origin?.kind === 'subsequence'
+  const origin = filtered
     ? filterOrigin(loop.source, loop.sourceExpr)
     : mapOrigin(loop.source, loop.sourceExpr)
   return emptyArraySummary(origin)
@@ -2721,16 +2728,25 @@ function projectSummaryThroughRename(summary: ArraySummary | null, callbackFn: F
   const projected: ArraySummary = {relations: [], advances: [], lastEnd: null, extentEnds: []}
   for (const relation of summary.relations) {
     const left = renameOutput(relation.left.path)
-    const terms = relation.right.terms.map(term => {
+    if (left == null) continue
+    if (relation.kind === 'adjacent-comparison') {
+      const terms = relation.right.terms.map(term => {
+        const path = renameOutput(term.path)
+        return path == null ? null : {...term, path}
+      })
+      if (terms.some(term => term == null)) continue
+      projected.relations.push({
+        ...relation,
+        left: {...relation.left, path: left},
+        right: {...relation.right, terms: terms as typeof relation.right.terms},
+      })
+      continue
+    }
+    const right = mapSequenceAddition(relation.right, term => {
       const path = renameOutput(term.path)
       return path == null ? null : {...term, path}
     })
-    if (left == null || terms.some(term => term == null)) continue
-    projected.relations.push({
-      ...relation,
-      left: {...relation.left, path: left},
-      right: {...relation.right, terms: terms as typeof relation.right.terms},
-    })
+    if (right != null) projected.relations.push({...relation, left: {...relation.left, path: left}, right})
   }
   for (const advance of summary.advances) {
     const path = renameOutput(advance.prop.split('.').filter(part => part.length > 0))

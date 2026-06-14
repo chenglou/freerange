@@ -3,12 +3,22 @@ import {
   numberValue,
   type ArrayValue,
   type NumberValue,
+  type SequenceAddition,
   type SequenceExpression,
   type SequenceRelation,
   type SequenceTerm,
 } from './domain.ts'
 import {linearConstant, sameExpressionText, sameLinear} from './linear.ts'
 import {type ComparisonOperator} from './parser.ts'
+import {
+  samePath,
+  sameSequenceAddition,
+  sameSequenceExpression,
+  sameSequenceTerm,
+  sequenceAdditionInvariants,
+  sequenceAdditionTerms,
+  sequenceAdditionText,
+} from './sequence-relation.ts'
 
 // Resolves an addend's text to its abstract value, so written gaps and loop
 // residues compare by value: a claim's `boxesGapY` matches a relation's `8`
@@ -17,14 +27,15 @@ export type AddendResolver = (text: string) => NumberValue | null
 
 export type SpacedShape = {gapExpr: string; heightExpr: string; advanceExpr: string}
 
-// The two field vocabularies the row catalog accepts. Other namings reach the
-// catalog by mapping into one of these (e.g. rows.map(row => ({top: row.y,
-// height: row.size}))).
+// The field vocabularies the row catalog accepts. Other names reach the
+// catalog by mapping into one of these.
 export type RowAxis = {position: string; size: string; end: string}
 
 export const rowAxes: RowAxis[] = [
   {position: 'y', size: 'height', end: 'bottom'},
   {position: 'x', size: 'width', end: 'right'},
+  {position: 'top', size: 'height', end: 'bottom'},
+  {position: 'start', size: 'size', end: 'end'},
 ]
 
 export function rowAxisUnionTypeText(): string {
@@ -72,35 +83,49 @@ export function spacedShapesFromRelations(relations: SequenceRelation[]): Spaced
 }
 
 function spacedShapeFromRelation(relation: SequenceRelation): SpacedShape | null {
-  if (relation.kind !== 'adjacent-comparison') return null
   if (relation.op !== '==') return null
   if (relation.left.item !== 'next') return null
-  const terms = relation.right.terms
+  const terms = relation.kind === 'adjacent-comparison'
+    ? relation.right.terms
+    : sequenceAdditionTerms(relation.right)
   if (terms.length === 0 || !terms.every(term => term.item === 'previous')) return null
-  if (terms.length === 1) {
-    const heightPath = terms[0]!.path
-    const heightExpr = heightPath.join('.')
-    const gapExpr = relation.right.addends.length === 0 ? '0' : relation.right.addends.join(' + ')
-    const advanceExpr = relation.left.path.join('.')
-    return {gapExpr, heightExpr, advanceExpr}
+  const addends = relation.kind === 'adjacent-comparison'
+    ? relation.right.addends
+    : sequenceAdditionInvariants(relation.right)
+  if (addends.length > 1) return null
+  const gapExpr = addends[0] ?? '0'
+  if (relation.left.path.length === 0
+    && terms.length === 1
+    && terms[0]!.path.length === 0) {
+    return {gapExpr, heightExpr: '', advanceExpr: ''}
   }
-  if (terms.length === 2) {
-    const match = terms.find(term => samePath(term.path, relation.left.path))
-    const other = terms.find(term => !samePath(term.path, relation.left.path))
-    if (match == null || other == null) return null
-    const heightExpr = other.path.join('.')
-    const gapExpr = relation.right.addends.length === 0 ? '0' : relation.right.addends.join(' + ')
-    const advanceExpr = relation.left.path.join('.')
-    return {gapExpr, heightExpr, advanceExpr}
+  for (const axis of rowAxes) {
+    if (!samePath(relation.left.path, [axis.position])) continue
+    if (terms.length === 1 && samePath(terms[0]!.path, [axis.end])) {
+      return {gapExpr, heightExpr: axis.end, advanceExpr: axis.position}
+    }
+    if (terms.length === 2
+      && terms.some(term => samePath(term.path, [axis.position]))
+      && terms.some(term => samePath(term.path, [axis.size]))) {
+      return {gapExpr, heightExpr: axis.size, advanceExpr: axis.position}
+    }
   }
   return null
 }
 
-export type AdjacentComparison = {
-  left: SequenceTerm
-  op: ComparisonOperator
-  right: SequenceExpression
-}
+export type AdjacentComparison =
+  | {
+      kind: 'adjacent-comparison'
+      left: SequenceTerm
+      op: ComparisonOperator
+      right: SequenceExpression
+    }
+  | {
+      kind: 'adjacent-addition'
+      left: SequenceTerm
+      op: ComparisonOperator
+      right: SequenceAddition
+    }
 
 export function proveAdjacentComparison(array: ArrayValue, target: AdjacentComparison, resolve: AddendResolver | null = null) {
   return array.summary?.relations.some(relation => relationImplies(relation, target, resolve)) === true
@@ -109,32 +134,20 @@ export function proveAdjacentComparison(array: ArrayValue, target: AdjacentCompa
 export function hasNondecreasingProp(array: ArrayValue, prop: string) {
   const path = propPath(prop)
   return proveAdjacentComparison(array, {
+    kind: 'adjacent-comparison',
     left: {item: 'next', path},
     op: '>=',
     right: {terms: [{item: 'previous', path}], addends: []},
   })
 }
 
-// spaced(rows, gap) means next.position == previous.position + previous.size
-// + gap over one of the axis vocabularies (or the equivalent previous.end
-// form), so only a relation over those fields discharges it. A numerically
-// true recurrence on some other field pair says nothing about row geometry.
+// Object rows use one of the axis vocabularies; scalar arrays use
+// next == previous + gap. A recurrence on any other object field pair says
+// nothing about row spacing.
 export function provedSpacing(array: ArrayValue, gapExpr: string, resolve: AddendResolver | null = null) {
   return array.summary?.relations.find(relation => {
-    if (relation.kind !== 'adjacent-comparison') return false
-    if (relation.op !== '==') return false
-    if (relation.left.item !== 'next') return false
-    if (!addendSumsEqual(relation.right.addends, gapExpr === '0' ? [] : [gapExpr], resolve)) return false
-    const terms = relation.right.terms
-    if (!terms.every(term => term.item === 'previous')) return false
-    return rowAxes.some(axis => {
-      if (!samePath(relation.left.path, [axis.position])) return false
-      if (terms.length === 1) return samePath(terms[0]!.path, [axis.end])
-      if (terms.length === 2) {
-        return terms.some(term => samePath(term.path, [axis.position])) && terms.some(term => samePath(term.path, [axis.size]))
-      }
-      return false
-    })
+    const shape = spacedShapeFromRelation(relation)
+    return shape != null && addendSumsEqual(shape.gapExpr === '0' ? [] : [shape.gapExpr], gapExpr === '0' ? [] : [gapExpr], resolve)
   }) ?? null
 }
 
@@ -143,12 +156,11 @@ export function isRowExtentShape(shape: SpacedShape): boolean {
   return rowAxes.some(axis => shape.advanceExpr === axis.position && (shape.heightExpr === axis.size || shape.heightExpr === axis.end))
 }
 
-function samePath(left: string[], right: string[]) {
-  return left.length === right.length && left.every((part, index) => part === right[index])
-}
-
 export function adjacentComparisonText(collection: string, comparison: AdjacentComparison) {
-  return `${sequenceTermText(collection, comparison.left)} ${comparison.op} ${sequenceExpressionText(collection, comparison.right)}`
+  const right = comparison.kind === 'adjacent-comparison'
+    ? sequenceExpressionText(collection, comparison.right)
+    : sequenceAdditionText(comparison.right, term => sequenceTermText(collection, term))
+  return `${sequenceTermText(collection, comparison.left)} ${comparison.op} ${right}`
 }
 
 export function sequenceRelationText(collection: string, relation: SequenceRelation) {
@@ -156,10 +168,14 @@ export function sequenceRelationText(collection: string, relation: SequenceRelat
 }
 
 function relationImplies(relation: SequenceRelation, target: AdjacentComparison, resolve: AddendResolver | null) {
-  return relation.kind === 'adjacent-comparison'
-    && sameSequenceTerm(relation.left, target.left)
-    && comparisonImplies(relation.op, target.op)
-    && sameSequenceExpression(relation.right, target.right, resolve)
+  if (relation.kind !== target.kind
+    || !sameSequenceTerm(relation.left, target.left)
+    || !comparisonImplies(relation.op, target.op)) return false
+  if (relation.kind === 'adjacent-comparison' && target.kind === 'adjacent-comparison') {
+    return sameAlgebraicSequenceExpression(relation.right, target.right, resolve)
+  }
+  return relation.kind === 'adjacent-addition' && target.kind === 'adjacent-addition'
+    && sameSequenceAddition(relation.right, target.right, (left, right) => invariantValuesEqual(left, right, resolve))
 }
 
 function comparisonImplies(known: ComparisonOperator, target: ComparisonOperator) {
@@ -168,18 +184,26 @@ function comparisonImplies(known: ComparisonOperator, target: ComparisonOperator
   return false
 }
 
-function sameSequenceExpression(left: SequenceExpression, right: SequenceExpression, resolve: AddendResolver | null) {
-  return sameSequenceTerms(left.terms, right.terms) && addendSumsEqual(left.addends, right.addends, resolve)
+function sameAlgebraicSequenceExpression(left: SequenceExpression, right: SequenceExpression, resolve: AddendResolver | null) {
+  return sameSequenceExpression(left, right) || (
+    sameSequenceTerms(left.terms, right.terms)
+    && addendSumsEqual(left.addends, right.addends, resolve)
+  )
 }
 
 function sameSequenceTerms(left: SequenceTerm[], right: SequenceTerm[]) {
-  return left.length === right.length && left.every((term, index) => sameSequenceTerm(term, right[index]!))
+  if (left.length !== right.length) return false
+  const unmatched = [...right]
+  for (const term of left) {
+    const index = unmatched.findIndex(candidate => sameSequenceTerm(term, candidate))
+    if (index < 0) return false
+    unmatched.splice(index, 1)
+  }
+  return true
 }
 
-function sameSequenceTerm(left: SequenceTerm, right: SequenceTerm) {
-  return left.item === right.item
-    && left.path.length === right.path.length
-    && left.path.every((part, index) => part === right.path[index])
+function invariantValuesEqual(left: string, right: string, resolve: AddendResolver | null) {
+  return sameExpressionText(left, right) || addendSumsEqual([left], [right], resolve)
 }
 
 function sameAddends(left: string[], right: string[]) {

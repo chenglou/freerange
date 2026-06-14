@@ -4,6 +4,7 @@ import {
   binaryNumberComputation,
   divideNumbers,
   joinValues,
+  mergeArraySummary,
   multiplyNumbers,
   numberValue,
   numberWithBounds,
@@ -11,6 +12,9 @@ import {
   sameComputationOperand,
   sameNumberComputation,
   subtractNumbers,
+  type ArraySummary,
+  type ArrayValue,
+  type SequenceRelation,
 } from '../../src/domain.ts'
 import {linearVariable} from '../../src/linear.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
@@ -188,6 +192,166 @@ if (
   process.exitCode = 1
 } else {
   console.log('domain: numeric computation identity and facts stay separate')
+}
+
+const exactSequenceRelation: SequenceRelation = {
+  kind: 'adjacent-comparison',
+  left: {item: 'next', path: ['y']},
+  op: '==',
+  right: {
+    terms: [
+      {item: 'previous', path: ['y']},
+      {item: 'previous', path: ['height']},
+    ],
+    addends: ['gap'],
+  },
+}
+const nondecreasingSequenceRelation: SequenceRelation = {
+  kind: 'adjacent-comparison',
+  left: {item: 'next', path: ['y']},
+  op: '>=',
+  right: {terms: [{item: 'previous', path: ['y']}], addends: []},
+}
+const equalYSequenceRelation: SequenceRelation = {
+  kind: 'adjacent-comparison',
+  left: {item: 'next', path: ['y']},
+  op: '==',
+  right: {terms: [{item: 'previous', path: ['y']}], addends: []},
+}
+const commutedExactSequenceRelation: SequenceRelation = {
+  ...exactSequenceRelation,
+  right: {
+    terms: [
+      {item: 'previous', path: ['height']},
+      {item: 'previous', path: ['y']},
+    ],
+    addends: ['gap'],
+  },
+}
+const operationalSequenceRelation: SequenceRelation = {
+  kind: 'adjacent-addition',
+  left: {item: 'next', path: ['y']},
+  op: '==',
+  right: {
+    kind: 'add',
+    left: {
+      kind: 'add',
+      left: {kind: 'term', term: {item: 'previous', path: ['y']}},
+      right: {kind: 'term', term: {item: 'previous', path: ['height']}},
+    },
+    right: {kind: 'invariant', text: 'gap'},
+  },
+}
+const summaryDeltaWide = numberValue(0, 10, null, 'delta', linearVariable('delta'))
+const summaryDeltaNarrow = numberValue(2, 4, null, 'otherDelta', linearVariable('otherDelta'))
+const summaryEnd = numberValue(0, 100, null, 'end', linearVariable('end'))
+const summaryOtherEnd = numberValue(20, 80, null, 'otherEnd', linearVariable('otherEnd'))
+const baseArraySummary: ArraySummary = {
+  relations: [exactSequenceRelation],
+  advances: [{prop: 'y', value: summaryDeltaWide}],
+  lastEnd: {value: summaryEnd, positionPath: ['y'], sizePath: ['height']},
+  extentEnds: [{emptyExpr: 'top', value: summaryEnd, positionPath: ['y'], sizePath: ['height']}],
+}
+function arrayWithSummary(summary: ArraySummary): ArrayValue {
+  return {
+    kind: 'array',
+    referenceIds: [],
+    layout: 'collection',
+    length: numberValue(0, 10, 0, 'rows.length', linearVariable('rows.length')),
+    elements: null,
+    element: null,
+    expr: 'rows',
+    summary,
+  }
+}
+const reorderedSummaryJoin = joinValues(
+  arrayWithSummary({...baseArraySummary, relations: [exactSequenceRelation, nondecreasingSequenceRelation]}),
+  arrayWithSummary({...baseArraySummary, relations: [nondecreasingSequenceRelation, exactSequenceRelation]}),
+)
+const mismatchedSummaryJoin = joinValues(
+  arrayWithSummary(baseArraySummary),
+  arrayWithSummary({...baseArraySummary, relations: [operationalSequenceRelation]}),
+)
+const reverseMismatchedSummaryJoin = joinValues(
+  arrayWithSummary({...baseArraySummary, relations: [operationalSequenceRelation]}),
+  arrayWithSummary(baseArraySummary),
+)
+const mismatchedEndSummaryJoin = joinValues(
+  arrayWithSummary(baseArraySummary),
+  arrayWithSummary({
+    ...baseArraySummary,
+    lastEnd: {value: summaryEnd, positionPath: ['x'], sizePath: ['width']},
+    extentEnds: [{emptyExpr: 'top', value: summaryEnd, positionPath: ['x'], sizePath: ['width']}],
+  }),
+)
+const joinedAdvanceSummary = joinValues(
+  arrayWithSummary(baseArraySummary),
+  arrayWithSummary({...baseArraySummary, advances: [{prop: 'y', value: summaryDeltaNarrow}]}),
+)
+const reverseJoinedAdvanceSummary = joinValues(
+  arrayWithSummary({...baseArraySummary, advances: [{prop: 'y', value: summaryDeltaNarrow}]}),
+  arrayWithSummary(baseArraySummary),
+)
+const sharedGuaranteeSummaryJoin = joinValues(
+  arrayWithSummary({...baseArraySummary, relations: [equalYSequenceRelation]}),
+  arrayWithSummary({...baseArraySummary, relations: [nondecreasingSequenceRelation]}),
+)
+const commutedRelationSummaryJoin = joinValues(
+  arrayWithSummary({...baseArraySummary, relations: [exactSequenceRelation]}),
+  arrayWithSummary({...baseArraySummary, relations: [commutedExactSequenceRelation]}),
+)
+const structuralEndSummaryJoin = joinValues(
+  arrayWithSummary(baseArraySummary),
+  arrayWithSummary({
+    ...baseArraySummary,
+    lastEnd: {...baseArraySummary.lastEnd!, value: summaryOtherEnd},
+    extentEnds: [{...baseArraySummary.extentEnds[0]!, value: summaryOtherEnd}],
+  }),
+)
+const definitelyEmptyArray: ArrayValue = {
+  ...arrayWithSummary(baseArraySummary),
+  length: numberValue(0, 0, 0, 'empty.length', linearVariable('empty.length')),
+  summary: null,
+}
+const emptyBranchSummaryJoin = joinValues(definitelyEmptyArray, arrayWithSummary(baseArraySummary))
+const incompatibleAccumulation = mergeArraySummary(baseArraySummary, {
+  ...baseArraySummary,
+  lastEnd: {value: summaryEnd, positionPath: ['x'], sizePath: ['width']},
+})
+if (
+  reorderedSummaryJoin.kind !== 'array'
+  || reorderedSummaryJoin.summary?.relations.length !== 2
+  || mismatchedSummaryJoin.kind !== 'array'
+  || mismatchedSummaryJoin.summary?.relations.length !== 0
+  || reverseMismatchedSummaryJoin.kind !== 'array'
+  || reverseMismatchedSummaryJoin.summary?.relations.length !== 0
+  || mismatchedEndSummaryJoin.kind !== 'array'
+  || mismatchedEndSummaryJoin.summary?.lastEnd != null
+  || mismatchedEndSummaryJoin.summary?.extentEnds.length !== 0
+  || joinedAdvanceSummary.kind !== 'array'
+  || joinedAdvanceSummary.summary?.advances[0]?.value.min !== 0
+  || joinedAdvanceSummary.summary.advances[0]?.value.max !== 10
+  || reverseJoinedAdvanceSummary.kind !== 'array'
+  || reverseJoinedAdvanceSummary.summary?.advances[0]?.value.min !== 0
+  || reverseJoinedAdvanceSummary.summary.advances[0]?.value.max !== 10
+  || sharedGuaranteeSummaryJoin.kind !== 'array'
+  || sharedGuaranteeSummaryJoin.summary?.relations[0]?.op !== '>='
+  || commutedRelationSummaryJoin.kind !== 'array'
+  || commutedRelationSummaryJoin.summary?.relations.length !== 1
+  || structuralEndSummaryJoin.kind !== 'array'
+  || structuralEndSummaryJoin.summary?.lastEnd?.value.min !== 0
+  || structuralEndSummaryJoin.summary.lastEnd.value.max !== 100
+  || structuralEndSummaryJoin.summary.extentEnds[0]?.value.min !== 0
+  || structuralEndSummaryJoin.summary.extentEnds[0]?.value.max !== 100
+  || emptyBranchSummaryJoin.kind !== 'array'
+  || emptyBranchSummaryJoin.summary?.relations.length !== 1
+  || emptyBranchSummaryJoin.summary.lastEnd != null
+  || incompatibleAccumulation?.lastEnd != null
+) {
+  console.error('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends')
+  process.exitCode = 1
+} else {
+  console.log('domain: array summaries distinguish accumulation from branch joins')
 }
 
 const computationIdentityChecks = verifyFitSource('computation-identity.ts', `
@@ -1185,6 +1349,264 @@ if (Bun.argv.includes('--update')) {
   }
 }
 
+const sequenceOperationChecks = verifyFitSource('sequence-operations.ts', `
+/** @fit
+ * given items.length: int 2..2
+ * given items[].height: 1
+ * given gap: 1
+ * spaced(return, gap)
+ * return[$i + 1].y == return[$i].y + (return[$i].height + gap)
+ */
+function rightGrouped(items: {height: number}[], gap: number) {
+  const rows = []
+  let y = 10000000000000000
+  for (const item of items) {
+    rows.push({y, height: item.height})
+    y += gap + item.height
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given items[].height: 1
+ * given gap: 1
+ * return[$i + 1].y == (return[$i].y + return[$i].height) + gap
+ * return[$i + 1].y == return[$i].y + (return[$i].height + gap)
+ */
+function leftGrouped(items: {height: number}[], gap: number) {
+  const rows = []
+  let y = 10000000000000000
+  for (const item of items) {
+    rows.push({y, height: item.height})
+    y = (y + item.height) + gap
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * spaced(return, gap)
+ */
+function nanCapable(items: {height: number}[], gap: number) {
+  const rows = []
+  let y = 0
+  for (const item of items) {
+    rows.push({y, height: item.height})
+    y += item.height + gap
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * nondecreasing(return.y)
+ * return[$i + 1].y == return[$i].y
+ */
+function nanStable(items: number[], y: number) {
+  const rows = []
+  for (const item of items) {
+    rows.push({y, item})
+    y += 0
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given step: 1
+ * spaced(return, step)
+ */
+function unrelatedField(items: number[], step: number) {
+  const rows = []
+  let counter = 0
+  for (const item of items) {
+    rows.push({y: 0, height: 1, counter, item})
+    counter += step
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * spaced(return, 1 + gap)
+ * return[$i + 1].y == return[$i].y + (return[$i].height + (1 + gap))
+ */
+function precomputedGap(items: {height: number}[], gap: number) {
+  const rows = []
+  const actualGap = 1 + gap
+  let y = 0
+  for (const item of items) {
+    rows.push({y, height: item.height})
+    y += item.height + actualGap
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * spaced(return, gap)
+ * noOverlap(return)
+ * return[$i + 1].y == return[$i].next
+ * return[$i + 1].y == return[$i].y + (return[$i].height + gap)
+ */
+function pushedComputedCursor(items: {height: number}[], gap: number) {
+  const rows = []
+  let cursor = 0
+  for (const item of items) {
+    const next = cursor + (item.height + gap)
+    rows.push({y: cursor, height: item.height, next})
+    cursor = next
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given items[].size: 0..40
+ * given gap: 0..10
+ * spaced(return, gap)
+ * noOverlap(return)
+ */
+function documentedStartAxis(items: {size: number}[], gap: number) {
+  const rows = []
+  let start = 0
+  for (const item of items) {
+    rows.push({start, size: item.size})
+    start += item.size + gap
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 2..2
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * spaced(return, gap)
+ * noOverlap(return)
+ */
+function documentedTopAxis(items: {height: number}[], gap: number) {
+  const rows = []
+  let top = 0
+  for (const item of items) {
+    rows.push({top, height: item.height})
+    top += item.height + gap
+  }
+  return rows
+}
+
+/** @fit
+ * given spaced(rows, gap)
+ * spaced(return, gap)
+ */
+function arbitraryPushBreaksSpacing(rows: {y: number; height: number}[], gap: number) {
+  rows.push({y: 0, height: 1})
+  return rows
+}
+
+/** @fit
+ * given first.length: int 1..2
+ * given second.length: int 1..2
+ * spaced(return, 0)
+ */
+function incompatibleSecondLoop(first: number[], second: number[]) {
+  const rows = []
+  let y = 0
+  for (const item of first) {
+    rows.push({y, height: 1, item})
+    y += 1
+  }
+  for (const item of second) {
+    rows.push({y: 100, height: 1, item})
+  }
+  return rows
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given y: 0..1000
+ * given gap: 0..10
+ * lastEnd(return.rows) == return.bottom
+ */
+function roundedLastEnd(items: {height: number}[], y: number, gap: number) {
+  const rows = []
+  let cursor = y
+  for (const item of items) {
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
+  }
+  return {rows, bottom: cursor - gap}
+}
+
+/** @fit
+ * given items.length: int 0..50
+ * given items[].height: 0..40
+ * given y: 0..1000
+ * given gap: 0..10
+ * extentEnd(return.rows, y) == return.bottom
+ */
+function roundedExtentEnd(items: {height: number}[], y: number, gap: number) {
+  const rows = []
+  let cursor = y
+  for (const item of items) {
+    rows.push({y: cursor, height: item.height})
+    cursor += item.height + gap
+  }
+  return {rows, bottom: rows.length === 0 ? y : cursor - gap}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..1
+ * return: -50..0
+ */
+function unaryGroupedUpdate(items: {height: number}[]) {
+  let total = 0
+  for (const item of items) {
+    total = total + (-item.height)
+  }
+  return total
+}
+`)
+const sequenceOperationStatus = (functionName: string, text: string) =>
+  sequenceOperationChecks.find(check => check.functionName === functionName && check.text === text)?.status
+if (
+  sequenceOperationStatus('rightGrouped', 'spaced(return, gap)') !== 'pass'
+  || sequenceOperationStatus('rightGrouped', 'return[$i + 1].y == return[$i].y + (return[$i].height + gap)') !== 'pass'
+  || sequenceOperationStatus('leftGrouped', 'return[$i + 1].y == (return[$i].y + return[$i].height) + gap') !== 'pass'
+  || sequenceOperationStatus('leftGrouped', 'return[$i + 1].y == return[$i].y + (return[$i].height + gap)') !== 'unknown'
+  || sequenceOperationStatus('nanCapable', 'spaced(return, gap)') !== 'unknown'
+  || sequenceOperationStatus('nanStable', 'nondecreasing(return.y)') !== 'unknown'
+  || sequenceOperationStatus('nanStable', 'return[$i + 1].y == return[$i].y') !== 'unknown'
+  || sequenceOperationStatus('unrelatedField', 'spaced(return, step)') !== 'unknown'
+  || sequenceOperationStatus('precomputedGap', 'spaced(return, 1 + gap)') !== 'pass'
+  || sequenceOperationStatus('precomputedGap', 'return[$i + 1].y == return[$i].y + (return[$i].height + (1 + gap))') !== 'pass'
+  || sequenceOperationStatus('pushedComputedCursor', 'spaced(return, gap)') !== 'pass'
+  || sequenceOperationStatus('pushedComputedCursor', 'noOverlap(return)') !== 'pass'
+  || sequenceOperationStatus('pushedComputedCursor', 'return[$i + 1].y == return[$i].next') !== 'pass'
+  || sequenceOperationStatus('pushedComputedCursor', 'return[$i + 1].y == return[$i].y + (return[$i].height + gap)') !== 'pass'
+  || sequenceOperationStatus('documentedTopAxis', 'spaced(return, gap)') !== 'pass'
+  || sequenceOperationStatus('documentedTopAxis', 'noOverlap(return)') !== 'pass'
+  || sequenceOperationStatus('documentedStartAxis', 'spaced(return, gap)') !== 'pass'
+  || sequenceOperationStatus('documentedStartAxis', 'noOverlap(return)') !== 'pass'
+  || sequenceOperationStatus('arbitraryPushBreaksSpacing', 'spaced(return, gap)') !== 'unknown'
+  || sequenceOperationStatus('incompatibleSecondLoop', 'spaced(return, 0)') !== 'unknown'
+  || sequenceOperationStatus('roundedLastEnd', 'lastEnd(return.rows) == return.bottom') !== 'unknown'
+  || sequenceOperationStatus('roundedExtentEnd', 'extentEnd(return.rows, y) == return.bottom') !== 'unknown'
+  || sequenceOperationStatus('unaryGroupedUpdate', 'return: -50..0') !== 'pass'
+) {
+  console.error('expected sequence relations to preserve source grouping and reject unsound spacing or end facts')
+  console.error(JSON.stringify(sequenceOperationChecks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('sequences: source operations preserve grouping without rounded cancellation')
+}
+
 const lateRefinementChecks = verifyFitSource('late-refinement.ts', `
 /** @fit
  * given items[].height: -100..100
@@ -1422,7 +1844,7 @@ const expectedSegmentedFacts = [
   'return.rows[].height: 0..40',
   'nondecreasing(return.rows.y)',
   'spaced(return.rows, gap)',
-  'return.rows[$i + 1].y == return.rows[$i].y + return.rows[$i].height + gap',
+  'return.rows[$i + 1].y == return.rows[$i].bottom + gap',
 ]
 const missingSegmentedFacts = expectedSegmentedFacts.filter(fact => !segmentedFacts.has(fact))
 const expectedSegmentedSpecStatuses = [

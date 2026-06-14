@@ -18,6 +18,7 @@ import {
 import {linearKey} from '../linear.ts'
 import {mergeAssumptions} from '../assumptions.ts'
 import {assumptionsAreReachable} from '../constraint-reachability.ts'
+import {sequenceRelationKey} from '../sequence-relation.ts'
 
 export const maxStateCases = 8
 
@@ -188,6 +189,7 @@ function valueFingerprint(value: Value): string {
         min: value.min,
         max: value.max,
         grid: value.grid,
+        neverNaN: value.neverNaN === true,
         expr: value.expr,
         linear: value.linear == null ? null : linearKey(value.linear),
         computation: computationFingerprint(value),
@@ -255,8 +257,12 @@ function summaryFingerprint(summary: Extract<Value, {kind: 'array'}>['summary'])
   if (summary == null) return null
   return {
     ...summary,
+    relations: summary.relations.map(sequenceRelationKey).sort(),
     advances: summary.advances.map(item => ({...item, value: valueFingerprint(item.value)})),
-    lastEnd: summary.lastEnd == null ? null : valueFingerprint(summary.lastEnd.value),
+    lastEnd: summary.lastEnd == null ? null : {
+      ...summary.lastEnd,
+      value: valueFingerprint(summary.lastEnd.value),
+    },
     extentEnds: summary.extentEnds.map(item => ({...item, value: valueFingerprint(item.value)})),
   }
 }

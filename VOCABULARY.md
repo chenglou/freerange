@@ -85,12 +85,12 @@ Decidable claims with documented rules. Users call these like functions; the ana
 
 ### Sequence shorthand
 
-- `spaced(arr, gap)` — adjacent items separated by exactly `gap`.
+- `spaced(arr, gap)` — each next number equals the previous number plus `gap`, or each next row starts at the previous row's end plus `gap`.
 - `nondecreasing(arr.field)` — every next item's field ≥ previous item's field.
 - `lastEnd(arr)` — the last element's end coordinate. Requires `arr.length >= 1`.
 - `extentEnd(arr, fallback)` — `lastEnd(arr)` when non-empty, `fallback` when empty. Total form.
 
-These are queries against the array's relational facts. They work for any field names — `top/height`, `start/size`, `x/width` are the same shape under the hood.
+These are queries against the array's relational facts. Row operations recognize `y/height`, `x/width`, `top/height`, and `start/size`. Map other names into one of those pairs first. For floating-point additions, an inferred equality keeps the grouping the source evaluated; it does not reassociate `a + (b + c)` into `(a + b) + c`.
 
 ### Layout
 

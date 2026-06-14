@@ -75,6 +75,7 @@ export type {
   NumberValue,
   ObjectValue,
   SequenceExpression,
+  SequenceAddition,
   SequenceRelation,
   SequenceTerm,
   UnknownValue,

@@ -1,6 +1,5 @@
 import * as ts from 'typescript'
 import {
-  additionIsExact,
   addNumbers,
   binaryNumberComputation,
   gridJoin,
@@ -17,13 +16,16 @@ import {
   numberWithBounds,
   numberValue,
   numberWithComputation,
+  possiblyNaN,
   sameComputationOperand,
   subtractNumbers,
+  unaryNumberComputation,
   unknown,
   type ArrayValue,
   type ArraySummary,
   type LinearConstraint,
   type NumberValue,
+  type SequenceAddition,
   type SequenceRelation,
   type Value,
 } from '../domain.ts'
@@ -50,6 +52,11 @@ import {
 import {fitExpressionParsed, parseExpression, type ParsedFitExpression} from '../parser.ts'
 import {comparisonConstraint, provableBounds, proveComparison, runningSumFacts} from '../proof.ts'
 import {
+  sameSequenceAddition,
+  sequenceAdditionInvariants,
+  sequenceAdditionTerms,
+} from '../sequence-relation.ts'
+import {
   rationalAdd,
   rationalEquals,
   rationalFromNumber,
@@ -58,7 +65,6 @@ import {
   rationalIsZero,
   rationalMultiply,
   rationalOne,
-  rationalZero,
   rationalToNumber,
   rationalToNumberCeil,
   rationalToNumberFloor,
@@ -83,6 +89,7 @@ import {
   isSideEffectFreeExpression,
   referencesIdentifier,
   scalarUpdateFromExpression,
+  type ScalarUpdate,
   unwrapExpression,
 } from './source-syntax.ts'
 import {blockScopedNames, restoreScopedValues, saveScopedValues} from './scope.ts'
@@ -95,8 +102,8 @@ import {writeMutationPath} from './value-path.ts'
 // enumerated path by path; each variable's per-iteration effect must land in a
 // small closed algebra (unchanged, += delta, min/max with a candidate, or a
 // plain rebind) and anything outside it makes that one variable unknown, not
-// the whole loop. Sequence facts for pushed arrays come from comparing the
-// linear forms of consecutive pushed elements, never from source text.
+// the whole loop. Sequence facts compare exact linear forms or the evaluated
+// arithmetic trees carried by consecutive pushed elements.
 
 export type SymbolicLoop = {
   claim: InterpreterLoopClaim
@@ -123,6 +130,7 @@ export type LoopOutcome = {kind: 'done'} | {kind: 'function-unknown'; value: Val
 
 const pathCap = 32
 const narrowingRoundCap = 3
+const sequenceRelationVariantCap = 32
 
 // Names minted across all analyses stay globally unique: facts published by
 // two different loops must never share an internal symbol, or the proof layer
@@ -238,7 +246,7 @@ export function evaluateSymbolicLoop(loop: SymbolicLoop, frame: InterpreterFrame
   }
 
   runReportingPass(analysis, preHulls)
-  finalizeArrays(result, analysis)
+  finalizeArrays(result, analysis, preHulls)
   finalizeScalars(result, analysis)
 
   for (const root of analysis.writeSet) loop.claim.factRoots.add(root)
@@ -529,12 +537,18 @@ function walkTrackedScalarUpdate(
   const update = scalarUpdateFromExpression(expression)
   if (update != null && update.targetName === tracked) {
     const before = snapshotRoots(path, analysis)
+    const termValues = new Map<ts.Expression, NumberValue>()
     let delta: NumberValue | null = null
     let unresolvedTerm = false
     for (const term of update.terms) {
-      const value = 'constant' in term
-        ? numberValue(term.constant, term.constant, gridOfNumber(term.constant), `${term.constant}`, linearConstant(term.constant))
-        : signedTermNumber(term.expression, term.negate, path, analysis)
+      let value: NumberValue | null
+      if ('constant' in term) {
+        value = numberValue(term.constant, term.constant, gridOfNumber(term.constant), `${term.constant}`, linearConstant(term.constant))
+      } else {
+        const raw = evaluatedNumber(term.expression, path, analysis)
+        if (raw != null) termValues.set(term.expression, raw)
+        value = raw == null ? null : term.negate ? negateNumber(raw, `-(${raw.expr ?? term.expression.getText()})`) : raw
+      }
       if (value == null) {
         unresolvedTerm = true
         break
@@ -546,10 +560,16 @@ function walkTrackedScalarUpdate(
       composeEffect(path, tracked, {kind: 'opaque', reason: `updated by ${statement.getText()}`})
       forgetRoot(path.frame.env, tracked)
     } else {
-      composeEffect(path, tracked, {kind: 'add', delta})
       const current = path.frame.env.get(tracked)
-      if (current?.kind === 'number') {
-        path.frame.env.set(tracked, numberWithComputation(addNumbers(current, delta), binaryNumberComputation('+', current, delta)))
+      const result = current?.kind === 'number'
+        ? scalarUpdateResult(update, current, termValues)
+        : null
+      if (result == null) {
+        composeEffect(path, tracked, {kind: 'opaque', reason: `updated by ${statement.getText()}`})
+        forgetRoot(path.frame.env, tracked)
+      } else {
+        composeEffect(path, tracked, {kind: 'add', delta})
+        path.frame.env.set(tracked, mintNumber(result, tracked, analysis))
       }
     }
     diffRoots(before, statement, path, restartRoots, analysis, expected)
@@ -610,10 +630,69 @@ function trackedScalarTarget(expression: ts.Expression, path: PathState, analysi
   return name
 }
 
-function signedTermNumber(expression: ts.Expression, negate: boolean, path: PathState, analysis: Analysis): NumberValue | null {
+function evaluatedNumber(expression: ts.Expression, path: PathState, analysis: Analysis): NumberValue | null {
   const value = analysis.context.evaluateExpression(expression, path.frame)
-  if (value.kind !== 'number') return null
-  return negate ? negateNumber(value, `-(${value.expr ?? expression.getText()})`) : value
+  return value.kind === 'number' ? value : null
+}
+
+function scalarUpdateResult(
+  update: ScalarUpdate,
+  current: NumberValue,
+  termValues: Map<ts.Expression, NumberValue>,
+): NumberValue | null {
+  switch (update.operation.kind) {
+    case 'increment': {
+      const amount = numberValue(
+        update.operation.amount,
+        update.operation.amount,
+        gridOfNumber(update.operation.amount),
+        `${update.operation.amount}`,
+        linearConstant(update.operation.amount),
+      )
+      return computedUpdate('+', current, amount)
+    }
+    case 'compound': {
+      const right = termValues.get(update.operation.expression)
+      return right == null ? null : computedUpdate(update.operation.op, current, right)
+    }
+    case 'assignment':
+      return evaluatedUpdateExpression(update.operation.expression, update.targetName, current, termValues)
+  }
+}
+
+function evaluatedUpdateExpression(
+  expression: ts.Expression,
+  targetName: string,
+  current: NumberValue,
+  termValues: Map<ts.Expression, NumberValue>,
+): NumberValue | null {
+  const unwrapped = unwrapExpression(expression)
+  if (isIdentifierNamed(unwrapped, targetName)) return current
+  if (ts.isPrefixUnaryExpression(unwrapped)
+    && (unwrapped.operator === ts.SyntaxKind.PlusToken || unwrapped.operator === ts.SyntaxKind.MinusToken)) {
+    const operand = evaluatedUpdateExpression(unwrapped.operand, targetName, current, termValues)
+    if (operand == null) return null
+    return unwrapped.operator === ts.SyntaxKind.PlusToken
+      ? operand
+      : numberWithComputation(
+          negateNumber(operand, `-(${operand.expr ?? unwrapped.operand.getText()})`),
+          unaryNumberComputation('negate', operand),
+        )
+  }
+  if (ts.isBinaryExpression(unwrapped)
+    && (unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken
+      || unwrapped.operatorToken.kind === ts.SyntaxKind.MinusToken)) {
+    const left = evaluatedUpdateExpression(unwrapped.left, targetName, current, termValues)
+    const right = evaluatedUpdateExpression(unwrapped.right, targetName, current, termValues)
+    if (left == null || right == null) return null
+    return computedUpdate(unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken ? '+' : '-', left, right)
+  }
+  return termValues.get(unwrapped) ?? null
+}
+
+function computedUpdate(op: '+' | '-', left: NumberValue, right: NumberValue): NumberValue {
+  const value = op === '+' ? addNumbers(left, right) : subtractNumbers(left, right)
+  return numberWithComputation(value, binaryNumberComputation(op, left, right))
 }
 
 // `x = Math.max(...)` / `Math.min(...)` with x exactly once among the
@@ -794,9 +873,12 @@ function normalizeEffects(paths: PathState[], analysis: Analysis) {
 // an additive step: the post value's linear form carries the pre-state symbol
 // with coefficient one, and the rest is the delta.
 function reclassifyAliasRebind(root: string, effect: ScalarEffect, analysis: Analysis): ScalarEffect {
-  if (effect.kind !== 'rebind' || effect.value.kind !== 'number' || effect.value.linear == null) return effect
+  if (effect.kind !== 'rebind' || effect.value.kind !== 'number') return effect
   const name = analysis.preNames.get(root)
   if (name == null) return effect
+  const computedDelta = additiveDeltaFromPreState(effect.value, name, analysis)
+  if (computedDelta != null) return {kind: 'add', delta: computedDelta}
+  if (effect.value.linear == null) return effect
   const coefficient = effect.value.linear.terms.get(name)
   if (coefficient == null || !rationalEquals(coefficient, rationalOne)) return effect
   const deltaLinear = linearSubtract(effect.value.linear, linearVariable(name))
@@ -806,6 +888,39 @@ function reclassifyAliasRebind(root: string, effect: ScalarEffect, analysis: Ana
     kind: 'add',
     delta: numberValue(bounds?.min ?? -Infinity, bounds?.max ?? Infinity, bounds?.isInteger === true ? 0 : null, null, deltaLinear),
   }
+}
+
+function additiveDeltaFromPreState(value: NumberValue, preName: string, analysis: Analysis): NumberValue | null {
+  const operands = addedOperandValues(value)
+  if (operands == null) return null
+  let preIndex = -1
+  for (let index = 0; index < operands.length; index++) {
+    if (singleUnitAtom(operands[index]!.linear) !== preName) continue
+    if (preIndex >= 0) return null
+    preIndex = index
+  }
+  if (preIndex < 0) return null
+  let delta: NumberValue | null = null
+  for (let index = 0; index < operands.length; index++) {
+    if (index === preIndex) continue
+    const operand = operands[index]!
+    if (numberMentionsPre(operand, analysis)) return null
+    delta = delta == null ? operand : addNumbers(delta, operand)
+  }
+  return delta ?? numberValue(0, 0, 0, '0', linearConstant(0))
+}
+
+function numberMentionsPre(value: NumberValue, analysis: Analysis): boolean {
+  if (value.linear != null) {
+    for (const name of value.linear.terms.keys()) {
+      if (analysis.preRoots.has(name)) return true
+    }
+  }
+  const computation = value.computation
+  if (computation == null) return false
+  return computation.kind === 'unary'
+    ? numberMentionsPre(computation.operand, analysis)
+    : numberMentionsPre(computation.left, analysis) || numberMentionsPre(computation.right, analysis)
 }
 
 function linearMentionsPre(linear: LinearExpr, analysis: Analysis): boolean {
@@ -1037,7 +1152,7 @@ function finalizeScalars(result: LoopResult, analysis: Analysis) {
 
 // ——— pushed arrays
 
-function finalizeArrays(result: LoopResult, analysis: Analysis) {
+function finalizeArrays(result: LoopResult, analysis: Analysis, preHulls: Map<string, Value>) {
   const frame = analysis.realFrame
   const arrayNames = new Set<string>()
   for (const path of result.paths) {
@@ -1082,9 +1197,9 @@ function finalizeArrays(result: LoopResult, analysis: Analysis) {
       ? null
       : conditional ? filterOrigin(analysis.loop.source, analysis.loop.sourceExpr) : mapOrigin(analysis.loop.source, analysis.loop.sourceExpr)
 
-    let summary: ArraySummary | null = base.summary
+    let summary: ArraySummary | null = null
     if (startedEmpty) {
-      const derived = derivePushSummary(arrayName, sites, result, analysis)
+      const derived = derivePushSummary(arrayName, sites, result, analysis, preHulls)
       summary = {...mergeArraySummary({relations: [], advances: [], lastEnd: null, extentEnds: []}, derived)!, origin}
       publishElementFormFacts(arrayName, leafForms, renames, exprOverrides, analysis)
       liftElementAssumptions(renames, analysis)
@@ -1366,7 +1481,13 @@ type RelationPair = {
   transfer: Map<string, TransferStep> | null
 }
 
-function derivePushSummary(arrayName: string, sites: (Value | null)[][], result: LoopResult, analysis: Analysis): ArraySummary | null {
+function derivePushSummary(
+  arrayName: string,
+  sites: (Value | null)[][],
+  result: LoopResult,
+  analysis: Analysis,
+  preHulls: Map<string, Value>,
+): ArraySummary | null {
   const pushingPaths: number[] = []
   const emptyPaths: number[] = []
   sites.forEach((pathSites, index) => (pathSites.length > 0 ? pushingPaths : emptyPaths).push(index))
@@ -1421,15 +1542,12 @@ function derivePushSummary(arrayName: string, sites: (Value | null)[][], result:
   const summary: ArraySummary = {relations: [], advances: [], lastEnd: null, extentEnds: []}
   for (let field = 0; field < fieldPaths.length; field++) {
     const candidates = relationCandidates(field, fieldPaths.length, pairs, analysis)
-    const covered = new Set(candidates.map(candidate => candidate.terms.join(',')))
-    for (const candidate of computationRelationCandidates(field, fieldPaths.length, pairs, analysis)) {
-      if (!covered.has(candidate.terms.join(','))) candidates.push(candidate)
-    }
     for (const candidate of candidates) {
       const relation = relationFromCandidate(fieldPaths, candidate)
       if (relation != null) summary.relations.push(relation)
     }
-    deriveNondecreasing(field, fieldPaths, pairs, summary, analysis)
+    summary.relations.push(...computationRelations(field, fieldPaths, pairs, analysis, preHulls))
+    deriveNondecreasing(field, fieldPaths, pairs, summary, analysis, preHulls)
   }
   deriveAdvancesAndEnds(arrayName, fieldPaths, fieldFormsByPath, result, emptyPaths.length > 0, summary, analysis)
   return summary
@@ -1468,9 +1586,9 @@ function pathTransfer(path: PathState, analysis: Analysis): Map<string, Transfer
       transfer.set(name, {linear: null, value: null, rounded: true})
       continue
     }
-    const pre = analysis.mintedValues.get(name)
-    const exact = pre != null && additionIsExact(pre, effect.delta)
-    transfer.set(name, {linear: linearAdd(linearVariable(name), effect.delta.linear), value: postNumber, rounded: !exact})
+    const expected = linearAdd(linearVariable(name), effect.delta.linear)
+    const exact = postNumber?.linear != null && expected != null && sameLinear(postNumber.linear, expected)
+    transfer.set(name, {linear: expected, value: postNumber, rounded: !exact})
   }
   return transfer
 }
@@ -1495,6 +1613,10 @@ function relationCandidates(field: number, fieldCount: number, pairs: RelationPa
     let rounded = false
     let valid = true
     for (const pair of pairs) {
+      if (!relationValuesNeverNaN(field, terms, pair)) {
+        valid = false
+        break
+      }
       const residue = pairResidue(field, terms, pair, analysis)
       if (residue == null || !invariantLinear(residue.linear, analysis) || (gamma != null && !sameLinear(gamma, residue.linear))) {
         valid = false
@@ -1506,7 +1628,7 @@ function relationCandidates(field: number, fieldCount: number, pairs: RelationPa
     // A gamma naming an arithmetic atom (e.g. `(step + gap)` minus `step`)
     // is an artifact of one opaque computation failing to cancel against
     // another; the computation candidates state that recurrence properly.
-    if (valid && gamma != null && ![...gamma.terms.keys()].some(arithmeticAtomName)) {
+    if (valid && gamma != null && !rounded && ![...gamma.terms.keys()].some(arithmeticAtomName)) {
       candidates.push({field, terms, gamma, rounded})
     }
   }
@@ -1522,55 +1644,125 @@ function arithmeticAtomName(name: string): boolean {
   }
 }
 
-// A rounded cursor still advances by the computation the source evaluated.
-// Captured operands let us match the previous pushed fields without parsing
-// source text after mutable bindings have changed.
-function computationRelationCandidates(field: number, fieldCount: number, pairs: RelationPair[], analysis: Analysis): RelationCandidate[] {
-  if (pairs.length === 0) return []
-  const termSets: number[][] = []
-  for (let other = 0; other < fieldCount; other++) termSets.push([other])
-  for (let other = 0; other < fieldCount; other++) {
-    if (other !== field) termSets.push([field, other])
-  }
-  const candidates: RelationCandidate[] = []
-  for (const terms of termSets) {
-    let gamma: LinearExpr | null = null
-    let valid = true
-    for (const pair of pairs) {
-      const transferred = transferredFieldValue(field, pair)
-      const operands = transferred == null ? null : addedOperandValues(transferred)
-      if (operands == null) {
-        valid = false
-        break
-      }
-      const remaining = [...operands]
-      for (const term of terms) {
-        const previous = pair.prev[term]?.value
-        const matchIndex = previous == null ? -1 : remaining.findIndex(value => sameComputationOperand(value, previous))
-        if (matchIndex < 0) {
-          valid = false
-          break
-        }
-        remaining.splice(matchIndex, 1)
-      }
-      if (!valid) break
-      let pairGamma: LinearExpr | null = {constant: rationalZero, terms: new Map()}
-      for (const value of remaining) {
-        if (value.linear == null || !invariantLinear(value.linear, analysis)) {
-          pairGamma = null
-          break
-        }
-        pairGamma = linearAdd(pairGamma, value.linear)
-      }
-      if (pairGamma == null || (gamma != null && !sameLinear(gamma, pairGamma))) {
-        valid = false
-        break
-      }
-      gamma = pairGamma
+// A rounded cursor keeps the exact binary addition tree the source evaluated.
+// Leaves become previous element fields before nested computations are
+// expanded, so a stored `bottom` remains `previous.bottom`.
+function computationRelations(
+  field: number,
+  fieldPaths: string[][],
+  pairs: RelationPair[],
+  analysis: Analysis,
+  preHulls: Map<string, Value>,
+): SequenceRelation[] {
+  let common: SequenceAddition[] | null = null
+  for (const pair of pairs) {
+    const transferred = transferredFieldValue(field, pair)
+    if (transferred == null) return []
+    const withEntryFacts = numberWithLoopEntryFacts(transferred, analysis, preHulls)
+    if (possiblyNaN(withEntryFacts)) return []
+    const additions = sequenceAdditionsFromValue(withEntryFacts, pair.prev, fieldPaths, analysis)
+    if (additions.length === 0) return []
+    if (common == null) {
+      common = additions
+      continue
     }
-    if (valid && gamma != null) candidates.push({field, terms, gamma, rounded: true})
+    common = common.filter(candidate => additions.some(addition => sameSequenceAddition(candidate, addition)))
+    if (common.length === 0) return []
   }
-  return candidates
+  return (common ?? []).map(right => ({
+    kind: 'adjacent-addition',
+    left: {item: 'next', path: fieldPaths[field]!},
+    op: '==',
+    right,
+  }))
+}
+
+function uniqueSequenceAdditions(additions: SequenceAddition[]): SequenceAddition[] {
+  const result: SequenceAddition[] = []
+  for (const addition of additions) {
+    if (!result.some(candidate => sameSequenceAddition(candidate, addition))) result.push(addition)
+  }
+  return result
+}
+
+function sequenceAdditionsFromValue(
+  value: NumberValue,
+  previous: FieldForm[],
+  fieldPaths: string[][],
+  analysis: Analysis,
+): SequenceAddition[] {
+  const matchingFields: number[] = []
+  for (let index = 0; index < previous.length; index++) {
+    const field = previous[index]
+    if (field?.value != null && sameComputationOperand(value, field.value)) matchingFields.push(index)
+  }
+  const additions: SequenceAddition[] = []
+  if (matchingFields.length > 0) {
+    if (matchingFields.length > sequenceRelationVariantCap) return []
+    for (const index of matchingFields) {
+      additions.push({
+        kind: 'term',
+        term: {item: 'previous', path: fieldPaths[index]!},
+      })
+    }
+  }
+
+  if (value.linear != null
+    && invariantLinear(value.linear, analysis)
+    && !computationContainsPreviousField(value, previous)) {
+    const text = renderLinear(value.linear)
+    if (text != null) additions.push({kind: 'invariant', text})
+  }
+
+  const computation = value.computation
+  if (computation?.kind === 'binary' && computation.op === '+') {
+    const left = sequenceAdditionsFromValue(computation.left, previous, fieldPaths, analysis)
+    const right = sequenceAdditionsFromValue(computation.right, previous, fieldPaths, analysis)
+    for (const leftAddition of left) {
+      for (const rightAddition of right) {
+        additions.push({kind: 'add', left: leftAddition, right: rightAddition})
+        if (additions.length > sequenceRelationVariantCap) return []
+      }
+    }
+    return uniqueSequenceAdditions(additions)
+  }
+  return uniqueSequenceAdditions(additions)
+}
+
+function computationContainsPreviousField(value: NumberValue, previous: FieldForm[]): boolean {
+  for (const field of previous) {
+    if (field.value != null && sameComputationOperand(value, field.value)) return true
+  }
+  const computation = value.computation
+  if (computation == null) return false
+  return computation.kind === 'unary'
+    ? computationContainsPreviousField(computation.operand, previous)
+    : computationContainsPreviousField(computation.left, previous)
+      || computationContainsPreviousField(computation.right, previous)
+}
+
+function numberWithLoopEntryFacts(
+  value: NumberValue,
+  analysis: Analysis,
+  preHulls: Map<string, Value>,
+): NumberValue {
+  if (value.computation == null) {
+    const name = singleUnitAtom(value.linear)
+    if (name == null) return value
+    const minted = analysis.mintedValues.get(name)
+    if (minted != null) return minted
+    const root = analysis.preRoots.get(name)
+    const hull = root == null ? null : preHulls.get(root)
+    return hull?.kind === 'number'
+      ? numberWithBounds(value, hull.min, hull.max, hull.grid)
+      : value
+  }
+  if (value.computation.kind === 'binary' && value.computation.op === '+') {
+    const left = numberWithLoopEntryFacts(value.computation.left, analysis, preHulls)
+    const right = numberWithLoopEntryFacts(value.computation.right, analysis, preHulls)
+    return numberWithComputation(addNumbers(left, right), binaryNumberComputation('+', left, right))
+  }
+  return value
 }
 
 function transferredFieldValue(field: number, pair: RelationPair): NumberValue | null {
@@ -1681,6 +1873,7 @@ function expressionIdentifierRoots(expression: ts.Expression): string[] {
 }
 
 function relationFromCandidate(fieldPaths: string[][], candidate: RelationCandidate): SequenceRelation | null {
+  if (candidate.rounded) return null
   const addends: string[] = []
   if (!isZeroLinear(candidate.gamma)) {
     const rendered = renderLinear(candidate.gamma)
@@ -1695,7 +1888,6 @@ function relationFromCandidate(fieldPaths: string[][], candidate: RelationCandid
       terms: candidate.terms.map(term => ({item: 'previous' as const, path: fieldPaths[term]!})),
       addends,
     },
-    ...(candidate.rounded ? {rounded: true as const} : {}),
   }
 }
 
@@ -1716,17 +1908,28 @@ function renderLinear(linear: LinearExpr): string | null {
   return parts.join(' + ')
 }
 
-function deriveNondecreasing(field: number, fieldPaths: string[][], pairs: RelationPair[], summary: ArraySummary, analysis: Analysis) {
+function deriveNondecreasing(
+  field: number,
+  fieldPaths: string[][],
+  pairs: RelationPair[],
+  summary: ArraySummary,
+  analysis: Analysis,
+  preHulls: Map<string, Value>,
+) {
   if (pairs.length === 0) return
   let structured = true
   for (const pair of pairs) {
+    if (!relationValuesNeverNaN(field, [field], pair)) {
+      structured = false
+      break
+    }
     const residue = pairResidue(field, [field], pair, analysis)
     if (residue == null || !provedNonnegativeResidue(residue.linear, analysis)) {
       structured = false
       break
     }
   }
-  if (!structured && !computedAdvanceIsNonnegative(field, pairs, analysis)) return
+  if (!structured && !computedAdvanceIsNonnegative(field, pairs, analysis, preHulls)) return
   summary.relations.push({
     kind: 'adjacent-comparison',
     left: {item: 'next', path: fieldPaths[field]!},
@@ -1735,12 +1938,28 @@ function deriveNondecreasing(field: number, fieldPaths: string[][], pairs: Relat
   })
 }
 
-function computedAdvanceIsNonnegative(field: number, pairs: RelationPair[], analysis: Analysis): boolean {
+function relationValuesNeverNaN(field: number, terms: number[], pair: RelationPair): boolean {
+  const next = pair.next[field]?.value
+  if (next == null || possiblyNaN(next)) return false
+  for (const term of terms) {
+    const previous = pair.prev[term]?.value
+    if (previous == null || possiblyNaN(previous)) return false
+  }
+  return true
+}
+
+function computedAdvanceIsNonnegative(
+  field: number,
+  pairs: RelationPair[],
+  analysis: Analysis,
+  preHulls: Map<string, Value>,
+): boolean {
   for (const pair of pairs) {
     const transferred = transferredFieldValue(field, pair)
-    const operands = transferred == null ? null : addedOperandValues(transferred)
+    const withEntryFacts = transferred == null ? null : numberWithLoopEntryFacts(transferred, analysis, preHulls)
+    const operands = withEntryFacts == null ? null : addedOperandValues(withEntryFacts)
     const previous = pair.prev[field]?.value
-    if (operands == null || previous == null) return false
+    if (withEntryFacts == null || possiblyNaN(withEntryFacts) || operands == null || previous == null) return false
     const remaining = [...operands]
     const matchIndex = remaining.findIndex(value => sameComputationOperand(value, previous))
     if (matchIndex < 0) return false
@@ -1875,9 +2094,13 @@ function deriveAdvancesAndEnds(
 
     for (const relation of summary.relations) {
       if (relation.op !== '==' || !samePath(relation.left.path, fieldPaths[field]!)) continue
-      const sizeTerm = relationSizeTerm(relation, fieldPaths[field]!)
+      const sizeTerm = relation.kind === 'adjacent-comparison'
+        ? algebraicRelationSizeTerm(relation, fieldPaths[field]!)
+        : operationalRelationSizeTerm(relation, fieldPaths[field]!)
       if (sizeTerm == null) continue
-      const gammaValue = addendsValue(relation.right.addends, analysis)
+      const gammaValue = relation.kind === 'adjacent-comparison'
+        ? addendsValue(relation.right.addends, analysis)
+        : numberValue(0, 0, 0, '0')
       if (gammaValue == null) continue
       // With count >= 1, the cursor's post-loop closed form IS the last end
       // plus gamma; reusing it keeps the linear identity that proves
@@ -1909,13 +2132,29 @@ function deriveAdvancesAndEnds(
 
 // The size side of a cursor relation: prev.position + prev.size (two terms,
 // one of them the cursor field) or prev.end (one term, a different field).
-function relationSizeTerm(relation: SequenceRelation, cursorPath: string[]): string[] | null {
+function algebraicRelationSizeTerm(
+  relation: Extract<SequenceRelation, {kind: 'adjacent-comparison'}>,
+  cursorPath: string[],
+): string[] | null {
   const terms = relation.right.terms
   if (terms.length === 2 && terms.some(term => samePath(term.path, cursorPath))) {
     return terms.find(term => !samePath(term.path, cursorPath))?.path ?? null
   }
   if (terms.length === 1 && !samePath(terms[0]!.path, cursorPath)) return terms[0]!.path
   return null
+}
+
+// A rounded recurrence can identify the final row end without algebra when
+// its operation is exactly previous position + previous size. Any invariant
+// would require cancellation after the loop, which rounding does not permit.
+function operationalRelationSizeTerm(
+  relation: Extract<SequenceRelation, {kind: 'adjacent-addition'}>,
+  cursorPath: string[],
+): string[] | null {
+  if (sequenceAdditionInvariants(relation.right).length > 0) return null
+  const terms = sequenceAdditionTerms(relation.right)
+  if (terms.length !== 2 || !terms.some(term => samePath(term.path, cursorPath))) return null
+  return terms.find(term => !samePath(term.path, cursorPath))?.path ?? null
 }
 
 function cursorRootForField(field: number, fieldFormsByPath: FieldForm[][][], analysis: Analysis): string | null {

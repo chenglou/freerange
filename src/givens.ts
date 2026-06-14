@@ -23,6 +23,7 @@ import {
   type ConstraintSource,
   type LinearConstraint,
   type NumberValue,
+  type SequenceAddition,
   type SequenceRelation,
   type Value,
   gridMeet,
@@ -690,6 +691,18 @@ function nondecreasingPropPath(expression: ts.Expression): {root: string; path: 
 
 function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue | 'ambiguous' {
   if (ambiguousRowAxes(array)) return 'ambiguous'
+  if (array.element?.kind === 'number') {
+    const previous: SequenceAddition = {kind: 'term', term: {item: 'previous', path: []}}
+    const relation: SequenceRelation = {
+      kind: 'adjacent-addition',
+      left: {item: 'next', path: []},
+      op: '==',
+      right: gapText === '0'
+        ? previous
+        : {kind: 'add', left: previous, right: {kind: 'invariant', text: gapText}},
+    }
+    return {...array, summary: appendRelation(array.summary, relation)}
+  }
   // Without element fields to look at, assert the relation for both axis
   // vocabularies; claims on fields the element does not have are rejected by
   // the type gate before they could use the spare relation.
@@ -697,13 +710,16 @@ function arrayWithSpacedRelation(array: ArrayValue, gapText: string): ArrayValue
   let summary = array.summary
   for (const axis of axes) {
     const relation: SequenceRelation = {
-      kind: 'adjacent-comparison',
+      kind: 'adjacent-addition',
       left: {item: 'next', path: [axis.position]},
       op: '==',
-      right: {
-        terms: [{item: 'previous', path: [axis.end]}],
-        addends: gapText === '0' ? [] : [gapText],
-      },
+      right: gapText === '0'
+        ? {kind: 'term', term: {item: 'previous', path: [axis.end]}}
+        : {
+            kind: 'add',
+            left: {kind: 'term', term: {item: 'previous', path: [axis.end]}},
+            right: {kind: 'invariant', text: gapText},
+          },
     }
     summary = appendRelation(summary, relation)
   }
