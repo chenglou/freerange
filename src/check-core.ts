@@ -127,6 +127,7 @@ import {
   preparedFunctionContracts,
   preparedProgramContracts,
   type PreparedBodyContracts,
+  type PreparedUnsupportedSpec,
 } from './prepared-contracts.ts'
 import {
   evaluateDomainPathValue,
@@ -443,6 +444,7 @@ function verifyFunctionSpecsDetailed(
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {env} = setup
   const checks = [...setup.typeChecks, ...setup.givenChecks]
+  checks.push(...preparedUnsupportedChecks(file, functionName, prepared.unsupportedSpecs))
   pushUnsupportedPlacements(checks, file, functionName, prepared.body.unsupportedPlacements)
   if (setup.typeChecks.some(check => check.status !== 'pass')) {
     return {checks, callsiteChecks: [], recordedCallsites: false}
@@ -482,6 +484,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {contractSpecs, env} = setup
   const typeContractChecks = typeUnsupportedChecks(program.file, functionName, prepared.typeUnsupported)
+  const preparedUnsupported = preparedUnsupportedChecks(program.file, functionName, prepared.unsupportedSpecs)
   const inferUnsupported: string[] = []
   const context = functionEvalContext(program, fn, setup, contractCache, {inferLoops: loops, inferUnsupported})
   const state = evaluateFunctionBodyState(fn, context)
@@ -490,6 +493,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const backgroundChecks = [
     ...setup.typeChecks,
     ...setup.givenChecks,
+    ...preparedUnsupported,
     ...typeContractChecks,
     ...setup.assumptionChecks,
     ...context.checks,
@@ -511,6 +515,7 @@ function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Ma
   const unsupported = [
     ...setup.typeChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...setup.givenChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
+    ...preparedUnsupported.map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...typeContractChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...setup.assumptionChecks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
     ...context.checks.filter(check => check.status !== 'pass').map(check => `${check.text}: ${check.reason ?? check.status}`),
@@ -534,6 +539,17 @@ function typeUnsupportedChecks(file: string, functionName: string, unsupported: 
     file,
     functionName,
     ...boundary,
+    text: problem.text,
+    status: 'unknown',
+    reason: problem.reason,
+    ...(problem.line == null ? {} : {line: problem.line}),
+  }))
+}
+
+function preparedUnsupportedChecks(file: string, functionName: string, unsupported: PreparedUnsupportedSpec[]): FitCheck[] {
+  return unsupported.map(problem => ({
+    file,
+    functionName,
     text: problem.text,
     status: 'unknown',
     reason: problem.reason,

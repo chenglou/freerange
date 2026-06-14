@@ -29,6 +29,15 @@ import type {
   TypeContractResult,
   TypeContractUnsupported,
 } from './type-contracts.ts'
+import {
+  unsupportedNamedIndexSpecReason,
+} from './bound-index.ts'
+
+export type PreparedUnsupportedSpec = {
+  text: string
+  reason: string
+  line?: number
+}
 
 export type PreparedBodyContracts = {
   localSpecsByStatement: Map<ts.VariableStatement, FitInlineCheckSpec[]>
@@ -54,6 +63,7 @@ export type PreparedFunctionContracts = {
   contractSpecs: FitSpec[]
   assumptions: FitGivenSpec[]
   proofs: FitFunctionCheckSpec[]
+  unsupportedSpecs: PreparedUnsupportedSpec[]
   typeChecks: FitCheck[]
   typeUnsupported: TypeContractUnsupported[]
   body: PreparedBodyContracts
@@ -83,7 +93,8 @@ export function preparedProgramContracts(program: Program): PreparedProgramContr
   const functions = new Map<FitFunction, PreparedFunctionContracts>()
   for (const fn of program.functions.values()) {
     const functionSource = functionContractSource(program, fn)
-    const contractSpecs = acceptedSpecs(program, functionSource.specs)
+    const preparedSpecs = prepareSpecs(program, functionSource.specs)
+    const contractSpecs = preparedSpecs.specs
     const assumptions = contractSpecs.filter(fitSpecIsAssumption)
     const proofs = contractSpecs.filter(fitSpecIsProof)
     const body = prepareBodyContracts(program, fn.bodySpecs, functionSource.bodyTypes)
@@ -91,6 +102,7 @@ export function preparedProgramContracts(program: Program): PreparedProgramContr
       contractSpecs,
       assumptions,
       proofs,
+      unsupportedSpecs: preparedSpecs.unsupported,
       typeChecks: contractTypeChecksForFunction(program, fn),
       typeUnsupported: functionSource.unsupported,
       body,
@@ -124,13 +136,18 @@ function prepareBodyContracts(
   body: FitBodySpecIndex,
   bodyTypes: BodyTypeContractIndex,
 ): PreparedBodyContracts {
+  const unsupportedPlacements = [...body.unsupportedPlacements]
   const localSpecsByStatement = new Map<ts.VariableStatement, FitInlineCheckSpec[]>()
   for (const [statement, specs] of body.localSpecsByStatement) {
-    localSpecsByStatement.set(statement, acceptedSpecs(program, specs))
+    const prepared = prepareSpecs(program, specs)
+    localSpecsByStatement.set(statement, prepared.specs)
+    unsupportedPlacements.push(...requiredLineProblems(prepared.unsupported))
   }
   const returnSpecsByNode = new Map<ts.Node, FitInlineCheckSpec[]>()
   for (const [node, specs] of body.returnSpecsByNode) {
-    returnSpecsByNode.set(node, acceptedSpecs(program, specs))
+    const prepared = prepareSpecs(program, specs)
+    returnSpecsByNode.set(node, prepared.specs)
+    unsupportedPlacements.push(...requiredLineProblems(prepared.unsupported))
   }
   const objectPropertyTemplatesByNode = new Map<ts.PropertyAssignment | ts.ShorthandPropertyAssignment, FitInlineSpecTemplate[]>()
   for (const [property, templates] of body.objectPropertyTemplatesByNode) {
@@ -138,7 +155,9 @@ function prepareBodyContracts(
   }
   const loopsByStatement = new Map<ts.ForOfStatement | ts.ForStatement, PreparedLoopContracts>()
   for (const [statement, specs] of body.loopSpecsByStatement) {
-    const accepted = acceptedSpecs(program, specs)
+    const prepared = prepareSpecs(program, specs)
+    const accepted = prepared.specs
+    unsupportedPlacements.push(...requiredLineProblems(prepared.unsupported))
     const localSpecs: FitLoopSpec[] = []
     const resultSpecs: FitLoopSpec[] = []
     for (const spec of accepted) {
@@ -172,7 +191,7 @@ function prepareBodyContracts(
     loopsByStatement,
     variableTypes,
     returnTypes,
-    unsupportedPlacements: body.unsupportedPlacements,
+    unsupportedPlacements,
     hasExecutableClaims,
     hasTypeBoundaries,
     hasAnnotationSurface: hasSourceAnnotationSurface,
@@ -185,20 +204,46 @@ function prepareTypeContracts<K>(
 ): Map<K, TypeContractResult<FitCheckSpec>> {
   const prepared = new Map<K, TypeContractResult<FitCheckSpec>>()
   for (const [node, contract] of contracts) {
+    const specs = prepareSpecs(program, contract.specs)
     prepared.set(node, {
-      specs: acceptedSpecs(program, contract.specs),
-      unsupported: contract.unsupported,
+      specs: specs.specs,
+      unsupported: [...contract.unsupported, ...specs.unsupported],
     })
   }
   return prepared
 }
 
-function acceptedSpecs<T extends FitSpec>(program: Program, specs: T[]): T[] {
-  return specs.filter(spec => contractPassesTypeCheck(program, spec))
+function prepareSpecs<T extends FitSpec>(
+  program: Program,
+  specs: T[],
+): {specs: T[]; unsupported: PreparedUnsupportedSpec[]} {
+  const accepted: T[] = []
+  const unsupported: PreparedUnsupportedSpec[] = []
+  for (const spec of specs) {
+    if (!contractPassesTypeCheck(program, spec)) continue
+    const reason = unsupportedNamedIndexSpecReason(spec)
+    if (reason == null) {
+      accepted.push(spec)
+      continue
+    }
+    unsupported.push({
+      text: spec.text,
+      reason,
+      ...(spec.line == null ? {} : {line: spec.line}),
+    })
+  }
+  return {specs: accepted, unsupported}
 }
 
 function acceptedTemplates<T extends FitInlineSpecTemplate>(program: Program, templates: T[]): T[] {
   return templates.filter(template => contractPassesTypeCheck(program, template))
+}
+
+function requiredLineProblems(problems: PreparedUnsupportedSpec[]) {
+  return problems.map(problem => {
+    if (problem.line == null) throw new Error(`Body @fit problem is missing a line: ${problem.text}`)
+    return {...problem, line: problem.line}
+  })
 }
 
 function hasMapValues<K, V>(map: Map<K, V[]>) {

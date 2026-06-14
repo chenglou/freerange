@@ -214,13 +214,15 @@ Freerange keeps up to 8 exact numeric alternatives. Beyond that, it keeps their 
 rows[].height: 0..40
 rows[].top >= 0
 rows[$i].height == items[$i].height
+rows[$i].height == rows[$i + 1].height
 
 rows.length == items.length
 rows.length: int 0..200
 ```
 
 `rows[].height: 0..40` means "the rows array, which contains objects with a field `height`, has that `height` between 0 and 40".
-`$i` is a special syntax to express "the same item index".
+`$i` designates any item index. Reusing `$i` means the same position. Across differing arrays, their lengths must be proven equal.
+`$i + 1` designates the next item and is supported in direct comparisons with `$i` from the same array. You can't currently do `$i - 1`, `$i + 2`, or `$i + 1` across differing arrays.
 Array elements require homogeneous (aka the same) contracts. To have differing contracts per array element, use tuples instead, just like you'd do it in regular TypeScript.
 
 ### Tuple

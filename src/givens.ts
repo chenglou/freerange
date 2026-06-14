@@ -79,6 +79,7 @@ import {
 } from './source-expressions.ts'
 import {formatRangeSpec} from './reporting.ts'
 import {ambiguousRowAxes, rowAxes, type RowAxis} from './sequence-facts.ts'
+import {unsupportedNamedIndexSpecReason} from './bound-index.ts'
 
 export type GivenEvaluators = {
   evaluateRangeBound(text: FitExpressionLike, context: EvalContext): Value
@@ -98,6 +99,11 @@ export function validateGivenSpecs(
 
   for (const spec of specs) {
     if (!fitSpecIsAssumption(spec)) continue
+    const unsupportedNamedIndex = unsupportedNamedIndexSpecReason(spec)
+    if (unsupportedNamedIndex != null) {
+      checks.push(invalidGivenCheck(file, functionName, spec, unsupportedNamedIndex))
+      continue
+    }
     if (spec.kind === 'expression') {
       const badRoot = givenExpressionBadRoot(spec.expression, allowedRoots)
       if (badRoot != null) {

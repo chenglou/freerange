@@ -2,11 +2,13 @@ import * as ts from 'typescript'
 import {
   fitExpressionParsed,
   fitRangeCases,
+  fitValueSpecExpressions,
   publicFitText,
   type FitComparisonCheckSpec,
   type FitDomainPath,
   type FitExpressionLike,
   type FitRangeCheckSpec,
+  type FitSpec,
 } from './parser.ts'
 import {
   arrayLength,
@@ -25,13 +27,19 @@ type BoundIndexStatus = 'pass' | 'fail' | 'unknown'
 type BoundIndexUse = {
   label: string
   offset: number
-  collectionKey: string
-  collectionText: string
   collectionPath: FitDomainPath
+  nested: boolean
 }
 
-type BoundPathExpression = BoundIndexUse & {
-  prop: string
+type BoundIndexRelationship =
+  | {kind: 'none'}
+  | {kind: 'same-index'; uses: BoundIndexUse[]}
+  | {kind: 'adjacent'; relation: AdjacentComparisonParse}
+  | {kind: 'unsupported'; reason: string}
+
+type BoundIndexAnalysis = {
+  uses: BoundIndexUse[]
+  hasAnonymousItem: boolean
 }
 
 export type BoundIndexContext = {
@@ -42,49 +50,47 @@ export type BoundIndexContext = {
   proveAdjacentComparison: (collectionPath: FitDomainPath, comparison: AdjacentComparison) => {status: BoundIndexStatus; reason?: string}
 }
 
+export function unsupportedNamedIndexSpecReason(spec: FitSpec): string | null {
+  const analysis = analyzeBoundIndexesInSpec(spec)
+  const uses = analysis.uses
+  if (uses.length === 0) return null
+  if (spec.role === 'assume') {
+    return 'Named indexes are unsupported in given contracts because their matching-position relationship is not carried into the function; use [] for per-item input bounds'
+  }
+  if (spec.kind === 'expression' || spec.kind === 'value') {
+    return 'Named indexes are supported only in direct range and comparison contracts'
+  }
+  if (spec.kind === 'pure') return null
+  const relationship = classifyBoundIndexRelationship(spec, analysis)
+  if (relationship.kind === 'unsupported') return relationship.reason
+  return null
+}
+
 export function proveBoundIndexRangeSpec(
   spec: FitRangeCheckSpec,
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} | null {
-  const uses = [
-    ...boundIndexUses(spec.expression),
-    ...fitRangeCases(spec.range).flatMap(rangeCase => [
-      ...boundIndexUses(rangeCase.lower),
-      ...boundIndexUses(rangeCase.upper),
-    ]),
-  ]
-  if (uses.length === 0) return null
-  const nonZeroOffset = uses.find(use => use.offset !== 0)
-  if (nonZeroOffset != null) {
-    if (!needsCrossCollectionLengthProof(uses)) return null
-    return {
-      status: 'unknown',
-      reason: `Bound index label ${nonZeroOffset.label} in range specs currently supports same-index labels without offsets`,
-    }
+  const relationship = classifyBoundIndexRelationship(spec, analyzeBoundIndexesInSpec(spec))
+  if (relationship.kind === 'none') return null
+  if (relationship.kind === 'unsupported') return {status: 'unknown', reason: relationship.reason}
+  if (relationship.kind === 'adjacent') {
+    return {status: 'unknown', reason: 'Adjacent named indexes are unsupported in range contracts'}
   }
-  return proveSameIndexCollectionLengths(uses, context)
+  return proveSameIndexCollectionLengths(relationship.uses, context)
 }
 
 export function proveBoundIndexComparisonSpec(
   spec: FitComparisonCheckSpec,
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} | null {
-  const uses = [...boundIndexUses(spec.left), ...boundIndexUses(spec.right)]
-  if (uses.length === 0) return null
-
-  const adjacent = proveAdjacentBoundIndexComparison(spec, context)
-  if (adjacent != null) return adjacent
-
-  const nonZeroOffset = uses.find(use => use.offset !== 0)
-  if (nonZeroOffset != null) {
-    if (!needsCrossCollectionLengthProof(uses)) return null
-    return {
-      status: 'unknown',
-      reason: `Bound index label ${nonZeroOffset.label} currently supports same-index ${nonZeroOffset.label} comparisons and adjacent ${nonZeroOffset.label} + 1 comparisons backed by inferred sequence facts`,
-    }
+  const relationship = classifyBoundIndexRelationship(spec, analyzeBoundIndexesInSpec(spec))
+  if (relationship.kind === 'none') return null
+  if (relationship.kind === 'unsupported') return {status: 'unknown', reason: relationship.reason}
+  if (relationship.kind === 'adjacent') {
+    return proveAdjacentBoundIndexComparison(spec.text, relationship.relation, context)
   }
 
-  const lengthStatus = proveSameIndexCollectionLengths(uses, context)
+  const lengthStatus = proveSameIndexCollectionLengths(relationship.uses, context)
   if (lengthStatus.status !== 'pass') return lengthStatus
 
   const left = context.evaluateSpecExpression(spec.left)
@@ -99,53 +105,94 @@ export function proveBoundIndexComparisonSpec(
   }
 }
 
-function proveAdjacentBoundIndexComparison(
-  spec: FitComparisonCheckSpec,
-  context: BoundIndexContext,
-): {status: BoundIndexStatus; reason?: string} | null {
-  const left = singleBoundPathExpression(spec.left)
-  const right = singleBoundPathExpression(spec.right)
-  if (left != null && right != null && left.label === right.label && left.collectionKey === right.collectionKey && left.prop === right.prop) {
-    const offsetDiff = right.offset - left.offset
-    const forward =
-      offsetDiff === 1 && spec.op === '<=' ? {previous: left, next: right}
-        : offsetDiff === -1 && spec.op === '>=' ? {previous: right, next: left}
-          : null
-    if (forward != null) {
-      const array = context.evaluateDomainPath(forward.previous.collectionPath)
-      if (array.kind !== 'array') return {status: 'unknown', reason: `${forward.previous.collectionText} expected an array`}
-      const generic = context.proveAdjacentComparison(forward.previous.collectionPath, {
-        kind: 'adjacent-comparison',
-        left: {item: 'next', path: [forward.previous.prop]},
-        op: '>=',
-        right: {terms: [{item: 'previous', path: [forward.previous.prop]}], addends: []},
-      })
-      if (generic.status === 'pass') return generic
-      return {status: 'unknown', reason: context.nondecreasingFailureReason(spec.text, {array, prop: forward.previous.prop})}
+function classifyBoundIndexRelationship(
+  spec: FitRangeCheckSpec | FitComparisonCheckSpec,
+  analysis: BoundIndexAnalysis,
+): BoundIndexRelationship {
+  const {uses} = analysis
+  if (uses.length === 0) return {kind: 'none'}
+  if (analysis.hasAnonymousItem) {
+    return {
+      kind: 'unsupported',
+      reason: 'Named index contracts cannot mix a named position such as $i with [] in the same contract',
     }
   }
+  const nested = uses.find(use => use.nested)
+  if (nested != null) {
+    return {
+      kind: 'unsupported',
+      reason: `Named index ${nested.label} is nested with another collection item; named index contracts currently support one collection level`,
+    }
+  }
+  const labels = [...new Set(uses.map(use => use.label))]
+  if (labels.length !== 1) {
+    return {
+      kind: 'unsupported',
+      reason: `Named index contracts support one label at a time; ${labels.join(' and ')} would require a relationship the checker does not model`,
+    }
+  }
+  const label = labels[0]!
+  if (uses.every(use => use.offset === 0)) return {kind: 'same-index', uses}
+  if (spec.kind === 'range') {
+    return {
+      kind: 'unsupported',
+      reason: `Named index range contracts support matching ${label} positions without offsets`,
+    }
+  }
+  const offsets = new Set(uses.map(use => use.offset))
+  const collectionPath = uses[0]!.collectionPath
+  if (
+    offsets.size === 2
+    && offsets.has(0)
+    && offsets.has(1)
+    && uses.every(use => sameDomainPath(use.collectionPath, collectionPath))
+  ) {
+    const relation = adjacentComparisonFromSpec(spec)
+    return relation == null
+      ? {
+          kind: 'unsupported',
+          reason: 'Adjacent named index contracts must directly compare $i + 1 with an expression over $i from the same collection',
+        }
+      : {kind: 'adjacent', relation}
+  }
+  return {
+    kind: 'unsupported',
+    reason: `Named index comparisons support matching ${label} positions, or ${label} and ${label} + 1 in one collection`,
+  }
+}
 
-  const adjacent = adjacentComparisonFromSpec(spec)
-  if (adjacent != null) {
-    let firstFailure: {status: BoundIndexStatus; reason?: string} | null = null
-    for (const comparison of adjacent.comparisons) {
-      const result = context.proveAdjacentComparison(adjacent.collectionPath, comparison)
-      if (result.status === 'pass') return result
-      firstFailure ??= result
+function proveAdjacentBoundIndexComparison(
+  specText: string,
+  adjacent: AdjacentComparisonParse,
+  context: BoundIndexContext,
+): {status: BoundIndexStatus; reason?: string} {
+  const collection = context.evaluateDomainPath(adjacent.collectionPath)
+  if (collection.kind !== 'array' || collection.layout !== 'collection') {
+    return {
+      status: 'unknown',
+      reason: `Named index collection ${domainPathText(adjacent.collectionPath)} expected a homogeneous array; fixed tuples use numeric positions`,
     }
-    return firstFailure
   }
-  return null
+  let firstFailure: {status: BoundIndexStatus; reason?: string} | null = null
+  for (const comparison of adjacent.comparisons) {
+    const result = context.proveAdjacentComparison(adjacent.collectionPath, comparison)
+    if (result.status === 'pass') return result
+    firstFailure ??= result
+  }
+  if (adjacent.nondecreasingProp != null) {
+    return {status: 'unknown', reason: context.nondecreasingFailureReason(specText, {array: collection, prop: adjacent.nondecreasingProp})}
+  }
+  return firstFailure ?? {status: 'unknown', reason: 'Adjacent relationship was not inferred'}
 }
 
 type AdjacentComparisonParse = {
   collectionPath: FitDomainPath
   comparisons: AdjacentComparison[]
+  nondecreasingProp: string | null
 }
 
 type BoundSequenceTerm = {
   label: string
-  collectionKey: string
   collectionPath: FitDomainPath
   term: SequenceTerm
 }
@@ -167,6 +214,7 @@ function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentCompa
         {kind: 'adjacent-addition', left: nextLeft.term, op: spec.op, right: right.addition},
         {kind: 'adjacent-comparison', left: nextLeft.term, op: spec.op, right: right.expression},
       ],
+      nondecreasingProp: nondecreasingProp(nextLeft.term, spec.op, right.expression),
     }
   }
 
@@ -180,10 +228,18 @@ function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentCompa
         {kind: 'adjacent-addition', left: nextRight.term, op, right: left.addition},
         {kind: 'adjacent-comparison', left: nextRight.term, op, right: left.expression},
       ],
+      nondecreasingProp: nondecreasingProp(nextRight.term, op, left.expression),
     }
   }
 
   return null
+}
+
+function nondecreasingProp(next: SequenceTerm, op: FitComparisonCheckSpec['op'], previous: SequenceExpression): string | null {
+  if (op !== '>=' || next.path.length !== 1) return null
+  const previousTerm = singleTermExpression(previous)?.term
+  if (previousTerm == null || previousTerm.item !== 'previous') return null
+  return previousTerm.path.length === 1 && previousTerm.path[0] === next.path[0] ? next.path[0]! : null
 }
 
 function sequenceSideFromText(text: FitExpressionLike): {
@@ -256,7 +312,6 @@ function boundSequenceTermFromExpression(expression: ts.Expression, domainPaths:
   const collectionPath = {root: domainPath.root, segments: domainPath.segments.slice(0, lastItemIndex)}
   return {
     label: item.label,
-    collectionKey: domainPathKey(collectionPath),
     collectionPath,
     term: {item: itemKind, path},
   }
@@ -287,7 +342,7 @@ function expressionHasOnlyPreviousTerms(expression: SequenceExpression) {
 function matchingCollectionPath(terms: BoundSequenceTerm[]): FitDomainPath | null {
   if (terms.length === 0) return null
   const first = terms[0]!
-  if (!terms.every(term => term.label === first.label && term.collectionKey === first.collectionKey)) return null
+  if (!terms.every(term => term.label === first.label && sameDomainPath(term.collectionPath, first.collectionPath))) return null
   return first.collectionPath
 }
 
@@ -301,58 +356,68 @@ function proveSameIndexCollectionLengths(
   uses: BoundIndexUse[],
   context: BoundIndexContext,
 ): {status: BoundIndexStatus; reason?: string} {
-  const byLabel = new Map<string, BoundIndexUse[]>()
-  for (const use of uses) {
-    const group = byLabel.get(use.label) ?? []
-    group.push(use)
-    byLabel.set(use.label, group)
+  const label = uses[0]!.label
+  const collections = uniqueBoundCollections(uses)
+  const first = collections[0]!
+  const firstText = domainPathText(first.collectionPath)
+  const firstArray = context.evaluateDomainPath(first.collectionPath)
+  if (firstArray.kind !== 'array' || firstArray.layout !== 'collection') {
+    return {status: 'unknown', reason: `Named index collection ${firstText} expected a homogeneous array; fixed tuples use numeric positions`}
   }
-
-  for (const [label, group] of byLabel) {
-    const collections = uniqueBoundCollections(group)
-    if (collections.length <= 1) continue
-    const first = collections[0]!
-    const firstArray = context.evaluateDomainPath(first.collectionPath)
-    if (firstArray.kind !== 'array') return {status: 'unknown', reason: `${first.collectionText} expected an array`}
-    for (const other of collections.slice(1)) {
-      const otherArray = context.evaluateDomainPath(other.collectionPath)
-      if (otherArray.kind !== 'array') return {status: 'unknown', reason: `${other.collectionText} expected an array`}
-      const status = proveComparison(arrayLength(firstArray), '==', arrayLength(otherArray), context.assumptions)
-      if (status.status !== 'pass') {
-        return {
-          status: 'unknown',
-          reason: `Bound index label ${label} needs matching lengths for ${first.collectionText} and ${other.collectionText}\n${status.reason ?? `missing: ${first.collectionText}.length == ${other.collectionText}.length`}`,
-        }
+  for (const other of collections.slice(1)) {
+    const otherText = domainPathText(other.collectionPath)
+    const otherArray = context.evaluateDomainPath(other.collectionPath)
+    if (otherArray.kind !== 'array' || otherArray.layout !== 'collection') {
+      return {status: 'unknown', reason: `Named index collection ${otherText} expected a homogeneous array; fixed tuples use numeric positions`}
+    }
+    const status = proveComparison(arrayLength(firstArray), '==', arrayLength(otherArray), context.assumptions)
+    if (status.status !== 'pass') {
+      return {
+        status: 'unknown',
+        reason: `Bound index label ${label} needs matching lengths for ${firstText} and ${otherText}\n${status.reason ?? `missing: ${firstText}.length == ${otherText}.length`}`,
       }
     }
   }
   return {status: 'pass'}
 }
 
-function needsCrossCollectionLengthProof(uses: BoundIndexUse[]) {
-  const byLabel = new Map<string, Set<string>>()
-  for (const use of uses) {
-    const collections = byLabel.get(use.label) ?? new Set<string>()
-    collections.add(use.collectionKey)
-    byLabel.set(use.label, collections)
-  }
-  return [...byLabel.values()].some(collections => collections.size > 1)
-}
-
 function uniqueBoundCollections(uses: BoundIndexUse[]) {
-  const byKey = new Map<string, BoundIndexUse>()
+  const collections: BoundIndexUse[] = []
   for (const use of uses) {
-    if (!byKey.has(use.collectionKey)) byKey.set(use.collectionKey, use)
+    if (!collections.some(collection => sameDomainPath(collection.collectionPath, use.collectionPath))) collections.push(use)
   }
-  return [...byKey.values()]
+  return collections
 }
 
-function boundIndexUses(text: FitExpressionLike): BoundIndexUse[] {
-  return [...fitExpressionParsed(text).domainPaths.values()].flatMap(domainPath => boundIndexUsesInDomainPath(domainPath))
+function analyzeBoundIndexesInSpec(spec: FitSpec): BoundIndexAnalysis {
+  const expressions: FitExpressionLike[] = (() => {
+    switch (spec.kind) {
+      case 'range':
+        return [
+          spec.expression,
+          ...fitRangeCases(spec.range).flatMap(rangeCase => [rangeCase.lower, rangeCase.upper]),
+        ]
+      case 'comparison':
+        return [spec.left, spec.right]
+      case 'expression':
+        return [spec.expression]
+      case 'value':
+        return [spec.expression, ...fitValueSpecExpressions(spec.value)]
+      case 'pure':
+        return []
+    }
+  })()
+  const paths = expressions.flatMap(expression => [...fitExpressionParsed(expression).domainPaths.values()])
+  return {
+    uses: paths.flatMap(boundIndexUsesInDomainPath),
+    hasAnonymousItem: paths.some(domainPath =>
+      domainPath.segments.some(segment => segment.kind === 'item' && segment.label == null)),
+  }
 }
 
 function boundIndexUsesInDomainPath(domainPath: FitDomainPath): BoundIndexUse[] {
   const uses: BoundIndexUse[] = []
+  const itemCount = domainPath.segments.filter(segment => segment.kind === 'item').length
   for (let index = 0; index < domainPath.segments.length; index++) {
     const segment = domainPath.segments[index]!
     if (segment.kind !== 'item' || segment.label == null) continue
@@ -361,51 +426,34 @@ function boundIndexUsesInDomainPath(domainPath: FitDomainPath): BoundIndexUse[] 
     uses.push({
       label: segment.label,
       offset: segment.offset ?? 0,
-      collectionKey: domainPathKey(collectionPath),
-      collectionText: domainPathText(collectionPath),
       collectionPath,
+      nested: itemCount > 1,
     })
   }
   return uses
 }
 
-function singleBoundPathExpression(text: FitExpressionLike): BoundPathExpression | null {
-  const parsed = fitExpressionParsed(text)
-  if (!ts.isIdentifier(parsed.expression)) return null
-  const domainPath = parsed.domainPaths.get(parsed.expression.text)
-  if (domainPath == null) return null
-  const lastItemIndex = domainPath.segments.findLastIndex(segment => segment.kind === 'item')
-  if (lastItemIndex < 0) return null
-  const lastItem = domainPath.segments[lastItemIndex]!
-  if (lastItem.kind !== 'item' || lastItem.label == null) return null
-  const tail = domainPath.segments.slice(lastItemIndex + 1)
-  if (tail.length !== 1 || tail[0]!.kind !== 'prop') return null
-  const earlierLabeledItem = domainPath.segments.slice(0, lastItemIndex).find(segment => segment.kind === 'item' && segment.label != null)
-  if (earlierLabeledItem != null) return null
-  const collectionSegments = domainPath.segments.slice(0, lastItemIndex)
-  const collectionPath = {root: domainPath.root, segments: collectionSegments}
-  return {
-    label: lastItem.label,
-    offset: lastItem.offset ?? 0,
-    collectionKey: domainPathKey(collectionPath),
-    collectionText: domainPathText(collectionPath),
-    collectionPath,
-    prop: tail[0]!.name,
-  }
+function sameDomainPath(left: FitDomainPath, right: FitDomainPath) {
+  if (left.root !== right.root || left.segments.length !== right.segments.length) return false
+  return left.segments.every((segment, index) => {
+    const other = right.segments[index]!
+    if (segment.kind !== other.kind) return false
+    if (segment.kind === 'prop' && other.kind === 'prop') return segment.name === other.name
+    if (segment.kind === 'item' && other.kind === 'item') {
+      return segment.label === other.label && (segment.offset ?? 0) === (other.offset ?? 0)
+    }
+    return false
+  })
 }
 
-function domainPathKey(domainPath: FitDomainPath) {
-  return domainPathText(domainPath, false)
-}
-
-function domainPathText(domainPath: FitDomainPath, includeLabels = true) {
+function domainPathText(domainPath: FitDomainPath) {
   let text = domainPath.root
   for (const segment of domainPath.segments) {
     if (segment.kind === 'prop') {
       text += `.${segment.name}`
       continue
     }
-    if (segment.label == null || !includeLabels) {
+    if (segment.label == null) {
       text += '[]'
       continue
     }

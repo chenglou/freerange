@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import {
   proveBoundIndexComparisonSpec,
   proveBoundIndexRangeSpec,
+  unsupportedNamedIndexSpecReason,
   type BoundIndexContext,
 } from './bound-index.ts'
 import {nondecreasingFailureReason} from './builtins.ts'
@@ -149,6 +150,19 @@ export function verifyCheckSpecWithProof(
     contractCache,
   }
   const boundIndexContext = specBoundIndexContext(context, hooks)
+  const unsupportedNamedIndex = spec.kind === 'expression' || spec.kind === 'value'
+    ? unsupportedNamedIndexSpecReason(spec)
+    : null
+  if (unsupportedNamedIndex != null) {
+    return checkProof({
+      file,
+      ...(spec.line == null ? {} : {line: spec.line}),
+      functionName,
+      text: spec.text,
+      status: 'unknown',
+      reason: unsupportedNamedIndex,
+    }, 'collection', 'unsupported-named-index', 'rejected unsupported named index relationship', [], context.assumptions)
+  }
 
   if (spec.kind === 'range') {
     const directElement = directFiniteElementAccess(fitExpressionParsed(spec.expression).expression)

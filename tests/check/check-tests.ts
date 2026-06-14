@@ -974,25 +974,115 @@ function copyRows(items: {height: number}[]) {
 function offsetAcrossCollections(items: {height: number}[], boxes: {height: number}[]) {
   return {rows: items.map(item => ({height: item.height})), boxes}
 }
+
+/** @fit
+ * given items[].height: 0..40
+ * return[$i + 2].height >= return[$i].height
+ * return[$i].height == return[$j].height
+ * return[$i].height >= 0
+ * return[$i].height: 0..40
+ * return[$i + 1].height <= return[$i + 2].height
+ * return[$i - 1].height <= return[$i].height
+ * twice(return[$i + 1].height) >= twice(return[$i].height)
+ * return[$i].height <= return[].height
+ * (return[$i + 2].height >= return[$i].height)
+ * return[$i + 1]: {height: 0..40}
+ */
+function namedIndexForms(items: {height: number}[]) {
+  return items
+}
+
+/** @fit
+ * given groups[].rows[].height: 0..40
+ * return[$i].rows[$j].height >= 0
+ */
+function nestedNamedIndexes(groups: {rows: {height: number}[]}[]) {
+  return groups
+}
+
+/** @fit
+ * return[$i].height == return[$i].height
+ */
+function namedIndexTuple() {
+  const result: [{height: number}, {height: number}] = [{height: 1}, {height: 2}]
+  return result
+}
+
+/** @fit
+ * given items[$i + 2].height == items[$i].height
+ * return == 1
+ */
+function unsupportedNamedIndexGiven(items: {height: number}[]) {
+  void items
+  return 1
+}
 `)
 const collectionExpressionPasses = [
   'twice(return.rows[$i].height) == twice(items[$i].height)',
-  'return.rows[$i + 1].height: 0..40',
-  'return.rows[$i + 1].height >= 0',
   'twice(return.rows[].height) <= 80',
 ].map(text => collectionExpressionChecks.find(check => check.functionName === 'copyRows' && check.text === text)?.status)
-const crossCollectionOffsetCheck = collectionExpressionChecks.find(check =>
-  check.functionName === 'offsetAcrossCollections'
-  && check.text === 'return.rows[$i + 1].height == boxes[$i].height')
+collectionExpressionPasses.push(...[
+  'return[$i].height >= 0',
+  'return[$i].height: 0..40',
+].map(text => collectionExpressionChecks.find(check =>
+  check.functionName === 'namedIndexForms'
+  && check.text === text)?.status))
+const unsupportedNamedIndexChecks = [
+  ['copyRows', 'return.rows[$i + 1].height: 0..40'],
+  ['copyRows', 'return.rows[$i + 1].height >= 0'],
+  ['offsetAcrossCollections', 'return.rows[$i + 1].height == boxes[$i].height'],
+  ['namedIndexForms', 'return[$i + 2].height >= return[$i].height'],
+  ['namedIndexForms', 'return[$i].height == return[$j].height'],
+  ['namedIndexForms', 'return[$i + 1].height <= return[$i + 2].height'],
+  ['namedIndexForms', 'return[$i - 1].height <= return[$i].height'],
+  ['namedIndexForms', 'twice(return[$i + 1].height) >= twice(return[$i].height)'],
+  ['namedIndexForms', 'return[$i].height <= return[].height'],
+  ['namedIndexForms', '(return[$i + 2].height >= return[$i].height)'],
+  ['namedIndexForms', 'return[$i + 1]: {height: 0..40}'],
+  ['nestedNamedIndexes', 'return[$i].rows[$j].height >= 0'],
+  ['namedIndexTuple', 'return[$i].height == return[$i].height'],
+  ['unsupportedNamedIndexGiven', 'given items[$i + 2].height == items[$i].height'],
+].map(([functionName, text]) => collectionExpressionChecks.find(check =>
+  check.functionName === functionName && check.text === text))
 if (
   collectionExpressionPasses.some(status => status !== 'pass')
-  || crossCollectionOffsetCheck?.status !== 'unknown'
+  || unsupportedNamedIndexChecks.some(check =>
+    check?.status !== 'unknown'
+    || check.reason?.toLowerCase().includes('named index') !== true)
 ) {
-  console.error('expected indexed and wildcard checks to keep expression support where the index meaning is clear')
+  console.error('expected named indexes to support only matching positions and direct adjacent relationships')
   console.error(JSON.stringify(collectionExpressionChecks, null, 2))
   process.exitCode = 1
 } else {
-  console.log('collection contracts: pure expressions with wildcards and indexed paths')
+  console.log('collection contracts: named-index relationships reject unsupported forms before evaluation')
+}
+
+const unsupportedNamedIndexProgram = buildFitSourceFile('unsupported-named-index-preparation.ts', `/** @fit
+ * given items[$i + 2].height == items[$i].height
+ * return[$i].height == return[$j].height
+ */
+function unsupported(items: {height: number}[]) {
+  return items
+}
+`, readTopLevelGlobal)
+const unsupportedNamedIndexFunction = unsupportedNamedIndexProgram.functions.get('unsupported')!
+const preparedUnsupportedNamedIndexes = preparedProgramContracts(unsupportedNamedIndexProgram).functions.get(unsupportedNamedIndexFunction)!
+if (
+  preparedUnsupportedNamedIndexes.contractSpecs.length !== 0
+  || preparedUnsupportedNamedIndexes.assumptions.length !== 0
+  || preparedUnsupportedNamedIndexes.proofs.length !== 0
+  || preparedUnsupportedNamedIndexes.unsupportedSpecs.length !== 2
+) {
+  console.error('expected unsupported named indexes to stay out of call requirements and helper summaries')
+  console.error(JSON.stringify({
+    contractSpecs: preparedUnsupportedNamedIndexes.contractSpecs.map(spec => spec.text),
+    assumptions: preparedUnsupportedNamedIndexes.assumptions.map(spec => spec.text),
+    proofs: preparedUnsupportedNamedIndexes.proofs.map(spec => spec.text),
+    unsupported: preparedUnsupportedNamedIndexes.unsupportedSpecs,
+  }, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('contract preparation: unsupported named indexes are report-only')
 }
 
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit

@@ -672,6 +672,7 @@ export function wildcardRowsFitParent(items: {height: number}[], y: number, gap:
  * given items.length: int 1..50
  * given items[].height: 0..40
  * return.rows[$i].y <= return.rows[$i + 1].y
+ * return.rows[$i + 1].y >= return.rows[$i].y
  */
 export function adjacentBoundIndexRowsAreNondecreasing(items: {height: number}[]) {
   const rows = []
