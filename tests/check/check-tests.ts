@@ -970,6 +970,7 @@ function copyRows(items: {height: number}[]) {
  * given boxes[].height: 0..40
  * return.rows.length == items.length
  * return.rows[$i + 1].height == boxes[$i].height
+ * return.rows[$i].height == boxes[$i - 1].height
  */
 function offsetAcrossCollections(items: {height: number}[], boxes: {height: number}[]) {
   return {rows: items.map(item => ({height: item.height})), boxes}
@@ -983,10 +984,17 @@ function offsetAcrossCollections(items: {height: number}[], boxes: {height: numb
  * return[$i].height: 0..40
  * return[$i + 1].height <= return[$i + 2].height
  * return[$i - 1].height <= return[$i].height
+ * return[$i - 1].height >= 0
+ * return[$i - 1].height: 0..40
+ * return[$i - 2].height <= return[$i - 1].height
+ * return[$i - 1].height <= return[$i + 1].height
  * twice(return[$i + 1].height) >= twice(return[$i].height)
+ * twice(return[$i].height) >= twice(return[$i - 1].height)
+ * twice(return[$row].height) >= twice(return[$row - 1].height)
  * return[$i].height <= return[].height
  * (return[$i + 2].height >= return[$i].height)
  * return[$i + 1]: {height: 0..40}
+ * return[$i - 1]: {height: 0..40}
  */
 function namedIndexForms(items: {height: number}[]) {
   return items
@@ -1031,21 +1039,37 @@ const unsupportedNamedIndexChecks = [
   ['copyRows', 'return.rows[$i + 1].height: 0..40'],
   ['copyRows', 'return.rows[$i + 1].height >= 0'],
   ['offsetAcrossCollections', 'return.rows[$i + 1].height == boxes[$i].height'],
+  ['offsetAcrossCollections', 'return.rows[$i].height == boxes[$i - 1].height'],
   ['namedIndexForms', 'return[$i + 2].height >= return[$i].height'],
   ['namedIndexForms', 'return[$i].height == return[$j].height'],
   ['namedIndexForms', 'return[$i + 1].height <= return[$i + 2].height'],
-  ['namedIndexForms', 'return[$i - 1].height <= return[$i].height'],
+  ['namedIndexForms', 'return[$i - 1].height >= 0'],
+  ['namedIndexForms', 'return[$i - 1].height: 0..40'],
+  ['namedIndexForms', 'return[$i - 2].height <= return[$i - 1].height'],
+  ['namedIndexForms', 'return[$i - 1].height <= return[$i + 1].height'],
   ['namedIndexForms', 'twice(return[$i + 1].height) >= twice(return[$i].height)'],
+  ['namedIndexForms', 'twice(return[$i].height) >= twice(return[$i - 1].height)'],
+  ['namedIndexForms', 'twice(return[$row].height) >= twice(return[$row - 1].height)'],
   ['namedIndexForms', 'return[$i].height <= return[].height'],
   ['namedIndexForms', '(return[$i + 2].height >= return[$i].height)'],
   ['namedIndexForms', 'return[$i + 1]: {height: 0..40}'],
+  ['namedIndexForms', 'return[$i - 1]: {height: 0..40}'],
   ['nestedNamedIndexes', 'return[$i].rows[$j].height >= 0'],
   ['namedIndexTuple', 'return[$i].height == return[$i].height'],
   ['unsupportedNamedIndexGiven', 'given items[$i + 2].height == items[$i].height'],
 ].map(([functionName, text]) => collectionExpressionChecks.find(check =>
   check.functionName === functionName && check.text === text))
+const acceptedMinusOneWithoutFact = collectionExpressionChecks.find(check =>
+  check.functionName === 'namedIndexForms'
+  && check.text === 'return[$i - 1].height <= return[$i].height')
+const customLabelFailure = collectionExpressionChecks.find(check =>
+  check.functionName === 'namedIndexForms'
+  && check.text === 'twice(return[$row].height) >= twice(return[$row - 1].height)')
 if (
   collectionExpressionPasses.some(status => status !== 'pass')
+  || acceptedMinusOneWithoutFact?.status !== 'unknown'
+  || acceptedMinusOneWithoutFact.reason?.toLowerCase().includes('named index') === true
+  || customLabelFailure?.reason?.includes('$row - 1') !== true
   || unsupportedNamedIndexChecks.some(check =>
     check?.status !== 'unknown'
     || check.reason?.toLowerCase().includes('named index') !== true)
@@ -1482,6 +1506,37 @@ if (Bun.argv.includes('--update')) {
   } else {
     console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
   }
+}
+
+const previousIndexReport = await verifyFitFiles([
+  'tests/patterns/previous-index-patterns.ts',
+  'tests/imports/adjacent-summary-patterns.ts',
+], {annotationsOnly: true})
+if (previousIndexReport.phase !== 'ready') {
+  console.error('expected direct and imported previous-index relationships to pass')
+  console.error(JSON.stringify(previousIndexReport.checks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('collection contracts: previous-index relationships pass directly and through helper summaries')
+}
+
+const negativeAdjacentSummaryReport = await verifyFitFiles(['tests/imports/negative-adjacent-summary.ts'], {annotationsOnly: true})
+const negativeAdjacentSummaryCheck = negativeAdjacentSummaryReport.checks.find(check =>
+  check.functionName === 'negativeImportedPreviousNamedIndexSummary'
+  && check.text === 'return.rows[$i].top == return.rows[$i - 1].top + (return.rows[$i - 1].height + spacing + 1)')
+const negativeAdjacentFirstItemCheck = negativeAdjacentSummaryReport.checks.find(check =>
+  check.functionName === 'negativeAdjacentSummaryDoesNotDescribeFirstItem'
+  && check.text === 'return.rows[].top >= 1')
+if (
+  negativeAdjacentSummaryCheck?.status !== 'unknown'
+  || negativeAdjacentSummaryCheck.reason?.includes('adjacent: return.rows[$i + 1].top == return.rows[$i].top + (return.rows[$i].height + spacing)') !== true
+  || negativeAdjacentFirstItemCheck?.status !== 'unknown'
+) {
+  console.error('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence')
+  console.error(JSON.stringify(negativeAdjacentSummaryReport.checks, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('collection contracts: adjacent helper summaries preserve abstraction without proving a different recurrence')
 }
 
 const sequenceOperationChecks = verifyFitSource('sequence-operations.ts', `

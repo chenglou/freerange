@@ -16,6 +16,7 @@ import {
   type Assumption,
   type SequenceAddition,
   type SequenceExpression,
+  type SequenceRelation,
   type SequenceTerm,
   type Value,
 } from './domain.ts'
@@ -42,12 +43,28 @@ type BoundIndexAnalysis = {
   hasAnonymousItem: boolean
 }
 
+type AdjacentIndexPair =
+  | {previousOffset: -1; nextOffset: 0}
+  | {previousOffset: 0; nextOffset: 1}
+
 export type BoundIndexContext = {
   assumptions: Assumption[]
   evaluateDomainPath: (domainPath: FitDomainPath) => Value
   evaluateSpecExpression: (text: FitExpressionLike) => Value
   nondecreasingFailureReason: (text: string, target: {array: ArrayValue; prop: string}) => string
   proveAdjacentComparison: (collectionPath: FitDomainPath, comparison: AdjacentComparison) => {status: BoundIndexStatus; reason?: string}
+}
+
+export function adjacentBoundIndexRelation(
+  spec: FitComparisonCheckSpec,
+): {collectionPath: FitDomainPath; relation: SequenceRelation} | null {
+  const relationship = classifyBoundIndexRelationship(spec, analyzeBoundIndexesInSpec(spec))
+  return relationship.kind === 'adjacent'
+    ? {
+        collectionPath: relationship.relation.collectionPath,
+        relation: relationship.relation.sequenceRelation,
+      }
+    : null
 }
 
 export function unsupportedNamedIndexSpecReason(spec: FitSpec): string | null {
@@ -139,26 +156,32 @@ function classifyBoundIndexRelationship(
       reason: `Named index range contracts support matching ${label} positions without offsets`,
     }
   }
-  const offsets = new Set(uses.map(use => use.offset))
+  const pair = adjacentIndexPair(uses)
   const collectionPath = uses[0]!.collectionPath
   if (
-    offsets.size === 2
-    && offsets.has(0)
-    && offsets.has(1)
+    pair != null
     && uses.every(use => sameDomainPath(use.collectionPath, collectionPath))
   ) {
-    const relation = adjacentComparisonFromSpec(spec)
+    const relation = adjacentComparisonFromSpec(spec, pair)
     return relation == null
       ? {
           kind: 'unsupported',
-          reason: 'Adjacent named index contracts must directly compare $i + 1 with an expression over $i from the same collection',
+          reason: `Adjacent named index contracts must directly compare ${label} with an expression over ${label} - 1, or ${label} + 1 with an expression over ${label}, from the same collection`,
         }
       : {kind: 'adjacent', relation}
   }
   return {
     kind: 'unsupported',
-    reason: `Named index comparisons support matching ${label} positions, or ${label} and ${label} + 1 in one collection`,
+    reason: `Named index comparisons support matching ${label} positions, or direct comparisons between ${label} and one adjacent position in one collection`,
   }
+}
+
+function adjacentIndexPair(uses: BoundIndexUse[]): AdjacentIndexPair | null {
+  const offsets = new Set(uses.map(use => use.offset))
+  if (offsets.size !== 2 || !offsets.has(0)) return null
+  if (offsets.has(-1)) return {previousOffset: -1, nextOffset: 0}
+  if (offsets.has(1)) return {previousOffset: 0, nextOffset: 1}
+  return null
 }
 
 function proveAdjacentBoundIndexComparison(
@@ -188,6 +211,7 @@ function proveAdjacentBoundIndexComparison(
 type AdjacentComparisonParse = {
   collectionPath: FitDomainPath
   comparisons: AdjacentComparison[]
+  sequenceRelation: SequenceRelation
   nondecreasingProp: string | null
 }
 
@@ -197,9 +221,9 @@ type BoundSequenceTerm = {
   term: SequenceTerm
 }
 
-function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentComparisonParse | null {
-  const left = sequenceSideFromText(spec.left)
-  const right = sequenceSideFromText(spec.right)
+function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec, pair: AdjacentIndexPair): AdjacentComparisonParse | null {
+  const left = sequenceSideFromText(spec.left, pair)
+  const right = sequenceSideFromText(spec.right, pair)
   if (left == null || right == null) return null
 
   const allTerms = [...left.expression.terms, ...right.expression.terms]
@@ -208,12 +232,12 @@ function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentCompa
   const nextLeft = singleTermExpression(left.expression)
   if (nextLeft?.term.item === 'next' && expressionHasOnlyPreviousTerms(right.expression)) {
     const collectionPath = matchingCollectionPath([...left.boundTerms, ...right.boundTerms])
+    const addition: AdjacentComparison = {kind: 'adjacent-addition', left: nextLeft.term, op: spec.op, right: right.addition}
+    const comparison: AdjacentComparison = {kind: 'adjacent-comparison', left: nextLeft.term, op: spec.op, right: right.expression}
     return collectionPath == null ? null : {
       collectionPath,
-      comparisons: [
-        {kind: 'adjacent-addition', left: nextLeft.term, op: spec.op, right: right.addition},
-        {kind: 'adjacent-comparison', left: nextLeft.term, op: spec.op, right: right.expression},
-      ],
+      comparisons: [addition, comparison],
+      sequenceRelation: sequenceRelationForContract(nextLeft.term, spec.op, right.expression, right.addition),
       nondecreasingProp: nondecreasingProp(nextLeft.term, spec.op, right.expression),
     }
   }
@@ -222,17 +246,28 @@ function adjacentComparisonFromSpec(spec: FitComparisonCheckSpec): AdjacentCompa
   if (nextRight?.term.item === 'next' && expressionHasOnlyPreviousTerms(left.expression)) {
     const collectionPath = matchingCollectionPath([...left.boundTerms, ...right.boundTerms])
     const op = flipComparison(spec.op)
+    const addition: AdjacentComparison = {kind: 'adjacent-addition', left: nextRight.term, op, right: left.addition}
+    const comparison: AdjacentComparison = {kind: 'adjacent-comparison', left: nextRight.term, op, right: left.expression}
     return collectionPath == null ? null : {
       collectionPath,
-      comparisons: [
-        {kind: 'adjacent-addition', left: nextRight.term, op, right: left.addition},
-        {kind: 'adjacent-comparison', left: nextRight.term, op, right: left.expression},
-      ],
+      comparisons: [addition, comparison],
+      sequenceRelation: sequenceRelationForContract(nextRight.term, op, left.expression, left.addition),
       nondecreasingProp: nondecreasingProp(nextRight.term, op, left.expression),
     }
   }
 
   return null
+}
+
+function sequenceRelationForContract(
+  next: SequenceTerm,
+  op: FitComparisonCheckSpec['op'],
+  expression: SequenceExpression,
+  addition: SequenceAddition,
+): SequenceRelation {
+  return op === '=='
+    ? {kind: 'adjacent-addition', left: next, op, right: addition}
+    : {kind: 'adjacent-comparison', left: next, op, right: expression}
 }
 
 function nondecreasingProp(next: SequenceTerm, op: FitComparisonCheckSpec['op'], previous: SequenceExpression): string | null {
@@ -242,13 +277,13 @@ function nondecreasingProp(next: SequenceTerm, op: FitComparisonCheckSpec['op'],
   return previousTerm.path.length === 1 && previousTerm.path[0] === next.path[0] ? next.path[0]! : null
 }
 
-function sequenceSideFromText(text: FitExpressionLike): {
+function sequenceSideFromText(text: FitExpressionLike, pair: AdjacentIndexPair): {
   expression: SequenceExpression
   addition: SequenceAddition
   boundTerms: BoundSequenceTerm[]
 } | null {
   const parsed = fitExpressionParsed(text)
-  const result = sequenceExpressionFromExpression(parsed.expression, parsed.domainPaths)
+  const result = sequenceExpressionFromExpression(parsed.expression, parsed.domainPaths, pair)
   if (result == null) return null
   return result.boundTerms.length === 0 ? null : result
 }
@@ -256,9 +291,10 @@ function sequenceSideFromText(text: FitExpressionLike): {
 function sequenceExpressionFromExpression(
   expression: ts.Expression,
   domainPaths: Map<string, FitDomainPath>,
+  pair: AdjacentIndexPair,
 ): {expression: SequenceExpression; addition: SequenceAddition; boundTerms: BoundSequenceTerm[]} | null {
   const unwrapped = unwrapParentheses(expression)
-  const boundTerm = boundSequenceTermFromExpression(unwrapped, domainPaths)
+  const boundTerm = boundSequenceTermFromExpression(unwrapped, domainPaths, pair)
   if (boundTerm != null) {
     return {
       expression: {terms: [boundTerm.term], addends: []},
@@ -275,8 +311,8 @@ function sequenceExpressionFromExpression(
     }
   }
   if (ts.isBinaryExpression(unwrapped) && unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-    const left = sequenceExpressionFromExpression(unwrapped.left, domainPaths)
-    const right = sequenceExpressionFromExpression(unwrapped.right, domainPaths)
+    const left = sequenceExpressionFromExpression(unwrapped.left, domainPaths, pair)
+    const right = sequenceExpressionFromExpression(unwrapped.right, domainPaths, pair)
     if (left == null || right == null) return null
     return {
       expression: {
@@ -291,7 +327,11 @@ function sequenceExpressionFromExpression(
   return null
 }
 
-function boundSequenceTermFromExpression(expression: ts.Expression, domainPaths: Map<string, FitDomainPath>): BoundSequenceTerm | null {
+function boundSequenceTermFromExpression(
+  expression: ts.Expression,
+  domainPaths: Map<string, FitDomainPath>,
+  pair: AdjacentIndexPair,
+): BoundSequenceTerm | null {
   if (!ts.isIdentifier(expression)) return null
   const domainPath = domainPaths.get(expression.text)
   if (domainPath == null) return null
@@ -301,7 +341,8 @@ function boundSequenceTermFromExpression(expression: ts.Expression, domainPaths:
   if (item.kind !== 'item' || item.label == null) return null
   const earlierLabeledItem = domainPath.segments.slice(0, lastItemIndex).find(segment => segment.kind === 'item' && segment.label != null)
   if (earlierLabeledItem != null) return null
-  const itemKind = item.offset == null || item.offset === 0 ? 'previous' : item.offset === 1 ? 'next' : null
+  const offset = item.offset ?? 0
+  const itemKind = offset === pair.previousOffset ? 'previous' : offset === pair.nextOffset ? 'next' : null
   if (itemKind == null) return null
   const tail = domainPath.segments.slice(lastItemIndex + 1)
   const path: string[] = []

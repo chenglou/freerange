@@ -14,6 +14,7 @@ import type {
   Program,
 } from './check-types.ts'
 import {
+  arraySummaryWithRelation,
   linearNameForExpression,
   joinValues,
   literalValue,
@@ -22,6 +23,7 @@ import {
   numberWithBounds,
   numberValue,
   unknown,
+  unknownArray,
   withCombinedNumberCaseInfo,
   withNumberCases,
   type BranchArm,
@@ -32,10 +34,12 @@ import {
   gridMeet,
   integerValued,
 } from './domain.ts'
+import {adjacentBoundIndexRelation} from './bound-index.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {mergeBranchArms} from './branch-context.ts'
 import {
   finiteElementAccessRoot,
+  evaluateDomainPathValue,
   parsePrintedNumber,
   setCheckedDomainPathValue,
   setCheckedFiniteArrayElementValue,
@@ -66,6 +70,7 @@ import {
   parseExpression,
   parseFitRangeText,
   type ComparisonOperator,
+  type FitDomainPath,
   type FitExpressionLike,
   type FitRange,
   type FitRangeCheckSpec,
@@ -675,6 +680,29 @@ function applySummaryComparisonSpec(
   source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
+  const adjacent = adjacentBoundIndexRelation(spec)
+  if (adjacent != null && adjacent.collectionPath.root === fitReturnInternalRoot) {
+    const collection = evaluateDomainPathValue(adjacent.collectionPath, env)
+    const summarizedCollection = collection.kind === 'array'
+      ? collection.layout === 'collection' ? collection : null
+      : unknownArray(domainPathExpressionText(adjacent.collectionPath))
+    if (summarizedCollection != null) {
+      env.set(
+        adjacent.collectionPath.root,
+        setCheckedDomainPathValue(
+          env.get(adjacent.collectionPath.root),
+          adjacent.collectionPath.root,
+          adjacent.collectionPath.segments,
+          {
+            ...summarizedCollection,
+            summary: arraySummaryWithRelation(summarizedCollection.summary, adjacent.relation),
+          },
+        ),
+      )
+    }
+    return
+  }
+
   const leftPath = simpleResultPathText(spec.left)
   const rightPath = simpleResultPathText(spec.right)
   const fact = checkedContractFact(source, spec.text)
@@ -699,6 +727,14 @@ function applySummaryComparisonSpec(
     if (left.kind === 'number') applySummaryComparisonToPath(env, context, rightPath, flipComparison(spec.op), left, fact, evaluators)
     else if (left.kind === 'literal' && spec.op === '==') applySummaryLiteralEqualityToPath(env, rightPath, left, fact)
   }
+}
+
+function domainPathExpressionText(domainPath: FitDomainPath) {
+  let text = domainPath.root
+  for (const segment of domainPath.segments) {
+    text += segment.kind === 'prop' ? `.${segment.name}` : '[]'
+  }
+  return text
 }
 
 function applySummaryLiteralEqualityToPath(

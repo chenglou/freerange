@@ -130,3 +130,35 @@ export function importedDynamicRange(min: number, max: number) {
 export function importedValueSpecRows() {
   return {rows: [{height: 10}, {height: 20}]}
 }
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * return.rows[$row].top == return.rows[$row - 1].top + (return.rows[$row - 1].height + gap)
+ */
+export function importedPreviousNamedIndexRows(items: {height: number}[], gap: number) {
+  const rows = []
+  let top = 0
+  for (const item of items) {
+    rows.push({top, height: item.height})
+    top += item.height + gap
+  }
+  return {rows}
+}
+
+/** @fit
+ * given items.length: int 1..50
+ * given items[].height: 0..40
+ * given gap: 0..10
+ * return.rows[$row - 1].top <= return.rows[$row].top
+ */
+export function importedNondecreasingRows(items: {height: number}[], gap: number) {
+  const rows = []
+  let top = 0
+  for (const item of items) {
+    rows.push({top, height: item.height})
+    top += item.height + gap
+  }
+  return {rows}
+}

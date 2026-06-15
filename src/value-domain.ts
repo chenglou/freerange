@@ -90,7 +90,7 @@ export function unknownArrayLength(name: string): NumberValue {
   return numberValue(0, maxArrayLength, 0, expr, linearVariable(linearNameForExpression(expr)))
 }
 
-export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): ArrayValue {
+export function unknownArray(name: string, length: NumberValue = unknownArrayLength(name), element: Value | null = null): CollectionValue {
   return {
     kind: 'array',
     referenceIds: freshReferenceIds(),

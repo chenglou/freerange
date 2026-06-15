@@ -1,4 +1,5 @@
 export {
+  arraySummaryWithRelation,
   isDefinitelyEmptyArray,
   mergeArraySummary,
 } from './array-summary.ts'

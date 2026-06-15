@@ -42,6 +42,14 @@ export function emptyArraySummary(origin: ArrayOrigin | null): ArraySummary {
   }
 }
 
+export function arraySummaryWithRelation(summary: ArraySummary | null, relation: SequenceRelation): ArraySummary {
+  const base = summary ?? emptyArraySummary(null)
+  return canonicalArraySummary({
+    ...base,
+    relations: unionRelations(base.relations, [relation]),
+  })
+}
+
 export function mergeArraySummary(left: ArraySummary | null, right: ArraySummary | null): ArraySummary | null {
   if (left == null) return right == null ? null : canonicalArraySummary(right)
   if (right == null) return canonicalArraySummary(left)

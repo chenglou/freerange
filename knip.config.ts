@@ -14,10 +14,13 @@ const config: KnipConfig = {
     // Fixture files loaded by file path inside test suites and the verify scripts
     'tests/patterns/patterns.ts',
     'tests/patterns/loop-patterns.ts',
+    'tests/patterns/previous-index-patterns.ts',
     'tests/patterns/negative-patterns.ts',
     'tests/patterns/negative-shadowed-catalog.ts',
+    'tests/imports/adjacent-summary-patterns.ts',
     'tests/imports/import-patterns.ts',
     'tests/imports/import-pattern-*.{ts,tsx}',
+    'tests/imports/negative-adjacent-summary.ts',
     'tests/imports/negative-import-*.ts',
     'tests/interpreter-matrix/interpreter-matrix-*.ts',
     'photo-gallery/index.ts',
