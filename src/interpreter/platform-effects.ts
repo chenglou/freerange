@@ -10,9 +10,16 @@ export type PlatformResultSource =
   | {kind: 'arguments-from'; index: number}
   | {kind: 'callback-return'; argumentIndex: number}
 
+// Apply `selections` property/element reads to the source, then place the
+// result behind `containers` object or array layers.
+export type PlatformResultReference = {
+  source: PlatformResultSource
+  selections: number
+  containers: number
+}
+
 export type PlatformResultEffect = {
-  aliases: readonly PlatformResultSource[]
-  retains: readonly PlatformResultSource[]
+  references: readonly PlatformResultReference[]
 }
 
 export type PlatformCallbackEffect = {
@@ -35,7 +42,7 @@ export type PlatformCallClassification =
   | {kind: 'unsupported'; reason: string}
   | {kind: 'unrecognized'}
 
-const noReferenceResult: PlatformResultEffect = {aliases: [], retains: []}
+const noReferenceResult: PlatformResultEffect = {references: []}
 
 const noPlatformEffects: PlatformCallEffect = {
   mutatesReceiver: false,
@@ -47,21 +54,21 @@ const noPlatformEffects: PlatformCallEffect = {
 }
 
 const freshResult = (...sources: PlatformResultSource[]): PlatformResultEffect => ({
-  aliases: [],
-  retains: sources,
+  references: sources.map(source => ({source, selections: 0, containers: 1})),
 })
 
 const aliasResult = (...sources: PlatformResultSource[]): PlatformResultEffect => ({
-  aliases: sources,
-  retains: [],
+  references: sources.map(source => ({source, selections: 0, containers: 0})),
 })
 
 const aliasResultRetaining = (
   alias: PlatformResultSource,
   ...retains: PlatformResultSource[]
 ): PlatformResultEffect => ({
-  aliases: [alias],
-  retains,
+  references: [
+    {source: alias, selections: 0, containers: 0},
+    ...retains.map(source => ({source, selections: 0, containers: 1})),
+  ],
 })
 
 const receiverResult = aliasResult({kind: 'receiver'})
@@ -95,7 +102,6 @@ const arrayMethodEffects = new Map<string, PlatformCallEffect>([
   ['includes', noPlatformEffects],
   ['keys', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
   ['values', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
-  ['flat', {...noPlatformEffects, result: freshReceiverElementsResult}],
   ['toReversed', {...noPlatformEffects, result: freshReceiverElementsResult}],
   ['toSpliced', {...noPlatformEffects, result: freshResult(
     {kind: 'receiver-elements'},
@@ -122,11 +128,6 @@ const arrayMethodEffects = new Map<string, PlatformCallEffect>([
   ['findIndex', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
   ['findLast', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)], result: receiverElementResult}],
   ['findLastIndex', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
-  ['flatMap', {
-    ...noPlatformEffects,
-    callbacks: [arrayCallback(0, 1)],
-    result: freshResult({kind: 'callback-return', argumentIndex: 0}),
-  }],
   ['toSorted', {
     ...noPlatformEffects,
     callbacks: [comparatorCallback(0)],
@@ -272,6 +273,14 @@ export function classifyPlatformMethodCall(
   name: string,
   argumentCount: number,
 ): PlatformCallClassification {
+  if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'flat' || name === 'flatMap')) {
+    return {
+      kind: 'unsupported',
+      reason: name === 'flat'
+        ? 'Array.flat is unsupported because it conditionally removes nested array containers'
+        : 'Array.flatMap is unsupported because it conditionally removes an array returned by its callback',
+    }
+  }
   if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'reduce' || name === 'reduceRight')) {
     return {
       kind: 'unsupported',

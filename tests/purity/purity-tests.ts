@@ -18,6 +18,8 @@ import {
   importedNamespacePure,
   importedNamedCallbackKeepsSourceProgram,
   importedPrimitivePure,
+  importedWrapperMutationImpure,
+  importedWrapperReplacementPure,
 } from './imported-caller.ts'
 
 void contractRejectsImportedAlias
@@ -31,6 +33,8 @@ void importedNamespacePrimitivePure
 void importedNamespacePure
 void importedNamedCallbackKeepsSourceProgram
 void importedPrimitivePure
+void importedWrapperMutationImpure
+void importedWrapperReplacementPure
 
 function purityOf(name: string, source: string): Purity {
   const program = buildFitSourceFile('purity.ts', source, readTopLevelGlobal)
@@ -43,6 +47,9 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   // --- pure ---
   {label: 'arithmetic on params', kind: 'pure', source: `function f(x: number) { return x * 2 + 1 }`},
   {label: 'local array build with push', kind: 'pure', source: `function f(x: number) { const ys: number[] = []; ys.push(x); return ys.length }`},
+  {label: 'local Array constructor build with push', kind: 'pure', source: `function f(x: number) { const ys = new Array<number>(); ys.push(x); return ys.length }`},
+  {label: 'Array constructor element replacement stays local', kind: 'pure', source: `function f(box: {n: number}) { const ys = new Array(box); ys[0] = {n: 1}; return ys.length }`},
+  {label: 'typed array numeric construction stays local', kind: 'pure', source: `function f() { return new Uint8Array(10).length }`},
   {label: 'local let mutation', kind: 'pure', source: `function f(x: number) { let t = 0; t += x; return t }`},
   {label: 'Math (non-random)', kind: 'pure', source: `function f(x: number) { return Math.min(Math.abs(x), 10) }`},
   {label: 'reads module const primitive', kind: 'pure', source: `const MAX = 100\nfunction f(x: number) { return Math.min(x, MAX) }`},
@@ -57,6 +64,22 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'shorthand property keeps local object mutation local', kind: 'pure', source: `function f() { const box = {value: 0}; const holder = {box}; holder.box.value = 1; return 1 }`},
   {label: 'map result container is fresh', kind: 'pure', source: `function f(xs: number[]) { const holders = xs.map(value => ({value})); holders.push({value: 1}); return holders.length }`},
   {label: 'immediate slice result container is fresh', kind: 'pure', source: `function f(xs: number[]) { return xs.slice().push(1) }`},
+  {label: 'helper result container is fresh', kind: 'pure', source: `function wrap(box: {n: number}) { return {box, marker: 0} }\nfunction f(box: {n: number}) { wrap(box).marker = 1; return 1 }`},
+  {label: 'assignment result preserves a fresh wrapper', kind: 'pure', source: `function wrap(box: {n: number}) { let holder = {box: {n: 0}}; return holder = {box} }\nfunction f(box: {n: number}) { wrap(box).box = {n: 1}; return 1 }`},
+  {label: 'helper nested wrapper field replacement stays local', kind: 'pure', source: `function wrap(box: {n: number}) { return [{box}] }\nfunction f(box: {n: number}) { wrap(box)[0]!.box = {n: 1}; return 1 }`},
+  {label: 'helper chain preserves nested fresh containers', kind: 'pure', source: `function wrap(box: {n: number}) { return [{box}] }\nfunction relay(box: {n: number}) { return wrap(box) }\nfunction f(box: {n: number}) { relay(box)[0]!.box = {n: 1}; return 1 }`},
+  {label: 'named map callback uses its return summary', kind: 'pure', source: `function wrap(value: {n: number}) { return [{value}] }\nfunction f(xs: {n: number}[]) { xs.map(wrap)[0]![0]!.value = {n: 1}; return 1 }`},
+  {label: 'helper slice result container is fresh', kind: 'pure', source: `function copy(xs: {n: number}[]) { return xs.slice() }\nfunction f(xs: {n: number}[]) { copy(xs).push({n: 1}); return 1 }`},
+  {label: 'rest parameter array mutation stays local', kind: 'pure', source: `function f(...boxes: {n: number}[]) { boxes.push({n: 1}); return boxes.length }`},
+  {label: 'rest parameter array is fresh', kind: 'pure', source: `function collect(...boxes: {n: number}[]) { return boxes }\nfunction f(first: {n: number}, second: {n: number}) { collect(first, second)[1] = {n: 1}; return 1 }`},
+  {label: 'rest parameter array stays fresh through a spread call', kind: 'pure', source: `function collect(...boxes: {n: number}[]) { return boxes }\nfunction f(boxes: {n: number}[]) { collect(...boxes).push({n: 1}); return 1 }`},
+  {label: 'omitted parameter contributes no outside reference', kind: 'pure', source: `function make(box = {n: 0}) { return box }\nfunction f() { make().n += 1; return 1 }`},
+  {label: 'argument before a spread keeps its exact returned reference', kind: 'pure', source: `function chooseFirst(first: {n: number}, second: {n: number}) { return first }\nfunction f(boxes: [{n: number}]) { const local = {n: 0}; chooseFirst(local, ...boxes).n += 1; return 1 }`},
+  {label: 'callback rest parameter array is fresh', kind: 'pure', source: `function collect(...args: [{n: number}, number, {n: number}[]]) { return args }\nfunction f(xs: {n: number}[]) { xs.map(collect)[0]![0] = {n: 1}; return 1 }`},
+  {label: 'callback rest parameter array mutation stays local', kind: 'pure', source: `function collect(...args: [{n: number}, number, {n: number}[]]) { args.pop(); return 1 }\nfunction f(xs: {n: number}[]) { return xs.map(collect)[0] ?? 0 }`},
+  {label: 'recursive identity without fresh growth settles', kind: 'pure', source: `function identity(box: {n: number}, stop: boolean): {n: number} { return stop ? box : identity(box, true) }\nfunction f(box: {n: number}) { identity(box, false); return 1 }`},
+  {label: 'nested destructuring of ordinary data is supported', kind: 'pure', source: `function f({outer: {value}}: {outer: {value: number}}) { return value }`},
+  {label: 'object destructuring nested in an array is supported for ordinary data', kind: 'pure', source: `function f(items: [{value: number}]) { const [{value}] = items; return value }`},
   {label: 'destructuring assignment target is not a read', kind: 'pure', source: `function f(box: {n: number}, source: {box: {n: number}}) { ({box} = source); return box.n }`},
   {label: 'object rest assignment creates a fresh object', kind: 'pure', source: `function f(source: {n: number}) { let rest = {n: 0}; ({...rest} = source); rest.n += 1; return rest.n }`},
   {label: 'for-of over an array uses the built-in iterator', kind: 'pure', source: `function f(xs: number[]) { let total = 0; for (const value of xs) total += value; return total }`},
@@ -71,9 +94,25 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
 
   // --- impure ---
   {label: 'mutates a parameter', kind: 'impure', source: `function f(o: {v: number}) { o.v = 9; return 1 }`},
+  {label: 'Array constructor retains object arguments', kind: 'impure', source: `function f(box: {n: number}) { const ys = new Array(box); ys[0]!.n += 1; return 1 }`},
   {label: 'shorthand property retains a mutated parameter', kind: 'impure', source: `function f(box: {value: number}) { const holder = {box}; holder.box.value = 1; return 1 }`},
   {label: 'map result retains a callback return', kind: 'impure', source: `function f(box: {n: number}, xs: number[]) { const holders = xs.map(() => ({box})); holders[0]!.box.n += 1; return 1 }`},
   {label: 'map result retains a callback local return', kind: 'impure', source: `function f(xs: {n: number}[]) { const holders = xs.map(value => { const holder = {value}; return holder }); holders[0]!.value.n += 1; return 1 }`},
+  {label: 'helper nested wrapper still exposes its input', kind: 'impure', source: `function wrap(box: {n: number}) { return [{box}] }\nfunction f(box: {n: number}) { wrap(box)[0]!.box.n += 1; return 1 }`},
+  {label: 'helper chain still exposes its input', kind: 'impure', source: `function wrap(box: {n: number}) { return [{box}] }\nfunction relay(box: {n: number}) { return wrap(box) }\nfunction f(box: {n: number}) { relay(box)[0]!.box.n += 1; return 1 }`},
+  {label: 'named map callback still exposes source elements', kind: 'impure', source: `function wrap(value: {n: number}) { return [{value}] }\nfunction f(xs: {n: number}[]) { xs.map(wrap)[0]![0]!.value.n += 1; return 1 }`},
+  {label: 'helper slice result still exposes source elements', kind: 'impure', source: `function copy(xs: {n: number}[]) { return xs.slice() }\nfunction f(xs: {n: number}[]) { copy(xs)[0]!.n += 1; return 1 }`},
+  {label: 'rest parameter elements still expose arguments', kind: 'impure', source: `function f(...boxes: {n: number}[]) { boxes[0]!.n += 1; return 1 }`},
+  {label: 'rest parameter result still exposes every argument', kind: 'impure', source: `function collect(...boxes: {n: number}[]) { return boxes }\nfunction f(first: {n: number}, second: {n: number}) { collect(first, second)[1]!.n += 1; return 1 }`},
+  {label: 'rest parameter result still exposes spread elements', kind: 'impure', source: `function collect(...boxes: {n: number}[]) { return boxes }\nfunction f(boxes: {n: number}[]) { collect(...boxes)[0]!.n += 1; return 1 }`},
+  {label: 'ordinary parameter result conservatively maps spread elements', kind: 'impure', source: `function identity(box: {n: number}) { return box }\nfunction f(boxes: [{n: number}]) { identity(...boxes).n += 1; return 1 }`},
+  {label: 'selected rest parameter element still exposes every possible argument', kind: 'impure', source: `function pickSecond(...boxes: {n: number}[]) { return boxes[1]! }\nfunction f(first: {n: number}, second: {n: number}) { pickSecond(first, second).n += 1; return 1 }`},
+  {label: 'direct helper result aliases only its selected argument', kind: 'impure', reasonIncludes: 'mutates parameter `first`', source: `function chooseFirst(first: {n: number}, second: {n: number}) { return first }\nfunction f(first: {n: number}, second: {n: number}) { chooseFirst(first, second).n += 1; return second.n }`},
+  {label: 'nullish result choice preserves both possible references', kind: 'impure', source: `function choose(first: {n: number} | null, second: {n: number}) { return first ?? second }\nfunction f(first: {n: number} | null, second: {n: number}) { choose(first, second).n += 1; return 1 }`},
+  {label: 'logical result choice preserves its possible reference', kind: 'impure', source: `function choose(first: {n: number} | false, second: {n: number}) { return first || second }\nfunction f(first: {n: number} | false, second: {n: number}) { choose(first, second).n += 1; return 1 }`},
+  {label: 'mutual recursive identity settles', kind: 'impure', source: `function first(box: {n: number}, stop: boolean): {n: number} { return stop ? box : second(box, true) }\nfunction second(box: {n: number}, stop: boolean): {n: number} { return stop ? box : first(box, true) }\nfunction f(box: {n: number}) { first(box, false).n += 1; return 1 }`},
+  {label: 'zero-argument helper return reaches module state', kind: 'impure', reasonIncludes: 'writes outside state `box`', source: `const box = {n: 0}\nfunction current() { return box }\nfunction f() { current().n += 1; return 1 }`},
+  {label: 'nested destructuring mutation reaches its parameter', kind: 'impure', source: `function f({outer: {box}}: {outer: {box: {n: number}}}) { box.n += 1; return 1 }`},
   {label: 'slice result retains its elements', kind: 'impure', source: `function f(xs: {n: number}[]) { xs.slice()[0]!.n += 1; return 1 }`},
   {label: 'Array values iterator retains its elements', kind: 'impure', source: `function f(xs: {n: number}[]) { const values = [...xs.values()]; values[0]!.n += 1; return 1 }`},
   {label: 'toSpliced result retains later inserted arguments', kind: 'impure', source: `function f(xs: {n: number}[], first: {n: number}, second: {n: number}) { xs.toSpliced(0, 0, first, second)[1]!.n += 1; return 1 }`},
@@ -134,11 +173,18 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'sort without a comparator stays unknown', kind: 'unknown', reasonIncludes: 'Array.sort without a comparator is unsupported because default sorting converts elements to strings and can run user code', source: `function f(xs: number[]) { return xs.sort()[0] ?? 0 }`},
   {label: 'toSorted without a comparator stays unknown', kind: 'unknown', reasonIncludes: 'Array.toSorted without a comparator is unsupported because default sorting converts elements to strings and can run user code', source: `function f(xs: number[]) { return xs.toSorted()[0] ?? 0 }`},
   {label: 'reduce recurrence stays unknown', kind: 'unknown', reasonIncludes: 'Array.reduce is unsupported because each callback result becomes the next callback input', source: `function f(xs: number[]) { return xs.reduce((total, value) => total + value, 0) }`},
+  {label: 'flat stays unknown', kind: 'unknown', reasonIncludes: 'Array.flat is unsupported because it conditionally removes nested array containers', source: `function f(xs: number[][]) { return xs.flat()[0] ?? 0 }`},
+  {label: 'flatMap stays unknown', kind: 'unknown', reasonIncludes: 'Array.flatMap is unsupported because it conditionally removes an array returned by its callback', source: `function f(xs: number[][]) { return xs.flatMap(value => value)[0] ?? 0 }`},
   {label: 'collection entries pair stays unknown', kind: 'unknown', reasonIncludes: 'Collection.entries is unsupported because each result is wrapped in a new pair', source: `function f(xs: number[]) { return [...xs.entries()].length }`},
   {label: 'arbitrary iterable spread stays unknown', kind: 'unknown', reasonIncludes: 'spread is unsupported because its iterator can run user code', source: `function f(values: Iterable<number>) { return [...values].length }`},
   {label: 'destructuring getter stays unknown', kind: 'unknown', reasonIncludes: 'object destructuring is unsupported because reading a property can call a getter', source: `class Source { get selected() { return Math.random() } }\nfunction f(source: Source) { const {selected} = source; return selected }`},
   {label: 'object spread getter stays unknown', kind: 'unknown', reasonIncludes: 'object spread is unsupported because reading a property can call a getter', source: `function f() { const source = {get selected() { return Math.random() }}; const copy = {...source}; return Object.keys(copy).length }`},
-  {label: 'nested destructuring stays unknown', kind: 'unknown', reasonIncludes: 'nested destructuring is unsupported because selected values need separate reference tracking', source: `function f({outer: {value}}: {outer: {value: number}}) { return value }`},
+  {label: 'nested array destructuring arbitrary iterable stays unknown', kind: 'unknown', reasonIncludes: 'array destructuring is unsupported because its iterator can run user code', source: `function f({items: [value]}: {items: Iterable<number>}) { return value }`},
+  {label: 'nested destructuring getter stays unknown', kind: 'unknown', reasonIncludes: 'object destructuring is unsupported because reading a property can call a getter', source: `class Inner { get value() { return Math.random() } }\nfunction f({outer: {value}}: {outer: Inner}) { return value }`},
+  {label: 'getter in an object pattern nested in an array stays unknown', kind: 'unknown', reasonIncludes: 'object destructuring is unsupported because reading a property can call a getter', source: `class Item { get value() { return Math.random() } }\nfunction f(items: [Item]) { const [{value}] = items; return value }`},
+  {label: 'unknown helper result mutation stays unknown', kind: 'unknown', reasonIncludes: 'calls a function whose body cannot be analyzed', source: `declare function externalCall(box: {n: number}): {n: number}\nfunction f(box: {n: number}) { externalCall(box).n += 1; return 1 }`},
+  {label: 'recursive fresh return growth stays unknown', kind: 'unknown', reasonIncludes: 'recursive returned references keep adding container layers', source: `type Link = {box: {n: number}, next?: Link}\nfunction wrap(box: {n: number}, stop: boolean): Link { return stop ? {box} : {box, next: wrap(box, true)} }\nfunction f(box: {n: number}) { wrap(box, false).next!.box.n += 1; return 1 }`},
+  {label: 'typed array mutable source construction stays unknown', kind: 'unknown', reasonIncludes: 'typed array construction from mutable input is unsupported', source: `function f(buffer: ArrayBuffer) { return new Uint8Array(buffer).length }`},
   {label: 'unavailable constructor is unknown', kind: 'unknown', source: `declare class Counter {}\nfunction f() { return new Counter() }`},
   {label: 'calls an unresolved function', kind: 'unknown', source: `declare function ext(n: number): number\nfunction f(x: number) { return ext(x) }`},
   {label: 'map with an unresolvable callback parameter', kind: 'unknown', source: `function f(xs: number[], cb: (n: number) => number) { return xs.map(cb)[0] ?? 0 }`},
@@ -164,6 +210,36 @@ if (failures > 0) {
   process.exitCode = 1
 } else {
   console.log(`purity: ${cases.length} classifications`)
+}
+
+const cacheOrderSource = `
+function wrap(value: {n: number}) { return [{value}] }
+function f(value: {n: number}) { wrap(value)[0]!.value.n += 1 }
+`
+const calleeFirstProgram = buildFitSourceFile('callee-first.ts', cacheOrderSource, readTopLevelGlobal)
+const calleeFirstWrap = calleeFirstProgram.functions.get('wrap')
+const calleeFirstCaller = calleeFirstProgram.functions.get('f')
+if (calleeFirstWrap == null || calleeFirstCaller == null) throw new Error('expected cache-order functions')
+functionPurity(functionImplementationReference(calleeFirstProgram, calleeFirstWrap.node))
+const calleeFirstResult = functionPurity(
+  functionImplementationReference(calleeFirstProgram, calleeFirstCaller.node),
+)
+const callerFirstProgram = buildFitSourceFile('caller-first.ts', cacheOrderSource, readTopLevelGlobal)
+const callerFirstCaller = callerFirstProgram.functions.get('f')
+if (callerFirstCaller == null) throw new Error('expected caller-first function')
+const callerFirstResult = functionPurity(
+  functionImplementationReference(callerFirstProgram, callerFirstCaller.node),
+)
+if (
+  calleeFirstResult.kind !== 'impure'
+  || callerFirstResult.kind !== 'impure'
+  || calleeFirstResult.reason !== callerFirstResult.reason
+) {
+  console.error('purity: expected function summary cache order not to change returned-reference effects')
+  console.error(JSON.stringify({calleeFirstResult, callerFirstResult}, null, 2))
+  process.exitCode = 1
+} else {
+  console.log('purity: returned-reference summaries are independent of cache order')
 }
 
 const identityProject = loadFitProject(['tests/purity/imported-caller.ts'], readTopLevelGlobal)
@@ -206,6 +282,10 @@ const namespacePrimitiveClaim = importedPurity.checks.find(check => check.functi
 const pureContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedAlias' && check.text === 'return <= identity()')
 const impureContract = importedPurity.checks.find(check => check.functionName === 'contractRejectsImportedAlias' && check.text === 'return <= noisy()')
 const callbackContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedCallbackAfterMap' && check.text === 'return <= importedPureCallback(0)')
+const importedWrapperReplacement = importedPurity.checks.find(check =>
+  check.functionName === 'importedWrapperReplacementPure' && check.text === 'pure')
+const importedWrapperMutation = importedPurity.checks.find(check =>
+  check.functionName === 'importedWrapperMutationImpure' && check.text === 'pure')
 if (
   pureClaim?.status !== 'pass'
   || impureClaim?.status !== 'fail'
@@ -217,6 +297,9 @@ if (
   || pureContract?.status !== 'pass'
   || impureContract?.status !== 'unknown'
   || callbackContract?.status !== 'pass'
+  || importedWrapperReplacement?.status !== 'pass'
+  || importedWrapperMutation?.status !== 'fail'
+  || importedWrapperMutation.reason?.includes('mutates parameter `value`') !== true
   || impureClaim.reason?.includes('observes the environment') !== true
   || impureNamespaceClaim.reason?.includes('observes the environment') !== true
   || impureContract.reason?.includes('helper importedImpure is not pure: observes the environment') !== true

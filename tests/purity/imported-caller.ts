@@ -3,6 +3,7 @@ import {
   importedPure as identity,
   importedPureCallback,
   importedStable,
+  importedWrap,
 } from './imported-barrel.ts'
 import * as importedHelpers from './imported-barrel.ts'
 import importedDefaultPure from './imported-helper.ts'
@@ -83,4 +84,20 @@ export function importedNamedCallbackKeepsSourceProgram(values: number[]) {
  */
 export function contractUsesImportedCallbackAfterMap() {
   return 0
+}
+
+/** @fit
+ * pure
+ */
+export function importedWrapperReplacementPure(value: {n: number}) {
+  importedWrap(value)[0]!.value = {n: 1}
+  return 1
+}
+
+/** @fit
+ * pure
+ */
+export function importedWrapperMutationImpure(value: {n: number}) {
+  importedWrap(value)[0]!.value.n += 1
+  return 1
 }

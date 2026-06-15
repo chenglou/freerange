@@ -23,6 +23,10 @@ export function importedPureCallback(value: number) {
   return increment(value)
 }
 
+export function importedWrap(value: {n: number}) {
+  return [{value}]
+}
+
 export default function importedDefaultPure() {
   return 10
 }
