@@ -222,7 +222,8 @@ rows.length: int 0..200
 
 `rows[].height: 0..40` means "the rows array, which contains objects with a field `height`, has that `height` between 0 and 40".
 `$i` designates any item index. Reusing `$i` means the same position. Across differing arrays, their lengths must be proven equal.
-`$i + 1` designates the next item and is supported in direct comparisons with `$i` from the same array. You can't currently do `$i - 1`, `$i + 2`, or `$i + 1` across differing arrays.
+`$i + 1` designates the next item, `$i - 1` the previous item, and are supported in direct comparisons with `$i` from the same array. You can't currently do `$i + 2`, or `$i + 1` across differing arrays.
+
 Array elements require homogeneous (aka the same) contracts. To have differing contracts per array element, use tuples instead, just like you'd do it in regular TypeScript.
 
 ### Tuple
@@ -440,6 +441,7 @@ height: number // @fit 0..40 // required type-field contract, reused at explicit
 items[] // every item in one anonymous collection.
 items[$i] // same-index label. Reusing `$i` means matching positions across collections, when lengths are proven equal.
 items[$i + 1] // adjacent label form. Currently supports monotone checks and adjacent row relations the checker inferred from a sequence loop.
+items[$i - 1] // similar to above
 nondecreasing(rows.top) // built-in check: each next row top is at least the previous row top.
 isValidLayout(return) // pure boolean call. Freerange must prove it returns true.
 spaced(rows, gap) // built-in check: adjacent rows are separated by previous height plus `gap`.
