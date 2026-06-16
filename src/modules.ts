@@ -217,13 +217,32 @@ export function buildFitSourceFile<TGlobal>(
   const typeProgram = ts.createProgram([sourceId], compilerOptions, host)
   const typeChecker = typeProgram.getTypeChecker()
   const sourceFile = typeProgram.getSourceFile(sourceId)
-    ?? ts.createSourceFile(sourceId, sourceText, ts.ScriptTarget.Latest, true, scriptKindForFile(sourceId))
-  throwOnUserlandTypeDiagnostics({typeProgram, configDiagnostics: []})
+  if (sourceFile == null) {
+    throwOnUserlandTypeDiagnostics({typeProgram, configDiagnostics: []})
+    throw new Error(`TypeScript program did not contain ${sourceId}`)
+  }
+  if (standaloneProgramHasDiagnostics(typeProgram)) throwOnUserlandTypeDiagnostics({typeProgram, configDiagnostics: []})
   const project: FitProjectIndex<TGlobal> = {files: new Map(), filesBySourceFile: new Map(), compilerOptions, rootNames: [sourceId], typeProgram}
   const fitFile = parseFitFile(sourceId, displayPath(sourceId), sourceText, readGlobal, typeChecker, sourceFile, typeProgram.getSyntacticDiagnostics(sourceFile), project)
   project.files.set(cacheKeyFor(sourceId), fitFile)
   project.filesBySourceFile.set(sourceFile, fitFile)
   return fitFile
+}
+
+function standaloneProgramHasDiagnostics(typeProgram: ts.Program) {
+  if (
+    typeProgram.getConfigFileParsingDiagnostics().length > 0
+    || typeProgram.getOptionsDiagnostics().length > 0
+    || typeProgram.getGlobalDiagnostics().length > 0
+  ) return true
+  for (const sourceFile of typeProgram.getSourceFiles()) {
+    if (typeProgram.isSourceFileDefaultLibrary(sourceFile)) continue
+    if (
+      typeProgram.getSyntacticDiagnostics(sourceFile).length > 0
+      || typeProgram.getSemanticDiagnostics(sourceFile).length > 0
+    ) return true
+  }
+  return false
 }
 
 function throwOnSyntaxDiagnostics(sourceFile: ts.SourceFile, diagnostics: readonly ts.Diagnostic[] = sourceFileParseDiagnostics(sourceFile)) {

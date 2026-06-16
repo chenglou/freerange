@@ -1888,6 +1888,138 @@ if (
   console.log('function data: duplicate names rejected')
 }
 
+const repeatedSourceFile = 'repeated-source-preflight.ts'
+const repeatedValidSource = `function score(value: number) {
+  return value + 1
+}
+`
+let repeatedSourceError: Error | null = null
+buildFitSourceFile(repeatedSourceFile, repeatedValidSource, readTopLevelGlobal)
+try {
+  buildFitSourceFile(repeatedSourceFile, `function score(value: number) {
+  const label: string = value
+  return label
+}
+`, readTopLevelGlobal)
+} catch (error) {
+  repeatedSourceError = error instanceof Error ? error : new Error(String(error))
+}
+const repeatedValidProgram = buildFitSourceFile(repeatedSourceFile, repeatedValidSource, readTopLevelGlobal)
+if (
+  !(repeatedSourceError instanceof TypeScriptUserlandError)
+  || !repeatedSourceError.message.includes("repeated-source-preflight.ts(2,9): error TS2322: Type 'number' is not assignable to type 'string'.")
+  || !repeatedValidProgram.functions.has('score')
+) {
+  console.error('expected standalone source preflight to use the current source text on every build')
+  console.error(repeatedSourceError?.message ?? '<no error>')
+  process.exitCode = 1
+} else {
+  console.log('source preflight: repeated filenames keep independent diagnostics')
+}
+
+let defaultLibraryConflictError: Error | null = null
+try {
+  buildFitSourceFile('default-library-conflict.ts', 'type PropertyKey = string\n', readTopLevelGlobal)
+} catch (error) {
+  defaultLibraryConflictError = error instanceof Error ? error : new Error(String(error))
+}
+const expectedDefaultLibraryConflict = `default-library-conflict.ts(1,6): error TS2300: Duplicate identifier 'PropertyKey'.
+node_modules/typescript/lib/lib.es5.d.ts(106,14): error TS2300: Duplicate identifier 'PropertyKey'.`
+if (
+  !(defaultLibraryConflictError instanceof TypeScriptUserlandError)
+  || defaultLibraryConflictError.message !== expectedDefaultLibraryConflict
+) {
+  console.error('expected standalone source preflight failures to keep complete TypeScript diagnostics')
+  console.error(defaultLibraryConflictError?.message ?? '<no error>')
+  process.exitCode = 1
+} else {
+  console.log('source preflight: default-library diagnostics preserved')
+}
+
+let unsupportedSourceExtensionError: Error | null = null
+try {
+  buildFitSourceFile('unsupported-source.txt', 'function ok() { return 1 }\n', readTopLevelGlobal)
+} catch (error) {
+  unsupportedSourceExtensionError = error instanceof Error ? error : new Error(String(error))
+}
+const unsupportedSourcePath = `${repoDir}unsupported-source.txt`
+const expectedUnsupportedSourceExtension = `error TS6054: File '${unsupportedSourcePath}' has an unsupported extension. The only supported extensions are '.ts', '.tsx', '.d.ts', '.cts', '.d.cts', '.mts', '.d.mts'.
+  The file is in the program because:
+    Root file specified for compilation`
+if (
+  !(unsupportedSourceExtensionError instanceof TypeScriptUserlandError)
+  || unsupportedSourceExtensionError.message !== expectedUnsupportedSourceExtension
+) {
+  console.error('expected unsupported standalone source extensions to keep TypeScript diagnostics')
+  console.error(unsupportedSourceExtensionError?.message ?? '<no error>')
+  process.exitCode = 1
+} else {
+  console.log('source preflight: unsupported extensions preserve diagnostics')
+}
+
+const importedPreflightDir = `/tmp/freerange-source-preflight-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
+const importedPreflightMkdir = Bun.spawnSync({cmd: ['mkdir', '-p', importedPreflightDir]})
+if (importedPreflightMkdir.exitCode !== 0) throw new Error(`Could not create ${importedPreflightDir}`)
+try {
+  const importedPreflightHelper = `${importedPreflightDir}/helper.ts`
+  const importedPreflightUser = `${importedPreflightDir}/user.ts`
+  const importedPreflightSource = `import {label} from './helper'
+function readLabel() {
+  return label
+}
+`
+  const importedPreflightFailureSource = `import {label} from './helper'
+const enabled: boolean = label
+void enabled
+`
+  let importedPreflightError: Error | null = null
+  await Bun.write(importedPreflightHelper, 'export const label: string = 1\n')
+  try {
+    buildFitSourceFile(importedPreflightUser, importedPreflightFailureSource, readTopLevelGlobal)
+  } catch (error) {
+    importedPreflightError = error instanceof Error ? error : new Error(String(error))
+  }
+  const importedPreflightDisplayPath = `<fixture>`
+  const importedPreflightPathPattern = new RegExp(`(?:\\.\\./)*tmp/${importedPreflightDir.slice(importedPreflightDir.lastIndexOf('/') + 1)}`, 'g')
+  const normalizedImportedPreflightError = importedPreflightError?.message.replace(importedPreflightPathPattern, importedPreflightDisplayPath)
+  const expectedImportedPreflightError = `<fixture>/helper.ts(1,14): error TS2322: Type 'number' is not assignable to type 'string'.
+<fixture>/user.ts(2,7): error TS2322: Type 'string' is not assignable to type 'boolean'.`
+  await Bun.write(importedPreflightHelper, "export const label = 'ok'\n")
+  const importedPreflightProgram = buildFitSourceFile(importedPreflightUser, importedPreflightSource, readTopLevelGlobal)
+  if (
+    !(importedPreflightError instanceof TypeScriptUserlandError)
+    || normalizedImportedPreflightError !== expectedImportedPreflightError
+    || !importedPreflightProgram.functions.has('readLabel')
+  ) {
+    console.error('expected standalone source preflight to preserve ordered multi-file diagnostics')
+    console.error(importedPreflightError?.message ?? '<no error>')
+    process.exitCode = 1
+  } else {
+    console.log('source preflight: multi-file diagnostics keep order and attribution')
+  }
+
+  let importedSyntaxError: Error | null = null
+  await Bun.write(importedPreflightHelper, 'export const label = ;\n')
+  try {
+    buildFitSourceFile(importedPreflightUser, importedPreflightSource, readTopLevelGlobal)
+  } catch (error) {
+    importedSyntaxError = error instanceof Error ? error : new Error(String(error))
+  }
+  const normalizedImportedSyntaxError = importedSyntaxError?.message.replace(importedPreflightPathPattern, importedPreflightDisplayPath)
+  if (
+    !(importedSyntaxError instanceof TypeScriptUserlandError)
+    || normalizedImportedSyntaxError !== '<fixture>/helper.ts(1,22): error TS1109: Expression expected.'
+  ) {
+    console.error('expected standalone source preflight to preserve imported syntax diagnostics')
+    console.error(importedSyntaxError?.message ?? '<no error>')
+    process.exitCode = 1
+  } else {
+    console.log('source preflight: imported syntax diagnostics preserved')
+  }
+} finally {
+  Bun.spawnSync({cmd: ['rm', '-rf', importedPreflightDir]})
+}
+
 const collapsedUnsupported = uniqueUnsupported([
   'unsupported render line 1: Unknown identifier events',
   'unsupported render line 1: Property access expected an object path: events.click',
