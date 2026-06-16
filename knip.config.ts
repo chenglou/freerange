@@ -11,6 +11,7 @@ const config: KnipConfig = {
     'verify-*.ts',
     'corpus-probes.ts',
     'snapshot.ts',
+    'tests/orchestration/fixtures/*.ts',
     // Fixture files loaded by file path inside test suites and the verify scripts
     'tests/patterns/patterns.ts',
     'tests/patterns/loop-patterns.ts',

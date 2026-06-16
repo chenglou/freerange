@@ -9,7 +9,9 @@ import {
 import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
 import {frameForStateCase} from '../../src/interpreter/state-cases.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('interpreter suite', async suite => {
 const frameProgram = buildFitSourceFile('frame-policy.ts', 'function f() { return 1 }', readTopLevelGlobal)
 const policy = interpreterPolicy({}, 'suppress')
 const root = rootFrame({
@@ -51,7 +53,7 @@ if (
   || activeCall.stateCases !== root.stateCases
 ) {
   console.error('interpreter frames should copy state and preserve shared output and policy')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('interpreter: frames copy state and share output and policy')
 }
@@ -71,7 +73,7 @@ if (
   || isolated.objectPath != null
 ) {
   console.error('interpreter analysis frames should isolate findings and may clear scoped paths')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('interpreter: analysis frames isolate output')
 }
@@ -95,7 +97,9 @@ if (
 ) {
   console.error('interpreter effects should distinguish block locals from same-named module bindings')
   console.error(shadowResult.output.effects)
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('interpreter: assignment effects follow TypeScript bindings')
 }
+
+})

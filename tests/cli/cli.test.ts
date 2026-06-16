@@ -1,5 +1,7 @@
 import {verifyFitFiles} from '../../src/reports.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('CLI suite', async suite => {
 const repoDir = new URL('../..', import.meta.url).pathname
 
 await runCliRegressionTests()
@@ -619,7 +621,7 @@ function expectCli(condition: boolean, message: string, output: string) {
   if (condition) return
   console.error(message)
   console.error(output.trimEnd())
-  process.exitCode = 1
+  suite.fail()
 }
 
 function pathJoin(first: string, ...rest: string[]) {
@@ -627,3 +629,5 @@ function pathJoin(first: string, ...rest: string[]) {
   for (const part of rest) path += '/' + part.replace(/^\/+/, '')
   return path
 }
+
+})

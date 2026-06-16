@@ -25,7 +25,10 @@ import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {isFunctionImplementation} from '../../src/function-shape.ts'
+import {snapshotUpdateRequested} from '../../snapshot.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('check suite', async suite => {
 const positiveFiles = ['tests/patterns/patterns.ts', 'tests/patterns/loop-patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
 const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/patterns/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
@@ -63,7 +66,7 @@ if (
 ) {
   console.error('expected every supported function implementation to share one indexed declaration family')
   console.error(JSON.stringify(callableFamilyNames))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('functions: one implementation family and canonical class-member names')
 }
@@ -76,7 +79,7 @@ function verifyFitSourceWithCallsites(file: string, sourceText: string) {
 const positiveReport = await verifyFitFiles(positiveFiles)
 if (positiveReport.phase !== 'ready') {
   console.error(JSON.stringify(positiveReport, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 requires, 0 unknown`)
 }
@@ -87,7 +90,7 @@ if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 
   console.error(photoGalleryReport.phase === 'ready'
     ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.requires} requires, ${photoGalleryReport.summary.unknown} unknown`
     : JSON.stringify(photoGalleryReport, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('photo-gallery: summarized array data')
 }
@@ -100,7 +103,7 @@ const unboundedNonnegativeProduct = multiplyNumbers(
 // widen fully for the NaN exclusion to see it.
 if (unboundedNonnegativeProduct.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected the NaN-admitting product to widen fully, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: NaN-admitting product widens')
 }
@@ -112,7 +115,7 @@ const unboundedNonnegativeQuotient = divideNumbers(
 // Infinity over Infinity is NaN, and both sides admit Infinity here.
 if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected the NaN-admitting quotient to widen fully, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: NaN-admitting quotient widens')
 }
@@ -125,7 +128,7 @@ const unboundedNonnegativeRunningSum = runningSumNumber(
 )
 if (unboundedNonnegativeRunningSum.min !== 0 || unboundedNonnegativeRunningSum.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`)
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: unbounded nonnegative running sum')
 }
@@ -136,7 +139,7 @@ const unboundedDifference = subtractNumbers(
 )
 if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`)
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: unbounded difference')
 }
@@ -180,7 +183,7 @@ if (
 ) {
   console.error('expected numeric alternative overflow to keep its range and report lost exact choices')
   console.error(JSON.stringify(numericAlternativeBudgetChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: numeric alternative budget reports lost choices')
 }
@@ -235,7 +238,7 @@ if (
   || unrelatedContainedCasesRetainIdentity
 ) {
   console.error('expected numeric computation identity to ignore refinement, merge facts, preserve grouping, and support commutativity')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: numeric computation identity and facts stay separate')
 }
@@ -394,7 +397,7 @@ if (
   || incompatibleAccumulation?.lastEnd != null
 ) {
   console.error('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: array summaries distinguish accumulation from branch joins')
 }
@@ -414,7 +417,7 @@ const computationIdentityFailures = computationIdentityChecks.filter(check => ch
 if (computationIdentityFailures.length > 0 || computationIdentityChecks.length !== 2) {
   console.error('expected commutative computations to retain runtime identity')
   console.error(JSON.stringify(computationIdentityChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: commutative computations prove')
 }
@@ -430,7 +433,7 @@ function nanCapableCommutative(left: number, right: number) {
 if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'unknown') {
   console.error('expected matching computations to remain unproved when they can produce NaN')
   console.error(JSON.stringify(nanComputationIdentityChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: NaN-capable computation equality stays unknown')
 }
@@ -468,7 +471,7 @@ if (
 ) {
   console.error('expected checks to carry proof obligations and used facts')
   console.error(JSON.stringify({obligationChecks, sequenceObligationCheck}, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('obligations: attached to checks with facts')
 }
@@ -491,7 +494,7 @@ const pureContractHelperCheck = pureContractHelperChecks.find(check => check.fun
 if (pureContractHelperCheck?.status !== 'pass') {
   console.error('expected pure unannotated helper calls to work in contracts')
   console.error(JSON.stringify(pureContractHelperChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: pure helper call')
 }
@@ -515,7 +518,7 @@ const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.stat
 if (pureGivenHelperFailures.length > 0) {
   console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
   console.error(JSON.stringify(pureGivenHelperChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('given contract expressions: pure helper call')
 }
@@ -626,7 +629,7 @@ if (
 ) {
   console.error('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape')
   console.error(JSON.stringify(shortcutCleanupChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('shortcut cleanup: no invented spec or callback paths')
 }
@@ -675,7 +678,7 @@ if (
 ) {
   console.error('expected TypeScript generic constraints to drive function contracts and call checks')
   console.error(JSON.stringify({constrainedGenericFunctionResult, unconstrainedGenericFunctionChecks}, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('generic functions: constrained numbers checked through calls')
 }
@@ -734,7 +737,7 @@ const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, te
 if (missingTypeLayerErrors.length > 0) {
   console.error('expected every contract surface to be TypeScript-checked before proving')
   console.error(JSON.stringify({missingTypeLayerErrors, contractTypeLayerChecks}, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract type layer: all surfaces reject TypeScript mismatches')
 }
@@ -750,7 +753,7 @@ const inlineNonNumberEqualityFailures = inlineNonNumberEqualityChecks.filter(che
 if (inlineNonNumberEqualityFailures.length > 0) {
   console.error('expected inline equality to allow non-number values')
   console.error(JSON.stringify(inlineNonNumberEqualityChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('inline contracts: non-number equality type-checks')
 }
@@ -787,7 +790,7 @@ if (
     typeChecks: preparedBounded.typeChecks,
     preparedPropertyTemplateCounts,
   }, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract preparation: stable index and exact rejection identity')
 }
@@ -824,7 +827,7 @@ if (
 ) {
   console.error('expected top-level properties, loops, and nested placements to use the prepared body index')
   console.error(JSON.stringify(topLevelContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('top-level contracts: properties, loops, and nested placements')
 }
@@ -888,7 +891,7 @@ if (
 ) {
   console.error('expected bare pure boolean call contracts to be checked')
   console.error(JSON.stringify(booleanCallContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: bare boolean helper call')
 }
@@ -940,7 +943,7 @@ if (
 ) {
   console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
   console.error(JSON.stringify(booleanGivenContractResult, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('given contract expressions: boolean predicate call')
 }
@@ -1076,7 +1079,7 @@ if (
 ) {
   console.error('expected named indexes to support only matching positions and direct adjacent relationships')
   console.error(JSON.stringify(collectionExpressionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('collection contracts: named-index relationships reject unsupported forms before evaluation')
 }
@@ -1104,7 +1107,7 @@ if (
     proofs: preparedUnsupportedNamedIndexes.proofs.map(spec => spec.text),
     unsupported: preparedUnsupportedNamedIndexes.unsupportedSpecs,
   }, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract preparation: unsupported named indexes are report-only')
 }
@@ -1140,7 +1143,7 @@ if (
 ) {
   console.error('expected proof simplification to reduce rounding comparisons to smaller arithmetic')
   console.error(JSON.stringify(simplifiedRoundingChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('proof simplification: rounded bound comparison')
 }
@@ -1231,7 +1234,7 @@ if (
 ) {
   console.error('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases')
   console.error(JSON.stringify(roundingFamilyChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('proof simplification: rounding family')
 }
@@ -1312,7 +1315,7 @@ if (
 ) {
   console.error('expected expanded Math builtin families to infer ranges and reject unsafe domains')
   console.error(JSON.stringify(expandedMathChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('math builtins: constants, integer/coarse, and monotone functions')
 }
@@ -1339,7 +1342,7 @@ if (
 ) {
   console.error('expected impure helper calls in contracts to be rejected loudly')
   console.error(JSON.stringify(impureContractHelperChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: impure helper rejected')
 }
@@ -1365,7 +1368,7 @@ if (
 ) {
   console.error('expected contract helpers that read mutable outside state to be rejected by the shared purity check')
   console.error(JSON.stringify(mutableReadContractHelperChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: mutable outside read rejected')
 }
@@ -1394,7 +1397,7 @@ if (
 ) {
   console.error('expected unsupported contract expressions to explain the unsupported step')
   console.error(JSON.stringify(unsupportedContractExpressionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: unsupported calls rejected')
 }
@@ -1415,7 +1418,7 @@ if (
 ) {
   console.error('expected mutable helper aliases in contracts to be rejected loudly')
   console.error(JSON.stringify(mutableAliasContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract expressions: mutable alias rejected')
 }
@@ -1486,14 +1489,14 @@ if (
 ) {
   console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
   console.error(JSON.stringify(unsupportedGivenExpressionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('given contract expressions: unsupported cases rejected')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = normalizeNegative(negativeReport.checks)
-if (Bun.argv.includes('--update')) {
+if (snapshotUpdateRequested()) {
   await Bun.write(negativeExpectedPath, actualNegative)
   console.log(`negative: updated ${negativeExpectedPath}`)
 } else {
@@ -1502,7 +1505,7 @@ if (Bun.argv.includes('--update')) {
     console.error('expected negative messages changed')
     console.error('\nExpected:\n' + expectedNegative)
     console.error('Actual:\n' + actualNegative)
-    process.exitCode = 1
+    suite.fail()
   } else {
     console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
   }
@@ -1515,7 +1518,7 @@ const previousIndexReport = await verifyFitFiles([
 if (previousIndexReport.phase !== 'ready') {
   console.error('expected direct and imported previous-index relationships to pass')
   console.error(JSON.stringify(previousIndexReport.checks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('collection contracts: previous-index relationships pass directly and through helper summaries')
 }
@@ -1534,7 +1537,7 @@ if (
 ) {
   console.error('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence')
   console.error(JSON.stringify(negativeAdjacentSummaryReport.checks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('collection contracts: adjacent helper summaries preserve abstraction without proving a different recurrence')
 }
@@ -1792,7 +1795,7 @@ if (
 ) {
   console.error('expected sequence relations to preserve source grouping and reject unsound spacing or end facts')
   console.error(JSON.stringify(sequenceOperationChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('sequences: source operations preserve grouping without rounded cancellation')
 }
@@ -1817,7 +1820,7 @@ function lateRefinement(items: {height: number}[], top: number) {
 if (lateRefinementChecks.length !== 1 || lateRefinementChecks[0]?.status !== 'pass') {
   console.error('expected a computation to retain operand identity after a later range refinement')
   console.error(JSON.stringify(lateRefinementChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('domain: late-refined computation operands prove')
 }
@@ -1837,7 +1840,7 @@ if (
 ) {
   console.error('expected given typo suggestion')
   console.error(suggestedGivenRootReason ?? '<missing>')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('given typo: suggested contract root')
 }
@@ -1855,7 +1858,7 @@ function layout(containerSizeX: number) {
 if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !== true) {
   console.error('expected ambiguous given typo to use TypeScript diagnostics')
   console.error(ambiguousGivenRootReason ?? '<missing>')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('given typo: ambiguous root reported by TypeScript')
 }
@@ -1880,7 +1883,7 @@ if (
 ) {
   console.error('expected duplicate function names to be rejected by TypeScript preflight')
   console.error(duplicateFunctionError?.message ?? '<no error>')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('function data: duplicate names rejected')
 }
@@ -1903,7 +1906,7 @@ const expectedCollapsedUnsupported = [
 if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n')) {
   console.error('expected unsupported root fallout to collapse')
   console.error(collapsedUnsupported.join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('diagnostics: collapsed unsupported root fallout')
 }
@@ -1929,7 +1932,7 @@ if (
 ) {
   console.error('expected unsupported branch conditions to stop before speculating through branch bodies')
   console.error(JSON.stringify(unsupportedBranchConditionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('control flow: unsupported branch condition stops')
 }
@@ -1946,7 +1949,7 @@ const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact
 if (missingInferFacts.length > 0) {
   console.error('expected inferred facts changed')
   console.error(missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer: ${expectedInferFacts.length} expected facts`)
 }
@@ -1960,7 +1963,7 @@ const missingFilterInferFacts = expectedFilterInferFacts.filter(fact => !filterI
 if (missingFilterInferFacts.length > 0) {
   console.error('expected filter inferred facts changed')
   console.error(missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
 }
@@ -1974,7 +1977,7 @@ const missingFilterMapInferFacts = expectedFilterMapInferFacts.filter(fact => !f
 if (missingFilterMapInferFacts.length > 0) {
   console.error('expected filter-map inferred facts changed')
   console.error(missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
 }
@@ -2016,7 +2019,7 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.error(missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`).join('\n'))
   console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
   console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
@@ -2049,7 +2052,7 @@ if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
   console.error('expected segmented loop inferred facts changed')
   console.error(missingSegmentedFacts.map(fact => `missing: ${fact}`).join('\n'))
   console.error(badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
 }
@@ -2073,7 +2076,7 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.error('expected function-level redundant facts changed')
   console.error(missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
   console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
@@ -2082,7 +2085,7 @@ const tupleInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {function
 const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 if (!tupleFacts.has('return.length == 2')) {
   console.error('expected fixed tuple length inference to stay readable')
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('infer tuple length: readable')
 }
@@ -2098,7 +2101,7 @@ const missingEqualityRedundantFacts = expectedEqualityRedundantFacts.filter(fact
 if (missingEqualityRedundantFacts.length > 0 || equalityRedundantSpecs.get('return.rows[].bottom == return.rows[].y + return.rows[].height') !== 'checked') {
   console.error('expected equality redundant facts changed')
   console.error(missingEqualityRedundantFacts.map(fact => `missing: ${fact}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
 }
@@ -2112,7 +2115,7 @@ const missingCallSiteTextFacts = expectedCallSiteTextFacts.filter(fact => !callS
 if (missingCallSiteTextFacts.length > 0) {
   console.error('expected call-site inferred text changed')
   console.error(missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`infer call-site text: ${expectedCallSiteTextFacts.length} expected facts`)
 }
@@ -2134,7 +2137,7 @@ const actualInferSnapshot = normalizeText([
     '../vibescript/demos/photo-gallery/prompt-layout.ts',
   ], 'getLineLayout'),
 ].join('\n'))
-if (Bun.argv.includes('--update')) {
+if (snapshotUpdateRequested()) {
   await Bun.write(inferSnapshotExpectedPath, actualInferSnapshot)
   console.log(`infer snapshot: updated ${inferSnapshotExpectedPath}`)
 } else {
@@ -2143,7 +2146,7 @@ if (Bun.argv.includes('--update')) {
     console.error('expected infer snapshot changed')
     console.error('\nExpected:\n' + expectedInferSnapshot)
     console.error('Actual:\n' + actualInferSnapshot)
-    process.exitCode = 1
+    suite.fail()
   } else {
     console.log('infer snapshot: matched')
   }
@@ -2247,7 +2250,7 @@ if (
 ) {
   console.error('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches')
   console.error(JSON.stringify(referenceAliasChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('reference aliases: mutations forget every reachable binding')
 }
@@ -2288,7 +2291,7 @@ if (
 ) {
   console.error('expected invalid loop and nested class-member placements to be rejected during placement classification')
   console.error(JSON.stringify(purePlacementChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('contract placement: loop and nested class-member diagnostics')
 }
@@ -2412,3 +2415,5 @@ function displayFile(file: string) {
   if (file.startsWith(workspaceDir)) return `../${file.slice(workspaceDir.length)}`
   return file
 }
+
+})

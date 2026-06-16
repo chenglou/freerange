@@ -12,7 +12,7 @@ export function displayWorkspaceFile(file: string) {
 
 export async function verifySnapshot(path: string, actualText: string, label: string) {
   const actual = normalizeSnapshot(actualText)
-  if (Bun.argv.includes('--update')) {
+  if (snapshotUpdateRequested()) {
     await Bun.write(path, actual)
     console.log(`${label}: updated`)
     return true
@@ -26,4 +26,8 @@ export async function verifySnapshot(path: string, actualText: string, label: st
   console.error('\nExpected:\n' + expected)
   console.error('Actual:\n' + actual)
   return false
+}
+
+export function snapshotUpdateRequested() {
+  return Bun.argv.includes('--update') || Bun.env['FREERANGE_UPDATE_SNAPSHOTS'] === '1'
 }

@@ -1,5 +1,7 @@
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('type contracts suite', async suite => {
 async function verifyTempFitFiles(files: Record<string, string>) {
   const dir = pathJoin('/tmp', `freerange-type-contract-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
   const mkdir = Bun.spawnSync({cmd: ['mkdir', '-p', dir]})
@@ -57,7 +59,7 @@ if (
 ) {
   console.error('expected whole-value contracts to use TypeScript type syntax with range leaves')
   console.error(JSON.stringify(wholeValueTypeSyntaxChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('whole-value contracts: TypeScript type syntax')
 }
@@ -155,7 +157,7 @@ if (
 ) {
   console.error('expected type @fit contracts to inline through inputs, returns, locals, satisfies, as, arrays, and relations')
   console.error(JSON.stringify(typeContractBoundaryChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: annotation boundaries')
 }
@@ -238,7 +240,7 @@ if (
 ) {
   console.error('expected generic type contracts to preserve constraints without representative type arguments')
   console.error(JSON.stringify(genericTypeContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: generic declaration constraints')
 }
@@ -267,7 +269,7 @@ if (
 ) {
   console.error('expected type contracts with unpreserved inner generic context to be rejected directly')
   console.error(JSON.stringify(unsupportedGenericTypeContextChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: inner generic contexts rejected directly')
 }
@@ -297,7 +299,7 @@ if (
 ) {
   console.error('expected type @fit given keyword to be rejected directly')
   console.error(JSON.stringify(typeGivenKeywordChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: given keyword rejected directly')
 }
@@ -320,7 +322,7 @@ const typeGivenPrefixFieldFailures = typeGivenPrefixFieldChecks.filter(check => 
 if (typeGivenPrefixFieldFailures.length > 0) {
   console.error('expected type @fit fields starting with given to keep working')
   console.error(JSON.stringify(typeGivenPrefixFieldChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: given-prefixed field allowed')
 }
@@ -367,7 +369,7 @@ if (
 ) {
   console.error('expected type @fit contracts to evaluate free names where the type is declared')
   console.error(JSON.stringify(typeContractScopeChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: declaration scope')
 }
@@ -403,7 +405,7 @@ if (
 ) {
   console.error('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used')
   console.error(JSON.stringify(importedDeclarationScopeChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: imported declaration scope')
 }
@@ -436,7 +438,7 @@ if (
 ) {
   console.error('expected imported type @fit helper parameter mistakes to be reported at the type declaration')
   console.error(JSON.stringify(importedDeclarationTypeErrorChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: imported declaration type errors')
 }
@@ -489,7 +491,7 @@ if (
 ) {
   console.error('expected each helper type @fit error to attribute to its own declaration file')
   console.error(JSON.stringify(multiHelperAttributionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: multi-helper diagnostic attribution')
 }
@@ -539,7 +541,7 @@ if (
 ) {
   console.error('expected imported generic type contracts to keep their declaration constraints')
   console.error(JSON.stringify(importedGenericTypeChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: imported generic declaration constraints')
 }
@@ -565,7 +567,9 @@ if (
 ) {
   console.error('expected type @fit field relations to compare against the same object')
   console.error(JSON.stringify(typeFieldRelationChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('type contracts: field relation')
 }
+
+})

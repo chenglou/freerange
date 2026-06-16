@@ -1,5 +1,6 @@
 declare const Bun: {
   argv: string[]
+  env: Record<string, string | undefined>
   file(path: string | URL): {
     text(): Promise<string>
   }
@@ -19,4 +20,8 @@ declare const Bun: {
 declare const process: {
   exitCode?: number
   execPath: string
+}
+
+declare module 'bun:test' {
+  export function test(name: string, run: () => void | Promise<void>, timeout?: number): void
 }

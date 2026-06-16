@@ -1,6 +1,5 @@
-// Pure-function classification: `bun tests/purity/purity-tests.ts` (run via test.ts).
-// isFunctionPure is a pure function of the source, so each case is just
-// source -> pure | impure | unknown, no interpreter run or proof needed.
+// Pure-function classification. Each case is source -> pure | impure | unknown,
+// with no interpreter run or proof needed.
 import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {functionImplementationReference} from '../../src/function-shape.ts'
 import {functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
@@ -21,7 +20,9 @@ import {
   importedWrapperMutationImpure,
   importedWrapperReplacementPure,
 } from './imported-caller.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('purity suite', async suite => {
 void contractRejectsImportedAlias
 void contractUsesImportedCallbackAfterMap
 void contractUsesImportedAlias
@@ -207,7 +208,7 @@ for (const {label, source, kind, reasonIncludes} of cases) {
   }
 }
 if (failures > 0) {
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log(`purity: ${cases.length} classifications`)
 }
@@ -237,7 +238,7 @@ if (
 ) {
   console.error('purity: expected function summary cache order not to change returned-reference effects')
   console.error(JSON.stringify({calleeFirstResult, callerFirstResult}, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('purity: returned-reference summaries are independent of cache order')
 }
@@ -266,7 +267,7 @@ if (
 ) {
   console.error('purity: expected mismatched source programs to fail before caching')
   console.error(JSON.stringify({mismatchedReferenceReason, purityAfterRejectedMismatch}, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('purity: implementation and source program stay one cache identity')
 }
@@ -306,7 +307,9 @@ if (
 ) {
   console.error('purity: expected imports, aliases, callbacks, and re-exports to keep source identity')
   console.error(JSON.stringify(importedPurity.checks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('purity: imported aliases, callbacks, and contract helpers share source identity')
 }
+
+})

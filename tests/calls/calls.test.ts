@@ -7,7 +7,9 @@ import {
   importedDefaultRunsOnce,
   importedDestructuredDefaultUsesFinalBinding,
 } from './imported-caller.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('calls suite', async suite => {
 void importedArgumentRunsOnce
 void importedDefaultRunsOnce
 void importedDestructuredDefaultUsesFinalBinding
@@ -270,7 +272,7 @@ const sourceCallFailures = sourceCallChecks.filter(check => check.status !== 'pa
 if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 25) {
   console.error('expected source calls to prepare operands and parameters once')
   console.error(JSON.stringify(sourceCallChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: operands and parameters prepared once')
 }
@@ -633,7 +635,7 @@ if (
 ) {
   console.error('expected arrays and fixed tuples to keep separate guarantees at every type boundary')
   console.error(JSON.stringify(arrayTupleBoundaryChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: arrays and fixed tuples keep separate guarantees')
 }
@@ -690,7 +692,7 @@ if (
     nestedIndexedWrite: nestedIndexedWriteBoundary.output.issues.map(issue => issue.message),
     negativeTupleIndexWrite: negativeTupleIndexWriteBoundary.output.issues.map(issue => issue.message),
   })
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: unsupported tuple assertions and collection writes report directly')
 }
@@ -714,7 +716,7 @@ if (
 ) {
   console.error('expected false claims to see final destructured parameter bindings')
   console.error(JSON.stringify(finalBindingNegativeChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: stale destructured parameter values cannot prove claims')
 }
@@ -756,7 +758,7 @@ if (
 ) {
   console.error('expected caller and default text to remain distinct from callee parameter names')
   console.error(JSON.stringify(sameParameterNameChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: caller text stays distinct from callee names')
 }
@@ -781,7 +783,7 @@ const restRequirement = restContractChecks.find(check => check.text.includes('ex
 if (restRequirement?.status !== 'fail' || !restRequirement.reason?.includes('([1]).length >= 2')) {
   console.error('expected rest parameter contracts to retain caller argument text')
   console.error(JSON.stringify(restContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: rest contracts retain caller argument text')
 }
@@ -802,7 +804,7 @@ function narrowInput(
 if (annotationOnlyInputChecks.some(check => check.status !== 'pass')) {
   console.error('expected input-only annotations to skip body callsite checks')
   console.error(JSON.stringify(annotationOnlyInputChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: annotation-only input checks stay local')
 }
@@ -836,7 +838,7 @@ if (
     unknownSpread: unknownSpread.output.issues.map(issue => issue.message),
     destructuringDefault: destructuringDefault.output.issues.map(issue => issue.message),
   })
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: unsupported spread and binding defaults reported')
 }
@@ -911,7 +913,7 @@ const supportedSortFailures = ['sortWithComparator', 'toSortedWithComparator'].f
 if (unsupportedPlatformFailures.length > 0 || supportedSortFailures.length > 0) {
   console.error('expected deliberate platform boundaries to report their shared specific reasons')
   console.error({unsupportedPlatformFailures, supportedSortFailures})
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: deliberate platform boundaries report specific reasons')
 }
@@ -988,7 +990,7 @@ if (
     callbackThis,
     unknownTarget,
   })
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: unsupported callbacks and callable targets preserve operand effects')
 }
@@ -997,7 +999,9 @@ const importedReport = await verifyFitFiles(['tests/calls/imported-caller.ts'])
 if (importedReport.phase !== 'ready' || importedReport.summary.pass !== 4) {
   console.error('expected imported calls to share prepared invocation semantics')
   console.error(JSON.stringify(importedReport, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('calls: imported defaults and side effects prepared once')
 }
+
+})

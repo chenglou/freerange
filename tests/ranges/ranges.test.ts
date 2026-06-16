@@ -1,5 +1,7 @@
 import {verifyFitSource} from '../../src/reports.ts'
+import {testSuite} from '../test-suite.ts'
 
+testSuite('ranges suite', async suite => {
 const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
   return 10
 }
@@ -84,7 +86,7 @@ if (
 ) {
   console.error('expected dynamic range summaries and numeric alternatives to be checked')
   console.error(JSON.stringify(dynamicRangeContractChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: dynamic bounds and alternatives')
 }
@@ -160,7 +162,7 @@ if (
 ) {
   console.error('expected pure numeric range unions to propagate, normalize, and reject gaps')
   console.error(JSON.stringify(numericUnionPropagationChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: numeric union propagation')
 }
@@ -194,7 +196,7 @@ if (
 ) {
   console.error('expected pure unannotated helpers to work as dynamic range bounds')
   console.error(JSON.stringify(unannotatedHelperBoundChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: unannotated helper bound')
 }
@@ -237,7 +239,7 @@ if (
 ) {
   console.error('expected uncorrelated annotated helper bounds to stay unknown')
   console.error(JSON.stringify(annotatedHelperBoundChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: annotated helper alternative bound')
 }
@@ -300,7 +302,7 @@ if (
 ) {
   console.error('expected separate two-sided helper bounds to preserve definite failures and leave mixed cases unknown')
   console.error(JSON.stringify(twoSidedHelperBoundChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: separate two-sided helper bounds')
 }
@@ -336,7 +338,7 @@ if (
 ) {
   console.error('expected separate returned values and helper bounds not to reconnect')
   console.error(JSON.stringify(separateDynamicBoundChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: separate returned values and helper bounds')
 }
@@ -390,7 +392,7 @@ if (
 ) {
   console.error('expected broad dynamic bounds to decide obvious over-budget cases')
   console.error(JSON.stringify(dynamicRangeBudgetChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: over-budget dynamic bounds')
 }
@@ -417,7 +419,9 @@ if (
 ) {
   console.error('expected unsupported range expressions to reject the same way as comparisons')
   console.error(JSON.stringify(unsupportedRangeExpressionChecks, null, 2))
-  process.exitCode = 1
+  suite.fail()
 } else {
   console.log('range contracts: unsupported expression rejected')
 }
+
+})
