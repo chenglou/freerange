@@ -1,6 +1,7 @@
 # AGENTS.md
 
-Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. Use [README.md](./README.md) as the short project front door. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [todo.md](./todo.md) for current priorities and [research.md](./research.md) for durable direction notes.
+Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. See [DEVELOPMENT.md](./DEVELOPMENT.md) for commands and the repo map. Use [research.md](./research.md) for durable direction notes.
+Mandatory read: `engineering.md`.
 
 - This project is private. Do NOT consider legacy and interop when refactoring.
 - Add positive and negative tests.
