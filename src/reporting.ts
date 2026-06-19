@@ -11,6 +11,7 @@ export type ReportNumberValue = {
   min: number
   max: number
   grid: number | null
+  nan?: 'excluded' | 'possible'
   expr: string | null
   linear: ReportLinearExpr | null
   cases?: {value: ReportNumberValue; assumptions: unknown[]; branches?: unknown[]}[] | null
@@ -162,6 +163,9 @@ function formatNumberValueRange(value: ReportNumberValue) {
       .sort((left, right) => left.min - right.min || left.max - right.max)
     return [...new Set(alternatives.map(formatNumberRangePart))].join(' | ')
   }
+  if (value.min === -Infinity && value.max === Infinity && value.nan === 'excluded') {
+    return value.grid != null && value.grid >= 0 ? 'any non-NaN integer' : 'any non-NaN number'
+  }
   return formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)
 }
 
@@ -172,6 +176,9 @@ function numberRangeContains(container: ReportNumberValue, contained: ReportNumb
 }
 
 function formatNumberRangePart(value: ReportNumberValue) {
+  if (value.min === -Infinity && value.max === Infinity && value.nan === 'excluded') {
+    return value.grid != null && value.grid >= 0 ? 'any non-NaN integer' : 'any non-NaN number'
+  }
   return value.min === value.max && Number.isFinite(value.min)
     ? formatNumber(value.min)
     : formatExpectedRange(value.min, value.max, value.grid != null && value.grid >= 0)

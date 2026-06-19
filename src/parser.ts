@@ -65,6 +65,8 @@ type FitSpecBase<R extends FitSpecRole, K extends string> = {
 export type FitRangeSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'range'> & {
   expression: FitExpression
   range: FitRange
+  implicitFinite?: true
+  finiteWhenNumeric?: true
 }
 
 export type FitComparisonSpec<R extends FitSpecRole = FitSpecRole> = FitSpecBase<R, 'comparison'> & {
@@ -685,6 +687,7 @@ export function parseFitRangeText(text: string, parseExpression: FitExpressionPa
     const cases = alternatives.map(part => parseFitRangeCaseText(part, parseExpression))
     if (cases.some(item => item == null)) return null
     const rangeCases = cases as FitRangeCase[]
+    rejectNaNRangeCases(rangeCases)
     const envelope = rangeCaseEnvelope(rangeCases)
     const finiteValues = finiteValuesFromRangeCases(rangeCases)
     return {
@@ -698,11 +701,36 @@ export function parseFitRangeText(text: string, parseExpression: FitExpressionPa
 
   const single = parseFitRangeCaseText(body, parseExpression)
   if (single == null) return null
+  rejectNaNRangeCases([single])
   return {
     valueKind,
     ...single,
     text,
   }
+}
+
+function rejectNaNRangeCases(cases: FitRangeCase[]) {
+  if (cases.some(rangeCase => fitExpressionUsesNaN(rangeCase.lower) || fitExpressionUsesNaN(rangeCase.upper))) {
+    throw new Error('NaN is outside the checked numerical domain')
+  }
+}
+
+function fitExpressionUsesNaN(expression: FitExpression) {
+  let found = false
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (ts.isIdentifier(node) && node.text === 'NaN') {
+      const parent = node.parent
+      if (!ts.isPropertyAccessExpression(parent) || parent.name !== node
+        || (ts.isIdentifier(parent.expression) && parent.expression.text === 'Number')) {
+        found = true
+        return
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(expression.parsed.expression)
+  return found
 }
 
 function shouldParseFitValueSpec(text: string): boolean {

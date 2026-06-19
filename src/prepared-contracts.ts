@@ -95,14 +95,17 @@ export function preparedProgramContracts(program: Program): PreparedProgramContr
     const functionSource = functionContractSource(program, fn)
     const preparedSpecs = prepareSpecs(program, functionSource.specs)
     const contractSpecs = preparedSpecs.specs
-    const assumptions = contractSpecs.filter(fitSpecIsAssumption)
     const proofs = contractSpecs.filter(fitSpecIsProof)
     const body = prepareBodyContracts(program, fn.bodySpecs, functionSource.bodyTypes)
+    const preparedImplicitAssumptions = contractSpecs.length > 0 || body.hasAnnotationSurface
+      ? prepareSpecs(program, functionSource.implicitAssumptions)
+      : {specs: [], unsupported: []}
+    const assumptions = [...preparedImplicitAssumptions.specs, ...contractSpecs.filter(fitSpecIsAssumption)]
     functions.set(fn, {
       contractSpecs,
       assumptions,
       proofs,
-      unsupportedSpecs: preparedSpecs.unsupported,
+      unsupportedSpecs: [...preparedSpecs.unsupported, ...preparedImplicitAssumptions.unsupported],
       typeChecks: contractTypeChecksForFunction(program, fn),
       typeUnsupported: functionSource.unsupported,
       body,

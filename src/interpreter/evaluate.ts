@@ -52,6 +52,7 @@ import {
   unknown,
   unknownArray,
   unknownArrayLength,
+  unknownNumber,
   unknownObject,
   valueWithAssumptions,
   valueWithDefaultedUndefined,
@@ -116,6 +117,7 @@ import {
   interpreterPolicy,
   joinFrameEnvs,
   noteEffect,
+  noteOutsideNumericDomain,
   noteUnsupported,
   rootFrame,
   type InterpreterCall,
@@ -180,6 +182,7 @@ import {
 } from './forget.ts'
 import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {evaluateNumberCasePairs} from './number-cases.ts'
+import {evaluateNumberPredicate, numberPredicateCall} from './number-predicates.ts'
 import {
   defaultLibraryOwner,
   elementAccessHasSourceAccessor,
@@ -1532,6 +1535,9 @@ function evaluateVoidExpression(expression: ts.VoidExpression, frame: Interprete
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
   if (expression.text === 'undefined') return nullValue('undefined')
   if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, null, 'Infinity')
+  if (expression.text === 'NaN' && isDefaultLibrarySymbol(expression, frame.program)) {
+    return noteOutsideNumericDomain(frame, 'NaN is outside the checked numerical domain', expression, 'definite')
+  }
   const ambient = ambientIdentifierBound(expression, frame.program)
   if (ambient != null) return ambient
   return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
@@ -1546,6 +1552,17 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
   ) {
     const value = evaluateMathProperty(expression.name.text, expression.getText(frame.program.sourceFile))
     if (value != null) return value
+  }
+  if (
+    ts.isIdentifier(expression.expression)
+    && expression.expression.text === 'Number'
+    && isDefaultLibrarySymbol(expression.expression, frame.program)
+    && isDefaultLibraryMemberAccess(expression, frame.program)
+  ) {
+    const text = expression.getText(frame.program.sourceFile)
+    const numericConstant = numberStaticProperty(expression.name.text)
+    if (numericConstant != null) return numberValue(numericConstant, numericConstant, gridOfNumber(numericConstant), text, linearConstant(numericConstant))
+    if (expression.name.text === 'NaN') return noteOutsideNumericDomain(frame, 'NaN is outside the checked numerical domain', expression, 'definite')
   }
   if (!hasQuestionDotToken(expression)) {
     const ambient = ambientPropertyBound(expression, frame.program)
@@ -1838,6 +1855,7 @@ function evaluatePrefixUnary(expression: ts.PrefixUnaryExpression, frame: Interp
     return evaluateIncrementDecrement(expression, frame)
   }
   const value = evaluateExpression(expression.operand, frame)
+  if (value.kind === 'unknown' && value.nan != null) return value
   if (value.kind !== 'number') return noteUnsupported(frame, `Unary ${expression.getText(frame.program.sourceFile)} expected a number`, expression)
   if (expression.operator === ts.SyntaxKind.PlusToken) return value
   if (expression.operator === ts.SyntaxKind.MinusToken) {
@@ -1866,7 +1884,9 @@ function evaluateIncrementDecrement(expression: ts.PrefixUnaryExpression | ts.Po
   }
   const old = readPath(path, frame, expression)
   const one = numberValue(1, 1, 0, '1', linearConstant(1))
-  const next = old.kind === 'number'
+  const next = old.kind === 'unknown' && old.nan != null
+    ? old
+    : old.kind === 'number'
     ? evaluateNumberBinary(
         expression.operator === ts.SyntaxKind.PlusPlusToken
           ? ts.SyntaxKind.PlusToken
@@ -1893,7 +1913,7 @@ function typeOfValues(value: Value): string[] {
   if (value.kind === 'literal') return value.values.map(item => typeof item)
   if (value.kind === 'null') return [value.expr === 'undefined' ? 'undefined' : 'object']
   if (value.kind === 'nullable') return [...typeOfValues(value.present), ...absentTypeOfValues(value.absent)]
-  if (value.kind === 'unknown') return ['number', 'string', 'boolean', 'object', 'undefined']
+  if (value.kind === 'unknown') return value.nan == null ? ['number', 'string', 'boolean', 'object', 'undefined'] : ['number']
   return ['object']
 }
 
@@ -1910,6 +1930,8 @@ function evaluateBinaryExpression(expression: ts.BinaryExpression, frame: Interp
   if (expression.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) return evaluateNullishCoalescing(expression, frame)
   const left = evaluateExpression(expression.left, frame)
   const right = evaluateExpression(expression.right, frame)
+  if (left.kind === 'unknown' && left.nan != null) return left
+  if (right.kind === 'unknown' && right.nan != null) return right
   if (left.kind !== 'number' || right.kind !== 'number') {
     return noteUnsupported(frame, `Binary expression ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
   }
@@ -2048,33 +2070,116 @@ function evaluatePlainNumberBinary(
   frame: InterpreterFrame,
   expression: ts.Expression,
 ): Value {
+  const checked = (value: Value): Value => {
+    if (value.kind === 'unknown') return value.nan == null ? {...value, nan: 'possible' as const} : value
+    if (value.kind !== 'number' || !possiblyNaN(value)) return value
+    const text = expression.getText(frame.program.sourceFile)
+    if (admitsNaN(left, frame.assumptions) || admitsNaN(right, frame.assumptions)) {
+      return noteOutsideNumericDomain(frame, `${text} is unknown because an operand may be NaN`, expression)
+    }
+    if (operationMayProduceNaN(kind, left, right, frame)) {
+      return noteOutsideNumericDomain(frame, nanOperationReason(kind, text), expression)
+    }
+    return {...value, nan: 'excluded' as const}
+  }
   switch (kind) {
     case ts.SyntaxKind.PlusToken: {
-      const result = computedBinary('+', addNumbers(left, right), left, right)
+      const checkedResult = checked(addNumbers(left, right))
+      if (checkedResult.kind !== 'number') return checkedResult
+      const result = computedBinary('+', checkedResult, left, right)
       publishRoundedMonotoneFacts(result, '+', left, right, frame)
       return result
     }
     case ts.SyntaxKind.MinusToken: {
-      const result = computedBinary('-', subtractNumbers(left, right), left, right)
+      const checkedResult = checked(subtractNumbers(left, right))
+      if (checkedResult.kind !== 'number') return checkedResult
+      const result = computedBinary('-', checkedResult, left, right)
       publishRoundedMonotoneFacts(result, '-', left, right, frame)
       return result
     }
     case ts.SyntaxKind.AsteriskToken:
-      return computedBinary('*', multiplyNumbers(left, right), left, right)
+      return computedBinaryValue('*', checked(multiplyNumbers(left, right)), left, right)
     case ts.SyntaxKind.SlashToken:
-      return computedBinaryValue('/', divideNumbers(left, right), left, right)
+      return computedBinaryValue('/', checked(divideNumbers(left, right)), left, right)
     case ts.SyntaxKind.PercentToken: {
-      const result = computedBinaryValue('%', moduloNumbers(left, right), left, right)
-      if (result.kind === 'number' && !possiblyNaN(result) && result.linear != null && right.linear != null) {
+      const result = computedBinaryValue('%', checked(moduloNumbers(left, right)), left, right)
+      if (
+        result.kind === 'number'
+        && !possiblyNaN(result)
+        && left.min >= 0
+        && right.min > 0
+        && result.linear != null
+        && right.linear != null
+      ) {
         const upper = comparisonConstraint(result, '<', right, `${result.expr} < ${right.expr}`)
         if (upper != null) frame.assumptions = mergeAssumptions(frame.assumptions, [upper])
       }
       return result
     }
     case ts.SyntaxKind.AsteriskAsteriskToken:
-      return computedBinaryValue('**', powerNumbers(left, right), left, right)
+      return computedBinaryValue('**', checked(powerNumbers(left, right)), left, right)
     default:
       return noteUnsupported(frame, `Unsupported numeric operator ${expression.getText(frame.program.sourceFile)}`, expression)
+  }
+}
+
+function operationMayProduceNaN(
+  kind: ts.SyntaxKind,
+  left: NumberValue,
+  right: NumberValue,
+  frame: InterpreterFrame,
+) {
+  const leftPositiveInfinity = mayBeInfinite(left, 'positive', frame.assumptions)
+  const leftNegativeInfinity = mayBeInfinite(left, 'negative', frame.assumptions)
+  const rightPositiveInfinity = mayBeInfinite(right, 'positive', frame.assumptions)
+  const rightNegativeInfinity = mayBeInfinite(right, 'negative', frame.assumptions)
+  const strictlyOrdered = proveComparisonPlain(left, '<', right, frame.assumptions).status === 'pass'
+    || proveComparisonPlain(left, '>', right, frame.assumptions).status === 'pass'
+  switch (kind) {
+    case ts.SyntaxKind.PlusToken:
+      return (leftPositiveInfinity && rightNegativeInfinity) || (leftNegativeInfinity && rightPositiveInfinity)
+    case ts.SyntaxKind.MinusToken:
+      return !strictlyOrdered
+        && ((leftPositiveInfinity && rightPositiveInfinity) || (leftNegativeInfinity && rightNegativeInfinity))
+    case ts.SyntaxKind.AsteriskToken:
+      return (mayBeZero(left, frame) && (rightPositiveInfinity || rightNegativeInfinity))
+        || (mayBeZero(right, frame) && (leftPositiveInfinity || leftNegativeInfinity))
+    case ts.SyntaxKind.SlashToken:
+      return (leftPositiveInfinity && rightNegativeInfinity)
+        || (leftNegativeInfinity && rightPositiveInfinity)
+        || (!strictlyOrdered && ((leftPositiveInfinity && rightPositiveInfinity) || (leftNegativeInfinity && rightNegativeInfinity)))
+    case ts.SyntaxKind.PercentToken:
+      return leftPositiveInfinity || leftNegativeInfinity
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+      return true
+    default:
+      return true
+  }
+}
+
+function mayBeZero(value: NumberValue, frame: InterpreterFrame) {
+  if (value.min > 0 || value.max < 0) return false
+  const zero = numberValue(0, 0, 0, '0', linearConstant(0))
+  return proveComparisonPlain(value, '>', zero, frame.assumptions).status !== 'pass'
+    && proveComparisonPlain(value, '<', zero, frame.assumptions).status !== 'pass'
+}
+
+function nanOperationReason(kind: ts.SyntaxKind, expression: string) {
+  switch (kind) {
+    case ts.SyntaxKind.PlusToken:
+      return `${expression} is unknown because opposite infinities may meet, producing NaN`
+    case ts.SyntaxKind.MinusToken:
+      return `${expression} is unknown because equal infinities may meet, producing NaN`
+    case ts.SyntaxKind.AsteriskToken:
+      return `${expression} is unknown because zero and infinity may meet, producing NaN`
+    case ts.SyntaxKind.SlashToken:
+      return `${expression} is unknown because two infinities may meet, producing NaN`
+    case ts.SyntaxKind.PercentToken:
+      return `${expression} is unknown because an infinite dividend produces NaN`
+    case ts.SyntaxKind.AsteriskAsteriskToken:
+      return `${expression} is unknown because this base and exponent may produce NaN`
+    default:
+      return `${expression} is unknown because it may produce NaN`
   }
 }
 
@@ -2223,10 +2328,12 @@ function evaluateAccessorReference(expression: ts.Expression, receiver: ts.Expre
 
 function assignedValue(kind: ts.SyntaxKind, path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.BinaryExpression): Value {
   if (kind === ts.SyntaxKind.EqualsToken) return right
+  if (right.kind === 'unknown' && right.nan != null) return right
   if (kind === ts.SyntaxKind.PlusEqualsToken) return evaluateCompoundPlus(path, right, frame, expression)
   const operator = compoundAssignmentOperator(kind)
   if (operator == null) return noteUnsupported(frame, `Unsupported assignment operator ${expression.getText(frame.program.sourceFile)}`, expression)
   const left = readPath(path, frame, expression)
+  if (left.kind === 'unknown' && left.nan != null) return left
   if (operator === 'conditional') return joinValues(left, right)
   if (left.kind !== 'number' || right.kind !== 'number') {
     return noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
@@ -2493,6 +2600,8 @@ function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, fra
 
 function evaluateCompoundPlus(path: ValuePath, right: Value, frame: InterpreterFrame, expression: ts.Expression): Value {
   const left = readPath(path, frame, expression)
+  if (left.kind === 'unknown' && left.nan != null) return left
+  if (right.kind === 'unknown' && right.nan != null) return right
   if (left.kind !== 'number' || right.kind !== 'number') return stringishCompoundPlus(left, right, expression) ?? noteUnsupported(frame, `Compound assignment ${expression.getText(frame.program.sourceFile)} expected numbers`, expression)
   return evaluateNumberBinary(ts.SyntaxKind.PlusToken, left, right, frame, expression)
 }
@@ -2645,7 +2754,24 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   let returnTypeFallback: Value | null | undefined
   const fallback = () => {
     returnTypeFallback ??= valueFromProjectCallReturnType(expression.getText(frame.program.sourceFile), expression, frame.program)
+      ?? valueFromNodeType(expression.getText(frame.program.sourceFile), expression, frame.program)
     return returnTypeFallback
+  }
+  const numberPredicate = numberPredicateCall(expression, frame.program)
+  if (numberPredicate != null) {
+    const value = evaluateExpression(numberPredicate.argument, frame)
+    return evaluateNumberPredicate(numberPredicate.name, value, expression.getText(frame.program.sourceFile), frame.assumptions)
+  }
+  if (
+    ts.isPropertyAccessExpression(target)
+    && ts.isIdentifier(target.expression)
+    && target.expression.text === 'Number'
+    && (target.name.text === 'parseFloat' || target.name.text === 'parseInt')
+    && isDefaultLibrarySymbol(target.expression, frame.program)
+    && isDefaultLibraryMemberAccess(target, frame.program)
+  ) {
+    evaluatedArguments(expression.arguments, frame)
+    return unknownNumber(expression.getText(frame.program.sourceFile))
   }
   if (
     ts.isPropertyAccessExpression(target)
@@ -2673,6 +2799,10 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       applyPlatformMethodRuntimeEffects(expression, target, effect, receiver, argumentValues, frame)
       const typed = fallback()
       if (typed?.kind === 'object' || typed?.kind === 'array') return typed
+      if (typed?.kind === 'number') {
+        noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
+        return typed
+      }
       return noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
     }
     if (classification.kind === 'unsupported') platformRejectionReason = classification.reason
@@ -2754,7 +2884,24 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     : noteUnsupported(frame, platformRejectionReason, expression)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
+  if (unresolvedFallback?.kind === 'number' && resolved.reason.startsWith('Unknown function ')) {
+    noteUnsupported(frame, resolved.reason, expression)
+    return unresolvedFallback
+  }
   return platformRejection ?? noteUnsupported(frame, resolved.reason, expression)
+}
+
+function numberStaticProperty(name: string): number | null {
+  switch (name) {
+    case 'EPSILON': return Number.EPSILON
+    case 'MAX_SAFE_INTEGER': return Number.MAX_SAFE_INTEGER
+    case 'MAX_VALUE': return Number.MAX_VALUE
+    case 'MIN_SAFE_INTEGER': return Number.MIN_SAFE_INTEGER
+    case 'MIN_VALUE': return Number.MIN_VALUE
+    case 'NEGATIVE_INFINITY': return Number.NEGATIVE_INFINITY
+    case 'POSITIVE_INFINITY': return Number.POSITIVE_INFINITY
+    default: return null
+  }
 }
 
 function evaluateKnownPlatformMethod(

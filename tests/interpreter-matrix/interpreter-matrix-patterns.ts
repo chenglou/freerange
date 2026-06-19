@@ -43,7 +43,7 @@ export function matrixNestedIifeMapDefaults(): MatrixSpringBox[][] {
     return matrixInput.groups.map(group => group.items.map((item, index) => {
       touched.count = touched.count + 1
       return {
-        spring: matrixSpring(item.pos),
+        spring: matrixSpring(Number.isFinite(item.pos) ? item.pos : 0),
         index,
       }
     }))

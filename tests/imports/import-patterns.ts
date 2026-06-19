@@ -281,7 +281,7 @@ type ImportedLiteralSpringBox = {
 }
 
 export function importedLiteralArrayMapDefaultFields(): ImportedLiteralSpringBox[] {
-  return importedLiteralSpringData.map(item => ({spring: importedLiteralSpring(item.position)}))
+  return importedLiteralSpringData.map(item => ({spring: importedLiteralSpring(Number.isFinite(item.position) ? item.position : 0)}))
 }
 
 export function importedLiteralArrayMapDefaultFieldsThroughIife(): ImportedLiteralSpringBox[] {
@@ -289,7 +289,7 @@ export function importedLiteralArrayMapDefaultFieldsThroughIife(): ImportedLiter
     const marker = {count: 0}
     return importedLiteralSpringData.map(item => {
       marker.count = marker.count + 1
-      return {spring: importedLiteralSpring(item.position)}
+      return {spring: importedLiteralSpring(Number.isFinite(item.position) ? item.position : 0)}
     })
   })()
 }
@@ -300,6 +300,6 @@ type ImportedNestedLiteralSpringBox = {
 
 export function importedNestedLiteralArrayMapDefaultFields(): ImportedNestedLiteralSpringBox[] {
   return importedNestedLiteralSpringData.groups.map(group => ({
-    springs: group.items.map(item => importedLiteralSpring(item.position)),
+    springs: group.items.map(item => importedLiteralSpring(Number.isFinite(item.position) ? item.position : 0)),
   }))
 }

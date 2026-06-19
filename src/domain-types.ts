@@ -38,13 +38,10 @@ export type NumberValue = {
   // algebraic identity between result and operands, which the linear-form
   // exactness gate decides separately.
   grid: number | null
-  // A fully unbounded hull normally admits NaN, but a computation can be
-  // overflow-capable yet NaN-free (a finite value divided by 0.998 reaches
-  // ±Infinity, never NaN). The op that proves its operands avoid the
-  // indeterminate forms (Inf−Inf, 0·Inf, Inf/Inf, 0/0, Inf%d) sets this so
-  // the value still compares equal to itself. Only set alongside a fully
-  // unbounded hull; a value with any finite bound excludes NaN already.
-  neverNaN?: true
+  // Bounds describe the non-NaN members. This flag is separate because the
+  // full [-Infinity, Infinity] hull can mean either every checked number or an
+  // unchecked JavaScript number that may still be NaN.
+  nan: 'excluded' | 'possible'
   expr: string | null
   linear: LinearExpr | null
   // Actual source arithmetic keeps the operand identities and facts read at
@@ -177,6 +174,10 @@ export type SequenceAddition =
 export type UnknownValue = {
   kind: 'unknown'
   reason: string
+  // JavaScript still considers an out-of-domain NaN result a number. Keep
+  // enough state for typeof and the Number predicates without admitting it
+  // to checked arithmetic.
+  nan?: 'definite' | 'possible'
 }
 
 export type NumberCase = {

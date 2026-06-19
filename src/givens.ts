@@ -19,6 +19,7 @@ import {
   linearNameForExpression,
   numberWithBounds,
   numberValue,
+  unknownNumber,
   withNumberCases,
   type ArraySummary,
   type ArrayValue,
@@ -46,7 +47,7 @@ import {
   sameExpressionText,
   isFixedElementPathExpression,
 } from './linear.ts'
-import {rationalCompare, rationalNegate, rationalOne, rationalZero} from './rational.ts'
+import {nextDoubleDown, nextDoubleUp, rationalCompare, rationalNegate, rationalOne, rationalZero} from './rational.ts'
 import {
   fitSpecIsAssumption,
   fitExpressionParsed,
@@ -578,6 +579,9 @@ function evaluateGivenNumber(
     : evaluators.evaluateRangeBound(expression, context)
   if (value.kind === 'number') return {kind: 'number', value}
   if (value.kind === 'nullable' && value.present.kind === 'number') return {kind: 'number', value: value.present}
+  if (role === 'expression' && spec.kind === 'range' && spec.implicitFinite === true) {
+    return {kind: 'number', value: unknownNumber(fitExpressionText(expression))}
+  }
   const text = publicFitText(fitExpressionText(expression))
   return {kind: 'invalid', check: invalidGivenCheck(file, functionName, spec, givenNonNumberReason(role, text, value))}
 }
@@ -783,11 +787,12 @@ function appendRelation(summary: ArraySummary | null, relation: SequenceRelation
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGivenSpec, value = staticRangeValue(spec.range, spec.expression.text)) {
   const expressionText = spec.expression.text
+  const preserveNullable = spec.finiteWhenNumeric === true
   if (value == null) return
   if (expressionText.includes('[]')) {
     const domainPath = parseDomainPathText(expressionText)
     if (domainPath != null && domainPath.segments.length > 0) {
-      env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
+      env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value, preserveNullable))
     }
     return
   }
@@ -802,7 +807,8 @@ export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGiven
     return
   }
   if (ts.isIdentifier(expression)) {
-    env.set(expression.text, value)
+    const current = env.get(expression.text)
+    env.set(expression.text, preserveNullable && current?.kind === 'nullable' ? {...current, present: value} : value)
     return
   }
 
@@ -928,13 +934,14 @@ function evaluatedRangeValue(range: FitRange, expressionText: string, cases: Eva
 // One endpoint of a bound over doubles. Excluding an infinite endpoint
 // admits every finite double, so the bound becomes ±MAX_VALUE inclusive —
 // MAX_VALUE is integral, so this holds for int ranges too and wins over the
-// int adjustment. An exclusive int bound steps one whole number inward; an
-// exclusive finite float bound keeps the constant (sound, just not tight).
+// int adjustment. An exclusive finite float bound moves to the next
+// representable double because there is no runtime value between the two.
 function boundEndpoint(valueKind: 'int' | 'number', inclusive: boolean, bound: number, side: 'lower' | 'upper'): number {
   if (!inclusive && bound === (side === 'lower' ? Number.NEGATIVE_INFINITY : Number.POSITIVE_INFINITY)) {
     return side === 'lower' ? -Number.MAX_VALUE : Number.MAX_VALUE
   }
   if (valueKind === 'int' && !inclusive) return side === 'lower' ? Math.floor(bound) + 1 : Math.ceil(bound) - 1
+  if (!inclusive) return side === 'lower' ? nextDoubleUp(bound) : nextDoubleDown(bound)
   return bound
 }
 

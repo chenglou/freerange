@@ -204,6 +204,8 @@ focusedIndex < items.length
 columns: 5 | 6 | 7
 ```
 
+Function `number` arguments checked by Freerange, by convenient default, exclude `-Infinity`, `Infinity` and `NaN` (unless annotated otherwise), since these 3 special values would invalidate most important proof statements (e.g. `NaN` breaks boolean comparison by always producing `false`, and `x - x` or `x * 0` can be `NaN` if `x` includes `Infinity`).
+
 This includes addition, subtraction, multiplication by a known value, and division when the required facts about the divisor are known. Floating-point arithmetic follows JS evaluation and respects floating-point imprecision.
 
 Freerange keeps up to 8 exact numeric alternatives. Beyond that, it keeps their overall range. E.g. `1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9` becomes `1..9`. Checks that only need the range can still pass. Checks that need the individual choices become `unknown` and report that the numeric-alternative limit was exceeded.
@@ -361,8 +363,6 @@ This infers `{left: 0, width: 100} | {left: 20, width: 80}` instead of broadenin
 
 Freerange keeps up to 8 branch states. Beyond that, it reports that the branch-state limit was exceeded, then only keeps facts that are uniformly true in every branch. This is to avoid combinatorial explosion of states later on.
 
-Note: taking the false branch of `value >= 0` does not prove `value < 0`. The value could be `NaN`, for which both `value >= 0` and `value < 0` are false.
-
 #### Loops
 
 Freerange tracks your loop and the consequences of each variable that the loop body affect. **TODO**: there's something about 32 ifs limit here. Document.
@@ -469,6 +469,7 @@ Math.floor/ceil/round/trunc(value) // inferred result ranges, non-strict order p
 Math.PI/E/LN10/LN2/LOG10E/LOG2E/SQRT1_2/SQRT2
 Math.pow(base, exponent), Math.cbrt/fround/f16round/clz32(value), Math.imul(left, right) // inferred result ranges; clz32 and imul use coarse integer ranges unless inputs are exact
 Math.exp/expm1/log/log2/log10/log1p/asin/acos/atan/sinh/asinh/tanh/acosh/atanh(value) // inferred ranges for monotone numeric functions, with domain checks where JS would otherwise produce NaN
+Number.isFinite/isNaN/isInteger/isSafeInteger(value) // guards that refine numeric values
 ```
 
 ```ts

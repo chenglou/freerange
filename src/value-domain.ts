@@ -56,6 +56,10 @@ export function literalValue(values: LiteralPrimitive[], expr: string | null, or
   return {kind: 'literal', values: finiteValues, expr, origin: [...new Set(origin)]}
 }
 
+export function outsideNumericDomain(reason: string, nan: 'definite' | 'possible' = 'possible'): UnknownValue {
+  return {kind: 'unknown', reason, nan}
+}
+
 export function finiteLiteralSetValues(values: LiteralPrimitive[]) {
   const seen = new Set<string>()
   const result: LiteralPrimitive[] = []
@@ -257,8 +261,18 @@ export function mergeElementValue(left: Value | null, right: Value | null): Valu
 }
 
 export function joinValues(left: Value, right: Value): Value {
-  if (left.kind === 'unknown') return left
-  if (right.kind === 'unknown') return right
+  if (left.kind === 'unknown') {
+    if (left.nan == null) return left
+    if (right.kind === 'number') return {...left, nan: 'possible'}
+    if (right.kind === 'unknown' && right.nan != null) {
+      return left.nan === 'definite' && right.nan === 'definite' ? left : {...left, nan: 'possible'}
+    }
+    return unknown(left.reason)
+  }
+  if (right.kind === 'unknown') {
+    if (right.nan == null) return right
+    return left.kind === 'number' ? {...right, nan: 'possible'} : unknown(right.reason)
+  }
   if (left.kind === 'number' && right.kind === 'number') return joinNumberValues(left, right)
   if (left.kind === 'literal' && right.kind === 'literal') {
     return literalValue(

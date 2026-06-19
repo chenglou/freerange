@@ -1650,11 +1650,13 @@ export function typeofUndefinedGuardKeepsOptionalNumber(max?: number) {
 }
 
 export function optionalPropertyNullishFallbackFeedsMath(dimensions: {width?: number}) {
-  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
+  const width = dimensions?.width ?? 0
+  return Math.max(Number.isFinite(width) ? width : 0, 0) // @fit >= 0
 }
 
 export function nullableObjectOptionalChainFallbackFeedsMath(dimensions: {width: number} | null) {
-  return Math.max(dimensions?.width ?? 0, 0) // @fit >= 0
+  const width = dimensions?.width ?? 0
+  return Math.max(Number.isFinite(width) ? width : 0, 0) // @fit >= 0
 }
 
 /** @fit

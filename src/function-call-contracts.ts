@@ -15,11 +15,14 @@ import type {
 } from './check-types.ts'
 import {
   arraySummaryWithRelation,
+  finiteMembersAreIntegers,
   linearNameForExpression,
   joinValues,
   literalValue,
   mergeOrigin,
   numberBranches,
+  plainNumber,
+  possiblyNaN,
   numberWithBounds,
   numberValue,
   unknown,
@@ -32,7 +35,6 @@ import {
   type NumberValue,
   type Value,
   gridMeet,
-  integerValued,
 } from './domain.ts'
 import {adjacentBoundIndexRelation} from './bound-index.ts'
 import {mergeAssumptions} from './assumptions.ts'
@@ -128,7 +130,7 @@ export function verifyCallGivenSpecs(
   options: {record: boolean; callLine?: number | undefined; callSiteBindings?: CallSiteBindings | undefined},
   evaluators: CallContractEvaluators,
 ) {
-  const contractSpecs = preparedFunctionContracts(calleeProgram, fn).contractSpecs
+  const contractSpecs = preparedFunctionContracts(calleeProgram, fn).assumptions
   const env = new Map(prepared.entryEnv)
   let statusSummary: FitCheckStatus = 'pass'
   const calleeContext: EvalContext = {...context, program: calleeProgram, env, inputRoots: functionInputRoots(calleeProgram, fn)}
@@ -140,7 +142,18 @@ export function verifyCallGivenSpecs(
     if (spec.kind === 'range') {
       const value = evaluators.evaluateSpecExpression(spec.expression, calleeContext)
       usedFacts = proofFactsFromValues([value], calleeContext.assumptions)
-      status = evaluators.proveRangeSpec(value, spec.range, calleeContext)
+      const proofValue = spec.finiteWhenNumeric === true && value.kind === 'nullable'
+        ? value.present
+        : value
+      status = spec.finiteWhenNumeric === true && proofValue.kind !== 'number'
+        ? {status: 'pass'}
+        : evaluators.proveRangeSpec(
+            spec.implicitFinite === true && proofValue.kind === 'number' && !possiblyNaN(proofValue)
+              ? plainNumber(proofValue)
+              : proofValue,
+            spec.range,
+            calleeContext,
+          )
       status = withCallRangeDetail(status, callText, value, spec, options.callSiteBindings)
     }
     if (spec.kind === 'comparison') {
@@ -157,13 +170,14 @@ export function verifyCallGivenSpecs(
       status = withCallExpressionDetail(status, callText, value, spec, options.callSiteBindings)
     }
     if (status == null) continue
-    if (options.record) {
-      const text = `${callText}: ${callRequirementText(spec)}`
+    if (options.record && !(spec.kind === 'range' && spec.implicitFinite === true && status.status === 'pass')) {
+      const requirement = callRequirementText(spec, options.callSiteBindings)
+      const text = `${callText}: ${requirement}`
       const obligation = callPreconditionObligation({
         file: context.file,
         functionName: context.stack.join(' > '),
         text,
-        requirement: callRequirementText(spec),
+        requirement,
         ...(options.callLine == null ? {} : {callLine: options.callLine}),
       })
       context.checks.push(proveObligation({
@@ -191,7 +205,10 @@ export function verifyCallGivenSpecs(
   return statusSummary
 }
 
-function callRequirementText(spec: FitSpec) {
+function callRequirementText(spec: FitSpec, callSiteBindings?: CallSiteBindings) {
+  if (spec.kind === 'range' && spec.implicitFinite === true) {
+    return `requires ${callSiteText(spec.expression.text, callSiteBindings)} to be finite${spec.finiteWhenNumeric === true ? ' when numeric' : ''}`
+  }
   return spec.text.startsWith('given ') ? `requires ${spec.text.slice('given '.length)}` : spec.text
 }
 
@@ -202,14 +219,14 @@ function withCallRangeDetail(
   spec: FitRangeGivenSpec,
   callSiteBindings: CallSiteBindings | undefined,
 ): CallPreconditionStatus {
-  if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallBinding(spec.expression.text, value), [
+  if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec, callSiteBindings), formatCallBinding(spec.expression.text, value), [
     `${callSiteText(spec.expression.text, callSiteBindings)}: ${callSiteText(formatRangeSpec(spec.range), callSiteBindings)}`,
   ])
   const missing = status.status === 'pass' ? [] : missingBoundsForRange(value, spec.range, callSiteBindings)
   return withCallDetail(status, {
     kind: 'call-precondition',
     callText,
-    requirement: callRequirementText(spec),
+    requirement: callRequirementText(spec, callSiteBindings),
     callerPassed: formatCallBinding(spec.expression.text, value),
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(value) != null,
@@ -227,7 +244,7 @@ function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBind
   const missing = {
     lower: range.lowerValue != null && (range.lowerInclusive ? value.min < range.lowerValue : value.min <= range.lowerValue),
     upper: range.upperValue != null && (range.upperInclusive ? value.max > range.upperValue : value.max >= range.upperValue),
-    integer: range.valueKind === 'int' && !integerValued(value),
+    integer: range.valueKind === 'int' && !finiteMembersAreIntegers(value),
   }
   if ((missing.lower && missing.upper) || (missing.integer && (missing.lower || missing.upper))) {
     return [`${valueText}: ${rangeText}`]
@@ -249,7 +266,7 @@ function withCallComparisonDetail(
   callSiteBindings: CallSiteBindings | undefined,
 ): CallPreconditionStatus {
   if (left.kind !== 'number' || right.kind !== 'number') {
-    return withUnsupportedCallDetail(status, callText, callRequirementText(spec), formatCallComparisonBinding(spec, left, right), [
+    return withUnsupportedCallDetail(status, callText, callRequirementText(spec, callSiteBindings), formatCallComparisonBinding(spec, left, right), [
       callSiteText(`${spec.left.text} ${spec.op} ${spec.right.text}`, callSiteBindings),
     ])
   }
@@ -257,7 +274,7 @@ function withCallComparisonDetail(
   return withCallDetail(status, {
     kind: 'call-precondition',
     callText,
-    requirement: callRequirementText(spec),
+    requirement: callRequirementText(spec, callSiteBindings),
     callerPassed: formatCallComparisonBinding(spec, left, right),
     missing,
     definiteFailure: status.status === 'fail' && exactNumber(left) != null && exactNumber(right) != null,
@@ -277,7 +294,7 @@ function withCallExpressionDetail(
   return withCallDetail(status, {
     kind: 'call-precondition',
     callText,
-    requirement: callRequirementText(spec),
+    requirement: callRequirementText(spec, callSiteBindings),
     callerPassed: formatCallBinding(spec.expression.text, value),
     missing,
     definiteFailure: status.status === 'fail',
@@ -342,7 +359,7 @@ function formatCallComparisonBinding(spec: FitComparisonGivenSpec, left: Value, 
 }
 
 function exactNumber(value: NumberValue) {
-  return value.min === value.max && Number.isFinite(value.min) ? value.min : null
+  return value.min === value.max ? value.min : null
 }
 
 export function importedContractUnavailableReason(localName: string, binding: ImportedBinding, detail: string) {

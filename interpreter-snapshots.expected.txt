@@ -1,12 +1,13 @@
 case matrix nested iife/map/defaults: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNestedIifeMapDefaults
   return.length: int 0..4294967295
   return[].length: int 0..4294967295
-  return[][].spring.pos: any number
+  return[][].spring.pos: -1.7976931348623157e+308..1.7976931348623157e+308
   return[][].spring.k: int 290..290
   return[][].spring.b: int 30..30
   return[][].index: int 0..4294967294
   fact return[] follows group.items by index
   fact return follows matrixInput.groups by index
+  unsupported matrixNestedIifeMapDefaults > <iife> > <map-element> > <map-element> line 44: touched.count + 1 is unknown because an operand may be NaN
 case matrix default param order: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixDefaultParamOrder
   return.pos: int 0..0
   return.k: int 10..10
@@ -35,22 +36,26 @@ case matrix abstract for-of cursor values: tests/interpreter-matrix/interpreter-
 case matrix abstract conditional count: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfParamConditionalCount
   return: int 0..4294967295
 case matrix abstract running max: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixForOfParamRunningMax
-  return: 0..Infinity
+  return: any number
+  unsupported matrixForOfParamRunningMax line 148: Math.max is unknown because an argument may be NaN
+  unsupported matrixForOfParamRunningMax: Loop left maxWidth unknown: updated by maxWidth = Math.max(maxWidth, width)
 case matrix indexed conditional count: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayConditionalCount
   return: int 0..4294967295
 case matrix indexed running max: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayRunningMax
-  return: 0..Infinity
+  return: any number
+  unsupported matrixIndexedArrayRunningMax line 174: Math.max is unknown because an argument may be NaN
+  unsupported matrixIndexedArrayRunningMax: Loop left maxWidth unknown: updated by maxWidth = Math.max(maxWidth, width)
 case matrix indexed limit range: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedLimitRange
   return.length: int 5..5
   return[]: int 0..4
 case matrix indexed array param rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayParamRows
   return.rows.length: int 0..4294967295
-  return.rows[].height: any number
+  return.rows[].height: any non-NaN number
   return.rows[].sourceIndex: int 0..4294967294
   fact return.rows follows items by index
 case matrix indexed array guarded rows: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedRows
   return.rows.length: int 0..4294967295
-  return.rows[].height: any number
+  return.rows[].height: any non-NaN number
   return.rows[].sourceIndex: int 0..4294967294
   fact return.rows is an order-preserving subset of items
 case matrix indexed array guarded cursor values: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIndexedArrayGuardedCursorValues
@@ -64,7 +69,8 @@ case matrix indexed array cursor values: tests/interpreter-matrix/interpreter-ma
   return.bottom: int 10..8589934600
   fact return.rows follows items by index
 case matrix Math clamp columns: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixMathClampColumns
-  return: int 1..7
+  return: unknown (width / 240 is unknown because an operand may be NaN)
+  unsupported matrixMathClampColumns line 258: width / 240 is unknown because an operand may be NaN
 case matrix else-if continuation: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixElseIfContinuation
   return: -1 | 0 | 1
 case matrix throw guard narrows positive: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixThrowGuardNarrowsPositive
@@ -86,13 +92,17 @@ case matrix stringish mutation preserves tuple: tests/interpreter-matrix/interpr
   return[]: unknown (Stringish assignment changed path += `M ${items.length}`)
   unsupported matrixStringishMutationPreservesTuple line 328: Template string `M ${items.length}`
 case matrix typeof undefined guard: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTypeofUndefinedGuard
-  return: 0..Infinity
+  return: unknown (Math.max is unknown because an argument may be NaN)
+  unsupported matrixTypeofUndefinedGuard line 333: Math.max is unknown because an argument may be NaN
 case matrix optional property nullish fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixOptionalPropertyNullishFallback
-  return: 0..Infinity
+  return: unknown (Math.max is unknown because an argument may be NaN)
+  unsupported matrixOptionalPropertyNullishFallback line 338: Math.max is unknown because an argument may be NaN
 case matrix nullable object optional fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
-  return: 0..Infinity
+  return: unknown (Math.max is unknown because an argument may be NaN)
+  unsupported matrixNullableObjectOptionalFallback line 342: Math.max is unknown because an argument may be NaN
 case matrix local Math alias: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixLocalMathAlias
-  return: 10..Infinity
+  return: unknown (Math.max is unknown because an argument may be NaN)
+  unsupported matrixLocalMathAlias line 346: Math.max is unknown because an argument may be NaN
 case matrix property access call shape: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
   return: object
   unsupported matrixPropertyAccessCallShape line 350: Unknown identifier matrixShapeApi
@@ -112,13 +122,17 @@ case negative cursor update before push surface: tests/interpreter-matrix/interp
 case negative conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixConditionalElseCount
   return: int 0..8589934590
 case negative mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMixedExtremumAndCursor
-  return: any number
+  return: unknown (maxWidth + total is unknown because an operand may be NaN)
+  unsupported negativeMatrixMixedExtremumAndCursor line 51: Math.max is unknown because an argument may be NaN
+  unsupported negativeMatrixMixedExtremumAndCursor line 52: total += item.width is unknown because an operand may be NaN
+  unsupported negativeMatrixMixedExtremumAndCursor: Loop left maxWidth unknown: updated by maxWidth = Math.max(maxWidth, item.width)
+  unsupported negativeMatrixMixedExtremumAndCursor line 54: maxWidth + total is unknown because an operand may be NaN
 case negative indexed loop starts at one surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedLoopStartsAtOne
   return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
   unsupported negativeMatrixIndexedLoopStartsAtOne line 59: Indexed for loops support for (let i = 0; i < limit; i++) style loops
 case negative indexed array guarded else surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayGuardedElse
   return.length: int 0..4294967295
-  return[]: any number
+  return[]: any non-NaN number
   fact return follows items by index
 case negative indexed array pushes into source surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedArrayPushesIntoSource
   return: unknown (Loop body mutates a value used by its iteration bound)
@@ -130,7 +144,11 @@ case negative indexed cursor update before push surface: tests/interpreter-matri
 case negative indexed conditional else count surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedConditionalElseCount
   return: int 0..8589934590
 case negative indexed mixed extremum/cursor surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixIndexedMixedExtremumAndCursor
-  return: any number
+  return: unknown (maxWidth + total is unknown because an operand may be NaN)
+  unsupported negativeMatrixIndexedMixedExtremumAndCursor line 107: Math.max is unknown because an argument may be NaN
+  unsupported negativeMatrixIndexedMixedExtremumAndCursor line 108: total += item.width is unknown because an operand may be NaN
+  unsupported negativeMatrixIndexedMixedExtremumAndCursor: Loop left maxWidth unknown: updated by maxWidth = Math.max(maxWidth, item.width)
+  unsupported negativeMatrixIndexedMixedExtremumAndCursor line 110: maxWidth + total is unknown because an operand may be NaN
 case negative guarded unsafe reset surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixGuardedExtremumUnsafeReset
   return.rows.length: int 0..4294967295
   return.rows[].height: int 0..1

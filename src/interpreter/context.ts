@@ -2,6 +2,7 @@ import type * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
 import {
   joinValues,
+  outsideNumericDomain,
   unknown,
   type Assumption,
   type ArrayValue,
@@ -274,6 +275,16 @@ export function noteUnsupported(frame: InterpreterFrame, message: string, node?:
     ...(node == null ? {} : {line: lineNumberForNode(frame.program.sourceFile, node)}),
   })
   return unknown(message)
+}
+
+export function noteOutsideNumericDomain(
+  frame: InterpreterFrame,
+  message: string,
+  node?: ts.Node,
+  nan: 'definite' | 'possible' = 'possible',
+): Value {
+  noteUnsupported(frame, message, node)
+  return outsideNumericDomain(message, nan)
 }
 
 function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {

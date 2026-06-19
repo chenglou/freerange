@@ -27,20 +27,36 @@ export function parsePrintedNumber(text: string): number | null {
 }
 
 // Caller must already have checked the path with TypeScript or a proven helper contract.
-export function setCheckedDomainPathValue(current: Value | undefined, expr: string, segments: FitDomainPathSegment[], value: Value): Value {
+export function setCheckedDomainPathValue(
+  current: Value | undefined,
+  expr: string,
+  segments: FitDomainPathSegment[],
+  value: Value,
+  preserveNullable = false,
+): Value {
+  if (preserveNullable && current?.kind === 'nullable') {
+    return {
+      ...current,
+      present: setCheckedDomainPathValue(current.present, expr, segments, value, true),
+    }
+  }
   const segment = segments[0]
-  if (segment == null) return value
+  if (segment == null) {
+    return preserveNullable && current?.kind === 'nullable'
+      ? {...current, present: value}
+      : value
+  }
 
   if (segment.kind === 'prop') {
     if (current?.kind === 'array' && segment.name === 'length') {
       if (current.layout === 'tuple') return current
-      const length = setCheckedDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value)
+      const length = setCheckedDomainPathValue(current.length, `${expr}.length`, segments.slice(1), value, preserveNullable)
       return length.kind === 'number' ? {...current, length} : current
     }
     const base = current?.kind === 'object' ? current : unknownObject(expr)
     const props = new Map(base.props)
     const propExpr = `${expr}.${segment.name}`
-    props.set(segment.name, setCheckedDomainPathValue(props.get(segment.name), propExpr, segments.slice(1), value))
+    props.set(segment.name, setCheckedDomainPathValue(props.get(segment.name), propExpr, segments.slice(1), value, preserveNullable))
     return {...base, props}
   }
 
@@ -52,10 +68,10 @@ export function setCheckedDomainPathValue(current: Value | undefined, expr: stri
     return {
       ...base,
       elements: base.elements.map((element, index) =>
-        setCheckedDomainPathValue(element, `${expr}[${index}]`, segments.slice(1), value)),
+        setCheckedDomainPathValue(element, `${expr}[${index}]`, segments.slice(1), value, preserveNullable)),
     }
   }
-  return {...base, element: setCheckedDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value)}
+  return {...base, element: setCheckedDomainPathValue(base.element ?? undefined, `${expr}[]`, segments.slice(1), value, preserveNullable)}
 }
 
 export function evaluateDomainPathValue(domainPath: FitDomainPath, env: Map<string, Value>): Value {

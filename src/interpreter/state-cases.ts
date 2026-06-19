@@ -244,7 +244,7 @@ function valueFingerprint(value: Value): string {
         min: value.min,
         max: value.max,
         grid: value.grid,
-        neverNaN: value.neverNaN === true,
+        nan: value.nan,
         expr: value.expr,
         linear: value.linear == null ? null : linearKey(value.linear),
         computation: computationFingerprint(value),

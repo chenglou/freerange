@@ -16,8 +16,12 @@ FAIL tests/patterns/negative-patterns.ts:negativeComparison: return.high < retur
   missing fact: (value + 10) < value
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOpaqueInequalityGraphLoosePathIsNotStrict: return < _high * scale
   known:
-    (low * scale): any number
-    (_high * scale): any number
+    (low * scale): any non-NaN number
+    (_high * scale): any non-NaN number
+    assumed from input: given low: -Infinity<..<Infinity
+    assumed from input: given _mid: -Infinity<..<Infinity
+    assumed from input: given _high: -Infinity<..<Infinity
+    assumed from input: given scale: -Infinity<..<Infinity
     assumed from input: given low * scale <= _mid * scale
     assumed from input: given _mid * scale <= _high * scale
   missing fact: (low * scale) < (_high * scale)
@@ -25,8 +29,11 @@ FAIL tests/patterns/negative-patterns.ts:negativeGivenGraphContradiction: given 
   no input can satisfy this with the earlier given lines; they already rule out _high * scale < low * scale
 UNKNOWN tests/patterns/negative-patterns.ts:negativeHelperResultComparisonNeedsBridge: return.low <= return.high
   known:
-    low: any number
-    high: any number
+    low: -1.7976931348623157e+308..1.7976931348623157e+308
+    high: -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given low: -Infinity<..<Infinity
+    assumed from input: given mid: -Infinity<..<Infinity
+    assumed from input: given high: -Infinity<..<Infinity
     assumed from input: given low <= mid
     checked helper contract: tests/patterns/negative-patterns.ts#negativePartialOrderedTriple: return.low <= return.mid
   missing fact: low <= high
@@ -98,6 +105,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayIndexNeedsUpperBound: r
   known:
     index: int 0..10
     items.length: int 0..10
+    assumed from input: given items[]: -Infinity<..<Infinity
     assumed from input: given items.length: int 0..10
     assumed from input: given index: int 0..10
   missing fact: index < items.length
@@ -108,6 +116,7 @@ FAIL tests/patterns/negative-patterns.ts:negativeHalfOpenUpperExcludesLength: re
   range was int 1..50 as items.length, expected inside int 0..<items.length
   known:
     items.length: int 1..50
+    assumed from input: given items[]: -Infinity<..<Infinity
     assumed from input: given items.length: int 1..50
   missing: items.length < items.length
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFloorDivisionDoesNotCoverTotal: return >= total
@@ -148,16 +157,21 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeScaleNeedsNonNegativeFactor:
   missing: scale >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeScaleFlipNeedsNegativeFactor: return <= content * scale
   known:
-    (available * scale): any number
-    (content * scale): any number
+    (available * scale): any non-NaN number
+    (content * scale): any non-NaN number
+    assumed from input: given content: -Infinity<..<Infinity
+    assumed from input: given available: -Infinity<..<Infinity
+    assumed from input: given scale: -Infinity<..<Infinity
     assumed from input: given content <= available
   missing: scale < 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeModuloNeedsPositiveCount: return < count
-  Modulo is only supported for non-negative values and positive divisors
+  Remainder by a range containing zero is unsupported
 UNKNOWN tests/patterns/negative-patterns.ts:negativeRoundingDoesNotKeepStrictOrder: return.floorLeft < return.floorRight
   known:
-    floor(x): any integer
-    floor(right): any integer
+    floor(x): int -1.7976931348623157e+308..1.7976931348623157e+308
+    floor(right): int -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given x: -Infinity<..<Infinity
+    assumed from input: given right: -Infinity<..<Infinity
     assumed from input: given x < right
     inferred from code: floor(x) <= x
     inferred from code: floor(x) > x - 1
@@ -212,10 +226,6 @@ FAIL tests/patterns/negative-patterns.ts:negativeGuardedColumnWidthRejectsWrongB
     assumed from input: given availableWidth: int 320..1200
     inferred from branch: availableWidth - 600 < 0
   missing fact: ((availableWidth - (16 * (2 - 1))) / 2) >= 400
-UNKNOWN tests/patterns/negative-patterns.ts:negativeNaNCapableFalseGuardStaysUnknown: return >= 0
-  known:
-    -value: any number
-  missing fact: -value >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSeparateNumericGuardOutcomesStayUnknown: return <= 0
   Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/patterns/negative-patterns.ts:negativeCompoundNumericGuardCorrelationStaysUnknown: return: -100 | -9
@@ -234,7 +244,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeStatePartitionBudgetDoesNotS
   State partition budget exceeded: 16 branch states exceed limit 8; Freerange refuses to summarize branch states silently
 UNKNOWN tests/patterns/negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
   known:
-    step: 0..10
+    step: 5e-324..10
     assumed from input: given step: -10..10
     inferred from branch: step > 0
   missing fact: step > 1
@@ -373,14 +383,17 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalStructuralCallShape:
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(801,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
 UNKNOWN tests/patterns/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
-  range was any number as items[index]!.height, expected inside 0..40
+  range was -1.7976931348623157e+308..1.7976931348623157e+308 as items[index].height, expected inside 0..40
   known:
-    items[index]!.height: any number
+    items[index].height: -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given items[].height: -Infinity<..<Infinity
     assumed from input: given items.length: int 1..50
     assumed from input: given index: int 0..49
     assumed from input: given index < items.length
-  missing: items[index]!.height >= 0
-  missing: items[index]!.height <= 40
+    inferred from code: items[index].height >= -1.7976931348623157e+308
+    inferred from code: items[index].height <= 1.7976931348623157e+308
+  missing: items[index].height >= 0
+  missing: items[index].height <= 40
 UNKNOWN tests/patterns/negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(return.rows.y)
   nondecreasing(return.rows.y) was not inferred
   need: every next .y >= previous .y
@@ -395,12 +408,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeRunningTotalNeedsNonNegative
     assumed from input: given items[].height: -40..40
   missing fact: total >= 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
-  range was any number as total, expected inside 0..10
-  known:
-    total: any number
-    assumed from input: given items.length: int 1..10
-  missing: total >= 0
-  missing: total <= 10
+  total += total is unknown because opposite infinities may meet, producing NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGuardMutationIsNotPure: return == 10
   Loop condition has effects or unknown behavior: --cap > 0
 FAIL tests/patterns/negative-patterns.ts:negativeCompoundAssignmentWrites: return == 10
@@ -420,6 +428,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeCalleeMutatesArgument: retur
 UNKNOWN tests/patterns/negative-patterns.ts:negativeMapCallbackMutatesCaptured: return == 0
   known:
     total: any number
+    assumed from input: given items[]: -Infinity<..<Infinity
     assumed from input: given items.length: int 0..50
   missing fact: total == 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativeNamedMapCallbackMutatesElement: return == 1
@@ -441,11 +450,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayElementAliasMutatedThro
     box.size: any number
   missing fact: box.size == 1
 UNKNOWN tests/patterns/negative-patterns.ts:negativeSnapshotCancelsAcrossMutation: return: 0..0
-  range was any number, expected inside 0..0
-  known:
-    any number
-  missing: any number >= 0
-  missing: any number <= 0
+  before - after is unknown because an operand may be NaN
 FAIL tests/patterns/negative-patterns.ts:negativePureClaimOnEnvironmentObserver: pure
   not pure: observes the environment (I/O, the clock, or randomness)
 FAIL tests/patterns/negative-patterns.ts:negativePureClaimOnParameterMutator: pure
@@ -517,6 +522,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeScalarPushLoopNeedsNonNegati
   applies to: every item in return
   known:
     rows[]: -1960..2960
+    assumed from input: given items[]: -Infinity<..<Infinity
     assumed from input: given items.length: int 0..50
     assumed from input: given y: 0..1000
     assumed from input: given step: -40..40
@@ -728,15 +734,17 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeAliasHelperPreconditionNeeds
     inferred from branch: -bounds.max + value > 0
   missing fact: bounds.max >= bounds.min
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max: -1000..1000
-  caller passed: max: any number
+  caller passed: max: any non-NaN number
   missing: (extent[1][0] - width): -1000..1000
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min
-  caller passed: max: any number, min: any number
+  caller passed: max: any non-NaN number, min: any number
   missing: (extent[1][0] - width) >= extent[0][0]
 UNKNOWN tests/patterns/negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: return >= extent[0][0]
   known:
     (extent[1][0] - width): -Infinity..1000
     extent[0][0]: -1000..1000
+    assumed from input: given extent[0][1]: -Infinity<..<Infinity
+    assumed from input: given extent[1][1]: -Infinity<..<Infinity
     assumed from input: given extent[0][0]: -1000..1000
     assumed from input: given extent[1][0]: -990..1000
     assumed from input: given width: 0..10
@@ -762,8 +770,6 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalNumberNeedsPresentGu
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1662,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
     Type 'undefined' is not assignable to type 'number'.
-UNKNOWN tests/patterns/negative-patterns.ts:negativeNullishFallbackNeedsNumericDefault: return >= 0
-  Math.max expected number arguments
 UNKNOWN tests/patterns/negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: return: 0
   TypeScript rejected @fit contract:
   tests/patterns/negative-patterns.ts(1673,18): error TS2322: Type 'string' is not assignable to type 'number'.
@@ -825,6 +831,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeOffByOneTargetIndex: return.
   known:
     (focused + 1): int 1..50
     items.length: int 1..50
+    assumed from input: given items[]: -Infinity<..<Infinity
     assumed from input: given items.length: int 1..50
     assumed from input: given focused: int 0..<items.length
   missing: (focused + 1) < items.length
@@ -932,6 +939,7 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeIndexedAssignmentKillsRowDom
   range was any number as return.rows[].height, expected inside 0..40
   known:
     return.rows[].height: any number
+    assumed from input: given height: -Infinity<..<Infinity
     assumed from input: given items.length: int 1..50
     assumed from input: given items[].height: 0..40
   missing: return.rows[].height >= 0
@@ -951,7 +959,8 @@ FAIL tests/patterns/negative-patterns.ts:negativeGivenComparisonsCannotBothHold:
   no input can satisfy this with the earlier given lines
   result: is false
   known:
-    width: 100..Infinity
+    width: 100..1.7976931348623157e+308
+    assumed from input: given width: -Infinity<..<Infinity
     assumed from input: given width >= 100
   missing fact: width <= 50
 FAIL tests/patterns/negative-patterns.ts:negativeGivenComparisonsCannotTransitivelyHold: given right > x
@@ -977,16 +986,21 @@ FAIL tests/patterns/negative-patterns.ts:negativeInlineReturnComparison: return 
   missing: strict comparison cannot hold when both sides are 5
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrowFunctionContract: return >= min
   known:
-    (min - 1): any number
-    min: any number
+    (min - 1): -1.7976931348623157e+308..1.7976931348623157e+308
+    min: -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given value: -Infinity<..<Infinity
+    assumed from input: given min: -Infinity<..<Infinity
+    inferred from code: (min - 1) <= min
     inferred from code: min(value, (min - 1)) <= value
     inferred from code: min(value, (min - 1)) <= (min - 1)
     inferred from branch: (min - 1) - value <= 0
   missing fact: (min - 1) >= min
 UNKNOWN tests/patterns/negative-patterns.ts:negativeDestructuredArrowParamClaim: return >= width
   known:
-    (width - 1): any number
-    width: any number
+    (width - 1): -1.7976931348623157e+308..1.7976931348623157e+308
+    width: -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given width: -Infinity<..<Infinity
+    inferred from code: (width - 1) <= width
   missing fact: (width - 1) >= width
 UNKNOWN tests/patterns/negative-patterns.ts:negativeArrayDestructuredLocalClaim: return >= value
   known:
@@ -1070,9 +1084,11 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeGivenComparisonCannotCallInp
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
   rows not found in this contract scope
 UNKNOWN tests/patterns/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
-  range was any number as input[1].height, expected inside 0..40
+  range was -1.7976931348623157e+308..1.7976931348623157e+308 as input[1].height, expected inside 0..40
   known:
-    input[1].height: any number
+    input[1].height: -1.7976931348623157e+308..1.7976931348623157e+308
+    assumed from input: given input[0].height: -Infinity<..<Infinity
+    assumed from input: given input[1].height: -Infinity<..<Infinity
   missing: input[1].height >= 0
   missing: input[1].height <= 40
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOptionalTupleShapeIsNotExactLength: return.length == 2
@@ -1136,12 +1152,12 @@ FAIL tests/patterns/negative-patterns.ts:negativeMapCallbackMutationForgetsRetur
     inferred from code: mapIndex([item]) - 1 < 0
   missing fact: -1 > 0
 UNKNOWN tests/patterns/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..Infinity
-  range was any number as box.clientWidth, expected inside 0..Infinity
+  range was -1.7976931348623157e+308..1.7976931348623157e+308 as box.clientWidth, expected inside 0..Infinity
   known:
-    box.clientWidth: any number
+    box.clientWidth: -1.7976931348623157e+308..1.7976931348623157e+308
     Infinity: Infinity..Infinity
+    assumed from input: given box.clientWidth: -Infinity<..<Infinity
   missing: box.clientWidth >= 0
-  missing: box.clientWidth <= Infinity
 UNKNOWN tests/patterns/negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.x + ((rect.right - rect.x) / 2)), expected inside 50..100
   known:
@@ -1163,9 +1179,9 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopCursorMovesWithoutPush: 
     sequence facts: no sequence facts
   missing: recognized adjacent row spacing
 UNKNOWN tests/patterns/negative-patterns.ts:negativeLoopStaleBodyClaim: snapshot: 0..0
-  range was any number as y, expected inside 0..0
+  range was any non-NaN number as y, expected inside 0..0
   known:
-    y: any number
+    y: any non-NaN number
     assumed from input: given items[].height: 1..100
     assumed from input: given items.length: 1..50
   missing: y >= 0
@@ -1240,41 +1256,15 @@ UNKNOWN tests/patterns/negative-patterns.ts:negativeRepeatedAdditionIsNotMultipl
     inferred from code: total >= 0
   missing fact: total == (n * 0.1)
 UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityMinusInfinityIsNaN: return >= 0
-  known:
-    (a - b): any number
-    assumed from input: given a: 0..Infinity
-    assumed from input: given b: 0..Infinity
-    assumed from input: given a >= b
-  missing fact: (a - b) >= 0
+  a - b is unknown because equal infinities may meet, producing NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeZeroTimesInfinityIsNaN: return >= 0
-  known:
-    (a * b): any number
-    assumed from input: given a: 0..1
-    assumed from input: given b: 0..Infinity
-  missing fact: (a * b) >= 0
+  a * b is unknown because zero and infinity may meet, producing NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityModuloIsNaN: return >= 0
-  known:
-    (a % b): any number
-    assumed from input: given a: 0..Infinity
-    assumed from input: given b: 1..1000
-  missing fact: (a % b) >= 0
+  a % b is unknown because an infinite dividend produces NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOppositeInfinitySumIsNaN: return == a + b
-  known:
-    (a + b): any number
-    assumed from input: given a: -Infinity..0
-    assumed from input: given b: 0..Infinity
-  missing fact: (a + b) == (a + b)
+  a + b is unknown because opposite infinities may meet, producing NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeInfinityOverInfinityEchoIsNaN: return == a / b
-  known:
-    (a / b): any number
-    assumed from input: given a: 0..Infinity
-    assumed from input: given b: 1..Infinity
-  missing fact: (a / b) == (a / b)
-UNKNOWN tests/patterns/negative-patterns.ts:negativeHalfFiniteSelfDifferenceIsNaN: return == 0
-  known:
-    (x - x): any number
-    assumed from input: given x < Infinity
-  missing fact: (x - x) == 0
+  a / b is unknown because two infinities may meet, producing NaN
 UNKNOWN tests/patterns/negative-patterns.ts:negativeOneMarkerIsNotFinite: return < Infinity
   known:
     pos: -1.7976931348623157e+308..Infinity
@@ -1395,6 +1385,7 @@ FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldArrayEle
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
   known:
     importedTupleWithOneOffset(value)[3]: any number
+    assumed from input: given value: -Infinity<..<Infinity
   missing fact: importedTupleWithOneOffset(value)[3] >= 0
 FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: matrixNegativeDefault(): requires value >= 0
   caller passed: value: -1

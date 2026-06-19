@@ -158,7 +158,7 @@ function numberWithRebasedElementPath(value: NumberValue, sourceElementExpr: str
       null,
       value.origin,
     ),
-    ...(value.neverNaN === true ? {neverNaN: true as const} : {}),
+    nan: value.nan,
     ...(value.caseLoss == null ? {} : {caseLoss: value.caseLoss}),
   }
   if (value.cases == null) return rebased

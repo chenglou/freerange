@@ -110,6 +110,21 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
       expect(error.message.includes('Unsupported @fit range'), `expected loud range rejection for '${bad}'`)
     }
   }
+
+  for (const nan of ['given x: NaN', 'given x: Number.NaN', 'given x: 0..NaN', 'given x: 0..3 | NaN']) {
+    try {
+      parseFitSpecLine(nan)
+      throw new Error(`expected '${nan}' to be rejected`)
+    } catch (error) {
+      expect(error instanceof Error, 'expected parser error')
+      expect(error.message.includes('NaN is outside the checked numerical domain'), `expected direct NaN rejection for '${nan}'`)
+    }
+  }
+
+  parseFitSpecLine('return: "NaN"')
+  parseFitSpecLine('given input.NaN: 0..3')
+  parseFitSpecLine('given x: 0..input.NaN')
+  parseFitSpecLine('given x: 0..input . NaN')
 }
 
 {

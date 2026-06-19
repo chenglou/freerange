@@ -15,9 +15,10 @@ infer matrix nested iife/map/defaults
   return return[][].spring.b: int 30..30
   return return[][].spring.k == 290
   return return[][].spring.k: int 290..290
-  return return[][].spring.pos == item.pos
+  return return[][].spring.pos: -1.7976931348623157e+308..1.7976931348623157e+308
   return return[] follows group.items by index
   return return follows matrixInput.groups by index
+  unsupported unsupported matrixNestedIifeMapDefaults > <iife> > <map-element> > <map-element> line 44: touched.count + 1 is unknown because an operand may be NaN
 infer matrix default param order
   return return.b == (10 + 1)
   return return.b: int 11..11
@@ -168,6 +169,6 @@ infer imported literal nested map/defaults
   return return[].springs[].b: int 30..30
   return return[].springs[].k == 290
   return return[].springs[].k: int 290..290
-  return return[].springs[].pos == item.position
+  return return[].springs[].pos: -1.7976931348623157e+308..1.7976931348623157e+308
   return return[].springs follows group.items by index
   return return follows importedNestedLiteralSpringData.groups by index

@@ -8,6 +8,7 @@ import {
 import type {Program} from './check-types.ts'
 import type {FitFunction} from './modules.ts'
 import {
+  finiteInputGivenContractForFunction,
   typeCheckContractForTypeNode,
   typeInputGivenContractForFunction,
   typeReturnCheckContractForFunction,
@@ -24,6 +25,7 @@ export type BodyTypeContractIndex = {
 
 export type FunctionContractSource = {
   specs: FitSpec[]
+  implicitAssumptions: FitGivenSpec[]
   unsupported: TypeContractUnsupported[]
   bodyTypes: BodyTypeContractIndex
   hasTypeContracts: boolean
@@ -79,9 +81,21 @@ function buildFunctionContractSource(program: Program, fn: FitFunction): Functio
   const typeGiven = typeInputGivenContractForFunction(program, fn)
   const typeReturn = typeReturnCheckContractForFunction(program, fn)
   const bodyTypes = collectFunctionBodyTypeContracts(program, fn)
+  const specs = [...typeGiven.specs, ...fn.explicitSpecs, ...typeReturn.specs]
+  const hasFunctionContract = specs.length > 0
+    || bodyTypes.hasWork
+    || fn.bodySpecs.localSpecsByStatement.size > 0
+    || fn.bodySpecs.returnSpecsByNode.size > 0
+    || fn.bodySpecs.objectPropertyTemplatesByNode.size > 0
+    || fn.bodySpecs.loopSpecsByStatement.size > 0
+    || fn.bodySpecs.unsupportedPlacements.length > 0
+  const finiteInput = hasFunctionContract
+    ? finiteInputGivenContractForFunction(program, fn, specs.filter((spec): spec is FitGivenSpec => spec.role === 'assume'))
+    : {specs: [], unsupported: []}
   return {
-    specs: [...typeGiven.specs, ...fn.explicitSpecs, ...typeReturn.specs],
-    unsupported: [...typeGiven.unsupported, ...typeReturn.unsupported],
+    specs,
+    implicitAssumptions: finiteInput.specs,
+    unsupported: [...typeGiven.unsupported, ...typeReturn.unsupported, ...finiteInput.unsupported],
     bodyTypes,
     hasTypeContracts: hasTypeContractWork(typeGiven)
       || hasTypeContractWork(typeReturn)

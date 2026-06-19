@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import {
   literalValue,
+  numberValue,
   numberWithBounds,
   withNumberCases,
   type NullishKind,
@@ -10,6 +11,8 @@ import {
   gridOfNumber,
   integerValued,
 } from '../domain.ts'
+import {linearConstant} from '../linear.ts'
+import {nextDoubleDown, nextDoubleUp} from '../rational.ts'
 import {mergeAssumptions, sharedAssumptions} from '../assumptions.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {
@@ -20,6 +23,7 @@ import {
 } from '../proof.ts'
 import {childFrame, type InterpreterFrame} from './context.ts'
 import {unwrapExpression} from './source-syntax.ts'
+import {numberPredicateCall, valueAfterNumberPredicate} from './number-predicates.ts'
 import {
   pathFromExpression as pathFromSourceExpression,
   readPath,
@@ -90,7 +94,51 @@ function refineCondition(frame: InterpreterFrame, condition: ts.Expression, trut
     refineBinaryCondition(frame, current, truth, evaluateExpression)
     return
   }
+  if (ts.isCallExpression(current) && refineNumberPredicate(frame, current, truth, evaluateExpression)) return
   refineLiteralTruthiness(frame, current, truth, evaluateExpression)
+}
+
+function refineNumberPredicate(
+  frame: InterpreterFrame,
+  expression: ts.CallExpression,
+  truth: boolean,
+  evaluateExpression: EvaluateRefinementExpression,
+) {
+  const predicate = numberPredicateCall(expression, frame.program)
+  if (predicate == null) return false
+  const evaluated = evaluateExpression(predicate.argument, frame)
+  if (evaluated.kind !== 'number') return true
+  const refined = valueAfterNumberPredicate(predicate.name, evaluated, truth)
+  if (refined?.kind === 'number') addPredicateAssumptions(frame, evaluated, refined)
+  const path = pathFromExpression(predicate.argument, frame, evaluateExpression)
+  if (path == null) return true
+  const current = readPath(path, frame)
+  if (current.kind !== 'number') {
+    if (refined != null) writePath(path, refined, frame)
+    return true
+  }
+  const next = valueAfterNumberPredicate(predicate.name, current, truth)
+  if (next != null) writePath(path, next, frame)
+  return true
+}
+
+function addPredicateAssumptions(frame: InterpreterFrame, value: NumberValue, refined: NumberValue) {
+  const assumptions = []
+  if (Number.isFinite(refined.min)) {
+    const lower = numberValue(refined.min, refined.min, gridOfNumber(refined.min), String(refined.min), linearConstant(refined.min))
+    const fact = comparisonConstraint(value, '>=', lower, undefined, 'branch')
+    if (fact != null) assumptions.push(fact)
+  }
+  if (Number.isFinite(refined.max)) {
+    const upper = numberValue(refined.max, refined.max, gridOfNumber(refined.max), String(refined.max), linearConstant(refined.max))
+    const fact = comparisonConstraint(value, '<=', upper, undefined, 'branch')
+    if (fact != null) assumptions.push(fact)
+  }
+  if (refined.nan === 'excluded' && assumptions.length === 0) {
+    const fact = comparisonConstraint(value, '==', value, undefined, 'branch')
+    if (fact != null) assumptions.push(fact)
+  }
+  frame.assumptions = mergeAssumptions(frame.assumptions, assumptions)
 }
 
 function refineLogicalCondition(frame: InterpreterFrame, expression: ts.BinaryExpression, truth: boolean, evaluateExpression: EvaluateRefinementExpression): boolean {
@@ -333,11 +381,11 @@ function narrowNumber(value: NumberValue, op: ComparisonOperator, other: number)
     case '>=':
       return numberWithBounds(value, Math.max(value.min, other), value.max)
     case '>':
-      return numberWithBounds(value, Math.max(value.min, integerValued(value) ? Math.floor(other) + 1 : other), value.max)
+      return numberWithBounds(value, Math.max(value.min, integerValued(value) ? Math.floor(other) + 1 : nextDoubleUp(other)), value.max)
     case '<=':
       return numberWithBounds(value, value.min, Math.min(value.max, other))
     case '<':
-      return numberWithBounds(value, value.min, Math.min(value.max, integerValued(value) ? Math.ceil(other) - 1 : other))
+      return numberWithBounds(value, value.min, Math.min(value.max, integerValued(value) ? Math.ceil(other) - 1 : nextDoubleDown(other)))
   }
 }
 

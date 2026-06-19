@@ -26,6 +26,7 @@ import {
 import {type FitFunction} from './modules.ts'
 import {type Program} from './check-types.ts'
 import {fitValueSpecTupleElementType} from './value-specs.ts'
+import {arrayElementType} from './shapes.ts'
 
 type TypeContractSpec = FitCheckSpec | FitGivenSpec
 
@@ -214,6 +215,229 @@ export function typeInputGivenContractForFunction(program: Program, fn: FitFunct
     results.push(typeGivenContractForTypeNode(program, param.type, param.name.text))
   }
   return dedupeResult(mergeResults(results))
+}
+
+export function finiteInputGivenContractForFunction(
+  program: Program,
+  fn: FitFunction,
+  writtenSpecs: FitGivenSpec[],
+): TypeContractResult<FitGivenSpec> {
+  const replacedPaths = new Set(writtenSpecs
+    .filter(spec => spec.kind === 'range')
+    .map(spec => normalizeFitText(spec.expression.text)))
+  const results: TypeContractResult<FitGivenSpec>[] = []
+  for (const param of fn.node.parameters) {
+    if (ts.isIdentifier(param.name)) {
+      const type = program.typeChecker?.getTypeAtLocation(param.name)
+      results.push(type == null
+        ? collectFiniteInputSpecs(program, param.type, param.name.text, replacedPaths, new Set())
+        : collectFiniteResolvedInputSpecs(program, type, param.name.text, replacedPaths, new Set()))
+    } else {
+      results.push(collectFiniteBindingSpecs(program, param.name, replacedPaths))
+    }
+  }
+  return dedupeResult(mergeResults(results))
+}
+
+function collectFiniteBindingSpecs(
+  program: Program,
+  name: ts.BindingName,
+  replacedPaths: Set<string>,
+): TypeContractResult<FitGivenSpec> {
+  if (ts.isIdentifier(name)) {
+    const checker = program.typeChecker
+    if (checker == null) return emptyResult()
+    return collectFiniteResolvedInputSpecs(program, checker.getTypeAtLocation(name), name.text, replacedPaths, new Set())
+  }
+  const results: TypeContractResult<FitGivenSpec>[] = []
+  if (ts.isObjectBindingPattern(name)) {
+    for (const element of name.elements) results.push(collectFiniteBindingSpecs(program, element.name, replacedPaths))
+  } else {
+    for (const element of name.elements) {
+      if (!ts.isOmittedExpression(element)) results.push(collectFiniteBindingSpecs(program, element.name, replacedPaths))
+    }
+  }
+  return mergeResults(results)
+}
+
+function collectFiniteResolvedInputSpecs(
+  program: Program,
+  type: ts.Type,
+  root: string,
+  replacedPaths: Set<string>,
+  seen: Set<ts.Type>,
+  finiteWhenNumeric = false,
+): TypeContractResult<FitGivenSpec> {
+  const checker = program.typeChecker
+  if (checker == null) return emptyResult()
+  if ((type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return emptyResult()
+  if (checker.isTypeAssignableTo(type, checker.getNumberType())) return finiteInputSpec(root, replacedPaths, finiteWhenNumeric)
+
+  if (type.isUnion()) {
+    const members = type.types.filter(member => (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) === 0)
+    if (members.some(member => checker.isTupleType(member)
+      && (member as ts.TupleTypeReference).target.elementFlags.some(flag => flag !== ts.ElementFlags.Required))) {
+      return emptyResult()
+    }
+    if (members.length > 0 && members.every(member => checker.isTypeAssignableTo(member, checker.getNumberType()))) {
+      return finiteInputSpec(root, replacedPaths, finiteWhenNumeric || members.length !== type.types.length)
+    }
+    return mergeResults(members.map(member =>
+      collectFiniteResolvedInputSpecs(program, member, root, replacedPaths, seen, true)))
+  }
+
+  if (checker.isTupleType(type)) {
+    const tuple = type as ts.TupleTypeReference
+    if (tuple.target.elementFlags.some(flag => flag !== ts.ElementFlags.Required)) return emptyResult()
+    const members = checker.getTypeArguments(tuple)
+    return mergeResults(members.map((member, index) =>
+      collectFiniteResolvedInputSpecs(program, member, `${root}[${index}]`, replacedPaths, seen, finiteWhenNumeric)))
+  }
+
+  const element = arrayElementType(type, checker)
+  if (element != null && element !== type) {
+    return collectFiniteResolvedInputSpecs(program, element, `${root}[]`, replacedPaths, seen, finiteWhenNumeric)
+  }
+
+  if ((type.flags & ts.TypeFlags.Object) === 0) return emptyResult()
+  if (seen.has(type)) {
+    if (!resolvedTypeContainsNumericLeaf(program, type, new Set())) return emptyResult()
+    return {
+      specs: [],
+      unsupported: [{
+        text: `given ${publicFitText(root)}: finite numeric leaves`,
+        reason: 'Recursive input types cannot publish the finite numeric default',
+      }],
+    }
+  }
+  seen.add(type)
+  const results: TypeContractResult<FitGivenSpec>[] = []
+  for (const property of checker.getPropertiesOfType(type)) {
+    const declaration = property.valueDeclaration ?? property.declarations?.[0]
+    if (declaration == null || !isSupportedTypeContractSource(declaration.getSourceFile())) continue
+    if (!/^[$\p{ID_Start}_][$\p{ID_Continue}_\u200C\u200D]*$/u.test(property.name)) continue
+    const propertyType = checker.getTypeOfSymbolAtLocation(property, declaration)
+    results.push(collectFiniteResolvedInputSpecs(
+      program,
+      propertyType,
+      `${root}.${property.name}`,
+      replacedPaths,
+      seen,
+      finiteWhenNumeric || (property.flags & ts.SymbolFlags.Optional) !== 0,
+    ))
+  }
+  seen.delete(type)
+  return mergeResults(results)
+}
+
+function resolvedTypeContainsNumericLeaf(program: Program, type: ts.Type, seen: Set<ts.Type>): boolean {
+  const checker = program.typeChecker
+  if (checker == null || (type.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown | ts.TypeFlags.Never)) !== 0) return false
+  if (checker.isTypeAssignableTo(type, checker.getNumberType())) return true
+  if (type.isUnion()) return type.types.some(member => resolvedTypeContainsNumericLeaf(program, member, seen))
+  if (checker.isTupleType(type)) {
+    return checker.getTypeArguments(type as ts.TupleTypeReference).some(member => resolvedTypeContainsNumericLeaf(program, member, seen))
+  }
+  const element = arrayElementType(type, checker)
+  if (element != null && element !== type) return resolvedTypeContainsNumericLeaf(program, element, seen)
+  if ((type.flags & ts.TypeFlags.Object) === 0 || seen.has(type)) return false
+  seen.add(type)
+  for (const property of checker.getPropertiesOfType(type)) {
+    const declaration = property.valueDeclaration ?? property.declarations?.[0]
+    if (declaration == null || !isSupportedTypeContractSource(declaration.getSourceFile())) continue
+    if (resolvedTypeContainsNumericLeaf(program, checker.getTypeOfSymbolAtLocation(property, declaration), seen)) {
+      seen.delete(type)
+      return true
+    }
+  }
+  seen.delete(type)
+  return false
+}
+
+function finiteInputSpec(root: string, replacedPaths: Set<string>, finiteWhenNumeric = false): TypeContractResult<FitGivenSpec> {
+  if (replacedPaths.has(normalizeFitText(root))) return emptyResult()
+  const range = parseFitRangeText('-Infinity<..<Infinity')!
+  return {
+    specs: [{
+      role: 'assume',
+      kind: 'range',
+      expression: parseFitExpressionText(root),
+      range,
+      text: `given ${publicFitText(root)}: ${range.text}`,
+      implicitFinite: true,
+      ...(finiteWhenNumeric ? {finiteWhenNumeric: true as const} : {}),
+    }],
+    unsupported: [],
+  }
+}
+
+function collectFiniteInputSpecs(
+  program: Program,
+  type: ts.TypeNode | undefined,
+  root: string,
+  replacedPaths: Set<string>,
+  seen: Set<string>,
+): TypeContractResult<FitGivenSpec> {
+  if (type == null) return emptyResult()
+  if (ts.isParenthesizedTypeNode(type)) return collectFiniteInputSpecs(program, type.type, root, replacedPaths, seen)
+  if (ts.isTypeOperatorNode(type) && type.operator === ts.SyntaxKind.ReadonlyKeyword) {
+    return collectFiniteInputSpecs(program, type.type, root, replacedPaths, seen)
+  }
+  if (type.kind === ts.SyntaxKind.NumberKeyword) {
+    return finiteInputSpec(root, replacedPaths)
+  }
+  if (ts.isArrayTypeNode(type)) {
+    return collectFiniteInputSpecs(program, type.elementType, `${root}[]`, replacedPaths, seen)
+  }
+  if (ts.isTupleTypeNode(type)) {
+    const results: TypeContractResult<FitGivenSpec>[] = []
+    if (type.elements.some(element => fitValueSpecTupleElementType(element) == null)) return emptyResult()
+    for (const [index, element] of type.elements.entries()) {
+      const elementType = fitValueSpecTupleElementType(element)
+      if (elementType != null) results.push(collectFiniteInputSpecs(program, elementType, `${root}[${index}]`, replacedPaths, seen))
+    }
+    return mergeResults(results)
+  }
+  if (ts.isIntersectionTypeNode(type)) {
+    return mergeResults(type.types.map(member => collectFiniteInputSpecs(program, member, root, replacedPaths, seen)))
+  }
+  if (ts.isTypeLiteralNode(type)) {
+    return collectFiniteObjectInputSpecs(program, type.members, root, replacedPaths, seen)
+  }
+  if (!ts.isTypeReferenceNode(type)) return emptyResult()
+  const name = ts.isIdentifier(type.typeName) ? type.typeName.text : null
+  const typeArgument = type.typeArguments?.[0]
+  if ((name === 'Array' || name === 'ReadonlyArray') && typeArgument != null) {
+    return collectFiniteInputSpecs(program, typeArgument, `${root}[]`, replacedPaths, seen)
+  }
+  if (typeReferenceIsTypeParameter(program, type)) return emptyResult()
+  const declaration = localTypeDeclarationForReference(program, type)
+  if (declaration == null) return emptyResult()
+  const key = `${declaration.getSourceFile().fileName}#${declaration.name.text}`
+  if (seen.has(key)) return emptyResult()
+  seen.add(key)
+  const result = ts.isInterfaceDeclaration(declaration)
+    ? collectFiniteObjectInputSpecs(program, declaration.members, root, replacedPaths, seen)
+    : collectFiniteInputSpecs(program, declaration.type, root, replacedPaths, seen)
+  seen.delete(key)
+  return result
+}
+
+function collectFiniteObjectInputSpecs(
+  program: Program,
+  members: ts.NodeArray<ts.TypeElement>,
+  root: string,
+  replacedPaths: Set<string>,
+  seen: Set<string>,
+): TypeContractResult<FitGivenSpec> {
+  const results: TypeContractResult<FitGivenSpec>[] = []
+  for (const member of members) {
+    if (!ts.isPropertySignature(member) || member.questionToken != null) continue
+    const name = propertyNameText(member.name)
+    if (name == null) continue
+    results.push(collectFiniteInputSpecs(program, member.type, `${root}.${name}`, replacedPaths, seen))
+  }
+  return mergeResults(results)
 }
 
 export function typeReturnCheckContractForFunction(program: Program, fn: FitFunction): TypeContractResult<FitCheckSpec> {

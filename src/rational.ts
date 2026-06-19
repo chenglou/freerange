@@ -63,7 +63,7 @@ function doubleComparesToRational(double: number, value: Rational): number {
 const doubleScratch = new Float64Array(1)
 const doubleScratchBits = new BigUint64Array(doubleScratch.buffer)
 
-function nextDoubleDown(value: number): number {
+export function nextDoubleDown(value: number): number {
   if (value === Number.NEGATIVE_INFINITY) return value
   if (value === Number.POSITIVE_INFINITY) return Number.MAX_VALUE
   if (value === 0) return -Number.MIN_VALUE
@@ -72,7 +72,7 @@ function nextDoubleDown(value: number): number {
   return doubleScratch[0]!
 }
 
-function nextDoubleUp(value: number): number {
+export function nextDoubleUp(value: number): number {
   if (value === Number.POSITIVE_INFINITY) return value
   if (value === Number.NEGATIVE_INFINITY) return -Number.MAX_VALUE
   if (value === 0) return Number.MIN_VALUE

@@ -10,6 +10,7 @@ import {
   numberValue,
   numberBranches,
   plainNumber,
+  possiblyNaN,
   powerNumbers,
   unaryNumberComputation,
   unknown,
@@ -28,11 +29,12 @@ import {additionalAssumptions, mergeAssumptions} from '../assumptions.ts'
 import {linearAdd, linearConstant, linearScale, linearVariable} from '../linear.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {
+  admitsNaN,
   comparisonConstraint,
   proveComparisonPlain,
   reachableNumberCasePairs,
 } from '../proof.ts'
-import {deriveFrame, noteUnsupported, type InterpreterFrame} from './context.ts'
+import {deriveFrame, noteOutsideNumericDomain, noteUnsupported, type InterpreterFrame} from './context.ts'
 import {auditMathSelector} from './audit.ts'
 import {
   evaluateNumberCasePairs,
@@ -59,11 +61,20 @@ export function evaluateMathProperty(name: string, text: string): Value | null {
 }
 
 export function evaluateMathCall(name: string, values: Value[], frame: InterpreterFrame, expression: ts.CallExpression): Value {
+  const outside = values.find(value => value.kind === 'unknown' && value.nan != null)
+  if (outside != null) return outside
   if (values.some(value => value.kind !== 'number')) return noteUnsupported(frame, `Math.${name} expected number arguments`, expression)
   const numbers = values as NumberValue[]
+  if (numbers.some(value => admitsNaN(value, frame.assumptions))) {
+    return noteOutsideNumericDomain(frame, `Math.${name} is unknown because an argument may be NaN`, expression)
+  }
   const evaluator = mathCallEvaluators.get(name)
   if (evaluator == null) return noteUnsupported(frame, `Unsupported Math.${name} call ${expression.getText(frame.program.sourceFile)}`, expression)
   const result = evaluator(name, numbers, frame, expression)
+  if (result.kind === 'unknown') return {...result, nan: 'possible'}
+  if (result.kind === 'number' && possiblyNaN(result)) {
+    return {...result, nan: 'excluded'}
+  }
   if (result.kind === 'number' && numbers.length === 1 && isRoundingFunctionName(name)) {
     frame.assumptions = mergeAssumptions(frame.assumptions, roundingFacts(name, result, numbers[0]!))
   }
@@ -149,13 +160,22 @@ const mathCallEvaluators = new Map<string, MathCallEvaluator>([
   ['tanh', unaryMath(monotoneMath(Math.tanh))],
   ['acosh', unaryMath(monotoneMath(Math.acosh, domainAtLeast(1, 'a number at least 1')))],
   ['atanh', unaryMath(monotoneMath(Math.atanh, domainBetween(-1, 1, 'a number between -1 and 1')))],
-  ['sin', unaryMath(boundedOutputMath(-1, 1))],
-  ['cos', unaryMath(boundedOutputMath(-1, 1))],
+  ['sin', unaryMath(finiteBoundedOutputMath(-1, 1))],
+  ['cos', unaryMath(finiteBoundedOutputMath(-1, 1))],
   ['cosh', unaryMath(boundedOutputMath(1, Number.POSITIVE_INFINITY))],
 ])
 
 function boundedOutputMath(min: number, max: number): UnaryNumberEvaluator {
   return (value, _frame, name) => numberValue(min, max, null, callExpr(`Math.${name}`, [value]))
+}
+
+function finiteBoundedOutputMath(min: number, max: number): UnaryNumberEvaluator {
+  return (value, _frame, name) => {
+    if (!Number.isFinite(value.min) || !Number.isFinite(value.max)) {
+      return unknown(`Math.${name} expected a finite number`)
+    }
+    return numberValue(min, max, null, callExpr(`Math.${name}`, [value]))
+  }
 }
 
 function selectorMath(kind: 'min' | 'max'): MathCallEvaluator {
@@ -182,7 +202,10 @@ function monotoneMath(
 }
 
 function evaluateMathMinMax(kind: 'min' | 'max', values: NumberValue[], frame: InterpreterFrame): Value {
-  if (values.length === 0) return unknown(`Math.${kind} expected at least one argument`)
+  if (values.length === 0) {
+    const value = kind === 'min' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY
+    return numberValue(value, value, null, `Math.${kind}()`)
+  }
   return values.slice(1).reduce((current, value) => {
     return kind === 'min' ? minNumberPair(current, value, frame) : maxNumberPair(current, value, frame)
   }, values[0]!)

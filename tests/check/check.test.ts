@@ -430,12 +430,567 @@ function nanCapableCommutative(left: number, right: number) {
   return left + right
 }
 `)
-if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'unknown') {
-  console.error('expected matching computations to remain unproved when they can produce NaN')
+if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'pass') {
+  console.error('expected checked number inputs to exclude NaN by default')
   console.error(JSON.stringify(nanComputationIdentityChecks, null, 2))
   suite.fail()
 } else {
-  console.log('domain: NaN-capable computation equality stays unknown')
+  console.log('domain: checked number inputs exclude NaN')
+}
+
+const finiteDefaultChecks = verifyFitSourceWithCallsites('finite-default.ts', `
+/** @fit
+ * return: -Infinity<..<Infinity
+ */
+function needsFinite(value: number) {
+  return value
+}
+
+/** @fit
+ * given value: -Infinity..Infinity
+ * pure
+ */
+function needsNonNaN(value: number) {
+  return value
+}
+
+/** @fit
+ * pure
+ */
+function forwardsChecked(value: number) {
+  return needsFinite(value)
+}
+
+function guardedExternal(value: number) {
+  if (!Number.isFinite(value)) return
+  needsFinite(value)
+}
+
+function unguardedExternal(value: number) {
+  needsFinite(value)
+}
+
+function integerExternal(value: number) {
+  if (!Number.isInteger(value)) return
+  needsFinite(value)
+}
+
+function safeIntegerExternal(value: number) {
+  if (!Number.isSafeInteger(value)) return
+  needsFinite(value)
+}
+
+function nonNaNExternal(value: number) {
+  if (Number.isNaN(value)) return
+  needsNonNaN(value)
+}
+
+/** @fit
+ * given value: -100..100
+ * pure
+ */
+function boundedDouble(value: number) {
+  return needsFinite(value * 2)
+}
+
+/** @fit
+ * pure
+ */
+function overflowingDouble(value: number) {
+  return needsFinite(value * 2)
+}
+`)
+const finiteDefaultAllChecks = [...finiteDefaultChecks.annotationChecks, ...finiteDefaultChecks.callsiteChecks]
+const finiteDefaultStatus = (functionName: string, text: string) => finiteDefaultAllChecks.find(check =>
+  check.functionName.includes(functionName) && check.text.includes(text))?.status
+const expectedPassingFiniteDefaultFunctions = new Set([
+  'forwardsChecked',
+  'guardedExternal',
+  'integerExternal',
+  'safeIntegerExternal',
+  'boundedDouble',
+])
+if (
+  finiteDefaultStatus('needsFinite', 'return: -Infinity<..<Infinity') !== 'pass'
+  || finiteDefaultStatus('unguardedExternal', 'requires value to be finite') !== 'requires'
+  || !finiteDefaultAllChecks.some(check => check.functionName.includes('overflowingDouble')
+    && check.text.includes('to be finite')
+    && (check.status === 'unknown' || check.status === 'requires'))
+  || finiteDefaultAllChecks.some(check =>
+    expectedPassingFiniteDefaultFunctions.has(check.functionName.split(' > ')[0]!)
+    && check.status !== 'pass')
+  || !finiteDefaultAllChecks.some(check => check.functionName.includes('nonNaNExternal')
+    && check.text.includes('requires value: -Infinity..Infinity')
+    && check.status === 'pass')
+) {
+  console.error('expected finite defaults to apply only at checked contracts and to publish call requirements')
+  console.error(JSON.stringify(finiteDefaultChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: finite checked inputs and caller requirements')
+}
+
+const finiteLeafChecks = verifyFitSourceWithCallsites('finite-leaves.ts', `
+/** @fit
+ * pure
+ */
+function reads(input: {width: number; rows: {height: number}[]}) {
+  return input.width
+}
+
+/** @fit
+ * given input.width: 0..Infinity
+ * pure
+ */
+function allowsInfiniteWidth(input: {width: number; height: number}) {
+  return input.width
+}
+
+/** @fit
+ * pure
+ */
+function destructuredWidth({width}: {width: number}) {
+  return width
+}
+
+reads({width: Infinity, rows: [{height: 1}]})
+reads({width: 1, rows: [{height: Infinity}]})
+allowsInfiniteWidth({width: Infinity, height: 1})
+allowsInfiniteWidth({width: 1, height: Infinity})
+destructuredWidth({width: Infinity})
+`)
+const finiteLeafCallChecks = finiteLeafChecks.callsiteChecks
+const infiniteWidth = finiteLeafCallChecks.find(check => check.text.startsWith('reads({width: Infinity') && check.text.includes('.width to be finite'))
+const infiniteHeight = finiteLeafCallChecks.find(check => check.text.startsWith('reads({width: 1') && check.text.includes('.rows[].height to be finite'))
+const allowedWidth = finiteLeafCallChecks.find(check => check.text.startsWith('allowsInfiniteWidth({width: Infinity') && check.text.includes('input.width: 0..Infinity'))
+const rejectedSibling = finiteLeafCallChecks.find(check => check.text.startsWith('allowsInfiniteWidth({width: 1') && check.text.includes('.height to be finite'))
+const rejectedDestructured = finiteLeafCallChecks.find(check => check.text.startsWith('destructuredWidth({width: Infinity') && check.text.includes('requires Infinity to be finite'))
+if (
+  infiniteWidth?.status !== 'fail'
+  || infiniteHeight?.status !== 'fail'
+  || allowedWidth?.status !== 'pass'
+  || rejectedSibling?.status !== 'fail'
+  || rejectedDestructured?.status !== 'fail'
+) {
+  console.error('expected finite defaults on nested numeric leaves and exact-path range replacement')
+  console.error(JSON.stringify(finiteLeafChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: nested finite leaves and explicit infinity replacement')
+}
+
+const resolvedFiniteLeafChecks = verifyFitSourceWithCallsites('resolved-finite-leaves.ts', `
+type Box<T> = {value: T}
+interface Base {value: number}
+interface Derived extends Base {}
+type OptionalChild = {child?: {value: number}}
+type NullableChild = {child: {value: number} | null}
+type NumericChoice = {kind: 'number'; value: number} | {kind: 'text'; value: string}
+
+/** @fit
+ * pure
+ */
+function genericLeaf(input: Box<number>) {
+  return input.value
+}
+
+/** @fit
+ * pure
+ */
+function inheritedLeaf(input: Derived) {
+  return input.value
+}
+
+/** @fit
+ * pure
+ */
+function destructuredRows({rows}: {rows: {height: number}[]}) {
+  return rows[0]!.height
+}
+
+/** @fit
+ * return >= 0
+ */
+function optionalLeaf(input: {value?: number}) {
+  const value = input.value ?? 0
+  return value >= 0 ? value : -value
+}
+
+/** @fit
+ * return >= 0
+ */
+function nullableLeaf(value: number | null) {
+  if (value === null) return 0
+  return value >= 0 ? value : -value
+}
+
+/** @fit
+ * return >= 0
+ */
+function inferredLeaf(value = 0) {
+  return value >= 0 ? value : -value
+}
+
+/** @fit
+ * pure
+ */
+function optionalChild(input: OptionalChild) {
+  return input.child?.value ?? 0
+}
+
+/** @fit
+ * pure
+ */
+function nullableChild(input: NullableChild) {
+  return input.child?.value ?? 0
+}
+
+/** @fit
+ * pure
+ */
+function unionNumericLeaf(input: NumericChoice) {
+  return input.value
+}
+
+/** @fit
+ * given !flag
+ * pure
+ */
+function requiresFalse(flag: boolean) {}
+
+function comparisonExcludesNaN(value: number) {
+  if (value < 0) requiresFalse(Number.isNaN(value))
+}
+
+genericLeaf({value: Infinity})
+inheritedLeaf({value: Infinity})
+destructuredRows({rows: [{height: Infinity}]})
+optionalLeaf({})
+optionalLeaf({value: Infinity})
+nullableLeaf(null)
+nullableLeaf(Infinity)
+inferredLeaf(Infinity)
+genericLeaf({} as any)
+optionalChild({})
+optionalChild({child: {value: Infinity}})
+nullableChild({child: null})
+nullableChild({child: {value: Infinity}})
+unionNumericLeaf({kind: 'text', value: 'ok'})
+unionNumericLeaf({kind: 'number', value: Infinity})
+`)
+const resolvedFiniteChecks = [...resolvedFiniteLeafChecks.annotationChecks, ...resolvedFiniteLeafChecks.callsiteChecks]
+const expectedResolvedFiniteFailures = [
+  'genericLeaf',
+  'inheritedLeaf',
+  'destructuredRows',
+  'optionalLeaf',
+  'nullableLeaf',
+  'inferredLeaf',
+  'optionalChild',
+  'nullableChild',
+  'unionNumericLeaf',
+]
+if (
+  resolvedFiniteLeafChecks.annotationChecks.some(check => check.status !== 'pass')
+  || expectedResolvedFiniteFailures.some(functionName => !resolvedFiniteLeafChecks.callsiteChecks.some(check =>
+    check.text.startsWith(`${functionName}(`) && check.status === 'fail' && check.text.includes('to be finite')))
+  || resolvedFiniteChecks.some(check =>
+    check.text.startsWith('optionalLeaf({})')
+    || check.text.startsWith('nullableLeaf(null)')
+    || check.text.startsWith('optionalChild({})')
+    || check.text.startsWith('nullableChild({child: null})')
+    || check.text.startsWith("unionNumericLeaf({kind: 'text'"))
+  || !resolvedFiniteLeafChecks.callsiteChecks.some(check => check.text.startsWith('genericLeaf({} as any)') && check.status === 'unknown')
+  || !resolvedFiniteLeafChecks.callsiteChecks.some(check => check.text.startsWith('requiresFalse(Number.isNaN(value))') && check.status === 'pass')
+) {
+  console.error('expected resolved, inherited, destructured, optional, nullable, and inferred number leaves to share the finite boundary')
+  console.error(JSON.stringify(resolvedFiniteLeafChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: resolved TypeScript number leaves share one finite boundary')
+}
+
+const recursiveFiniteDefaultChecks = verifyFitSource('recursive-finite-default.ts', `
+type Tree = {value: number; children: Tree[]}
+type Labels = {name: string; children: Labels[]}
+
+/** @fit
+ * pure
+ */
+function walk(tree: Tree) {
+  return tree.value
+}
+
+/** @fit
+ * pure
+ */
+function labels(tree: Labels) {
+  return tree.name
+}
+`)
+if (!recursiveFiniteDefaultChecks.some(check => check.status === 'unknown'
+  && check.reason === 'Recursive input types cannot publish the finite numeric default')
+  || recursiveFiniteDefaultChecks.some(check => check.functionName === 'labels' && check.status !== 'pass')) {
+  console.error('expected recursive numeric input types to be rejected instead of silently dropping finite leaves')
+  console.error(JSON.stringify(recursiveFiniteDefaultChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: recursive finite defaults reject unsupported traversal')
+}
+
+const checkedNumberOperationChecks = verifyFitSource('checked-number-operations.ts', `
+/** @fit
+ * given extent: 0..Infinity
+ * return >= 0
+ */
+function zeroTimesInfinity(extent: number) {
+  return (0 * extent) + 1
+}
+
+/** @fit
+ * given angle: 0..Infinity
+ * return: -1..1
+ */
+function infiniteSine(angle: number) {
+  return Math.sin(angle)
+}
+
+/** @fit
+ * return: 0..Infinity
+ */
+function benignOverflow() {
+  return Number.MAX_VALUE * 2
+}
+
+/** @fit
+ * return: -Infinity<..<Infinity
+ */
+function parsedFinite(text: string) {
+  const value = Number.parseFloat(text)
+  if (!Number.isFinite(value)) return 0
+  return value
+}
+
+/** @fit
+ * return: 0..10
+ */
+function deliberateNaN(): number {
+  return NaN
+}
+
+/** @fit
+ * return: 0..10
+ */
+function oneNaNBranch(flag: boolean): number {
+  return flag ? 3 : Number.NaN
+}
+
+/** @fit
+ * return: int -Infinity<..<Infinity
+ */
+function integerGuard(value: number) {
+  if (!Number.isInteger(value)) return 0
+  return value
+}
+
+/** @fit
+ * return: int -9007199254740991..9007199254740991
+ */
+function safeIntegerGuard(value: number) {
+  if (!Number.isSafeInteger(value)) return 0
+  return value
+}
+
+/** @fit
+ * return: int 0..Infinity
+ */
+function inclusiveIntegerInfinity() {
+  return Infinity
+}
+
+/** @fit
+ * given value: int 0..Infinity
+ * return: int 0..Infinity
+ */
+function acceptsIntegerInfinity(value: number) {
+  return value
+}
+
+/** @fit
+ * return == Infinity
+ */
+function callsIntegerInfinity() {
+  return acceptsIntegerInfinity(Infinity)
+}
+
+/** @fit
+ * return == "number"
+ */
+function nanTypeof() {
+  return typeof NaN
+}
+
+/** @fit
+ * return
+ */
+function directNaNPredicate() {
+  return Number.isNaN(NaN)
+}
+
+/** @fit
+ * given value: 0..10 | Infinity
+ * return: 0..10
+ */
+function finiteAlternative(value: number) {
+  if (!Number.isFinite(value)) return 0
+  return value
+}
+
+/** @fit
+ * given value: 0..10 | 10.5 | Infinity
+ * return: int 0..10
+ */
+function integerAlternative(value: number) {
+  if (!Number.isInteger(value)) return 0
+  return value
+}
+
+/** @fit
+ * given value: -0.5..10.5
+ * return: int 0..10
+ */
+function integerInterval(value: number) {
+  if (!Number.isInteger(value)) return 0
+  return value
+}
+
+/** @fit
+ * given factor: 0..1
+ * given extent: 0..Infinity
+ * return >= 0
+ */
+function guardedInfiniteProduct(factor: number, extent: number) {
+  if (factor <= 0) return 0
+  return factor * extent
+}
+
+/** @fit
+ * given divisor: 0..Infinity
+ * return >= 0
+ */
+function guardedDivision(divisor: number) {
+  if (divisor <= 0) return 0
+  return 1 / divisor
+}
+
+/** @fit
+ * return == Infinity
+ */
+function emptyMinimum() {
+  return Math.min()
+}
+
+/** @fit
+ * return == -Infinity
+ */
+function emptyMaximum() {
+  return Math.max()
+}
+
+/** @fit
+ * return == -1
+ */
+function negativeRemainder() {
+  return -5 % 2
+}
+
+/** @fit
+ * given base: -2..-1
+ * return: 1..4
+ */
+function negativeSquare(base: number) {
+  return base ** 2
+}
+
+/** @fit
+ * return >= 0
+ */
+function nanUnderUnary() {
+  return -(0 * Infinity)
+}
+
+/** @fit
+ * return >= 0
+ */
+function nanUnderCompound() {
+  let value = 0 * Infinity
+  value += 1
+  return value
+}
+
+
+/** @fit
+ * return >= 0
+ */
+function uncheckedSquare(text: string) {
+  const value = Number.parseFloat(text)
+  return value ** 2
+}
+`)
+const zeroTimesInfinity = checkedNumberOperationChecks.find(check => check.functionName === 'zeroTimesInfinity')
+const infiniteSine = checkedNumberOperationChecks.find(check => check.functionName === 'infiniteSine')
+const benignOverflow = checkedNumberOperationChecks.find(check => check.functionName === 'benignOverflow')
+const parsedFinite = checkedNumberOperationChecks.find(check => check.functionName === 'parsedFinite')
+const deliberateNaN = checkedNumberOperationChecks.find(check => check.functionName === 'deliberateNaN')
+const oneNaNBranch = checkedNumberOperationChecks.find(check => check.functionName === 'oneNaNBranch')
+const integerGuard = checkedNumberOperationChecks.find(check => check.functionName === 'integerGuard')
+const safeIntegerGuard = checkedNumberOperationChecks.find(check => check.functionName === 'safeIntegerGuard')
+const expectedPassingNumberFunctions = new Set([
+  'inclusiveIntegerInfinity',
+  'acceptsIntegerInfinity',
+  'callsIntegerInfinity',
+  'nanTypeof',
+  'directNaNPredicate',
+  'finiteAlternative',
+  'integerAlternative',
+  'integerInterval',
+  'guardedInfiniteProduct',
+  'guardedDivision',
+  'emptyMinimum',
+  'emptyMaximum',
+  'negativeRemainder',
+  'negativeSquare',
+])
+const nanUnderUnary = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderUnary')
+const nanUnderCompound = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderCompound')
+const uncheckedSquare = checkedNumberOperationChecks.find(check => check.functionName === 'uncheckedSquare')
+if (
+  zeroTimesInfinity?.status !== 'unknown'
+  || zeroTimesInfinity.reason?.includes('zero and infinity may meet') !== true
+  || zeroTimesInfinity.reason?.includes('+ 1') === true
+  || infiniteSine?.status !== 'unknown'
+  || infiniteSine.reason?.includes('expected a finite number') !== true
+  || benignOverflow?.status !== 'pass'
+  || parsedFinite?.status !== 'pass'
+  || deliberateNaN?.status !== 'unknown'
+  || deliberateNaN.reason !== 'NaN is outside the checked numerical domain'
+  || oneNaNBranch?.status !== 'unknown'
+  || oneNaNBranch.reason !== 'NaN is outside the checked numerical domain'
+  || integerGuard?.status !== 'pass'
+  || safeIntegerGuard?.status !== 'pass'
+  || checkedNumberOperationChecks.some(check => expectedPassingNumberFunctions.has(check.functionName) && check.status !== 'pass')
+  || nanUnderUnary?.status !== 'unknown'
+  || nanUnderUnary.reason?.startsWith('0 * Infinity is unknown because') !== true
+  || nanUnderCompound?.status !== 'unknown'
+  || nanUnderCompound.reason?.startsWith('0 * Infinity is unknown because') !== true
+  || uncheckedSquare?.status !== 'unknown'
+  || uncheckedSquare.reason?.includes('operand may be NaN') !== true
+) {
+  console.error('expected NaN hazards to stop at their source while overflow and guarded parsing remain usable')
+  console.error(JSON.stringify(checkedNumberOperationChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: NaN operation stops, Math domains, overflow, and validation')
 }
 
 const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
@@ -1774,8 +2329,8 @@ if (
   || sequenceOperationStatus('leftGrouped', 'return[$i + 1].y == (return[$i].y + return[$i].height) + gap') !== 'pass'
   || sequenceOperationStatus('leftGrouped', 'return[$i + 1].y == return[$i].y + (return[$i].height + gap)') !== 'unknown'
   || sequenceOperationStatus('nanCapable', 'spaced(return, gap)') !== 'unknown'
-  || sequenceOperationStatus('nanStable', 'nondecreasing(return.y)') !== 'unknown'
-  || sequenceOperationStatus('nanStable', 'return[$i + 1].y == return[$i].y') !== 'unknown'
+  || sequenceOperationStatus('nanStable', 'nondecreasing(return.y)') !== 'pass'
+  || sequenceOperationStatus('nanStable', 'return[$i + 1].y == return[$i].y') !== 'pass'
   || sequenceOperationStatus('unrelatedField', 'spaced(return, step)') !== 'unknown'
   || sequenceOperationStatus('precomputedGap', 'spaced(return, 1 + gap)') !== 'pass'
   || sequenceOperationStatus('precomputedGap', 'return[$i + 1].y == return[$i].y + (return[$i].height + (1 + gap))') !== 'pass'
@@ -2074,7 +2629,7 @@ const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text
 const expectedInferFacts = [
   'return.rows.length == params.items.length',
   'return.rows.length: int 0..4294967295',
-  'return.rows[].height == item.height',
+  'return.rows[].height == params.items[].height',
   'return.rows follows params.items by index',
 ]
 const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
@@ -2546,6 +3101,27 @@ function displayFile(file: string) {
   if (file.startsWith(repoDir)) return file.slice(repoDir.length)
   if (file.startsWith(workspaceDir)) return `../${file.slice(workspaceDir.length)}`
   return file
+}
+
+const finiteDefaultLoopChecks = verifyFitSource('finite-default-loop.ts', `
+/** @fit
+ * given count: int 0..100
+ * return >= 0
+ */
+function accumulatedMagnitude(value: number, count: number) {
+  let total = 0
+  for (let i = 0; i < count; i++) {
+    total += value >= 0 ? value : -value
+  }
+  return total
+}
+`)
+if (finiteDefaultLoopChecks.length !== 1 || finiteDefaultLoopChecks[0]?.status !== 'pass') {
+  console.error('expected finite default inputs to restore the loop magnitude proof')
+  console.error(JSON.stringify(finiteDefaultLoopChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('numbers: finite default restores comparison-based loop proof')
 }
 
 })

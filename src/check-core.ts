@@ -1425,7 +1425,7 @@ function evaluateLocalFunctionCall(
   const returnTypeFallback = valueFromFunctionReturnType(`${functionName}Result`, fn.node, context.program)
     ?? valueFromTypeNode(`${functionName}Result`, fn.node.type, context.program)
     ?? options.fallback
-  const fallbackResult = result.kind === 'unknown'
+  const fallbackResult = result.kind === 'unknown' && result.nan == null
     ? returnTypeFallback ?? result
     : result
   const callSiteFallbackResult = valueWithCallSiteText(fallbackResult, options.callSiteBindings)

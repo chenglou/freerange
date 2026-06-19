@@ -8,37 +8,46 @@ unsupported:
 function spring
 return:
   return.b == b
-  return.b: 0..Infinity
+  return.b: 5e-324..1.7976931348623157e+308
   return.dest == pos
+  return.dest: -1.7976931348623157e+308..1.7976931348623157e+308
   return.k == k
-  return.k: 0..Infinity
+  return.k: 5e-324..1.7976931348623157e+308
   return.pos == pos
+  return.pos: -1.7976931348623157e+308..1.7976931348623157e+308
   return.v == v
+  return.v: -1.7976931348623157e+308..1.7976931348623157e+308
 checked:
   return.k > 0
   return.b > 0
 assumptions:
   given k > 0
   given b > 0
+redundant:
+  return.k > 0 (covered by return.k: 5e-324..1.7976931348623157e+308)
+  return.b > 0 (covered by return.b: 5e-324..1.7976931348623157e+308)
 
 function springStep
 locals:
   t == (msPerAnimationStep / 1000)
   t: 0.004..0.004
   pos == config.pos
+  pos: -1.7976931348623157e+308..1.7976931348623157e+308
   dest == config.dest
+  dest: -1.7976931348623157e+308..1.7976931348623157e+308
   v == config.v
+  v: -1.7976931348623157e+308..1.7976931348623157e+308
   k == config.k
+  k: -1.7976931348623157e+308..1.7976931348623157e+308
   b == config.b
+  b: -1.7976931348623157e+308..1.7976931348623157e+308
   Fspring == (-config.k * (config.pos - config.dest))
   Fdamper == (-config.b * config.v)
-  a == ((-config.k * (config.pos - config.dest)) + (-config.b * config.v))
-  newV == (config.v + (((-config.k * (config.pos - config.dest)) + (-config.b * config.v)) * (msPerAnimationStep / 1000)))
-  newPos == (config.pos + ((config.v + (((-config.k * (config.pos - config.dest)) + (-config.b * config.v)) * (msPerAnimationStep / 1000))) * (msPerAnimationStep / 1000)))
 assumptions:
   given config.k > 0
   given config.b > 0
 unsupported:
+  unsupported springStep line 43: Fspring + Fdamper is unknown because opposite infinities may meet, producing NaN
   unsupported springStep line 34: Function springStep did not return
 
 function springGoToEnd
@@ -49,6 +58,8 @@ unsupported:
   unsupported springGoToEnd line 49: Function springGoToEnd did not return
 
 function clamp
+return:
+  return: -1.7976931348623157e+308..1.7976931348623157e+308
 checked:
   return >= min
   return <= max
@@ -58,21 +69,21 @@ assumptions:
 
 function colsBoxMaxSizeXF
 return:
-  return.boxMaxSizeX: 1..Infinity
+  return.boxMaxSizeX: 1..1.7976931348623157e+308
   return.cols: int 1..7
 locals:
   boxMinSizeX == 220
   boxMinSizeX: int 220..220
   cols: int 1..7
-  boxMaxSizeX: 1..Infinity
+  boxMaxSizeX: 1..1.7976931348623157e+308
 checked:
   return.cols: int 1..7
   return.boxMaxSizeX > 0
 assumptions:
-  given containerSizeX: int 0..Infinity
+  given containerSizeX: int 0..<Infinity
 redundant:
   return.cols: int 1..7 (covered by return.cols: int 1..7)
-  return.boxMaxSizeX > 0 (covered by return.boxMaxSizeX: 1..Infinity)
+  return.boxMaxSizeX > 0 (covered by return.boxMaxSizeX: 1..1.7976931348623157e+308)
 
 function isDebug
 unsupported:
@@ -80,13 +91,13 @@ unsupported:
 
 function springForEach
 unsupported:
-  unsupported springForEach line 169: Unknown identifier data
-  unsupported springForEach line 169: for..of expected an array source, but data is not proven array-valued
+  unsupported springForEach line 175: Unknown identifier data
+  unsupported springForEach line 175: for..of expected an array source, but data is not proven array-valued
 
 function stepSprings
 unsupported:
-  unsupported stepSprings line 175: Unknown identifier data
-  unsupported stepSprings line 175: for..of expected an array source, but data is not proven array-valued
+  unsupported stepSprings line 181: Unknown identifier data
+  unsupported stepSprings line 181: for..of expected an array source, but data is not proven array-valued
 
 function stepSpring
 assumptions:
@@ -94,7 +105,7 @@ assumptions:
   given s.b > 0
   given steps: int 0..Infinity
 unsupported:
-  unsupported stepSpring line 189: Indexed for loops support block bodies only
+  unsupported stepSpring line 195: Indexed for loops support block bodies only
 
 function hitTest2DMode
 assumptions:
@@ -116,7 +127,7 @@ assumptions:
   given data[].fxFactor.k > 0
   given data[].fxFactor.b > 0
 unsupported:
-  unsupported hitTest2DMode line 220: Loop control flow is unsupported: return i
+  unsupported hitTest2DMode line 226: Loop control flow is unsupported: return i
 
 function hitTest1DMode
 assumptions:
@@ -140,6 +151,6 @@ assumptions:
 
 function render
 unsupported:
-  unsupported render line 234: Unknown identifier events
-  unsupported render line 250: Unknown identifier debug
+  unsupported render line 240: Unknown identifier events
+  unsupported render line 256: Unknown identifier debug
   Unsupported branch condition: debug

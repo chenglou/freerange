@@ -11,6 +11,7 @@ import {
   arrayLength,
   arraySummary,
   finiteNumberSet,
+  finiteMembersAreIntegers,
   isDefinitelyEmptyArray,
   literalKey,
   numberValue,
@@ -1069,7 +1070,7 @@ function proveNumberInsideRangeCase(
 }
 
 function integerClaimStatus(value: NumberValue, range: FitRange): {status: FitCheckStatus; reason?: string} {
-  if (range.valueKind !== 'int' || integerValued(value)) return {status: 'pass'}
+  if (range.valueKind !== 'int' || finiteMembersAreIntegers(value)) return {status: 'pass'}
   const provablyFractional = value.min === value.max && Number.isFinite(value.min) && !Number.isInteger(value.min)
   return {
     status: provablyFractional ? 'fail' : 'unknown',

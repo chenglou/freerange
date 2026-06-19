@@ -21,7 +21,7 @@ export function localizeValue(value: Value, expr: string, options: LocalizeOptio
     )
     return {
       ...localized,
-      ...(value.neverNaN === true ? {neverNaN: true as const} : {}),
+      nan: value.nan,
       ...(value.caseLoss == null ? {} : {caseLoss: value.caseLoss}),
     }
   }

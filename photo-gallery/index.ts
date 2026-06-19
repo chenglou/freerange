@@ -77,7 +77,7 @@ const gapTopPeek = 40 // used when programmatically scrolling and wanting to sho
 const hitArea1DSizeX = 100 // left and right click region in 1D mode
 
 /** @fit
- * given containerSizeX: int 0..Infinity
+ * given containerSizeX: int 0..<Infinity
  * return.cols: int 1..7
  * return.boxMaxSizeX > 0
  */
@@ -111,7 +111,8 @@ let debugTimestamp = 0
 let animatedUntilTime: number | null = null
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)')
 let anchor = 0 // keep a box stable during resize layout shifts
-let windowSizeX = document.documentElement.clientWidth
+const initialWindowSizeX = document.documentElement.clientWidth
+let windowSizeX = Number.isFinite(initialWindowSizeX) ? initialWindowSizeX : 0
 let scrollY = isSafari ? document.body.scrollTop : window.scrollY
 let pointer: {x: number; y: number} = {x: -Infinity, y: -Infinity} // btw, on page load, there's no way to render a first cursor state =(
 let events: {keydown: KeyboardEvent | null; click: MouseEvent | null; mousemove: MouseEvent | null} = {keydown: null, click: null, mousemove: null}
@@ -131,7 +132,8 @@ type BoxData = {
 }
 
 const data: BoxData[] = (() => {
-  const windowSizeY = document.documentElement.clientHeight
+  const rawWindowSizeY = document.documentElement.clientHeight
+  const windowSizeY = Number.isFinite(rawWindowSizeY) ? rawWindowSizeY : 0
   const {cols, boxMaxSizeX} = colsBoxMaxSizeXF(windowSizeX)
   const imgMaxSizeY = boxMaxSizeX + 100 // TODO: adjust this better
   return photoGalleryData.map((d, i) => {
@@ -149,14 +151,18 @@ const data: BoxData[] = (() => {
         promptNode.className = 'prompt'
         promptNode.textContent = d.prompt
     node.append(img, promptNode)
+    const startX = Math.floor(i / cols) * -windowSizeX - windowSizeX
+    const startY = windowSizeY + Math.floor(i / cols) * imgMaxSizeY
+    const finiteStartX = Number.isFinite(startX) ? startX : 0
+    const finiteStartY = Number.isFinite(startY) ? startY : 0
     return {
       id: d.id,
       naturalSizeX: d.w,
       ar, // aspect ratio
       sizeX: spring(sizeX),
       sizeY: spring(sizeY), // image + prompt
-      x: spring(Math.floor(i / cols) * -windowSizeX - windowSizeX), // unfold from lower left. More visible on long screens
-      y: spring(windowSizeY + Math.floor(i / cols) * imgMaxSizeY),
+      x: spring(finiteStartX), // unfold from lower left. More visible on long screens
+      y: spring(finiteStartY),
       scale: spring(1),
       fxFactor: spring(20), // for brightness and blur
       node,
@@ -253,8 +259,10 @@ function render(now: number): boolean {
   }
 
   // === step 1: batched DOM reads (to avoid accidental DOM read & write interleaving)
-  const newWindowSizeX = document.documentElement.clientWidth // excludes scroll bar & invariant under safari pinch zoom
-  const windowSizeY = document.documentElement.clientHeight // same
+  const rawWindowSizeX = document.documentElement.clientWidth // excludes scroll bar & invariant under safari pinch zoom
+  const newWindowSizeX = Number.isFinite(rawWindowSizeX) ? rawWindowSizeX : 0
+  const rawWindowSizeY = document.documentElement.clientHeight // same
+  const windowSizeY = Number.isFinite(rawWindowSizeY) ? rawWindowSizeY : 0
   // this way, when pinch zooming in, we don't occlude away rows outside of the view; if we did, when we zoom out again we wouldn't see those occluded rows until we release our fingers. During safari pinch, no event is triggered so we couldn't have updated the occlusion in real time
   const animationDisabled = reducedMotion.matches
   const currentScrollY = isSafari ? document.body.scrollTop : window.scrollY
