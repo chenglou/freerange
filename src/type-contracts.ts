@@ -1,17 +1,21 @@
 import * as ts from 'typescript'
 import {
-  domainPathSyntheticName,
   findTopLevelColon,
   findTopLevelComparison,
+  fitDomainPathKey,
+  fitExpressionDomainPath,
   fitBlockSpecCommentLines,
   fitSpecTextForRole,
   fitReturnPublicRoot,
+  formatFitDomainPath,
   inlineFitCommentLinesForNode,
   normalizeFitText,
   parseDomainPathText,
   parseFitExpressionText,
   parseFitRangeText,
   publicFitText,
+  replaceFitCode,
+  unusedDomainPathSyntheticName,
   withFitExpressionScope,
   type ComparisonOperator,
   type FitCheckSpec,
@@ -104,7 +108,12 @@ const shorthandComparisonPattern = /^(==|>=|<=|>|<)\s*(.+)$/
 const intRangePrefixPattern = /^(int\s+)([\s\S]+)$/
 const givenKeywordPattern = /^given(?:\s|$)/
 const typeContractTemplateRootPattern = /(?<![\w$.])__fit_type_root(?![\w$])/g
-const typeContractTemplatePathPattern = /(?<![\w$.])__fit_type_root(?:\.[A-Za-z_$][\w$]*|\[\]|\[\$[A-Za-z_][\w$]*(?:\s*[+-]\s*\d+)?\])*/g
+const typeContractIdentifierPattern = '[\\p{ID_Start}_$][\\p{ID_Continue}$\\u200C\\u200D]*'
+const typeContractStringKeyPattern = String.raw`\[(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)\]`
+const typeContractTemplatePathPattern = new RegExp(
+  `(?<![\\w$.])__fit_type_root(?:\\.${typeContractIdentifierPattern}|${typeContractStringKeyPattern}|\\[\\]|\\[\\$[\\p{ID_Start}_][\\p{ID_Continue}$\\u200C\\u200D]*(?:\\s*[+-]\\s*\\d+)?\\])*`,
+  'gu',
+)
 
 export function createTypeContractTemplateIndex(sourceText: string, sourceFile: ts.SourceFile): TypeContractTemplateIndex {
   const index = emptyTypeContractTemplateIndex()
@@ -177,7 +186,7 @@ function collectObjectFieldContractTemplates(
       continue
     }
 
-    const fieldRoot = `${typeContractTemplateRoot}.${name}`
+    const fieldRoot = appendPropertyPath(typeContractTemplateRoot, name)
     setTypeContractTemplates(index, member, parsePropertyAttachedTemplates(sourceText, member, fieldRoot, scope))
     ts.forEachChild(member, child => {
       if (ts.isTypeNode(child)) visitTypeContractFieldTemplateChild(sourceText, child, index)
@@ -224,7 +233,9 @@ export function finiteInputGivenContractForFunction(
 ): TypeContractResult<FitGivenSpec> {
   const replacedPaths = new Set(writtenSpecs
     .filter(spec => spec.kind === 'range')
-    .map(spec => normalizeFitText(spec.expression.text)))
+    .map(spec => fitExpressionDomainPath(spec.expression))
+    .filter((path): path is FitDomainPath => path != null)
+    .map(canonicalFinitePathKey))
   const results: TypeContractResult<FitGivenSpec>[] = []
   for (const param of fn.node.parameters) {
     if (ts.isIdentifier(param.name)) {
@@ -315,12 +326,11 @@ function collectFiniteResolvedInputSpecs(
   for (const property of checker.getPropertiesOfType(type)) {
     const declaration = property.valueDeclaration ?? property.declarations?.[0]
     if (declaration == null || !isSupportedTypeContractSource(declaration.getSourceFile())) continue
-    if (!/^[$\p{ID_Start}_][$\p{ID_Continue}_\u200C\u200D]*$/u.test(property.name)) continue
     const propertyType = checker.getTypeOfSymbolAtLocation(property, declaration)
     results.push(collectFiniteResolvedInputSpecs(
       program,
       propertyType,
-      `${root}.${property.name}`,
+      appendPropertyPath(root, property.name),
       replacedPaths,
       seen,
       finiteWhenNumeric || (property.flags & ts.SymbolFlags.Optional) !== 0,
@@ -355,13 +365,15 @@ function resolvedTypeContainsNumericLeaf(program: Program, type: ts.Type, seen: 
 }
 
 function finiteInputSpec(root: string, replacedPaths: Set<string>, finiteWhenNumeric = false): TypeContractResult<FitGivenSpec> {
-  if (replacedPaths.has(normalizeFitText(root))) return emptyResult()
+  const expression = parseFitExpressionText(root)
+  const path = fitExpressionDomainPath(expression)
+  if (path != null && replacedPaths.has(canonicalFinitePathKey(path))) return emptyResult()
   const range = parseFitRangeText('-Infinity<..<Infinity')!
   return {
     specs: [{
       role: 'assume',
       kind: 'range',
-      expression: parseFitExpressionText(root),
+      expression,
       range,
       text: `given ${publicFitText(root)}: ${range.text}`,
       implicitFinite: true,
@@ -369,6 +381,15 @@ function finiteInputSpec(root: string, replacedPaths: Set<string>, finiteWhenNum
     }],
     unsupported: [],
   }
+}
+
+function canonicalFinitePathKey(path: FitDomainPath) {
+  return fitDomainPathKey({
+    ...path,
+    segments: path.segments.map(segment => segment.kind === 'prop' && /^(?:0|[1-9]\d*)$/.test(segment.name)
+      ? {kind: 'index' as const, index: Number(segment.name)}
+      : segment),
+  })
 }
 
 function collectFiniteInputSpecs(
@@ -435,7 +456,7 @@ function collectFiniteObjectInputSpecs(
     if (!ts.isPropertySignature(member) || member.questionToken != null) continue
     const name = propertyNameText(member.name)
     if (name == null) continue
-    results.push(collectFiniteInputSpecs(program, member.type, `${root}.${name}`, replacedPaths, seen))
+    results.push(collectFiniteInputSpecs(program, member.type, appendPropertyPath(root, name), replacedPaths, seen))
   }
   return mergeResults(results)
 }
@@ -565,7 +586,7 @@ function collectObjectMemberContractSpecs(
       continue
     }
 
-    const propRoot = `${root}.${name}`
+    const propRoot = appendPropertyPath(root, name)
     results.push(instantiateTypeContractTemplates(typeTemplatesForNode(program, member), root, role))
     results.push(collectTypeContractSpecs(program, member.type, propRoot, role, seen))
   }
@@ -682,8 +703,13 @@ function typeRootPath(root: string): FitDomainPath {
   return domainPath ?? {root: normalized, segments: []}
 }
 
+function appendPropertyPath(root: string, name: string) {
+  const path = typeRootPath(root)
+  return formatFitDomainPath({...path, segments: [...path.segments, {kind: 'prop', name}]})
+}
+
 function instantiateTypeContractTemplateText(text: string, root: string) {
-  return publicFitText(text.replace(typeContractTemplateRootPattern, root))
+  return publicFitText(replaceFitCode(text, typeContractTemplateRootPattern, () => root))
 }
 
 function parseScalarTypeAttachedTemplates(sourceText: string, node: ts.Node): TypeContractTemplateResult {
@@ -810,11 +836,16 @@ function parseTypeComparisonTemplate(leftText: string, op: ComparisonOperator, r
 function parseTypeTemplateExpression(text: string): FitExpression {
   const normalized = normalizeFitText(text)
   const domainPaths = new Map<string, FitDomainPath>()
-  const sourceText = normalized.replace(typeContractTemplatePathPattern, match => {
+  const domainNames = new Map<string, string>()
+  const sourceText = replaceFitCode(normalized, typeContractTemplatePathPattern, match => {
     const domainPath = parseDomainPathText(match)
     if (domainPath == null) return match
-    const synthetic = domainPathSyntheticName(match)
+    const key = fitDomainPathKey(domainPath)
+    const existing = domainNames.get(key)
+    if (existing != null) return existing
+    const synthetic = unusedDomainPathSyntheticName(match, normalized, domainPaths)
     domainPaths.set(synthetic, domainPath)
+    domainNames.set(key, synthetic)
     return synthetic
   })
   const parsed = parseFitExpressionText(sourceText)
@@ -829,8 +860,11 @@ function parseTypeTemplateExpression(text: string): FitExpression {
 
 function expressionDescribesField(text: string, fieldRoot: string | null) {
   if (fieldRoot == null) return false
-  const root = publicFitText(fieldRoot)
-  return text === root || text.startsWith(`${root}.`) || text.startsWith(`${root}[`)
+  const expressionPath = fitExpressionDomainPath(parseTypeTemplateExpression(text))
+  const fieldPath = fitExpressionDomainPath(parseTypeTemplateExpression(fieldRoot))
+  if (expressionPath == null || fieldPath == null || expressionPath.root !== fieldPath.root) return false
+  if (expressionPath.segments.length < fieldPath.segments.length) return false
+  return fitDomainPathKey({...expressionPath, segments: expressionPath.segments.slice(0, fieldPath.segments.length)}) === fitDomainPathKey(fieldPath)
 }
 
 function rewriteRangeReferences(text: string, scope: TypeScope): TypeTextResult {
@@ -844,9 +878,12 @@ function rewriteRangeReferences(text: string, scope: TypeScope): TypeTextResult 
 
 function rewriteExpressionReferences(text: string, scope: TypeScope): TypeTextResult {
   let rewritten = text
-  for (const field of [...scope.requiredFields].sort((left, right) => right.length - left.length)) {
+  const referenceFields = [...scope.requiredFields]
+    .filter(field => /^[A-Za-z_$][\w$]*$/.test(field))
+    .sort((left, right) => right.length - left.length)
+  for (const field of referenceFields) {
     const pattern = new RegExp(`(?<![\\w$.])${escapeRegExp(field)}(?![\\w$])`, 'g')
-    rewritten = rewritten.replace(pattern, `${scope.root}.${field}`)
+    rewritten = replaceFitCode(rewritten, pattern, () => `${scope.root}.${field}`)
   }
 
   const rootName = rootBaseName(scope.root)

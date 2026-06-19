@@ -66,10 +66,12 @@ export {
   referenceIdsOverlap,
   tupleElements,
   unknown,
+  unknownNotInferred,
   unknownArray,
   maxArrayLength,
   unknownArrayLength,
   unknownObject,
+  unsupportedTupleValue,
   valueWithAssumptions,
   valueWithDefaultedUndefined,
 } from './value-domain.ts'

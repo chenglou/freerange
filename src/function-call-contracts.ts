@@ -40,16 +40,13 @@ import {adjacentBoundIndexRelation} from './bound-index.ts'
 import {mergeAssumptions} from './assumptions.ts'
 import {mergeBranchArms} from './branch-context.ts'
 import {
-  finiteElementAccessRoot,
   evaluateDomainPathValue,
   parsePrintedNumber,
   setCheckedDomainPathValue,
-  setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
 import {functionInputRoots} from './function-shape.ts'
 import {
   linearVariable,
-  unwrapExpression,
   type LinearExpr,
 } from './linear.ts'
 import type {FitFunction} from './modules.ts'
@@ -57,8 +54,9 @@ import type {PreparedCall} from './prepared-call.ts'
 import {
   fitSpecIsAssumption,
   fitSpecIsProof,
-  fitExpressionParsed,
-  fitExpressionText,
+  fitDomainPathKey,
+  fitExpressionDomainPath,
+  formatFitDomainPath,
   type FitComparisonCheckSpec,
   type FitComparisonGivenSpec,
   type FitExpressionCheckSpec,
@@ -68,8 +66,6 @@ import {
   fitValueSpecPropertyName,
   fitValueSpecRangeForTypeNode,
   fitReturnInternalRoot,
-  parseDomainPathText,
-  parseExpression,
   parseFitRangeText,
   type ComparisonOperator,
   type FitDomainPath,
@@ -105,7 +101,6 @@ import {
   formatRange,
   formatRangeSpec,
 } from './reporting.ts'
-import {expressionRootNameDeep} from './source-expressions.ts'
 
 export type CallContractEvaluators = {
   evaluateSpecExpression(text: FitExpressionLike, context: EvalContext): Value
@@ -468,39 +463,43 @@ function applySummaryValueSpec(
   source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
-  const rootPath = simpleResultPathText(expression)
+  const rootPath = simpleResultPath(expression)
   if (rootPath == null) return
   const ranges = valueSpecRangeValues(valueSpec.typeNode, createFitValueSpecTypeEnv(context.program, valueSpec), rootPath, text, context, source, evaluators)
-  for (const [path, value] of ranges) {
+  for (const {path, value} of ranges.values()) {
     if (value.kind !== 'number') continue
-    const current = evaluators.evaluateSpecExpression(path, context)
+    const current = evaluators.evaluateSpecExpression(formatFitDomainPath(path), context)
     setSummaryPathValue(env, path, summaryRangeValue(current, value, source, text))
   }
 }
 
+type SummaryPathValueMap = Map<string, {path: FitDomainPath; value: Value}>
+
 function valueSpecRangeValues(
   node: ts.TypeNode,
   env: FitValueSpecTypeEnv,
-  path: string,
+  path: FitDomainPath,
   text: string,
   context: EvalContext,
   source: ContractSummarySource,
   evaluators: CallContractEvaluators,
-): Map<string, Value> {
+): SummaryPathValueMap {
   if (ts.isParenthesizedTypeNode(node)) return valueSpecRangeValues(node.type, env, path, text, context, source, evaluators)
   if (ts.isTypeOperatorNode(node) && node.operator === ts.SyntaxKind.ReadonlyKeyword) return valueSpecRangeValues(node.type, env, path, text, context, source, evaluators)
   if (ts.isUnionTypeNode(node)) {
     const caseMaps = node.types.map(current => valueSpecRangeValues(current, env, path, text, context, source, evaluators))
     const sharedPaths = caseMaps[0] == null ? [] : [...caseMaps[0].keys()].filter(key => caseMaps.every(caseMap => caseMap.has(key)))
-    const result = new Map<string, Value>()
+    const result: SummaryPathValueMap = new Map()
     for (const sharedPath of sharedPaths) {
       let value: Value | null = null
+      let path: FitDomainPath | null = null
       for (const caseMap of caseMaps) {
         const next = caseMap.get(sharedPath)
         if (next == null) continue
-        value = value == null ? next : joinValues(value, next)
+        path = next.path
+        value = value == null ? next.value : joinValues(value, next.value)
       }
-      if (value != null) result.set(sharedPath, value)
+      if (value != null && path != null) result.set(sharedPath, {path, value})
     }
     return result
   }
@@ -509,23 +508,26 @@ function valueSpecRangeValues(
   }
   const range = fitValueSpecRangeForTypeNode(node, env.spec.ranges)
   if (range != null) {
-    const value = evaluators.evaluateRangeValue(range, context, path, [checkedContractFact(source, text)])
-    return new Map([[path, value]])
+    const pathText = formatFitDomainPath(path)
+    const value = evaluators.evaluateRangeValue(range, context, pathText, [checkedContractFact(source, text)])
+    return summaryPathValueMap(path, value)
   }
   if (ts.isLiteralTypeNode(node)) {
     const value = fitValueSpecNumberLiteralValue(node)
     if (value == null) return new Map()
     const range = parseFitRangeText(String(value))
-    return range == null ? new Map() : new Map([[path, evaluators.evaluateRangeValue(range, context, path, [checkedContractFact(source, text)])]])
+    return range == null
+      ? new Map()
+      : summaryPathValueMap(path, evaluators.evaluateRangeValue(range, context, formatFitDomainPath(path), [checkedContractFact(source, text)]))
   }
   if (ts.isTypeLiteralNode(node)) {
     return valueSpecMemberRangeValues(node.members, env, path, text, context, source, evaluators)
   }
-  if (ts.isArrayTypeNode(node)) return valueSpecRangeValues(node.elementType, env, `${path}[]`, text, context, source, evaluators)
+  if (ts.isArrayTypeNode(node)) return valueSpecRangeValues(node.elementType, env, appendSummaryPath(path, {kind: 'item'}), text, context, source, evaluators)
   if (ts.isTupleTypeNode(node)) {
     return mergeValueSpecRangeMaps(node.elements.map((element, index) => {
       const type = fitValueSpecTupleElementType(element)
-      return type == null ? new Map() : valueSpecRangeValues(type, env, `${path}[${index}]`, text, context, source, evaluators)
+      return type == null ? new Map() : valueSpecRangeValues(type, env, appendSummaryPath(path, {kind: 'index', index}), text, context, source, evaluators)
     }))
   }
   if (ts.isTypeReferenceNode(node)) {
@@ -536,7 +538,7 @@ function valueSpecRangeValues(
         case 'members':
           return valueSpecMemberRangeValues(current.members, current.env, path, text, context, source, evaluators)
         case 'array':
-          return valueSpecRangeValues(current.element, current.env, `${path}[]`, text, context, source, evaluators)
+          return valueSpecRangeValues(current.element, current.env, appendSummaryPath(path, {kind: 'item'}), text, context, source, evaluators)
       }
     }) ?? new Map()
   }
@@ -546,7 +548,7 @@ function valueSpecRangeValues(
 function valueSpecMemberRangeValues(
   members: ts.NodeArray<ts.TypeElement>,
   env: FitValueSpecTypeEnv,
-  path: string,
+  path: FitDomainPath,
   text: string,
   context: EvalContext,
   source: ContractSummarySource,
@@ -555,27 +557,37 @@ function valueSpecMemberRangeValues(
   return mergeValueSpecRangeMaps(members.map(member => {
     if (!ts.isPropertySignature(member) || member.questionToken != null || member.type == null) return new Map()
     const name = fitValueSpecPropertyName(member.name)
-    return name == null ? new Map() : valueSpecRangeValues(member.type, env, `${path}.${name}`, text, context, source, evaluators)
+    return name == null
+      ? new Map()
+      : valueSpecRangeValues(member.type, env, appendSummaryPath(path, {kind: 'prop', name}), text, context, source, evaluators)
   }))
 }
 
-function mergeValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value> {
-  const result = new Map<string, Value>()
+function summaryPathValueMap(path: FitDomainPath, value: Value): SummaryPathValueMap {
+  return new Map([[fitDomainPathKey(path), {path, value}]])
+}
+
+function appendSummaryPath(path: FitDomainPath, segment: FitDomainPath['segments'][number]): FitDomainPath {
+  return {...path, segments: [...path.segments, segment]}
+}
+
+function mergeValueSpecRangeMaps(maps: SummaryPathValueMap[]): SummaryPathValueMap {
+  const result: SummaryPathValueMap = new Map()
   for (const map of maps) {
-    for (const [path, value] of map) {
-      const current = result.get(path)
-      result.set(path, current == null ? value : joinValues(current, value))
+    for (const [key, entry] of map) {
+      const current = result.get(key)
+      result.set(key, current == null ? entry : {...entry, value: joinValues(current.value, entry.value)})
     }
   }
   return result
 }
 
-function intersectValueSpecRangeMaps(maps: Map<string, Value>[]): Map<string, Value> {
-  const result = new Map<string, Value>()
+function intersectValueSpecRangeMaps(maps: SummaryPathValueMap[]): SummaryPathValueMap {
+  const result: SummaryPathValueMap = new Map()
   for (const map of maps) {
-    for (const [path, value] of map) {
-      const current = result.get(path)
-      result.set(path, current == null ? value : summaryIntersectionValue(current, value))
+    for (const [key, entry] of map) {
+      const current = result.get(key)
+      result.set(key, current == null ? entry : {...entry, value: summaryIntersectionValue(current.value, entry.value)})
     }
   }
   return result
@@ -601,13 +613,14 @@ function applySummaryRangeSpec(
   source: ContractSummarySource,
   evaluators: CallContractEvaluators,
 ) {
-  if (simpleResultPathText(spec.expression) == null) return
+  const path = simpleResultPath(spec.expression)
+  if (path == null) return
   const current = evaluators.evaluateSpecExpression(spec.expression, context)
   const rangeValue = evaluators.evaluateRangeValue(spec.range, context, current.kind === 'number' ? current.expr : spec.expression.text, [checkedContractFact(source, spec.text)])
   if (rangeValue.kind !== 'number') return
   setSummaryPathValue(
     env,
-    spec.expression.text,
+    path,
     summaryRangeValue(current, rangeValue, source, spec.text),
   )
 }
@@ -702,7 +715,7 @@ function applySummaryComparisonSpec(
     const collection = evaluateDomainPathValue(adjacent.collectionPath, env)
     const summarizedCollection = collection.kind === 'array'
       ? collection.layout === 'collection' ? collection : null
-      : unknownArray(domainPathExpressionText(adjacent.collectionPath))
+      : unknownArray(formatFitDomainPath(adjacent.collectionPath))
     if (summarizedCollection != null) {
       env.set(
         adjacent.collectionPath.root,
@@ -720,8 +733,8 @@ function applySummaryComparisonSpec(
     return
   }
 
-  const leftPath = simpleResultPathText(spec.left)
-  const rightPath = simpleResultPathText(spec.right)
+  const leftPath = simpleResultPath(spec.left)
+  const rightPath = simpleResultPath(spec.right)
   const fact = checkedContractFact(source, spec.text)
   if (leftPath != null && rightPath != null) {
     const left = evaluators.evaluateSpecExpression(spec.left, context)
@@ -746,21 +759,13 @@ function applySummaryComparisonSpec(
   }
 }
 
-function domainPathExpressionText(domainPath: FitDomainPath) {
-  let text = domainPath.root
-  for (const segment of domainPath.segments) {
-    text += segment.kind === 'prop' ? `.${segment.name}` : '[]'
-  }
-  return text
-}
-
 function applySummaryLiteralEqualityToPath(
   env: Map<string, Value>,
-  path: string,
+  path: FitDomainPath,
   other: LiteralValue,
   fact: string,
 ) {
-  const projected = literalValue(other.values, path, [...other.origin, fact])
+  const projected = literalValue(other.values, formatFitDomainPath(path), [...other.origin, fact])
   setSummaryPathValue(env, path, projected)
 }
 
@@ -769,24 +774,22 @@ function applySummaryExpressionSpec(
   spec: FitExpressionCheckSpec,
   source: ContractSummarySource,
 ) {
-  const path = simpleResultPathText(spec.expression)
+  const path = simpleResultPath(spec.expression)
   if (path == null) return
-  const parsed = fitExpressionParsed(spec.expression)
-  if (parsed.domainPaths.size !== 0) return
-  if (!ts.isIdentifier(parsed.expression)) return
-  if (parsed.expression.text !== fitReturnInternalRoot) return
-  setSummaryPathValue(env, path, literalValue([true], path, [checkedContractFact(source, spec.text)]))
+  if (path.segments.length !== 0) return
+  const pathText = formatFitDomainPath(path)
+  setSummaryPathValue(env, path, literalValue([true], pathText, [checkedContractFact(source, spec.text)]))
 }
 
 function applySummaryConstraintToPath(
   env: Map<string, Value>,
   context: EvalContext,
-  path: string,
+  path: FitDomainPath,
   summaryConstraint: SummaryComparisonConstraint,
   fact: string,
   evaluators: CallContractEvaluators,
 ) {
-  const current = evaluators.evaluateSpecExpression(path, context)
+  const current = evaluators.evaluateSpecExpression(formatFitDomainPath(path), context)
   if (current.kind !== 'number') return
   setSummaryPathValue(env, path, numberWithSummaryConstraint({...current, origin: mergeOrigin(current, [fact])}, summaryConstraint))
 }
@@ -794,13 +797,13 @@ function applySummaryConstraintToPath(
 function applySummaryComparisonToPath(
   env: Map<string, Value>,
   context: EvalContext,
-  path: string,
+  path: FitDomainPath,
   op: ComparisonOperator,
   other: NumberValue,
   fact: string,
   evaluators: CallContractEvaluators,
 ) {
-  const current = evaluators.evaluateSpecExpression(path, context)
+  const current = evaluators.evaluateSpecExpression(formatFitDomainPath(path), context)
   if (current.kind !== 'number') return
   const origin = mergeOrigin(current, other, [fact])
   const withSummaryFact = (value: NumberValue): NumberValue => {
@@ -847,36 +850,12 @@ function checkedContractFact(source: ContractSummarySource, text: string) {
   return `${kind}: ${source.sourceFile}#${source.sourceFunctionName}: ${text}`
 }
 
-function simpleResultPathText(text: FitExpressionLike): string | null {
-  const sourceText = fitExpressionText(text)
-  const parsed = fitExpressionParsed(text)
-  const domainPaths = [...parsed.domainPaths.values()]
-  if (domainPaths.length === 1 && domainPaths[0]!.root === fitReturnInternalRoot && ts.isIdentifier(parsed.expression)) return sourceText
-  if (domainPaths.length > 0) return null
-
-  const expression = unwrapExpression(parsed.expression)
-  if (ts.isIdentifier(expression) && expression.text === fitReturnInternalRoot) return sourceText
-  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === fitReturnInternalRoot) return sourceText
-  const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement?.root === fitReturnInternalRoot) return sourceText
-  return null
+function simpleResultPath(expression: FitExpressionLike): FitDomainPath | null {
+  const path = fitExpressionDomainPath(expression)
+  return path?.root === fitReturnInternalRoot ? path : null
 }
 
-function setSummaryPathValue(env: Map<string, Value>, path: string, value: Value) {
-  const domainPath = parseDomainPathText(path)
-  if (domainPath != null && domainPath.segments.length > 0) {
-    env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
-    return
-  }
-
-  const expression = parseExpression(path)
-  if (ts.isIdentifier(expression)) {
-    env.set(expression.text, value)
-    return
-  }
-
-  const finiteElement = finiteElementAccessRoot(expression)
-  if (finiteElement != null) {
-    env.set(finiteElement.root, setCheckedFiniteArrayElementValue(env.get(finiteElement.root), finiteElement.root, finiteElement.index, value))
-  }
+function setSummaryPathValue(env: Map<string, Value>, path: FitDomainPath, value: Value) {
+  if (path.segments.length === 0) env.set(path.root, value)
+  else env.set(path.root, setCheckedDomainPathValue(env.get(path.root), path.root, path.segments, value))
 }

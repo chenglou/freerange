@@ -1457,7 +1457,7 @@ const booleanGivenContractResult = verifyFitSourceWithCallsites('boolean-given-c
 
 /** @fit
  * given isValidLayout(layout)
- * isValidLayout(layout)
+ * isValidLayout((layout))
  */
 function assumesValidLayout(layout: {width: number}) {
   return layout
@@ -1469,7 +1469,7 @@ function invalidCaller() {
 
 /** @fit
  * given isValidLayout(layout)
- * given !isValidLayout(layout)
+ * given !isValidLayout((layout))
  */
 function conflictingLayout(layout: {width: number}) {
   return layout
@@ -1483,15 +1483,15 @@ function assumesInvalidLayout(layout: {width: number}) {
   return layout
 }
 `)
-const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout(layout)')
-const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout(layout)')
+const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout((layout))')
+const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout((layout))')
 const assumedNegativeBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesInvalidLayout' && check.text === '!isValidLayout(layout)')
 const invalidBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'invalidCaller' && check.text === 'assumesValidLayout({width: 0}): requires isValidLayout(layout)')
 if (
   assumedBooleanGivenCheck?.status !== 'pass'
   || assumedBooleanGivenCheck.trace?.steps.some(step => step.rule === 'assumption') !== true
   || conflictingBooleanGivenCheck?.status !== 'fail'
-  || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout(layout) and given !isValidLayout(layout)') !== true
+  || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout((layout)) and given !isValidLayout((layout))') !== true
   || assumedNegativeBooleanGivenCheck?.status !== 'pass'
   || invalidBooleanGivenCall?.status !== 'fail'
   || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
@@ -2047,6 +2047,161 @@ if (
   suite.fail()
 } else {
   console.log('given contract expressions: unsupported cases rejected')
+}
+
+const unsupportedSpreadContractChecks = verifyFitSource('unsupported-spread-contract.ts', `
+function first(...values: number[]): number {
+  return values[0]!
+}
+
+/** @fit
+ * given items.length: 0..0
+ * typeof first(...items) === "number"
+ */
+function emptySpreadCannotProveNumber(items: number[]) {
+  return 0
+}
+`)
+const unsupportedSpreadContractCheck = unsupportedSpreadContractChecks.find(check =>
+  check.functionName === 'emptySpreadCannotProveNumber'
+  && check.text === 'typeof first(...items) === "number"')
+if (
+  unsupportedSpreadContractCheck?.status !== 'unknown'
+  || unsupportedSpreadContractCheck.reason?.includes('Call spread needs an exact tuple') !== true
+) {
+  console.error('expected every interpreter rejection in a contract expression to stop the proof')
+  console.error(JSON.stringify(unsupportedSpreadContractChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('contract expressions: tagged interpreter rejection stops type fallback proof')
+}
+
+const wildcardIdentityCollisionChecks = verifyFitSource('wildcard-identity-collision.ts', `
+/** @fit
+ * given rows.length: 1..1
+ * given rows[].height: 0..10
+ * given __fit_domain_rows___item_height: 20..30
+ * rows[].height == __fit_domain_rows___item_height
+ */
+function wildcardIdentityCollision(rows: {height: number}[], __fit_domain_rows___item_height: number) {
+  return rows
+}
+`)
+const wildcardIdentityCollisionCheck = wildcardIdentityCollisionChecks.find(check =>
+  check.functionName === 'wildcardIdentityCollision'
+  && check.text === 'rows[].height == __fit_domain_rows___item_height')
+if (wildcardIdentityCollisionCheck?.status === 'pass') {
+  console.error('expected a source identifier not to share proof identity with a wildcard path placeholder')
+  console.error(JSON.stringify(wildcardIdentityCollisionChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('contract paths: generated placeholder cannot alias a source identifier')
+}
+
+const structuredPathRegressionChecks = verifyFitSource('structured-path-regressions.ts', `
+/** @fit
+ * given items.length: 0..2
+ * return: int 0..2
+ */
+function boundedLength(items: number[]) {
+  return items.length
+}
+
+/** @fit
+ * given input[0]: 0..10
+ * return: 0..10
+ */
+function numericObjectProperty(input: {0: number}) {
+  return input[0]
+}
+
+/** @fit
+ * given input[1.5]: 0..10
+ * return: 0..10
+ */
+function decimalObjectProperty(input: {1.5: number}) {
+  return input[1.5]
+}
+
+/** @fit
+ * given input[-1]: 0..10
+ * return: 0..10
+ */
+function negativeObjectProperty(input: {"-1": number}) {
+  return input[-1]
+}
+
+/** @fit
+ * given value: 5..5
+ * return == 5
+ */
+function functionScopedVar(value: number) {
+  {
+    var value = 1
+  }
+  return value
+}
+
+/** @fit
+ * given value: 5..5
+ * return == 5
+ */
+function uninitializedFunctionScopedVar(value: number) {
+  {
+    var value: number
+  }
+  return value
+}
+
+/** @fit
+ * given typeof value === "number"
+ * typeof (value) === "number"
+ */
+function structurallyEqualBooleanGiven(value: number) {
+  return value
+}
+
+/** @fit
+ * given __fit_return: 0..0
+ * return == __fit_return
+ */
+function reservedReturnBinding(__fit_return: number) {
+  return 1
+}
+`)
+const boundedLengthCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'boundedLength' && check.text === 'return: int 0..2')
+const numericObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'numericObjectProperty' && check.text === 'return: 0..10')
+const decimalObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'decimalObjectProperty' && check.text === 'return: 0..10')
+const negativeObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'negativeObjectProperty' && check.text === 'return: 0..10')
+const functionScopedVarCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'functionScopedVar' && check.text === 'return == 5')
+const uninitializedFunctionScopedVarCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'uninitializedFunctionScopedVar' && check.text === 'return == 5')
+const structurallyEqualBooleanGivenCheck = structuredPathRegressionChecks.find(check =>
+  check.functionName === 'structurallyEqualBooleanGiven' && check.text === 'typeof (value) === "number"')
+const reservedReturnBindingChecks = structuredPathRegressionChecks.filter(check =>
+  check.functionName === 'reservedReturnBinding')
+if (
+  boundedLengthCheck?.status !== 'pass'
+  || numericObjectPropertyCheck?.status !== 'pass'
+  || decimalObjectPropertyCheck?.status !== 'pass'
+  || negativeObjectPropertyCheck?.status !== 'pass'
+  || functionScopedVarCheck?.status !== 'fail'
+  || uninitializedFunctionScopedVarCheck?.status !== 'pass'
+  || structurallyEqualBooleanGivenCheck?.status !== 'pass'
+  || reservedReturnBindingChecks.length !== 1
+  || reservedReturnBindingChecks[0]?.status !== 'unknown'
+  || reservedReturnBindingChecks[0]?.reason?.includes('is reserved for Freerange contract evaluation') !== true
+) {
+  console.error('expected structured paths and binding scopes to preserve their semantic guarantees')
+  console.error(JSON.stringify(structuredPathRegressionChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('contract paths: array lengths, numeric object keys, and function-scoped var stay distinct')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)

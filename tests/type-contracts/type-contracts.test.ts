@@ -572,4 +572,33 @@ if (
   console.log('type contracts: field relation')
 }
 
+const staticPropertyContractChecks = verifyFitSource('type-static-properties.ts', `
+type Limits = {
+  "available-width": number // @fit 0..10
+  0: number // @fit > 0
+}
+
+function goodLimits(): Limits {
+  return {"available-width": 5, 0: 1}
+}
+
+function badQuotedLimit(): Limits {
+  return {"available-width": 20, 0: 1}
+}
+
+function badNumericLimit(): Limits {
+  return {"available-width": 5, 0: 0}
+}
+`)
+const goodStaticPropertyFailures = staticPropertyContractChecks.filter(check => check.functionName === 'goodLimits' && check.status !== 'pass')
+const badQuotedProperty = staticPropertyContractChecks.find(check => check.functionName === 'badQuotedLimit' && check.status === 'fail')
+const badNumericProperty = staticPropertyContractChecks.find(check => check.functionName === 'badNumericLimit' && check.status === 'fail')
+if (goodStaticPropertyFailures.length > 0 || badQuotedProperty == null || badNumericProperty == null) {
+  console.error('expected quoted and numeric static properties to keep their exact contract paths')
+  console.error(JSON.stringify(staticPropertyContractChecks, null, 2))
+  suite.fail()
+} else {
+  console.log('type contracts: quoted and numeric static properties')
+}
+
 })

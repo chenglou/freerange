@@ -495,5 +495,9 @@ function pathFromExpression(
   frame: InterpreterFrame,
   evaluateExpression: EvaluateRefinementExpression,
 ): ValuePath | null {
-  return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
+  return pathFromSourceExpression(
+    expression,
+    indexExpression => evaluateExpression(indexExpression, frame),
+    path => readPath(path, frame),
+  )
 }

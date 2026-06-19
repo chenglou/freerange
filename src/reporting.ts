@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import {parseExpression, publicFitText, type ComparisonOperator, type FitRange} from './parser.ts'
+import {parseExpression, publicFitText, publicLinearName, type ComparisonOperator, type FitRange} from './parser.ts'
 import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} from './rational.ts'
 import type {SequenceRelation} from './domain-types.ts'
 import {
@@ -275,10 +275,11 @@ function formatLinearTerm(coefficient: Rational, name: string, first: boolean) {
 }
 
 function formattedLinearName(name: string): string {
-  const text = publicFitText(name)
-  if (name.length === 0) return text
+  const publicName = publicLinearName(name)
+  const text = publicFitText(publicName)
+  if (publicName.length === 0) return text
   try {
-    const expression = parseExpression(name)
+    const expression = parseExpression(publicName)
     return ts.isBinaryExpression(expression) || ts.isConditionalExpression(expression)
       ? `(${text})`
       : text

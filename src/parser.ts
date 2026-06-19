@@ -8,6 +8,7 @@ export type FitDomainPath = {
 
 export type FitDomainPathSegment =
   | {kind: 'prop'; name: string}
+  | {kind: 'index'; index: number}
   | {kind: 'item'; label?: string; offset?: number}
 
 export type ParsedFitExpression = {
@@ -155,7 +156,12 @@ type FitExpressionParser = (text: string) => FitExpression
 // Identifiers as the language defines them, not ASCII approximations.
 const identifierPattern = '[\\p{ID_Start}_$][\\p{ID_Continue}$\\u200C\\u200D]*'
 const indexLabelPattern = '\\$[\\p{ID_Start}_][\\p{ID_Continue}$\\u200C\\u200D]*(?:\\s*[+-]\\s*\\d+)?'
-const domainPathPattern = new RegExp(`${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:\\]|${indexLabelPattern}\\])))+`, 'gu')
+const numericPropertyPattern = '-?(?:\\d+(?:\\.\\d*)?|\\.\\d+)(?:[eE][+-]?\\d+)?'
+const quotedPropertyPattern = `(?:(?:"(?:\\\\.|[^"\\\\])*")|(?:'(?:\\\\.|[^'\\\\])*'))`
+const domainPathPattern = new RegExp(
+  `${identifierPattern}(?:(?:\\.${identifierPattern})|(?:\\[(?:${indexLabelPattern}|${numericPropertyPattern}|${quotedPropertyPattern})?\\]))+`,
+  'gu',
+)
 export const fitReturnPublicRoot = 'return'
 export const fitReturnInternalRoot = '__fit_return'
 const publicReturnRootPattern = /(?<![\w$.])return(?![\w$])/g
@@ -172,12 +178,155 @@ export type FitCommentLine = {
 
 export function normalizeFitText(text: string) {
   if (!text.includes(fitReturnPublicRoot)) return text
-  return text.replace(publicReturnRootPattern, fitReturnInternalRoot)
+  return replaceFitCode(text, publicReturnRootPattern, () => fitReturnInternalRoot)
 }
 
 export function publicFitText(text: string) {
   if (!text.includes(fitReturnInternalRoot)) return text
-  return text.replace(internalReturnRootPattern, fitReturnPublicRoot)
+  return replaceFitCode(text, internalReturnRootPattern, () => fitReturnPublicRoot)
+}
+
+export function replaceFitCode(text: string, pattern: RegExp, replace: (match: string) => string) {
+  const protectedRanges = fitTextProtectedRanges(text)
+  return text.replace(pattern, (match: string, ...args: unknown[]) => {
+    const offset = args.at(-2)
+    if (typeof offset !== 'number') throw new Error('Expected a regex replacement offset')
+    if (protectedRanges.some(range => offset >= range.start && offset < range.end)) return match
+    return replace(match)
+  })
+}
+
+export function replaceFitIdentifiers(text: string, replacements: ReadonlyMap<string, string>) {
+  if (replacements.size === 0) return text
+  const prefix = 'const __fit_value = '
+  const fileName = 'fit-identifier-replacement.ts'
+  const sourceFile = ts.createSourceFile(fileName, `${prefix}${text}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const options: ts.CompilerOptions = {noLib: true, noResolve: true, target: ts.ScriptTarget.Latest}
+  const host = ts.createCompilerHost(options)
+  host.getSourceFile = requested => requested === fileName ? sourceFile : undefined
+  host.fileExists = requested => requested === fileName
+  host.readFile = requested => requested === fileName ? sourceFile.text : undefined
+  host.writeFile = () => {}
+  const checker = ts.createProgram([fileName], options, host).getTypeChecker()
+  const statement = sourceFile.statements[0]
+  const declaration = statement != null && ts.isVariableStatement(statement)
+    ? statement.declarationList.declarations[0]
+    : null
+  const initializer = declaration?.initializer
+  if (initializer == null) return text
+
+  const edits: {start: number; end: number; text: string}[] = []
+  const addEdit = (node: ts.Node, replacement: string) => {
+    edits.push({start: node.getStart(sourceFile) - prefix.length, end: node.getEnd() - prefix.length, text: replacement})
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isTypeNode(node)) return
+    if (ts.isShorthandPropertyAssignment(node)) {
+      const replacement = replacements.get(node.name.text)
+      const valueSymbol = checker.getShorthandAssignmentValueSymbol(node)
+      if (replacement != null && valueSymbol == null) addEdit(node.name, `${node.name.text}: ${replacement}`)
+      if (node.objectAssignmentInitializer != null) visit(node.objectAssignmentInitializer)
+      return
+    }
+    if (ts.isPropertyAssignment(node)) {
+      if (ts.isComputedPropertyName(node.name)) visit(node.name.expression)
+      visit(node.initializer)
+      return
+    }
+    if (ts.isPropertyAccessExpression(node)) {
+      visit(node.expression)
+      return
+    }
+    if (ts.isIdentifier(node)) {
+      const replacement = replacements.get(node.text)
+      if (replacement != null && checker.getSymbolAtLocation(node) == null) addEdit(node, replacement)
+      return
+    }
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      const replacement = replacements.get('this')
+      if (replacement != null && !thisHasNonArrowFunctionOwner(node)) addEdit(node, replacement)
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(initializer)
+  let result = text
+  for (const edit of edits.sort((left, right) => right.start - left.start)) {
+    if (edit.start < 0 || edit.end > text.length) continue
+    result = result.slice(0, edit.start) + edit.text + result.slice(edit.end)
+  }
+  return result
+}
+
+function thisHasNonArrowFunctionOwner(node: ts.Node) {
+  let current = node.parent
+  while (current != null) {
+    if (ts.isArrowFunction(current)) {
+      current = current.parent
+      continue
+    }
+    if (ts.isFunctionLike(current)) return true
+    current = current.parent
+  }
+  return false
+}
+
+function fitTextProtectedRanges(text: string): {start: number; end: number}[] {
+  const ranges: {start: number; end: number}[] = []
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, false, ts.LanguageVariant.Standard, text)
+  while (true) {
+    const kind = scanner.scan()
+    if (kind === ts.SyntaxKind.EndOfFileToken) break
+    if (kind === ts.SyntaxKind.SingleLineCommentTrivia || kind === ts.SyntaxKind.MultiLineCommentTrivia) {
+      ranges.push({start: scanner.getTokenPos(), end: scanner.getTextPos()})
+    }
+  }
+
+  const prefix = 'const __fit_value = '
+  const sourceFile = ts.createSourceFile('fit-protected-ranges.ts', `${prefix}${text}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const protectNode = (node: ts.Node) => {
+    ranges.push({start: node.getStart(sourceFile) - prefix.length, end: node.getEnd() - prefix.length})
+  }
+  const visit = (node: ts.Node) => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node) || node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+      protectNode(node)
+    }
+    if (ts.isTemplateExpression(node)) {
+      protectNode(node.head)
+      for (const span of node.templateSpans) protectNode(span.literal)
+    }
+    if (
+      ts.isPropertyAssignment(node)
+      && !ts.isComputedPropertyName(node.name)
+      && sourceFile.text.slice(node.name.end, node.end).includes(':')
+    ) protectNode(node.name)
+    if (ts.isReturnStatement(node) && returnKeywordIsStatementStart(sourceFile, node.getStart(sourceFile))) {
+      const start = node.getStart(sourceFile) - prefix.length
+      ranges.push({start, end: start + 'return'.length})
+    }
+    if (ts.isBindingElement(node) && node.propertyName != null && !ts.isComputedPropertyName(node.propertyName)) {
+      protectNode(node.propertyName)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return ranges.filter(range => range.end > 0 && range.start < text.length)
+}
+
+function returnKeywordIsStatementStart(sourceFile: ts.SourceFile, start: number) {
+  const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, sourceFile.text)
+  let previous = ts.SyntaxKind.Unknown
+  while (true) {
+    const kind = scanner.scan()
+    if (kind === ts.SyntaxKind.EndOfFileToken || scanner.getTokenPos() >= start) break
+    previous = kind
+  }
+  return previous === ts.SyntaxKind.OpenBraceToken
+    || previous === ts.SyntaxKind.SemicolonToken
+    || previous === ts.SyntaxKind.CloseParenToken
+    || previous === ts.SyntaxKind.ElseKeyword
+    || previous === ts.SyntaxKind.ColonToken
+    || previous === ts.SyntaxKind.DoKeyword
 }
 
 export function publicParsedExpressionText(parsed: ParsedFitExpression, expression: ts.Expression) {
@@ -203,6 +352,75 @@ export function fitExpressionParsed(expression: FitExpressionLike) {
 
 export function fitExpressionScopeSourceId(expression: FitExpressionLike) {
   return typeof expression === 'string' ? undefined : expression.scopeSourceId
+}
+
+export function fitExpressionDomainPath(expression: FitExpressionLike): FitDomainPath | null {
+  const parsed = fitExpressionParsed(expression)
+  return fitDomainPathFromExpression(parsed.expression, parsed.domainPaths)
+}
+
+export function fitDomainPathFromExpression(expression: ts.Expression, domainPaths: ReadonlyMap<string, FitDomainPath>): FitDomainPath | null {
+  let current = expression
+  while (
+    ts.isParenthesizedExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isTypeAssertionExpression(current)
+  ) current = current.expression
+
+  if (ts.isIdentifier(current)) return domainPaths.get(current.text) ?? {root: current.text, segments: []}
+  if (current.kind === ts.SyntaxKind.ThisKeyword) return {root: 'this', segments: []}
+  if (ts.isPropertyAccessExpression(current)) {
+    const parent = fitDomainPathFromExpression(current.expression, domainPaths)
+    return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: current.name.text}]}
+  }
+  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+    const parent = fitDomainPathFromExpression(current.expression, domainPaths)
+    if (parent == null) return null
+    const argument = current.argumentExpression
+    if (ts.isStringLiteralLike(argument)) {
+      return {...parent, segments: [...parent.segments, domainSegmentForPropertyName(argument.text)]}
+    }
+    if (ts.isNumericLiteral(argument)) {
+      return appendNumericDomainPathSegment(parent, Number(argument.text))
+    }
+    if (
+      ts.isPrefixUnaryExpression(argument)
+      && argument.operator === ts.SyntaxKind.MinusToken
+      && ts.isNumericLiteral(argument.operand)
+    ) {
+      return appendNumericDomainPathSegment(parent, -Number(argument.operand.text))
+    }
+  }
+  return null
+}
+
+function appendNumericDomainPathSegment(parent: FitDomainPath, value: number): FitDomainPath | null {
+  if (!Number.isFinite(value)) return null
+  const segment: FitDomainPathSegment = Number.isSafeInteger(value) && value >= 0
+    ? {kind: 'index', index: value}
+    : {kind: 'prop', name: String(value)}
+  return {...parent, segments: [...parent.segments, segment]}
+}
+
+function domainSegmentForPropertyName(name: string): FitDomainPathSegment {
+  if (/^(?:0|[1-9]\d*)$/.test(name)) {
+    const index = Number(name)
+    if (Number.isSafeInteger(index) && index < 0xffff_ffff) return {kind: 'index', index}
+  }
+  return {kind: 'prop', name}
+}
+
+export function fitDomainPathKey(path: FitDomainPath) {
+  const segments = path.segments.map(segment => {
+    switch (segment.kind) {
+      case 'prop': return `p${segment.name.length}:${segment.name}`
+      case 'index': return `n${segment.index}`
+      case 'item': return `i${segment.label ?? ''}:${segment.offset ?? ''}`
+    }
+  })
+  return `${path.root.length}:${path.root}/${segments.join('/')}`
 }
 
 export function withFitExpressionScope(expression: FitExpression, scopeSourceId: string | undefined): FitExpression {
@@ -1217,11 +1435,16 @@ function cachedParsedFitExpression(normalizedText: string): ParsedFitExpression 
 
 function parseNormalizedFitExpression(normalizedText: string): ParsedFitExpression {
   const domainPaths = new Map<string, FitDomainPath>()
-  const sourceText = normalizedText.replace(domainPathPattern, match => {
+  const domainNames = new Map<string, string>()
+  const sourceText = replaceFitCode(normalizedText, domainPathPattern, match => {
     const domainPath = parseDomainPathText(match)
     if (domainPath == null || !domainPath.segments.some(segment => segment.kind === 'item')) return match
-    const synthetic = domainPathSyntheticName(match)
+    const key = fitDomainPathKey(domainPath)
+    const existing = domainNames.get(key)
+    if (existing != null) return existing
+    const synthetic = unusedDomainPathSyntheticName(match, normalizedText, domainPaths)
     domainPaths.set(synthetic, domainPath)
+    domainNames.set(key, synthetic)
     return synthetic
   })
   const sourceFile = ts.createSourceFile('fit-spec-expression.ts', `const value = ${sourceText}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
@@ -1235,10 +1458,10 @@ function parseNormalizedFitExpression(normalizedText: string): ParsedFitExpressi
 }
 
 export function parseDomainPathText(text: string): FitDomainPath | null {
-  const match = new RegExp(`^(${identifierPattern})((?:\\.${identifierPattern}|\\[(?:\\]|${indexLabelPattern}\\]))*)$`, 'u').exec(text)
+  const match = new RegExp(`^(${identifierPattern})`, 'u').exec(text)
   if (match == null) return null
   const root = match[1]!
-  const suffix = match[2]!
+  const suffix = text.slice(match[0].length)
   const segments: FitDomainPathSegment[] = []
   let index = 0
   while (index < suffix.length) {
@@ -1255,6 +1478,25 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
       index += itemLabel[0].length
       continue
     }
+    const numericProperty = new RegExp(`^\\[(${numericPropertyPattern})\\]`).exec(suffix.slice(index))
+    if (numericProperty != null) {
+      const value = Number(numericProperty[1])
+      const withSegment = appendNumericDomainPathSegment({root, segments}, value)
+      if (withSegment == null) return null
+      segments.push(withSegment.segments.at(-1)!)
+      index += numericProperty[0].length
+      continue
+    }
+    const quotedProperty = /^\[((?:"(?:\\.|[^"\\])*")|(?:'(?:\\.|[^'\\])*'))\]/.exec(suffix.slice(index))
+    if (quotedProperty != null) {
+      const sourceFile = ts.createSourceFile('fit-property-name.ts', `const value = ${quotedProperty[1]!}`, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+      const statement = sourceFile.statements[0]
+      const declaration = statement != null && ts.isVariableStatement(statement) ? statement.declarationList.declarations[0] : null
+      if (declaration?.initializer == null || !ts.isStringLiteralLike(declaration.initializer)) return null
+      segments.push(domainSegmentForPropertyName(declaration.initializer.text))
+      index += quotedProperty[0].length
+      continue
+    }
     if (suffix[index] !== '.') return null
     const next = new RegExp(`^\\.(${identifierPattern})`, 'u').exec(suffix.slice(index))
     if (next == null) return null
@@ -1265,23 +1507,65 @@ export function parseDomainPathText(text: string): FitDomainPath | null {
 }
 
 export function domainPathSyntheticName(text: string) {
-  const parts = text
-    .replace(/\[\s*\]/g, '.__item')
-    .replace(/\[\s*(\$[A-Za-z_][\w$]*)(?:\s*([+-])\s*(\d+))?\s*\]/g, (_match, label: string, sign: string | undefined, offset: string | undefined) => {
-      const suffix = offset == null ? '' : sign === '-' ? `_minus_${offset}` : `_plus_${offset}`
-      return `.__item_${label}${suffix}`
-    })
-    .split('.')
-    .filter(part => part.length > 0)
-    .map(part => part.replace(/[^\w$]/g, '_'))
-  return `__fit_domain_${parts.join('_')}`
+  const path = parseDomainPathText(text)
+  if (path != null && domainPathCanUseReadableSyntheticName(path)) {
+    const parts = [path.root]
+    for (const segment of path.segments) {
+      if (segment.kind === 'prop') parts.push(segment.name)
+      else if (segment.kind === 'index') parts.push(`__index_${segment.index}`)
+      else if (segment.label == null || segment.offset == null) parts.push('__item')
+      else parts.push(`__item_${segment.label}${segment.offset === 0 ? '' : segment.offset < 0 ? `_minus_${-segment.offset}` : `_plus_${segment.offset}`}`)
+    }
+    return `__fit_domain_${parts.join('_')}`
+  }
+  return `__fit_domain_${Array.from(text, char => char.codePointAt(0)!.toString(16)).join('_')}`
 }
 
-function domainPathText(domainPath: FitDomainPath) {
+const domainPathLinearNameMarker = '#fit-domain:'
+
+export function domainPathLinearName(text: string) {
+  return `${domainPathSyntheticName(text)}${domainPathLinearNameMarker}${encodeURIComponent(text)}`
+}
+
+export function publicLinearName(name: string) {
+  const marker = name.indexOf(domainPathLinearNameMarker)
+  if (marker < 0) return name
+  const encodedStart = marker + domainPathLinearNameMarker.length
+  const suffixStart = name.indexOf('@', encodedStart)
+  const encodedEnd = suffixStart < 0 ? name.length : suffixStart
+  try {
+    return decodeURIComponent(name.slice(encodedStart, encodedEnd)) + name.slice(encodedEnd)
+  } catch {
+    return name
+  }
+}
+
+function domainPathCanUseReadableSyntheticName(path: FitDomainPath) {
+  const safe = (name: string) => /^[A-Za-z$][A-Za-z0-9$]*$/.test(name)
+  return safe(path.root) && path.segments.every(segment => {
+    if (segment.kind === 'prop') return safe(segment.name)
+    if (segment.kind === 'index') return true
+    return segment.label == null || safe(segment.label.slice(1))
+  })
+}
+
+export function unusedDomainPathSyntheticName(text: string, sourceText: string, domainPaths: ReadonlyMap<string, FitDomainPath>) {
+  let synthetic = domainPathSyntheticName(text)
+  while (sourceText.includes(synthetic) || domainPaths.has(synthetic)) synthetic += '_'
+  return synthetic
+}
+
+export function formatFitDomainPath(domainPath: FitDomainPath) {
   let text = domainPath.root
   for (const segment of domainPath.segments) {
     if (segment.kind === 'prop') {
-      text += `.${segment.name}`
+      text += new RegExp(`^${identifierPattern}$`, 'u').test(segment.name)
+        ? `.${segment.name}`
+        : `[${JSON.stringify(segment.name)}]`
+      continue
+    }
+    if (segment.kind === 'index') {
+      text += `[${segment.index}]`
       continue
     }
     if (segment.label == null || segment.offset == null) {
@@ -1298,12 +1582,14 @@ function domainPathText(domainPath: FitDomainPath) {
   return publicFitText(text)
 }
 
+const domainPathText = formatFitDomainPath
+
 function escapeRegExp(text: string) {
   return text.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')
 }
 
 function parseIndexLabelText(text: string): {label: string; offset: number} | null {
-  const match = /^(\$[A-Za-z_][\w$]*)(?:\s*([+-])\s*(\d+))?$/.exec(text)
+  const match = new RegExp(`^(\\$[\\p{ID_Start}_][\\p{ID_Continue}$\\u200C\\u200D]*)(?:\\s*([+-])\\s*(\\d+))?$`, 'u').exec(text)
   if (match == null) return null
   const magnitude = match[3] == null ? 0 : Number(match[3])
   if (!Number.isSafeInteger(magnitude)) return null

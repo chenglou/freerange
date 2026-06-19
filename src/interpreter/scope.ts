@@ -19,7 +19,7 @@ export function forOfBodyScopedNames(statement: ts.Statement): string[] {
 
 export function blockScopedNames(block: ts.Block): string[] {
   return block.statements.flatMap(statement => {
-    if (!ts.isVariableStatement(statement)) return []
+    if (!ts.isVariableStatement(statement) || (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0) return []
     return statement.declarationList.declarations.flatMap(declaration => bindingNames(declaration.name))
   })
 }

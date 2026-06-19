@@ -1,13 +1,20 @@
 import ts from 'typescript'
+import {sameExpressionText} from '../../src/linear.ts'
 import {
+  domainPathLinearName,
   fitExpressionText,
   fitReturnInternalRoot,
   fitSpecMentionsRoot,
+  fitExpressionDomainPath,
   fitValueSpecExpressions,
   lowerFitValueSpecTextForTypeScript,
+  normalizeFitText,
+  parseFitExpressionText,
   parseFitSpecLine,
+  publicParsedExpressionText,
   parseFunctionBodyFitSpecIndex,
   parseFunctionFitSpecs,
+  publicLinearName,
   type FitRange,
   type FitSpec,
 } from '../../src/parser.ts'
@@ -15,6 +22,75 @@ import {
 function expect(condition: boolean, message: string): asserts condition {
   if (condition) return
   throw new Error(message)
+}
+
+{
+  expectEqual(normalizeFitText('({return: return})'), '({return: __fit_return})', 'expected return replacement to preserve a static property name')
+  expectEqual(
+    normalizeFitText('rows.every(row => { return row.height > 0 })'),
+    'rows.every(row => { return row.height > 0 })',
+    'expected a callback return statement to remain source code',
+  )
+  expectEqual(
+    normalizeFitText('rows.every(row => { return return.length > 0 })'),
+    'rows.every(row => { return __fit_return.length > 0 })',
+    'expected a callback return keyword and contract return value to stay distinct',
+  )
+  expectEqual(
+    normalizeFitText('(({return: value}) => value)(return)'),
+    '(({return: value}) => value)(__fit_return)',
+    'expected a binding property named return to stay distinct from the contract return value',
+  )
+
+  const literal = parseFitExpressionText('label == "return rows[].height"')
+  expectEqual(literal.parsed.domainPaths.size, 0, 'expected strings not to create domain paths')
+  expectEqual(literal.parsed.expression.getText(), 'label == "return rows[].height"', 'expected string contents to stay unchanged')
+
+  const regex = parseFitExpressionText('/return rows[].height/.test(label)')
+  expectEqual(regex.parsed.domainPaths.size, 0, 'expected regex literals not to create domain paths')
+  expectEqual(publicParsedExpressionText(regex.parsed, regex.parsed.expression), '/return rows[].height/.test(label)', 'expected regex contents to stay unchanged')
+
+  const template = parseFitExpressionText('`before ${rows[].height} after return rows[].width`')
+  expectEqual(template.parsed.domainPaths.size, 1, 'expected only the template expression to create a domain path')
+  expectEqual(
+    publicParsedExpressionText(template.parsed, template.parsed.expression),
+    '`before ${rows[].height} after return rows[].width`',
+    'expected template tail contents to stay unchanged',
+  )
+
+  const distinct = parseFitExpressionText('rows[].b_c == rows[].b.c')
+  expectEqual(distinct.parsed.domainPaths.size, 2, 'expected distinct wildcard paths to keep distinct placeholders')
+  expectEqual(publicParsedExpressionText(distinct.parsed, distinct.parsed.expression), 'rows[].b_c == rows[].b.c', 'expected wildcard paths to render back independently')
+
+  const collision = parseFitExpressionText('rows[].height == __fit_domain_rows___item_height')
+  expectEqual(collision.parsed.domainPaths.size, 1, 'expected one wildcard path beside a similarly named user identifier')
+  expect(
+    collision.parsed.expression.getText().split('==')[0]!.trim() !== collision.parsed.expression.getText().split('==')[1]!.trim(),
+    'expected generated placeholders not to collide with user identifiers',
+  )
+  expectEqual(
+    publicLinearName(`${domainPathLinearName('rows[].height')}@rows@loop1`),
+    'rows[].height@rows@loop1',
+    'expected internal path identity to render as the source path in reports',
+  )
+
+  const unicodeIndex = parseFitExpressionText('rows[$行 + 1].top >= rows[$行].bottom')
+  expectEqual(unicodeIndex.parsed.domainPaths.size, 2, 'expected Unicode named indexes to parse')
+
+  const compactPath = fitExpressionDomainPath(parseFitExpressionText('input.width'))
+  const spacedPath = fitExpressionDomainPath(parseFitExpressionText('(input . width)'))
+  expectEqual(JSON.stringify(spacedPath), JSON.stringify(compactPath), 'expected trivia and parentheses not to change path identity')
+  expect(sameExpressionText('input.width', '(input . width)'), 'expected path proof identity to ignore trivia and parentheses')
+  expect(sameExpressionText('input["width"]', 'input.width'), 'expected quoted and dotted static properties to share proof identity')
+
+  const quotedPath = fitExpressionDomainPath(parseFitExpressionText('input["available-width"]'))
+  expectEqual(quotedPath?.segments[0]?.kind, 'prop', 'expected quoted property path')
+  expectEqual(quotedPath?.segments[0]?.kind === 'prop' ? quotedPath.segments[0].name : null, 'available-width', 'expected quoted property name')
+
+  const decimalPath = fitExpressionDomainPath(parseFitExpressionText('input[1.5]'))
+  const negativePath = fitExpressionDomainPath(parseFitExpressionText('input[-1]'))
+  expectEqual(decimalPath?.segments[0]?.kind === 'prop' ? decimalPath.segments[0].name : null, '1.5', 'expected decimal numeric property name')
+  expectEqual(negativePath?.segments[0]?.kind === 'prop' ? negativePath.segments[0].name : null, '-1', 'expected negative numeric property name')
 }
 
 function expectEqual<T>(actual: T, expected: T, message: string) {

@@ -14,7 +14,11 @@ export type InterpreterCallTarget =
       fn: FitFunction
       imported?: {localName: string; binding: Extract<ImportedBinding, {kind: 'resolved'}>}
     }
-  | {kind: 'unresolved'; reason: string}
+  | {
+      kind: 'unresolved'
+      cause: 'unknown-function' | 'unsupported-target' | 'unavailable-import'
+      reason: string
+    }
 
 export type ResolvedFunctionTarget = Extract<InterpreterCallTarget, {kind: 'function'}>
 
@@ -34,17 +38,17 @@ export function resolveCallTarget(target: ts.Expression, program: Program): Inte
   if (source != null) return source
   if (ts.isIdentifier(target)) {
     if (!identifierAllowsIndexedFallback(target, program)) {
-      return {kind: 'unresolved', reason: `Unsupported function value ${target.text}`}
+      return {kind: 'unresolved', cause: 'unsupported-target', reason: `Unsupported function value ${target.text}`}
     }
     return resolveIdentifierCallTarget(target.text, program)
   }
   if (ts.isPropertyAccessExpression(target) && ts.isIdentifier(target.expression)) {
     if (!namespaceAccessAllowsIndexedFallback(target.expression, program)) {
-      return {kind: 'unresolved', reason: `Unsupported call ${target.getText()}`}
+      return {kind: 'unresolved', cause: 'unsupported-target', reason: `Unsupported call ${target.getText()}`}
     }
     return resolveNamespaceMemberCallTarget(target.expression.text, target.name.text, program, new Set())
   }
-  return {kind: 'unresolved', reason: `Unsupported call ${target.getText()}`}
+  return {kind: 'unresolved', cause: 'unsupported-target', reason: `Unsupported call ${target.getText()}`}
 }
 
 function sourceFunctionTarget(
@@ -110,7 +114,9 @@ function resolveIdentifierCallTarget(name: string, program: Program, seen = new 
   if (local != null) return {kind: 'function', program, fn: local}
 
   const key = `${program.sourceId}#${name}`
-  if (seen.has(key)) return {kind: 'unresolved', reason: `Cyclic call alias at ${program.file}#${name}`}
+  if (seen.has(key)) {
+    return {kind: 'unresolved', cause: 'unsupported-target', reason: `Cyclic call alias at ${program.file}#${name}`}
+  }
   seen.add(key)
 
   const alias = program.callAliases.get(name)
@@ -121,19 +127,23 @@ function resolveIdentifierCallTarget(name: string, program: Program, seen = new 
   }
 
   const unsupportedAlias = program.unsupportedCallAliases.get(name)
-  if (unsupportedAlias != null) return {kind: 'unresolved', reason: unsupportedAlias}
+  if (unsupportedAlias != null) return {kind: 'unresolved', cause: 'unsupported-target', reason: unsupportedAlias}
 
   const binding = program.imports.get(name)
-  if (binding == null) return {kind: 'unresolved', reason: `Unknown function ${name}`}
-  if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
-  if (binding.kind === 'namespace') return {kind: 'unresolved', reason: `Unsupported namespace call ${name}`}
+  if (binding == null) return {kind: 'unresolved', cause: 'unknown-function', reason: `Unknown function ${name}`}
+  if (binding.kind === 'unresolved') return {kind: 'unresolved', cause: 'unavailable-import', reason: binding.reason}
+  if (binding.kind === 'namespace') {
+    return {kind: 'unresolved', cause: 'unsupported-target', reason: `Unsupported namespace call ${name}`}
+  }
   return resolveImportedCallTarget(name, binding, seen)
 }
 
 function resolveNamespaceMemberCallTarget(namespace: string, exportedName: string, program: Program, seen: Set<string>): InterpreterCallTarget {
   const binding = program.imports.get(namespace)
-  if (binding == null || binding.kind === 'resolved') return {kind: 'unresolved', reason: `Unsupported call ${namespace}.${exportedName}`}
-  if (binding.kind === 'unresolved') return {kind: 'unresolved', reason: binding.reason}
+  if (binding == null || binding.kind === 'resolved') {
+    return {kind: 'unresolved', cause: 'unsupported-target', reason: `Unsupported call ${namespace}.${exportedName}`}
+  }
+  if (binding.kind === 'unresolved') return {kind: 'unresolved', cause: 'unavailable-import', reason: binding.reason}
   const member = binding.members.get(exportedName) ?? {file: binding.file, sourceName: exportedName}
   return resolveImportedCallTarget(`${namespace}.${exportedName}`, {
     kind: 'resolved',
@@ -151,7 +161,9 @@ function resolveImportedCallTarget(
 ): InterpreterCallTarget {
   const sourceName = binding.sourceName
   const target = resolveIdentifierCallTarget(sourceName, binding.file, seen)
-  if (target.kind === 'unresolved') return {kind: 'unresolved', reason: `${localName} resolved to ${sourceName}: ${target.reason}`}
+  if (target.kind === 'unresolved') {
+    return {...target, reason: `${localName} resolved to ${sourceName}: ${target.reason}`}
+  }
   if (target.kind === 'math') return target
   return {
     ...target,

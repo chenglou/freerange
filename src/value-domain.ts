@@ -153,13 +153,13 @@ export function arrayElement(value: ArrayValue): Value | null {
 
 export function arrayValueAtKnownIndex(value: ArrayValue, index: number, expr: string): Value {
   if (value.layout === 'tuple') {
-    return value.elements[index] ?? unknown(`${expr} was not inferred`)
+    return value.elements[index] ?? unknownNotInferred(`${expr} was not inferred`)
   }
   if (index < 0 || index >= maxArrayLength) {
     return unknown(`Array index ${index} is not a JavaScript array index`)
   }
   if (index >= value.length.max) return nullValue('undefined')
-  if (value.element == null) return unknown(`${expr} was not inferred`)
+  if (value.element == null) return unknownNotInferred(`${expr} was not inferred`)
   return index < value.length.min
     ? value.element
     : nullableValue(value.element, expr, 'undefined')
@@ -205,8 +205,16 @@ export function mergeNullishKind(left: NullishKind, right: NullishKind): Nullish
   return left === right ? left : 'nullish'
 }
 
-export function unknown(reason: string): UnknownValue {
-  return {kind: 'unknown', reason}
+export function unknown(reason: string, cause?: UnknownValue['cause']): UnknownValue {
+  return {kind: 'unknown', reason, ...(cause == null ? {} : {cause})}
+}
+
+export function unknownNotInferred(reason: string): UnknownValue {
+  return unknown(reason, 'not-inferred')
+}
+
+export function unsupportedTupleValue(reason: string): UnknownValue {
+  return unknown(reason, 'unsupported-tuple')
 }
 
 export function valueWithAssumptions(

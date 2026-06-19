@@ -1,4 +1,5 @@
 import {readTopLevelGlobal} from '../../src/check-core.ts'
+import {callSiteText} from '../../src/call-site-text.ts'
 import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
@@ -313,11 +314,43 @@ function fixedIndexGivenOnCollectionIsUnsupported(values: number[]) {
 }
 
 /** @fit
+ * given values[-1]: 0..10
+ * return: 0..10
+ */
+function negativePropertyGivenOnCollectionIsUnsupported(values: number[]) {
+  return values[-1] ?? 0
+}
+
+/** @fit
+ * given values[1.5]: 0..10
+ * return: 0..10
+ */
+function fractionalPropertyGivenOnCollectionIsUnsupported(values: number[]) {
+  return values[1.5] ?? 0
+}
+
+/** @fit
+ * given values["0"]: 0..10
+ * return: 0..10
+ */
+function quotedIndexGivenOnCollectionIsUnsupported(values: number[]) {
+  return values["0"] ?? 0
+}
+
+/** @fit
  * given pair[0]: 0..10
  * return: 0..10
  */
 function fixedIndexGivenOnTupleIsSupported(pair: [number, number]) {
   return pair[0]
+}
+
+/** @fit
+ * given pair["0"]: 0..10
+ * return: 0..10
+ */
+function quotedIndexGivenOnTupleIsSupported(pair: [number, number]) {
+  return pair["0"]
 }
 
 /** @fit
@@ -379,6 +412,15 @@ function namedTupleKeepsSecondPosition() {
 function tupleWriteUpdatesOnePosition(): [number, number] {
   const pair: [number, number] = [10, 20]
   pair[0] = 30
+  return pair
+}
+
+/** @fit
+ * return[0] == 30
+ */
+function quotedTupleWriteUpdatesOnePosition(): [number, number] {
+  const pair: [number, number] = [10, 20]
+  pair["0"] = 30
   return pair
 }
 
@@ -590,6 +632,7 @@ const boundaryStatus = (name: string) =>
   arrayTupleBoundaryChecks.find(check => check.functionName === name)
 const expectedBoundaryPasses = [
   'fixedIndexGivenOnTupleIsSupported',
+  'quotedIndexGivenOnTupleIsSupported',
   'collectionReadWithLengthProof',
   'explicitTupleKeepsFirstPosition',
   'constAssertionKeepsFirstPosition',
@@ -597,6 +640,7 @@ const expectedBoundaryPasses = [
   'emptyTupleHasExactLength',
   'namedTupleKeepsSecondPosition',
   'tupleWriteUpdatesOnePosition',
+  'quotedTupleWriteUpdatesOnePosition',
   'tuplePushBecomesCollection',
   'widenedAliasPushInvalidatesTupleLength',
   'equalLengthTupleUnionKeepsPositions',
@@ -604,6 +648,9 @@ const expectedBoundaryPasses = [
 const expectedBoundaryUnknowns = [
   'arrayParameterDoesNotKeepFirstPosition',
   'fixedIndexGivenOnCollectionIsUnsupported',
+  'negativePropertyGivenOnCollectionIsUnsupported',
+  'fractionalPropertyGivenOnCollectionIsUnsupported',
+  'quotedIndexGivenOnCollectionIsUnsupported',
   'fixedIndexReturnOnCollectionIsUnsupported',
   'arrayReturnDoesNotKeepFirstPosition',
   'nestedArrayBoundaryDoesNotKeepFirstPosition',
@@ -628,6 +675,9 @@ if (
   || !boundaryStatus('optionalTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
   || !boundaryStatus('restTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
   || !boundaryStatus('fixedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
+  || !boundaryStatus('negativePropertyGivenOnCollectionIsUnsupported')?.reason?.includes('requires an object, not an array')
+  || !boundaryStatus('fractionalPropertyGivenOnCollectionIsUnsupported')?.reason?.includes('requires an object, not an array')
+  || !boundaryStatus('quotedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
   || !boundaryStatus('fixedIndexReturnOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
   || boundaryStatus('indexedCollectionWriteIsUnsupported')?.status === 'pass'
   || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status === 'pass'
@@ -761,6 +811,86 @@ if (
   suite.fail()
 } else {
   console.log('calls: caller text stays distinct from callee names')
+}
+
+const simultaneousParameterChecks = verifyFitSource('simultaneous-parameters.ts', `
+function difference(left: number, right: number) {
+  return left - right
+}
+
+function copy(left: number, right: number = left) {
+  return right
+}
+
+/** @fit
+ * given left: 0..10
+ * given right: 0..10
+ * return >= 0
+ */
+function exchangedArgumentsStayInCallerScope(left: number, right: number) {
+  return difference(right, left)
+}
+
+/** @fit
+ * given value: 0..10
+ * return == value
+ */
+function defaultReadsEarlierCalleeParameter(value: number) {
+  return copy(value)
+}
+`)
+const exchangedArgumentCheck = simultaneousParameterChecks.find(check => check.functionName === 'exchangedArgumentsStayInCallerScope' && check.text === 'return >= 0')
+const defaultParameterCheck = simultaneousParameterChecks.find(check => check.functionName === 'defaultReadsEarlierCalleeParameter' && check.text === 'return == value')
+const quotedPropertyRebase = callSiteText('obj["x"] + x', new Map([['obj', 'item'], ['x', 'amount']]))
+const namedPropertyRebase = callSiteText('({x: x, x})', new Map([['x', 'amount']]))
+const shadowedCallbackRebase = callSiteText('[1].map(x => x + outside)', new Map([['x', 'wrong'], ['outside', 'amount']]))
+const shadowedBlockRebase = callSiteText('(() => { const x = 1; return x + outside })()', new Map([['x', 'wrong'], ['outside', 'amount']]))
+const defaultInitializerRebase = callSiteText('((local = outside) => local)()', new Map([['outside', 'amount']]))
+const catchBindingRebase = callSiteText('(() => { try {} catch (x) { return x + outside } })()', new Map([['x', 'wrong'], ['outside', 'amount']]))
+const thisRebase = callSiteText('this.width + x', new Map([['this', 'item'], ['x', 'amount']]))
+const arrowThisRebase = callSiteText('(() => this.width)()', new Map([['this', 'item']]))
+const functionThisRebase = callSiteText('(function () { return this.width })()', new Map([['this', 'item']]))
+const loopBindingRebase = callSiteText('(() => { for (const x of [1]) { void x }; return outside })()', new Map([['x', 'wrong'], ['outside', 'total']]))
+const switchBindingRebase = callSiteText('(() => { switch (outside) { case 0: const x = 1; return x; default: return outside } })()', new Map([['x', 'wrong'], ['outside', 'total']]))
+const classBindingRebase = callSiteText('(class x { static value() { return x } })', new Map([['x', 'wrong']]))
+const methodFreeVariableRebase = callSiteText('({x() { return x + outside }})', new Map([['x', 'amount'], ['outside', 'total']]))
+if (
+  exchangedArgumentCheck?.status === 'pass'
+  || defaultParameterCheck?.status !== 'pass'
+  || quotedPropertyRebase !== 'item["x"] + amount'
+  || namedPropertyRebase !== '({x: amount, x: amount})'
+  || shadowedCallbackRebase !== '[1].map(x => x + amount)'
+  || shadowedBlockRebase !== '(() => { const x = 1; return x + amount })()'
+  || defaultInitializerRebase !== '((local = amount) => local)()'
+  || catchBindingRebase !== '(() => { try {} catch (x) { return x + amount } })()'
+  || thisRebase !== 'item.width + amount'
+  || arrowThisRebase !== '(() => item.width)()'
+  || functionThisRebase !== '(function () { return this.width })()'
+  || loopBindingRebase !== '(() => { for (const x of [1]) { void x }; return total })()'
+  || switchBindingRebase !== '(() => { switch (total) { case 0: const x = 1; return x; default: return total } })()'
+  || classBindingRebase !== '(class x { static value() { return x } })'
+  || methodFreeVariableRebase !== '({x() { return amount + total }})'
+) {
+  console.error('expected explicit arguments to stay in caller scope and defaults to read earlier parameters')
+  console.error({
+    simultaneousParameterChecks,
+    quotedPropertyRebase,
+    namedPropertyRebase,
+    shadowedCallbackRebase,
+    shadowedBlockRebase,
+    defaultInitializerRebase,
+    catchBindingRebase,
+    thisRebase,
+    arrowThisRebase,
+    functionThisRebase,
+    loopBindingRebase,
+    switchBindingRebase,
+    classBindingRebase,
+    methodFreeVariableRebase,
+  })
+  suite.fail()
+} else {
+  console.log('calls: explicit arguments and defaults use their own lexical scopes')
 }
 
 const restContractChecks = verifyFitSource('rest-contract.ts', `

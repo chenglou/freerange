@@ -30,14 +30,11 @@ import {
   type SequenceAddition,
   type SequenceRelation,
   type Value,
-  gridMeet,
 } from './domain.ts'
 import {
-  directFiniteElementAccess,
-  fixedArrayElementContractCheck,
+  checkedDomainPathProblem,
   parsePrintedNumber,
   setCheckedDomainPathValue,
-  setCheckedFiniteArrayElementValue,
 } from './domain-paths.ts'
 import {linearConstraints} from './assumptions.ts'
 import {
@@ -45,15 +42,14 @@ import {
   linearScaleExact,
   linearVariable,
   sameExpressionText,
-  isFixedElementPathExpression,
 } from './linear.ts'
 import {nextDoubleDown, nextDoubleUp, rationalCompare, rationalNegate, rationalOne, rationalZero} from './rational.ts'
 import {
   fitSpecIsAssumption,
+  fitExpressionDomainPath,
   fitExpressionParsed,
   fitExpressionText,
   fitRangeCases,
-  parseDomainPathText,
   publicFitText,
   type ComparisonOperator,
   type FitExpression,
@@ -301,19 +297,10 @@ function rangeCaseSetsOverlap(left: {min: number; max: number}[], right: {min: n
 }
 
 function givenShapeProblem(spec: FitRangeGivenSpec | FitComparisonGivenSpec): string | null {
-  if (spec.kind === 'range') {
-    if (parseDomainPathText(spec.expression.text) == null) {
-      const expression = fitExpressionParsed(spec.expression).expression
-      if (!isGivenRangeExpression(expression)) return 'given range must name one input path, not a derived expression'
-    }
+  if (spec.kind === 'range' && fitExpressionDomainPath(spec.expression) == null) {
+    return 'given range must name one input path, not a derived expression'
   }
   return null
-}
-
-function isGivenRangeExpression(expression: ts.Expression): boolean {
-  if (isFixedElementPathExpression(expression)) return true
-  if (ts.isParenthesizedExpression(expression)) return isGivenRangeExpression(expression.expression)
-  return false
 }
 
 function invalidGivenCheck(file: string, functionName: string, spec: FitSpec, reason: string): FitCheck {
@@ -350,17 +337,11 @@ export function collectGivenAssumptions(
     syncEvaluationFacts()
     if (given.kind === 'range') {
       const spec = given.spec
-      const directElement = directFiniteElementGiven(spec)
-      if (directElement != null) {
-        const checked = fixedArrayElementContractCheck(
-          env.get(directElement.root),
-          directElement.root,
-          directElement.index,
-        )
-        if ('reason' in checked) {
-          checks.push(invalidGivenCheck(file, functionName, spec, checked.reason))
-          continue
-        }
+      const domainPath = fitExpressionDomainPath(spec.expression)
+      const pathProblem = domainPath == null ? null : checkedDomainPathProblem(domainPath, env.get(domainPath.root))
+      if (pathProblem != null) {
+        checks.push(invalidGivenCheck(file, functionName, spec, pathProblem))
+        continue
       }
       const value = evaluateGivenNumber(file, functionName, spec, spec.expression, context, evaluators)
       if (value.kind === 'invalid') {
@@ -521,7 +502,7 @@ function collectGivenExpressionAssumption(
 
   const value = evaluators.evaluateSpecExpression(spec.expression, context)
   const status = proveBooleanTrue(spec.text, value)
-  if (status.status === 'pass' || (status.status === 'unknown' && status.reason === `${spec.text} was not proven true`)) {
+  if (status.result === 'true' || status.result === 'indeterminate') {
     assumeBooleanExpression(context, spec.expression)
     return {kind: 'valid'}
   }
@@ -579,6 +560,14 @@ function evaluateGivenNumber(
     : evaluators.evaluateRangeBound(expression, context)
   if (value.kind === 'number') return {kind: 'number', value}
   if (value.kind === 'nullable' && value.present.kind === 'number') return {kind: 'number', value: value.present}
+  if (
+    role === 'expression'
+    && spec.kind === 'range'
+    && value.kind === 'unknown'
+    && fitExpressionDomainPath(expression) != null
+  ) {
+    return {kind: 'number', value: unknownNumber(fitExpressionText(expression))}
+  }
   if (role === 'expression' && spec.kind === 'range' && spec.implicitFinite === true) {
     return {kind: 'number', value: unknownNumber(fitExpressionText(expression))}
   }
@@ -786,56 +775,14 @@ function appendRelation(summary: ArraySummary | null, relation: SequenceRelation
 }
 
 export function applyGivenRangeSpec(env: Map<string, Value>, spec: FitRangeGivenSpec, value = staticRangeValue(spec.range, spec.expression.text)) {
-  const expressionText = spec.expression.text
   const preserveNullable = spec.finiteWhenNumeric === true
   if (value == null) return
-  if (expressionText.includes('[]')) {
-    const domainPath = parseDomainPathText(expressionText)
-    if (domainPath != null && domainPath.segments.length > 0) {
-      env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value, preserveNullable))
-    }
-    return
-  }
-
-  const expression = spec.expression.parsed.expression
-  const directElement = directFiniteElementGiven(spec)
-  if (directElement != null) {
-    env.set(
-      directElement.root,
-      setCheckedFiniteArrayElementValue(env.get(directElement.root), directElement.root, directElement.index, value),
-    )
-    return
-  }
-  if (ts.isIdentifier(expression)) {
-    const current = env.get(expression.text)
-    env.set(expression.text, preserveNullable && current?.kind === 'nullable' ? {...current, present: value} : value)
-    return
-  }
-
-  const lengthRoot = arrayLengthRoot(expression)
-  if (lengthRoot != null) {
-    const target = env.get(lengthRoot)
-    if (target?.kind === 'array') {
-      // The given refines what the array already guarantees: a length is an
-      // integer whether or not the range says `int`.
-      const length = numberWithBounds(
-        value,
-        value.min,
-        value.max,
-        gridMeet(value.grid, arrayLength(target).grid),
-      )
-      if (target.layout === 'collection') env.set(lengthRoot, {...target, length})
-      return
-    }
-  }
-
-  const domainPath = parseDomainPathText(expressionText)
-  if (domainPath == null || domainPath.segments.length === 0) return
-  env.set(domainPath.root, setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value))
-}
-
-function directFiniteElementGiven(spec: FitRangeGivenSpec): {root: string; index: number} | null {
-  return directFiniteElementAccess(spec.expression.parsed.expression)
+  const domainPath = fitExpressionDomainPath(spec.expression)
+  if (domainPath == null) return
+  env.set(
+    domainPath.root,
+    setCheckedDomainPathValue(env.get(domainPath.root), domainPath.root, domainPath.segments, value, preserveNullable),
+  )
 }
 
 function unionEnvelopeFacts(value: NumberValue, cases: EvaluatedRangeCase[], text: string, source: ConstraintSource): LinearConstraint[] {

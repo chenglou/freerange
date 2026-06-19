@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 import {type FitFunction} from './modules.ts'
-import {parseExpression} from './parser.ts'
+import {parseExpression, replaceFitIdentifiers} from './parser.ts'
 import {
   bindingElementPropertyName,
   forEachArrayBindingElement,
@@ -27,13 +27,6 @@ import {rationalAdd, rationalMultiply} from './rational.ts'
 type MutableCallSiteBindings = Map<string, string>
 
 export type CallSiteBindings = ReadonlyMap<string, string>
-
-type CompiledCallSiteBindings = {
-  pattern: RegExp
-  replacements: Map<string, string>
-}
-
-const compiledBindingsCache = new WeakMap<CallSiteBindings, CompiledCallSiteBindings>()
 
 export function valueWithCallSiteText(value: Value, bindings: CallSiteBindings | undefined): Value {
   if (bindings == null || bindings.size === 0) return value
@@ -71,40 +64,29 @@ export function callSiteBindingsFor(
   const bindings: MutableCallSiteBindings = new Map()
   if (thisText != null) bindings.set('this', callSiteValueText(thisText))
   for (let i = 0; i < fn.node.parameters.length; i++) {
-    const sourceText = callSite.parameterSourceTexts[i]
-    if (sourceText == null) continue
-    const rebasedSourceText = callSiteTextWhileBuilding(sourceText, bindings)
-    bindCallSitePattern(fn.node.parameters[i]!.name, rebasedSourceText, callSite.boundValues, bindings)
+    const source = callSite.parameterSources[i]
+    if (source == null) continue
+    const rebasedSourceText = source.scope === 'callee'
+      ? callSiteTextWhileBuilding(source.text, bindings)
+      : source.text
+    bindCallSitePattern(
+      fn.node.parameters[i]!.name,
+      rebasedSourceText,
+      callSite.boundValues,
+      bindings,
+      source.scope === 'callee',
+    )
   }
   return new Map(bindings)
 }
 
 export function callSiteText(text: string, bindings: CallSiteBindings | undefined) {
   if (bindings == null || bindings.size === 0) return text
-  const compiled = compiledCallSiteBindings(bindings)
-  return text.replace(compiled.pattern, name => compiled.replacements.get(name) ?? name)
+  return replaceFitIdentifiers(text, bindings)
 }
 
 function callSiteTextWhileBuilding(text: string, bindings: MutableCallSiteBindings) {
-  if (bindings.size === 0) return text
-  const compiled = compileCallSiteBindings(bindings)
-  return text.replace(compiled.pattern, name => compiled.replacements.get(name) ?? name)
-}
-
-function compiledCallSiteBindings(bindings: CallSiteBindings): CompiledCallSiteBindings {
-  const cached = compiledBindingsCache.get(bindings)
-  if (cached != null) return cached
-  const compiled = compileCallSiteBindings(bindings)
-  compiledBindingsCache.set(bindings, compiled)
-  return compiled
-}
-
-function compileCallSiteBindings(bindings: CallSiteBindings): CompiledCallSiteBindings {
-  const names = [...bindings.keys()].sort((left, right) => right.length - left.length)
-  return {
-    pattern: new RegExp(`(?<![\\p{ID_Continue}$.])(?:${names.map(escapeRegExp).join('|')})(?![\\p{ID_Continue}$]|\\s*\\()`, 'gu'),
-    replacements: new Map(bindings),
-  }
+  return replaceFitIdentifiers(text, bindings)
 }
 
 function numberWithCallSiteText(value: NumberValue, bindings: CallSiteBindings): NumberValue {
@@ -198,10 +180,16 @@ function maybeCallSiteText(text: string | null, bindings: CallSiteBindings) {
   return text == null ? null : callSiteText(text, bindings)
 }
 
-function callSiteArgumentText(sourceText: string, value: Value, bindingName: string, bindings: MutableCallSiteBindings) {
+function callSiteArgumentText(
+  sourceText: string,
+  value: Value,
+  bindingName: string,
+  bindings: MutableCallSiteBindings,
+  rebaseValueText: boolean,
+) {
   if (value.kind === 'number' && value.min === value.max) return formatNumber(value.min)
   if (value.kind === 'unknown' || value.expr == null || value.expr === bindingName) return sourceText
-  return callSiteTextWhileBuilding(value.expr, bindings)
+  return rebaseValueText ? callSiteTextWhileBuilding(value.expr, bindings) : value.expr
 }
 
 function bindCallSitePattern(
@@ -209,10 +197,13 @@ function bindCallSitePattern(
   sourceText: string,
   boundValues: ReadonlyMap<string, Value>,
   bindings: MutableCallSiteBindings,
+  rebaseValueText: boolean,
 ) {
   if (ts.isIdentifier(name)) {
     const value = boundValues.get(name.text)
-    const text = value == null ? sourceText : callSiteArgumentText(sourceText, value, name.text, bindings)
+    const text = value == null
+      ? sourceText
+      : callSiteArgumentText(sourceText, value, name.text, bindings, rebaseValueText)
     bindings.set(name.text, callSiteValueText(text))
     return
   }
@@ -222,14 +213,14 @@ function bindCallSitePattern(
       if (element.dotDotDotToken != null) continue
       const propertyName = bindingElementPropertyName(element)
       if (propertyName == null) continue
-      bindCallSitePattern(element.name, `${base}.${propertyName}`, boundValues, bindings)
+      bindCallSitePattern(element.name, `${base}.${propertyName}`, boundValues, bindings, rebaseValueText)
     }
     return
   }
   if (ts.isArrayBindingPattern(name)) {
     const base = callSitePropertyBaseText(sourceText)
     forEachArrayBindingElement(name, (elementName, index, isRest) => {
-      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, boundValues, bindings)
+      if (!isRest) bindCallSitePattern(elementName, `${base}[${index}]`, boundValues, bindings, rebaseValueText)
     })
   }
 }
@@ -253,8 +244,4 @@ function isParenthesizedCallSiteText(text: string) {
   } catch {
     return false
   }
-}
-
-function escapeRegExp(text: string) {
-  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

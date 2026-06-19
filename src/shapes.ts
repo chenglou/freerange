@@ -7,7 +7,9 @@ import {
   mergeNullishKind,
   nullableValue,
   numberValue,
+  unsupportedTupleValue,
   unknown,
+  unknownNotInferred,
   unknownArray,
   unknownArrayLength,
   unknownNumber,
@@ -39,7 +41,7 @@ export function valueFromNodeType(expr: string, node: ts.Node, program: ShapePro
 export function valueFromTypeNode(expr: string, node: ts.TypeNode | undefined, program: ShapeProgram): Value | null {
   if (node == null) return null
   if (typeNodeContainsUnsupportedTuple(node, program.typeChecker)) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
   const checker = program.typeChecker
   return checker == null ? valueFromTypeNodeSyntax(expr, node) : valueFromResolvedType(expr, checker.getTypeFromTypeNode(node), checker, node)
@@ -166,7 +168,7 @@ function valueFromTypePathInternal(
   }
 
   if (checker.isTupleType(type) && fixedTupleElementTypes(type, checker) == null) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
 
   const [segment, ...rest] = segments
@@ -247,7 +249,7 @@ export function resolvedTypeContainsUnsupportedTuple(
 
 export function valueFromResolvedType(expr: string, type: ts.Type, checker: ts.TypeChecker, location: ts.Node): Value | null {
   if (resolvedTypeContainsUnsupportedTuple(type, checker)) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
   if (type.isUnion()) return valueFromUnionType(expr, type.types, checker, location)
   if (tsNullishKind(type) != null) return unknown(`Nullish value is not in the static layout subset: ${expr}`)
@@ -259,10 +261,10 @@ export function valueFromResolvedType(expr: string, type: ts.Type, checker: ts.T
   if (checker.isTypeAssignableTo(type, checker.getStringType())) return unknown(`String values are not in the static layout subset: ${expr}`)
   if (checker.isTupleType(type)) {
     const members = fixedTupleElementTypes(type, checker)
-    if (members == null) return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    if (members == null) return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
     const elements = members.map((member, index) =>
       valueFromResolvedType(`${expr}[${index}]`, member, checker, location)
-      ?? unknown(`${expr}[${index}] was not inferred from its tuple type`))
+      ?? unknownNotInferred(`${expr}[${index}] was not inferred from its tuple type`))
     return fixedTupleValue(elements, expr)
   }
   if (checker.isArrayLikeType(type)) return unknownArray(expr, arrayLengthValue(expr))
@@ -296,12 +298,12 @@ function valueFromTypeNodeSyntax(expr: string, node: ts.TypeNode): Value | null 
       ts.isOptionalTypeNode(element)
       || ts.isRestTypeNode(element)
       || (ts.isNamedTupleMember(element) && (element.questionToken != null || element.dotDotDotToken != null)))) {
-      return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+      return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
     }
     return fixedTupleValue(node.elements.map((element, index) => {
       const type = ts.isNamedTupleMember(element) ? element.type : element
       return valueFromTypeNodeSyntax(`${expr}[${index}]`, type)
-        ?? unknown(`${expr}[${index}] was not inferred from its tuple type`)
+        ?? unknownNotInferred(`${expr}[${index}] was not inferred from its tuple type`)
     }), expr)
   }
   switch (node.kind) {

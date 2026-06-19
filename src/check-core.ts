@@ -11,6 +11,7 @@ import {
   fitSpecIsAssumption,
   fitSpecIsProof,
   fitExpressionScopeSourceId,
+  formatFitDomainPath,
   fitReturnInternalRoot,
   fitReturnPublicRoot,
   instantiateInlineFitTemplates,
@@ -48,7 +49,7 @@ import {
   type FunctionContractProof,
   type Program,
 } from './check-types.ts'
-import {bindingElementPropertyName, forEachArrayBindingElement} from './binding-patterns.ts'
+import {bindingElementPropertyName, bindingNames, forEachArrayBindingElement} from './binding-patterns.ts'
 import {
   arrayElement,
   arrayLength,
@@ -441,6 +442,19 @@ function verifyFunctionSpecsDetailed(
 ): {checks: FitCheck[]; callsiteChecks: FitCheck[]; recordedCallsites: boolean} {
   const functionName = fn.name
   const prepared = preparedFunctionContracts(program, fn)
+  if (functionHasReservedReturnBinding(fn.node)) {
+    return {
+      checks: [{
+        file,
+        functionName,
+        text: '@fit contract',
+        status: 'unknown',
+        reason: `${fitReturnInternalRoot} is reserved for Freerange contract evaluation`,
+      }],
+      callsiteChecks: [],
+      recordedCallsites: false,
+    }
+  }
   const setup = prepareFunctionEvaluation(program, fn, contractCache, givenEvaluators)
   const {env} = setup
   const checks = [...setup.typeChecks, ...setup.givenChecks]
@@ -475,6 +489,31 @@ function verifyFunctionSpecsDetailed(
     callsiteChecks: recordsCallsites ? callChecks(context) : [],
     recordedCallsites: prepared.needsBodyEvaluation && recordsCallsites,
   }
+}
+
+function functionHasReservedReturnBinding(fn: ts.FunctionLikeDeclaration) {
+  if (fn.name != null && ts.isIdentifier(fn.name) && fn.name.text === fitReturnInternalRoot) return true
+  if (fn.parameters.some(parameter => bindingNames(parameter.name).includes(fitReturnInternalRoot))) return true
+  if (fn.body == null) return false
+  let found = false
+  const visit = (node: ts.Node) => {
+    if (found) return
+    if (node !== fn.body && ts.isFunctionLike(node)) {
+      if (node.name != null && ts.isIdentifier(node.name) && node.name.text === fitReturnInternalRoot) found = true
+      return
+    }
+    if (ts.isVariableDeclaration(node) && bindingNames(node.name).includes(fitReturnInternalRoot)) {
+      found = true
+      return
+    }
+    if (ts.isClassDeclaration(node) && node.name?.text === fitReturnInternalRoot) {
+      found = true
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(fn.body)
+  return found
 }
 
 function inferFunctionFacts(program: Program, fn: FitFunction, contractCache: Map<string, FunctionContractProof>): FitInferFunctionReport {
@@ -727,17 +766,9 @@ function formatContractExpressionProblems(
   effects: InterpreterEffect[],
 ) {
   return [
-    ...formatInterpreterIssues(issues.filter(isHardContractExpressionIssue)),
+    ...formatInterpreterIssues(issues),
     ...formatInterpreterEffects(effects),
   ]
-}
-
-function isHardContractExpressionIssue(issue: InterpreterIssue) {
-  return /\bunsupported\b/i.test(issue.message)
-    || issue.message.startsWith('Unknown function ')
-    || issue.message.startsWith('Unknown identifier ')
-    || issue.message.startsWith('Call arity mismatch')
-    || issue.message.includes('mutable helper alias')
 }
 
 function replaceEnvEntries(target: Map<string, Value>, source: Map<string, Value>) {
@@ -1566,7 +1597,11 @@ function verifyFunctionContract(program: Program, functionName: string, contract
 }
 
 function objectPathText(path: string[] | undefined) {
-  return path == null || path.length === 0 ? '<property>' : path.join('.')
+  if (path == null || path.length === 0) return '<property>'
+  return formatFitDomainPath({
+    root: path[0]!,
+    segments: path.slice(1).map(name => ({kind: 'prop' as const, name})),
+  })
 }
 
 function verifyInlineSpecsForValue(specs: FitInlineCheckSpec[], value: Value, context: EvalContext) {

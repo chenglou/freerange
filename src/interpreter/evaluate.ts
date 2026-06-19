@@ -50,6 +50,7 @@ import {
   subtractNumbers,
   tupleElements,
   unknown,
+  unknownNotInferred,
   unknownArray,
   unknownArrayLength,
   unknownNumber,
@@ -94,7 +95,7 @@ import {
   type InlineFunctionNode,
 } from '../function-shape.ts'
 import {type FitFunction} from '../modules.ts'
-import type {EvaluatedOperand, PreparedCall} from '../prepared-call.ts'
+import type {EvaluatedOperand, PreparedCall, PreparedParameterSource} from '../prepared-call.ts'
 import {programFunctionEnv} from '../program-env.ts'
 import {
   valueFromClassInstanceType,
@@ -134,11 +135,14 @@ import {
   type LoopFrame,
 } from './context.ts'
 import {
+  arrayIndexForPropertyName,
   exactInteger,
   pathFromExpression as pathFromSourceExpression,
   readArrayIndexValue,
   readPath,
   readPropertyValue,
+  staticNumericPropertyName,
+  staticPropertyName,
   replaceValueEverywhere,
   valueExpr,
   valuePathExpression,
@@ -409,7 +413,7 @@ function prepareFitFunctionInvocation(
     prepared: {
       entryEnv,
       callSite: {
-        parameterSourceTexts: prepared.parameterSourceTexts,
+        parameterSources: prepared.parameterSources,
         boundValues,
       },
     },
@@ -483,7 +487,7 @@ function evaluateFunctionNodeBodyResult(
 }
 
 type PreparedFunctionNodeInvocation =
-  | {kind: 'valid'; frame: InterpreterFrame; parameterSourceTexts: (string | null)[]}
+  | {kind: 'valid'; frame: InterpreterFrame; parameterSources: (PreparedParameterSource | null)[]}
   | {kind: 'invalid'; reason: string}
 
 function prepareFunctionNodeInvocation(
@@ -493,13 +497,14 @@ function prepareFunctionNodeInvocation(
   frame: InterpreterFrame,
   missingRequired: 'invalid' | 'unknown',
 ): PreparedFunctionNodeInvocation {
-  const parameterSourceTexts: (string | null)[] = []
+  const parameterSources: (PreparedParameterSource | null)[] = []
   let argumentIndex = 0
   for (const param of fn.parameters) {
     if (bindingPatternHasUnsupportedParameterParts(param.name)) {
       return {kind: 'invalid', reason: `Unsupported parameter binding in ${name}: ${param.name.getText(frame.program.sourceFile)}`}
     }
     let input: EvaluatedOperand
+    let sourceScope: PreparedParameterSource['scope'] = 'caller'
     if (param.dotDotDotToken != null) {
       const restValues: Value[] = []
       const restSourceTexts: string[] = []
@@ -521,11 +526,12 @@ function prepareFunctionNodeInvocation(
       const initialized = initializeParameterInput(argument, param, frame, missingRequired)
       if (initialized.kind === 'invalid') return initialized
       input = initialized.input
+      sourceScope = initialized.sourceScope
     }
     bindPattern(param.name, parameterValue(param, input.value, frame), frame)
-    parameterSourceTexts.push(input.sourceText)
+    parameterSources.push(input.sourceText == null ? null : {text: input.sourceText, scope: sourceScope})
   }
-  return {kind: 'valid', frame, parameterSourceTexts}
+  return {kind: 'valid', frame, parameterSources}
 }
 
 function initializeParameterInput(
@@ -533,7 +539,7 @@ function initializeParameterInput(
   param: ts.ParameterDeclaration,
   frame: InterpreterFrame,
   missingRequired: 'invalid' | 'unknown',
-): {kind: 'valid'; input: EvaluatedOperand} | {kind: 'invalid'; reason: string} {
+): {kind: 'valid'; input: EvaluatedOperand; sourceScope: PreparedParameterSource['scope']} | {kind: 'invalid'; reason: string} {
   if (argument == null) {
     if (param.initializer != null) {
       return {
@@ -542,18 +548,21 @@ function initializeParameterInput(
           value: evaluateExpression(param.initializer, frame),
           sourceText: param.initializer.getText(frame.program.sourceFile),
         },
+        sourceScope: 'callee',
       }
     }
     if (missingRequired === 'unknown') {
-      return {kind: 'valid', input: {value: unknownParamPatternValue(param, frame), sourceText: null}}
+      return {kind: 'valid', input: {value: unknownParamPatternValue(param, frame), sourceText: null}, sourceScope: 'caller'}
     }
-    if (param.questionToken != null) return {kind: 'valid', input: {value: nullValue('undefined'), sourceText: 'undefined'}}
+    if (param.questionToken != null) {
+      return {kind: 'valid', input: {value: nullValue('undefined'), sourceText: 'undefined'}, sourceScope: 'caller'}
+    }
     return {kind: 'invalid', reason: `Call omitted required parameter ${param.name.getText(frame.program.sourceFile)}`}
   }
-  if (param.initializer == null) return {kind: 'valid', input: argument}
+  if (param.initializer == null) return {kind: 'valid', input: argument, sourceScope: 'caller'}
   switch (defaultUse(argument.value)) {
     case 'never':
-      return {kind: 'valid', input: argument}
+      return {kind: 'valid', input: argument, sourceScope: 'caller'}
     case 'always':
       return {
         kind: 'valid',
@@ -561,6 +570,7 @@ function initializeParameterInput(
           value: evaluateExpression(param.initializer, frame),
           sourceText: param.initializer.getText(frame.program.sourceFile),
         },
+        sourceScope: 'callee',
       }
     case 'maybe': {
       const beforeEnv = new Map(frame.env)
@@ -575,6 +585,7 @@ function initializeParameterInput(
           value: valueWithDefaultedUndefined(argument.value, fallback),
           sourceText: null,
         },
+        sourceScope: 'caller',
       }
     }
   }
@@ -717,7 +728,7 @@ function evaluateStatement(statement: ts.Statement, frame: InterpreterFrame): In
   if (ts.isWhileStatement(statement) || ts.isDoStatement(statement)) {
     return {kind: 'return', value: noteUnsupported(frame, 'While and do loops are unsupported', statement)}
   }
-  if (ts.isBlock(statement)) return evaluateStatements(statement.statements, frame)
+  if (ts.isBlock(statement)) return evaluateLexicalBlock(statement, frame)
   if (ts.isIfStatement(statement)) return evaluateIfStatement(statement, frame)
   if (ts.isSwitchStatement(statement)) return evaluateSwitchStatement(statement, frame)
   if (ts.isThrowStatement(statement)) return {kind: 'exit'}
@@ -728,10 +739,49 @@ function evaluateVariableStatement(statement: ts.VariableStatement, frame: Inter
   for (const declaration of statement.declarationList.declarations) evaluateVariableDeclaration(statement, declaration, frame)
 }
 
+function evaluateLexicalBlock(block: ts.Block, frame: InterpreterFrame): InterpreterFlow {
+  const names = blockScopedNames(block)
+  if (names.length === 0) return evaluateStatements(block.statements, frame)
+  const savedValues = saveScopedValues(frame.env, names)
+  const savedAssumptions = frame.assumptions.filter(assumption => assumptionMentionsAnyRoot(assumption, names))
+  const savedCaseAssumptions = frame.caseAssumptions.filter(assumption => assumptionMentionsAnyRoot(assumption, names))
+  const savedChangedRoots = new Set(names.filter(name => frame.changedRoots.has(name)))
+  try {
+    return evaluateStatements(block.statements, frame)
+  } finally {
+    restoreScopedValues(frame.env, savedValues)
+    frame.assumptions = restoreScopedAssumptions(frame.assumptions, savedAssumptions, names)
+    frame.caseAssumptions = restoreScopedAssumptions(frame.caseAssumptions, savedCaseAssumptions, names)
+    for (const name of names) {
+      if (savedChangedRoots.has(name)) frame.changedRoots.add(name)
+      else frame.changedRoots.delete(name)
+    }
+  }
+}
+
+function restoreScopedAssumptions(current: Assumption[], saved: Assumption[], names: string[]) {
+  return mergeAssumptions(
+    current.filter(assumption => !assumptionMentionsAnyRoot(assumption, names)),
+    saved,
+  )
+}
+
+function assumptionMentionsAnyRoot(assumption: Assumption, names: string[]) {
+  return names.some(name => assumptionMentionsRoot(assumption, rootMentionPattern(name)))
+}
+
 function evaluateVariableDeclaration(statement: ts.VariableStatement, declaration: ts.VariableDeclaration, frame: InterpreterFrame) {
+  if (
+    declaration.initializer == null
+    && (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+    && ts.isIdentifier(declaration.name)
+    && frame.env.has(declaration.name.text)
+  ) return
   const claim: InterpreterClaim = {kind: 'variable', statement, declaration}
   const value = declaration.initializer == null
-    ? unknown(`Uninitialized local ${declaration.name.getText(frame.program.sourceFile)}`)
+    ? (statement.declarationList.flags & ts.NodeFlags.BlockScoped) === 0
+      ? nullValue('undefined')
+      : unknown(`Uninitialized local ${declaration.name.getText(frame.program.sourceFile)}`)
     : evaluateClaim(claim, frame, () => evaluateWithObjectPath(frame, variableObjectPath(declaration), () => evaluateExpression(declaration.initializer!, frame)))
   const boundValue = declarationValue(declaration, value, frame)
   bindPattern(declaration.name, boundValue, frame)
@@ -1071,7 +1121,7 @@ function valueWithSeparateBranchLoss(value: Value): Value {
 }
 
 function evaluateBranch(statement: ts.Statement, frame: InterpreterFrame): InterpreterFlow {
-  return ts.isBlock(statement) ? evaluateStatements(statement.statements, frame) : evaluateStatement(statement, frame)
+  return ts.isBlock(statement) ? evaluateLexicalBlock(statement, frame) : evaluateStatement(statement, frame)
 }
 
 function evaluateConditionalBranchWithContinuation(
@@ -1283,7 +1333,7 @@ function evaluateSymbolicForOfStatement(statement: ts.ForOfStatement, source: Ar
   const scopedNames = [...iterationRoots, ...blockScopedNames(body)]
   const scopedValues = saveScopedValues(frame.env, scopedNames)
   const sourceExpr = sourceExpression(source, statement.expression, frame)
-  const item = arrayElement(source) ?? unknown(`${sourceExpr}[] was not inferred`)
+  const item = arrayElement(source) ?? unknownNotInferred(`${sourceExpr}[] was not inferred`)
   try {
     const outcome = evaluateSymbolicLoop({
       claim,
@@ -1533,14 +1583,27 @@ function evaluateVoidExpression(expression: ts.VoidExpression, frame: Interprete
 }
 
 function readIdentifier(expression: ts.Identifier, frame: InterpreterFrame): Value {
-  if (expression.text === 'undefined') return nullValue('undefined')
-  if (expression.text === 'Infinity') return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, null, 'Infinity')
+  const bound = frame.env.get(expression.text)
+  if (bound != null) return bound
+  if (
+    expression.text === 'undefined'
+    && identifierHasNoUserDeclaration(expression, frame.program)
+  ) return nullValue('undefined')
+  if (expression.text === 'Infinity' && isDefaultLibrarySymbol(expression, frame.program)) {
+    return numberValue(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, null, 'Infinity')
+  }
   if (expression.text === 'NaN' && isDefaultLibrarySymbol(expression, frame.program)) {
     return noteOutsideNumericDomain(frame, 'NaN is outside the checked numerical domain', expression, 'definite')
   }
   const ambient = ambientIdentifierBound(expression, frame.program)
   if (ambient != null) return ambient
-  return frame.env.get(expression.text) ?? noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
+  return noteUnsupported(frame, `Unknown identifier ${expression.text}`, expression)
+}
+
+function identifierHasNoUserDeclaration(expression: ts.Identifier, program: Program) {
+  const declarations = program.typeChecker?.getSymbolAtLocation(expression)?.declarations
+  return declarations == null
+    || declarations.every(declaration => program.project.typeProgram?.isSourceFileDefaultLibrary(declaration.getSourceFile()) === true)
 }
 
 function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: InterpreterFrame): Value {
@@ -1612,6 +1675,12 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: In
 
 function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported', expression)
+  const propertyName = staticPropertyName(expression.argumentExpression)
+    ?? staticNumericPropertyName(expression.argumentExpression)
+  if (target.kind === 'object' && propertyName != null) {
+    const text = expression.getText(frame.program.sourceFile)
+    return valueWithTypeFallback(readPropertyValue(target, propertyName, text), valueFromNodeType(text, expression, frame.program))
+  }
   if (target.kind !== 'array' && target.kind !== 'nullable') {
     const typed = valueFromNodeType(expression.getText(frame.program.sourceFile), expression, frame.program)
     if (typed != null) return typed
@@ -1627,7 +1696,12 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
   ) {
     return noteUnsupported(frame, 'Array length-derived index on local arrays inside loops is not supported', expression.argumentExpression)
   }
-  const index = evaluateExpression(expression.argumentExpression, frame)
+  const staticArrayIndex = target.kind === 'array' && propertyName != null
+    ? arrayIndexForPropertyName(propertyName)
+    : null
+  const index = staticArrayIndex == null
+    ? evaluateExpression(expression.argumentExpression, frame)
+    : numberValue(staticArrayIndex, staticArrayIndex, 0, String(staticArrayIndex), linearConstant(staticArrayIndex))
   const finiteCase = finiteArrayElementAccess(target, index, expression, frame)
   if (finiteCase != null) return finiteCase
   const exactIndex = exactInteger(index)
@@ -1645,7 +1719,7 @@ function evaluatePresentElementAccess(target: Value, expression: ts.ElementAcces
     if (exactIndex >= target.length.max) return nullValue('undefined')
     if (target.element == null) {
       return valueWithTypeFallback(
-        unknown(`${text} was not inferred`),
+        unknownNotInferred(`${text} was not inferred`),
         valueFromNodeType(text, expression, frame.program),
       )
     }
@@ -1682,7 +1756,7 @@ function canReadProperty(target: Value, name: string) {
 }
 
 function valueWithTypeFallback(value: Value, typed: Value | null): Value {
-  return value.kind === 'unknown' && typed != null && unknownCanUseTypeFallback(value.reason) ? typed : value
+  return value.kind === 'unknown' && typed != null && unknownCanUseTypeFallback(value) ? typed : value
 }
 
 function patternPropertyValue(value: Value, propertyName: string, typed: Value | null): Value {
@@ -1694,10 +1768,8 @@ function patternPropertyValue(value: Value, propertyName: string, typed: Value |
   return valueWithTypeFallback(readPropertyValue(value, propertyName, `${valueExpr(value) ?? 'param'}.${propertyName}`), typed)
 }
 
-function unknownCanUseTypeFallback(reason: string) {
-  return reason.includes(' was not inferred')
-    || reason.startsWith('Property ')
-    || reason.startsWith('Parameter ')
+function unknownCanUseTypeFallback(value: Extract<Value, {kind: 'unknown'}>) {
+  return value.cause === 'not-inferred'
 }
 
 function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
@@ -2884,7 +2956,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     : noteUnsupported(frame, platformRejectionReason, expression)
   const unresolvedFallback = fallback()
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
-  if (unresolvedFallback?.kind === 'number' && resolved.reason.startsWith('Unknown function ')) {
+  if (unresolvedFallback?.kind === 'number' && resolved.cause === 'unknown-function') {
     noteUnsupported(frame, resolved.reason, expression)
     return unresolvedFallback
   }
@@ -3240,7 +3312,7 @@ function evaluateEverySomeCall(
   const effectiveSource = sourceAfterCallback(source, callbackEffects, effect.callbacks[0]!)
   const sourceExpr = sourceExpression(effectiveSource, target.expression, frame)
   const effectiveLength = arrayLength(effectiveSource)
-  const item = arrayElement(effectiveSource) ?? unknown(`${sourceExpr}[] was not inferred`)
+  const item = arrayElement(effectiveSource) ?? unknownNotInferred(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`${kind}Index(${sourceExpr})`, effectiveLength)
   const raw = invokeInlineFunction(`<${kind}-predicate>`, callbackFn, [item, index, effectiveSource], frame)
   const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, effectiveLength))
@@ -3398,7 +3470,7 @@ function samePathParts(left: string[], right: string[]) {
 
 function evaluateMapElement(source: ArrayValue, sourceExpr: string, callbackFn: InlineFunctionNode, frame: InterpreterFrame): Value | null {
   const length = arrayLength(source)
-  const item = arrayElement(source) ?? unknown(`${sourceExpr}[] was not inferred`)
+  const item = arrayElement(source) ?? unknownNotInferred(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`mapIndex(${sourceExpr})`, length)
   const value = invokeInlineFunction(
     '<map-element>',
@@ -3450,7 +3522,7 @@ function filteredLength(source: ArrayValue, callbackFn: InlineFunctionNode, fram
   const fallback = numberValue(0, sourceLength.max, 0, `${text}.length`)
   if (sourceLength.max === 0) return numberValue(0, 0, 0, `${text}.length`)
   const sourceExpr = source.expr ?? text
-  const item = arrayElement(source) ?? unknown(`${sourceExpr}[] was not inferred`)
+  const item = arrayElement(source) ?? unknownNotInferred(`${sourceExpr}[] was not inferred`)
   const index = indexedElementPathValue(`filterIndex(${sourceExpr})`, sourceLength)
   const raw = invokeInlineFunction('<filter-predicate>', callbackFn, [item, index, source], frame)
   const refined = valueWithAssumptions(raw, indexedElementAssumptions(index, sourceLength))
@@ -3469,7 +3541,7 @@ function filteredElement(source: ArrayValue, sourceExpr: string, callbackFn: Inl
   const predicate = callbackPredicateExpression(callbackFn)
   const sourceElement = arrayElement(source)
   if (predicate == null || !expressionIsRepeatable(predicate, frame.program)) return sourceElement
-  const element = sourceElement ?? unknown(`${sourceExpr}[] was not inferred`)
+  const element = sourceElement ?? unknownNotInferred(`${sourceExpr}[] was not inferred`)
   const callbackFrame = childFrame(frame, new Map(frame.env), '<filter-predicate>')
   const prepared = prepareFunctionNodeInvocation(
     '<filter-predicate>',
@@ -3556,7 +3628,11 @@ function evaluatedArguments(args: ts.NodeArray<ts.Expression>, frame: Interprete
 }
 
 function pathFromExpression(expression: ts.Expression, frame: InterpreterFrame): ValuePath | null {
-  return pathFromSourceExpression(expression, indexExpression => evaluateExpression(indexExpression, frame))
+  return pathFromSourceExpression(
+    expression,
+    indexExpression => evaluateExpression(indexExpression, frame),
+    path => readPath(path, frame),
+  )
 }
 
 function nodeText(node: ts.Node, frame: InterpreterFrame) {

@@ -7,6 +7,7 @@ import {
   collectionValue,
   fixedTupleValue,
   joinValues,
+  unsupportedTupleValue,
   unknown,
   type Value,
 } from './domain.ts'
@@ -39,7 +40,7 @@ export function valueAtTypeNodeBoundary(
   program: ShapeProgram,
 ): Value {
   if (node != null && typeNodeContainsUnsupportedTuple(node, program.typeChecker)) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
   const checker = program.typeChecker
   if (checker == null) {
@@ -57,7 +58,7 @@ export function valueAtFunctionReturnBoundary(
 ): Value {
   if (fn.type == null) return value
   if (typeNodeContainsUnsupportedTuple(fn.type, program.typeChecker)) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
   const checker = program.typeChecker
   if (checker == null) return adaptValueToShape(value, valueFromFunctionReturnType(expr, fn, program))
@@ -66,9 +67,9 @@ export function valueAtFunctionReturnBoundary(
 
 function adaptValueToShape(value: Value, shape: Value | null): Value {
   if (shape == null) return value
-  if (shape.kind === 'unknown' && shape.reason.startsWith('Optional and rest tuple elements are unsupported:')) return shape
+  if (shape.kind === 'unknown' && shape.cause === 'unsupported-tuple') return shape
   if (shape.kind === 'array') {
-    if (value.kind === 'unknown') return unknownCanUseTypeFallback(value.reason) ? shape : value
+    if (value.kind === 'unknown') return unknownCanUseTypeFallback(value) ? shape : value
     if (value.kind !== 'array') return value
     if (shape.layout === 'collection') {
       return collectionValue(arrayLength(value), arrayElement(value), value.expr, value.referenceIds, arraySummary(value))
@@ -80,7 +81,7 @@ function adaptValueToShape(value: Value, shape: Value | null): Value {
   if (shape.kind === 'nullable' && value.kind === 'nullable') {
     return {...value, present: adaptValueToShape(value.present, shape.present)}
   }
-  return value.kind === 'unknown' && unknownCanUseTypeFallback(value.reason) ? shape : value
+  return value.kind === 'unknown' && unknownCanUseTypeFallback(value) ? shape : value
 }
 
 function adaptValueToTsType(
@@ -91,7 +92,7 @@ function adaptValueToTsType(
   location: ts.Node,
 ): Value {
   if (resolvedTypeContainsUnsupportedTuple(type, checker)) {
-    return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
   }
   if (type.isUnion()) {
     const presentTypes = type.types.filter(member => tsNullishKind(member) == null)
@@ -103,7 +104,9 @@ function adaptValueToTsType(
         const lengths = new Set(tupleMembers.map(members => members!.length))
         if (lengths.size === 1) {
           if (presentValue.kind === 'unknown') {
-            adapted = valueFromResolvedType(expr, type, checker, location) ?? presentValue
+            adapted = unknownCanUseTypeFallback(presentValue)
+              ? valueFromResolvedType(expr, type, checker, location) ?? presentValue
+              : presentValue
           } else if (presentValue.kind === 'array' && presentValue.layout === 'tuple'
             && presentValue.elements.length === tupleMembers[0]!.length) {
             adapted = presentTypes
@@ -115,14 +118,18 @@ function adaptValueToTsType(
         } else {
           adapted = presentValue.kind === 'array'
             ? arrayAsCollection(presentValue)
-            : valueFromResolvedType(expr, type, checker, location) ?? presentValue
+            : presentValue.kind === 'unknown' && unknownCanUseTypeFallback(presentValue)
+              ? valueFromResolvedType(expr, type, checker, location) ?? presentValue
+              : presentValue
         }
       } else {
         adapted = presentValue.kind === 'array'
           ? arrayAsCollection(presentValue)
-          : valueFromResolvedType(expr, type, checker, location) ?? presentValue
+          : presentValue.kind === 'unknown' && unknownCanUseTypeFallback(presentValue)
+            ? valueFromResolvedType(expr, type, checker, location) ?? presentValue
+            : presentValue
       }
-    } else if (presentValue.kind === 'unknown') {
+    } else if (presentValue.kind === 'unknown' && unknownCanUseTypeFallback(presentValue)) {
       adapted = valueFromResolvedType(expr, type, checker, location) ?? presentValue
     }
     return value.kind === 'nullable' ? {...value, present: adapted} : adapted
@@ -130,10 +137,10 @@ function adaptValueToTsType(
 
   if (checker.isTupleType(type)) {
     const members = fixedTupleElementTypes(type, checker)
-    if (members == null) return unknown(`Optional and rest tuple elements are unsupported: ${expr}`)
+    if (members == null) return unsupportedTupleValue(`Optional and rest tuple elements are unsupported: ${expr}`)
     if (value.kind === 'unknown') {
       const shape = valueFromResolvedType(expr, type, checker, location)
-      return shape != null && unknownCanUseTypeFallback(value.reason) ? shape : value
+      return shape != null && unknownCanUseTypeFallback(value) ? shape : value
     }
     if (value.kind !== 'array' || value.layout !== 'tuple' || value.elements.length !== members.length) {
       return unknown(`A fixed tuple with ${members.length} elements was required`)
@@ -149,7 +156,7 @@ function adaptValueToTsType(
   if (checker.isArrayLikeType(type)) {
     if (value.kind === 'unknown') {
       const shape = valueFromResolvedType(expr, type, checker, location)
-      return shape != null && unknownCanUseTypeFallback(value.reason) ? shape : value
+      return shape != null && unknownCanUseTypeFallback(value) ? shape : value
     }
     if (value.kind !== 'array') return value
     const targetElementType = arrayElementType(type, checker)
@@ -181,14 +188,12 @@ function adaptValueToTsType(
     return {...value, props}
   }
 
-  if (value.kind === 'unknown' && unknownCanUseTypeFallback(value.reason)) {
+  if (value.kind === 'unknown' && unknownCanUseTypeFallback(value)) {
     return valueFromResolvedType(expr, type, checker, location) ?? value
   }
   return value
 }
 
-function unknownCanUseTypeFallback(reason: string) {
-  return reason.includes(' was not inferred')
-    || reason.startsWith('Property ')
-    || reason.startsWith('Parameter ')
+function unknownCanUseTypeFallback(value: Extract<Value, {kind: 'unknown'}>) {
+  return value.cause === 'not-inferred'
 }

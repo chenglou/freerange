@@ -52,7 +52,7 @@ import {
   runningExtremumNumber,
   runningSumNumber,
 } from '../loop-summary.ts'
-import {fitExpressionParsed, parseExpression, type ParsedFitExpression} from '../parser.ts'
+import {fitExpressionParsed, parseExpression, publicLinearName, type ParsedFitExpression} from '../parser.ts'
 import {comparisonConstraint, provableBounds, proveComparison, runningSumFacts} from '../proof.ts'
 import {
   sameSequenceAddition,
@@ -1926,7 +1926,8 @@ function renderLinear(linear: LinearExpr): string | null {
   for (const [name, coefficient] of [...linear.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
     if (!rationalIsExactNumber(coefficient)) return null
     const value = rationalToNumber(coefficient)
-    parts.push(value === 1 ? name : `${value} * (${name})`)
+    const publicName = publicLinearName(name)
+    parts.push(value === 1 ? publicName : `${value} * (${publicName})`)
   }
   if (constant !== 0 || parts.length === 0) parts.push(`${constant}`)
   return parts.join(' + ')

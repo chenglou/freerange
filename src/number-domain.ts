@@ -10,7 +10,7 @@ import {
   type Rational,
 } from './rational.ts'
 import {
-  domainPathSyntheticName,
+  domainPathLinearName,
   parseDomainPathText,
 } from './parser.ts'
 import {
@@ -47,7 +47,7 @@ export function numberCaseLossMessage(loss: NumberCaseLoss) {
 
 export function linearNameForExpression(text: string) {
   const domainPath = parseDomainPathText(text)
-  return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathSyntheticName(text) : text
+  return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathLinearName(text) : text
 }
 
 // A value pinned to zero sits on every grid; coarser than any nonzero

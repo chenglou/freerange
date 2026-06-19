@@ -36,7 +36,11 @@ export function forgetRoot(env: Map<string, Value>, root: string) {
 // `box.v`, and `Math.min(box, y)` all match `box`, but `boxes` and `mybox` do
 // not. Build once per root and reuse across a forget, not once per lookup.
 export function rootMentionPattern(root: string): RegExp {
-  return new RegExp(`(?<![\\p{ID_Continue}$])${root}(?![\\p{ID_Continue}$])`, 'u')
+  return new RegExp(`(?<![\\p{ID_Continue}$])${escapeRegExp(root)}(?![\\p{ID_Continue}$])`, 'u')
+}
+
+function escapeRegExp(text: string) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 // A value read before a mutation keeps the mutated path's symbolic identity:

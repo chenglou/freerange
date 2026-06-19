@@ -1,9 +1,14 @@
 import * as ts from 'typescript'
 import {
+  fitDomainPathKey,
+  fitDomainPathFromExpression,
   fitExpressionParsed,
   fitExpressionText,
+  domainPathLinearName,
+  formatFitDomainPath,
   publicParsedExpressionText,
   type FitExpressionLike,
+  type FitDomainPath,
   type ParsedFitExpression,
 } from './parser.ts'
 import {
@@ -50,7 +55,8 @@ export function linearVariable(name: string): LinearExpr {
 
 export function linearFromExpressionText(text: FitExpressionLike): LinearExpr | null {
   try {
-    return linearFromExpression(fitExpressionParsed(text).expression)
+    const parsed = fitExpressionParsed(text)
+    return linearFromExpression(parsed.expression, parsed.domainPaths)
   } catch {
     return null
   }
@@ -62,14 +68,17 @@ export function linearFromExpressionText(text: FitExpressionLike): LinearExpr | 
 // semantics like source literals; everything else becomes one opaque atom,
 // named like the evaluator names the same computation, so identical
 // computations still connect through Farkas without claiming any algebra.
-export function linearFromExpression(expression: ts.Expression): LinearExpr | null {
+export function linearFromExpression(expression: ts.Expression, domainPaths: ReadonlyMap<string, FitDomainPath> = new Map()): LinearExpr | null {
   if (ts.isNumericLiteral(expression)) return linearConstant(Number(expression.text))
-  if (ts.isIdentifier(expression)) return linearVariable(expression.text)
-  if (ts.isPropertyAccessExpression(expression)) return linearVariable(expression.getText())
+  const domainPath = fitDomainPathFromExpression(expression, domainPaths)
+  if (domainPath != null) {
+    const text = formatFitDomainPath(domainPath)
+    return linearVariable(domainPath.segments.some(segment => segment.kind === 'item') ? domainPathLinearName(text) : text)
+  }
   if (ts.isElementAccessExpression(expression) && isFixedElementPathExpression(expression)) return linearVariable(expression.getText())
-  if (ts.isParenthesizedExpression(expression)) return linearFromExpression(expression.expression)
+  if (ts.isParenthesizedExpression(expression)) return linearFromExpression(expression.expression, domainPaths)
   if (ts.isPrefixUnaryExpression(expression)) {
-    const operand = linearFromExpression(expression.operand)
+    const operand = linearFromExpression(expression.operand, domainPaths)
     if (operand == null) return null
     // Unary minus is a sign-bit flip: exact for every double.
     if (expression.operator === ts.SyntaxKind.MinusToken) return linearScaleExact(operand, rationalNegate(rationalOne))
@@ -79,8 +88,8 @@ export function linearFromExpression(expression: ts.Expression): LinearExpr | nu
   if (!ts.isBinaryExpression(expression)) return null
   const op = expression.operatorToken.kind
   if (op !== ts.SyntaxKind.PlusToken && op !== ts.SyntaxKind.MinusToken && op !== ts.SyntaxKind.AsteriskToken && op !== ts.SyntaxKind.SlashToken) return null
-  const left = linearFromExpression(expression.left)
-  const right = linearFromExpression(expression.right)
+  const left = linearFromExpression(expression.left, domainPaths)
+  const right = linearFromExpression(expression.right, domainPaths)
   if (left == null || right == null) return null
   const leftConstant = constantOnlyValue(left)
   const rightConstant = constantOnlyValue(right)
@@ -264,10 +273,17 @@ export function sameExpressionText(left: FitExpressionLike, right: FitExpression
 
 export function expressionKeyFromText(text: FitExpressionLike): string {
   try {
-    return expressionKey(fitExpressionParsed(text).expression)
+    const parsed = fitExpressionParsed(text)
+    return expressionKeyWithDomainPaths(parsed.expression, parsed.domainPaths)
   } catch {
     return `text:${fitExpressionText(text)}`
   }
+}
+
+export function expressionKeyWithDomainPaths(expression: ts.Expression, domainPaths: ReadonlyMap<string, FitDomainPath>): string {
+  const domainPath = fitDomainPathFromExpression(expression, domainPaths)
+  if (domainPath != null) return `path:${fitDomainPathKey(domainPath)}`
+  return domainPaths.size === 0 ? expressionKey(expression) : structuralExpressionKey(unwrapExpression(expression), domainPaths)
 }
 
 export function expressionKey(expression: ts.Expression): string {
@@ -278,25 +294,67 @@ export function expressionKey(expression: ts.Expression): string {
   return structuralExpressionKey(current)
 }
 
-function structuralExpressionKey(current: ts.Expression): string {
-  if (ts.isIdentifier(current)) return `id:${current.text}`
+function structuralExpressionKey(current: ts.Expression, domainPaths: ReadonlyMap<string, FitDomainPath> = new Map()): string {
+  if (ts.isIdentifier(current)) {
+    const domainPath = domainPaths.get(current.text)
+    return domainPath == null ? `id:${current.text}` : `path:${fitDomainPathKey(domainPath)}`
+  }
   if (ts.isNumericLiteral(current)) return `number:${Number(current.text)}`
-  if (ts.isPropertyAccessExpression(current)) return `prop:${expressionKey(current.expression)}.${current.name.text}`
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) return `element:${expressionKey(current.expression)}[${expressionKey(current.argumentExpression)}]`
-  if (ts.isCallExpression(current)) return `call:${callName(current.expression)}(${current.arguments.map(argument => expressionKey(argument)).join(',')})`
-  if (ts.isPrefixUnaryExpression(current)) return `prefix:${current.operator}:${expressionKey(current.operand)}`
+  if (ts.isStringLiteralLike(current)) return `string:${JSON.stringify(current.text)}`
+  if (ts.isBigIntLiteral(current)) return `bigint:${current.text}`
+  if (current.kind === ts.SyntaxKind.TrueKeyword) return 'boolean:true'
+  if (current.kind === ts.SyntaxKind.FalseKeyword) return 'boolean:false'
+  if (current.kind === ts.SyntaxKind.NullKeyword) return 'null'
+  if (ts.isPropertyAccessExpression(current)) {
+    return `prop:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}.${current.name.text}`
+  }
+  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+    return `element:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}[${structuralExpressionKey(unwrapExpression(current.argumentExpression), domainPaths)}]`
+  }
+  if (ts.isCallExpression(current)) {
+    return `call:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}(${current.arguments.map(argument => structuralExpressionKey(unwrapExpression(argument), domainPaths)).join(',')})`
+  }
+  if (ts.isPrefixUnaryExpression(current)) {
+    return `prefix:${current.operator}:${structuralExpressionKey(unwrapExpression(current.operand), domainPaths)}`
+  }
+  if (ts.isTypeOfExpression(current) || ts.isVoidExpression(current) || ts.isDeleteExpression(current) || ts.isAwaitExpression(current)) {
+    return `unary:${current.kind}:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}`
+  }
+  if (ts.isPostfixUnaryExpression(current)) {
+    return `postfix:${current.operator}:${structuralExpressionKey(unwrapExpression(current.operand), domainPaths)}`
+  }
+  if (ts.isConditionalExpression(current)) {
+    return `conditional:${structuralExpressionKey(unwrapExpression(current.condition), domainPaths)}?${structuralExpressionKey(unwrapExpression(current.whenTrue), domainPaths)}:${structuralExpressionKey(unwrapExpression(current.whenFalse), domainPaths)}`
+  }
+  if (ts.isTemplateExpression(current)) {
+    const spans = current.templateSpans.map(span =>
+      `${structuralExpressionKey(unwrapExpression(span.expression), domainPaths)}:${JSON.stringify(span.literal.text)}`)
+    return `template:${JSON.stringify(current.head.text)}:${spans.join(':')}`
+  }
   if (ts.isBinaryExpression(current)) {
     const op = current.operatorToken.kind
     // + and * may swap their two operands (IEEE commutativity is bitwise) but
     // never regroup across nesting: a different association rounds
     // differently.
     if (op === ts.SyntaxKind.AsteriskToken || op === ts.SyntaxKind.PlusToken) {
-      const operands = [expressionKey(current.left), expressionKey(current.right)].sort()
+      const operands = [
+        structuralExpressionKey(unwrapExpression(current.left), domainPaths),
+        structuralExpressionKey(unwrapExpression(current.right), domainPaths),
+      ].sort()
       return `${op === ts.SyntaxKind.AsteriskToken ? 'product' : 'sum'}:${operands.join(op === ts.SyntaxKind.AsteriskToken ? '*' : '+')}`
     }
-    return `binary:${ts.SyntaxKind[op]}:${expressionKey(current.left)}:${expressionKey(current.right)}`
+    return `binary:${ts.SyntaxKind[op]}:${structuralExpressionKey(unwrapExpression(current.left), domainPaths)}:${structuralExpressionKey(unwrapExpression(current.right), domainPaths)}`
   }
-  return `text:${current.getText()}`
+  return `syntax:${syntaxChildrenKey(current, domainPaths)}`
+}
+
+function syntaxChildrenKey(node: ts.Node, domainPaths: ReadonlyMap<string, FitDomainPath>): string {
+  const children = node.getChildren()
+  if (children.length === 0) return `token:${node.kind}`
+  return `${node.kind}(${children.map(child =>
+    ts.isExpression(child)
+      ? structuralExpressionKey(unwrapExpression(child), domainPaths)
+      : syntaxChildrenKey(child, domainPaths)).join(',')})`
 }
 
 function containsElementAccess(expression: ts.Expression): boolean {
@@ -315,7 +373,13 @@ function containsElementAccess(expression: ts.Expression): boolean {
 
 export function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression
-  while (ts.isParenthesizedExpression(current)) current = current.expression
+  while (
+    ts.isParenthesizedExpression(current)
+    || ts.isNonNullExpression(current)
+    || ts.isAsExpression(current)
+    || ts.isSatisfiesExpression(current)
+    || ts.isTypeAssertionExpression(current)
+  ) current = current.expression
   return current
 }
 

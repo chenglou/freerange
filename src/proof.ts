@@ -1,4 +1,4 @@
-import {type ComparisonOperator} from './parser.ts'
+import {publicLinearName, type ComparisonOperator} from './parser.ts'
 import {
   comparisonFailureReason,
   comparisonNeed,
@@ -583,7 +583,8 @@ function singleLinearBound(linear: LinearExpr) {
   if (first == null) return null
   const [name, coefficient] = first
   if (rationalIsZero(coefficient)) return null
-  return rationalIsPositive(coefficient) ? `${name} >= 0` : `${name} <= 0`
+  const publicName = publicLinearName(name)
+  return rationalIsPositive(coefficient) ? `${publicName} >= 0` : `${publicName} <= 0`
 }
 
 export function comparisonConstraint(left: NumberValue, op: ComparisonOperator, right: NumberValue, text?: string, source: ConstraintSource = 'code'): LinearConstraint | null {

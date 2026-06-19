@@ -8,6 +8,7 @@ import {
   maxArrayLength,
   referenceIdsOverlap,
   unknown,
+  unknownNotInferred,
   type Value,
   integerValued,
 } from '../domain.ts'
@@ -23,20 +24,57 @@ export type ValuePath = {
   segments: PathSegment[]
 }
 
-export function pathFromExpression(expression: ts.Expression, evaluateIndex: (expression: ts.Expression) => Value): ValuePath | null {
+export function pathFromExpression(
+  expression: ts.Expression,
+  evaluateIndex: (expression: ts.Expression) => Value,
+  valueAtPath?: (path: ValuePath) => Value,
+): ValuePath | null {
   const unwrapped = unwrapPathExpression(expression)
   if (ts.isIdentifier(unwrapped)) return {root: unwrapped.text, segments: []}
   if (ts.isPropertyAccessExpression(unwrapped)) {
-    const parent = pathFromExpression(unwrapped.expression, evaluateIndex)
+    const parent = pathFromExpression(unwrapped.expression, evaluateIndex, valueAtPath)
     return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: unwrapped.name.text}]}
   }
   if (ts.isElementAccessExpression(unwrapped) && unwrapped.argumentExpression != null) {
-    const parent = pathFromExpression(unwrapped.expression, evaluateIndex)
+    const parent = pathFromExpression(unwrapped.expression, evaluateIndex, valueAtPath)
+    const propertyName = staticPropertyName(unwrapped.argumentExpression)
+    if (parent != null && propertyName != null) {
+      const arrayIndex = arrayIndexForPropertyName(propertyName)
+      if (arrayIndex != null && valueAtPath?.(parent).kind === 'array') {
+        return {...parent, segments: [...parent.segments, {kind: 'index', index: arrayIndex}]}
+      }
+      return {...parent, segments: [...parent.segments, {kind: 'prop', name: propertyName}]}
+    }
+    const numericPropertyName = staticNumericPropertyName(unwrapped.argumentExpression)
+    if (parent != null && numericPropertyName != null && valueAtPath?.(parent).kind === 'object') {
+      return {...parent, segments: [...parent.segments, {kind: 'prop', name: numericPropertyName}]}
+    }
     const index = exactInteger(evaluateIndex(unwrapped.argumentExpression))
     return parent == null || index == null ? null : {...parent, segments: [...parent.segments, {kind: 'index', index}]}
   }
   const root = expressionRootName(unwrapped)
   return root == null ? null : {root, segments: []}
+}
+
+export function staticPropertyName(expression: ts.Expression): string | null {
+  if (ts.isStringLiteralLike(expression)) return expression.text
+  return null
+}
+
+export function staticNumericPropertyName(expression: ts.Expression): string | null {
+  if (ts.isNumericLiteral(expression)) return String(Number(expression.text))
+  if (
+    ts.isPrefixUnaryExpression(expression)
+    && expression.operator === ts.SyntaxKind.MinusToken
+    && ts.isNumericLiteral(expression.operand)
+  ) return String(-Number(expression.operand.text))
+  return null
+}
+
+export function arrayIndexForPropertyName(name: string): number | null {
+  if (!/^(?:0|[1-9]\d*)$/.test(name)) return null
+  const index = Number(name)
+  return Number.isSafeInteger(index) && index < maxArrayLength ? index : null
 }
 
 export function valuePathExpression(path: ValuePath): string {
@@ -105,7 +143,7 @@ export function replaceValueEverywhere(env: Map<string, Value>, current: Value, 
 }
 
 export function readPropertyValue(target: Value, name: string, expr: string): Value {
-  if (target.kind === 'object') return target.props.get(name) ?? unknown(`${expr} was not inferred`)
+  if (target.kind === 'object') return target.props.get(name) ?? unknownNotInferred(`${expr} was not inferred`)
   if (target.kind === 'array' && name === 'length') return arrayLength(target)
   if (target.kind === 'nullable') return readPropertyValue(target.present, name, expr)
   return unknown(`${expr} expected an object`)
@@ -154,7 +192,7 @@ function setPathSegments(current: Value, segments: PathSegment[], value: Value, 
     const nextExpr = `${expr}.${segment.name}`
     const existing = props.get(segment.name)
     props.set(segment.name, existing == null && segments.length > 1
-      ? unknown(`${nextExpr} was not inferred before nested assignment`)
+      ? unknownNotInferred(`${nextExpr} was not inferred before nested assignment`)
       : setPathSegments(existing ?? value, segments.slice(1), value, nextExpr))
     return {...current, props}
   }

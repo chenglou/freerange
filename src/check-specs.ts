@@ -38,10 +38,10 @@ import {
 } from './branch-context.ts'
 import {linearConstant} from './linear.ts'
 import {
-  directFiniteElementAccess,
-  fixedArrayElementContractCheck,
+  checkedDomainPathProblem,
 } from './domain-paths.ts'
 import {
+  fitExpressionDomainPath,
   fitExpressionScopeSourceId,
   fitExpressionParsed,
   fitExpressionText,
@@ -53,6 +53,7 @@ import {
   fitReturnInternalRoot,
   parseFitRangeText,
   publicFitText,
+  publicLinearName,
   type FitCheckSpec,
   type FitDomainPath,
   type FitExpressionCheckSpec,
@@ -166,23 +167,17 @@ export function verifyCheckSpecWithProof(
   }
 
   if (spec.kind === 'range') {
-    const directElement = directFiniteElementAccess(fitExpressionParsed(spec.expression).expression)
-    if (directElement != null) {
-      const checked = fixedArrayElementContractCheck(
-        context.env.get(directElement.root),
-        publicFitText(directElement.root),
-        directElement.index,
-      )
-      if ('reason' in checked) {
-        return checkProof({
-          file,
-          ...(spec.line == null ? {} : {line: spec.line}),
-          functionName,
-          text: spec.text,
-          status: 'unknown',
-          reason: checked.reason,
-        }, 'shape', 'fixed-tuple-index', 'checked fixed-index contract placement', [], context.assumptions)
-      }
+    const domainPath = fitExpressionDomainPath(spec.expression)
+    const pathProblem = domainPath == null ? null : checkedDomainPathProblem(domainPath, context.env.get(domainPath.root))
+    if (pathProblem != null) {
+      return checkProof({
+        file,
+        ...(spec.line == null ? {} : {line: spec.line}),
+        functionName,
+        text: spec.text,
+        status: 'unknown',
+        reason: pathProblem,
+      }, 'shape', 'static-path', 'checked static contract path placement', [], context.assumptions)
     }
     const boundIndexCheck = proveBoundIndexRangeSpec(spec, boundIndexContext)
     if (boundIndexCheck != null && boundIndexCheck.status !== 'pass') {
@@ -1014,7 +1009,7 @@ function rangeCaseCounterexample(
 function formatCounterexamplePoint(point: Map<string, Rational>): string {
   const entries = [...point.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([name, value]) => `${publicFitText(name)} = ${rationalToNumber(value)}`)
+    .map(([name, value]) => `${publicFitText(publicLinearName(name))} = ${rationalToNumber(value)}`)
   return entries.length > 6 ? `${entries.slice(0, 6).join(', ')}, …` : entries.join(', ')
 }
 
@@ -1215,7 +1210,9 @@ function domainPathCollectionText(domainPath: FitDomainPath) {
       collection = `${collection}[]`
       continue
     }
-    collection = `${collection}.${segment.name}`
+    collection = segment.kind === 'index'
+      ? `${collection}[${segment.index}]`
+      : `${collection}.${segment.name}`
   }
   return publicFitText(collection)
 }
@@ -1227,7 +1224,7 @@ function domainPathText(domainPath: FitDomainPath) {
       text += `.${segment.name}`
       continue
     }
-    text += '[]'
+    text += segment.kind === 'index' ? `[${segment.index}]` : '[]'
   }
   return publicFitText(text)
 }

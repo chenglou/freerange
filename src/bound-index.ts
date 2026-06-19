@@ -480,6 +480,7 @@ function sameDomainPath(left: FitDomainPath, right: FitDomainPath) {
     const other = right.segments[index]!
     if (segment.kind !== other.kind) return false
     if (segment.kind === 'prop' && other.kind === 'prop') return segment.name === other.name
+    if (segment.kind === 'index' && other.kind === 'index') return segment.index === other.index
     if (segment.kind === 'item' && other.kind === 'item') {
       return segment.label === other.label && (segment.offset ?? 0) === (other.offset ?? 0)
     }
@@ -492,6 +493,10 @@ function domainPathText(domainPath: FitDomainPath) {
   for (const segment of domainPath.segments) {
     if (segment.kind === 'prop') {
       text += `.${segment.name}`
+      continue
+    }
+    if (segment.kind === 'index') {
+      text += `[${segment.index}]`
       continue
     }
     if (segment.label == null) {

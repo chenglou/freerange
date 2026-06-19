@@ -914,7 +914,8 @@ function lowerRawExpressionText(text: string, options: LowerOptions): string {
 function lowerDomainPath(domainPath: FitDomainPath, options: LowerOptions): string {
   let text = domainPath.root === fitReturnInternalRoot ? options.returnName : domainPath.root
   for (const segment of domainPath.segments) {
-    if (segment.kind === 'prop') text += `.${segment.name}`
+    if (segment.kind === 'prop') text += /^[$\p{ID_Start}_][$\p{ID_Continue}_\u200C\u200D]*$/u.test(segment.name) ? `.${segment.name}` : `[${JSON.stringify(segment.name)}]`
+    else if (segment.kind === 'index') text += `[${segment.index}]`
     else text += '[0]!'
   }
   return text
@@ -925,6 +926,8 @@ function domainPathText(domainPath: FitDomainPath) {
   for (const segment of domainPath.segments) {
     if (segment.kind === 'prop') {
       text += `.${segment.name}`
+    } else if (segment.kind === 'index') {
+      text += `[${segment.index}]`
     } else {
       text += domainPathItemText(segment)
     }

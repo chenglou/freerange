@@ -174,6 +174,7 @@ export type SequenceAddition =
 export type UnknownValue = {
   kind: 'unknown'
   reason: string
+  cause?: 'not-inferred' | 'unsupported-tuple'
   // JavaScript still considers an out-of-domain NaN result a number. Keep
   // enough state for typeof and the Number predicates without admitting it
   // to checked arithmetic.
