@@ -2970,14 +2970,6 @@ const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/imports/import-patterns.ts'], 'namespaceImportedStructuralShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapBlockRowsWithDestructure'),
   formatInferSnapshot(['tests/patterns/loop-patterns.ts'], 'localLoopAnnotation'),
-  formatInferSnapshot([
-    '../vibescript/demos/photo-gallery/layout.ts',
-    '../vibescript/demos/photo-gallery/prompt-layout.ts',
-  ], 'getGridLayout'),
-  formatInferSnapshot([
-    '../vibescript/demos/photo-gallery/layout.ts',
-    '../vibescript/demos/photo-gallery/prompt-layout.ts',
-  ], 'getLineLayout'),
 ].join('\n'))
 if (snapshotUpdateRequested()) {
   await Bun.write(inferSnapshotExpectedPath, actualInferSnapshot)

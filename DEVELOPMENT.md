@@ -15,17 +15,14 @@ bun install
 - `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
 - `bun run fr check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
 - `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
-- `bun run bench -- --runs 3` — dev-only timing for the current sibling demo contract set, including cold load, warmed load/verify medians, and a load-phase split; pass files to time a custom set
-- `bun run verify:demos` — verify the current checked Vibescript/Pretext demo contracts from sibling checkouts
+- `bun run bench -- --runs 3 path/to/file.ts` — dev-only timing for explicit files, including cold load, warmed load/verify medians, and a load-phase split
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
 - `bun run verify:interpreter` — run the interpreter on focused tests and snapshot the abstract return values it builds
 - `bun run verify:semantics` — snapshot the internal obligation/proof-trace shape for a tiny checked fixture
 - `bun run verify:corpus` — reproducible external corpus sweep over every `@fit` source file when `/Users/chenglou/github/freerange-corpus` is present
-- `bun run verify:bench` — loose warmed performance guard for demo-contract load and verification time
-- `bun run audit:demos` — summarize which demo `@fit` checks are likely-removable redundant noise versus public-looking explicit contracts
 - `bun run knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
-- `bun run check` — full local gate: pattern tests, parser tests, demo contracts, eval/interpreter/semantic/corpus/bench snapshots, typecheck, lint, and knip
+- `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter/semantic/corpus snapshots, typecheck, lint, and knip
 
 ## Current Sources Of Truth
 
@@ -35,7 +32,7 @@ bun install
 - [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [demo-contracts.expected.txt](./demo-contracts.expected.txt), [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for demos, the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter tests, proof-trace shape, and the external corpus sweep
+- [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt), and [corpus-probes.expected.txt](./corpus-probes.expected.txt) — stable harness snapshots for the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter tests, proof-trace shape, and the external corpus sweep
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -65,7 +62,7 @@ Dev tools and harnesses:
 - `bun run test` — runs the focused checker suites in isolated worker processes
 - [tests/check](./tests/check), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), and [tests/cli](./tests/cli) — focused checker, call evaluation, interpreter frame ownership, range-reduction, type-contract, purity, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
-- `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), [audit-demo-contracts.ts](./audit-demo-contracts.ts), [demo-contract-paths.ts](./demo-contract-paths.ts), and [snapshot.ts](./snapshot.ts) — snapshot, demo, corpus, audit, and benchmark harnesses
+- `verify-*.ts`, [corpus-probes.ts](./corpus-probes.ts), and [snapshot.ts](./snapshot.ts) — snapshot and corpus harnesses
 
 ## Infer Tool
 
@@ -77,7 +74,7 @@ Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter
 
 `infer` must stay total. Recursive helper cycles should report an unsupported recursion stop. Do not recursively copy TypeScript object or array structure just to make `infer` prettier; ask TypeScript only for the exact node or path the checker is using.
 
-Treat `infer`, `check --audit`, `audit:demos`, and normal reports as one
+Treat `infer`, `check --audit`, and normal reports as one
 adoption loop: inspect what source proves, keep the human-important `@fit`
 comments, then classify any remaining failure as missing input fact, unsupported
 source shape, helper boundary, or real proof gap.
@@ -88,7 +85,7 @@ Do not invent containers from a written path. `given input.width: 0..10` may att
 
 ## Selector Audit
 
-`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks. This is separate from `audit:demos`, which summarizes redundant demo annotations.
+`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks.
 
 ## External Corpus Probes
 

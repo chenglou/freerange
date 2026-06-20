@@ -9,7 +9,6 @@ import {
   runBench,
   sourceLineCount,
 } from './bench-core.ts'
-import {demoContractPaths} from './demo-contract-paths.ts'
 
 type BenchOptions = {
   paths: string[]
@@ -21,16 +20,15 @@ if (args.includes('--help') || args.includes('-h')) {
   printHelp()
 } else {
   const options = parseBenchArgs(args)
-  const paths = options.paths.length === 0 ? demoContractPaths : options.paths
-  const label = options.paths.length === 0 ? 'demo contracts' : 'custom files'
-  const lineCount = await sourceLineCount(paths)
+  if (options.paths.length === 0) throw new Error('bench needs at least one file path')
+  const lineCount = await sourceLineCount(options.paths)
 
-  console.log(`bench: ${label}`)
-  console.log(`files: ${paths.length} entry, ${lineCount} lines`)
+  console.log('bench: custom files')
+  console.log(`files: ${options.paths.length} entry, ${lineCount} lines`)
 
   const runs: BenchRun[] = []
   for (let index = 0; index < options.runs; index++) {
-    const run = runBench(paths)
+    const run = runBench(options.paths)
     runs.push(run)
     console.log(`run ${index + 1}: ${formatMs(run.totalMs)} total (${formatMs(run.loadMs)} load, ${formatMs(run.verifyMs)} verify) - ${formatSummary(run.checks)}, ${run.files} files`)
     console.log(`  load: ${formatLoadTiming(run.loadTiming, run.loadMs)}`)
@@ -75,7 +73,6 @@ function parseRuns(text: string) {
 function printHelp() {
   console.log([
     'Usage: bun run bench [--runs N] [path ...]',
-    '',
-    'Without paths, benchmarks the current sibling demo contract set.',
+    'At least one path is required.',
   ].join('\n'))
 }

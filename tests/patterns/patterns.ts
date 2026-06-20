@@ -4,10 +4,8 @@
 // - `rectInside`
 // - `rectEquals`
 // - `nonOverlapX` / `nonOverlapY`
-// - `life-calendar` numeric sizing: `**`, `Math.sqrt`, `Math.ceil`, positive-domain facts, integer facts after `ceil`
 // - column/row width reasoning: tables, grids, flex-like negotiation, cells that cover multiple columns
 // - Pretext text facts: line width fits, fragments are ordered, fragments cover ranges, selection rects reuse paint fragments
-// - scroll-anchor stability as a userland geometry relation
 
 const patternGap = 4
 

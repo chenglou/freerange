@@ -13,16 +13,13 @@
     "test:update": "FREERANGE_UPDATE_SNAPSHOTS=1 bun run test",
     "test:parser": "bun tests/parser/parser-tests.ts",
     "bench": "bun bench.ts",
-    "verify:demos": "bun verify-demo-contracts.ts",
     "verify:photo-gallery": "bun verify-photo-gallery-infer-snapshots.ts",
     "verify:eval": "bun verify-eval-snapshots.ts",
     "verify:interpreter": "bun verify-interpreter-snapshots.ts",
     "verify:semantics": "bun verify-semantic-snapshots.ts",
     "verify:corpus": "bun verify-corpus-probes.ts",
-    "verify:bench": "bun verify-bench-budget.ts",
-    "audit:demos": "bun audit-demo-contracts.ts",
     "knip": "knip",
-    "check": "bun run test && bun run test:parser && bun run verify:demos && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && bun run verify:semantics && bun run verify:corpus && bun run verify:bench && tsc && oxlint --type-aware src tests bench.ts bench-core.ts fr.ts verify-demo-contracts.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts verify-semantic-snapshots.ts verify-corpus-probes.ts verify-bench-budget.ts audit-demo-contracts.ts demo-contract-paths.ts corpus-probes.ts snapshot.ts --ignore-pattern '*.js' && bun run knip"
+    "check": "bun run test && bun run test:parser && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && bun run verify:semantics && bun run verify:corpus && tsc && oxlint --type-aware src tests bench.ts bench-core.ts fr.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts verify-semantic-snapshots.ts verify-corpus-probes.ts corpus-probes.ts snapshot.ts --ignore-pattern '*.js' && bun run knip"
   },
   "devDependencies": {
     "knip": "^6.14.2",
