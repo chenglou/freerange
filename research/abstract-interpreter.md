@@ -102,7 +102,7 @@ Current core:
 
 The interpreter now answers function bodies, top-level inline checks, local inline checks, return checks, object-field checks, type-boundary checks, supported loop reports, and helper-call obligations. `src/check-core.ts` holds the current checker shell around interpreter state.
 
-The useful comparison was behavioral, not architectural. The old evaluator helped reveal missing surfaces, then got deleted with the differential harness once demos, negative reports, inferred facts, focused interpreter tests, the corpus sweep, and type/lint all had enough coverage.
+The useful comparison was behavioral, not architectural. The old evaluator helped reveal missing surfaces, then got deleted with the differential harness once demos, negative reports, inferred facts, focused interpreter tests, and type/lint all had enough coverage.
 
 Lessons worth keeping:
 

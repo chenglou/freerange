@@ -9,7 +9,6 @@ import type {KnipConfig} from 'knip'
 const config: KnipConfig = {
   entry: [
     'verify-*.ts',
-    'corpus-probes.ts',
     'snapshot.ts',
     'tests/orchestration/fixtures/*.ts',
     // Fixture files loaded by file path inside test suites and the verify scripts
