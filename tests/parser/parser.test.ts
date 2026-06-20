@@ -18,6 +18,9 @@ import {
   type FitRange,
   type FitSpec,
 } from '../../src/parser.ts'
+import {testSuite} from '../test-suite.ts'
+
+testSuite('parser suite', () => {
 
 function expect(condition: boolean, message: string): asserts condition {
   if (condition) return
@@ -353,4 +356,4 @@ function layout(availableWidth: number) {
   }
 }
 
-console.log('parser: syntax layer checks passed')
+})

@@ -6,9 +6,8 @@ bun install
 
 ## Day-To-Day
 
-- `bun run test` — focused checker suites, positive patterns, stable negative messages, CLI regressions, and curated inference snapshots
+- `bun run test` — focused checker suites, parser checks, positive patterns, stable negative messages, CLI regressions, and curated inference snapshots
 - `bun run test:update` — update the focused suite's negative and inference snapshots
-- `bun run test:parser` — focused parser-layer checks in [tests/parser](./tests/parser) for contract syntax classification and TS type lowering
 - `bun run fr --help` — print the CLI command shapes
 - `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
@@ -58,7 +57,7 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [bench.ts](./bench.ts) and [bench-core.ts](./bench-core.ts) — dev-only timing tools
-- `bun run test` — runs the focused checker suites in isolated worker processes
+- `bun run test` — runs the focused checker suites and parser checks in isolated worker processes
 - [tests/check](./tests/check), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), and [tests/cli](./tests/cli) — focused checker, call evaluation, interpreter frame ownership, range-reduction, type-contract, purity, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
 - `verify-*.ts` and [snapshot.ts](./snapshot.ts) — snapshot harnesses
