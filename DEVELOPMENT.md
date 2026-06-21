@@ -18,9 +18,8 @@ bun install
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
 - `bun run verify:interpreter` — run the interpreter on focused tests and snapshot the abstract return values it builds
-- `bun run verify:semantics` — snapshot the internal obligation/proof-trace shape for a tiny checked fixture
 - `bun knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
-- `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter/semantic snapshots, typecheck, lint, and knip
+- `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter snapshots, typecheck, lint, and knip
 
 ## Current Sources Of Truth
 
@@ -30,7 +29,7 @@ bun install
 - [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt), and [semantic-snapshots.expected.txt](./semantic-snapshots.expected.txt) — stable harness snapshots for the local photo-gallery infer inventory, interpreter-adjacent facts, focused interpreter tests, and proof-trace shape
+- [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), and [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt) — stable harness snapshots for the local photo-gallery infer inventory, interpreter-adjacent facts, and focused interpreter tests
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 

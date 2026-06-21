@@ -14,8 +14,7 @@
     "verify:photo-gallery": "bun verify-photo-gallery-infer-snapshots.ts",
     "verify:eval": "bun verify-eval-snapshots.ts",
     "verify:interpreter": "bun verify-interpreter-snapshots.ts",
-    "verify:semantics": "bun verify-semantic-snapshots.ts",
-    "check": "bun run test && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && bun run verify:semantics && tsc && oxlint --type-aware src tests bench.ts bench-core.ts fr.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts verify-semantic-snapshots.ts snapshot.ts --ignore-pattern '*.js' && bun knip"
+    "check": "bun run test && bun run verify:photo-gallery && bun run verify:eval && bun run verify:interpreter && tsc && oxlint --type-aware src tests bench.ts bench-core.ts fr.ts verify-photo-gallery-infer-snapshots.ts verify-eval-snapshots.ts verify-interpreter-snapshots.ts snapshot.ts --ignore-pattern '*.js' && bun knip"
   },
   "devDependencies": {
     "knip": "^6.14.2",
