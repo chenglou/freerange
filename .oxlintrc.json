@@ -1,0 +1,7 @@
+{
+  "ignorePatterns": [
+    "**/*.js",
+    "import-pattern-declared-package/**",
+    "import-pattern-declared-package-no-map/**"
+  ]
+}
