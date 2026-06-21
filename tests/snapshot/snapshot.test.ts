@@ -1,4 +1,4 @@
-import {test} from 'bun:test'
+import {expect, test} from 'bun:test'
 import {formatSnapshotDiff, verifySnapshot} from '../../snapshot.ts'
 import {formatTestDiagnostics} from '../test-diagnostics.ts'
 
@@ -10,17 +10,17 @@ test('snapshot differences show one focused hunk', () => {
     '+ changed',
     '  three',
   ].join('\n')
-  assert(formatSnapshotDiff('one\ntwo\nthree\n', 'one\nchanged\nthree\n') === expected, 'expected one focused snapshot hunk')
+  expect(formatSnapshotDiff('one\ntwo\nthree\n', 'one\nchanged\nthree\n')).toBe(expected)
 })
 
 test('large snapshot differences are bounded', () => {
   const expected = Array.from({length: 30}, (_, index) => `old ${index}`).join('\n')
   const actual = Array.from({length: 30}, (_, index) => `new ${index}`).join('\n')
   const diff = formatSnapshotDiff(expected, actual)
-  assert(diff.includes('- ... 14 more lines'), 'expected omitted old-line count')
-  assert(diff.includes('+ ... 14 more lines'), 'expected omitted new-line count')
-  assert(!diff.includes('old 29'), 'expected old lines to be bounded')
-  assert(!diff.includes('new 29'), 'expected new lines to be bounded')
+  expect(diff).toContain('- ... 14 more lines')
+  expect(diff).toContain('+ ... 14 more lines')
+  expect(diff).not.toContain('old 29')
+  expect(diff).not.toContain('new 29')
 })
 
 test('snapshot updates write the normalized result', async () => {
@@ -28,8 +28,8 @@ test('snapshot updates write the normalized result', async () => {
   const previous = Bun.env['FREERANGE_UPDATE_SNAPSHOTS']
   try {
     Bun.env['FREERANGE_UPDATE_SNAPSHOTS'] = '1'
-    assert(await verifySnapshot(path, 'updated', 'temporary snapshot'), 'expected snapshot update to pass')
-    assert(await Bun.file(path).text() === 'updated\n', 'expected a normalized snapshot update')
+    expect(await verifySnapshot(path, 'updated', 'temporary snapshot')).toBe(true)
+    expect(await Bun.file(path).text()).toBe('updated\n')
   } finally {
     if (previous == null) delete Bun.env['FREERANGE_UPDATE_SNAPSHOTS']
     else Bun.env['FREERANGE_UPDATE_SNAPSHOTS'] = previous
@@ -47,19 +47,15 @@ test('test diagnostics keep outcomes and omit proof machinery', () => {
     trace: {steps: ['large internal trace']},
     detail: {missing: ['large internal detail']},
   })
-  assert(output.includes('"status": "fail"'), 'expected the check status')
-  assert(output.includes('"reason": "width exceeded"'), 'expected the check reason')
-  assert(!output.includes('large internal'), 'expected nested proof machinery to be omitted')
+  expect(output).toContain('"status": "fail"')
+  expect(output).toContain('"reason": "width exceeded"')
+  expect(output).not.toContain('large internal')
 })
 
 test('large test diagnostics are bounded', () => {
   const output = formatTestDiagnostics({
     checks: Array.from({length: 100}, (_, index) => `check ${index}`),
   })
-  assert(output.includes('... 24 more lines'), 'expected omitted diagnostic-line count')
-  assert(!output.includes('check 99'), 'expected late diagnostic lines to be omitted')
+  expect(output).toContain('... 24 more lines')
+  expect(output).not.toContain('check 99')
 })
-
-function assert(condition: boolean, message: string): asserts condition {
-  if (!condition) throw new Error(message)
-}

@@ -23,5 +23,16 @@ declare const process: {
 }
 
 declare module 'bun:test' {
+  type Matchers<T> = {
+    readonly not: Matchers<T>
+    toBe(expected: T): void
+    toBeDefined(): void
+    toContain(expected: T extends string ? string : T extends readonly (infer Item)[] ? Item : never): void
+    toEqual(expected: unknown): void
+    toHaveLength(expected: number): void
+    toThrow(expected?: string | RegExp | Error | (new (...args: never[]) => Error)): void
+  }
+
+  export function expect<T>(actual: T): Matchers<T>
   export function test(name: string, run: () => void | Promise<void>, timeout?: number): void
 }
