@@ -12,7 +12,7 @@
     "test:update": "FREERANGE_UPDATE_SNAPSHOTS=1 bun run test",
     "bench": "bun bench.ts",
     "probe:photo-gallery": "bun verify-photo-gallery-infer-snapshots.ts",
-    "check": "bun run test && tsc && oxlint --type-aware src tests bench.ts bench-core.ts fr.ts verify-photo-gallery-infer-snapshots.ts snapshot.ts --ignore-pattern '*.js' && bun knip"
+    "check": "bun run test && tsc && oxlint --type-aware --ignore-pattern '*.js' --ignore-pattern 'photo-gallery/**' --ignore-pattern 'import-pattern-declared-package/**' --ignore-pattern 'import-pattern-declared-package-no-map/**' && bun knip"
   },
   "devDependencies": {
     "knip": "^6.14.2",
