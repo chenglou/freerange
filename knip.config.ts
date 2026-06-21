@@ -24,7 +24,6 @@ const config: KnipConfig = {
     'tests/imports/negative-import-*.ts',
     'tests/interpreter-matrix/interpreter-matrix-*.ts',
     'photo-gallery/index.ts',
-    'tests/vocab/*.ts',
   ],
   ignoreDependencies: [
     // Workspace-package fixtures resolved via tsconfig paths
