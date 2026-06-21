@@ -59,3 +59,12 @@ test('large test diagnostics are bounded', () => {
   expect(output).toContain('... 24 more lines')
   expect(output).not.toContain('check 99')
 })
+
+test('test diagnostics bound text and show collections', () => {
+  const text = Array.from({length: 100}, (_, index) => `line ${index}`).join('\n')
+  const boundedText = formatTestDiagnostics(text)
+  expect(boundedText).toContain('... 20 more lines')
+  expect(boundedText).not.toContain('line 99')
+  expect(formatTestDiagnostics(new Set(['missing height']))).toContain('missing height')
+  expect(formatTestDiagnostics(new Map([['height', 'missing']]))).toContain('height')
+})

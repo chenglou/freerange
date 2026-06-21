@@ -1,3 +1,4 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {
   addNumbers,
   arraySummary,
@@ -21,10 +22,12 @@ import {farkasProvesNonNegative, linearMaximum} from '../../src/farkas.ts'
 import {linearAdd, linearConstant, linearScale, linearSubtract, linearVariable} from '../../src/linear.ts'
 import {rationalEquals} from '../../src/rational.ts'
 import {verifyFitSource} from '../../src/reports.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
-import {testSuite} from '../test-suite.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('domain suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('domain', () => {
+test('preserves simplex bounded, unbounded, infeasible, and proof results', () => {
 const simplexX = linearVariable('simplex.x')
 const simplexY = linearVariable('simplex.y')
 const simplexNonnegativeFacts = [
@@ -103,11 +106,11 @@ if (
     {diff: simplexY, strict: false},
   ])
 ) {
-  console.error('expected simplex pivots to preserve bounded, unbounded, infeasible, and proof results')
-  suite.fail()
+  throw testDiagnosticError('expected simplex pivots to preserve bounded, unbounded, infeasible, and proof results', [])
 }
+})
 
-
+test('widens arithmetic ranges that admit infinity hazards', () => {
 const unboundedNonnegativeProduct = multiplyNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'left'),
   numberValue(0, Number.POSITIVE_INFINITY, null, 'right'),
@@ -115,8 +118,7 @@ const unboundedNonnegativeProduct = multiplyNumbers(
 // Zero times Infinity is NaN, and both are admitted here, so the hull must
 // widen fully for the NaN exclusion to see it.
 if (unboundedNonnegativeProduct.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected the NaN-admitting product to widen fully, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
-  suite.fail()
+  throw testDiagnosticError(`expected the NaN-admitting product to widen fully, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`, unboundedNonnegativeProduct)
 }
 
 const unboundedNonnegativeQuotient = divideNumbers(
@@ -125,8 +127,7 @@ const unboundedNonnegativeQuotient = divideNumbers(
 )
 // Infinity over Infinity is NaN, and both sides admit Infinity here.
 if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected the NaN-admitting quotient to widen fully, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
-  suite.fail()
+  throw testDiagnosticError(`expected the NaN-admitting quotient to widen fully, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`, unboundedNonnegativeQuotient)
 }
 
 
@@ -135,10 +136,11 @@ const unboundedDifference = subtractNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'right'),
 )
 if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`)
-  suite.fail()
+  throw testDiagnosticError(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`, unboundedDifference)
 }
+})
 
+test('preserves numeric computation identity across refinement and joins', () => {
 const computationLeft = numberValue(0, 1000, null, 'left', linearVariable('left'))
 const computationHeight = numberValue(0, 40, null, 'height', linearVariable('height'))
 const computationGap = numberValue(0, 10, null, 'gap', linearVariable('gap'))
@@ -188,10 +190,11 @@ if (
   || !sameNumberComputation(refinedOperandJoin.computation, reverseRefinedOperandJoin.computation)
   || unrelatedContainedCasesRetainIdentity
 ) {
-  console.error('expected numeric computation identity to ignore refinement, merge facts, preserve grouping, and support commutativity')
-  suite.fail()
+  throw testDiagnosticError('expected numeric computation identity to ignore refinement, merge facts, preserve grouping, and support commutativity', [])
 }
+})
 
+test('joins array summaries by semantic identity and compatible paths', () => {
 const exactSequenceRelation: SequenceRelation = {
   kind: 'adjacent-comparison',
   left: {item: 'next', path: ['y']},
@@ -345,10 +348,11 @@ if (
   || arraySummary(emptyBranchSummaryJoin)?.lastEnd != null
   || incompatibleAccumulation?.lastEnd != null
 ) {
-  console.error('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends')
-  suite.fail()
+  throw testDiagnosticError('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends', [])
 }
+})
 
+test('retains runtime identity for commutative computations', () => {
 const computationIdentityChecks = verifyFitSource('computation-identity.ts', `
 /** @fit
  * given left: -100..100
@@ -362,11 +366,11 @@ function commutative(left: number, right: number) {
 `)
 const computationIdentityFailures = computationIdentityChecks.filter(check => check.status !== 'pass')
 if (computationIdentityFailures.length > 0 || computationIdentityChecks.length !== 2) {
-  console.error('expected commutative computations to retain runtime identity')
-  console.error(formatTestDiagnostics(computationIdentityChecks))
-  suite.fail()
+  throw testDiagnosticError('expected commutative computations to retain runtime identity', computationIdentityChecks)
 }
+})
 
+test('excludes NaN from checked number inputs by default', () => {
 const nanComputationIdentityChecks = verifyFitSource('nan-computation-identity.ts', `
 /** @fit
  * return == right + left
@@ -376,12 +380,11 @@ function nanCapableCommutative(left: number, right: number) {
 }
 `)
 if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'pass') {
-  console.error('expected checked number inputs to exclude NaN by default')
-  console.error(formatTestDiagnostics(nanComputationIdentityChecks))
-  suite.fail()
+  throw testDiagnosticError('expected checked number inputs to exclude NaN by default', nanComputationIdentityChecks)
 }
+})
 
-
+test('contains NaN hazards while preserving overflow and guarded parsing', () => {
 const checkedNumberOperationChecks = verifyFitSource('checked-number-operations.ts', `
 /** @fit
  * given extent: 0..Infinity
@@ -633,11 +636,11 @@ if (
   || uncheckedSquare?.status !== 'unknown'
   || uncheckedSquare.reason?.includes('operand may be NaN') !== true
 ) {
-  console.error('expected NaN hazards to stop at their source while overflow and guarded parsing remain usable')
-  console.error(formatTestDiagnostics(checkedNumberOperationChecks))
-  suite.fail()
+  throw testDiagnosticError('expected NaN hazards to stop at their source while overflow and guarded parsing remain usable', checkedNumberOperationChecks)
 }
+})
 
+test('supports matching named indexes and direct adjacent relationships', () => {
 const collectionExpressionChecks = verifyFitSource('collection-expression-contracts.ts', `function twice(value: number) {
   return value * 2
 }
@@ -767,12 +770,11 @@ if (
     check?.status !== 'unknown'
     || check.reason?.toLowerCase().includes('named index') !== true)
 ) {
-  console.error('expected named indexes to support only matching positions and direct adjacent relationships')
-  console.error(formatTestDiagnostics(collectionExpressionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected named indexes to support only matching positions and direct adjacent relationships', collectionExpressionChecks)
 }
+})
 
-
+test('simplifies rounding comparisons to smaller arithmetic', () => {
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
  * given width: int 320..2400
  * given gap: int 1..32
@@ -802,11 +804,11 @@ if (
   || missingRoundingCheck?.status !== 'unknown'
   || missingRoundingCheck.reason?.includes('missing: (width / 2) <= gap') !== true
 ) {
-  console.error('expected proof simplification to reduce rounding comparisons to smaller arithmetic')
-  console.error(formatTestDiagnostics(simplifiedRoundingChecks))
-  suite.fail()
+  throw testDiagnosticError('expected proof simplification to reduce rounding comparisons to smaller arithmetic', simplifiedRoundingChecks)
 }
+})
 
+test('covers the rounding proof family and rejects unsafe cases', () => {
 const roundingFamilyChecks = verifyFitSource('rounding-family.ts', `/** @fit
  * given value: -10..10
  * return.floorValue <= value
@@ -891,11 +893,11 @@ if (
   || roundStrictCheck?.status !== 'unknown'
   || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
 ) {
-  console.error('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases')
-  console.error(formatTestDiagnostics(roundingFamilyChecks))
-  suite.fail()
+  throw testDiagnosticError('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases', roundingFamilyChecks)
 }
+})
 
+test('infers expanded Math builtin ranges and rejects unsafe domains', () => {
 const expandedMathChecks = verifyFitSource('expanded-math.ts', `/** @fit
  * return.pi: 3..4
  * return.powValue: 8
@@ -970,12 +972,11 @@ if (
   || logNeedsPositiveCheck?.status !== 'unknown'
   || logNeedsPositiveCheck.reason?.includes('Math.log expected a non-negative number') !== true
 ) {
-  console.error('expected expanded Math builtin families to infer ranges and reject unsafe domains')
-  console.error(formatTestDiagnostics(expandedMathChecks))
-  suite.fail()
+  throw testDiagnosticError('expected expanded Math builtin families to infer ranges and reject unsafe domains', expandedMathChecks)
 }
+})
 
-
+test('keeps source identifiers distinct from wildcard path placeholders', () => {
 const wildcardIdentityCollisionChecks = verifyFitSource('wildcard-identity-collision.ts', `
 /** @fit
  * given rows.length: 1..1
@@ -991,10 +992,8 @@ const wildcardIdentityCollisionCheck = wildcardIdentityCollisionChecks.find(chec
   check.functionName === 'wildcardIdentityCollision'
   && check.text === 'rows[].height == __fit_domain_rows___item_height')
 if (wildcardIdentityCollisionCheck?.status !== 'fail') {
-  console.error('expected a source identifier not to share proof identity with a wildcard path placeholder')
-  console.error(formatTestDiagnostics(wildcardIdentityCollisionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected a source identifier not to share proof identity with a wildcard path placeholder', wildcardIdentityCollisionChecks)
 }
-
+})
 
 })

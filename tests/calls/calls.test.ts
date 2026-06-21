@@ -1,3 +1,4 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {createFunctionContractCache, readTopLevelGlobal, verifyFitProgramWithCallsites} from '../../src/check-core.ts'
 import {callSiteText} from '../../src/call-site-text.ts'
 import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
@@ -8,19 +9,17 @@ import {
   importedDefaultRunsOnce,
   importedDestructuredDefaultUsesFinalBinding,
 } from './imported-caller.ts'
-import {testSuite} from '../test-suite.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('calls suite', async suite => {
-void importedArgumentRunsOnce
-void importedDefaultRunsOnce
-void importedDestructuredDefaultUsesFinalBinding
+setDefaultTimeout(300_000)
 
 function verifyFitSourceWithCallsites(file: string, sourceText: string) {
   const program = buildFitSourceFile(file, sourceText, readTopLevelGlobal)
   return verifyFitProgramWithCallsites(program, createFunctionContractCache())
 }
 
+describe('calls', () => {
+test('prepares source call operands and parameters once', () => {
 const sourceCallChecks = verifyFitSource('source-call-evaluation.ts', `
 function id(value: number) {
   return value
@@ -277,11 +276,11 @@ function uncertainNullishRightJoinsState(value: number | undefined) {
 
 const sourceCallFailures = sourceCallChecks.filter(check => check.status !== 'pass')
 if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 25) {
-  console.error('expected source calls to prepare operands and parameters once')
-  console.error(formatTestDiagnostics(sourceCallChecks))
-  suite.fail()
+  throw testDiagnosticError('expected source calls to prepare operands and parameters once', sourceCallChecks)
 }
+})
 
+test('keeps arrays and fixed tuples separate at type boundaries', () => {
 const arrayTupleBoundaryChecks = verifyFitSource('array-tuple-boundaries.ts', `
 function throughArray(values: number[]) {
   return values
@@ -694,12 +693,17 @@ if (
   || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status !== 'unknown'
   || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status !== 'unknown'
 ) {
-  console.error('expected arrays and fixed tuples to keep separate guarantees at every type boundary')
-  console.error({missingBoundaryPasses, invalidBoundaryPasses, missingBoundaryNonPasses, invalidBoundaryNonPasses})
-  console.error(formatTestDiagnostics(arrayTupleBoundaryChecks))
-  suite.fail()
+  throw testDiagnosticError('expected arrays and fixed tuples to keep separate guarantees at every type boundary', {
+    missingBoundaryPasses,
+    invalidBoundaryPasses,
+    missingBoundaryNonPasses,
+    invalidBoundaryNonPasses,
+    arrayTupleBoundaryChecks,
+  })
 }
+})
 
+test('reports unsupported tuple assertions and collection writes at their boundaries', () => {
 const arrayTupleBoundaryProgram = buildFitSourceFile('array-tuple-boundary-interpreter.ts', `
 function assertionCannotCreateTuple(values: number[]) {
   return values as [number, number]
@@ -745,16 +749,16 @@ if (
   || !nestedIndexedWriteBoundary.output.issues.some(issue => issue.message.includes('Indexed writes to collections are unsupported'))
   || !negativeTupleIndexWriteBoundary.output.issues.some(issue => issue.message.includes('not a JavaScript array index'))
 ) {
-  console.error('expected unsupported tuple assertions and collection writes to report their actual boundary')
-  console.error({
+  throw testDiagnosticError('expected unsupported tuple assertions and collection writes to report their actual boundary', {
     assertion: assertionBoundary.output.issues.map(issue => issue.message),
     indexedWrite: indexedWriteBoundary.output.issues.map(issue => issue.message),
     nestedIndexedWrite: nestedIndexedWriteBoundary.output.issues.map(issue => issue.message),
     negativeTupleIndexWrite: negativeTupleIndexWriteBoundary.output.issues.map(issue => issue.message),
   })
-  suite.fail()
 }
+})
 
+test('uses final destructured parameter bindings for claims', () => {
 const finalBindingNegativeChecks = verifyFitSource('final-binding-negative.ts', `
 function read({value}: {value: number}, ignored = value = 2) {
   return value
@@ -772,11 +776,11 @@ if (
   || finalBindingNegativeChecks[0]?.status !== 'fail'
   || !finalBindingNegativeChecks[0].reason?.includes('is false')
 ) {
-  console.error('expected false claims to see final destructured parameter bindings')
-  console.error(formatTestDiagnostics(finalBindingNegativeChecks))
-  suite.fail()
+  throw testDiagnosticError('expected false claims to see final destructured parameter bindings', finalBindingNegativeChecks)
 }
+})
 
+test('keeps caller and default text distinct from callee parameter names', () => {
 const sameParameterNameChecks = verifyFitSource('same-parameter-name.ts', `
 /** @fit
  * given value: 0..10
@@ -812,11 +816,11 @@ if (
   || defaultRequirement?.status !== 'unknown'
   || !defaultRequirement.reason?.includes('(value + 1) <= value')
 ) {
-  console.error('expected caller and default text to remain distinct from callee parameter names')
-  console.error(formatTestDiagnostics(sameParameterNameChecks))
-  suite.fail()
+  throw testDiagnosticError('expected caller and default text to remain distinct from callee parameter names', sameParameterNameChecks)
 }
+})
 
+test('keeps explicit arguments in caller scope and defaults in callee scope', () => {
 const simultaneousParameterChecks = verifyFitSource('simultaneous-parameters.ts', `
 function difference(left: number, right: number) {
   return left - right
@@ -875,8 +879,7 @@ if (
   || classBindingRebase !== '(class x { static value() { return x } })'
   || methodFreeVariableRebase !== '({x() { return amount + total }})'
 ) {
-  console.error('expected explicit arguments to stay in caller scope and defaults to read earlier parameters')
-  console.error({
+  throw testDiagnosticError('expected explicit arguments to stay in caller scope and defaults to read earlier parameters', {
     simultaneousParameterChecks,
     quotedPropertyRebase,
     namedPropertyRebase,
@@ -892,9 +895,10 @@ if (
     classBindingRebase,
     methodFreeVariableRebase,
   })
-  suite.fail()
 }
+})
 
+test('retains caller argument text in rest parameter contracts', () => {
 const restContractChecks = verifyFitSource('rest-contract.ts', `
 /** @fit
  * given values.length: int 2..2
@@ -913,11 +917,11 @@ function tooFew() {
 `)
 const restRequirement = restContractChecks.find(check => check.text.includes('exactlyTwo(1): requires'))
 if (restRequirement?.status !== 'fail' || !restRequirement.reason?.includes('([1]).length >= 2')) {
-  console.error('expected rest parameter contracts to retain caller argument text')
-  console.error(formatTestDiagnostics(restContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected rest parameter contracts to retain caller argument text', restContractChecks)
 }
+})
 
+test('skips body callsite checks for input-only annotations', () => {
 const annotationOnlyInputChecks = verifyFitSource('annotation-only-input.ts', `
 export function annotationOnlyInput(
   value: number, // @fit 0..10
@@ -932,11 +936,11 @@ function narrowInput(
 }
 `)
 if (annotationOnlyInputChecks.some(check => check.status !== 'pass')) {
-  console.error('expected input-only annotations to skip body callsite checks')
-  console.error(formatTestDiagnostics(annotationOnlyInputChecks))
-  suite.fail()
+  throw testDiagnosticError('expected input-only annotations to skip body callsite checks', annotationOnlyInputChecks)
 }
+})
 
+test('reports unsupported call input families directly', () => {
 const unsupportedCallProgram = buildFitSourceFile('unsupported-call-inputs.ts', `
 function total(...values: number[]) {
   return values.length
@@ -961,14 +965,14 @@ if (
   !unknownSpread.output.issues.some(issue => issue.message.includes('Call spread needs an exact tuple'))
   || !destructuringDefault.output.issues.some(issue => issue.message.includes('Unsupported parameter binding'))
 ) {
-  console.error('expected unsupported call input families to be reported directly')
-  console.error({
+  throw testDiagnosticError('expected unsupported call input families to be reported directly', {
     unknownSpread: unknownSpread.output.issues.map(issue => issue.message),
     destructuringDefault: destructuringDefault.output.issues.map(issue => issue.message),
   })
-  suite.fail()
 }
+})
 
+test('reports specific reasons for unsupported platform calls', () => {
 const unsupportedPlatformProgram = buildFitSourceFile('unsupported-platform-calls.ts', `
 function arrayFrom(values: number[]) {
   return Array.from(values).length
@@ -1037,11 +1041,14 @@ const supportedSortFailures = ['sortWithComparator', 'toSortedWithComparator'].f
     : []
 })
 if (unsupportedPlatformFailures.length > 0 || supportedSortFailures.length > 0) {
-  console.error('expected deliberate platform boundaries to report their shared specific reasons')
-  console.error({unsupportedPlatformFailures, supportedSortFailures})
-  suite.fail()
+  throw testDiagnosticError('expected deliberate platform boundaries to report their shared specific reasons', {
+    unsupportedPlatformFailures,
+    supportedSortFailures,
+  })
 }
+})
 
+test('preserves operand effects across unsupported callbacks and callable targets', () => {
 const callbackBoundaryProgram = buildFitSourceFile('callback-boundaries.ts', `
 function localCallbackIsRejected(values: number[]) {
   let count = 0
@@ -1106,24 +1113,27 @@ if (
   || isExactNumber(unknownTarget.value, 0)
   || unknownTarget.output.issues.length === 0
 ) {
-  console.error('expected unsupported callbacks and callable targets to preserve operand effects without stale facts')
-  console.error({
+  throw testDiagnosticError('expected unsupported callbacks and callable targets to preserve operand effects without stale facts', {
     localCallback,
     callbackExpression,
     sortComparator,
     callbackThis,
     unknownTarget,
   })
-  suite.fail()
 }
+})
 
+test('shares prepared invocation semantics with imported calls', async () => {
+void importedArgumentRunsOnce
+void importedDefaultRunsOnce
+void importedDestructuredDefaultUsesFinalBinding
 const importedReport = await verifyFitFiles(['tests/calls/imported-caller.ts'])
 if (importedReport.phase !== 'ready' || importedReport.summary.pass !== 4) {
-  console.error('expected imported calls to share prepared invocation semantics')
-  console.error(formatTestDiagnostics(importedReport))
-  suite.fail()
+  throw testDiagnosticError('expected imported calls to share prepared invocation semantics', importedReport)
 }
+})
 
+test('applies finite defaults at checked contracts and publishes call requirements', () => {
 const finiteDefaultChecks = verifyFitSourceWithCallsites('finite-default.ts', `
 /** @fit
  * return: -Infinity<..<Infinity
@@ -1209,11 +1219,11 @@ if (
     && check.text.includes('requires value: -Infinity..Infinity')
     && check.status === 'pass')
 ) {
-  console.error('expected finite defaults to apply only at checked contracts and to publish call requirements')
-  console.error(formatTestDiagnostics(finiteDefaultChecks))
-  suite.fail()
+  throw testDiagnosticError('expected finite defaults to apply only at checked contracts and to publish call requirements', finiteDefaultChecks)
 }
+})
 
+test('applies finite defaults to nested numeric leaves and exact paths', () => {
 const finiteLeafChecks = verifyFitSourceWithCallsites('finite-leaves.ts', `
 /** @fit
  * pure
@@ -1256,11 +1266,11 @@ if (
   || rejectedSibling?.status !== 'fail'
   || rejectedDestructured?.status !== 'fail'
 ) {
-  console.error('expected finite defaults on nested numeric leaves and exact-path range replacement')
-  console.error(formatTestDiagnostics(finiteLeafChecks))
-  suite.fail()
+  throw testDiagnosticError('expected finite defaults on nested numeric leaves and exact-path range replacement', finiteLeafChecks)
 }
+})
 
+test('applies the finite boundary to resolved numeric leaves', () => {
 const resolvedFiniteLeafChecks = verifyFitSourceWithCallsites('resolved-finite-leaves.ts', `
 type Box<T> = {value: T}
 interface Base {value: number}
@@ -1385,11 +1395,11 @@ if (
   || !resolvedFiniteLeafChecks.callsiteChecks.some(check => check.text.startsWith('genericLeaf({} as any)') && check.status === 'unknown')
   || !resolvedFiniteLeafChecks.callsiteChecks.some(check => check.text.startsWith('requiresFalse(Number.isNaN(value))') && check.status === 'pass')
 ) {
-  console.error('expected resolved, inherited, destructured, optional, nullable, and inferred number leaves to share the finite boundary')
-  console.error(formatTestDiagnostics(resolvedFiniteLeafChecks))
-  suite.fail()
+  throw testDiagnosticError('expected resolved, inherited, destructured, optional, nullable, and inferred number leaves to share the finite boundary', resolvedFiniteLeafChecks)
 }
+})
 
+test('uses TypeScript generic constraints for contracts and call checks', () => {
 const constrainedGenericFunctionResult = verifyFitSourceWithCallsites('constrained-generic-function.ts', `/** @fit
  * given value > 0
  * return > 0
@@ -1432,11 +1442,14 @@ if (
   || unconstrainedGenericGivenCheck?.status !== 'unknown'
   || unconstrainedGenericGivenCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
 ) {
-  console.error('expected TypeScript generic constraints to drive function contracts and call checks')
-  console.error(formatTestDiagnostics({constrainedGenericFunctionResult, unconstrainedGenericFunctionChecks}))
-  suite.fail()
+  throw testDiagnosticError('expected TypeScript generic constraints to drive function contracts and call checks', {
+    constrainedGenericFunctionResult,
+    unconstrainedGenericFunctionChecks,
+  })
 }
+})
 
+test('assumes boolean given predicates in callees and checks them at callers', () => {
 const booleanGivenContractResult = verifyFitSourceWithCallsites('boolean-given-contracts.ts', `function isValidLayout(layout: {width: number}) {
   return layout.width > 0
 }
@@ -1482,9 +1495,8 @@ if (
   || invalidBooleanGivenCall?.status !== 'fail'
   || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
 ) {
-  console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
-  console.error(formatTestDiagnostics(booleanGivenContractResult))
-  suite.fail()
+  throw testDiagnosticError('expected boolean given predicates to be assumed in the callee and checked at callers', booleanGivenContractResult)
 }
+})
 
 })

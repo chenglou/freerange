@@ -1,14 +1,15 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {inferFitFiles, readTopLevelGlobal} from '../../src/check-core.ts'
 import {isFunctionImplementation} from '../../src/function-shape.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {verifyFitSource} from '../../src/reports.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
-import {testSuite} from '../test-suite.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('source checking suite', async suite => {
-const repoDir = new URL('../..', import.meta.url).pathname
+setDefaultTimeout(300_000)
 
+describe('source checking', () => {
+test('indexes every supported callable implementation', () => {
 const callableFamilyProgram = buildFitSourceFile('callable-family.ts', `
 export default () => 1
 export const arrow = () => 1
@@ -37,12 +38,11 @@ if (
   || callableFamilyNames.some(name => !expectedCallableNames.includes(name))
   || [...callableFamilyProgram.functions.values()].some(fn => !isFunctionImplementation(fn.node))
 ) {
-  console.error('expected every supported function implementation to share one indexed declaration family')
-  console.error(formatTestDiagnostics(callableFamilyNames))
-  suite.fail()
+  throw testDiagnosticError('expected every supported function implementation to share one indexed declaration family', callableFamilyNames)
 }
+})
 
-
+test('rejects recursive numeric input defaults without rejecting nonnumeric recursion', () => {
 const recursiveFiniteDefaultChecks = verifyFitSource('recursive-finite-default.ts', `
 type Tree = {value: number; children: Tree[]}
 type Labels = {name: string; children: Labels[]}
@@ -64,12 +64,11 @@ function labels(tree: Labels) {
 if (!recursiveFiniteDefaultChecks.some(check => check.status === 'unknown'
   && check.reason === 'Recursive input types cannot publish the finite numeric default')
   || recursiveFiniteDefaultChecks.some(check => check.functionName === 'labels' && check.status !== 'pass')) {
-  console.error('expected recursive numeric input types to be rejected instead of silently dropping finite leaves')
-  console.error(formatTestDiagnostics(recursiveFiniteDefaultChecks))
-  suite.fail()
+  throw testDiagnosticError('expected recursive numeric input types to be rejected instead of silently dropping finite leaves', recursiveFiniteDefaultChecks)
 }
+})
 
-
+test('checks contract paths against real TypeScript shapes', () => {
 const shortcutCleanupChecks = verifyFitSource('shortcut-cleanup.ts', `type AliasRect = {left: number}
 
 /** @fit
@@ -174,11 +173,11 @@ if (
   || missingCallbackItemFieldCheck?.status !== 'unknown'
   || missingCallbackItemFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
 ) {
-  console.error('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape')
-  console.error(formatTestDiagnostics(shortcutCleanupChecks))
-  suite.fail()
+  throw testDiagnosticError('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape', shortcutCleanupChecks)
 }
+})
 
+test('type-checks every contract surface before proving', () => {
 const contractTypeLayerChecks = verifyFitSource('contract-type-layer.ts', `type Tile = {
   width: number // @fit missingTypeMin..Infinity
 }
@@ -231,11 +230,11 @@ const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, te
     || check.line == null
 })
 if (missingTypeLayerErrors.length > 0) {
-  console.error('expected every contract surface to be TypeScript-checked before proving')
-  console.error(formatTestDiagnostics({missingTypeLayerErrors, contractTypeLayerChecks}))
-  suite.fail()
+  throw testDiagnosticError('expected every contract surface to be TypeScript-checked before proving', {missingTypeLayerErrors, contractTypeLayerChecks})
 }
+})
 
+test('allows inline equality for non-number values', () => {
 const inlineNonNumberEqualityChecks = verifyFitSource('inline-non-number-equality.ts', `function keepLines(lines: string[]) {
   return {
     lines,
@@ -245,11 +244,11 @@ const inlineNonNumberEqualityChecks = verifyFitSource('inline-non-number-equalit
 `)
 const inlineNonNumberEqualityFailures = inlineNonNumberEqualityChecks.filter(check => check.status !== 'pass')
 if (inlineNonNumberEqualityFailures.length > 0) {
-  console.error('expected inline equality to allow non-number values')
-  console.error(formatTestDiagnostics(inlineNonNumberEqualityChecks))
-  suite.fail()
+  throw testDiagnosticError('expected inline equality to allow non-number values', inlineNonNumberEqualityChecks)
 }
+})
 
+test('prepares contracts once by exact contract identity', () => {
 const preparedContractProgram = buildFitSourceFile('prepared-contracts.ts', `/** @fit
  * given input: 0..10
  * return: 0..10
@@ -275,16 +274,16 @@ if (
   || preparedPropertyTemplateCounts.filter(count => count === 1).length !== 1
   || preparedPropertyTemplateCounts.filter(count => count === 0).length !== 1
 ) {
-  console.error('expected contracts to be prepared once and rejected by exact contract identity')
-  console.error(formatTestDiagnostics({
+  throw testDiagnosticError('expected contracts to be prepared once and rejected by exact contract identity', {
     assumptions: preparedBounded.assumptions.map(spec => spec.text),
     proofs: preparedBounded.proofs.map(spec => spec.text),
     typeChecks: preparedBounded.typeChecks,
     preparedPropertyTemplateCounts,
-  }))
-  suite.fail()
+  })
 }
+})
 
+test('uses the prepared body index for top-level contracts', () => {
 const topLevelContractChecks = verifyFitSource('top-level-contracts.ts', `const layout = {
   width: 5, // @fit 0..10
   bad: 'wide', // @fit 0..10
@@ -315,11 +314,11 @@ if (
   || topLoopPass?.status !== 'pass'
   || topNestedPlacement?.status !== 'unknown'
 ) {
-  console.error('expected top-level properties, loops, and nested placements to use the prepared body index')
-  console.error(formatTestDiagnostics(topLevelContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected top-level properties, loops, and nested placements to use the prepared body index', topLevelContractChecks)
 }
+})
 
+test('checks bare pure boolean call contracts', () => {
 const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
   return layout.width > 0
 }
@@ -377,12 +376,11 @@ if (
   || numericExpressionCheck?.status !== 'unknown'
   || numericExpressionCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
 ) {
-  console.error('expected bare pure boolean call contracts to be checked')
-  console.error(formatTestDiagnostics(booleanCallContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected bare pure boolean call contracts to be checked', booleanCallContractChecks)
 }
+})
 
-
+test('keeps unsupported named indexes out of prepared requirements and summaries', () => {
 const unsupportedNamedIndexProgram = buildFitSourceFile('unsupported-named-index-preparation.ts', `/** @fit
  * given items[$i + 2].height == items[$i].height
  * return[$i].height == return[$j].height
@@ -399,17 +397,16 @@ if (
   || preparedUnsupportedNamedIndexes.proofs.length !== 0
   || preparedUnsupportedNamedIndexes.unsupportedSpecs.length !== 2
 ) {
-  console.error('expected unsupported named indexes to stay out of call requirements and helper summaries')
-  console.error(formatTestDiagnostics({
+  throw testDiagnosticError('expected unsupported named indexes to stay out of call requirements and helper summaries', {
     contractSpecs: preparedUnsupportedNamedIndexes.contractSpecs.map(spec => spec.text),
     assumptions: preparedUnsupportedNamedIndexes.assumptions.map(spec => spec.text),
     proofs: preparedUnsupportedNamedIndexes.proofs.map(spec => spec.text),
     unsupported: preparedUnsupportedNamedIndexes.unsupportedSpecs,
-  }))
-  suite.fail()
+  })
 }
+})
 
-
+test('reports the unsupported step in contract expressions', () => {
 const unsupportedContractExpressionChecks = verifyFitSource('contract-unsupported.ts', `function randomLimit() {
   return Math.random() * 10
 }
@@ -432,11 +429,11 @@ if (
   || dynamicContractCheck?.status !== 'unknown'
   || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
 ) {
-  console.error('expected unsupported contract expressions to explain the unsupported step')
-  console.error(formatTestDiagnostics(unsupportedContractExpressionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected unsupported contract expressions to explain the unsupported step', unsupportedContractExpressionChecks)
 }
+})
 
+test('rejects mutable helper aliases in contracts', () => {
 const mutableAliasContractChecks = verifyFitSource('contract-mutable-alias.ts', `let max = Math.max
 
 /** @fit
@@ -451,11 +448,11 @@ if (
   mutableAliasContractCheck?.status !== 'unknown'
   || mutableAliasContractCheck.reason?.includes('max is a mutable helper alias') !== true
 ) {
-  console.error('expected mutable helper aliases in contracts to be rejected loudly')
-  console.error(formatTestDiagnostics(mutableAliasContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected mutable helper aliases in contracts to be rejected loudly', mutableAliasContractChecks)
 }
+})
 
+test('rejects unsupported given helper expressions', () => {
 const unsupportedGivenExpressionChecks = verifyFitSource('given-contract-unsupported.ts', `const box = {limit: 0}
 
 function bump(value: number) {
@@ -520,11 +517,11 @@ if (
   || noInputBooleanGivenCheck?.status !== 'unknown'
   || noInputBooleanGivenCheck.reason !== 'given must mention an input'
 ) {
-  console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
-  console.error(formatTestDiagnostics(unsupportedGivenExpressionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected given helper expressions to reject impure, input-independent, and derived range target cases', unsupportedGivenExpressionChecks)
 }
+})
 
+test('stops contract proofs on call spreads without exact tuples', () => {
 const unsupportedSpreadContractChecks = verifyFitSource('unsupported-spread-contract.ts', `
 function first(...values: number[]): number {
   return values[0]!
@@ -545,12 +542,11 @@ if (
   unsupportedSpreadContractCheck?.status !== 'unknown'
   || unsupportedSpreadContractCheck.reason?.includes('Call spread needs an exact tuple') !== true
 ) {
-  console.error('expected every interpreter rejection in a contract expression to stop the proof')
-  console.error(formatTestDiagnostics(unsupportedSpreadContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected every interpreter rejection in a contract expression to stop the proof', unsupportedSpreadContractChecks)
 }
+})
 
-
+test('preserves structured path and binding scope semantics', () => {
 const structuredPathRegressionChecks = verifyFitSource('structured-path-regressions.ts', `
 /** @fit
  * given items.length: 0..2
@@ -650,11 +646,11 @@ if (
   || reservedReturnBindingChecks[0]?.status !== 'unknown'
   || reservedReturnBindingChecks[0].reason?.includes('is reserved for Freerange contract evaluation') !== true
 ) {
-  console.error('expected structured paths and binding scopes to preserve their semantic guarantees')
-  console.error(formatTestDiagnostics(structuredPathRegressionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected structured paths and binding scopes to preserve their semantic guarantees', structuredPathRegressionChecks)
 }
+})
 
+test('includes TypeScript suggestions for unambiguous given typos', () => {
 const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
 
 /** @fit
@@ -668,11 +664,11 @@ if (
   suggestedGivenRootReason?.includes("TS2552: Cannot find name 'containerSizX'") !== true
   || suggestedGivenRootReason.includes("Did you mean 'containerSizeX'?") !== true
 ) {
-  console.error('expected given typo suggestion')
-  console.error(suggestedGivenRootReason ?? '<missing>')
-  suite.fail()
+  throw testDiagnosticError('expected given typo suggestion', suggestedGivenRootReason ?? '<missing>')
 }
+})
 
+test('uses TypeScript diagnostics for ambiguous given typos', () => {
 const ambiguousGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
 const boxesGapY = 24
 
@@ -684,11 +680,11 @@ function layout(containerSizeX: number) {
 }
 `).find(check => check.text === 'given containerSizeX >= 2 * boxesGap')?.reason
 if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !== true) {
-  console.error('expected ambiguous given typo to use TypeScript diagnostics')
-  console.error(ambiguousGivenRootReason ?? '<missing>')
-  suite.fail()
+  throw testDiagnosticError('expected ambiguous given typo to use TypeScript diagnostics', ambiguousGivenRootReason ?? '<missing>')
 }
+})
 
+test('rejects duplicate function implementations during TypeScript preflight', () => {
 let duplicateFunctionError: Error | null = null
 try {
   verifyFitSource('duplicate-function.ts', `function score() {
@@ -707,11 +703,11 @@ if (
   || !duplicateFunctionError.message.includes('duplicate-function.ts(1,10): error TS2393: Duplicate function implementation.')
   || !duplicateFunctionError.message.includes('duplicate-function.ts(5,10): error TS2393: Duplicate function implementation.')
 ) {
-  console.error('expected duplicate function names to be rejected by TypeScript preflight')
-  console.error(duplicateFunctionError?.message ?? '<no error>')
-  suite.fail()
+  throw testDiagnosticError('expected duplicate function names to be rejected by TypeScript preflight', duplicateFunctionError?.message ?? '<no error>')
 }
+})
 
+test('preflights the current source text on every repeated build', () => {
 const repeatedSourceFile = 'repeated-source-preflight.ts'
 const repeatedValidSource = `function score(value: number) {
   return value + 1
@@ -734,11 +730,11 @@ if (
   || !repeatedSourceError.message.includes("repeated-source-preflight.ts(2,9): error TS2322: Type 'number' is not assignable to type 'string'.")
   || !repeatedValidProgram.functions.has('score')
 ) {
-  console.error('expected standalone source preflight to use the current source text on every build')
-  console.error(repeatedSourceError?.message ?? '<no error>')
-  process.exitCode = 1
+  throw testDiagnosticError('expected standalone source preflight to use the current source text on every build', repeatedSourceError?.message ?? '<no error>')
 }
+})
 
+test('preserves complete default library conflict diagnostics', () => {
 let defaultLibraryConflictError: Error | null = null
 try {
   buildFitSourceFile('default-library-conflict.ts', 'type PropertyKey = string\n', readTopLevelGlobal)
@@ -751,11 +747,12 @@ if (
   !(defaultLibraryConflictError instanceof TypeScriptUserlandError)
   || defaultLibraryConflictError.message !== expectedDefaultLibraryConflict
 ) {
-  console.error('expected standalone source preflight failures to keep complete TypeScript diagnostics')
-  console.error(defaultLibraryConflictError?.message ?? '<no error>')
-  process.exitCode = 1
+  throw testDiagnosticError('expected standalone source preflight failures to keep complete TypeScript diagnostics', defaultLibraryConflictError?.message ?? '<no error>')
 }
+})
 
+test('preserves unsupported source extension diagnostics', () => {
+const repoDir = new URL('../..', import.meta.url).pathname
 let unsupportedSourceExtensionError: Error | null = null
 try {
   buildFitSourceFile('unsupported-source.txt', 'function ok() { return 1 }\n', readTopLevelGlobal)
@@ -770,11 +767,11 @@ if (
   !(unsupportedSourceExtensionError instanceof TypeScriptUserlandError)
   || unsupportedSourceExtensionError.message !== expectedUnsupportedSourceExtension
 ) {
-  console.error('expected unsupported standalone source extensions to keep TypeScript diagnostics')
-  console.error(unsupportedSourceExtensionError?.message ?? '<no error>')
-  process.exitCode = 1
+  throw testDiagnosticError('expected unsupported standalone source extensions to keep TypeScript diagnostics', unsupportedSourceExtensionError?.message ?? '<no error>')
 }
+})
 
+test('preserves ordered diagnostics across an imported temporary project', async () => {
 const importedPreflightDir = `/tmp/freerange-source-preflight-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
 const importedPreflightMkdir = Bun.spawnSync({cmd: ['mkdir', '-p', importedPreflightDir]})
 if (importedPreflightMkdir.exitCode !== 0) throw new Error(`Could not create ${importedPreflightDir}`)
@@ -809,9 +806,7 @@ void enabled
     || normalizedImportedPreflightError !== expectedImportedPreflightError
     || !importedPreflightProgram.functions.has('readLabel')
   ) {
-    console.error('expected standalone source preflight to preserve ordered multi-file diagnostics')
-    console.error(importedPreflightError?.message ?? '<no error>')
-    process.exitCode = 1
+    throw testDiagnosticError('expected standalone source preflight to preserve ordered multi-file diagnostics', importedPreflightError?.message ?? '<no error>')
   }
 
   let importedSyntaxError: Error | null = null
@@ -826,15 +821,14 @@ void enabled
     !(importedSyntaxError instanceof TypeScriptUserlandError)
     || normalizedImportedSyntaxError !== '<fixture>/helper.ts(1,22): error TS1109: Expression expected.'
   ) {
-    console.error('expected standalone source preflight to preserve imported syntax diagnostics')
-    console.error(importedSyntaxError?.message ?? '<no error>')
-    process.exitCode = 1
+    throw testDiagnosticError('expected standalone source preflight to preserve imported syntax diagnostics', importedSyntaxError?.message ?? '<no error>')
   }
 } finally {
   Bun.spawnSync({cmd: ['rm', '-rf', importedPreflightDir]})
 }
+})
 
-
+test('stops before unsupported branch bodies', () => {
 const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `declare function externalPredicate(): boolean
 
 function danger() {
@@ -854,11 +848,11 @@ if (
   unsupportedBranchConditionCheck?.status !== 'unknown'
   || unsupportedBranchConditionCheck.reason !== 'Unsupported branch condition: externalPredicate()'
 ) {
-  console.error('expected unsupported branch conditions to stop before speculating through branch bodies')
-  console.error(formatTestDiagnostics(unsupportedBranchConditionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected unsupported branch conditions to stop before speculating through branch bodies', unsupportedBranchConditionChecks)
 }
+})
 
+test('forgets every reachable alias after possible mutation', () => {
 const referenceAliasChecks = verifyFitSource('reference-aliases.ts', `function grow(row: {size: number}) {
   row.size = 999
 }
@@ -955,11 +949,11 @@ if (
   || readOnlyAlias?.status !== 'pass'
   || conditionalAlias?.status === 'pass'
 ) {
-  console.error('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches')
-  console.error(formatTestDiagnostics(referenceAliasChecks))
-  suite.fail()
+  throw testDiagnosticError('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches', referenceAliasChecks)
 }
+})
 
+test('rejects invalid pure and nested class-member placements', () => {
 const purePlacementChecks = verifyFitSource('pure-placement.ts', `function misplacedPure(items: number[]) {
   /** @fit
    * pure
@@ -994,11 +988,11 @@ if (
   || nestedClassPlacements.length !== 2
   || nestedClassPlacements.some(check => check.status !== 'unknown' || check.reason !== nestedPlacementReason)
 ) {
-  console.error('expected invalid loop and nested class-member placements to be rejected during placement classification')
-  console.error(formatTestDiagnostics(purePlacementChecks))
-  suite.fail()
+  throw testDiagnosticError('expected invalid loop and nested class-member placements to be rejected during placement classification', purePlacementChecks)
 }
+})
 
+test('infers typed object parameter array shape facts', () => {
 const inferReport = inferFitFiles(['tests/source-checking/patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
 const inferFacts = new Set(inferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedInferFacts = [
@@ -1009,11 +1003,11 @@ const expectedInferFacts = [
 ]
 const missingInferFacts = expectedInferFacts.filter(fact => !inferFacts.has(fact))
 if (missingInferFacts.length > 0) {
-  console.error('expected inferred facts changed')
-  console.error(missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected inferred facts changed', missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
 }
+})
 
+test('infers filtered row subset lineage', () => {
 const filterInferReport = inferFitFiles(['tests/source-checking/patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
 const filterInferFacts = new Set(filterInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedFilterInferFacts = [
@@ -1021,11 +1015,11 @@ const expectedFilterInferFacts = [
 ]
 const missingFilterInferFacts = expectedFilterInferFacts.filter(fact => !filterInferFacts.has(fact))
 if (missingFilterInferFacts.length > 0) {
-  console.error('expected filter inferred facts changed')
-  console.error(missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected filter inferred facts changed', missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
 }
+})
 
+test('infers filtered mapped row base lineage', () => {
 const filterMapInferReport = inferFitFiles(['tests/source-checking/patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
 const filterMapInferFacts = new Set(filterMapInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedFilterMapInferFacts = [
@@ -1033,18 +1027,19 @@ const expectedFilterMapInferFacts = [
 ]
 const missingFilterMapInferFacts = expectedFilterMapInferFacts.filter(fact => !filterMapInferFacts.has(fact))
 if (missingFilterMapInferFacts.length > 0) {
-  console.error('expected filter-map inferred facts changed')
-  console.error(missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected filter-map inferred facts changed', missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
 }
+})
 
+test('keeps fixed tuple length inference readable', () => {
 const tupleInferReport = inferFitFiles(['tests/source-checking/patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
 const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 if (!tupleFacts.has('return.length == 2')) {
-  console.error('expected fixed tuple length inference to stay readable')
-  suite.fail()
+  throw testDiagnosticError('expected fixed tuple length inference to stay readable', tupleFacts)
 }
+})
 
+test('preserves inferred call-site text', () => {
 const callSiteTextReport = inferFitFiles(['tests/source-checking/patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
 const callSiteTextFacts = new Set(callSiteTextReport.functions[0]?.facts.map(fact => fact.text) ?? [])
 const expectedCallSiteTextFacts = [
@@ -1052,9 +1047,8 @@ const expectedCallSiteTextFacts = [
 ]
 const missingCallSiteTextFacts = expectedCallSiteTextFacts.filter(fact => !callSiteTextFacts.has(fact))
 if (missingCallSiteTextFacts.length > 0) {
-  console.error('expected call-site inferred text changed')
-  console.error(missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected call-site inferred text changed', missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
 }
+})
 
 })

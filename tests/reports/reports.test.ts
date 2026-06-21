@@ -1,11 +1,14 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {verifySnapshot} from '../../snapshot.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
-import {testSuite} from '../test-suite.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('reports suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('reports', () => {
+test('checks every positive catalog obligation and trace', async () => {
 const positiveCatalogs = [
   {path: 'tests/source-checking/patterns.ts', expectedChecks: 340},
   {path: 'tests/loops/loop-patterns.ts', expectedChecks: 115},
@@ -13,11 +16,6 @@ const positiveCatalogs = [
   {path: 'tests/interpreter-matrix/interpreter-matrix-patterns.ts', expectedChecks: 19},
 ] as const
 const positiveFiles = positiveCatalogs.map(catalog => catalog.path)
-const negativeFiles = ['tests/source-checking/negative-patterns.ts', 'tests/source-checking/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
-const negativeExpectedPath = 'negative-patterns.expected.txt'
-const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
-const repoDir = new URL('../..', import.meta.url).pathname
-const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
 
 const positiveReport = await verifyFitFiles(positiveFiles)
 const actualPositiveCounts = new Map<string, number>()
@@ -29,17 +27,16 @@ const positiveCountFailures = positiveCatalogs.filter(catalog =>
 const unexpectedPositiveFiles = [...actualPositiveCounts.keys()].filter(path =>
   !positiveCatalogs.some(catalog => catalog.path === path))
 if (positiveReport.phase !== 'ready' || positiveCountFailures.length > 0 || unexpectedPositiveFiles.length > 0) {
-  console.error('expected every positive catalog obligation to exist and pass')
-  for (const catalog of positiveCountFailures) {
-    console.error(`${catalog.path}: expected ${catalog.expectedChecks}, got ${actualPositiveCounts.get(catalog.path) ?? 0}`)
-  }
-  for (const path of unexpectedPositiveFiles) console.error(`unexpected positive catalog: ${path}`)
-  for (const check of positiveReport.checks.filter(check => check.status !== 'pass')) {
-    console.error(`${check.status.toUpperCase()} ${check.file}:${check.functionName}: ${check.text}`)
-  }
-  suite.fail()
+  throw testDiagnosticError('expected every positive catalog obligation to exist and pass', {
+    positiveCountFailures: positiveCountFailures.map(catalog => ({
+      path: catalog.path,
+      expected: catalog.expectedChecks,
+      actual: actualPositiveCounts.get(catalog.path) ?? 0,
+    })),
+    unexpectedPositiveFiles,
+    failedChecks: positiveReport.checks.filter(check => check.status !== 'pass'),
+  })
 }
-
 
 const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
  * return: 1
@@ -72,15 +69,21 @@ if (
   || sequenceObligationCheck.trace?.steps.some(step => step.message === 'checked boolean expression') !== true
   || sequenceObligationCheck.trace.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {
-  console.error('expected checks to carry proof obligations and used facts')
-  console.error(formatTestDiagnostics({obligationChecks, sequenceObligationCheck}))
-  suite.fail()
+  throw testDiagnosticError('expected checks to carry proof obligations and used facts', {obligationChecks, sequenceObligationCheck})
 }
+})
 
+test('matches the negative report snapshot', async () => {
+const negativeFiles = ['tests/source-checking/negative-patterns.ts', 'tests/source-checking/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
+const negativeExpectedPath = 'negative-patterns.expected.txt'
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = normalizeNegative(negativeReport.checks)
-if (!await verifySnapshot(negativeExpectedPath, actualNegative, 'negative messages')) suite.fail()
+if (!await verifySnapshot(negativeExpectedPath, actualNegative, 'negative messages')) {
+  throw testDiagnosticError('expected negative report snapshot to match', actualNegative)
+}
+})
 
+test('collapses unsupported fallout by root cause', () => {
 const collapsedUnsupported = uniqueUnsupported([
   'unsupported render line 1: Unknown identifier events',
   'unsupported render line 1: Property access expected an object path: events.click',
@@ -97,11 +100,12 @@ const expectedCollapsedUnsupported = [
   'unsupported render line 3: Recursive helper inlining is unsupported at walk',
 ]
 if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n')) {
-  console.error('expected unsupported root fallout to collapse')
-  console.error(collapsedUnsupported.join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected unsupported root fallout to collapse', collapsedUnsupported)
 }
+})
 
+test('matches the inference snapshot', async () => {
+const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/source-checking/patterns.ts'], 'propertyAccessCallShape'),
   formatInferSnapshot(['tests/source-checking/patterns.ts'], 'mapCallbackReturnShape'),
@@ -110,7 +114,11 @@ const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/source-checking/patterns.ts'], 'mapBlockRowsWithDestructure'),
   formatInferSnapshot(['tests/loops/loop-patterns.ts'], 'localLoopAnnotation'),
 ].join('\n'))
-if (!await verifySnapshot(inferSnapshotExpectedPath, actualInferSnapshot, 'infer snapshot')) suite.fail()
+if (!await verifySnapshot(inferSnapshotExpectedPath, actualInferSnapshot, 'infer snapshot')) {
+  throw testDiagnosticError('expected inference snapshot to match', actualInferSnapshot)
+}
+})
+})
 
 function normalizeNegative(checks: FitCheck[]) {
   const lines = checks
@@ -157,9 +165,9 @@ function addSection(lines: string[], name: string, items: string[], indent = '')
 }
 
 function displayFile(file: string) {
+  const repoDir = new URL('../..', import.meta.url).pathname
+  const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
   if (file.startsWith(repoDir)) return file.slice(repoDir.length)
   if (file.startsWith(workspaceDir)) return `../${file.slice(workspaceDir.length)}`
   return file
 }
-
-})

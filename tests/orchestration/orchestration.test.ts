@@ -1,40 +1,44 @@
 import {test} from 'bun:test'
+import ts from 'typescript'
 import {snapshotUpdateRequested} from '../../snapshot.ts'
 
 const repoDir = new URL('../..', import.meta.url).pathname
-const focusedSuitePaths = [
-  'tests/calls/calls.test.ts',
-  'tests/cli/cli.test.ts',
-  'tests/domain/domain.test.ts',
-  'tests/interpreter/interpreter.test.ts',
-  'tests/loops/loops.test.ts',
-  'tests/parser/parser.test.ts',
-  'tests/purity/purity.test.ts',
-  'tests/ranges/ranges.test.ts',
-  'tests/reports/reports.test.ts',
-  'tests/source-checking/source-checking.test.ts',
-  'tests/type-contracts/type-contracts.test.ts',
+const testFiles = [
+  {path: 'tests/calls/calls.test.ts', registrations: 17},
+  {path: 'tests/cli/cli.test.ts', registrations: 29},
+  {path: 'tests/domain/domain.test.ts', registrations: 12},
+  {path: 'tests/interpreter/interpreter.test.ts', registrations: 4},
+  {path: 'tests/loops/loops.test.ts', registrations: 10},
+  {path: 'tests/parser/parser.test.ts', registrations: 17},
+  {path: 'tests/purity/purity.test.ts', registrations: 8},
+  {path: 'tests/ranges/ranges.test.ts', registrations: 9},
+  {path: 'tests/reports/reports.test.ts', registrations: 4},
+  {path: 'tests/source-checking/source-checking.test.ts', registrations: 29},
+  {path: 'tests/type-contracts/type-contracts.test.ts', registrations: 13},
+  {path: 'tests/orchestration/orchestration.test.ts', registrations: 5},
+  {path: 'tests/snapshot/eval.test.ts', registrations: 1},
+  {path: 'tests/snapshot/interpreter-snapshots.test.ts', registrations: 1},
+  {path: 'tests/snapshot/snapshot.test.ts', registrations: 6},
 ]
-const infrastructureTestPaths = [
-  'tests/orchestration/orchestration.test.ts',
-  'tests/snapshot/eval.test.ts',
-  'tests/snapshot/interpreter-snapshots.test.ts',
-  'tests/snapshot/snapshot.test.ts',
-]
-const discoveredTestPaths = [...focusedSuitePaths, ...infrastructureTestPaths].sort()
+const discoveredTestPaths = testFiles.map(file => file.path).sort()
 
-test('focused suite family stays complete', async () => {
-  let registrationCount = 0
-  for (const path of focusedSuitePaths) {
-    const source = await Bun.file(new URL(`../../${path}`, import.meta.url)).text()
-    assert(countOccurrences(source, 'testSuite(') === 1, `expected ${path} to register one suite`)
-    registrationCount += countTestRegistrations(source)
+test('test inventory stays complete', async () => {
+  for (const file of testFiles) {
+    const source = await Bun.file(new URL(`../../${file.path}`, import.meta.url)).text()
+    const registrations = countTestRegistrations(file.path, source)
+    assert(registrations === file.registrations, `expected ${file.path} to register ${file.registrations} tests, got ${registrations}`)
   }
-  for (const path of infrastructureTestPaths) {
-    const source = await Bun.file(new URL(`../../${path}`, import.meta.url)).text()
-    registrationCount += countTestRegistrations(source)
+  const embeddedRegistration = "const source = `test('not registered', () => {})`\ntest('registered', () => {})"
+  assert(countTestRegistrations('embedded-registration.test.ts', embeddedRegistration) === 1, 'expected embedded test text not to count as a registration')
+  for (const modifier of ['test.skip', 'describe.skip']) {
+    let rejection: unknown
+    try {
+      countTestRegistrations('disabled-registration.test.ts', `${modifier}('disabled', () => { test('nested', () => {}) })`)
+    } catch (error) {
+      rejection = error
+    }
+    assert(rejection instanceof Error && rejection.message.includes(modifier), `expected ${modifier} to be rejected`)
   }
-  assert(registrationCount === 23, `expected 23 test registrations, got ${registrationCount}`)
   const find = runProcess(['find', 'tests', '-name', '*.test.ts', '-type', 'f'])
   assert(find.exitCode === 0, `expected test discovery scan to pass\n${find.output}`)
   const discovered = find.output.trim().split('\n').filter(line => line.length > 0).sort()
@@ -53,14 +57,14 @@ test('parallel runner preserves failure detail and independent success', () => {
   assert(result.output.includes('(pass) controlled passing suite'), 'expected independent success attribution')
 })
 
-test('filtered suites do not execute module work', () => {
+test('filtered tests skip unselected callback work', () => {
   const result = runTestFiles([
     './tests/orchestration/fixtures/failing-suite.ts',
     './tests/orchestration/fixtures/passing-suite.ts',
   ], {namePattern: 'controlled passing suite'})
-  assert(result.exitCode === 0, `expected the selected suite to pass\n${result.output}`)
-  assert(!result.output.includes('controlled failure detail'), 'expected the filtered suite body not to execute')
-  assert(result.output.includes('controlled passing suite completed'), 'expected the selected suite to execute')
+  assert(result.exitCode === 0, `expected the selected test to pass\n${result.output}`)
+  assert(!result.output.includes('controlled failure detail'), 'expected the unselected callback not to execute')
+  assert(result.output.includes('controlled passing suite completed'), 'expected the selected callback to execute')
 })
 
 test('parallel files and repeated commands start with fresh module state', () => {
@@ -122,8 +126,27 @@ function countOccurrences(text: string, part: string) {
   return text.split(part).length - 1
 }
 
-function countTestRegistrations(source: string) {
-  return source.match(/^(?:test|testSuite)\(/gm)?.length ?? 0
+function countTestRegistrations(path: string, source: string) {
+  const sourceFile = ts.createSourceFile(path, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  let registrations = 0
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      if (ts.isIdentifier(node.expression) && node.expression.text === 'test') {
+        const name = node.arguments[0]
+        assert(name != null && ts.isStringLiteralLike(name), `expected ${path} to use a static test name`)
+        registrations += 1
+      } else if (
+        ts.isPropertyAccessExpression(node.expression)
+        && ts.isIdentifier(node.expression.expression)
+        && (node.expression.expression.text === 'test' || node.expression.expression.text === 'describe')
+      ) {
+        throw new Error(`unsupported test modifier in ${path}: ${node.expression.getText(sourceFile)}`)
+      }
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(sourceFile)
+  return registrations
 }
 
 function assert(condition: boolean, message: string): asserts condition {

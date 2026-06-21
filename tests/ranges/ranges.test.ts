@@ -1,8 +1,11 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {verifyFitSource} from '../../src/reports.ts'
-import {testSuite} from '../test-suite.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('ranges suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('ranges', () => {
+test('checks dynamic summaries and numeric alternatives', () => {
 const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
   return 10
 }
@@ -85,11 +88,11 @@ if (
   || dynamicRangeAlternativeCheck?.status !== 'pass'
   || missedRangeAlternativeCheck?.status !== 'fail'
 ) {
-  console.error('expected dynamic range summaries and numeric alternatives to be checked')
-  console.error(formatTestDiagnostics(dynamicRangeContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected dynamic range summaries and numeric alternatives to be checked', dynamicRangeContractChecks)
 }
+})
 
+test('propagates numeric range unions and rejects gaps', () => {
 const numericUnionPropagationChecks = verifyFitSource('numeric-union-propagation.ts', `/** @fit
  * return: 5 | 20
  */
@@ -159,11 +162,11 @@ if (
   || gapCallerCheck.reason?.includes('int 6..6') !== true
   || redundantAlternativeCallerCheck?.status !== 'fail'
 ) {
-  console.error('expected pure numeric range unions to propagate, normalize, and reject gaps')
-  console.error(formatTestDiagnostics(numericUnionPropagationChecks))
-  suite.fail()
+  throw testDiagnosticError('expected pure numeric range unions to propagate, normalize, and reject gaps', numericUnionPropagationChecks)
 }
+})
 
+test('uses pure unannotated helpers as dynamic bounds', () => {
 const unannotatedHelperBoundChecks = verifyFitSource('unannotated-helper-range-bounds.ts', `function limit(value: number) {
   return value * 2
 }
@@ -191,11 +194,11 @@ if (
   || outsideHelperBoundCheck?.status !== 'fail'
   || outsideHelperBoundCheck.reason?.includes('50 <= (width * 2)') !== true
 ) {
-  console.error('expected pure unannotated helpers to work as dynamic range bounds')
-  console.error(formatTestDiagnostics(unannotatedHelperBoundChecks))
-  suite.fail()
+  throw testDiagnosticError('expected pure unannotated helpers to work as dynamic range bounds', unannotatedHelperBoundChecks)
 }
+})
 
+test('keeps uncorrelated annotated helper bounds unknown', () => {
 const annotatedHelperBoundChecks = verifyFitSource('annotated-helper-range-bounds.ts', `/** @fit
  * return: 5 | 10..20
  */
@@ -232,11 +235,11 @@ if (
   || outsideAnnotatedHelperBoundCheck?.status !== 'fail'
   || outsideAnnotatedHelperBoundCheck.reason?.includes('21 <= int 5..5') !== true
 ) {
-  console.error('expected uncorrelated annotated helper bounds to stay unknown')
-  console.error(formatTestDiagnostics(annotatedHelperBoundChecks))
-  suite.fail()
+  throw testDiagnosticError('expected uncorrelated annotated helper bounds to stay unknown', annotatedHelperBoundChecks)
 }
+})
 
+test('preserves definite failures for two-sided helper bounds', () => {
 const twoSidedHelperBoundChecks = verifyFitSource('two-sided-helper-range-bounds.ts', `/** @fit
  * return: 10 | 30
  */
@@ -293,11 +296,11 @@ if (
   || outsideLowTwoSidedBoundCheck.reason?.includes('5 >= int 10..10') !== true
   || outsideHighTwoSidedBoundCheck.reason?.includes('26 <= int 20..20') !== true
 ) {
-  console.error('expected separate two-sided helper bounds to preserve definite failures and leave mixed cases unknown')
-  console.error(formatTestDiagnostics(twoSidedHelperBoundChecks))
-  suite.fail()
+  throw testDiagnosticError('expected separate two-sided helper bounds to preserve definite failures and leave mixed cases unknown', twoSidedHelperBoundChecks)
 }
+})
 
+test('does not reconnect separately evaluated values and bounds', () => {
 const separateDynamicBoundChecks = verifyFitSource('separate-dynamic-range-bounds.ts', `function limit(n: number) {
   return n > 4 ? 5 : 20
 }
@@ -327,11 +330,11 @@ if (
   || separateInside.reason?.includes('came from separate branch constructs') !== true
   || separateOutside?.status !== 'fail'
 ) {
-  console.error('expected separate returned values and helper bounds not to reconnect')
-  console.error(formatTestDiagnostics(separateDynamicBoundChecks))
-  suite.fail()
+  throw testDiagnosticError('expected separate returned values and helper bounds not to reconnect', separateDynamicBoundChecks)
 }
+})
 
+test('decides obvious cases beyond the dynamic alternative budget', () => {
 const dynamicRangeBudgetChecks = verifyFitSource('dynamic-range-budget.ts', `/** @fit
  * return: 0 | 1 | 2
  */
@@ -379,11 +382,11 @@ if (
   || budgetMixed?.status !== 'unknown'
   || budgetMixed.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
-  console.error('expected broad dynamic bounds to decide obvious over-budget cases')
-  console.error(formatTestDiagnostics(dynamicRangeBudgetChecks))
-  suite.fail()
+  throw testDiagnosticError('expected broad dynamic bounds to decide obvious over-budget cases', dynamicRangeBudgetChecks)
 }
+})
 
+test('rejects impure range expressions like comparisons', () => {
 const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}
 
 function bump() {
@@ -404,11 +407,11 @@ if (
   || unsupportedRangeExpressionCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
   || unsupportedRangeExpressionCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
-  console.error('expected unsupported range expressions to reject the same way as comparisons')
-  console.error(formatTestDiagnostics(unsupportedRangeExpressionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected unsupported range expressions to reject the same way as comparisons', unsupportedRangeExpressionChecks)
 }
+})
 
+test('keeps the broad range when exact numeric alternatives overflow', () => {
 const numericAlternativeBudgetChecks = verifyFitSource('numeric-alternative-budget.ts', `function choice(n: number) {
   return n === 0 ? 0
     : n === 1 ? 1
@@ -446,9 +449,8 @@ if (
   || exactNumericAlternatives?.status !== 'unknown'
   || exactNumericAlternatives.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
-  console.error('expected numeric alternative overflow to keep its range and report lost exact choices')
-  console.error(formatTestDiagnostics(numericAlternativeBudgetChecks))
-  suite.fail()
+  throw testDiagnosticError('expected numeric alternative overflow to keep its range and report lost exact choices', numericAlternativeBudgetChecks)
 }
+})
 
 })

@@ -1,3 +1,4 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import * as ts from 'typescript'
 import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {unknown, unknownNotInferred} from '../../src/domain.ts'
@@ -12,9 +13,12 @@ import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
 import {frameForStateCase} from '../../src/interpreter/state-cases.ts'
 import {buildFitSourceFile} from '../../src/modules.ts'
 import {valueAtTypeNodeBoundary} from '../../src/type-boundaries.ts'
-import {testSuite} from '../test-suite.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('interpreter suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('interpreter', () => {
+test('copies frame state while sharing policy and isolates analysis output', () => {
 const frameProgram = buildFitSourceFile('frame-policy.ts', 'function f() { return 1 }', readTopLevelGlobal)
 const policy = interpreterPolicy({}, 'suppress')
 const root = rootFrame({
@@ -55,8 +59,20 @@ if (
   || child.stateCases != null
   || activeCall.stateCases !== root.stateCases
 ) {
-  console.error('interpreter frames should copy state and preserve shared output and policy')
-  suite.fail()
+  throw testDiagnosticError('interpreter frames should copy state and preserve shared output and policy', {
+    sharesOutput: child.output === root.output,
+    sharesPolicy: child.policy === policy,
+    stateCaseSharesOutput: stateCase.output === root.output,
+    stateCaseSharesPolicy: stateCase.policy === policy,
+    checkRecording: stateCase.policy.checkRecording,
+    sharesEnv: child.env === root.env,
+    sharesStack: child.stack === root.stack,
+    sharesActiveCalls: child.activeCalls === root.activeCalls,
+    sharesLoopStack: child.loopStack === root.loopStack,
+    sharesAssumptions: child.assumptions === root.assumptions,
+    childStateCases: child.stateCases,
+    activeCallSharesStateCases: activeCall.stateCases === root.stateCases,
+  })
 }
 
 const isolatedOutput = emptyInterpreterOutput()
@@ -73,10 +89,16 @@ if (
   || isolated.output === root.output
   || isolated.objectPath != null
 ) {
-  console.error('interpreter analysis frames should isolate findings and may clear scoped paths')
-  suite.fail()
+  throw testDiagnosticError('interpreter analysis frames should isolate findings and may clear scoped paths', {
+    rootIssues: root.output.issues,
+    isolatedIssues: isolated.output.issues,
+    sharesOutput: isolated.output === root.output,
+    objectPath: isolated.objectPath,
+  })
 }
+})
 
+test('uses tagged missing values for type fallback', () => {
 const fallbackProgram = buildFitSourceFile('tagged-type-fallback.ts', `
 let union: number | undefined
 let plain: number
@@ -94,11 +116,15 @@ if (
   || unsupportedPlain.kind !== 'unknown'
   || missingUnion.kind !== 'nullable'
 ) {
-  console.error('type fallback should use tagged missing values, including through unions')
-  console.error({unsupportedUnion, unsupportedPlain, missingUnion})
-  suite.fail()
+  throw testDiagnosticError('type fallback should use tagged missing values, including through unions', {
+    unsupportedUnion,
+    unsupportedPlain,
+    missingUnion,
+  })
 }
+})
 
+test('distinguishes block locals from same-named module bindings in effects', () => {
 const shadowProgram = buildFitSourceFile('effect-shadow.ts', `
 let total = 0
 
@@ -116,11 +142,11 @@ if (
   shadowResult.output.effects.length !== 1
   || shadowResult.output.effects[0]?.message.includes('total = 2') !== true
 ) {
-  console.error('interpreter effects should distinguish block locals from same-named module bindings')
-  console.error(shadowResult.output.effects)
-  suite.fail()
+  throw testDiagnosticError('interpreter effects should distinguish block locals from same-named module bindings', shadowResult.output.effects)
 }
+})
 
+test('resolves lexical bindings before same-spelled blocks and globals', () => {
 const lexicalIdentityProgram = buildFitSourceFile('lexical-identity.ts', `
 function blockShadow() {
   const value = 5
@@ -215,10 +241,14 @@ if (
   || globalUndefined.kind !== 'null'
   || globalUndefined.expr !== 'undefined'
 ) {
-  console.error('expected lexical bindings to win over same-spelled blocks and globals')
-  console.error(Object.fromEntries(lexicalResults))
-  console.error({globalUndefined, dollarMutation, uninitializedFunctionScopedVar, newUninitializedFunctionScopedVar})
-  suite.fail()
+  throw testDiagnosticError('expected lexical bindings to win over same-spelled blocks and globals', {
+    lexicalResults: Object.fromEntries(lexicalResults),
+    globalUndefined,
+    dollarMutation,
+    uninitializedFunctionScopedVar,
+    newUninitializedFunctionScopedVar,
+  })
 }
+})
 
 })

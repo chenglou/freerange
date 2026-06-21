@@ -1,10 +1,7 @@
-import {testSuite} from '../../test-suite.ts'
+import {test} from 'bun:test'
 import {claimIsolation} from './isolation-state.ts'
 
-testSuite('isolation suite A', suite => {
-  if (!claimIsolation()) {
-    console.error('isolation suite A observed prior module state')
-    suite.fail()
-  }
+test('isolation suite A', () => {
+  if (!claimIsolation()) throw new Error('isolation suite A observed prior module state')
   console.log('isolation suite A completed')
 })

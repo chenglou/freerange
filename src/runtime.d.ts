@@ -34,5 +34,7 @@ declare module 'bun:test' {
   }
 
   export function expect<T>(actual: T): Matchers<T>
+  export function describe(name: string, register: () => void): void
+  export function setDefaultTimeout(milliseconds: number): void
   export function test(name: string, run: () => void | Promise<void>, timeout?: number): void
 }

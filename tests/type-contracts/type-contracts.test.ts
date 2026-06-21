@@ -1,8 +1,10 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {testSuite} from '../test-suite.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('type contracts suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('type contracts', () => {
 async function verifyTempFitFiles(files: Record<string, string>) {
   const dir = pathJoin('/tmp', `freerange-type-contract-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
   const mkdir = Bun.spawnSync({cmd: ['mkdir', '-p', dir]})
@@ -21,6 +23,7 @@ function pathJoin(first: string, ...rest: string[]) {
   return path
 }
 
+test('uses TypeScript syntax with range leaves for whole-value contracts', () => {
 const wholeValueTypeSyntaxChecks = verifyFitSource('whole-value-type-syntax.ts', `type Box<T> = {
   value: T
 }
@@ -58,11 +61,11 @@ if (
   || genericAliasValueCheck?.status !== 'pass'
   || genericAliasMissCheck?.status !== 'fail'
 ) {
-  console.error('expected whole-value contracts to use TypeScript type syntax with range leaves')
-  console.error(formatTestDiagnostics(wholeValueTypeSyntaxChecks))
-  suite.fail()
+  throw testDiagnosticError('expected whole-value contracts to use TypeScript type syntax with range leaves', wholeValueTypeSyntaxChecks)
 }
+})
 
+test('inlines type contracts through value boundaries and relations', () => {
 const typeContractBoundaryChecks = verifyFitSource('type-contract-boundaries.ts', `type Spring = {
   k: number // @fit > 0
   b: number // @fit >= 0
@@ -154,11 +157,11 @@ if (
   || inputRelationCheck?.status !== 'pass'
   || badRelationReturnCheck == null
 ) {
-  console.error('expected type @fit contracts to inline through inputs, returns, locals, satisfies, as, arrays, and relations')
-  console.error(formatTestDiagnostics(typeContractBoundaryChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type @fit contracts to inline through inputs, returns, locals, satisfies, as, arrays, and relations', typeContractBoundaryChecks)
 }
+})
 
+test('preserves generic type constraints without representative arguments', () => {
 const genericTypeContractChecks = verifyFitSource('generic-type-contracts.ts', `type AliasBox<T> = {
   width: number // @fit > 0
   value: T
@@ -235,11 +238,11 @@ if (
   || unsafeGenericDeclarationCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
   || unsafeGenericUseNoise != null
 ) {
-  console.error('expected generic type contracts to preserve constraints without representative type arguments')
-  console.error(formatTestDiagnostics(genericTypeContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected generic type contracts to preserve constraints without representative type arguments', genericTypeContractChecks)
 }
+})
 
+test('rejects type contracts with unpreserved inner generic context', () => {
 const unsupportedGenericTypeContextChecks = verifyFitSource('unsupported-generic-type-contexts.ts', `type ConditionalBox<T> = T extends number ? {
   value: T // @fit > 0
 } : never
@@ -262,11 +265,11 @@ if (
   || mappedTypeContextCheck?.status !== 'unknown'
   || nestedGenericTypeContextCheck?.status !== 'unknown'
 ) {
-  console.error('expected type contracts with unpreserved inner generic context to be rejected directly')
-  console.error(formatTestDiagnostics(unsupportedGenericTypeContextChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type contracts with unpreserved inner generic context to be rejected directly', unsupportedGenericTypeContextChecks)
 }
+})
 
+test('rejects given in type contracts directly', () => {
 const typeGivenKeywordChecks = verifyFitSource('type-given-keyword.ts', `type Bar = {
   b: number // @fit > 0
 }
@@ -290,11 +293,11 @@ if (
   typeGivenKeywordCheck?.status !== 'unknown'
   || typeGivenKeywordCheck.reason !== 'type @fit lines do not use given; write the field fact without given'
 ) {
-  console.error('expected type @fit given keyword to be rejected directly')
-  console.error(formatTestDiagnostics(typeGivenKeywordChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type @fit given keyword to be rejected directly', typeGivenKeywordChecks)
 }
+})
 
+test('accepts type contract fields whose names start with given', () => {
 const typeGivenPrefixFieldChecks = verifyFitSource('type-given-prefix-field.ts', `/** @fit
  * givenValue > 0
  */
@@ -311,11 +314,11 @@ function read(box: Box) {
 `)
 const typeGivenPrefixFieldFailures = typeGivenPrefixFieldChecks.filter(check => check.status !== 'pass')
 if (typeGivenPrefixFieldFailures.length > 0) {
-  console.error('expected type @fit fields starting with given to keep working')
-  console.error(formatTestDiagnostics(typeGivenPrefixFieldChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type @fit fields starting with given to keep working', typeGivenPrefixFieldChecks)
 }
+})
 
+test('evaluates free names where a type contract is declared', () => {
 const typeContractScopeChecks = verifyFitSource('type-contract-scope.ts', `const typeScopedMin = 80
 
 function typeScopedDouble(value: number) {
@@ -345,11 +348,11 @@ if (
   scopedTypeReadCheck?.status !== 'pass'
   || usageLocalCaptureCheck?.status !== 'fail'
 ) {
-  console.error('expected type @fit contracts to evaluate free names where the type is declared')
-  console.error(formatTestDiagnostics(typeContractScopeChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type @fit contracts to evaluate free names where the type is declared', typeContractScopeChecks)
 }
+})
 
+test('checks imported type helpers in declaration scope', async () => {
 const importedDeclarationScopeChecks = await verifyTempFitFiles({
   'helper.ts': `export function lowerBound(value: number) {
   void value
@@ -379,11 +382,11 @@ if (
   || importedBadCheck?.status !== 'fail'
   || importedScopeLeak != null
 ) {
-  console.error('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used')
-  console.error(formatTestDiagnostics(importedDeclarationScopeChecks))
-  suite.fail()
+  throw testDiagnosticError('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used', importedDeclarationScopeChecks)
 }
+})
 
+test('reports imported type helper mistakes at the declaration', async () => {
 const importedDeclarationTypeErrorChecks = await verifyTempFitFiles({
   'helper.ts': `export function needsString(value: string) {
   void value
@@ -410,11 +413,11 @@ if (
   || importedUseSiteNameError != null
   || importedSkippedBadReturn != null
 ) {
-  console.error('expected imported type @fit helper parameter mistakes to be reported at the type declaration')
-  console.error(formatTestDiagnostics(importedDeclarationTypeErrorChecks))
-  suite.fail()
+  throw testDiagnosticError('expected imported type @fit helper parameter mistakes to be reported at the type declaration', importedDeclarationTypeErrorChecks)
 }
+})
 
+test('attributes each helper type error to its declaration file', async () => {
 // Two helpers, each with its own ill-typed type @fit, referenced from one
 // user file: three contract twins share the type-check program, so each
 // twin's diagnostics must attribute to its own file. Diagnostic offsets are
@@ -461,11 +464,11 @@ if (
   || !heightAttribution.file.endsWith('height-helper.ts')
   || heightAttribution.reason?.includes("not assignable to parameter of type 'boolean'") !== true
 ) {
-  console.error('expected each helper type @fit error to attribute to its own declaration file')
-  console.error(formatTestDiagnostics(multiHelperAttributionChecks))
-  suite.fail()
+  throw testDiagnosticError('expected each helper type @fit error to attribute to its own declaration file', multiHelperAttributionChecks)
 }
+})
 
+test('keeps declaration constraints for imported generic contracts', async () => {
 const importedGenericTypeChecks = await verifyTempFitFiles({
   'helper.ts': `export type ImportedBox<T> = {
   width: number // @fit > 0
@@ -509,11 +512,11 @@ if (
   || unsafeImportedGenericCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
   || unsafeImportedUseNoise != null
 ) {
-  console.error('expected imported generic type contracts to keep their declaration constraints')
-  console.error(formatTestDiagnostics(importedGenericTypeChecks))
-  suite.fail()
+  throw testDiagnosticError('expected imported generic type contracts to keep their declaration constraints', importedGenericTypeChecks)
 }
+})
 
+test('compares type contract field relations against the same object', () => {
 const typeFieldRelationChecks = verifyFitSource('type-field-relation.ts', `type Size = {
   maxWidth: number
   width: number // @fit <= maxWidth
@@ -533,11 +536,11 @@ if (
   typeFieldRelationGoodFailures.length > 0
   || typeFieldRelationBadCheck?.status !== 'fail'
 ) {
-  console.error('expected type @fit field relations to compare against the same object')
-  console.error(formatTestDiagnostics(typeFieldRelationChecks))
-  suite.fail()
+  throw testDiagnosticError('expected type @fit field relations to compare against the same object', typeFieldRelationChecks)
 }
+})
 
+test('keeps exact paths for quoted and numeric static properties', () => {
 const staticPropertyContractChecks = verifyFitSource('type-static-properties.ts', `
 type Limits = {
   "available-width": number // @fit 0..10
@@ -560,9 +563,8 @@ const goodStaticPropertyFailures = staticPropertyContractChecks.filter(check => 
 const badQuotedProperty = staticPropertyContractChecks.find(check => check.functionName === 'badQuotedLimit' && check.status === 'fail')
 const badNumericProperty = staticPropertyContractChecks.find(check => check.functionName === 'badNumericLimit' && check.status === 'fail')
 if (goodStaticPropertyFailures.length > 0 || badQuotedProperty == null || badNumericProperty == null) {
-  console.error('expected quoted and numeric static properties to keep their exact contract paths')
-  console.error(formatTestDiagnostics(staticPropertyContractChecks))
-  suite.fail()
+  throw testDiagnosticError('expected quoted and numeric static properties to keep their exact contract paths', staticPropertyContractChecks)
 }
+})
 
 })

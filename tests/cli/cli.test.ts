@@ -1,18 +1,22 @@
+import {setDefaultTimeout, test} from 'bun:test'
 import {verifyFitFiles} from '../../src/reports.ts'
-import {testSuite} from '../test-suite.ts'
 
-testSuite('CLI suite', async suite => {
+setDefaultTimeout(300_000)
+
 const repoDir = new URL('../..', import.meta.url).pathname
 
-await runCliRegressionTests()
+test('CLI: fr check <files> to pass', () => {
+const explicitCheck = runFr(['check', 'tests/source-checking/patterns.ts', 'tests/imports/import-patterns.ts'])
 
-async function runCliRegressionTests() {
-  const explicitCheck = runFr(['check', 'tests/source-checking/patterns.ts', 'tests/imports/import-patterns.ts'])
-  expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
-  expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
-  expectCli(explicitCheck.output.includes('0 fail, 0 requires, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
+expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
 
-  await withCliFixture({
+expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
+
+expectCli(explicitCheck.output.includes('0 fail, 0 requires, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
+})
+
+test('CLI: no-arg fr check to pass from tsconfig project', async () => {
+await withCliFixture({
     'tsconfig.json': JSON.stringify({
       compilerOptions: {
         target: 'ESNext',
@@ -35,8 +39,10 @@ function ok() {
     expectCli(check.exitCode === 0, 'expected no-arg fr check to pass from tsconfig project', check.output)
     expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected no-arg fr check summary from tsconfig project', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: no-arg fr infer --all to summarize a tsconfig project', async () => {
+await withCliFixture({
     'tsconfig.json': JSON.stringify({
       compilerOptions: {
         target: 'ESNext',
@@ -65,8 +71,10 @@ function plain() {
     expectCli(infer.output.includes('facts:'), 'expected project infer summary facts', infer.output)
     expectCli(!infer.output.includes('layout.ts:plain'), 'expected project infer summary to avoid per-function dump', infer.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: explicit file check to use tsconfig type roots', async () => {
+await withCliFixture({
     'tsconfig.json': JSON.stringify({
       compilerOptions: {
         target: 'ESNext',
@@ -90,8 +98,10 @@ function plain() {
     expectCli(check.exitCode === 0, 'expected explicit file check to use tsconfig type roots', check.output)
     expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected project type contract to pass', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: project type roots to enforce imported type-field facts', async () => {
+await withCliFixture({
     'tsconfig.json': JSON.stringify({
       compilerOptions: {
         target: 'ESNext',
@@ -116,8 +126,10 @@ function plain() {
     expectCli(check.output.includes('FAIL return.value: 0..10'), 'expected project type root failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 requires, 0 unknown'), 'expected project type root failure summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: whole-value specs to resolve imported type syntax', async () => {
+await withCliFixture({
     'tsconfig.json': JSON.stringify({
       compilerOptions: {
         target: 'ESNext',
@@ -150,8 +162,10 @@ export function makeBox() {
     expectCli(check.exitCode === 0, 'expected whole-value specs to resolve imported type syntax', check.output)
     expectCli(check.output.includes('fr check: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown'), 'expected imported whole-value type spec to pass', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: star-barrel helper import to pass', async () => {
+await withCliFixture({
     'helper.ts': `/** @fit
  * given value: 0..10
  * return: 0..10
@@ -177,8 +191,10 @@ function use(value: number) {
     expectCli(check.exitCode === 0, 'expected star-barrel helper import to pass', check.output)
     expectCli(check.output.includes('0 fail, 0 requires, 0 unknown'), 'expected star-barrel helper import summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: star-barrel helper import to preserve callee range', async () => {
+await withCliFixture({
     'helper.ts': `/** @fit
  * given value: 0..100
  * return: 0..100
@@ -206,8 +222,10 @@ function use(value: number) {
     expectCli(check.output.includes('range was 0..100 as wide(value)'), 'expected star-barrel helper to preserve the callee range', check.output)
     expectCli(!check.output.includes('Unsupported call wide'), 'expected star-barrel helper call to resolve', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr check to exit 1 on a failed claim', async () => {
+await withCliFixture({
     'bad.ts': `/** @fit
  * return: 0..1
  */
@@ -223,8 +241,10 @@ function bad() {
     expectCli(check.output.includes('next: run fr infer --function bad bad.ts'), 'expected fr check to point at infer next', check.output)
     expectCli(check.output.includes('fr check: 1 files, 0 pass, 1 fail, 0 requires, 0 unknown'), 'expected fr check failure summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr check to exit 1 on a definite bad literal call', async () => {
+await withCliFixture({
     'calls.ts': `function h(
   value: number, // @fit 0..10
 ) {
@@ -244,8 +264,10 @@ function f() {
     expectCli(check.output.includes('fr check: 1 files,'), 'expected fr check summary', check.output)
     expectCli(check.output.includes('1 fail'), 'expected fr check summary to include one fail', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr check to exit 1 on caller requirements', async () => {
+await withCliFixture({
     'calls.ts': `function h(
   value: number, // @fit 0..10
 ) {
@@ -269,8 +291,10 @@ function f(value: number) {
     expectCli(!annotationsOnly.output.includes('REQUIRES: h(value)'), 'expected fr check --annotations-only to suppress broad callsite requirements', annotationsOnly.output)
     expectCli(annotationsOnly.output.includes('fr check --annotations-only: 1 files,'), 'expected fr check --annotations-only summary', annotationsOnly.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: normal check to ignore selector audit findings', async () => {
+await withCliFixture({
     'audit.ts': `/** @fit
  * given width: 1..99
  * return: 1..100
@@ -299,8 +323,10 @@ export function size(width: number) {
     expectCli(firstAudit?.obligation?.boundary === 'audit', 'expected audit to carry an audit obligation', JSON.stringify(report.audits, null, 2))
     expectCli(firstAudit?.trace?.steps[0]?.domain === 'audit', 'expected audit to carry a proof trace', JSON.stringify(report.audits, null, 2))
   })
+})
 
-  await withCliFixture({
+test('CLI: branch/nullish audit fixture to pass', async () => {
+await withCliFixture({
     'audit.ts': `/** @fit
  * given width: 10..99
  * given fallback: 0..100
@@ -320,8 +346,10 @@ function size(width: number, fallback: number) {
     expectCli(audit.output.includes('AUDIT value ?? fallback: fallback does not affect the result'), 'expected redundant nullish fallback audit', audit.output)
     expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 2 audit'), 'expected branch/nullish audit summary count', audit.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: selector audit to use composed comparison facts', async () => {
+await withCliFixture({
     'audit.ts': `/** @fit
  * given min <= mid
  * given mid <= width
@@ -337,8 +365,10 @@ function size(min: number, mid: number, width: number) {
     expectCli(audit.output.includes('AUDIT Math.max(min, width): min does not affect the result'), 'expected transitive Math.max guard audit', audit.output)
     expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 1 audit'), 'expected transitive audit summary count', audit.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: uncertain selector audit fixture to pass', async () => {
+await withCliFixture({
     'audit.ts': `/** @fit
  * given width: 0..99
  * return: 1..99
@@ -353,8 +383,10 @@ function size(width: number) {
     expectCli(!audit.output.includes('does not affect the result'), 'expected uncertain Math.max guard to stay quiet', audit.output)
     expectCli(audit.output.includes('fr check --audit: 1 files, 1 pass, 0 fail, 0 requires, 0 unknown, 0 audit'), 'expected zero audit summary count', audit.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: broad audit to visit plain functions', async () => {
+await withCliFixture({
     'audit.ts': `function plain() {
   return Math.max(1, 2)
 }
@@ -369,8 +401,10 @@ function size(width: number) {
     expectCli(!annotationsOnly.output.includes('AUDIT Math.max(1, 2)'), 'expected annotations-only audit to skip plain functions', annotationsOnly.output)
     expectCli(annotationsOnly.output.includes('fr check --annotations-only --audit: 1 files, 0 pass, 0 fail, 0 requires, 0 unknown, 0 audit'), 'expected annotations-only audit summary', annotationsOnly.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr check to visit broad bare callsites', async () => {
+await withCliFixture({
     'calls.ts': `/** @fit
  * given max >= min
  * return > 0
@@ -404,8 +438,10 @@ export default h(40, 0, 4)
     expectCli(check.output.includes('FAIL: h(40, 0, 4): requires max >= min'), 'expected export assignment call failure', check.output)
     expectCli(check.output.includes('fr check: 1 files, 1 pass, 4 fail, 0 requires, 0 unknown'), 'expected broad bare callsite summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr infer to run from the main CLI', async () => {
+await withCliFixture({
     'layout.ts': `/** @fit
  * return: 2
  */
@@ -420,8 +456,10 @@ function ok() {
     expectCli(check.output.includes('checked:'), 'expected fr infer to print checked claims', check.output)
     expectCli(check.output.includes('return: 2'), 'expected fr infer to print the checked return fact', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: file-scoped infer to include every function', async () => {
+await withCliFixture({
     'infer-filter.ts': `/** @fit
  * return: 2
  */
@@ -444,8 +482,10 @@ function plain() {
     expectCli(filtered.output.includes('infer-filter.ts:annotated'), 'expected annotations-only infer to include annotated function', filtered.output)
     expectCli(!filtered.output.includes('infer-filter.ts:plain'), 'expected annotations-only infer to skip plain function', filtered.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: fr infer to fail when a written contract expression is unsupported', async () => {
+await withCliFixture({
     'infer-contract.ts': `function randomLimit() {
   return Math.random() * 10
 }
@@ -463,16 +503,22 @@ function bad() {
     expectCli(infer.output.includes('Unsupported @fit contract expression: randomLimit()'), 'expected infer output to name the unsupported contract expression', infer.output)
     expectCli(infer.output.includes('helper randomLimit is not pure: observes the environment'), 'expected infer output to include the purity blocker', infer.output)
   })
+})
 
-  {
-    const infer = runFr(['infer'])
-    expectCli(infer.exitCode === 2, 'expected no-arg infer to require a file path', infer.output)
-    expectCli(infer.output.includes('fr infer: pass a file path'), 'expected no-arg infer guidance', infer.output)
-    expectCli(infer.output.includes('fr check [--annotations-only] [--audit] [file.ts ...]'), 'expected usage to include audit flag', infer.output)
-    expectCli(infer.output.includes('fr infer [--function name] [--annotations-only] [--all] file.ts ...'), 'expected no-arg infer to print help', infer.output)
-  }
+test('CLI: no-arg infer to require a file path', () => {
+const infer = runFr(['infer'])
 
-  await withCliFixture({
+expectCli(infer.exitCode === 2, 'expected no-arg infer to require a file path', infer.output)
+
+expectCli(infer.output.includes('fr infer: pass a file path'), 'expected no-arg infer guidance', infer.output)
+
+expectCli(infer.output.includes('fr check [--annotations-only] [--audit] [file.ts ...]'), 'expected usage to include audit flag', infer.output)
+
+expectCli(infer.output.includes('fr infer [--function name] [--annotations-only] [--all] file.ts ...'), 'expected no-arg infer to print help', infer.output)
+})
+
+test('CLI: standalone helper call check to pass', async () => {
+await withCliFixture({
     'helper.ts': `export function clamp(
   value: number,
   min: number, // @fit <= max
@@ -489,8 +535,10 @@ const opacity = clamp(1.2, 0, 1) // @fit 0..1
     expectCli(check.exitCode === 0, 'expected standalone helper call check to pass', check.output)
     expectCli(check.output.includes('fr check: 1 files, 6 pass, 0 fail, 0 requires, 0 unknown'), 'expected standalone helper call check summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: de-inlined clamp example to fail without crashing', async () => {
+await withCliFixture({
     'helper.ts': `/** @fit
  * given min <= max
  * return >= min
@@ -509,8 +557,10 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.output.includes('FAIL opacity: 0..1'), 'expected de-inlined clamp example failure output', check.output)
     expectCli(check.output.includes('fr check: 1 files, 3 pass, 1 fail, 0 requires, 0 unknown'), 'expected de-inlined clamp example summary', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: recursive infer to stop at the helper cycle instead of overflowing', async () => {
+await withCliFixture({
     'recursive-infer.ts': `function walk(value: number): number {
   const next = value > 0 ? walk(value - 1) : 0
   return next
@@ -521,21 +571,28 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(infer.exitCode === 0, 'expected recursive infer to stop at the helper cycle instead of overflowing', infer.output)
     expectCli(infer.output.includes('Recursive helper inlining is unsupported at walk'), 'expected recursive infer to report the helper cycle', infer.output)
   })
+})
 
-  {
-    const infer = runFr(['infer', 'src/bound-index.ts', '--function', 'proveBoundIndexComparisonSpec'])
-    expectCli(infer.exitCode === 0, 'expected self-hosted bound-index infer to stay bounded', infer.output)
-    expectCli(infer.output.includes('src/bound-index.ts:proveBoundIndexComparisonSpec'), 'expected bound-index infer header', infer.output)
-  }
+test('CLI: self-hosted bound-index infer to stay bounded', () => {
+const infer = runFr(['infer', 'src/bound-index.ts', '--function', 'proveBoundIndexComparisonSpec'])
 
-  {
-    const infer = runFr(['infer', 'src/interpreter/evaluate.ts', '--function', 'evaluateExpression'])
-    expectCli(infer.exitCode === 0, 'expected self-hosted evaluateExpression infer to stay bounded', infer.output)
-    expectCli(infer.output.includes('Unsupported branch condition: ts.isParenthesizedExpression(expression)'), 'expected evaluateExpression infer to report the first unsupported branch condition', infer.output)
-    expectCli(infer.output.split('\n').length < 30, 'expected evaluateExpression infer to avoid cascading through every branch body', infer.output)
-  }
+expectCli(infer.exitCode === 0, 'expected self-hosted bound-index infer to stay bounded', infer.output)
 
-  await withCliFixture({
+expectCli(infer.output.includes('src/bound-index.ts:proveBoundIndexComparisonSpec'), 'expected bound-index infer header', infer.output)
+})
+
+test('CLI: self-hosted evaluateExpression infer to stay bounded', () => {
+const infer = runFr(['infer', 'src/interpreter/evaluate.ts', '--function', 'evaluateExpression'])
+
+expectCli(infer.exitCode === 0, 'expected self-hosted evaluateExpression infer to stay bounded', infer.output)
+
+expectCli(infer.output.includes('Unsupported branch condition: ts.isParenthesizedExpression(expression)'), 'expected evaluateExpression infer to report the first unsupported branch condition', infer.output)
+
+expectCli(infer.output.split('\n').length < 30, 'expected evaluateExpression infer to avoid cascading through every branch body', infer.output)
+})
+
+test('CLI: inline block @fit to be rejected', async () => {
+await withCliFixture({
     'block-inline.ts': `function invalid(
   value: number /* @fit 0..10 */,
 ) {
@@ -547,8 +604,10 @@ const opacity = clamp(0, 10, 2) // @fit 0..1
     expectCli(check.exitCode === 2, 'expected inline block @fit to be rejected', check.output)
     expectCli(check.output.includes('Block @fit comments are only supported for function, loop, and type contract blocks; use // @fit for attached facts'), 'expected inline block @fit guidance', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: userland TypeScript errors to stop fr check', async () => {
+await withCliFixture({
     'userland-error.ts': `/** @fit
  * return: 0..10
  */
@@ -565,8 +624,10 @@ function plainSemanticError(value: number) {
     expectCli(!check.output.includes('FAIL return: 0..10'), 'expected Freerange proof not to run after userland TypeScript failure', check.output)
     expectCli(!check.output.includes('fr check:'), 'expected no Freerange summary after userland TypeScript failure', check.output)
   })
+})
 
-  await withCliFixture({
+test('CLI: syntax errors to stop fr check', async () => {
+await withCliFixture({
     'syntax.ts': `function invalid(value: number.) {
   return value
 }
@@ -580,8 +641,7 @@ const =
     expectCli(check.output.includes('syntax.ts(4,7): error TS1134: Variable declaration expected.'), 'expected second TypeScript syntax diagnostic', check.output)
     expectCli(!check.output.includes('fr:'), 'expected syntax errors to use TypeScript diagnostic formatting directly', check.output)
   })
-
-}
+})
 
 function runFr(args: string[], cwd = repoDir) {
   return runProcess([process.execPath, pathJoin(repoDir, 'fr.ts'), ...args], cwd)
@@ -616,17 +676,13 @@ async function withCliFixture(files: Record<string, string>, run: (dir: string) 
   }
 }
 
-function expectCli(condition: boolean, message: string, output: string) {
-  if (condition) return
-  console.error(message)
-  console.error(output.trimEnd())
-  suite.fail()
-}
-
 function pathJoin(first: string, ...rest: string[]) {
   let path = first.endsWith('/') ? first.slice(0, -1) : first
   for (const part of rest) path += '/' + part.replace(/^\/+/, '')
   return path
 }
 
-})
+function expectCli(condition: boolean, message: string, output: string) {
+  if (condition) return
+  throw new Error(`${message}\n${output.trimEnd()}`)
+}

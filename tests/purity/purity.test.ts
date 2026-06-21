@@ -1,5 +1,6 @@
 // Pure-function classification. Each case is source -> pure | impure | unknown,
 // with no interpreter run or proof needed.
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {functionImplementationReference} from '../../src/function-shape.ts'
 import {functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
@@ -20,10 +21,10 @@ import {
   importedWrapperMutationImpure,
   importedWrapperReplacementPure,
 } from './imported-caller.ts'
-import {testSuite} from '../test-suite.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('purity suite', async suite => {
+setDefaultTimeout(300_000)
+
 void contractRejectsImportedAlias
 void contractUsesImportedCallbackAfterMap
 void contractUsesImportedAlias
@@ -45,6 +46,8 @@ function purityOf(name: string, source: string): Purity {
   return functionPurity(functionImplementationReference(program, fn.node))
 }
 
+describe('purity', () => {
+test('classifies pure, impure, and unknown functions', () => {
 const cases: {label: string; source: string; kind: Purity['kind']; reasonIncludes?: string}[] = [
   // --- pure ---
   {label: 'arithmetic on params', kind: 'pure', source: `function f(x: number) { return x * 2 + 1 }`},
@@ -197,21 +200,22 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'nested declaration shadows top-level helper', kind: 'unknown', source: `function helper() { return 1 }\nfunction f() { function helper() { return Math.random() } return helper() }`},
 ]
 
-let failures = 0
+const failures: {label: string; kind: Purity['kind']; reasonIncludes: string | undefined; actual: Purity}[] = []
 for (const {label, source, kind, reasonIncludes} of cases) {
   const actual = purityOf('f', source)
   if (
     actual.kind !== kind
     || (reasonIncludes != null && (!('reason' in actual) || !actual.reason.includes(reasonIncludes)))
   ) {
-    console.error(`purity: expected ${kind}${reasonIncludes == null ? '' : ` with "${reasonIncludes}"`} but got ${JSON.stringify(actual)} for "${label}"`)
-    failures += 1
+    failures.push({label, kind, reasonIncludes, actual})
   }
 }
-if (failures > 0) {
-  suite.fail()
+if (failures.length > 0) {
+  throw testDiagnosticError('expected the purity classification table to match', failures)
 }
+})
 
+test('keeps returned-reference effects independent of summary order', () => {
 const cacheOrderSource = `
 function wrap(value: {n: number}) { return [{value}] }
 function f(value: {n: number}) { wrap(value)[0]!.value.n += 1 }
@@ -235,11 +239,14 @@ if (
   || callerFirstResult.kind !== 'impure'
   || calleeFirstResult.reason !== callerFirstResult.reason
 ) {
-  console.error('purity: expected function summary cache order not to change returned-reference effects')
-  console.error(formatTestDiagnostics({calleeFirstResult, callerFirstResult}))
-  suite.fail()
+  throw testDiagnosticError(
+    'expected function summary order not to change returned-reference effects',
+    {calleeFirstResult, callerFirstResult},
+  )
 }
+})
 
+test('rejects mismatched source programs before recording a summary', () => {
 const identityProject = loadFitProject(['tests/purity/imported-caller.ts'], readTopLevelGlobal)
 const identityCaller = identityProject.entries[0]!
 const callbackBinding = identityCaller.imports.get('importedPureCallback')
@@ -262,11 +269,14 @@ if (
   mismatchedReferenceReason?.includes('does not belong') !== true
   || purityAfterRejectedMismatch.kind !== 'pure'
 ) {
-  console.error('purity: expected mismatched source programs to fail before caching')
-  console.error(formatTestDiagnostics({mismatchedReferenceReason, purityAfterRejectedMismatch}))
-  suite.fail()
+  throw testDiagnosticError(
+    'expected mismatched source programs to fail before recording a summary',
+    {mismatchedReferenceReason, purityAfterRejectedMismatch},
+  )
 }
+})
 
+test('keeps source identity through imports, aliases, callbacks, and re-exports', async () => {
 const importedPurity = await verifyFitFiles(['tests/purity/imported-caller.ts'])
 const pureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasPure' && check.text === 'pure')
 const impureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasImpure' && check.text === 'pure')
@@ -300,11 +310,14 @@ if (
   || impureNamespaceClaim.reason?.includes('observes the environment') !== true
   || impureContract.reason?.includes('helper importedImpure is not pure: observes the environment') !== true
 ) {
-  console.error('purity: expected imports, aliases, callbacks, and re-exports to keep source identity')
-  console.error(formatTestDiagnostics(importedPurity.checks))
-  suite.fail()
+  throw testDiagnosticError(
+    'expected imports, aliases, callbacks, and re-exports to keep source identity',
+    importedPurity.checks,
+  )
 }
+})
 
+test('allows pure unannotated helper calls in contracts', () => {
 const pureContractHelperChecks = verifyFitSource('contract-purity.ts', `function safeLimit(value: number) {
   let floor = 9
   floor += 1
@@ -321,11 +334,11 @@ function bounded(value: number) {
 `)
 const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
 if (pureContractHelperCheck?.status !== 'pass') {
-  console.error('expected pure unannotated helper calls to work in contracts')
-  console.error(formatTestDiagnostics(pureContractHelperChecks))
-  suite.fail()
+  throw testDiagnosticError('expected pure unannotated helper calls to work in contracts', pureContractHelperChecks)
 }
+})
 
+test('allows pure unannotated helpers in given comparisons and range bounds', () => {
 const pureGivenHelperChecks = verifyFitSource('given-contract-purity.ts', `function double(value: number) {
   return value * 2
 }
@@ -343,11 +356,14 @@ function bounded(min: number, width: number, max: number) {
 `)
 const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.status !== 'pass')
 if (pureGivenHelperFailures.length > 0) {
-  console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
-  console.error(formatTestDiagnostics(pureGivenHelperChecks))
-  suite.fail()
+  throw testDiagnosticError(
+    'expected pure unannotated helper calls to work in given comparisons and range bounds',
+    pureGivenHelperChecks,
+  )
 }
+})
 
+test('rejects impure helper calls in contracts', () => {
 const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
 
 function bump() {
@@ -368,11 +384,11 @@ if (
   || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
   || impureContractHelperCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
-  console.error('expected impure helper calls in contracts to be rejected loudly')
-  console.error(formatTestDiagnostics(impureContractHelperChecks))
-  suite.fail()
+  throw testDiagnosticError('expected impure helper calls in contracts to be rejected loudly', impureContractHelperChecks)
 }
+})
 
+test('rejects contract helpers that read mutable outside state', () => {
 const mutableReadContractHelperChecks = verifyFitSource('contract-mutable-read.ts', `const state = {limit: 10}
 
 function currentLimit() {
@@ -392,9 +408,11 @@ if (
   || mutableReadContractHelperCheck.reason?.includes('Unsupported @fit contract expression: currentLimit()') !== true
   || mutableReadContractHelperCheck.reason.includes('helper currentLimit is not pure: reads mutable outside state') !== true
 ) {
-  console.error('expected contract helpers that read mutable outside state to be rejected by the shared purity check')
-  console.error(formatTestDiagnostics(mutableReadContractHelperChecks))
-  suite.fail()
+  throw testDiagnosticError(
+    'expected contract helpers that read mutable outside state to be rejected by the shared purity check',
+    mutableReadContractHelperChecks,
+  )
 }
+})
 
 })

@@ -1,6 +1,5 @@
-import {testSuite} from '../../test-suite.ts'
+import {test} from 'bun:test'
 
-testSuite('controlled failing suite', suite => {
-  console.error('controlled failure detail')
-  suite.fail()
+test('controlled failing suite', () => {
+  throw new Error('controlled failure detail')
 })

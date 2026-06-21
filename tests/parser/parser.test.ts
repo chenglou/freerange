@@ -1,4 +1,4 @@
-import {expect} from 'bun:test'
+import {describe, expect, setDefaultTimeout, test} from 'bun:test'
 import ts from 'typescript'
 import {sameExpressionText} from '../../src/linear.ts'
 import {
@@ -19,16 +19,42 @@ import {
   type FitRange,
   type FitSpec,
 } from '../../src/parser.ts'
-import {testSuite} from '../test-suite.ts'
-
-testSuite('parser suite', () => {
 
 function expectPresent<T>(value: T | null | undefined): asserts value is T {
   expect(value).not.toBe(null)
   expect(value).toBeDefined()
 }
 
-{
+function sourceFile(source: string) {
+  return ts.createSourceFile('parser-test.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+}
+
+function firstFunction(source: string) {
+  const file = sourceFile(source)
+  const fn = file.statements.find(ts.isFunctionDeclaration)
+  expectPresent(fn)
+  return {file, fn}
+}
+
+function expectSpec<R extends FitSpec['role'], K extends Extract<FitSpec, {role: R}>['kind']>(
+  spec: FitSpec,
+  role: R,
+  kind: K,
+): Extract<FitSpec, {role: R; kind: K}> {
+  expect(spec.role).toBe(role)
+  expect(spec.kind).toBe(kind)
+  return spec as Extract<FitSpec, {role: R; kind: K}>
+}
+
+function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int') {
+  expect(range.text).toBe(text)
+  expect(range.valueKind).toBe(valueKind)
+}
+
+setDefaultTimeout(300_000)
+
+describe('parser', () => {
+test('normalizes expression text and domain paths', () => {
   expect(normalizeFitText('({return: return})')).toBe('({return: __fit_return})')
   expect(normalizeFitText('rows.every(row => { return row.height > 0 })'))
     .toBe('rows.every(row => { return row.height > 0 })')
@@ -77,35 +103,9 @@ function expectPresent<T>(value: T | null | undefined): asserts value is T {
   const negativePath = fitExpressionDomainPath(parseFitExpressionText('input[-1]'))
   expect(decimalPath?.segments[0]?.kind === 'prop' ? decimalPath.segments[0].name : null).toBe('1.5')
   expect(negativePath?.segments[0]?.kind === 'prop' ? negativePath.segments[0].name : null).toBe('-1')
-}
+})
 
-function sourceFile(source: string) {
-  return ts.createSourceFile('parser-test.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-}
-
-function firstFunction(source: string) {
-  const file = sourceFile(source)
-  const fn = file.statements.find(ts.isFunctionDeclaration)
-  expectPresent(fn)
-  return {file, fn}
-}
-
-function expectSpec<R extends FitSpec['role'], K extends Extract<FitSpec, {role: R}>['kind']>(
-  spec: FitSpec,
-  role: R,
-  kind: K,
-): Extract<FitSpec, {role: R; kind: K}> {
-  expect(spec.role).toBe(role)
-  expect(spec.kind).toBe(kind)
-  return spec as Extract<FitSpec, {role: R; kind: K}>
-}
-
-function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int') {
-  expect(range.text).toBe(text)
-  expect(range.valueKind).toBe(valueKind)
-}
-
-{
+test('parses value specs with ranges', () => {
   const lowered = lowerFitValueSpecTextForTypeScript('{kind: "small", width: 100..200, cols: int 1..<7} | {kind: "large", width: minWidth()..maxWidth(), cols: 7}')
   expectPresent(lowered)
   expect(lowered.typeText)
@@ -127,9 +127,9 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
   expectRange(smallCols, 'int 1..<7', 'int')
   expect(smallCols.upperInclusive).toBe(false)
   expectRange(spec.value.ranges.get('r2')!, 'minWidth()..maxWidth()', 'number')
-}
+})
 
-{
+test('parses open ranges and rejects invalid ranges', () => {
   const spec = expectSpec(parseFitSpecLine('given x: 0<..10'), 'assume', 'range')
   expectRange(spec.range, '0<..10', 'number')
   expect(spec.range.lowerInclusive).toBe(false)
@@ -167,55 +167,55 @@ function expectRange(range: FitRange, text: string, valueKind: 'number' | 'int')
   parseFitSpecLine('given input.NaN: 0..3')
   parseFitSpecLine('given x: 0..input.NaN')
   parseFitSpecLine('given x: 0..input . NaN')
-}
+})
 
-{
+test('parses comparison assumptions', () => {
   const spec = expectSpec(parseFitSpecLine('given foo() > bar(10, "px")'), 'assume', 'comparison')
   expect(fitExpressionText(spec.left)).toBe('foo()')
   expect(spec.op).toBe('>')
   expect(fitExpressionText(spec.right)).toBe('bar(10, "px")')
-}
+})
 
-{
+test('parses expression assumptions', () => {
   const spec = expectSpec(parseFitSpecLine('given isSorted(items)'), 'assume', 'expression')
   expect(fitExpressionText(spec.expression)).toBe('isSorted(items)')
-}
+})
 
-{
+test('parses return comparisons', () => {
   const spec = expectSpec(parseFitSpecLine('return >= min'), 'prove', 'comparison')
   expect(fitExpressionText(spec.left)).toBe('__fit_return')
-}
+})
 
-{
+test('rejects return roots in given value specs', () => {
   expect(() => parseFitSpecLine('given return: {width: 0..10}')).toThrow('Unsupported @fit range')
-}
+})
 
-{
+test('parses nested array and tuple value specs', () => {
   const spec = expectSpec(parseFitSpecLine('return: {rows: {height: 10..20}[], snap: [0..10, 20..30]}'), 'prove', 'value')
   expect(spec.value.typeText).toBe('{rows: {height: __FRNumber<"r0">}[], snap: [__FRNumber<"r1">, __FRNumber<"r2">]}')
   expect(spec.value.ranges.size).toBe(3)
   expect(fitValueSpecExpressions(spec.value).map(fitExpressionText).join(', ')).toBe('10, 20, 0, 10, 20, 30')
-}
+})
 
-{
+test('parses intersection and union value specs', () => {
   const spec = expectSpec(parseFitSpecLine('return: ({left: 0..10} & {width: int 1..5}) | {kind: "empty", width: 0}'), 'prove', 'value')
   expect(spec.value.typeText).toBe('({left: __FRNumber<"r0">} & {width: __FRNumber<"r1">}) | {kind: "empty", width: 0}')
   expect(ts.isUnionTypeNode(spec.value.typeNode)).toBe(true)
   expect(spec.value.ranges.size).toBe(2)
-}
+})
 
-{
+test('parses generic value specs', () => {
   const spec = expectSpec(parseFitSpecLine('return: Box<{width: 0..maxWidth()}>'), 'prove', 'value')
   expect(spec.value.typeText).toBe('Box<{width: __FRNumber<"r0">}>')
   expect(ts.isTypeReferenceNode(spec.value.typeNode)).toBe(true)
   expect(fitValueSpecExpressions(spec.value).map(fitExpressionText).join(', ')).toBe('0, maxWidth()')
-}
+})
 
-{
+test('rejects dynamic values in value specs', () => {
   expect(() => parseFitSpecLine('return: {width: dynamicWidth()}')).toThrow('Unsupported @fit value spec')
-}
+})
 
-{
+test('parses function contract blocks', () => {
   const source = `/** @fit
  * given availableWidth: minWidth()..maxWidth()
  * return: {tiles: {width: 0..100}[], snap: [0..10, 20..30]}
@@ -231,9 +231,9 @@ function layout(availableWidth: number) {
   expectSpec(specs[0]!, 'assume', 'range')
   expectSpec(specs[1]!, 'prove', 'value')
   expectSpec(specs[2]!, 'prove', 'expression')
-}
+})
 
-{
+test('indexes inline function body specs', () => {
   const source = `function layout(availableWidth: number) {
   const columnWidth = availableWidth / 3 // @fit > 0
   return {
@@ -247,16 +247,16 @@ function layout(availableWidth: number) {
   expect(index.localSpecsByStatement.size).toBe(1)
   expect(index.objectPropertyTemplatesByNode.size).toBe(2)
   expect(index.returnSpecsByNode.size).toBe(0)
-}
+})
 
-{
+test('identifies return root references', () => {
   const stringLiteral = parseFitSpecLine('label == "return"', 1)
   const returnReference = parseFitSpecLine('return == label', 2)
   expect(fitSpecMentionsRoot(stringLiteral, fitReturnInternalRoot)).toBe(false)
   expect(fitSpecMentionsRoot(returnReference, fitReturnInternalRoot)).toBe(true)
-}
+})
 
-{
+test('parses parameter, local, and return inline specs', () => {
   const source = `function layout(
   width: number, // @fit 0..10
 ) {
@@ -272,9 +272,9 @@ function layout(availableWidth: number) {
   const returnSpecs = [...index.returnSpecsByNode.values()][0] ?? []
   expectSpec(localSpecs[0]!, 'prove', 'comparison')
   expectSpec(returnSpecs[0]!, 'prove', 'comparison')
-}
+})
 
-{
+test('rejects return value specs in inline comments', () => {
   const source = `function layout() {
   // @fit return: {width: 0..10}
   return {width: 5}
@@ -283,9 +283,9 @@ function layout(availableWidth: number) {
   const {fn} = firstFunction(source)
   expect(() => parseFunctionBodyFitSpecIndex(source, fn))
     .toThrow('Unsupported inline @fit range: @fit return: {width: 0..10}')
-}
+})
 
-{
+test('rejects block fit comments on parameters', () => {
   const source = `function layout(
   value: number /* @fit 0..10 */,
 ) {
@@ -295,6 +295,6 @@ function layout(availableWidth: number) {
   const {fn} = firstFunction(source)
   expect(() => parseFunctionFitSpecs(source, fn, fn.parameters))
     .toThrow('Block @fit comments are only supported for function, loop, and type contract blocks')
-}
+})
 
 })

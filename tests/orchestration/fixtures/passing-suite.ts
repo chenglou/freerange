@@ -1,5 +1,5 @@
-import {testSuite} from '../../test-suite.ts'
+import {test} from 'bun:test'
 
-testSuite('controlled passing suite', () => {
+test('controlled passing suite', () => {
   console.log('controlled passing suite completed')
 })

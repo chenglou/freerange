@@ -1,11 +1,14 @@
+import {describe, setDefaultTimeout, test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
 import {numberValue} from '../../src/domain.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
-import {testSuite} from '../test-suite.ts'
+import {testDiagnosticError} from '../test-diagnostics.ts'
 
-testSuite('loops suite', async suite => {
+setDefaultTimeout(300_000)
+
+describe('loops', () => {
+test('keeps an unbounded nonnegative running sum nonnegative', () => {
 const unboundedNonnegativeRunningSum = runningSumNumber(
   'y',
   numberValue(0, Number.POSITIVE_INFINITY, null, 'start'),
@@ -13,21 +16,21 @@ const unboundedNonnegativeRunningSum = runningSumNumber(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'increment'),
 )
 if (unboundedNonnegativeRunningSum.min !== 0 || unboundedNonnegativeRunningSum.max !== Number.POSITIVE_INFINITY) {
-  console.error(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`)
-  suite.fail()
+  throw testDiagnosticError(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`, unboundedNonnegativeRunningSum)
 }
+})
 
-
+test('checks direct and imported previous-index relationships', async () => {
 const previousIndexReport = await verifyFitFiles([
   'tests/loops/previous-index-patterns.ts',
   'tests/imports/adjacent-summary-patterns.ts',
 ], {annotationsOnly: true})
 if (previousIndexReport.phase !== 'ready') {
-  console.error('expected direct and imported previous-index relationships to pass')
-  console.error(formatTestDiagnostics(previousIndexReport.checks))
-  suite.fail()
+  throw testDiagnosticError('expected direct and imported previous-index relationships to pass', previousIndexReport.checks)
 }
+})
 
+test('preserves imported adjacent summaries and rejects a different recurrence', async () => {
 const negativeAdjacentSummaryReport = await verifyFitFiles(['tests/imports/negative-adjacent-summary.ts'], {annotationsOnly: true})
 const negativeAdjacentSummaryCheck = negativeAdjacentSummaryReport.checks.find(check =>
   check.functionName === 'negativeImportedPreviousNamedIndexSummary'
@@ -40,11 +43,11 @@ if (
   || negativeAdjacentSummaryCheck.reason?.includes('adjacent: return.rows[$i + 1].top == return.rows[$i].top + (return.rows[$i].height + spacing)') !== true
   || negativeAdjacentFirstItemCheck?.status !== 'unknown'
 ) {
-  console.error('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence')
-  console.error(formatTestDiagnostics(negativeAdjacentSummaryReport.checks))
-  suite.fail()
+  throw testDiagnosticError('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence', negativeAdjacentSummaryReport.checks)
 }
+})
 
+test('preserves sequence grouping and rejects unsound spacing or end facts', () => {
 const sequenceOperationChecks = verifyFitSource('sequence-operations.ts', `
 /** @fit
  * given items.length: int 2..2
@@ -296,11 +299,11 @@ if (
   || sequenceOperationStatus('roundedExtentEnd', 'extentEnd(return.rows, y) == return.bottom') !== 'unknown'
   || sequenceOperationStatus('unaryGroupedUpdate', 'return: -50..0') !== 'pass'
 ) {
-  console.error('expected sequence relations to preserve source grouping and reject unsound spacing or end facts')
-  console.error(formatTestDiagnostics(sequenceOperationChecks))
-  suite.fail()
+  throw testDiagnosticError('expected sequence relations to preserve source grouping and reject unsound spacing or end facts', sequenceOperationChecks)
 }
+})
 
+test('retains computation operands after later range refinement', () => {
 const lateRefinementChecks = verifyFitSource('late-refinement.ts', `
 /** @fit
  * given items[].height: -100..100
@@ -319,11 +322,11 @@ function lateRefinement(items: {height: number}[], top: number) {
 }
 `)
 if (lateRefinementChecks.length !== 1 || lateRefinementChecks[0]?.status !== 'pass') {
-  console.error('expected a computation to retain operand identity after a later range refinement')
-  console.error(formatTestDiagnostics(lateRefinementChecks))
-  suite.fail()
+  throw testDiagnosticError('expected a computation to retain operand identity after a later range refinement', lateRefinementChecks)
 }
+})
 
+test('reports expected inferred and redundant loop facts', () => {
 const loopInferReport = inferFitFiles(['tests/loops/loop-patterns.ts'], {functionName: 'localLoopAnnotation'})
 const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]
@@ -340,13 +343,15 @@ const missingLoopRedundantSpecs = expectedLoopRedundantSpecs.filter(([text, reas
 const unexpectedlyRedundantLoopSpecs: string[] = []
 const badLoopFunctionSpecStatuses = expectedLoopFunctionSpecStatuses.filter(([text, status]) => loopFunctionSpecStatuses.get(text) !== status)
 if (missingLoopRedundantSpecs.length > 0 || unexpectedlyRedundantLoopSpecs.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
-  console.error('expected loop inferred facts changed')
-  console.error(missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`).join('\n'))
-  console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
-  console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected loop inferred facts changed', [
+    ...missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`),
+    ...unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`),
+    ...badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`),
+  ])
 }
+})
 
+test('reports expected segmented loop facts', () => {
 // Conditional flush loops keep the exact operand snapshots used by rounded
 // additions, so resetting the height after the push cannot change the
 // row-bottom or next-row computation retroactively.
@@ -372,12 +377,14 @@ const expectedSegmentedSpecStatuses = [
 ] as const
 const badSegmentedSpecStatuses = expectedSegmentedSpecStatuses.filter(([text, status]) => segmentedSpecs.get(text) !== status)
 if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
-  console.error('expected segmented loop inferred facts changed')
-  console.error(missingSegmentedFacts.map(fact => `missing: ${fact}`).join('\n'))
-  console.error(badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected segmented loop inferred facts changed', [
+    ...missingSegmentedFacts.map(fact => `missing: ${fact}`),
+    ...badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`),
+  ])
 }
+})
 
+test('reports expected function-level redundant facts', () => {
 const redundantInferReport = inferFitFiles(['tests/loops/loop-patterns.ts'], {functionName: 'scalarPushLoop'})
 const redundantFunction = redundantInferReport.functions[0]
 const redundantFacts = new Map(redundantFunction?.redundant.map(fact => [fact.text, fact.reason]) ?? [])
@@ -394,12 +401,14 @@ const expectedRedundantSpecStatuses = [
 ] as const
 const badRedundantSpecStatuses = expectedRedundantSpecStatuses.filter(([text, status]) => redundantSpecStatuses.get(text) !== status)
 if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
-  console.error('expected function-level redundant facts changed')
-  console.error(missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
-  console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected function-level redundant facts changed', [
+    ...missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`),
+    ...badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`),
+  ])
 }
+})
 
+test('reports expected equality redundant facts', () => {
 const equalityRedundantReport = inferFitFiles(['tests/loops/loop-patterns.ts'], {functionName: 'stackedRowsWithBottom'})
 const equalityRedundantFunction = equalityRedundantReport.functions[0]
 const equalityRedundantFacts = new Set(equalityRedundantFunction?.facts.map(fact => fact.text) ?? [])
@@ -409,11 +418,11 @@ const expectedEqualityRedundantFacts = [
 ]
 const missingEqualityRedundantFacts = expectedEqualityRedundantFacts.filter(fact => !equalityRedundantFacts.has(fact))
 if (missingEqualityRedundantFacts.length > 0 || equalityRedundantSpecs.get('return.rows[].bottom == return.rows[].y + return.rows[].height') !== 'checked') {
-  console.error('expected equality redundant facts changed')
-  console.error(missingEqualityRedundantFacts.map(fact => `missing: ${fact}`).join('\n'))
-  suite.fail()
+  throw testDiagnosticError('expected equality redundant facts changed', missingEqualityRedundantFacts.map(fact => `missing: ${fact}`))
 }
+})
 
+test('restores loop magnitude proofs for finite default inputs', () => {
 const finiteDefaultLoopChecks = verifyFitSource('finite-default-loop.ts', `
 /** @fit
  * given count: int 0..100
@@ -428,9 +437,8 @@ function accumulatedMagnitude(value: number, count: number) {
 }
 `)
 if (finiteDefaultLoopChecks.length !== 1 || finiteDefaultLoopChecks[0]?.status !== 'pass') {
-  console.error('expected finite default inputs to restore the loop magnitude proof')
-  console.error(formatTestDiagnostics(finiteDefaultLoopChecks))
-  suite.fail()
+  throw testDiagnosticError('expected finite default inputs to restore the loop magnitude proof', finiteDefaultLoopChecks)
 }
+})
 
 })
