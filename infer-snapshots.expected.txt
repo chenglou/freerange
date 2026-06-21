@@ -2,12 +2,14 @@ tests/patterns/patterns.ts:typedObjectParamArrayShape
 return:
   return.rows.length == params.items.length
   return.rows.length: int 0..4294967295
-  return.rows[].height == item.height
+  return.rows[].height == params.items[].height
+  return.rows[].height: -1.7976931348623157e+308..1.7976931348623157e+308
   return.rows follows params.items by index
 locals:
   rows.length == params.items.length
   rows.length: int 0..4294967295
-  rows[].height == item.height
+  rows[].height == params.items[].height
+  rows[].height: -1.7976931348623157e+308..1.7976931348623157e+308
   rows follows params.items by index
 tests/patterns/patterns.ts:propertyAccessCallShape
 tests/patterns/patterns.ts:mapCallbackReturnShape
@@ -42,9 +44,13 @@ tests/imports/import-patterns.ts:namespaceImportedStructuralShape
 return:
   return.rows.length == items.length
   return.rows.length: int 0..4294967295
+  return.rows[].height == items[].height
+  return.rows[].height: -1.7976931348623157e+308..1.7976931348623157e+308
 locals:
   boxed.value.length == items.length
   boxed.value.length: int 0..4294967295
+  boxed.value[].height == items[].height
+  boxed.value[].height: -1.7976931348623157e+308..1.7976931348623157e+308
 tests/patterns/patterns.ts:mapBlockRowsWithDestructure
 return:
   return.rows.length == items.length

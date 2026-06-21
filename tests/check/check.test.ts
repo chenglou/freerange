@@ -2991,7 +2991,11 @@ function normalizeNegative(checks: FitCheck[]) {
     .map(check => {
       const head = `${check.status.toUpperCase()} ${check.file}:${check.functionName}: ${check.text}`
       if (check.reason == null) return head
-      const reason = check.reason.split('\n').map(line => `  ${line}`).join('\n')
+      const reason = check.reason
+        .replace(/@loop\d+/g, '@loop')
+        .split('\n')
+        .map(line => `  ${line}`)
+        .join('\n')
       return `${head}\n${reason}`
     })
   return normalizeText(lines.join('\n'))
@@ -3006,91 +3010,17 @@ function formatInferSnapshot(paths: string[], functionName: string) {
   const fn = report.functions[0]
   if (fn == null) return `${functionName}\n  missing function`
   const lines = [`${displayFile(fn.file)}:${fn.functionName}`]
-  addSection(lines, 'return', snapshotItems(functionName, 'return', fn.facts.map(fact => fact.text)))
-  addSection(lines, 'locals', snapshotItems(functionName, 'locals', fn.locals.map(fact => fact.text)))
+  addSection(lines, 'return', fn.facts.map(fact => fact.text))
+  addSection(lines, 'locals', fn.locals.map(fact => fact.text))
   for (const loop of fn.loops) {
     lines.push(`loop ${loop.line}: ${loop.header}`)
-    addSection(lines, 'inferred', snapshotItems(functionName, 'loop', loop.facts.map(fact => fact.text)), '  ')
+    addSection(lines, 'inferred', loop.facts.map(fact => fact.text), '  ')
     addSection(lines, 'checked', loop.specs.filter(spec => spec.status === 'checked').map(spec => spec.text), '  ')
     addSection(lines, 'assumptions', loop.specs.filter(spec => spec.status === 'assumed').map(spec => spec.text), '  ')
     addSection(lines, 'not-inferred', loop.specs.filter(spec => spec.status === 'not-inferred').map(spec => spec.text), '  ')
   }
   addSection(lines, 'unsupported', fn.unsupported.filter(line => line.startsWith('Forgot unsupported')))
   return lines.join('\n')
-}
-
-function snapshotItems(functionName: string, section: string, items: string[]) {
-  if (functionName === 'getGridLayout') return items.filter(item => keepGridLayoutSnapshotItem(section, item))
-  if (functionName === 'getLineLayout') return items.filter(item => keepLineLayoutSnapshotItem(section, item))
-  return items
-}
-
-function keepGridLayoutSnapshotItem(section: string, item: string) {
-  if (item.includes('.fragments')) return false
-  if (item === 'return.items.length == layoutSources.length') return true
-  if (item === 'return.contentHeight == nextRowTop') return true
-  if (item === 'return.contentHeight: 40..Infinity') return true
-  if (item === 'return.rows.length == rows.length') return true
-  if (item === 'return.rows[].bottom == (rows[].y + rows[].height)') return true
-  if (item === 'return.rows[].bottom: 40..Infinity') return true
-  if (item === 'return.rows[].height == rows[].height') return true
-  if (item === 'return.rows[].height: 0..Infinity') return true
-  if (item === 'return.rows[].y == rows[].y') return true
-  if (item === 'return.rows[].y: 40..Infinity') return true
-  if (item === 'nondecreasing(return.rows.y)') return true
-  if (item === 'spaced(return.rows, 24)') return true
-  if (section === 'return') {
-    return item === 'return.items[].imageBox.sizeX: 0..1952'
-      || item === 'return.items[].layoutBox.sizeX: 0..1952'
-      || item.includes('return.items[].prompt.box.sizeX ==')
-      || item.includes('return.items[].prompt.box.sizeY ==')
-      || item.includes('return.items[].prompt.lines.length ==')
-      || item === 'return.items[].prompt.lines.length: int 0..4294967295'
-  }
-  return item === 'cols: int 1..7'
-    || item === 'boxMaxSizeX: 18.285714285714285..1952'
-    || item === 'rows[].bottom == (rows[].y + rows[].height)'
-    || item === 'rows[].bottom: 40..Infinity'
-    || item === 'rows[].height: 0..Infinity'
-    || item === 'rows[].y: 40..Infinity'
-    || item === 'nondecreasing(rows.y)'
-    || item === 'spaced(rows, 24)'
-    || item === 'measurements.length == layoutSources.length'
-    || item === 'measurements[].imageSizeX: 0..1952'
-    || item.includes('measurements[].promptLayout.lineCount ==')
-    || item.includes('measurements[].promptLayout.lines.length ==')
-    || item === 'measurements[].promptLayout.lines.length: int 0..4294967295'
-    || item.includes('measurements[].promptLayout.visibleHeight ==')
-    || item.includes('measurements[].promptLayout.width ==')
-}
-
-function keepLineLayoutSnapshotItem(section: string, item: string) {
-  if (item.includes('.fragments')) return false
-  if (section === 'return') {
-    return item === 'return.items.length == layoutSources.length'
-      || item === 'return.items.length: int 0..4294967295'
-      || item === 'return.items[].imageBox.sizeX == get1DItemSizeResult.imageSizeX'
-      || item === 'return.items[].imageBox.sizeY == get1DItemSizeResult.imageSizeY'
-      || item.includes('return.items[].prompt.box.sizeX ==')
-      || item.includes('return.items[].prompt.box.sizeY ==')
-      || item.includes('return.items[].prompt.lines.length ==')
-      || item === 'return.items[].prompt.lines.length: int 0..4294967295'
-      || item.includes('return.items[].prompt.lines[].width ==')
-  }
-  return item === 'box1DMaxSizeX == ((windowSizeX - (boxes1DGapX * 2)) - (hitArea1DSizeX * 2))'
-    || item === 'box1DMaxSizeY == ((windowSizeY - windowPaddingTop) - boxes1DGapY)'
-    || item === 'measurements.length == layoutSources.length'
-    || item === 'measurements.length: int 0..4294967295'
-    || item === 'items.length == layoutSources.length'
-    || item === 'items.length: int 0..4294967295'
-    || item === 'measurements[].imageSizeX == get1DItemSizeResult.imageSizeX'
-    || item === 'measurements[].imageSizeY == get1DItemSizeResult.imageSizeY'
-    || item === 'measurements[].layoutHeight == get1DItemSizeResult.layoutHeight'
-    || item === 'measurements[].promptLayout.lineCount == get1DItemSizeResult.promptLayout.lineCount'
-    || item === 'measurements[].promptLayout.lines.length == get1DItemSizeResult.promptLayout.lines.length'
-    || item === 'measurements[].promptLayout.lines.length: int 0..4294967295'
-    || item === 'measurements[].promptLayout.visibleHeight == get1DItemSizeResult.promptLayout.visibleHeight'
-    || item === 'measurements[].promptLayout.width == get1DItemSizeResult.promptLayout.width'
 }
 
 function addSection(lines: string[], name: string, items: string[], indent = '') {
