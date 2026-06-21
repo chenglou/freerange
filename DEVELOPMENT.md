@@ -79,7 +79,7 @@ Do not invent containers from a written path. `given input.width: 0..10` may att
 
 ## Selector Audit
 
-`bun fr.ts check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks.
+`bun fr.ts check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternary choices, known `if` conditions, and `??` fallbacks.
 
 ## Adding Support
 
