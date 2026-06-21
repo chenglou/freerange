@@ -4,12 +4,15 @@ import {snapshotUpdateRequested} from '../../snapshot.ts'
 const repoDir = new URL('../..', import.meta.url).pathname
 const focusedSuitePaths = [
   'tests/calls/calls.test.ts',
-  'tests/check/check.test.ts',
   'tests/cli/cli.test.ts',
+  'tests/domain/domain.test.ts',
   'tests/interpreter/interpreter.test.ts',
+  'tests/loops/loops.test.ts',
   'tests/parser/parser.test.ts',
   'tests/purity/purity.test.ts',
   'tests/ranges/ranges.test.ts',
+  'tests/reports/reports.test.ts',
+  'tests/source-checking/source-checking.test.ts',
   'tests/type-contracts/type-contracts.test.ts',
 ]
 const infrastructureTestPaths = [
@@ -21,10 +24,17 @@ const infrastructureTestPaths = [
 const discoveredTestPaths = [...focusedSuitePaths, ...infrastructureTestPaths].sort()
 
 test('focused suite family stays complete', async () => {
+  let registrationCount = 0
   for (const path of focusedSuitePaths) {
     const source = await Bun.file(new URL(`../../${path}`, import.meta.url)).text()
     assert(countOccurrences(source, 'testSuite(') === 1, `expected ${path} to register one suite`)
+    registrationCount += countTestRegistrations(source)
   }
+  for (const path of infrastructureTestPaths) {
+    const source = await Bun.file(new URL(`../../${path}`, import.meta.url)).text()
+    registrationCount += countTestRegistrations(source)
+  }
+  assert(registrationCount === 23, `expected 23 test registrations, got ${registrationCount}`)
   const find = runProcess(['find', 'tests', '-name', '*.test.ts', '-type', 'f'])
   assert(find.exitCode === 0, `expected test discovery scan to pass\n${find.output}`)
   const discovered = find.output.trim().split('\n').filter(line => line.length > 0).sort()
@@ -110,6 +120,10 @@ function runProcess(cmd: string[]) {
 
 function countOccurrences(text: string, part: string) {
   return text.split(part).length - 1
+}
+
+function countTestRegistrations(source: string) {
+  return source.match(/^(?:test|testSuite)\(/gm)?.length ?? 0
 }
 
 function assert(condition: boolean, message: string): asserts condition {

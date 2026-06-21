@@ -1,5 +1,5 @@
-tests/patterns/patterns.ts:propertyAccessCallShape
-tests/patterns/patterns.ts:mapCallbackReturnShape
+tests/source-checking/patterns.ts:propertyAccessCallShape
+tests/source-checking/patterns.ts:mapCallbackReturnShape
 return:
   return.rows.length == items.length
   return.rows.length: int 0..4294967295
@@ -8,7 +8,7 @@ locals:
   rows.length == items.length
   rows.length: int 0..4294967295
   rows follows items by index
-tests/patterns/loop-patterns.ts:scalarPushLoop
+tests/loops/loop-patterns.ts:scalarPushLoop
 return:
   return.length == items.length
   return.length: int 0..50
@@ -38,7 +38,7 @@ locals:
   boxed.value.length: int 0..4294967295
   boxed.value[].height == items[].height
   boxed.value[].height: -1.7976931348623157e+308..1.7976931348623157e+308
-tests/patterns/patterns.ts:mapBlockRowsWithDestructure
+tests/source-checking/patterns.ts:mapBlockRowsWithDestructure
 return:
   return.rows.length == items.length
   return.rows.length: int 1..50
@@ -55,7 +55,7 @@ locals:
   rows[].index == mapIndex(items)
   rows[].index: int 0..49
   rows follows items by index
-tests/patterns/loop-patterns.ts:localLoopAnnotation
+tests/loops/loop-patterns.ts:localLoopAnnotation
 return:
   return.bottom == (cursor - gap)
   return.bottom: -10..3500

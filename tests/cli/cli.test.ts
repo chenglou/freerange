@@ -7,7 +7,7 @@ const repoDir = new URL('../..', import.meta.url).pathname
 await runCliRegressionTests()
 
 async function runCliRegressionTests() {
-  const explicitCheck = runFr(['check', 'tests/patterns/patterns.ts', 'tests/imports/import-patterns.ts'])
+  const explicitCheck = runFr(['check', 'tests/source-checking/patterns.ts', 'tests/imports/import-patterns.ts'])
   expectCli(explicitCheck.exitCode === 0, 'expected fr check <files> to pass', explicitCheck.output)
   expectCli(explicitCheck.output.includes('fr check: 2 files,'), 'expected explicit fr check summary to include file count', explicitCheck.output)
   expectCli(explicitCheck.output.includes('0 fail, 0 requires, 0 unknown'), 'expected explicit fr check summary to include clean counts', explicitCheck.output)
