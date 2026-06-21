@@ -6,7 +6,7 @@ bun install
 
 ## Day-To-Day
 
-- `bun run test` — focused checker suites, parser checks, positive patterns, stable negative messages, CLI regressions, curated inference snapshots, evaluation snapshots, and interpreter snapshots
+- `bun run test` — quiet local behavior suites and snapshots: checker families, parser, positive catalogs, stable negative messages, CLI regressions, evaluation, interpreter values, and focused test infrastructure
 - `bun run test:update` — update every local test snapshot
 - `bun fr.ts --help` — print the CLI command shapes
 - `bun fr.ts check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
@@ -55,7 +55,7 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [bench.ts](./bench.ts) and [bench-core.ts](./bench-core.ts) — dev-only timing tools
-- `bun run test` — runs the focused checker suites, parser checks, and local snapshot comparisons in isolated worker processes
+- `bun run test` — runs every Bun test under `tests/` in three isolated worker processes, including orchestration and snapshot tests
 - [tests/check](./tests/check), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), and [tests/cli](./tests/cli) — focused checker, call evaluation, interpreter frame ownership, range-reduction, type-contract, purity, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
 - [tests/snapshot](./tests/snapshot) and [snapshot.ts](./snapshot.ts) — local snapshot comparisons and infrastructure; `verify-photo-gallery-infer-snapshots.ts` is the explicit gallery probe
@@ -64,7 +64,7 @@ Dev tools and harnesses:
 
 `bun fr.ts infer path/to/file.ts` is for adoption and debugging, not public annotation generation. The user-facing command behavior lives in [DOCUMENTATION.md](./DOCUMENTATION.md); this section is only the maintenance policy.
 
-The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
+Selected inference functions are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt), including every fact reported for each function. Add a function when its inferred behavior becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
 Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for interpreter facts that are too specific for the public `infer` catalog but important during source-evaluation work: summarized literal data, IIFEs, default params, callback mutation invalidation, exact TypeScript path fallbacks, and unsupported stops.
 
