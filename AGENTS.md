@@ -4,7 +4,6 @@ Use [DOCUMENTATION.md](./DOCUMENTATION.md) as the user-facing source of truth. S
 Mandatory read: `engineering.md`.
 
 - This project is private. Do NOT consider legacy and interop when refactoring.
-- Add positive and negative tests.
 
 **Important:** when a small general family is visible, implement the family. If supporting `total += row.height` naturally includes `total = total + row.height` and guarded additions, define that invariant and reject the unsafe cases. Say what belongs in the family and what stays out.
 
