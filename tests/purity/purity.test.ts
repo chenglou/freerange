@@ -4,7 +4,7 @@ import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {functionImplementationReference} from '../../src/function-shape.ts'
 import {functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
 import {buildFitSourceFile, loadFitProject} from '../../src/modules.ts'
-import {verifyFitFiles} from '../../src/reports.ts'
+import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {
   contractRejectsImportedAlias,
   contractUsesImportedCallbackAfterMap,
@@ -302,6 +302,98 @@ if (
 ) {
   console.error('purity: expected imports, aliases, callbacks, and re-exports to keep source identity')
   console.error(formatTestDiagnostics(importedPurity.checks))
+  suite.fail()
+}
+
+const pureContractHelperChecks = verifyFitSource('contract-purity.ts', `function safeLimit(value: number) {
+  let floor = 9
+  floor += 1
+  return Math.max(value, floor)
+}
+
+/** @fit
+ * given value: 0..10
+ * return <= safeLimit(value)
+ */
+function bounded(value: number) {
+  return value
+}
+`)
+const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
+if (pureContractHelperCheck?.status !== 'pass') {
+  console.error('expected pure unannotated helper calls to work in contracts')
+  console.error(formatTestDiagnostics(pureContractHelperChecks))
+  suite.fail()
+}
+
+const pureGivenHelperChecks = verifyFitSource('given-contract-purity.ts', `function double(value: number) {
+  return value * 2
+}
+
+/** @fit
+ * given max >= double(min)
+ * given width: double(min)..max
+ * return.scaled <= max
+ * return.width >= double(min)
+ * return.width <= max
+ */
+function bounded(min: number, width: number, max: number) {
+  return {scaled: double(min), width}
+}
+`)
+const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.status !== 'pass')
+if (pureGivenHelperFailures.length > 0) {
+  console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
+  console.error(formatTestDiagnostics(pureGivenHelperChecks))
+  suite.fail()
+}
+
+const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
+
+function bump() {
+  box.limit = box.limit + 1
+  return box.limit
+}
+
+/** @fit
+ * return <= bump()
+ */
+function bad() {
+  return 0
+}
+`)
+const impureContractHelperCheck = impureContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= bump()')
+if (
+  impureContractHelperCheck?.status !== 'unknown'
+  || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
+  || impureContractHelperCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
+) {
+  console.error('expected impure helper calls in contracts to be rejected loudly')
+  console.error(formatTestDiagnostics(impureContractHelperChecks))
+  suite.fail()
+}
+
+const mutableReadContractHelperChecks = verifyFitSource('contract-mutable-read.ts', `const state = {limit: 10}
+
+function currentLimit() {
+  return state.limit
+}
+
+/** @fit
+ * return <= currentLimit()
+ */
+function bad() {
+  return 0
+}
+`)
+const mutableReadContractHelperCheck = mutableReadContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= currentLimit()')
+if (
+  mutableReadContractHelperCheck?.status !== 'unknown'
+  || mutableReadContractHelperCheck.reason?.includes('Unsupported @fit contract expression: currentLimit()') !== true
+  || mutableReadContractHelperCheck.reason.includes('helper currentLimit is not pure: reads mutable outside state') !== true
+) {
+  console.error('expected contract helpers that read mutable outside state to be rejected by the shared purity check')
+  console.error(formatTestDiagnostics(mutableReadContractHelperChecks))
   suite.fail()
 }
 
