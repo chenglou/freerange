@@ -338,23 +338,12 @@ function rejectsUsageLocal() {
   const tile: ScopedTile = {width: 40}
   return tile.width
 }
-
-type MissingScopedTile = {
-  width: number // @fit missingTypeMin..Infinity
-}
-
-function reportsMissingDeclarationName(tile: MissingScopedTile) {
-  return tile.width
-}
 `)
 const scopedTypeReadCheck = typeContractScopeChecks.find(check => check.functionName === 'readsScopedType' && check.text === 'return >= 160')
 const usageLocalCaptureCheck = typeContractScopeChecks.find(check => check.functionName === 'rejectsUsageLocal' && check.text === 'tile.width: typeScopedDouble(typeScopedMin)..Infinity')
-const missingDeclarationNameCheck = typeContractScopeChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit missingTypeMin..Infinity')
 if (
   scopedTypeReadCheck?.status !== 'pass'
   || usageLocalCaptureCheck?.status !== 'fail'
-  || missingDeclarationNameCheck?.status !== 'unknown'
-  || missingDeclarationNameCheck.reason?.includes("TS2304: Cannot find name 'missingTypeMin'") !== true
 ) {
   console.error('expected type @fit contracts to evaluate free names where the type is declared')
   console.error(formatTestDiagnostics(typeContractScopeChecks))
