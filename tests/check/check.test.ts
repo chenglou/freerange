@@ -18,11 +18,13 @@ import {
   type CollectionValue,
   type SequenceRelation,
 } from '../../src/domain.ts'
-import {linearVariable} from '../../src/linear.ts'
+import {farkasProvesNonNegative, linearMaximum} from '../../src/farkas.ts'
+import {linearAdd, linearConstant, linearScale, linearSubtract, linearVariable} from '../../src/linear.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
+import {rationalEquals} from '../../src/rational.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {isFunctionImplementation} from '../../src/function-shape.ts'
 import {verifySnapshot} from '../../snapshot.ts'
@@ -42,6 +44,88 @@ const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
 const repoDir = new URL('../..', import.meta.url).pathname
 const workspaceDir = repoDir.replace(/\/[^/]+\/$/, '/')
+
+const simplexX = linearVariable('simplex.x')
+const simplexY = linearVariable('simplex.y')
+const simplexNonnegativeFacts = [
+  {diff: simplexX, strict: false},
+  {diff: simplexY, strict: false},
+]
+const simplexBoundedFacts = [
+  ...simplexNonnegativeFacts,
+  {diff: linearSubtract(linearConstant(2), simplexX)!, strict: false},
+  {diff: linearSubtract(linearConstant(3), simplexY)!, strict: false},
+]
+const simplexSum = linearAdd(simplexX, simplexY)!
+const simplexOptimum = linearMaximum(simplexSum, simplexBoundedFacts)
+const simplexFractionalOptimum = linearMaximum(simplexSum, [
+  ...simplexNonnegativeFacts,
+  {diff: linearSubtract(linearConstant(4), linearAdd(linearScale(simplexX, 2), simplexY))!, strict: false},
+  {diff: linearSubtract(linearConstant(4), linearAdd(simplexX, linearScale(simplexY, 2)))!, strict: false},
+])
+const simplexDegenerateOptimum = linearMaximum(simplexSum, [
+  ...simplexNonnegativeFacts,
+  {diff: linearSubtract(linearConstant(1), simplexX)!, strict: false},
+  {diff: linearSubtract(linearConstant(1), simplexY)!, strict: false},
+  {diff: linearSubtract(linearConstant(1), simplexSum)!, strict: false},
+  {diff: linearSubtract(linearConstant(2), simplexSum)!, strict: false},
+])
+const simplexNegativeRhsFacts = [
+  {diff: linearAdd(simplexX, linearConstant(2))!, strict: false},
+  {diff: linearSubtract(linearConstant(-1), simplexX)!, strict: false},
+]
+const simplexNegativeRhsOptimum = linearMaximum(simplexX, [...simplexNegativeRhsFacts])
+const simplexNegativeRhsMinimum = linearMaximum(linearScale(simplexX, -1)!, [...simplexNegativeRhsFacts])
+const simplexUnbounded = linearMaximum(simplexX, [{diff: simplexX, strict: false}])
+const simplexInfeasible = linearMaximum(simplexX, [
+  {diff: linearSubtract(simplexX, linearConstant(1))!, strict: false},
+  {diff: linearSubtract(linearConstant(0), simplexX)!, strict: false},
+])
+const simplexFeasibleBoundary = linearMaximum(simplexX, [
+  {diff: linearSubtract(simplexX, linearConstant(1))!, strict: false},
+  {diff: linearSubtract(linearConstant(1), simplexX)!, strict: false},
+])
+if (
+  simplexOptimum.kind !== 'optimum'
+  || !rationalEquals(simplexOptimum.value, {num: 5n, den: 1n})
+  || !rationalEquals(simplexOptimum.point.get('simplex.x')!, {num: 2n, den: 1n})
+  || !rationalEquals(simplexOptimum.point.get('simplex.y')!, {num: 3n, den: 1n})
+  || simplexFractionalOptimum.kind !== 'optimum'
+  || !rationalEquals(simplexFractionalOptimum.value, {num: 8n, den: 3n})
+  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.x')!, {num: 4n, den: 3n})
+  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.y')!, {num: 4n, den: 3n})
+  || simplexDegenerateOptimum.kind !== 'optimum'
+  || !rationalEquals(simplexDegenerateOptimum.value, {num: 1n, den: 1n})
+  || simplexNegativeRhsOptimum.kind !== 'optimum'
+  || !rationalEquals(simplexNegativeRhsOptimum.value, {num: -1n, den: 1n})
+  || simplexNegativeRhsMinimum.kind !== 'optimum'
+  || !rationalEquals(simplexNegativeRhsMinimum.value, {num: 2n, den: 1n})
+  || simplexUnbounded.kind !== 'unbounded'
+  || simplexInfeasible.kind !== 'infeasible'
+  || simplexFeasibleBoundary.kind !== 'optimum'
+  || !rationalEquals(simplexFeasibleBoundary.value, {num: 1n, den: 1n})
+  || !farkasProvesNonNegative(simplexSum, false, simplexNonnegativeFacts)
+  || farkasProvesNonNegative(linearSubtract(simplexX, simplexY)!, false, simplexNonnegativeFacts)
+  || !farkasProvesNonNegative(simplexX, true, [
+    {diff: linearSubtract(simplexX, simplexY)!, strict: false},
+    {diff: simplexY, strict: true},
+  ])
+  || farkasProvesNonNegative(simplexX, true, [
+    {diff: linearSubtract(simplexX, simplexY)!, strict: false},
+    {diff: simplexY, strict: false},
+  ])
+  || !farkasProvesNonNegative(simplexX, true, [
+    {diff: linearSubtract(linearScale(simplexX, 2), simplexY)!, strict: false},
+    {diff: simplexY, strict: true},
+  ])
+  || farkasProvesNonNegative(simplexX, true, [
+    {diff: linearSubtract(linearScale(simplexX, 2), simplexY)!, strict: false},
+    {diff: simplexY, strict: false},
+  ])
+) {
+  console.error('expected simplex pivots to preserve bounded, unbounded, infeasible, and proof results')
+  suite.fail()
+}
 
 const callableFamilyProgram = buildFitSourceFile('callable-family.ts', `
 export default () => 1

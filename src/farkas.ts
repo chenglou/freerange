@@ -174,8 +174,8 @@ function solveSimplex(rows: Rational[][], rhs: Rational[], objective: Rational[]
 }
 
 function optimize(tableau: Rational[][], basis: number[], objective: Rational[], pivotColumnLimit: number): SimplexResult | null {
+  const reduced = reducedCosts(tableau, basis, objective)
   for (;;) {
-    const reduced = reducedCosts(tableau, basis, objective)
     let entering = -1
     for (let column = 0; column < pivotColumnLimit; column++) {
       if (rationalIsPositive(reduced[column]!)) {
@@ -199,7 +199,12 @@ function optimize(tableau: Rational[][], basis: number[], objective: Rational[],
       }
     }
     if (leaving === -1) return {objectiveValue: rationalZero, unbounded: true, point: []}
+    const enteringCost = reduced[entering]!
     pivot(tableau, basis, leaving, entering)
+    const pivotRow = tableau[leaving]!
+    for (let column = 0; column < reduced.length; column++) {
+      reduced[column] = rationalSubtract(reduced[column]!, rationalMultiply(enteringCost, pivotRow[column]!))
+    }
   }
 }
 
