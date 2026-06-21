@@ -1842,24 +1842,31 @@ export class ClassMethodThisClaims {
 }
 
 /** @fit
- * return: int 0..Infinity
+ * return: int 0..4294967295
  */
 export function ambientDocumentElementClientWidth() {
   return document.documentElement.clientWidth
 }
 
 /** @fit
- * return: int 0..Infinity
+ * return: int 0..4294967295
  */
 export function ambientBareInnerWidth() {
   return innerWidth
 }
 
 /** @fit
- * return: int 0..Infinity
+ * return: int 0..4294967295
  */
 export function ambientCanvasWidth(canvas: HTMLCanvasElement) {
   return canvas.width
+}
+
+/** @fit
+ * return: 0..<Infinity
+ */
+export function ambientVisualViewportWidth() {
+  return window.visualViewport!.width
 }
 
 /** @fit

@@ -2292,10 +2292,19 @@ export function negativeMapCallbackMutationForgetsReturnedFact(): NegativeMutate
 }
 
 /** @fit
- * return: 0..Infinity
+ * given box.clientWidth: 0..Infinity
+ * return: 0..<Infinity
  */
 export function negativePlainClientWidthIsNotAmbient(box: {clientWidth: number}) {
   return box.clientWidth
+}
+
+/** @fit
+ * given size.inlineSize: 0..Infinity
+ * return: 0..<Infinity
+ */
+export function negativeAmbientResizeObserverInlineSizeMayBeInfinite(size: ResizeObserverSize) {
+  return size.inlineSize
 }
 
 /** @fit

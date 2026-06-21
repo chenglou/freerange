@@ -1148,13 +1148,20 @@ FAIL tests/patterns/negative-patterns.ts:negativeMapCallbackMutationForgetsRetur
     inferred from code: mapIndex([item]) >= 0
     inferred from code: mapIndex([item]) - 1 < 0
   missing fact: -1 > 0
-UNKNOWN tests/patterns/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..Infinity
-  range was -1.7976931348623157e+308..1.7976931348623157e+308 as box.clientWidth, expected inside 0..Infinity
+UNKNOWN tests/patterns/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..<Infinity
+  range was 0..Infinity as box.clientWidth, expected inside 0..<Infinity
   known:
-    box.clientWidth: -1.7976931348623157e+308..1.7976931348623157e+308
+    box.clientWidth: 0..Infinity
     Infinity: Infinity..Infinity
-    assumed from input: given box.clientWidth: -Infinity<..<Infinity
-  missing: box.clientWidth >= 0
+    assumed from input: given box.clientWidth: 0..Infinity
+  missing: box.clientWidth < Infinity
+UNKNOWN tests/patterns/negative-patterns.ts:negativeAmbientResizeObserverInlineSizeMayBeInfinite: return: 0..<Infinity
+  range was 0..Infinity as size.inlineSize, expected inside 0..<Infinity
+  known:
+    size.inlineSize: 0..Infinity
+    Infinity: Infinity..Infinity
+    assumed from input: given size.inlineSize: 0..Infinity
+  missing: size.inlineSize < Infinity
 UNKNOWN tests/patterns/negative-patterns.ts:default: return.x: 50..100
   range was -50..150 as (rect.x + ((rect.right - rect.x) / 2)), expected inside 50..100
   known:

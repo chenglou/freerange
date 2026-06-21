@@ -338,7 +338,7 @@ Freerange inferred lots of facts! Here's what we infer:
 - Every returned field that's a number, be it array of numbers or object with nested number fields, gets their inferred range and number type, e.g. `0..<10` or `int 5..20`, and disjoint union values if applicable, e.g. `1 | 3 | 5` if the returned value is one of those 3 numbers inferred from some if-else in the function body.
 - In the future, we can and might infer more convenience facts, such as `return.array1.length == return.array2.length`. But for now, to preserve a simple mental model and avoid bad surprises during code changes, we ask the user/agent to write those out explicitly in the function's `@fit` contracts.
 
-Freerange comes out of the box understanding the relevant DOM and JS apis, e.g. it knows that `array.length` is `int 0..4294967295` (the JS cap) and that DOM `element.offsetWidth` is `int 0..Infinity`. Full glossary at the end of the docs.
+Freerange comes out of the box understanding the relevant DOM and JS apis, e.g. it knows that `array.length` is `int 0..4294967295` (the JS cap) and DOM `element.offsetWidth` is `int 0..<Infinity`. Full glossary at the end of the docs.
 It also understands useful `Math.*` calls. For example, it can prove `Math.floor(x) <= x`, `x < Math.floor(x) + 1`, `x <= Math.ceil(x)`, `Math.ceil(x) <= x + 1`, and `x - 0.5 <= Math.round(x) <= x + 0.5`. Claims follow how JS evaluates them: `x + 1` in a claim rounds like the code would, so the strict ceil bound holds as `<=`.
 
 #### Branches
@@ -454,17 +454,17 @@ return // the returned value of a function-level spec.
 
 ```ts
 array.length: int 0..4294967295
-element.clientWidth/clientHeight/scrollWidth/scrollHeight: int 0..Infinity
-element.offsetWidth/offsetHeight: int 0..Infinity
-canvas.width/height: int 0..Infinity
-image.width/height/naturalWidth/naturalHeight: int 0..Infinity
-video.width/height/videoWidth/videoHeight: int 0..Infinity
-pictureInPictureWindow.width/height: int 0..Infinity
-screen.width/height/availWidth/availHeight: int 0..Infinity
-window.innerWidth/innerHeight/outerWidth/outerHeight: int 0..Infinity
-innerWidth/innerHeight/outerWidth/outerHeight: int 0..Infinity
+element.clientWidth/clientHeight/scrollWidth/scrollHeight: int 0..<Infinity
+element.offsetWidth/offsetHeight: int 0..<Infinity
+canvas.width/height: int 0..<Infinity
+image.width/height/naturalWidth/naturalHeight: int 0..<Infinity
+video.width/height/videoWidth/videoHeight: int 0..<Infinity
+pictureInPictureWindow.width/height: int 0..<Infinity
+screen.width/height/availWidth/availHeight: int 0..<Infinity
+window.innerWidth/innerHeight/outerWidth/outerHeight: int 0..<Infinity
+innerWidth/innerHeight/outerWidth/outerHeight: int 0..<Infinity
 resizeObserverSize.inlineSize/blockSize: 0..Infinity
-visualViewport.width/height: 0..Infinity
+visualViewport.width/height: 0..<Infinity
 Math.floor/ceil/round/trunc(value) // inferred result ranges, non-strict order preservation, and ordinary rounding-loss bounds
 Math.PI/E/LN10/LN2/LOG10E/LOG2E/SQRT1_2/SQRT2
 Math.pow(base, exponent), Math.cbrt/fround/f16round/clz32(value), Math.imul(left, right) // inferred result ranges; clz32 and imul use coarse integer ranges unless inputs are exact

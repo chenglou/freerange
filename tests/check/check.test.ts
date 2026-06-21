@@ -85,7 +85,7 @@ if (positiveReport.phase !== 'ready') {
 }
 
 const photoGalleryReport = await verifyFitFiles(['photo-gallery/index.ts'])
-if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 40 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
+if (photoGalleryReport.phase !== 'ready' || photoGalleryReport.summary.pass !== 38 || photoGalleryReport.summary.fail !== 0 || photoGalleryReport.summary.requires !== 0 || photoGalleryReport.summary.unknown !== 0) {
   console.error('expected photo-gallery literal data to stay summarized')
   console.error(photoGalleryReport.phase === 'ready'
     ? `got ${photoGalleryReport.summary.pass} pass, ${photoGalleryReport.summary.fail} fail, ${photoGalleryReport.summary.requires} requires, ${photoGalleryReport.summary.unknown} unknown`

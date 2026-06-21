@@ -15,11 +15,19 @@ type AmbientNumberBound = {
 
 const nonnegativeInteger: AmbientNumberBound = {
   min: 0,
-  max: Number.POSITIVE_INFINITY,
+  // A shared unsigned-long envelope covers both signed and unsigned Web IDL
+  // integer geometry attributes without losing their finite upper bound.
+  max: 0xffff_ffff,
   isInteger: true,
 }
 
-const nonnegativeNumber: AmbientNumberBound = {
+const nonnegativeFiniteNumber: AmbientNumberBound = {
+  min: 0,
+  max: Number.MAX_VALUE,
+  isInteger: false,
+}
+
+const nonnegativeUnrestrictedNumber: AmbientNumberBound = {
   min: 0,
   max: Number.POSITIVE_INFINITY,
   isInteger: false,
@@ -44,14 +52,14 @@ const ambientPropertyBounds = new Map<string, AmbientNumberBound>([
   ['HTMLVideoElement.width', nonnegativeInteger],
   ['PictureInPictureWindow.height', nonnegativeInteger],
   ['PictureInPictureWindow.width', nonnegativeInteger],
-  ['ResizeObserverSize.blockSize', nonnegativeNumber],
-  ['ResizeObserverSize.inlineSize', nonnegativeNumber],
+  ['ResizeObserverSize.blockSize', nonnegativeUnrestrictedNumber],
+  ['ResizeObserverSize.inlineSize', nonnegativeUnrestrictedNumber],
   ['Screen.availHeight', nonnegativeInteger],
   ['Screen.availWidth', nonnegativeInteger],
   ['Screen.height', nonnegativeInteger],
   ['Screen.width', nonnegativeInteger],
-  ['VisualViewport.height', nonnegativeNumber],
-  ['VisualViewport.width', nonnegativeNumber],
+  ['VisualViewport.height', nonnegativeFiniteNumber],
+  ['VisualViewport.width', nonnegativeFiniteNumber],
   ['Window.innerHeight', nonnegativeInteger],
   ['Window.innerWidth', nonnegativeInteger],
   ['Window.outerHeight', nonnegativeInteger],
