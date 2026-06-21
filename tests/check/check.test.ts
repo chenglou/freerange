@@ -30,7 +30,13 @@ import {formatTestDiagnostics} from '../test-diagnostics.ts'
 import {testSuite} from '../test-suite.ts'
 
 testSuite('check suite', async suite => {
-const positiveFiles = ['tests/patterns/patterns.ts', 'tests/patterns/loop-patterns.ts', 'tests/imports/import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-patterns.ts']
+const positiveCatalogs = [
+  {path: 'tests/patterns/patterns.ts', expectedChecks: 340},
+  {path: 'tests/patterns/loop-patterns.ts', expectedChecks: 115},
+  {path: 'tests/imports/import-patterns.ts', expectedChecks: 66},
+  {path: 'tests/interpreter-matrix/interpreter-matrix-patterns.ts', expectedChecks: 19},
+] as const
+const positiveFiles = positiveCatalogs.map(catalog => catalog.path)
 const negativeFiles = ['tests/patterns/negative-patterns.ts', 'tests/patterns/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
@@ -76,8 +82,23 @@ function verifyFitSourceWithCallsites(file: string, sourceText: string) {
 }
 
 const positiveReport = await verifyFitFiles(positiveFiles)
-if (positiveReport.phase !== 'ready') {
-  console.error(formatTestDiagnostics(positiveReport))
+const actualPositiveCounts = new Map<string, number>()
+for (const check of positiveReport.checks) {
+  actualPositiveCounts.set(check.file, (actualPositiveCounts.get(check.file) ?? 0) + 1)
+}
+const positiveCountFailures = positiveCatalogs.filter(catalog =>
+  actualPositiveCounts.get(catalog.path) !== catalog.expectedChecks)
+const unexpectedPositiveFiles = [...actualPositiveCounts.keys()].filter(path =>
+  !positiveCatalogs.some(catalog => catalog.path === path))
+if (positiveReport.phase !== 'ready' || positiveCountFailures.length > 0 || unexpectedPositiveFiles.length > 0) {
+  console.error('expected every positive catalog obligation to exist and pass')
+  for (const catalog of positiveCountFailures) {
+    console.error(`${catalog.path}: expected ${catalog.expectedChecks}, got ${actualPositiveCounts.get(catalog.path) ?? 0}`)
+  }
+  for (const path of unexpectedPositiveFiles) console.error(`unexpected positive catalog: ${path}`)
+  for (const check of positiveReport.checks.filter(check => check.status !== 'pass')) {
+    console.error(`${check.status.toUpperCase()} ${check.file}:${check.functionName}: ${check.text}`)
+  }
   suite.fail()
 }
 
