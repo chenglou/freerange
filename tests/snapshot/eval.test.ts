@@ -1,7 +1,6 @@
 import {test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
-import {verifyFitFiles} from '../../src/reports.ts'
-import {displayWorkspaceFile, verifySnapshot} from '../../snapshot.ts'
+import {verifySnapshot} from '../../snapshot.ts'
 
 test('evaluation snapshots', async () => {
   const lines: string[] = []
@@ -28,16 +27,6 @@ test('evaluation snapshots', async () => {
     ['matrix indexed array cursor values', 'matrixIndexedArrayCursorValues'],
   ] as const
 
-  await addCheckCase(
-    lines,
-    'photo-gallery spring defaults through imported data',
-    ['photo-gallery/index.ts'],
-    text => text.includes('data[].sizeX.k > 0')
-      || text.includes('data[].sizeX.b > 0')
-      || text.includes('data[].fxFactor.k > 0')
-      || text.includes('data[].fxFactor.b > 0'),
-  )
-
   for (const [label, functionName] of matrixInferCases) addInferCase(lines, label, matrixFunctions, functionName)
   addInferCase(lines, 'imported literal nested map/defaults', importFunctions, 'importedNestedLiteralArrayMapDefaultFields')
 
@@ -45,22 +34,6 @@ test('evaluation snapshots', async () => {
     throw new Error('evaluation snapshots changed')
   }
 }, 300_000)
-
-async function addCheckCase(
-  lines: string[],
-  label: string,
-  paths: string[],
-  keep: (text: string) => boolean,
-) {
-  const report = await verifyFitFiles(paths, {annotationsOnly: true})
-  const checks = report.checks.filter(check => keep(check.text))
-  lines.push(`check ${label}`)
-  lines.push(`  summary: ${checks.filter(check => check.status === 'pass').length} pass, ${checks.filter(check => check.status === 'fail').length} fail, ${checks.filter(check => check.status === 'requires').length} requires, ${checks.filter(check => check.status === 'unknown').length} unknown`)
-  for (const check of checks) {
-    const line = check.line == null ? '' : `:${check.line}`
-    lines.push(`  ${check.status.toUpperCase()} ${displayWorkspaceFile(check.file)}${line}:${check.functionName}: ${check.text}`)
-  }
-}
 
 function addInferCase(
   lines: string[],

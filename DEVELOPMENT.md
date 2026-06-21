@@ -15,9 +15,9 @@ bun install
 - `bun fr.ts check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
 - `bun fr.ts infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
 - `bun run bench -- --runs 3 path/to/file.ts` — dev-only timing for explicit files, including cold load, warmed load/verify medians, and a load-phase split
-- `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
+- `bun run probe:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
-- `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter snapshots, typecheck, lint, and knip
+- `bun run check` — hermetic local gate: behavior suites, local snapshots, typecheck, lint, and knip
 
 ## Current Sources Of Truth
 
@@ -27,7 +27,8 @@ bun install
 - [tests/patterns/negative-patterns.ts](./tests/patterns/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad patterns
 - [negative-patterns.expected.txt](./negative-patterns.expected.txt) — stable negative report output
 - [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only inferred-facts snapshots
-- [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt), [eval-snapshots.expected.txt](./eval-snapshots.expected.txt), and [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt) — stable harness snapshots for the local photo-gallery infer inventory, interpreter-adjacent facts, and focused interpreter tests
+- [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) and [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt) — local snapshots for interpreter-adjacent facts and focused interpreter values
+- [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt) — mutable local gallery inventory; it does not decide whether the local checkout is correct
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -57,7 +58,7 @@ Dev tools and harnesses:
 - `bun run test` — runs the focused checker suites, parser checks, and local snapshot comparisons in isolated worker processes
 - [tests/check](./tests/check), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), and [tests/cli](./tests/cli) — focused checker, call evaluation, interpreter frame ownership, range-reduction, type-contract, purity, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
-- [tests/snapshot](./tests/snapshot), `verify-photo-gallery-infer-snapshots.ts`, and [snapshot.ts](./snapshot.ts) — local snapshot tests and the explicit gallery probe
+- [tests/snapshot](./tests/snapshot) and [snapshot.ts](./snapshot.ts) — local snapshot comparisons and infrastructure; `verify-photo-gallery-infer-snapshots.ts` is the explicit gallery probe
 
 ## Infer Tool
 

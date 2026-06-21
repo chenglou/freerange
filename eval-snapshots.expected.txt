@@ -1,9 +1,3 @@
-check photo-gallery spring defaults through imported data
-  summary: 4 pass, 0 fail, 0 requires, 0 unknown
-  PASS photo-gallery/index.ts:22:<top-level>: data[].sizeX.k > 0
-  PASS photo-gallery/index.ts:23:<top-level>: data[].sizeX.b > 0
-  PASS photo-gallery/index.ts:22:<top-level>: data[].fxFactor.k > 0
-  PASS photo-gallery/index.ts:23:<top-level>: data[].fxFactor.b > 0
 infer matrix nested iife/map/defaults
   return return.length == matrixInput.groups.length
   return return.length: int 0..4294967295
