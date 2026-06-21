@@ -92,7 +92,7 @@ Syntax Glossary's at the end of the docs.
 
 ## Contracts API
 
-Freerange checks the annotated function body, types, and their usages, to ensure the `@fit` contracts are upheld. Here's an example of a responsive 2D photo gallery grid where the column count is calculated to be between 1 and 7, and each photo tile's width is derived from that:
+Freerange checks the annotated function body, types, and their usages, to ensure the `@fit` contracts are upheld. Here's an example of a responsive 2D grid where the column count is calculated to be between 1 and 7, and each item's width is derived from that:
 
 ```ts
 /** @fit
@@ -100,39 +100,39 @@ Freerange checks the annotated function body, types, and their usages, to ensure
  * return: int 1..7
  */
 function columnCount(availableWidth: number) {
-  const preferredTileWidth = availableWidth >= 700 ? 320 : 160
-  const rawColumnCount = Math.floor(availableWidth / preferredTileWidth)
+  const preferredCellWidth = availableWidth >= 700 ? 320 : 160
+  const rawColumnCount = Math.floor(availableWidth / preferredCellWidth)
   return Math.min(7, Math.max(1, rawColumnCount))
 }
 
 /** @fit
- * given photos.length: int 0..200
- * given photos[].naturalWidth: int 1..Infinity
+ * given items.length: int 0..200
+ * given items[].preferredWidth: int 1..Infinity
  * given availableWidth: int 160..Infinity
- * return.tiles.length == photos.length
- * return.tiles[].width > 0
+ * return.cells.length == items.length
+ * return.cells[].width > 0
  */
-function layoutPhotoGrid(availableWidth: number, photos: {naturalWidth: number}[]) {
+function layoutGrid(availableWidth: number, items: {preferredWidth: number}[]) {
   const columns = columnCount(availableWidth)
-  const tileWidth = availableWidth / columns
-  const tiles = photos.map(photo => ({
-    width: Math.min(photo.naturalWidth, tileWidth),
-    naturalWidth: photo.naturalWidth,
+  const cellWidth = availableWidth / columns
+  const cells = items.map(item => ({
+    width: Math.min(item.preferredWidth, cellWidth),
+    preferredWidth: item.preferredWidth,
   }))
-  return {tiles}
+  return {cells}
 }
 ```
 
 Given the input TS types and Freerange's extra specs, the function bodies and calls are analyzed through "abstract interpretation" and "symbolic execution", then checked against those specs.
 
-Let's run `fr infer gallery.ts`. Look at how much information Freerange captures, statically, for you and AI agents to verify:
+Let's run `fr infer grid.ts`. Look at how much information Freerange captures, statically, for you and AI agents to verify:
 
 ```txt
-gallery.ts:columnCount
+grid.ts:columnCount
 return:
   return: int 1..7
 locals:
-  preferredTileWidth: 160 | 320
+  preferredCellWidth: 160 | 320
   rawColumnCount: int 0..Infinity
 checked:
   return: int 1..7
@@ -141,33 +141,33 @@ assumptions:
 redundant:
   return: int 1..7 (covered by return: int 1..7)
 
-gallery.ts:layoutPhotoGrid
+grid.ts:layoutGrid
 return:
-  return.tiles.length == photos.length
-  return.tiles.length: int 0..200
-  return.tiles[].naturalWidth == photos[].naturalWidth
-  return.tiles[].naturalWidth: int 1..Infinity
-  return.tiles[].width: 1..Infinity
-  return.tiles follows photos by index
+  return.cells.length == items.length
+  return.cells.length: int 0..200
+  return.cells[].preferredWidth == items[].preferredWidth
+  return.cells[].preferredWidth: int 1..Infinity
+  return.cells[].width: 1..Infinity
+  return.cells follows items by index
 locals:
   columns: int 1..7
-  tileWidth: 22.857142857142858..Infinity
-  tiles.length == photos.length
-  tiles.length: int 0..200
-  tiles[].naturalWidth == photos[].naturalWidth
-  tiles[].naturalWidth: int 1..Infinity
-  tiles[].width: 1..Infinity
-  tiles follows photos by index
+  cellWidth: 22.857142857142858..Infinity
+  cells.length == items.length
+  cells.length: int 0..200
+  cells[].preferredWidth == items[].preferredWidth
+  cells[].preferredWidth: int 1..Infinity
+  cells[].width: 1..Infinity
+  cells follows items by index
 checked:
-  return.tiles.length == photos.length
-  return.tiles[].width > 0
+  return.cells.length == items.length
+  return.cells[].width > 0
 assumptions:
-  given photos.length: int 0..200
-  given photos[].naturalWidth: int 1..Infinity
+  given items.length: int 0..200
+  given items[].preferredWidth: int 1..Infinity
   given availableWidth: int 160..Infinity
 redundant:
-  return.tiles.length == photos.length (covered by return.tiles.length == photos.length)
-  return.tiles[].width > 0 (covered by return.tiles[].width: 1..Infinity)
+  return.cells.length == items.length (covered by return.cells.length == items.length)
+  return.cells[].width > 0 (covered by return.cells[].width: 1..Infinity)
 ```
 
 ### Purity

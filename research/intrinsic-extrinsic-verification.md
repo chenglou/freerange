@@ -1,6 +1,6 @@
 # Intrinsic And Extrinsic Verification
 
-This came from the photo-gallery annotation thread, but the idea is broader than Freerange.
+This distinction is broader than Freerange.
 
 The useful question is:
 

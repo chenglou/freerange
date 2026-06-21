@@ -11,8 +11,7 @@
     "test": "bun test --only-failures --parallel=3 --parallel-delay=0 ./tests",
     "test:update": "FREERANGE_UPDATE_SNAPSHOTS=1 bun run test",
     "bench": "bun bench.ts",
-    "probe:photo-gallery": "bun verify-photo-gallery-infer-snapshots.ts",
-    "check": "bun run test && tsc && oxlint --type-aware --ignore-pattern '*.js' --ignore-pattern 'photo-gallery/**' --ignore-pattern 'import-pattern-declared-package/**' --ignore-pattern 'import-pattern-declared-package-no-map/**' && bun knip"
+    "check": "bun run test && tsc && oxlint --type-aware --ignore-pattern '*.js' --ignore-pattern 'import-pattern-declared-package/**' --ignore-pattern 'import-pattern-declared-package-no-map/**' && bun knip"
   },
   "devDependencies": {
     "knip": "^6.14.2",
