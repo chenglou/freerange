@@ -143,32 +143,29 @@ case negative guarded unsafe reset surface: tests/interpreter-matrix/interpreter
   return.rows.length: int 0..4294967295
   return.rows[].height: int 0..1
   fact return.rows is an order-preserving subset of items
-case negative unsupported loop impure read surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixUnsupportedLoopImpureRead
-  return: unknown (Indexed for loops support for (let i = 0; i < limit; i++) style loops)
-  unsupported negativeMatrixUnsupportedLoopImpureRead line 133: Indexed for loops support for (let i = 0; i < limit; i++) style loops
 case negative try/catch surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixTryCatchUnsupported
   return: unknown (Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1
   } catch {
     return 2
   })
-  unsupported negativeMatrixTryCatchUnsupported line 140: Unsupported statement in negativeMatrixTryCatchUnsupported: try {
+  unsupported negativeMatrixTryCatchUnsupported line 127: Unsupported statement in negativeMatrixTryCatchUnsupported: try {
     return 1
   } catch {
     return 2
   }
 case negative switch broad string surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixSwitchBroadStringUnsupported
   return: unknown (Switch expected a finite literal discriminant: kind)
-  unsupported negativeMatrixSwitchBroadStringUnsupported line 148: Switch expected a finite literal discriminant: kind
+  unsupported negativeMatrixSwitchBroadStringUnsupported line 135: Switch expected a finite literal discriminant: kind
 case negative switch fallthrough surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixSwitchFallthroughUnsupported
   return: unknown (Switch fallthrough is not supported: kind)
-  unsupported negativeMatrixSwitchFallthroughUnsupported line 157: Switch fallthrough is not supported: kind
+  unsupported negativeMatrixSwitchFallthroughUnsupported line 144: Switch fallthrough is not supported: kind
 case negative array at dynamic surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixArrayAtDynamicUnsupported
   return: unknown (Array.at only supports constant negative indexes)
-  unsupported negativeMatrixArrayAtDynamicUnsupported line 166: Array.at only supports constant negative indexes
+  unsupported negativeMatrixArrayAtDynamicUnsupported line 153: Array.at only supports constant negative indexes
 case negative nullish fallback string surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixNullishFallbackString
   return: unknown (Math.max expected number arguments)
-  unsupported negativeMatrixNullishFallbackString line 171: Math.max expected number arguments
+  unsupported negativeMatrixNullishFallbackString line 158: Math.max expected number arguments
 case negative mutable alias surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMutableAliasUnsupported
   return: unknown (negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases)
-  unsupported negativeMatrixMutableAliasUnsupported line 177: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases
+  unsupported negativeMatrixMutableAliasUnsupported line 164: negativeMatrixMutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases

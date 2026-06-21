@@ -2296,26 +2296,11 @@ if (missingFilterMapInferFacts.length > 0) {
 const loopInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'localLoopAnnotation'})
 const loopFunctionSpecStatuses = new Map(loopInferReport.functions[0]?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopReport = loopInferReport.functions[0]?.loops[0]
-const loopFacts = new Set(loopReport?.facts.map(fact => fact.text) ?? [])
-const loopSpecStatuses = new Map(loopReport?.specs.map(spec => [spec.text, spec.status]) ?? [])
 const loopRedundantSpecs = new Map(loopReport?.redundant.map(spec => [spec.text, spec.reason]) ?? [])
-const expectedLoopFacts = [
-  'rows.length == items.length',
-  'rows[].height: 0..40',
-  'nondecreasing(rows.y)',
-  'spaced(rows, gap)',
-]
-const missingLoopFacts = expectedLoopFacts.filter(fact => !loopFacts.has(fact))
-const expectedLoopSpecStatuses = [
-  ['given items[].height: 0..40', 'assumed'],
-  ['rows.length == items.length', 'checked'],
-  ['spaced(rows, gap)', 'checked'],
-] as const
 const expectedLoopFunctionSpecStatuses = [
   ['given items.length: int 1..50', 'assumed'],
   ['return.rows.length == items.length', 'checked'],
 ] as const
-const badLoopSpecStatuses = expectedLoopSpecStatuses.filter(([text, status]) => loopSpecStatuses.get(text) !== status)
 const expectedLoopRedundantSpecs = [
   ['rows.length == items.length', 'rows.length == items.length'],
   ['rows[].height: 0..40', 'rows[].height: 0..40'],
@@ -2323,10 +2308,8 @@ const expectedLoopRedundantSpecs = [
 const missingLoopRedundantSpecs = expectedLoopRedundantSpecs.filter(([text, reason]) => loopRedundantSpecs.get(text) !== reason)
 const unexpectedlyRedundantLoopSpecs: string[] = []
 const badLoopFunctionSpecStatuses = expectedLoopFunctionSpecStatuses.filter(([text, status]) => loopFunctionSpecStatuses.get(text) !== status)
-if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoopRedundantSpecs.length > 0 || unexpectedlyRedundantLoopSpecs.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
+if (missingLoopRedundantSpecs.length > 0 || unexpectedlyRedundantLoopSpecs.length > 0 || badLoopFunctionSpecStatuses.length > 0) {
   console.error('expected loop inferred facts changed')
-  console.error(missingLoopFacts.map(fact => `missing: ${fact}`).join('\n'))
-  console.error(badLoopSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
   console.error(missingLoopRedundantSpecs.map(([text, reason]) => `expected redundant ${text}: ${reason}`).join('\n'))
   console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
   console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))

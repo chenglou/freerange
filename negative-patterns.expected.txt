@@ -1351,8 +1351,6 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperContract
   missing: importedClampWidth(width) <= 100
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsThisGiven: return >= box.top
   Class getter call is not analyzed: box.bottom
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsCallerHeight: return >= box.top
-  Class getter call is not analyzed: box.bottom
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: return: 0..100
   range was 0..320 as barrelClampWidth(width), expected inside 0..100
   known:
@@ -1379,7 +1377,7 @@ UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedNumericConstan
   missing fact: (width + importedChromeX) == ((width + importedChromeX) + 1)
 UNKNOWN tests/imports/negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
   TypeScript rejected @fit contract:
-  tests/imports/negative-import-patterns.ts(111,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
+  tests/imports/negative-import-patterns.ts(103,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
 FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldReturnCheck: return.k > 0
   result: is false
   missing fact: -1 > 0

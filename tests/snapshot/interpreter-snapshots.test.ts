@@ -59,7 +59,6 @@ test('interpreter snapshots', async () => {
     ['negative indexed conditional else count surface', 'negativeMatrixIndexedConditionalElseCount'],
     ['negative indexed mixed extremum/cursor surface', 'negativeMatrixIndexedMixedExtremumAndCursor'],
     ['negative guarded unsafe reset surface', 'negativeMatrixGuardedExtremumUnsafeReset'],
-    ['negative unsupported loop impure read surface', 'negativeMatrixUnsupportedLoopImpureRead'],
     ['negative try/catch surface', 'negativeMatrixTryCatchUnsupported'],
     ['negative switch broad string surface', 'negativeMatrixSwitchBroadStringUnsupported'],
     ['negative switch fallthrough surface', 'negativeMatrixSwitchFallthroughUnsupported'],

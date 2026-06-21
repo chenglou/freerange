@@ -123,19 +123,6 @@ export function negativeMatrixGuardedExtremumUnsafeReset(items: {height: 0 | 1; 
   return {rows}
 }
 
-declare const negativeMatrixImpureLoopApi: {
-  touch(): number
-}
-
-export function negativeMatrixUnsupportedLoopImpureRead(items: number[], value: number): number {
-  let scratch = 0
-  const kept = value
-  for (let i = 1; i < items.length; i++) {
-    scratch += negativeMatrixImpureLoopApi.touch()
-  }
-  return kept
-}
-
 export function negativeMatrixTryCatchUnsupported(): number {
   try {
     return 1

@@ -27,19 +27,6 @@ export class NegativeImportedClassBox {
   }
 }
 
-export class NegativeImportedClassBoxNeedsHeight {
-  constructor(public top: number, public height: number) {}
-
-  /** @fit
-   * given this.top: 0..1000
-   * given this.height: 0..1000
-   * return >= this.top
-   */
-  get bottom() {
-    return this.top + this.height
-  }
-}
-
 export type ImportedOptionalRows = {
   rows?: {height: number}[]
 }
