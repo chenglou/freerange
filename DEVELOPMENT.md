@@ -19,7 +19,7 @@ bun install
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
 - `bun run verify:interpreter` — run the interpreter on focused tests and snapshot the abstract return values it builds
 - `bun run verify:semantics` — snapshot the internal obligation/proof-trace shape for a tiny checked fixture
-- `bun run knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
+- `bun knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
 - `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter/semantic snapshots, typecheck, lint, and knip
 
 ## Current Sources Of Truth
