@@ -942,6 +942,8 @@ const expectedPassingNumberFunctions = new Set([
   'negativeRemainder',
   'negativeSquare',
 ])
+const missingPassingNumberFunctions = [...expectedPassingNumberFunctions].filter(functionName =>
+  !checkedNumberOperationChecks.some(check => check.functionName === functionName))
 const nanUnderUnary = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderUnary')
 const nanUnderCompound = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderCompound')
 const uncheckedSquare = checkedNumberOperationChecks.find(check => check.functionName === 'uncheckedSquare')
@@ -959,6 +961,7 @@ if (
   || oneNaNBranch.reason !== 'NaN is outside the checked numerical domain'
   || integerGuard?.status !== 'pass'
   || safeIntegerGuard?.status !== 'pass'
+  || missingPassingNumberFunctions.length > 0
   || checkedNumberOperationChecks.some(check => expectedPassingNumberFunctions.has(check.functionName) && check.status !== 'pass')
   || nanUnderUnary?.status !== 'unknown'
   || nanUnderUnary.reason?.startsWith('0 * Infinity is unknown because') !== true
@@ -2025,7 +2028,7 @@ function wildcardIdentityCollision(rows: {height: number}[], __fit_domain_rows__
 const wildcardIdentityCollisionCheck = wildcardIdentityCollisionChecks.find(check =>
   check.functionName === 'wildcardIdentityCollision'
   && check.text === 'rows[].height == __fit_domain_rows___item_height')
-if (wildcardIdentityCollisionCheck?.status === 'pass') {
+if (wildcardIdentityCollisionCheck?.status !== 'fail') {
   console.error('expected a source identifier not to share proof identity with a wildcard path placeholder')
   console.error(formatTestDiagnostics(wildcardIdentityCollisionChecks))
   suite.fail()

@@ -644,7 +644,7 @@ const expectedBoundaryPasses = [
   'widenedAliasPushInvalidatesTupleLength',
   'equalLengthTupleUnionKeepsPositions',
 ]
-const expectedBoundaryUnknowns = [
+const expectedBoundaryNonPasses = [
   'arrayParameterDoesNotKeepFirstPosition',
   'fixedIndexGivenOnCollectionIsUnsupported',
   'negativePropertyGivenOnCollectionIsUnsupported',
@@ -663,10 +663,17 @@ const expectedBoundaryUnknowns = [
   'nonArrayIndexIsNotAnItem',
   'differentLengthTupleUnionDoesNotKeepPositions',
 ]
+const missingBoundaryPasses = expectedBoundaryPasses.filter(name =>
+  !arrayTupleBoundaryChecks.some(check => check.functionName === name))
+const invalidBoundaryPasses = expectedBoundaryPasses.filter(name =>
+  arrayTupleBoundaryChecks.some(check => check.functionName === name && check.status !== 'pass'))
+const missingBoundaryNonPasses = expectedBoundaryNonPasses.filter(name => boundaryStatus(name) == null)
+const invalidBoundaryNonPasses = expectedBoundaryNonPasses.filter(name => boundaryStatus(name)?.status === 'pass')
 if (
-  expectedBoundaryPasses.some(name =>
-    arrayTupleBoundaryChecks.filter(check => check.functionName === name).some(check => check.status !== 'pass'))
-  || expectedBoundaryUnknowns.some(name => boundaryStatus(name)?.status === 'pass')
+  missingBoundaryPasses.length > 0
+  || invalidBoundaryPasses.length > 0
+  || missingBoundaryNonPasses.length > 0
+  || invalidBoundaryNonPasses.length > 0
   || boundaryStatus('assertionCannotCreateTuple')?.status !== 'unknown'
   || !boundaryStatus('optionalTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
   || !boundaryStatus('restTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
@@ -678,11 +685,12 @@ if (
   || !boundaryStatus('fractionalPropertyGivenOnCollectionIsUnsupported')?.reason?.includes('requires an object, not an array')
   || !boundaryStatus('quotedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
   || !boundaryStatus('fixedIndexReturnOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
-  || boundaryStatus('indexedCollectionWriteIsUnsupported')?.status === 'pass'
-  || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status === 'pass'
-  || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status === 'pass'
+  || boundaryStatus('indexedCollectionWriteIsUnsupported')?.status !== 'unknown'
+  || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status !== 'unknown'
+  || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status !== 'unknown'
 ) {
   console.error('expected arrays and fixed tuples to keep separate guarantees at every type boundary')
+  console.error({missingBoundaryPasses, invalidBoundaryPasses, missingBoundaryNonPasses, invalidBoundaryNonPasses})
   console.error(formatTestDiagnostics(arrayTupleBoundaryChecks))
   suite.fail()
 }
