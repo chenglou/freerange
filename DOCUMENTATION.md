@@ -311,6 +311,8 @@ type PhotoGrid = {
 
 Contracts on types are a convenience API to avoid repeating the same default `@fit` lines every time the type is used. They're inlined into the places that use them. If a type is used for function arguments, its contracts are automatically considered as `given`s (aka input assumptions). If it is used for the return value instead, its contracts are considered as things Freerange should infer and prove.
 
+You cannot put a contract onto a generic (e.g. `T`) type argument unless TypeScript resolves it into a proper number in the end.
+
 ## Inference
 
 To verify the contracts, Freerange does "inference" over the related code. Example:
