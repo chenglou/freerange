@@ -96,7 +96,7 @@ Current core:
 - `src/interpreter/value-path.ts`: symbolic path reads/writes, exact index paths, and alias-preserving container replacement
 - `src/interpreter/evaluate.ts`: finite literals, objects/arrays, arithmetic and `Math` primitives, local/imported/aliased free-function calls, ordered call operands and defaults, IIFEs, summary `map`/`filter`, symbolic `for..of`, tuple/product slot reads, `push`, continuation-aware `if`/`else if` joins, finite-literal `switch`, throw exits, branch refinement, property assignment, conservative unknown calls, claim-boundary checks for locals/returns/object fields, and array origin summaries for map/filter/loop push
 - `src/interpreter/format.ts`: value-tree, origin-fact, and unsupported-shape snapshots
-- `verify-interpreter-snapshots.ts`: focused tests for interpreter evolution
+- `tests/snapshot/interpreter-snapshots.test.ts`: focused tests for interpreter evolution
 
 ## Cutover Notes
 

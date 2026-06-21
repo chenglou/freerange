@@ -7,11 +7,17 @@ const focusedSuitePaths = [
   'tests/check/check.test.ts',
   'tests/cli/cli.test.ts',
   'tests/interpreter/interpreter.test.ts',
+  'tests/parser/parser.test.ts',
   'tests/purity/purity.test.ts',
   'tests/ranges/ranges.test.ts',
   'tests/type-contracts/type-contracts.test.ts',
 ]
-const discoveredTestPaths = [...focusedSuitePaths, 'tests/orchestration/orchestration.test.ts'].sort()
+const infrastructureTestPaths = [
+  'tests/orchestration/orchestration.test.ts',
+  'tests/snapshot/eval.test.ts',
+  'tests/snapshot/interpreter-snapshots.test.ts',
+]
+const discoveredTestPaths = [...focusedSuitePaths, ...infrastructureTestPaths].sort()
 
 test('focused suite family stays complete', async () => {
   for (const path of focusedSuitePaths) {

@@ -6,8 +6,8 @@ bun install
 
 ## Day-To-Day
 
-- `bun run test` — focused checker suites, parser checks, positive patterns, stable negative messages, CLI regressions, and curated inference snapshots
-- `bun run test:update` — update the focused suite's negative and inference snapshots
+- `bun run test` — focused checker suites, parser checks, positive patterns, stable negative messages, CLI regressions, curated inference snapshots, evaluation snapshots, and interpreter snapshots
+- `bun run test:update` — update every local test snapshot
 - `bun fr.ts --help` — print the CLI command shapes
 - `bun fr.ts check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
 - `bun fr.ts check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
@@ -16,8 +16,6 @@ bun install
 - `bun fr.ts infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
 - `bun run bench -- --runs 3 path/to/file.ts` — dev-only timing for explicit files, including cold load, warmed load/verify medians, and a load-phase split
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
-- `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
-- `bun run verify:interpreter` — run the interpreter on focused tests and snapshot the abstract return values it builds
 - `bun knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
 - `bun run check` — full local gate: pattern tests, parser tests, photo-gallery/eval/interpreter snapshots, typecheck, lint, and knip
 
@@ -56,10 +54,10 @@ Facts, values, and proof:
 Dev tools and harnesses:
 
 - [bench.ts](./bench.ts) and [bench-core.ts](./bench-core.ts) — dev-only timing tools
-- `bun run test` — runs the focused checker suites and parser checks in isolated worker processes
+- `bun run test` — runs the focused checker suites, parser checks, and local snapshot comparisons in isolated worker processes
 - [tests/check](./tests/check), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), and [tests/cli](./tests/cli) — focused checker, call evaluation, interpreter frame ownership, range-reduction, type-contract, purity, and CLI/project regressions
 - [tests/parser](./tests/parser), [tests/patterns](./tests/patterns), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), import-pattern fixtures, and `*.expected.txt` snapshots — parser, pattern, import, interpreter, and report coverage
-- `verify-*.ts` and [snapshot.ts](./snapshot.ts) — snapshot harnesses
+- [tests/snapshot](./tests/snapshot), `verify-photo-gallery-infer-snapshots.ts`, and [snapshot.ts](./snapshot.ts) — local snapshot tests and the explicit gallery probe
 
 ## Infer Tool
 
@@ -101,4 +99,4 @@ bun run test
 bun run check
 ```
 
-Snapshot harnesses accept `--update` when the current behavior is the new baseline, for example `bun verify-eval-snapshots.ts --update`. Update snapshots only after reading the diff and deciding the behavior is intentional.
+Run `bun run test:update` when the current behavior is the new snapshot baseline. Update snapshots only after reading the diff and deciding the behavior is intentional.
