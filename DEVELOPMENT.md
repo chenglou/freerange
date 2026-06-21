@@ -8,12 +8,12 @@ bun install
 
 - `bun run test` — focused checker suites, parser checks, positive patterns, stable negative messages, CLI regressions, and curated inference snapshots
 - `bun run test:update` — update the focused suite's negative and inference snapshots
-- `bun run fr --help` — print the CLI command shapes
-- `bun run fr check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
-- `bun run fr check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
-- `bun run fr check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
-- `bun run fr check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
-- `bun run fr infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
+- `bun fr.ts --help` — print the CLI command shapes
+- `bun fr.ts check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
+- `bun fr.ts check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
+- `bun fr.ts check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
+- `bun fr.ts check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
+- `bun fr.ts infer path/to/file.ts` — main CLI view of inferred facts, explicit checks, redundancy, and unsupported proof spots for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
 - `bun run bench -- --runs 3 path/to/file.ts` — dev-only timing for explicit files, including cold load, warmed load/verify medians, and a load-phase split
 - `bun run verify:photo-gallery` — snapshot `fr infer --all` over the local photo-gallery so annotation work starts from source facts and unsupported stops
 - `bun run verify:eval` — curated interpreter-adjacent snapshots for facts, shapes, and unsupported stops we do not want to lose during source-evaluation work
@@ -64,7 +64,7 @@ Dev tools and harnesses:
 
 ## Infer Tool
 
-`bun run fr infer path/to/file.ts` is for adoption and debugging, not public annotation generation. The user-facing command behavior lives in [DOCUMENTATION.md](./DOCUMENTATION.md); this section is only the maintenance policy.
+`bun fr.ts infer path/to/file.ts` is for adoption and debugging, not public annotation generation. The user-facing command behavior lives in [DOCUMENTATION.md](./DOCUMENTATION.md); this section is only the maintenance policy.
 
 The best inference examples are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt). Add to that file when an inferred fact becomes important enough that we would notice losing it. The local photo-gallery has its own broad all-functions snapshot in [photo-gallery-infer.expected.txt](./photo-gallery-infer.expected.txt); use that one before adding gallery annotations so source-known facts and unsupported stops are visible. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
@@ -83,7 +83,7 @@ Do not invent containers from a written path. `given input.width: 0..10` may att
 
 ## Selector Audit
 
-`bun run fr check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks.
+`bun fr.ts check --audit path/to/file.ts` is advisory and exits like normal `check`. Keep it about cleanup that current facts prove: redundant `Math.min`, `Math.max`, exact min/max ternaries, known `if` conditions, and `??` fallbacks.
 
 ## Adding Support
 
