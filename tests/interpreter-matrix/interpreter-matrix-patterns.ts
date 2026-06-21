@@ -317,10 +317,6 @@ export function matrixSwitchNarrowsDiscriminantPath(spec: MatrixSwitchSpec): num
   }
 }
 
-export function matrixArrayAtLast(): number {
-  return ([10, 20, 30] as const).at(-1)!
-}
-
 export function matrixStringishMutationPreservesTuple(): [string, number] {
   const items = [1, 2]
   let path = ''

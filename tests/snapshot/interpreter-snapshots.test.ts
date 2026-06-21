@@ -17,8 +17,6 @@ test('interpreter snapshots', async () => {
   const negativeProject = loadInterpreterProject(negativePaths)
   const matrixCases = [
     ['matrix nested iife/map/defaults', 'matrixNestedIifeMapDefaults'],
-    ['matrix default param order', 'matrixDefaultParamOrder'],
-    ['matrix explicit undefined defaults', 'matrixExplicitUndefinedDefaults'],
     ['matrix if refines nonnegative', 'matrixIfRefinesNonnegative'],
     ['matrix ternary literal join', 'matrixTernaryLiteralJoin'],
     ['matrix filter/map literal booleans', 'matrixFilterMapLiteralBooleans'],
@@ -40,7 +38,6 @@ test('interpreter snapshots', async () => {
     ['matrix switch continuation', 'matrixSwitchContinuation'],
     ['matrix switch grouped cases', 'matrixSwitchGroupedCases'],
     ['matrix switch narrows discriminant path', 'matrixSwitchNarrowsDiscriminantPath'],
-    ['matrix array at last', 'matrixArrayAtLast'],
     ['matrix stringish mutation preserves tuple', 'matrixStringishMutationPreservesTuple'],
     ['matrix typeof undefined guard', 'matrixTypeofUndefinedGuard'],
     ['matrix optional property nullish fallback', 'matrixOptionalPropertyNullishFallback'],

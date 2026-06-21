@@ -1448,8 +1448,7 @@ export function arrayLiteralFiniteIndexCases(index: 0 | 2) {
  * return: int 30..30
  */
 export function arrayLiteralAtLast() {
-  const values: [10, 20, 30] = [10, 20, 30]
-  return values.at(-1)!
+  return ([10, 20, 30] as const).at(-1)!
 }
 
 /** @fit

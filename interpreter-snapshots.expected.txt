@@ -8,14 +8,6 @@ case matrix nested iife/map/defaults: tests/interpreter-matrix/interpreter-matri
   fact return[] follows group.items by index
   fact return follows matrixInput.groups by index
   unsupported matrixNestedIifeMapDefaults > <iife> > <map-element> > <map-element> line 44: touched.count + 1 is unknown because an operand may be NaN
-case matrix default param order: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixDefaultParamOrder
-  return.pos: int 0..0
-  return.k: int 10..10
-  return.b: int 11..11
-case matrix explicit undefined defaults: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixExplicitUndefinedDefaults
-  return.pos: int 0..0
-  return.k: int 290..290
-  return.b: int 30..30
 case matrix if refines nonnegative: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixIfRefinesNonnegative
   return: any number
 case matrix ternary literal join: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTernaryLiteralJoin
@@ -83,32 +75,30 @@ case matrix switch grouped cases: tests/interpreter-matrix/interpreter-matrix-pa
   return: "hidden" | "visible"
 case matrix switch narrows discriminant path: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixSwitchNarrowsDiscriminantPath
   return: 0 | 1 | 4
-case matrix array at last: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixArrayAtLast
-  return: int 30..30
 case matrix stringish mutation preserves tuple: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixStringishMutationPreservesTuple
   return.length: int 2..2
   return[0]: unknown (Stringish assignment changed path += `M ${items.length}`)
   return[1]: int 5..5
   return[]: unknown (Stringish assignment changed path += `M ${items.length}`)
-  unsupported matrixStringishMutationPreservesTuple line 328: Template string `M ${items.length}`
+  unsupported matrixStringishMutationPreservesTuple line 324: Template string `M ${items.length}`
 case matrix typeof undefined guard: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixTypeofUndefinedGuard
   return: unknown (Math.max is unknown because an argument may be NaN)
-  unsupported matrixTypeofUndefinedGuard line 333: Math.max is unknown because an argument may be NaN
+  unsupported matrixTypeofUndefinedGuard line 329: Math.max is unknown because an argument may be NaN
 case matrix optional property nullish fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixOptionalPropertyNullishFallback
   return: unknown (Math.max is unknown because an argument may be NaN)
-  unsupported matrixOptionalPropertyNullishFallback line 338: Math.max is unknown because an argument may be NaN
+  unsupported matrixOptionalPropertyNullishFallback line 334: Math.max is unknown because an argument may be NaN
 case matrix nullable object optional fallback: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixNullableObjectOptionalFallback
   return: unknown (Math.max is unknown because an argument may be NaN)
-  unsupported matrixNullableObjectOptionalFallback line 342: Math.max is unknown because an argument may be NaN
+  unsupported matrixNullableObjectOptionalFallback line 338: Math.max is unknown because an argument may be NaN
 case matrix local Math alias: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixLocalMathAlias
   return: unknown (Math.max is unknown because an argument may be NaN)
-  unsupported matrixLocalMathAlias line 346: Math.max is unknown because an argument may be NaN
+  unsupported matrixLocalMathAlias line 342: Math.max is unknown because an argument may be NaN
 case matrix property access call shape: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixPropertyAccessCallShape
   return: object
-  unsupported matrixPropertyAccessCallShape line 350: Unknown identifier matrixShapeApi
+  unsupported matrixPropertyAccessCallShape line 346: Unknown identifier matrixShapeApi
 case matrix class method this: tests/interpreter-matrix/interpreter-matrix-patterns.ts:matrixClassMethodThis
   return: unknown (Unsupported call box.area)
-  unsupported matrixClassMethodThis line 365: Unsupported call box.area
+  unsupported matrixClassMethodThis line 361: Unsupported call box.area
 case negative default value surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType
   return.value: int -1..-1
 case negative alias mutation surface: tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias

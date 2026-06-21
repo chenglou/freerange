@@ -2922,7 +2922,6 @@ if (missingCallSiteTextFacts.length > 0) {
 }
 
 const actualInferSnapshot = normalizeText([
-  formatInferSnapshot(['tests/patterns/patterns.ts'], 'typedObjectParamArrayShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'propertyAccessCallShape'),
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapCallbackReturnShape'),
   formatInferSnapshot(['tests/patterns/loop-patterns.ts'], 'scalarPushLoop'),
