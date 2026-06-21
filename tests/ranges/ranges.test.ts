@@ -1,5 +1,6 @@
 import {verifyFitSource} from '../../src/reports.ts'
 import {testSuite} from '../test-suite.ts'
+import {formatTestDiagnostics} from '../test-diagnostics.ts'
 
 testSuite('ranges suite', async suite => {
 const dynamicRangeContractChecks = verifyFitSource('dynamic-range-contracts.ts', `function low() {
@@ -85,10 +86,8 @@ if (
   || missedRangeAlternativeCheck?.status !== 'fail'
 ) {
   console.error('expected dynamic range summaries and numeric alternatives to be checked')
-  console.error(JSON.stringify(dynamicRangeContractChecks, null, 2))
+  console.error(formatTestDiagnostics(dynamicRangeContractChecks))
   suite.fail()
-} else {
-  console.log('range contracts: dynamic bounds and alternatives')
 }
 
 const numericUnionPropagationChecks = verifyFitSource('numeric-union-propagation.ts', `/** @fit
@@ -161,10 +160,8 @@ if (
   || redundantAlternativeCallerCheck?.status !== 'fail'
 ) {
   console.error('expected pure numeric range unions to propagate, normalize, and reject gaps')
-  console.error(JSON.stringify(numericUnionPropagationChecks, null, 2))
+  console.error(formatTestDiagnostics(numericUnionPropagationChecks))
   suite.fail()
-} else {
-  console.log('range contracts: numeric union propagation')
 }
 
 const unannotatedHelperBoundChecks = verifyFitSource('unannotated-helper-range-bounds.ts', `function limit(value: number) {
@@ -195,10 +192,8 @@ if (
   || outsideHelperBoundCheck.reason?.includes('50 <= (width * 2)') !== true
 ) {
   console.error('expected pure unannotated helpers to work as dynamic range bounds')
-  console.error(JSON.stringify(unannotatedHelperBoundChecks, null, 2))
+  console.error(formatTestDiagnostics(unannotatedHelperBoundChecks))
   suite.fail()
-} else {
-  console.log('range contracts: unannotated helper bound')
 }
 
 const annotatedHelperBoundChecks = verifyFitSource('annotated-helper-range-bounds.ts', `/** @fit
@@ -238,10 +233,8 @@ if (
   || outsideAnnotatedHelperBoundCheck.reason?.includes('21 <= int 5..5') !== true
 ) {
   console.error('expected uncorrelated annotated helper bounds to stay unknown')
-  console.error(JSON.stringify(annotatedHelperBoundChecks, null, 2))
+  console.error(formatTestDiagnostics(annotatedHelperBoundChecks))
   suite.fail()
-} else {
-  console.log('range contracts: annotated helper alternative bound')
 }
 
 const twoSidedHelperBoundChecks = verifyFitSource('two-sided-helper-range-bounds.ts', `/** @fit
@@ -301,10 +294,8 @@ if (
   || outsideHighTwoSidedBoundCheck.reason?.includes('26 <= int 20..20') !== true
 ) {
   console.error('expected separate two-sided helper bounds to preserve definite failures and leave mixed cases unknown')
-  console.error(JSON.stringify(twoSidedHelperBoundChecks, null, 2))
+  console.error(formatTestDiagnostics(twoSidedHelperBoundChecks))
   suite.fail()
-} else {
-  console.log('range contracts: separate two-sided helper bounds')
 }
 
 const separateDynamicBoundChecks = verifyFitSource('separate-dynamic-range-bounds.ts', `function limit(n: number) {
@@ -337,10 +328,8 @@ if (
   || separateOutside?.status !== 'fail'
 ) {
   console.error('expected separate returned values and helper bounds not to reconnect')
-  console.error(JSON.stringify(separateDynamicBoundChecks, null, 2))
+  console.error(formatTestDiagnostics(separateDynamicBoundChecks))
   suite.fail()
-} else {
-  console.log('range contracts: separate returned values and helper bounds')
 }
 
 const dynamicRangeBudgetChecks = verifyFitSource('dynamic-range-budget.ts', `/** @fit
@@ -391,10 +380,8 @@ if (
   || budgetMixed.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
   console.error('expected broad dynamic bounds to decide obvious over-budget cases')
-  console.error(JSON.stringify(dynamicRangeBudgetChecks, null, 2))
+  console.error(formatTestDiagnostics(dynamicRangeBudgetChecks))
   suite.fail()
-} else {
-  console.log('range contracts: over-budget dynamic bounds')
 }
 
 const unsupportedRangeExpressionChecks = verifyFitSource('range-expression-unsupported.ts', `const box = {limit: 0}
@@ -418,10 +405,8 @@ if (
   || unsupportedRangeExpressionCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
   console.error('expected unsupported range expressions to reject the same way as comparisons')
-  console.error(JSON.stringify(unsupportedRangeExpressionChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedRangeExpressionChecks))
   suite.fail()
-} else {
-  console.log('range contracts: unsupported expression rejected')
 }
 
 })

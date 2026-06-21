@@ -1,5 +1,6 @@
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {testSuite} from '../test-suite.ts'
+import {formatTestDiagnostics} from '../test-diagnostics.ts'
 
 testSuite('type contracts suite', async suite => {
 async function verifyTempFitFiles(files: Record<string, string>) {
@@ -58,10 +59,8 @@ if (
   || genericAliasMissCheck?.status !== 'fail'
 ) {
   console.error('expected whole-value contracts to use TypeScript type syntax with range leaves')
-  console.error(JSON.stringify(wholeValueTypeSyntaxChecks, null, 2))
+  console.error(formatTestDiagnostics(wholeValueTypeSyntaxChecks))
   suite.fail()
-} else {
-  console.log('whole-value contracts: TypeScript type syntax')
 }
 
 const typeContractBoundaryChecks = verifyFitSource('type-contract-boundaries.ts', `type Spring = {
@@ -156,10 +155,8 @@ if (
   || badRelationReturnCheck == null
 ) {
   console.error('expected type @fit contracts to inline through inputs, returns, locals, satisfies, as, arrays, and relations')
-  console.error(JSON.stringify(typeContractBoundaryChecks, null, 2))
+  console.error(formatTestDiagnostics(typeContractBoundaryChecks))
   suite.fail()
-} else {
-  console.log('type contracts: annotation boundaries')
 }
 
 const genericTypeContractChecks = verifyFitSource('generic-type-contracts.ts', `type AliasBox<T> = {
@@ -239,10 +236,8 @@ if (
   || unsafeGenericUseNoise != null
 ) {
   console.error('expected generic type contracts to preserve constraints without representative type arguments')
-  console.error(JSON.stringify(genericTypeContractChecks, null, 2))
+  console.error(formatTestDiagnostics(genericTypeContractChecks))
   suite.fail()
-} else {
-  console.log('type contracts: generic declaration constraints')
 }
 
 const unsupportedGenericTypeContextChecks = verifyFitSource('unsupported-generic-type-contexts.ts', `type ConditionalBox<T> = T extends number ? {
@@ -268,10 +263,8 @@ if (
   || nestedGenericTypeContextCheck?.status !== 'unknown'
 ) {
   console.error('expected type contracts with unpreserved inner generic context to be rejected directly')
-  console.error(JSON.stringify(unsupportedGenericTypeContextChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedGenericTypeContextChecks))
   suite.fail()
-} else {
-  console.log('type contracts: inner generic contexts rejected directly')
 }
 
 const typeGivenKeywordChecks = verifyFitSource('type-given-keyword.ts', `type Bar = {
@@ -298,10 +291,8 @@ if (
   || typeGivenKeywordCheck.reason !== 'type @fit lines do not use given; write the field fact without given'
 ) {
   console.error('expected type @fit given keyword to be rejected directly')
-  console.error(JSON.stringify(typeGivenKeywordChecks, null, 2))
+  console.error(formatTestDiagnostics(typeGivenKeywordChecks))
   suite.fail()
-} else {
-  console.log('type contracts: given keyword rejected directly')
 }
 
 const typeGivenPrefixFieldChecks = verifyFitSource('type-given-prefix-field.ts', `/** @fit
@@ -321,10 +312,8 @@ function read(box: Box) {
 const typeGivenPrefixFieldFailures = typeGivenPrefixFieldChecks.filter(check => check.status !== 'pass')
 if (typeGivenPrefixFieldFailures.length > 0) {
   console.error('expected type @fit fields starting with given to keep working')
-  console.error(JSON.stringify(typeGivenPrefixFieldChecks, null, 2))
+  console.error(formatTestDiagnostics(typeGivenPrefixFieldChecks))
   suite.fail()
-} else {
-  console.log('type contracts: given-prefixed field allowed')
 }
 
 const typeContractScopeChecks = verifyFitSource('type-contract-scope.ts', `const typeScopedMin = 80
@@ -368,10 +357,8 @@ if (
   || missingDeclarationNameCheck.reason?.includes("TS2304: Cannot find name 'missingTypeMin'") !== true
 ) {
   console.error('expected type @fit contracts to evaluate free names where the type is declared')
-  console.error(JSON.stringify(typeContractScopeChecks, null, 2))
+  console.error(formatTestDiagnostics(typeContractScopeChecks))
   suite.fail()
-} else {
-  console.log('type contracts: declaration scope')
 }
 
 const importedDeclarationScopeChecks = await verifyTempFitFiles({
@@ -404,10 +391,8 @@ if (
   || importedScopeLeak != null
 ) {
   console.error('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used')
-  console.error(JSON.stringify(importedDeclarationScopeChecks, null, 2))
+  console.error(formatTestDiagnostics(importedDeclarationScopeChecks))
   suite.fail()
-} else {
-  console.log('type contracts: imported declaration scope')
 }
 
 const importedDeclarationTypeErrorChecks = await verifyTempFitFiles({
@@ -437,10 +422,8 @@ if (
   || importedSkippedBadReturn != null
 ) {
   console.error('expected imported type @fit helper parameter mistakes to be reported at the type declaration')
-  console.error(JSON.stringify(importedDeclarationTypeErrorChecks, null, 2))
+  console.error(formatTestDiagnostics(importedDeclarationTypeErrorChecks))
   suite.fail()
-} else {
-  console.log('type contracts: imported declaration type errors')
 }
 
 // Two helpers, each with its own ill-typed type @fit, referenced from one
@@ -490,10 +473,8 @@ if (
   || heightAttribution.reason?.includes("not assignable to parameter of type 'boolean'") !== true
 ) {
   console.error('expected each helper type @fit error to attribute to its own declaration file')
-  console.error(JSON.stringify(multiHelperAttributionChecks, null, 2))
+  console.error(formatTestDiagnostics(multiHelperAttributionChecks))
   suite.fail()
-} else {
-  console.log('type contracts: multi-helper diagnostic attribution')
 }
 
 const importedGenericTypeChecks = await verifyTempFitFiles({
@@ -540,10 +521,8 @@ if (
   || unsafeImportedUseNoise != null
 ) {
   console.error('expected imported generic type contracts to keep their declaration constraints')
-  console.error(JSON.stringify(importedGenericTypeChecks, null, 2))
+  console.error(formatTestDiagnostics(importedGenericTypeChecks))
   suite.fail()
-} else {
-  console.log('type contracts: imported generic declaration constraints')
 }
 
 const typeFieldRelationChecks = verifyFitSource('type-field-relation.ts', `type Size = {
@@ -566,10 +545,8 @@ if (
   || typeFieldRelationBadCheck?.status !== 'fail'
 ) {
   console.error('expected type @fit field relations to compare against the same object')
-  console.error(JSON.stringify(typeFieldRelationChecks, null, 2))
+  console.error(formatTestDiagnostics(typeFieldRelationChecks))
   suite.fail()
-} else {
-  console.log('type contracts: field relation')
 }
 
 const staticPropertyContractChecks = verifyFitSource('type-static-properties.ts', `
@@ -595,10 +572,8 @@ const badQuotedProperty = staticPropertyContractChecks.find(check => check.funct
 const badNumericProperty = staticPropertyContractChecks.find(check => check.functionName === 'badNumericLimit' && check.status === 'fail')
 if (goodStaticPropertyFailures.length > 0 || badQuotedProperty == null || badNumericProperty == null) {
   console.error('expected quoted and numeric static properties to keep their exact contract paths')
-  console.error(JSON.stringify(staticPropertyContractChecks, null, 2))
+  console.error(formatTestDiagnostics(staticPropertyContractChecks))
   suite.fail()
-} else {
-  console.log('type contracts: quoted and numeric static properties')
 }
 
 })

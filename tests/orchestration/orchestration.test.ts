@@ -16,6 +16,7 @@ const infrastructureTestPaths = [
   'tests/orchestration/orchestration.test.ts',
   'tests/snapshot/eval.test.ts',
   'tests/snapshot/interpreter-snapshots.test.ts',
+  'tests/snapshot/snapshot.test.ts',
 ]
 const discoveredTestPaths = [...focusedSuitePaths, ...infrastructureTestPaths].sort()
 

@@ -21,6 +21,7 @@ import {
   importedWrapperReplacementPure,
 } from './imported-caller.ts'
 import {testSuite} from '../test-suite.ts'
+import {formatTestDiagnostics} from '../test-diagnostics.ts'
 
 testSuite('purity suite', async suite => {
 void contractRejectsImportedAlias
@@ -209,8 +210,6 @@ for (const {label, source, kind, reasonIncludes} of cases) {
 }
 if (failures > 0) {
   suite.fail()
-} else {
-  console.log(`purity: ${cases.length} classifications`)
 }
 
 const cacheOrderSource = `
@@ -237,10 +236,8 @@ if (
   || calleeFirstResult.reason !== callerFirstResult.reason
 ) {
   console.error('purity: expected function summary cache order not to change returned-reference effects')
-  console.error(JSON.stringify({calleeFirstResult, callerFirstResult}, null, 2))
+  console.error(formatTestDiagnostics({calleeFirstResult, callerFirstResult}))
   suite.fail()
-} else {
-  console.log('purity: returned-reference summaries are independent of cache order')
 }
 
 const identityProject = loadFitProject(['tests/purity/imported-caller.ts'], readTopLevelGlobal)
@@ -266,10 +263,8 @@ if (
   || purityAfterRejectedMismatch.kind !== 'pure'
 ) {
   console.error('purity: expected mismatched source programs to fail before caching')
-  console.error(JSON.stringify({mismatchedReferenceReason, purityAfterRejectedMismatch}, null, 2))
+  console.error(formatTestDiagnostics({mismatchedReferenceReason, purityAfterRejectedMismatch}))
   suite.fail()
-} else {
-  console.log('purity: implementation and source program stay one cache identity')
 }
 
 const importedPurity = await verifyFitFiles(['tests/purity/imported-caller.ts'])
@@ -306,10 +301,8 @@ if (
   || impureContract.reason?.includes('helper importedImpure is not pure: observes the environment') !== true
 ) {
   console.error('purity: expected imports, aliases, callbacks, and re-exports to keep source identity')
-  console.error(JSON.stringify(importedPurity.checks, null, 2))
+  console.error(formatTestDiagnostics(importedPurity.checks))
   suite.fail()
-} else {
-  console.log('purity: imported aliases, callbacks, and contract helpers share source identity')
 }
 
 })

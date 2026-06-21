@@ -57,8 +57,6 @@ if (
 ) {
   console.error('interpreter frames should copy state and preserve shared output and policy')
   suite.fail()
-} else {
-  console.log('interpreter: frames copy state and share output and policy')
 }
 
 const isolatedOutput = emptyInterpreterOutput()
@@ -77,8 +75,6 @@ if (
 ) {
   console.error('interpreter analysis frames should isolate findings and may clear scoped paths')
   suite.fail()
-} else {
-  console.log('interpreter: analysis frames isolate output')
 }
 
 const fallbackProgram = buildFitSourceFile('tagged-type-fallback.ts', `
@@ -101,8 +97,6 @@ if (
   console.error('type fallback should use tagged missing values, including through unions')
   console.error({unsupportedUnion, unsupportedPlain, missingUnion})
   suite.fail()
-} else {
-  console.log('interpreter: tagged type fallback survives unions')
 }
 
 const shadowProgram = buildFitSourceFile('effect-shadow.ts', `
@@ -125,8 +119,6 @@ if (
   console.error('interpreter effects should distinguish block locals from same-named module bindings')
   console.error(shadowResult.output.effects)
   suite.fail()
-} else {
-  console.log('interpreter: assignment effects follow TypeScript bindings')
 }
 
 const lexicalIdentityProgram = buildFitSourceFile('lexical-identity.ts', `
@@ -227,8 +219,6 @@ if (
   console.error(Object.fromEntries(lexicalResults))
   console.error({globalUndefined, dollarMutation, uninitializedFunctionScopedVar, newUninitializedFunctionScopedVar})
   suite.fail()
-} else {
-  console.log('interpreter: lexical bindings and ambient numeric names stay distinct')
 }
 
 })

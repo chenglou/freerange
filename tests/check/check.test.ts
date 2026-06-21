@@ -25,7 +25,8 @@ import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {isFunctionImplementation} from '../../src/function-shape.ts'
-import {snapshotUpdateRequested} from '../../snapshot.ts'
+import {verifySnapshot} from '../../snapshot.ts'
+import {formatTestDiagnostics} from '../test-diagnostics.ts'
 import {testSuite} from '../test-suite.ts'
 
 testSuite('check suite', async suite => {
@@ -65,10 +66,8 @@ if (
   || [...callableFamilyProgram.functions.values()].some(fn => !isFunctionImplementation(fn.node))
 ) {
   console.error('expected every supported function implementation to share one indexed declaration family')
-  console.error(JSON.stringify(callableFamilyNames))
+  console.error(formatTestDiagnostics(callableFamilyNames))
   suite.fail()
-} else {
-  console.log('functions: one implementation family and canonical class-member names')
 }
 
 function verifyFitSourceWithCallsites(file: string, sourceText: string) {
@@ -78,10 +77,8 @@ function verifyFitSourceWithCallsites(file: string, sourceText: string) {
 
 const positiveReport = await verifyFitFiles(positiveFiles)
 if (positiveReport.phase !== 'ready') {
-  console.error(JSON.stringify(positiveReport, null, 2))
+  console.error(formatTestDiagnostics(positiveReport))
   suite.fail()
-} else {
-  console.log(`positive: ${positiveReport.summary.pass} pass, 0 fail, 0 requires, 0 unknown`)
 }
 
 const unboundedNonnegativeProduct = multiplyNumbers(
@@ -93,8 +90,6 @@ const unboundedNonnegativeProduct = multiplyNumbers(
 if (unboundedNonnegativeProduct.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeProduct.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected the NaN-admitting product to widen fully, got ${unboundedNonnegativeProduct.min}..${unboundedNonnegativeProduct.max}`)
   suite.fail()
-} else {
-  console.log('domain: NaN-admitting product widens')
 }
 
 const unboundedNonnegativeQuotient = divideNumbers(
@@ -105,8 +100,6 @@ const unboundedNonnegativeQuotient = divideNumbers(
 if (unboundedNonnegativeQuotient.kind !== 'number' || unboundedNonnegativeQuotient.min !== Number.NEGATIVE_INFINITY || unboundedNonnegativeQuotient.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected the NaN-admitting quotient to widen fully, got ${unboundedNonnegativeQuotient.kind === 'number' ? `${unboundedNonnegativeQuotient.min}..${unboundedNonnegativeQuotient.max}` : unboundedNonnegativeQuotient.kind}`)
   suite.fail()
-} else {
-  console.log('domain: NaN-admitting quotient widens')
 }
 
 const unboundedNonnegativeRunningSum = runningSumNumber(
@@ -118,8 +111,6 @@ const unboundedNonnegativeRunningSum = runningSumNumber(
 if (unboundedNonnegativeRunningSum.min !== 0 || unboundedNonnegativeRunningSum.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected 0..Infinity running sum, got ${unboundedNonnegativeRunningSum.min}..${unboundedNonnegativeRunningSum.max}`)
   suite.fail()
-} else {
-  console.log('domain: unbounded nonnegative running sum')
 }
 
 const unboundedDifference = subtractNumbers(
@@ -129,8 +120,6 @@ const unboundedDifference = subtractNumbers(
 if (unboundedDifference.min !== Number.NEGATIVE_INFINITY || unboundedDifference.max !== Number.POSITIVE_INFINITY) {
   console.error(`expected -Infinity..Infinity difference, got ${unboundedDifference.min}..${unboundedDifference.max}`)
   suite.fail()
-} else {
-  console.log('domain: unbounded difference')
 }
 
 const numericAlternativeBudgetChecks = verifyFitSource('numeric-alternative-budget.ts', `function choice(n: number) {
@@ -171,10 +160,8 @@ if (
   || exactNumericAlternatives.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
   console.error('expected numeric alternative overflow to keep its range and report lost exact choices')
-  console.error(JSON.stringify(numericAlternativeBudgetChecks, null, 2))
+  console.error(formatTestDiagnostics(numericAlternativeBudgetChecks))
   suite.fail()
-} else {
-  console.log('domain: numeric alternative budget reports lost choices')
 }
 
 const computationLeft = numberValue(0, 1000, null, 'left', linearVariable('left'))
@@ -228,8 +215,6 @@ if (
 ) {
   console.error('expected numeric computation identity to ignore refinement, merge facts, preserve grouping, and support commutativity')
   suite.fail()
-} else {
-  console.log('domain: numeric computation identity and facts stay separate')
 }
 
 const exactSequenceRelation: SequenceRelation = {
@@ -387,8 +372,6 @@ if (
 ) {
   console.error('expected array summaries to join common facts by semantic identity and preserve path-sensitive ends')
   suite.fail()
-} else {
-  console.log('domain: array summaries distinguish accumulation from branch joins')
 }
 
 const computationIdentityChecks = verifyFitSource('computation-identity.ts', `
@@ -405,10 +388,8 @@ function commutative(left: number, right: number) {
 const computationIdentityFailures = computationIdentityChecks.filter(check => check.status !== 'pass')
 if (computationIdentityFailures.length > 0 || computationIdentityChecks.length !== 2) {
   console.error('expected commutative computations to retain runtime identity')
-  console.error(JSON.stringify(computationIdentityChecks, null, 2))
+  console.error(formatTestDiagnostics(computationIdentityChecks))
   suite.fail()
-} else {
-  console.log('domain: commutative computations prove')
 }
 
 const nanComputationIdentityChecks = verifyFitSource('nan-computation-identity.ts', `
@@ -421,10 +402,8 @@ function nanCapableCommutative(left: number, right: number) {
 `)
 if (nanComputationIdentityChecks.length !== 1 || nanComputationIdentityChecks[0]?.status !== 'pass') {
   console.error('expected checked number inputs to exclude NaN by default')
-  console.error(JSON.stringify(nanComputationIdentityChecks, null, 2))
+  console.error(formatTestDiagnostics(nanComputationIdentityChecks))
   suite.fail()
-} else {
-  console.log('domain: checked number inputs exclude NaN')
 }
 
 const finiteDefaultChecks = verifyFitSourceWithCallsites('finite-default.ts', `
@@ -513,10 +492,8 @@ if (
     && check.status === 'pass')
 ) {
   console.error('expected finite defaults to apply only at checked contracts and to publish call requirements')
-  console.error(JSON.stringify(finiteDefaultChecks, null, 2))
+  console.error(formatTestDiagnostics(finiteDefaultChecks))
   suite.fail()
-} else {
-  console.log('numbers: finite checked inputs and caller requirements')
 }
 
 const finiteLeafChecks = verifyFitSourceWithCallsites('finite-leaves.ts', `
@@ -562,10 +539,8 @@ if (
   || rejectedDestructured?.status !== 'fail'
 ) {
   console.error('expected finite defaults on nested numeric leaves and exact-path range replacement')
-  console.error(JSON.stringify(finiteLeafChecks, null, 2))
+  console.error(formatTestDiagnostics(finiteLeafChecks))
   suite.fail()
-} else {
-  console.log('numbers: nested finite leaves and explicit infinity replacement')
 }
 
 const resolvedFiniteLeafChecks = verifyFitSourceWithCallsites('resolved-finite-leaves.ts', `
@@ -693,10 +668,8 @@ if (
   || !resolvedFiniteLeafChecks.callsiteChecks.some(check => check.text.startsWith('requiresFalse(Number.isNaN(value))') && check.status === 'pass')
 ) {
   console.error('expected resolved, inherited, destructured, optional, nullable, and inferred number leaves to share the finite boundary')
-  console.error(JSON.stringify(resolvedFiniteLeafChecks, null, 2))
+  console.error(formatTestDiagnostics(resolvedFiniteLeafChecks))
   suite.fail()
-} else {
-  console.log('numbers: resolved TypeScript number leaves share one finite boundary')
 }
 
 const recursiveFiniteDefaultChecks = verifyFitSource('recursive-finite-default.ts', `
@@ -721,10 +694,8 @@ if (!recursiveFiniteDefaultChecks.some(check => check.status === 'unknown'
   && check.reason === 'Recursive input types cannot publish the finite numeric default')
   || recursiveFiniteDefaultChecks.some(check => check.functionName === 'labels' && check.status !== 'pass')) {
   console.error('expected recursive numeric input types to be rejected instead of silently dropping finite leaves')
-  console.error(JSON.stringify(recursiveFiniteDefaultChecks, null, 2))
+  console.error(formatTestDiagnostics(recursiveFiniteDefaultChecks))
   suite.fail()
-} else {
-  console.log('numbers: recursive finite defaults reject unsupported traversal')
 }
 
 const checkedNumberOperationChecks = verifyFitSource('checked-number-operations.ts', `
@@ -976,10 +947,8 @@ if (
   || uncheckedSquare.reason?.includes('operand may be NaN') !== true
 ) {
   console.error('expected NaN hazards to stop at their source while overflow and guarded parsing remain usable')
-  console.error(JSON.stringify(checkedNumberOperationChecks, null, 2))
+  console.error(formatTestDiagnostics(checkedNumberOperationChecks))
   suite.fail()
-} else {
-  console.log('numbers: NaN operation stops, Math domains, overflow, and validation')
 }
 
 const obligationChecks = verifyFitSource('obligation.ts', `/** @fit
@@ -1014,10 +983,8 @@ if (
   || sequenceObligationCheck?.trace?.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {
   console.error('expected checks to carry proof obligations and used facts')
-  console.error(JSON.stringify({obligationChecks, sequenceObligationCheck}, null, 2))
+  console.error(formatTestDiagnostics({obligationChecks, sequenceObligationCheck}))
   suite.fail()
-} else {
-  console.log('obligations: attached to checks with facts')
 }
 
 const pureContractHelperChecks = verifyFitSource('contract-purity.ts', `function safeLimit(value: number) {
@@ -1037,10 +1004,8 @@ function bounded(value: number) {
 const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
 if (pureContractHelperCheck?.status !== 'pass') {
   console.error('expected pure unannotated helper calls to work in contracts')
-  console.error(JSON.stringify(pureContractHelperChecks, null, 2))
+  console.error(formatTestDiagnostics(pureContractHelperChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: pure helper call')
 }
 
 const pureGivenHelperChecks = verifyFitSource('given-contract-purity.ts', `function double(value: number) {
@@ -1061,10 +1026,8 @@ function bounded(min: number, width: number, max: number) {
 const pureGivenHelperFailures = pureGivenHelperChecks.filter(check => check.status !== 'pass')
 if (pureGivenHelperFailures.length > 0) {
   console.error('expected pure unannotated helper calls to work in given comparisons and range bounds')
-  console.error(JSON.stringify(pureGivenHelperChecks, null, 2))
+  console.error(formatTestDiagnostics(pureGivenHelperChecks))
   suite.fail()
-} else {
-  console.log('given contract expressions: pure helper call')
 }
 
 const shortcutCleanupChecks = verifyFitSource('shortcut-cleanup.ts', `type AliasRect = {left: number}
@@ -1172,10 +1135,8 @@ if (
   || missingCallbackItemFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
 ) {
   console.error('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape')
-  console.error(JSON.stringify(shortcutCleanupChecks, null, 2))
+  console.error(formatTestDiagnostics(shortcutCleanupChecks))
   suite.fail()
-} else {
-  console.log('shortcut cleanup: no invented spec or callback paths')
 }
 
 const constrainedGenericFunctionResult = verifyFitSourceWithCallsites('constrained-generic-function.ts', `/** @fit
@@ -1221,10 +1182,8 @@ if (
   || unconstrainedGenericGivenCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
 ) {
   console.error('expected TypeScript generic constraints to drive function contracts and call checks')
-  console.error(JSON.stringify({constrainedGenericFunctionResult, unconstrainedGenericFunctionChecks}, null, 2))
+  console.error(formatTestDiagnostics({constrainedGenericFunctionResult, unconstrainedGenericFunctionChecks}))
   suite.fail()
-} else {
-  console.log('generic functions: constrained numbers checked through calls')
 }
 
 const contractTypeLayerChecks = verifyFitSource('contract-type-layer.ts', `type Tile = {
@@ -1280,10 +1239,8 @@ const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, te
 })
 if (missingTypeLayerErrors.length > 0) {
   console.error('expected every contract surface to be TypeScript-checked before proving')
-  console.error(JSON.stringify({missingTypeLayerErrors, contractTypeLayerChecks}, null, 2))
+  console.error(formatTestDiagnostics({missingTypeLayerErrors, contractTypeLayerChecks}))
   suite.fail()
-} else {
-  console.log('contract type layer: all surfaces reject TypeScript mismatches')
 }
 
 const inlineNonNumberEqualityChecks = verifyFitSource('inline-non-number-equality.ts', `function keepLines(lines: string[]) {
@@ -1296,10 +1253,8 @@ const inlineNonNumberEqualityChecks = verifyFitSource('inline-non-number-equalit
 const inlineNonNumberEqualityFailures = inlineNonNumberEqualityChecks.filter(check => check.status !== 'pass')
 if (inlineNonNumberEqualityFailures.length > 0) {
   console.error('expected inline equality to allow non-number values')
-  console.error(JSON.stringify(inlineNonNumberEqualityChecks, null, 2))
+  console.error(formatTestDiagnostics(inlineNonNumberEqualityChecks))
   suite.fail()
-} else {
-  console.log('inline contracts: non-number equality type-checks')
 }
 
 const preparedContractProgram = buildFitSourceFile('prepared-contracts.ts', `/** @fit
@@ -1328,15 +1283,13 @@ if (
   || preparedPropertyTemplateCounts.filter(count => count === 0).length !== 1
 ) {
   console.error('expected contracts to be prepared once and rejected by exact contract identity')
-  console.error(JSON.stringify({
+  console.error(formatTestDiagnostics({
     assumptions: preparedBounded.assumptions.map(spec => spec.text),
     proofs: preparedBounded.proofs.map(spec => spec.text),
     typeChecks: preparedBounded.typeChecks,
     preparedPropertyTemplateCounts,
-  }, null, 2))
+  }))
   suite.fail()
-} else {
-  console.log('contract preparation: stable index and exact rejection identity')
 }
 
 const topLevelContractChecks = verifyFitSource('top-level-contracts.ts', `const layout = {
@@ -1370,10 +1323,8 @@ if (
   || topNestedPlacement?.status !== 'unknown'
 ) {
   console.error('expected top-level properties, loops, and nested placements to use the prepared body index')
-  console.error(JSON.stringify(topLevelContractChecks, null, 2))
+  console.error(formatTestDiagnostics(topLevelContractChecks))
   suite.fail()
-} else {
-  console.log('top-level contracts: properties, loops, and nested placements')
 }
 
 const booleanCallContractChecks = verifyFitSource('boolean-call-contracts.ts', `function isValidLayout(layout: {width: number}) {
@@ -1434,10 +1385,8 @@ if (
   || numericExpressionCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
 ) {
   console.error('expected bare pure boolean call contracts to be checked')
-  console.error(JSON.stringify(booleanCallContractChecks, null, 2))
+  console.error(formatTestDiagnostics(booleanCallContractChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: bare boolean helper call')
 }
 
 const booleanGivenContractResult = verifyFitSourceWithCallsites('boolean-given-contracts.ts', `function isValidLayout(layout: {width: number}) {
@@ -1486,10 +1435,8 @@ if (
   || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
 ) {
   console.error('expected boolean given predicates to be assumed in the callee and checked at callers')
-  console.error(JSON.stringify(booleanGivenContractResult, null, 2))
+  console.error(formatTestDiagnostics(booleanGivenContractResult))
   suite.fail()
-} else {
-  console.log('given contract expressions: boolean predicate call')
 }
 
 const collectionExpressionChecks = verifyFitSource('collection-expression-contracts.ts', `function twice(value: number) {
@@ -1622,10 +1569,8 @@ if (
     || check.reason?.toLowerCase().includes('named index') !== true)
 ) {
   console.error('expected named indexes to support only matching positions and direct adjacent relationships')
-  console.error(JSON.stringify(collectionExpressionChecks, null, 2))
+  console.error(formatTestDiagnostics(collectionExpressionChecks))
   suite.fail()
-} else {
-  console.log('collection contracts: named-index relationships reject unsupported forms before evaluation')
 }
 
 const unsupportedNamedIndexProgram = buildFitSourceFile('unsupported-named-index-preparation.ts', `/** @fit
@@ -1645,15 +1590,13 @@ if (
   || preparedUnsupportedNamedIndexes.unsupportedSpecs.length !== 2
 ) {
   console.error('expected unsupported named indexes to stay out of call requirements and helper summaries')
-  console.error(JSON.stringify({
+  console.error(formatTestDiagnostics({
     contractSpecs: preparedUnsupportedNamedIndexes.contractSpecs.map(spec => spec.text),
     assumptions: preparedUnsupportedNamedIndexes.assumptions.map(spec => spec.text),
     proofs: preparedUnsupportedNamedIndexes.proofs.map(spec => spec.text),
     unsupported: preparedUnsupportedNamedIndexes.unsupportedSpecs,
-  }, null, 2))
+  }))
   suite.fail()
-} else {
-  console.log('contract preparation: unsupported named indexes are report-only')
 }
 
 const simplifiedRoundingChecks = verifyFitSource('rounding-simplification.ts', `/** @fit
@@ -1686,10 +1629,8 @@ if (
   || missingRoundingCheck.reason?.includes('missing: (width / 2) <= gap') !== true
 ) {
   console.error('expected proof simplification to reduce rounding comparisons to smaller arithmetic')
-  console.error(JSON.stringify(simplifiedRoundingChecks, null, 2))
+  console.error(formatTestDiagnostics(simplifiedRoundingChecks))
   suite.fail()
-} else {
-  console.log('proof simplification: rounded bound comparison')
 }
 
 const roundingFamilyChecks = verifyFitSource('rounding-family.ts', `/** @fit
@@ -1777,10 +1718,8 @@ if (
   || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
 ) {
   console.error('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases')
-  console.error(JSON.stringify(roundingFamilyChecks, null, 2))
+  console.error(formatTestDiagnostics(roundingFamilyChecks))
   suite.fail()
-} else {
-  console.log('proof simplification: rounding family')
 }
 
 const expandedMathChecks = verifyFitSource('expanded-math.ts', `/** @fit
@@ -1858,10 +1797,8 @@ if (
   || logNeedsPositiveCheck.reason?.includes('Math.log expected a non-negative number') !== true
 ) {
   console.error('expected expanded Math builtin families to infer ranges and reject unsafe domains')
-  console.error(JSON.stringify(expandedMathChecks, null, 2))
+  console.error(formatTestDiagnostics(expandedMathChecks))
   suite.fail()
-} else {
-  console.log('math builtins: constants, integer/coarse, and monotone functions')
 }
 
 const impureContractHelperChecks = verifyFitSource('contract-impure.ts', `const box = {limit: 0}
@@ -1885,10 +1822,8 @@ if (
   || impureContractHelperCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
   console.error('expected impure helper calls in contracts to be rejected loudly')
-  console.error(JSON.stringify(impureContractHelperChecks, null, 2))
+  console.error(formatTestDiagnostics(impureContractHelperChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: impure helper rejected')
 }
 
 const mutableReadContractHelperChecks = verifyFitSource('contract-mutable-read.ts', `const state = {limit: 10}
@@ -1911,10 +1846,8 @@ if (
   || mutableReadContractHelperCheck.reason.includes('helper currentLimit is not pure: reads mutable outside state') !== true
 ) {
   console.error('expected contract helpers that read mutable outside state to be rejected by the shared purity check')
-  console.error(JSON.stringify(mutableReadContractHelperChecks, null, 2))
+  console.error(formatTestDiagnostics(mutableReadContractHelperChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: mutable outside read rejected')
 }
 
 const unsupportedContractExpressionChecks = verifyFitSource('contract-unsupported.ts', `function randomLimit() {
@@ -1940,10 +1873,8 @@ if (
   || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
 ) {
   console.error('expected unsupported contract expressions to explain the unsupported step')
-  console.error(JSON.stringify(unsupportedContractExpressionChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedContractExpressionChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: unsupported calls rejected')
 }
 
 const mutableAliasContractChecks = verifyFitSource('contract-mutable-alias.ts', `let max = Math.max
@@ -1961,10 +1892,8 @@ if (
   || mutableAliasContractCheck.reason?.includes('max is a mutable helper alias') !== true
 ) {
   console.error('expected mutable helper aliases in contracts to be rejected loudly')
-  console.error(JSON.stringify(mutableAliasContractChecks, null, 2))
+  console.error(formatTestDiagnostics(mutableAliasContractChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: mutable alias rejected')
 }
 
 const unsupportedGivenExpressionChecks = verifyFitSource('given-contract-unsupported.ts', `const box = {limit: 0}
@@ -2032,10 +1961,8 @@ if (
   || noInputBooleanGivenCheck.reason !== 'given must mention an input'
 ) {
   console.error('expected given helper expressions to reject impure, input-independent, and derived range target cases')
-  console.error(JSON.stringify(unsupportedGivenExpressionChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedGivenExpressionChecks))
   suite.fail()
-} else {
-  console.log('given contract expressions: unsupported cases rejected')
 }
 
 const unsupportedSpreadContractChecks = verifyFitSource('unsupported-spread-contract.ts', `
@@ -2059,10 +1986,8 @@ if (
   || unsupportedSpreadContractCheck.reason?.includes('Call spread needs an exact tuple') !== true
 ) {
   console.error('expected every interpreter rejection in a contract expression to stop the proof')
-  console.error(JSON.stringify(unsupportedSpreadContractChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedSpreadContractChecks))
   suite.fail()
-} else {
-  console.log('contract expressions: tagged interpreter rejection stops type fallback proof')
 }
 
 const wildcardIdentityCollisionChecks = verifyFitSource('wildcard-identity-collision.ts', `
@@ -2081,10 +2006,8 @@ const wildcardIdentityCollisionCheck = wildcardIdentityCollisionChecks.find(chec
   && check.text === 'rows[].height == __fit_domain_rows___item_height')
 if (wildcardIdentityCollisionCheck?.status === 'pass') {
   console.error('expected a source identifier not to share proof identity with a wildcard path placeholder')
-  console.error(JSON.stringify(wildcardIdentityCollisionChecks, null, 2))
+  console.error(formatTestDiagnostics(wildcardIdentityCollisionChecks))
   suite.fail()
-} else {
-  console.log('contract paths: generated placeholder cannot alias a source identifier')
 }
 
 const structuredPathRegressionChecks = verifyFitSource('structured-path-regressions.ts', `
@@ -2187,28 +2110,13 @@ if (
   || reservedReturnBindingChecks[0]?.reason?.includes('is reserved for Freerange contract evaluation') !== true
 ) {
   console.error('expected structured paths and binding scopes to preserve their semantic guarantees')
-  console.error(JSON.stringify(structuredPathRegressionChecks, null, 2))
+  console.error(formatTestDiagnostics(structuredPathRegressionChecks))
   suite.fail()
-} else {
-  console.log('contract paths: array lengths, numeric object keys, and function-scoped var stay distinct')
 }
 
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = normalizeNegative(negativeReport.checks)
-if (snapshotUpdateRequested()) {
-  await Bun.write(negativeExpectedPath, actualNegative)
-  console.log(`negative: updated ${negativeExpectedPath}`)
-} else {
-  const expectedNegative = normalizeText(await Bun.file(negativeExpectedPath).text())
-  if (actualNegative !== expectedNegative) {
-    console.error('expected negative messages changed')
-    console.error('\nExpected:\n' + expectedNegative)
-    console.error('Actual:\n' + actualNegative)
-    suite.fail()
-  } else {
-    console.log(`negative: ${negativeReport.checks.filter(check => check.status !== 'pass').length} expected messages`)
-  }
-}
+if (!await verifySnapshot(negativeExpectedPath, actualNegative, 'negative messages')) suite.fail()
 
 const previousIndexReport = await verifyFitFiles([
   'tests/patterns/previous-index-patterns.ts',
@@ -2216,10 +2124,8 @@ const previousIndexReport = await verifyFitFiles([
 ], {annotationsOnly: true})
 if (previousIndexReport.phase !== 'ready') {
   console.error('expected direct and imported previous-index relationships to pass')
-  console.error(JSON.stringify(previousIndexReport.checks, null, 2))
+  console.error(formatTestDiagnostics(previousIndexReport.checks))
   suite.fail()
-} else {
-  console.log('collection contracts: previous-index relationships pass directly and through helper summaries')
 }
 
 const negativeAdjacentSummaryReport = await verifyFitFiles(['tests/imports/negative-adjacent-summary.ts'], {annotationsOnly: true})
@@ -2235,10 +2141,8 @@ if (
   || negativeAdjacentFirstItemCheck?.status !== 'unknown'
 ) {
   console.error('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence')
-  console.error(JSON.stringify(negativeAdjacentSummaryReport.checks, null, 2))
+  console.error(formatTestDiagnostics(negativeAdjacentSummaryReport.checks))
   suite.fail()
-} else {
-  console.log('collection contracts: adjacent helper summaries preserve abstraction without proving a different recurrence')
 }
 
 const sequenceOperationChecks = verifyFitSource('sequence-operations.ts', `
@@ -2493,10 +2397,8 @@ if (
   || sequenceOperationStatus('unaryGroupedUpdate', 'return: -50..0') !== 'pass'
 ) {
   console.error('expected sequence relations to preserve source grouping and reject unsound spacing or end facts')
-  console.error(JSON.stringify(sequenceOperationChecks, null, 2))
+  console.error(formatTestDiagnostics(sequenceOperationChecks))
   suite.fail()
-} else {
-  console.log('sequences: source operations preserve grouping without rounded cancellation')
 }
 
 const lateRefinementChecks = verifyFitSource('late-refinement.ts', `
@@ -2518,10 +2420,8 @@ function lateRefinement(items: {height: number}[], top: number) {
 `)
 if (lateRefinementChecks.length !== 1 || lateRefinementChecks[0]?.status !== 'pass') {
   console.error('expected a computation to retain operand identity after a later range refinement')
-  console.error(JSON.stringify(lateRefinementChecks, null, 2))
+  console.error(formatTestDiagnostics(lateRefinementChecks))
   suite.fail()
-} else {
-  console.log('domain: late-refined computation operands prove')
 }
 
 const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
@@ -2540,8 +2440,6 @@ if (
   console.error('expected given typo suggestion')
   console.error(suggestedGivenRootReason ?? '<missing>')
   suite.fail()
-} else {
-  console.log('given typo: suggested contract root')
 }
 
 const ambiguousGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
@@ -2558,8 +2456,6 @@ if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !=
   console.error('expected ambiguous given typo to use TypeScript diagnostics')
   console.error(ambiguousGivenRootReason ?? '<missing>')
   suite.fail()
-} else {
-  console.log('given typo: ambiguous root reported by TypeScript')
 }
 
 let duplicateFunctionError: Error | null = null
@@ -2583,8 +2479,6 @@ if (
   console.error('expected duplicate function names to be rejected by TypeScript preflight')
   console.error(duplicateFunctionError?.message ?? '<no error>')
   suite.fail()
-} else {
-  console.log('function data: duplicate names rejected')
 }
 
 const repeatedSourceFile = 'repeated-source-preflight.ts'
@@ -2612,8 +2506,6 @@ if (
   console.error('expected standalone source preflight to use the current source text on every build')
   console.error(repeatedSourceError?.message ?? '<no error>')
   process.exitCode = 1
-} else {
-  console.log('source preflight: repeated filenames keep independent diagnostics')
 }
 
 let defaultLibraryConflictError: Error | null = null
@@ -2631,8 +2523,6 @@ if (
   console.error('expected standalone source preflight failures to keep complete TypeScript diagnostics')
   console.error(defaultLibraryConflictError?.message ?? '<no error>')
   process.exitCode = 1
-} else {
-  console.log('source preflight: default-library diagnostics preserved')
 }
 
 let unsupportedSourceExtensionError: Error | null = null
@@ -2652,8 +2542,6 @@ if (
   console.error('expected unsupported standalone source extensions to keep TypeScript diagnostics')
   console.error(unsupportedSourceExtensionError?.message ?? '<no error>')
   process.exitCode = 1
-} else {
-  console.log('source preflight: unsupported extensions preserve diagnostics')
 }
 
 const importedPreflightDir = `/tmp/freerange-source-preflight-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`
@@ -2693,8 +2581,6 @@ void enabled
     console.error('expected standalone source preflight to preserve ordered multi-file diagnostics')
     console.error(importedPreflightError?.message ?? '<no error>')
     process.exitCode = 1
-  } else {
-    console.log('source preflight: multi-file diagnostics keep order and attribution')
   }
 
   let importedSyntaxError: Error | null = null
@@ -2712,8 +2598,6 @@ void enabled
     console.error('expected standalone source preflight to preserve imported syntax diagnostics')
     console.error(importedSyntaxError?.message ?? '<no error>')
     process.exitCode = 1
-  } else {
-    console.log('source preflight: imported syntax diagnostics preserved')
   }
 } finally {
   Bun.spawnSync({cmd: ['rm', '-rf', importedPreflightDir]})
@@ -2738,8 +2622,6 @@ if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n'))
   console.error('expected unsupported root fallout to collapse')
   console.error(collapsedUnsupported.join('\n'))
   suite.fail()
-} else {
-  console.log('diagnostics: collapsed unsupported root fallout')
 }
 
 const unsupportedBranchConditionChecks = verifyFitSource('unsupported-branch-condition.ts', `declare function externalPredicate(): boolean
@@ -2762,10 +2644,8 @@ if (
   || unsupportedBranchConditionCheck.reason !== 'Unsupported branch condition: externalPredicate()'
 ) {
   console.error('expected unsupported branch conditions to stop before speculating through branch bodies')
-  console.error(JSON.stringify(unsupportedBranchConditionChecks, null, 2))
+  console.error(formatTestDiagnostics(unsupportedBranchConditionChecks))
   suite.fail()
-} else {
-  console.log('control flow: unsupported branch condition stops')
 }
 
 const inferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'typedObjectParamArrayShape'})
@@ -2781,8 +2661,6 @@ if (missingInferFacts.length > 0) {
   console.error('expected inferred facts changed')
   console.error(missingInferFacts.map(fact => `missing: ${fact}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer: ${expectedInferFacts.length} expected facts`)
 }
 
 const filterInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredRowsKeepElementDomain'})
@@ -2795,8 +2673,6 @@ if (missingFilterInferFacts.length > 0) {
   console.error('expected filter inferred facts changed')
   console.error(missingFilterInferFacts.map(fact => `missing: ${fact}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer filter: ${expectedFilterInferFacts.length} expected facts`)
 }
 
 const filterMapInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'filteredMappedRowsKeepBaseLineage'})
@@ -2809,8 +2685,6 @@ if (missingFilterMapInferFacts.length > 0) {
   console.error('expected filter-map inferred facts changed')
   console.error(missingFilterMapInferFacts.map(fact => `missing: ${fact}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer filter-map: ${expectedFilterMapInferFacts.length} expected facts`)
 }
 
 const loopInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'localLoopAnnotation'})
@@ -2851,8 +2725,6 @@ if (missingLoopFacts.length > 0 || badLoopSpecStatuses.length > 0 || missingLoop
   console.error(unexpectedlyRedundantLoopSpecs.map(text => `unexpected redundant: ${text}`).join('\n'))
   console.error(badLoopFunctionSpecStatuses.map(([text, status]) => `expected function ${text}: ${status}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer loops: ${expectedLoopFacts.length} expected facts`)
 }
 
 // Conditional flush loops keep the exact operand snapshots used by rounded
@@ -2884,8 +2756,6 @@ if (missingSegmentedFacts.length > 0 || badSegmentedSpecStatuses.length > 0) {
   console.error(missingSegmentedFacts.map(fact => `missing: ${fact}`).join('\n'))
   console.error(badSegmentedSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer segmented loop: ${expectedSegmentedFacts.length} expected facts`)
 }
 
 const redundantInferReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'scalarPushLoop'})
@@ -2908,8 +2778,6 @@ if (missingRedundantFacts.length > 0 || badRedundantSpecStatuses.length > 0) {
   console.error(missingRedundantFacts.map(([fact, reason]) => `missing redundant: ${fact} covered by ${reason}`).join('\n'))
   console.error(badRedundantSpecStatuses.map(([text, status]) => `expected ${text}: ${status}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer redundant: ${expectedRedundantFacts.length} expected facts`)
 }
 
 const tupleInferReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'scalarStringishMutationPreservesTupleFacts'})
@@ -2917,8 +2785,6 @@ const tupleFacts = new Set(tupleInferReport.functions[0]?.facts.map(fact => fact
 if (!tupleFacts.has('return.length == 2')) {
   console.error('expected fixed tuple length inference to stay readable')
   suite.fail()
-} else {
-  console.log('infer tuple length: readable')
 }
 
 const equalityRedundantReport = inferFitFiles(['tests/patterns/loop-patterns.ts'], {functionName: 'stackedRowsWithBottom'})
@@ -2933,8 +2799,6 @@ if (missingEqualityRedundantFacts.length > 0 || equalityRedundantSpecs.get('retu
   console.error('expected equality redundant facts changed')
   console.error(missingEqualityRedundantFacts.map(fact => `missing: ${fact}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer equality redundant: ${expectedEqualityRedundantFacts.length} expected facts`)
 }
 
 const callSiteTextReport = inferFitFiles(['tests/patterns/patterns.ts'], {functionName: 'userlandClampThroughArithmeticAlias'})
@@ -2947,8 +2811,6 @@ if (missingCallSiteTextFacts.length > 0) {
   console.error('expected call-site inferred text changed')
   console.error(missingCallSiteTextFacts.map(fact => `missing: ${fact}`).join('\n'))
   suite.fail()
-} else {
-  console.log(`infer call-site text: ${expectedCallSiteTextFacts.length} expected facts`)
 }
 
 const actualInferSnapshot = normalizeText([
@@ -2960,20 +2822,7 @@ const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/patterns/patterns.ts'], 'mapBlockRowsWithDestructure'),
   formatInferSnapshot(['tests/patterns/loop-patterns.ts'], 'localLoopAnnotation'),
 ].join('\n'))
-if (snapshotUpdateRequested()) {
-  await Bun.write(inferSnapshotExpectedPath, actualInferSnapshot)
-  console.log(`infer snapshot: updated ${inferSnapshotExpectedPath}`)
-} else {
-  const expectedInferSnapshot = normalizeText(await Bun.file(inferSnapshotExpectedPath).text())
-  if (actualInferSnapshot !== expectedInferSnapshot) {
-    console.error('expected infer snapshot changed')
-    console.error('\nExpected:\n' + expectedInferSnapshot)
-    console.error('Actual:\n' + actualInferSnapshot)
-    suite.fail()
-  } else {
-    console.log('infer snapshot: matched')
-  }
-}
+if (!await verifySnapshot(inferSnapshotExpectedPath, actualInferSnapshot, 'infer snapshot')) suite.fail()
 
 const referenceAliasChecks = verifyFitSource('reference-aliases.ts', `function grow(row: {size: number}) {
   row.size = 999
@@ -3072,10 +2921,8 @@ if (
   || conditionalAlias?.status === 'pass'
 ) {
   console.error('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches')
-  console.error(JSON.stringify(referenceAliasChecks, null, 2))
+  console.error(formatTestDiagnostics(referenceAliasChecks))
   suite.fail()
-} else {
-  console.log('reference aliases: mutations forget every reachable binding')
 }
 
 const purePlacementChecks = verifyFitSource('pure-placement.ts', `function misplacedPure(items: number[]) {
@@ -3113,10 +2960,8 @@ if (
   || nestedClassPlacements.some(check => check.status !== 'unknown' || check.reason !== nestedPlacementReason)
 ) {
   console.error('expected invalid loop and nested class-member placements to be rejected during placement classification')
-  console.error(JSON.stringify(purePlacementChecks, null, 2))
+  console.error(formatTestDiagnostics(purePlacementChecks))
   suite.fail()
-} else {
-  console.log('contract placement: loop and nested class-member diagnostics')
 }
 
 function normalizeNegative(checks: FitCheck[]) {
@@ -3254,10 +3099,8 @@ function accumulatedMagnitude(value: number, count: number) {
 `)
 if (finiteDefaultLoopChecks.length !== 1 || finiteDefaultLoopChecks[0]?.status !== 'pass') {
   console.error('expected finite default inputs to restore the loop magnitude proof')
-  console.error(JSON.stringify(finiteDefaultLoopChecks, null, 2))
+  console.error(formatTestDiagnostics(finiteDefaultLoopChecks))
   suite.fail()
-} else {
-  console.log('numbers: finite default restores comparison-based loop proof')
 }
 
 })

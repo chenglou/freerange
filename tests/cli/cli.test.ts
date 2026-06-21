@@ -581,7 +581,6 @@ const =
     expectCli(!check.output.includes('fr:'), 'expected syntax errors to use TypeScript diagnostic formatting directly', check.output)
   })
 
-  console.log('cli: 30 expected behaviors')
 }
 
 function runFr(args: string[], cwd = repoDir) {

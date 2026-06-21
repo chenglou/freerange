@@ -9,6 +9,7 @@ import {
   importedDestructuredDefaultUsesFinalBinding,
 } from './imported-caller.ts'
 import {testSuite} from '../test-suite.ts'
+import {formatTestDiagnostics} from '../test-diagnostics.ts'
 
 testSuite('calls suite', async suite => {
 void importedArgumentRunsOnce
@@ -272,10 +273,8 @@ function uncertainNullishRightJoinsState(value: number | undefined) {
 const sourceCallFailures = sourceCallChecks.filter(check => check.status !== 'pass')
 if (sourceCallFailures.length > 0 || sourceCallChecks.length !== 25) {
   console.error('expected source calls to prepare operands and parameters once')
-  console.error(JSON.stringify(sourceCallChecks, null, 2))
+  console.error(formatTestDiagnostics(sourceCallChecks))
   suite.fail()
-} else {
-  console.log('calls: operands and parameters prepared once')
 }
 
 const arrayTupleBoundaryChecks = verifyFitSource('array-tuple-boundaries.ts', `
@@ -684,10 +683,8 @@ if (
   || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status === 'pass'
 ) {
   console.error('expected arrays and fixed tuples to keep separate guarantees at every type boundary')
-  console.error(JSON.stringify(arrayTupleBoundaryChecks, null, 2))
+  console.error(formatTestDiagnostics(arrayTupleBoundaryChecks))
   suite.fail()
-} else {
-  console.log('calls: arrays and fixed tuples keep separate guarantees')
 }
 
 const arrayTupleBoundaryProgram = buildFitSourceFile('array-tuple-boundary-interpreter.ts', `
@@ -743,8 +740,6 @@ if (
     negativeTupleIndexWrite: negativeTupleIndexWriteBoundary.output.issues.map(issue => issue.message),
   })
   suite.fail()
-} else {
-  console.log('calls: unsupported tuple assertions and collection writes report directly')
 }
 
 const finalBindingNegativeChecks = verifyFitSource('final-binding-negative.ts', `
@@ -765,10 +760,8 @@ if (
   || !finalBindingNegativeChecks[0].reason?.includes('is false')
 ) {
   console.error('expected false claims to see final destructured parameter bindings')
-  console.error(JSON.stringify(finalBindingNegativeChecks, null, 2))
+  console.error(formatTestDiagnostics(finalBindingNegativeChecks))
   suite.fail()
-} else {
-  console.log('calls: stale destructured parameter values cannot prove claims')
 }
 
 const sameParameterNameChecks = verifyFitSource('same-parameter-name.ts', `
@@ -807,10 +800,8 @@ if (
   || !defaultRequirement.reason?.includes('(value + 1) <= value')
 ) {
   console.error('expected caller and default text to remain distinct from callee parameter names')
-  console.error(JSON.stringify(sameParameterNameChecks, null, 2))
+  console.error(formatTestDiagnostics(sameParameterNameChecks))
   suite.fail()
-} else {
-  console.log('calls: caller text stays distinct from callee names')
 }
 
 const simultaneousParameterChecks = verifyFitSource('simultaneous-parameters.ts', `
@@ -889,8 +880,6 @@ if (
     methodFreeVariableRebase,
   })
   suite.fail()
-} else {
-  console.log('calls: explicit arguments and defaults use their own lexical scopes')
 }
 
 const restContractChecks = verifyFitSource('rest-contract.ts', `
@@ -912,10 +901,8 @@ function tooFew() {
 const restRequirement = restContractChecks.find(check => check.text.includes('exactlyTwo(1): requires'))
 if (restRequirement?.status !== 'fail' || !restRequirement.reason?.includes('([1]).length >= 2')) {
   console.error('expected rest parameter contracts to retain caller argument text')
-  console.error(JSON.stringify(restContractChecks, null, 2))
+  console.error(formatTestDiagnostics(restContractChecks))
   suite.fail()
-} else {
-  console.log('calls: rest contracts retain caller argument text')
 }
 
 const annotationOnlyInputChecks = verifyFitSource('annotation-only-input.ts', `
@@ -933,10 +920,8 @@ function narrowInput(
 `)
 if (annotationOnlyInputChecks.some(check => check.status !== 'pass')) {
   console.error('expected input-only annotations to skip body callsite checks')
-  console.error(JSON.stringify(annotationOnlyInputChecks, null, 2))
+  console.error(formatTestDiagnostics(annotationOnlyInputChecks))
   suite.fail()
-} else {
-  console.log('calls: annotation-only input checks stay local')
 }
 
 const unsupportedCallProgram = buildFitSourceFile('unsupported-call-inputs.ts', `
@@ -969,8 +954,6 @@ if (
     destructuringDefault: destructuringDefault.output.issues.map(issue => issue.message),
   })
   suite.fail()
-} else {
-  console.log('calls: unsupported spread and binding defaults reported')
 }
 
 const unsupportedPlatformProgram = buildFitSourceFile('unsupported-platform-calls.ts', `
@@ -1044,8 +1027,6 @@ if (unsupportedPlatformFailures.length > 0 || supportedSortFailures.length > 0) 
   console.error('expected deliberate platform boundaries to report their shared specific reasons')
   console.error({unsupportedPlatformFailures, supportedSortFailures})
   suite.fail()
-} else {
-  console.log('calls: deliberate platform boundaries report specific reasons')
 }
 
 const callbackBoundaryProgram = buildFitSourceFile('callback-boundaries.ts', `
@@ -1121,17 +1102,13 @@ if (
     unknownTarget,
   })
   suite.fail()
-} else {
-  console.log('calls: unsupported callbacks and callable targets preserve operand effects')
 }
 
 const importedReport = await verifyFitFiles(['tests/calls/imported-caller.ts'])
 if (importedReport.phase !== 'ready' || importedReport.summary.pass !== 4) {
   console.error('expected imported calls to share prepared invocation semantics')
-  console.error(JSON.stringify(importedReport, null, 2))
+  console.error(formatTestDiagnostics(importedReport))
   suite.fail()
-} else {
-  console.log('calls: imported defaults and side effects prepared once')
 }
 
 })
