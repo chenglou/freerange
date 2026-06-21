@@ -144,7 +144,7 @@ Concretely, for TS config (use `@typescript/native-preview`. Faster):
 For linting, we prefer oxlint + tsgolint npm packages for AI verification loop perf. But the recs below work for eslint too:
 
 ```jsonc
-"plugins": ["typescript", "oxc"], // no need to turn on other things. Others might be noisy for AI
+"plugins": ["typescript", "oxc", "promise"], // only add plugins whose checks are intentional. Others might be noisy for AI
 "options": {
   "denyWarnings": true, // keep diagnostics labeled as warnings, but still fail the check
 },
@@ -156,6 +156,8 @@ For linting, we prefer oxlint + tsgolint npm packages for AI verification loop p
 "@typescript-eslint/no-unsafe-argument": "error",
 "@typescript-eslint/no-unsafe-call": "error",
 "@typescript-eslint/no-unsafe-return": "error",
+"prefer-promise-reject-errors": "error",
+"promise/no-callback-in-promise": "error",
 "@typescript-eslint/no-unsafe-member-access": "error",
 "@typescript-eslint/prefer-nullish-coalescing": ["error", {
   "ignorePrimitives": { "boolean": true },
