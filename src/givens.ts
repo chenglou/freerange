@@ -243,7 +243,7 @@ function givenExpressionRootNames(expression: ts.Expression, ignored: string[]):
   if (ts.isPropertyAccessExpression(expression)) return givenExpressionRootNames(expression.expression, ignored)
   if (ts.isElementAccessExpression(expression)) {
     const roots = givenExpressionRootNames(expression.expression, ignored)
-    if (expression.argumentExpression != null) roots.push(...givenExpressionRootNames(expression.argumentExpression, ignored))
+    roots.push(...givenExpressionRootNames(expression.argumentExpression, ignored))
     return roots
   }
 

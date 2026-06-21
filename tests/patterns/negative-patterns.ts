@@ -1664,7 +1664,7 @@ export function negativeOptionalNumberNeedsPresentGuard(max?: number) {
 
 export function negativeNullishFallbackNeedsNumericDefault(dimensions: {width?: number}, label: string) {
   // @ts-expect-error This case intentionally keeps a non-numeric fallback.
-  return Math.max(dimensions?.width ?? label, 0) // @fit >= 0
+  return Math.max(dimensions?.width ?? label, 0) /* oxlint-disable-line typescript/no-unnecessary-condition */ // @fit >= 0
 }
 
 export function negativeScalarStringishMutationForgetsMutatedRoot(items: number[]) {

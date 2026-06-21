@@ -1,4 +1,5 @@
 export function formatTestDiagnostics(value: unknown) {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   const text = JSON.stringify(value, (key, current: unknown) => {
     if (key === 'obligation' || key === 'trace' || key === 'detail') return undefined
     return current

@@ -101,7 +101,7 @@ function adaptValueToTsType(
     if (presentTypes.length > 0 && presentTypes.every(member => isArrayLikeType(member, checker))) {
       const tupleMembers = presentTypes.map(member => fixedTupleElementTypes(member, checker))
       if (tupleMembers.every(members => members != null)) {
-        const lengths = new Set(tupleMembers.map(members => members!.length))
+        const lengths = new Set(tupleMembers.map(members => members.length))
         if (lengths.size === 1) {
           if (presentValue.kind === 'unknown') {
             adapted = unknownCanUseTypeFallback(presentValue)

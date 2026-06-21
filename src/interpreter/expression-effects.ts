@@ -43,7 +43,7 @@ export function expressionIsRepeatable(expression: ts.Expression, program: Progr
   if (ts.isElementAccessExpression(current)) {
     if (elementAccessHasSourceAccessor(current, 'get', program)) return false
     return expressionIsRepeatable(current.expression, program)
-      && (current.argumentExpression == null || expressionIsRepeatable(current.argumentExpression, program))
+      && expressionIsRepeatable(current.argumentExpression, program)
   }
   if (ts.isPrefixUnaryExpression(current)) {
     return current.operator !== ts.SyntaxKind.PlusPlusToken

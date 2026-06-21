@@ -1002,7 +1002,7 @@ function staticPathFromExpression(expression: ts.Expression): StaticPath | null 
     const parent = staticPathFromExpression(current.expression)
     return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: current.name.text}]}
   }
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+  if (ts.isElementAccessExpression(current)) {
     const parent = staticPathFromExpression(current.expression)
     const index = numericLiteralValue(current.argumentExpression)
     return parent == null || index == null || !Number.isInteger(index) || index < 0

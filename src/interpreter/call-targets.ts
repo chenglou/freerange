@@ -203,7 +203,6 @@ function classElementAccessSymbol(
   checker: ts.TypeChecker,
 ): ts.Symbol | undefined {
   const argument = access.argumentExpression
-  if (argument == null) return undefined
   if (ts.isStringLiteral(argument) || ts.isNumericLiteral(argument)) {
     return checker.getPropertyOfType(checker.getTypeAtLocation(access.expression), argument.text)
   }
@@ -253,6 +252,7 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
 }
 
 function containingNamedDeclaration(declaration: ts.Declaration): ts.DeclarationStatement | ts.InterfaceDeclaration | null {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   for (let current: ts.Node | undefined = declaration.parent; current != null; current = current.parent) {
     if (ts.isInterfaceDeclaration(current) || ts.isClassDeclaration(current)) return current
     if (ts.isSourceFile(current)) return null

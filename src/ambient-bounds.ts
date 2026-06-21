@@ -151,6 +151,7 @@ function hasLibDomGlobalDeclaration(expression: ts.Identifier, program: Program)
 
 function declarationOwnerName(declaration: ts.Declaration): string | null {
   let current: ts.Node | undefined = declaration.parent
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isInterfaceDeclaration(current)) return current.name.text
     current = current.parent

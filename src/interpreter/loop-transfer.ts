@@ -207,8 +207,8 @@ export function evaluateSymbolicLoop(loop: SymbolicLoop, frame: InterpreterFrame
 
   // Restarts terminate without a cap: every restart root is an env name not
   // yet in the write set, and the write set only grows.
-  let first: LoopResult | null = null
-  while (first == null) {
+  let first: LoopResult
+  while (true) {
     if (loop.iterationRoots.some(root => analysis.writeSet.has(root))) {
       return {kind: 'function-unknown', value: noteUnsupported(frame, 'Loop item/index is reassigned in the body', loop.body)}
     }
@@ -513,9 +513,7 @@ function walkIfStatement(statement: ts.IfStatement, path: PathState, restartRoot
   for (const branch of branches) {
     const fork = branches.length === 1
       ? path
-      : forkPath(path, repeatable
-        ? analysis.context.refinedBranchFrame(path.frame, statement.expression, branch.truth, branch.truth ? '<loop-if-true>' : '<loop-if-false>')
-        : pathFrame(path.frame, new Map(path.frame.env)))
+      : forkPath(path, analysis.context.refinedBranchFrame(path.frame, statement.expression, branch.truth, branch.truth ? '<loop-if-true>' : '<loop-if-false>'))
     if (branch.statement == null) {
       outcomes.push(fork)
       continue
@@ -1755,7 +1753,7 @@ function sequenceAdditionsFromValue(
 
 function computationContainsPreviousField(value: NumberValue, previous: FieldForm[]): boolean {
   for (const field of previous) {
-    if (field.value != null && sameComputationOperand(value, field.value)) return true
+    if (sameComputationOperand(value, field.value)) return true
   }
   const computation = value.computation
   if (computation == null) return false

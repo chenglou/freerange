@@ -190,7 +190,6 @@ function isCallReport(check: FitCheck) {
 function printFollowUp(check: FitCheck) {
   if (check.status === 'pass') return
   const followUp = adoptionFollowUp(check)
-  if (followUp == null) return
   console.log(`  next: ${followUp}`)
 }
 
@@ -219,7 +218,7 @@ function adoptionFollowUp(check: FitCheck) {
 }
 
 function hasCheckBoundary(check: FitCheck) {
-  return 'boundaryLine' in check && check.boundaryLine != null
+  return 'boundaryLine' in check
 }
 
 function inferCommandForCheck(check: {file: string; functionName: string}) {

@@ -12,6 +12,7 @@ export function testSuite(name: string, run: (suite: TestSuite) => void | Promis
         failed = true
       },
     })
+    // oxlint-disable-next-line typescript/no-unnecessary-condition
     if (failed) throw new Error(`${name} failed; see diagnostics above`)
   }, 300_000)
 }

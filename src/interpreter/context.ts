@@ -288,6 +288,7 @@ export function noteOutsideNumericDomain(
 }
 
 function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   const nodeSourceFile = node.getSourceFile() ?? sourceFile
   return nodeSourceFile.getLineAndCharacterOfPosition(node.getStart(nodeSourceFile)).line + 1
 }

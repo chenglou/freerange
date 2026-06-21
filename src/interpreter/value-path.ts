@@ -35,7 +35,7 @@ export function pathFromExpression(
     const parent = pathFromExpression(unwrapped.expression, evaluateIndex, valueAtPath)
     return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: unwrapped.name.text}]}
   }
-  if (ts.isElementAccessExpression(unwrapped) && unwrapped.argumentExpression != null) {
+  if (ts.isElementAccessExpression(unwrapped)) {
     const parent = pathFromExpression(unwrapped.expression, evaluateIndex, valueAtPath)
     const propertyName = staticPropertyName(unwrapped.argumentExpression)
     if (parent != null && propertyName != null) {

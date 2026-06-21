@@ -69,7 +69,7 @@ export function nextDoubleDown(value: number): number {
   if (value === 0) return -Number.MIN_VALUE
   doubleScratch[0] = value
   doubleScratchBits[0] = doubleScratchBits[0]! + (value > 0 ? -1n : 1n)
-  return doubleScratch[0]!
+  return doubleScratch[0]
 }
 
 export function nextDoubleUp(value: number): number {
@@ -78,7 +78,7 @@ export function nextDoubleUp(value: number): number {
   if (value === 0) return Number.MIN_VALUE
   doubleScratch[0] = value
   doubleScratchBits[0] = doubleScratchBits[0]! + (value > 0 ? 1n : -1n)
-  return doubleScratch[0]!
+  return doubleScratch[0]
 }
 
 export function rationalAdd(left: Rational, right: Rational): Rational {

@@ -168,7 +168,7 @@ export function negativeMatrixArrayAtDynamicUnsupported(items: number[], index: 
 
 export function negativeMatrixNullishFallbackString(dimensions: {width?: number}): number {
   // @ts-expect-error This case intentionally keeps a non-numeric fallback.
-  return Math.max(dimensions?.width ?? 'wide', 0)
+  return Math.max(dimensions?.width ?? 'wide', 0) // oxlint-disable-line typescript/no-unnecessary-condition
 }
 
 let negativeMatrixMutableMaxAlias = Math.max

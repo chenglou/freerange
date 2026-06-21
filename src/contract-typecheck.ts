@@ -133,7 +133,7 @@ export function contractPassesTypeCheck(
   program: Program,
   contract: FitSpec | FitInlineSpecTemplate,
 ) {
-  const identity = 'typeCheckOrigin' in contract && contract.typeCheckOrigin != null
+  const identity = 'typeCheckOrigin' in contract
     ? contract.typeCheckOrigin
     : contract
   return !contractTypeCheckResult(program).rejected.has(identity)
@@ -516,6 +516,7 @@ function typeContractCheckContext(node: ts.Node, sourceFile: ts.SourceFile): Typ
 function typeContractSelfScope(node: ts.Node): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | ts.TypeLiteralNode | null {
   if (ts.isInterfaceDeclaration(node) || ts.isTypeAliasDeclaration(node) || ts.isTypeLiteralNode(node)) return node
   let current: ts.Node | undefined = node.parent
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isTypeLiteralNode(current) || ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) return current
     current = current.parent
@@ -543,6 +544,7 @@ function typeDeclarationParametersText(
 
 function containingTypeContractDeclaration(node: ts.Node): ts.InterfaceDeclaration | ts.TypeAliasDeclaration | null {
   let current: ts.Node | undefined = node
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isInterfaceDeclaration(current) || ts.isTypeAliasDeclaration(current)) return current
     current = current.parent
@@ -555,6 +557,7 @@ function unsupportedNestedTypeContext(
   declaration: ts.InterfaceDeclaration | ts.TypeAliasDeclaration,
 ): string | null {
   let current: ts.Node | undefined = node.parent
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null && current !== declaration) {
     if (ts.isConditionalTypeNode(current)) {
       return 'type @fit inside a conditional type branch is not supported yet'
@@ -862,8 +865,9 @@ function loweredBuiltinExpression(expression: ts.Expression, options: LowerOptio
         ],
       }
     }
+    default:
+      return null
   }
-  return null
 }
 
 function sequencePropStatements(expression: ts.Expression, options: LowerOptions, id: string): string[] {
@@ -1073,6 +1077,7 @@ function returnStatementsIn(body: ts.Block): ts.ReturnStatement[] {
 
 function containingStatement(node: ts.Node): ts.Statement | null {
   let current: ts.Node | undefined = node
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isStatement(current)) return current
     current = current.parent
@@ -1086,6 +1091,7 @@ function propertyValueExpressionText(property: ts.PropertyAssignment | ts.Shorth
 }
 
 function lineNumberForNode(sourceFile: ts.SourceFile, node: ts.Node) {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   const nodeSourceFile = node.getSourceFile() ?? sourceFile
   return nodeSourceFile.getLineAndCharacterOfPosition(node.getStart(nodeSourceFile)).line + 1
 }

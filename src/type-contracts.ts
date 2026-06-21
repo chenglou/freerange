@@ -532,7 +532,7 @@ function collectTypeReferenceContractSpecs(
 
   const declaration = localTypeDeclarationForReference(program, type)
   if (declaration == null) return instantiateTypeContractTemplates(parseUnsupportedAttachedTemplates(type.getSourceFile().text, type, 'type @fit supports source-backed type references'), root, role)
-  const key = `${declaration.getSourceFile().fileName}#${declaration.name?.text ?? declaration.pos}`
+  const key = `${declaration.getSourceFile().fileName}#${declaration.name.text}`
   if (seen.has(key)) return emptyResult()
   seen.add(key)
 

@@ -260,6 +260,7 @@ export function replaceFitIdentifiers(text: string, replacements: ReadonlyMap<st
 
 function thisHasNonArrowFunctionOwner(node: ts.Node) {
   let current = node.parent
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isArrowFunction(current)) {
       current = current.parent
@@ -375,7 +376,7 @@ export function fitDomainPathFromExpression(expression: ts.Expression, domainPat
     const parent = fitDomainPathFromExpression(current.expression, domainPaths)
     return parent == null ? null : {...parent, segments: [...parent.segments, {kind: 'prop', name: current.name.text}]}
   }
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+  if (ts.isElementAccessExpression(current)) {
     const parent = fitDomainPathFromExpression(current.expression, domainPaths)
     if (parent == null) return null
     const argument = current.argumentExpression

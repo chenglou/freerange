@@ -308,7 +308,7 @@ function structuralExpressionKey(current: ts.Expression, domainPaths: ReadonlyMa
   if (ts.isPropertyAccessExpression(current)) {
     return `prop:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}.${current.name.text}`
   }
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+  if (ts.isElementAccessExpression(current)) {
     return `element:${structuralExpressionKey(unwrapExpression(current.expression), domainPaths)}[${structuralExpressionKey(unwrapExpression(current.argumentExpression), domainPaths)}]`
   }
   if (ts.isCallExpression(current)) {

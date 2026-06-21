@@ -6,7 +6,7 @@ export function expressionRootNames(expression: ts.Expression, ignored: string[]
   if (ts.isPropertyAccessExpression(expression)) return expressionRootNames(expression.expression, ignored)
   if (ts.isElementAccessExpression(expression)) {
     const roots = expressionRootNames(expression.expression, ignored)
-    if (expression.argumentExpression != null) roots.push(...expressionRootNames(expression.argumentExpression, ignored))
+    roots.push(...expressionRootNames(expression.argumentExpression, ignored))
     return roots
   }
   if (ts.isCallExpression(expression)) {

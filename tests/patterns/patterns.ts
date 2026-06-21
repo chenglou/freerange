@@ -1624,7 +1624,7 @@ export function nullableBranchKeepsPresentNumberFacts(focused: number) {
  */
 export function nullableBranchKeepsPresentObjectFacts(count: number, focused: number) {
   const previous = focused > 0 ? {count, targetIndex: focused - 1} : null
-  return previous != null ? previous : {count, targetIndex: focused}
+  return previous != null ? previous : {count, targetIndex: focused} // oxlint-disable-line typescript/prefer-nullish-coalescing
 }
 
 /** @fit
@@ -1647,7 +1647,7 @@ export function typeofUndefinedGuardKeepsOptionalNumber(max?: number) {
 }
 
 export function optionalPropertyNullishFallbackFeedsMath(dimensions: {width?: number}) {
-  const width = dimensions?.width ?? 0
+  const width = dimensions?.width ?? 0 // oxlint-disable-line typescript/no-unnecessary-condition
   return Math.max(Number.isFinite(width) ? width : 0, 0) // @fit >= 0
 }
 
@@ -1965,7 +1965,7 @@ export function totalExtentOfCountedItems(count: number, size: number) {
 export function pureClampToHundred(x: number): number {
   // builds a local array and uses Math: no observable effect, deterministic.
   const limits = [0, 100] as const
-  return Math.min(Math.max(x, limits[0]!), limits[1]!)
+  return Math.min(Math.max(x, limits[0]), limits[1])
 }
 
 /** @fit

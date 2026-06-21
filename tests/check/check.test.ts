@@ -1034,7 +1034,7 @@ const uncheckedSquare = checkedNumberOperationChecks.find(check => check.functio
 if (
   zeroTimesInfinity?.status !== 'unknown'
   || zeroTimesInfinity.reason?.includes('zero and infinity may meet') !== true
-  || zeroTimesInfinity.reason?.includes('+ 1') === true
+  || zeroTimesInfinity.reason.includes('+ 1')
   || infiniteSine?.status !== 'unknown'
   || infiniteSine.reason?.includes('expected a finite number') !== true
   || benignOverflow?.status !== 'pass'
@@ -1088,7 +1088,7 @@ if (
   || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
   || sequenceObligationCheck?.obligation?.goal.kind !== 'expression'
   || sequenceObligationCheck.trace?.steps.some(step => step.message === 'checked boolean expression') !== true
-  || sequenceObligationCheck?.trace?.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
+  || sequenceObligationCheck.trace.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {
   console.error('expected checks to carry proof obligations and used facts')
   console.error(formatTestDiagnostics({obligationChecks, sequenceObligationCheck}))
@@ -2215,7 +2215,7 @@ if (
   || structurallyEqualBooleanGivenCheck?.status !== 'pass'
   || reservedReturnBindingChecks.length !== 1
   || reservedReturnBindingChecks[0]?.status !== 'unknown'
-  || reservedReturnBindingChecks[0]?.reason?.includes('is reserved for Freerange contract evaluation') !== true
+  || reservedReturnBindingChecks[0].reason?.includes('is reserved for Freerange contract evaluation') !== true
 ) {
   console.error('expected structured paths and binding scopes to preserve their semantic guarantees')
   console.error(formatTestDiagnostics(structuredPathRegressionChecks))

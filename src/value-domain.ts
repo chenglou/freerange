@@ -310,7 +310,7 @@ export function joinValues(left: Value, right: Value): Value {
     const elements = left.layout === 'tuple'
       && right.layout === 'tuple'
       && left.elements.length === right.elements.length
-      ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements![index]!))
+      ? left.elements.map((leftElement, index) => joinValues(leftElement, right.elements[index]!))
       : null
     const referenceIds = mergedReferenceIds(left.referenceIds, right.referenceIds)
     const expr = left.expr != null && left.expr === right.expr ? left.expr : null

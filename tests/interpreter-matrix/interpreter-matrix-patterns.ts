@@ -282,7 +282,7 @@ export function matrixSwitchFiniteLiteral(kind: MatrixSwitchKind): number {
 }
 
 export function matrixSwitchContinuation(kind: MatrixSwitchKind): number {
-  switch (kind) {
+  switch (kind) { // oxlint-disable-line typescript/switch-exhaustiveness-check
     case 'compact':
       return 1
   }
@@ -331,7 +331,7 @@ export function matrixTypeofUndefinedGuard(max?: number): number {
 }
 
 export function matrixOptionalPropertyNullishFallback(dimensions: {width?: number}): number {
-  return Math.max(dimensions?.width ?? 0, 0)
+  return Math.max(dimensions?.width ?? 0, 0) // oxlint-disable-line typescript/no-unnecessary-condition
 }
 
 export function matrixNullableObjectOptionalFallback(dimensions: {width: number} | null): number {

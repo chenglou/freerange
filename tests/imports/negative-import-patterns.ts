@@ -24,7 +24,7 @@ export function negativeImportedHelperNeedsFit(width: number) {
  * return: 0..320
  */
 export function negativeImportedHelperUnresolved(width: number) {
-  return missingImportedClamp(width)
+  return missingImportedClamp(width) // oxlint-disable-line typescript/no-unsafe-return, typescript/no-unsafe-call
 }
 
 /** @fit

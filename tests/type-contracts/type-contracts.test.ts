@@ -455,10 +455,10 @@ const widthAttribution = multiHelperAttributionChecks.find(check => check.text =
 const heightAttribution = multiHelperAttributionChecks.find(check => check.text === 'type @fit 0..needsBoolean(height)')
 if (
   widthAttribution?.status !== 'unknown'
-  || !(widthAttribution.file?.endsWith('width-helper.ts') ?? false)
+  || !widthAttribution.file.endsWith('width-helper.ts')
   || widthAttribution.reason?.includes("not assignable to parameter of type 'string'") !== true
   || heightAttribution?.status !== 'unknown'
-  || !(heightAttribution.file?.endsWith('height-helper.ts') ?? false)
+  || !heightAttribution.file.endsWith('height-helper.ts')
   || heightAttribution.reason?.includes("not assignable to parameter of type 'boolean'") !== true
 ) {
   console.error('expected each helper type @fit error to attribute to its own declaration file')

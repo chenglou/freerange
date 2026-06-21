@@ -1560,6 +1560,7 @@ function mutableOuterRead(id: ts.Identifier, classifiers: Classifiers, program: 
 }
 
 function isWriteOnlyAssignmentBinding(identifier: ts.Identifier) {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   for (let current: ts.Node = identifier; current.parent != null; current = current.parent) {
     const parent = current.parent
     if (
@@ -1580,6 +1581,7 @@ function isIntrinsicJsxTagName(name: string) {
 }
 
 function isInTypeContext(node: ts.Node): boolean {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   for (let current = node.parent; current != null; current = current.parent) {
     if (ts.isTypeNode(current)) return true
     if (ts.isStatement(current) || ts.isSourceFile(current)) return false
@@ -1690,7 +1692,6 @@ function isSafeClassOuterRead(id: ts.Identifier, checker: ts.TypeChecker): boole
 
 function classElementAccessSymbol(access: ts.ElementAccessExpression, checker: ts.TypeChecker): ts.Symbol | undefined {
   const argument = access.argumentExpression
-  if (argument == null) return undefined
   if (ts.isStringLiteral(argument) || ts.isNumericLiteral(argument)) {
     return checker.getPropertyOfType(checker.getTypeAtLocation(access.expression), argument.text)
   }

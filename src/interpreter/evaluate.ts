@@ -834,6 +834,7 @@ function returnFlow(value: Value, frame: InterpreterFrame): InterpreterFlow {
 
 function nearestFunctionLike(node: ts.Node): ts.SignatureDeclaration | null {
   let current: ts.Node | undefined = node.parent
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   while (current != null) {
     if (ts.isFunctionLike(current)) return current
     current = current.parent
@@ -1288,7 +1289,7 @@ function switchLiteralFrame(
 }
 
 function evaluateSwitchClauseStatements(statements: ts.NodeArray<ts.Statement>, frame: InterpreterFrame): InterpreterFlow {
-  if (statements.length === 1 && ts.isBlock(statements[0]!)) return evaluateStatements(statements[0]!.statements, frame)
+  if (statements.length === 1 && ts.isBlock(statements[0]!)) return evaluateStatements(statements[0].statements, frame)
   return evaluateStatements(statements, frame)
 }
 
@@ -1658,7 +1659,7 @@ function evaluatePropertyAccess(expression: ts.PropertyAccessExpression, frame: 
 function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (elementAccessHasSourceAccessor(expression, 'get', frame.program)) {
     evaluateExpression(expression.expression, frame)
-    if (expression.argumentExpression != null) evaluateExpression(expression.argumentExpression, frame)
+    evaluateExpression(expression.argumentExpression, frame)
     havocExpressionAliases(frame, expression.expression)
     return noteUnsupported(frame, `Class getter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
   }
@@ -1674,7 +1675,6 @@ function evaluateElementAccess(expression: ts.ElementAccessExpression, frame: In
 }
 
 function evaluatePresentElementAccess(target: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
-  if (expression.argumentExpression == null) return noteUnsupported(frame, 'Element access without an index is unsupported', expression)
   const propertyName = staticPropertyName(expression.argumentExpression)
     ?? staticNumericPropertyName(expression.argumentExpression)
   if (target.kind === 'object' && propertyName != null) {
@@ -1775,14 +1775,13 @@ function unknownCanUseTypeFallback(value: Extract<Value, {kind: 'unknown'}>) {
 function symbolicArrayElementAccess(target: Value, index: Value, expression: ts.ElementAccessExpression, frame: InterpreterFrame): Value {
   if (target.kind === 'nullable') return symbolicArrayElementAccess(target.present, index, expression, frame)
   if (target.kind !== 'array') return noteUnsupported(frame, `Element access expected an array path: ${expression.expression.getText(frame.program.sourceFile)}`, expression.expression)
-  if (index.kind !== 'number') return noteUnsupported(frame, `Array index ${expression.argumentExpression?.getText(frame.program.sourceFile) ?? '<missing>'} expected a number`, expression.argumentExpression ?? expression)
+  if (index.kind !== 'number') return noteUnsupported(frame, `Array index ${expression.argumentExpression.getText(frame.program.sourceFile)} expected a number`, expression.argumentExpression)
   const lower = proveComparisonPlain(index, '>=', numberValue(0, 0, 0, '0', linearConstant(0)), frame.assumptions)
   const length = arrayLength(target)
   const upper = proveComparisonPlain(index, '<', length, frame.assumptions)
   if (lower.status !== 'pass' || upper.status !== 'pass') {
-    return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(length)}; prove 0 <= index < length or use a finite literal index`, expression.argumentExpression ?? expression)
+    return noteUnsupported(frame, `Array index ${formatRange(index)} was not proven inside length ${formatRange(length)}; prove 0 <= index < length or use a finite literal index`, expression.argumentExpression)
   }
-  if (expression.argumentExpression == null) return unknown('Element access without an index is unsupported')
   const sourceName = target.expr ?? expression.expression.getText(frame.program.sourceFile)
   const indexText = expression.argumentExpression.getText(frame.program.sourceFile)
   const accessExpr = `${sourceName}[${indexText}]`
@@ -1829,7 +1828,7 @@ function finiteArrayElementAccess(target: Value, index: Value, expression: ts.El
     const choice = exactInteger(branch.value)
     if (choice == null) return null
     const value = elements[choice]
-    if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`, expression.argumentExpression ?? expression)
+    if (value == null) return noteUnsupported(frame, `Array index ${choice} was outside ${expression.expression.getText(frame.program.sourceFile)}`, expression.argumentExpression)
     const branchValue = valueWithAssumptions(value, branch.caseAssumptions)
     result = result == null ? branchValue : joinValues(result, branchValue)
   }
@@ -2394,7 +2393,7 @@ function sourceAccessorWriteReceiver(expression: ts.Expression, frame: Interpret
 function evaluateAccessorReference(expression: ts.Expression, receiver: ts.Expression, frame: InterpreterFrame) {
   evaluateExpression(receiver, frame)
   const current = unwrapExpression(expression)
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+  if (ts.isElementAccessExpression(current)) {
     evaluateExpression(current.argumentExpression, frame)
   }
 }
@@ -2462,7 +2461,7 @@ function valueForAliasExpression(expression: ts.Expression, frame: InterpreterFr
     const receiver = valueForAliasExpression(current.expression, frame)
     return receiver == null ? null : readPropertyValue(receiver, current.name.text, current.getText(frame.program.sourceFile))
   }
-  if (ts.isElementAccessExpression(current) && current.argumentExpression != null) {
+  if (ts.isElementAccessExpression(current)) {
     const receiver = valueForAliasExpression(current.expression, frame)
     if (receiver == null) return null
     const index = numericLiteralValue(current.argumentExpression)
@@ -2665,6 +2664,7 @@ function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, fra
   if ((symbol.flags & ts.SymbolFlags.Alias) !== 0) symbol = checker.getAliasedSymbol(symbol)
   const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
   if (declaration == null) return true
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
   for (let owner = declaration.parent; owner != null && !ts.isSourceFile(owner); owner = owner.parent) {
     if (ts.isFunctionLike(owner)) return false
   }
@@ -2937,7 +2937,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     } else {
       receiverExpression = target.expression
       receiver = evaluateExpression(receiverExpression, frame)
-      if (target.argumentExpression != null) evaluateExpression(target.argumentExpression, frame)
+      evaluateExpression(target.argumentExpression, frame)
     }
   } else if (!ts.isIdentifier(target)) {
     evaluateExpression(target, frame)
