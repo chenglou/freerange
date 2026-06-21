@@ -1,9 +1,10 @@
 import {test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
 import {verifySnapshot} from '../../snapshot.ts'
+import {changedSnapshotObservation, testDiagnosticError} from '../test-diagnostics.ts'
 
 test('evaluation snapshots', async () => {
-  const lines: string[] = []
+  const observations: InferenceObservation[] = []
   const matrixPaths = ['tests/interpreter-matrix/interpreter-matrix-patterns.ts']
   const importPaths = ['tests/imports/import-patterns.ts']
   const matrixFunctions = inferFitFiles(matrixPaths, {all: true}).functions
@@ -27,27 +28,70 @@ test('evaluation snapshots', async () => {
     ['matrix indexed array cursor values', 'matrixIndexedArrayCursorValues'],
   ] as const
 
-  for (const [label, functionName] of matrixInferCases) addInferCase(lines, label, matrixFunctions, functionName)
-  addInferCase(lines, 'imported literal nested map/defaults', importFunctions, 'importedNestedLiteralArrayMapDefaultFields')
+  for (const [label, functionName] of matrixInferCases) {
+    observations.push(observeInference(label, matrixPaths[0]!, matrixFunctions, functionName))
+  }
+  observations.push(observeInference(
+    'imported literal nested map/defaults',
+    importPaths[0]!,
+    importFunctions,
+    'importedNestedLiteralArrayMapDefaultFields',
+  ))
 
-  if (!await verifySnapshot('eval-snapshots.expected.txt', lines.join('\n'), 'eval snapshots')) {
-    throw new Error('evaluation snapshots changed')
+  const snapshotPath = 'eval-snapshots.expected.txt'
+  const serialized = serializeObservations(observations)
+  if (!await verifySnapshot(snapshotPath, serialized, 'evaluation observations')) {
+    throw testDiagnosticError('evaluation observations changed', changedSnapshotObservation(
+      await Bun.file(snapshotPath).text(),
+      serialized,
+      observations,
+    ))
   }
 }, 300_000)
 
-function addInferCase(
-  lines: string[],
+type InferenceObservation = {
+  label: string
+  file: string
+  functionName: string
+  facts: string[]
+  locals: string[]
+  unsupported: string[]
+}
+
+function observeInference(
   label: string,
+  file: string,
   functions: ReturnType<typeof inferFitFiles>['functions'],
   functionName: string,
-) {
-  const fn = functions.find(fn => fn.functionName === functionName)
-  lines.push(`infer ${label}`)
-  if (fn == null) {
-    lines.push(`  missing ${functionName}`)
-    return
+): InferenceObservation {
+  const matches = functions.filter(fn => fn.functionName === functionName)
+  if (matches.length !== 1) {
+    throw testDiagnosticError(`expected exactly one inference result for ${functionName}`, matches)
   }
-  for (const fact of fn.facts.map(fact => fact.text)) lines.push(`  return ${fact}`)
-  for (const fact of fn.locals.map(fact => fact.text)) lines.push(`  local ${fact}`)
-  for (const unsupported of fn.unsupported) lines.push(`  unsupported ${unsupported}`)
+  const fn = matches[0]!
+  return {
+    label,
+    file,
+    functionName,
+    facts: fn.facts.map(fact => fact.text),
+    locals: fn.locals.map(fact => fact.text),
+    unsupported: fn.unsupported,
+  }
+}
+
+function serializeObservations(observations: InferenceObservation[]) {
+  const lines: string[] = []
+  let currentFile = ''
+  for (const observation of observations) {
+    const {file, functionName, facts, locals, unsupported} = observation
+    if (file !== currentFile) {
+      currentFile = file
+      lines.push(`@ ${JSON.stringify(file)}`)
+    }
+    lines.push(`# ${JSON.stringify([functionName])}`)
+    for (const fact of facts) lines.push(`f ${JSON.stringify(fact)}`)
+    for (const local of locals) lines.push(`l ${JSON.stringify(local)}`)
+    for (const item of unsupported) lines.push(`! ${JSON.stringify(item)}`)
+  }
+  return lines.join('\n')
 }

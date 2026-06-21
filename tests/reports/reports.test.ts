@@ -77,13 +77,53 @@ if (
 }
 })
 
-test('matches the negative report snapshot', async () => {
+test('matches the complete negative check manifest', async () => {
 const negativeFiles = ['tests/source-checking/negative-patterns.ts', 'tests/source-checking/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const negativeReport = await verifyFitFiles(negativeFiles)
-const actualNegative = normalizeNegative(negativeReport.checks)
-if (!await verifySnapshot(negativeExpectedPath, actualNegative, 'negative messages')) {
-  throw testDiagnosticError('expected negative report snapshot to match', actualNegative)
+const actualNegative = formatCheckManifest(negativeReport.checks)
+const expectedSummary = {pass: 82, fail: 69, requires: 0, unknown: 181, audit: 0}
+const checksWithoutReasons = negativeReport.checks.filter(check =>
+  check.status !== 'pass' && (check.reason == null || check.reason.trim().length === 0))
+const reasonCases = [
+  {
+    identity: {functionName: 'negativeOutputRange', text: 'return: int 0..4'},
+    fragments: ['range was int 5..15', 'known:', 'missing: (value + 5) <= 4', 'counterexample within the known facts: value = 10'],
+  },
+  {
+    identity: {functionName: 'negativeComparison', text: 'return.high < return.low'},
+    fragments: ['result: is false', 'known:', 'missing fact: (value + 10) < value'],
+  },
+  {
+    identity: {functionName: 'negativeArrayIndexNeedsUpperBound', text: 'return < items.length'},
+    fragments: ['known:', 'missing fact: index < items.length'],
+  },
+  {
+    identity: {functionName: 'negativeRunningSumNeedsNonNegativeStep', text: 'nondecreasing(return.rows.y)'},
+    fragments: ['need: every next .y >= previous .y', 'known:', 'missing: given step >= 0'],
+  },
+  {
+    identity: {functionName: 'negativeGivenGraphContradiction', text: 'given _high * scale < low * scale'},
+    fragments: ['no input can satisfy this with the earlier given lines'],
+  },
+] as const
+const reasonFailures = reasonCases.flatMap(({identity, fragments}) => {
+  const check = requiredCheck(negativeReport.checks, identity)
+  return fragments.filter(fragment => check.reason?.includes(fragment) !== true)
+    .map(fragment => ({identity, fragment, reason: check.reason}))
+})
+const manifestMatches = await verifySnapshot(negativeExpectedPath, actualNegative, 'negative check manifest')
+if (
+  JSON.stringify(negativeReport.summary) !== JSON.stringify(expectedSummary)
+  || checksWithoutReasons.length > 0
+  || reasonFailures.length > 0
+  || !manifestMatches
+) {
+  throw testDiagnosticError('expected every negative catalog check, status, and useful reason to match', {
+    summary: negativeReport.summary,
+    checksWithoutReasons,
+    reasonFailures,
+  })
 }
 })
 
@@ -124,20 +164,34 @@ if (!await verifySnapshot(inferSnapshotExpectedPath, actualInferSnapshot, 'infer
 })
 })
 
-function normalizeNegative(checks: FitCheck[]) {
-  const lines = checks
-    .filter(check => check.status !== 'pass')
-    .map(check => {
-      const head = `${check.status.toUpperCase()} ${check.file}:${check.functionName}: ${check.text}`
-      if (check.reason == null) return head
-      const reason = check.reason
-        .replace(/@loop\d+/g, '@loop')
-        .split('\n')
-        .map(line => `  ${line}`)
-        .join('\n')
-      return `${head}\n${reason}`
-    })
+function formatCheckManifest(checks: FitCheck[]) {
+  const sorted = [...checks].sort((left, right) =>
+    left.file.localeCompare(right.file)
+    || left.functionName.localeCompare(right.functionName)
+    || left.text.localeCompare(right.text)
+    || left.status.localeCompare(right.status))
+  const lines: string[] = []
+  let file = ''
+  for (const check of sorted) {
+    if (check.file !== file) {
+      file = check.file
+      lines.push(JSON.stringify(['file', file]))
+    }
+    lines.push(JSON.stringify([
+      check.functionName,
+      check.text,
+      check.status,
+      reasonOutline(check),
+    ]))
+  }
   return normalizeText(lines.join('\n'))
+}
+
+function reasonOutline(check: FitCheck) {
+  if (check.status === 'pass' || check.reason == null) return []
+  const lines = check.reason.replace(/@loop\d+/g, '@loop').split('\n')
+  if (lines[0] === 'TypeScript rejected @fit contract:') return [lines[0]]
+  return lines.filter(line => line.length > 0 && line !== 'known:' && !line.startsWith('  '))
 }
 
 function normalizeText(text: string) {

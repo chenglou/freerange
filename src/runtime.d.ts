@@ -1,6 +1,10 @@
 declare const Bun: {
   argv: string[]
   env: Record<string, string | undefined>
+  CryptoHasher: new (algorithm: string) => {
+    update(data: string): void
+    digest(encoding: 'hex' | 'base64'): string
+  }
   file(path: string | URL): {
     text(): Promise<string>
   }

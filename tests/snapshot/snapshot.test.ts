@@ -1,6 +1,6 @@
 import {expect, test} from 'bun:test'
 import {formatSnapshotDiff, verifySnapshot} from '../../snapshot.ts'
-import {formatTestDiagnostics, requiredCheck} from '../test-diagnostics.ts'
+import {changedSnapshotObservation, formatTestDiagnostics, requiredCheck} from '../test-diagnostics.ts'
 
 test('snapshot differences show one focused hunk', () => {
   const expected = [
@@ -94,4 +94,22 @@ test('required checks reject missing and duplicate identities', () => {
     failing,
   ], identity))
     .toThrow(/found 2[\s\S]*"status": "pass"[\s\S]*"status": "fail"/)
+
+  const observation = {file: 'layout.ts', functionName: 'layout', facts: ['new fact']}
+  const changed = changedSnapshotObservation(
+    '@ "layout.ts"\n# ["layout"]\nf "old fact"',
+    '@ "layout.ts"\n# ["layout"]\nf "new fact"',
+    [observation],
+  )
+  expect(changed.observation).toBe(observation)
+  expect(changed.line).toBe(3)
+
+  const firstFile = {file: 'first.ts', functionName: 'layout'}
+  const secondFile = {file: 'second.ts', functionName: 'layout'}
+  const duplicateNameChange = changedSnapshotObservation(
+    '@ "first.ts"\n# ["layout"]\nf "same"\n@ "second.ts"\n# ["layout"]\nf "old"',
+    '@ "first.ts"\n# ["layout"]\nf "same"\n@ "second.ts"\n# ["layout"]\nf "new"',
+    [firstFile, secondFile],
+  )
+  expect(duplicateNameChange.observation).toBe(secondFile)
 })

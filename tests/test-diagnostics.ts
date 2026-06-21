@@ -50,3 +50,45 @@ function boundTestDiagnostics(text: string) {
 export function testDiagnosticError(message: string, diagnostics: unknown) {
   return new Error(`${message}\n${formatTestDiagnostics(diagnostics)}`)
 }
+
+export function changedSnapshotObservation<T extends {file: string; functionName: string}>(
+  expectedText: string,
+  actualText: string,
+  observations: readonly T[],
+) {
+  const expected = expectedText.trimEnd().split('\n')
+  const actual = actualText.trimEnd().split('\n')
+  let index = 0
+  while (index < expected.length && index < actual.length && expected[index] === actual[index]) index += 1
+  const expectedLine = expected[index]
+  const actualLine = actual[index]
+  const observation = observationAtSnapshotLine(actual, index, observations)
+    ?? observationAtSnapshotLine(expected, index, observations)
+  return {
+    line: index + 1,
+    expected: expectedLine,
+    actual: actualLine,
+    observation,
+  }
+}
+
+function observationAtSnapshotLine<T extends {file: string; functionName: string}>(
+  lines: string[],
+  index: number,
+  observations: readonly T[],
+) {
+  let candidates: T[] = []
+  for (let candidateIndex = index; candidateIndex >= 0; candidateIndex--) {
+    const line = lines[candidateIndex]
+    if (candidates.length === 0) {
+      candidates = observations.filter(item => {
+        const prefix = `# ${JSON.stringify([item.functionName]).slice(0, -1)}`
+        return line?.startsWith(prefix) === true
+      })
+      continue
+    }
+    const match = candidates.find(item => line === `@ ${JSON.stringify(item.file)}`)
+    if (match != null) return match
+  }
+  return undefined
+}

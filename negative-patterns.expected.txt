@@ -1,1409 +1,336 @@
-FAIL tests/source-checking/negative-patterns.ts:negativeOutputRange: return: int 0..4
-  range was int 5..15 as (value + 5), expected inside int 0..4
-  known:
-    (value + 5): int 5..15
-    assumed from input: given value: int 0..10
-  missing: (value + 5) <= 4
-  counterexample within the known facts: value = 10
-FAIL tests/source-checking/negative-patterns.ts:negativeComparison: return.high < return.low
-  result: is false
-  known:
-    (value + 10): 10..15
-    value: 0..5
-    assumed from input: given value: 0..5
-    inferred from code: (value + 10) >= value
-    inferred from code: (value + 10) >= 10
-  missing fact: (value + 10) < value
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOpaqueInequalityGraphLoosePathIsNotStrict: return < _high * scale
-  known:
-    (low * scale): any non-NaN number
-    (_high * scale): any non-NaN number
-    assumed from input: given low: -Infinity<..<Infinity
-    assumed from input: given _mid: -Infinity<..<Infinity
-    assumed from input: given _high: -Infinity<..<Infinity
-    assumed from input: given scale: -Infinity<..<Infinity
-    assumed from input: given low * scale <= _mid * scale
-    assumed from input: given _mid * scale <= _high * scale
-  missing fact: (low * scale) < (_high * scale)
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenGraphContradiction: given _high * scale < low * scale
-  no input can satisfy this with the earlier given lines; they already rule out _high * scale < low * scale
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeHelperResultComparisonNeedsBridge: return.low <= return.high
-  known:
-    low: -1.7976931348623157e+308..1.7976931348623157e+308
-    high: -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given low: -Infinity<..<Infinity
-    assumed from input: given mid: -Infinity<..<Infinity
-    assumed from input: given high: -Infinity<..<Infinity
-    assumed from input: given low <= mid
-    checked helper contract: tests/source-checking/negative-patterns.ts#negativePartialOrderedTriple: return.low <= return.mid
-  missing fact: low <= high
-FAIL tests/source-checking/negative-patterns.ts:negativePathSensitiveMinOverflow: return.overflow < 0
-  result: is false
-  known:
-    (width - 320): 0..680
-    assumed from input: given width: 0..1000
-    inferred from code: min(width, 320) <= width
-    inferred from code: min(width, 320) <= 320
-    inferred from code: (width - 320) <= width
-    inferred from branch: -width + 320 <= 0
-  missing: width <= 0
-FAIL tests/source-checking/negative-patterns.ts:negativeMathMinOperandBoundIsNotStrict: return < 4
-  result: is false
-  known:
-    assumed from input: given value: 0..10
-    inferred from code: min(value, 4) <= value
-    inferred from code: min(value, 4) <= 4
-    inferred from branch: -value + 4 <= 0
-  missing: strict comparison cannot hold when both sides are 4
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMutableMathAlias: return >= 0
-  mutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases
-FAIL tests/source-checking/negative-patterns.ts:negativeHandwrittenMinOperandBoundIsNotStrict: return < 4
-  result: is false
-  known:
-    assumed from input: given value: 0..10
-    inferred from branch: value - 4 >= 0
-  missing: strict comparison cannot hold when both sides are 4
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFiniteLiteralDiscriminantWrongBranch: return.ordered.yThresholdX > return.ordered.uThresholdX
-  known:
-    (panelX + 100): 100..1100
-    (panelX + 300): 300..1300
-    assumed from input: given panelX: 0..1000
-    inferred from code: (panelX + 100) >= panelX
-    inferred from code: (panelX + 100) >= 100
-    inferred from code: (panelX + 300) >= panelX
-    inferred from code: (panelX + 300) >= 300
-    inferred from code: ((panelX + 300) - (panelX + 100)) <= (panelX + 300)
-  missing fact: (panelX + 100) > (panelX + 300)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBroadStringDoesNotBecomeFinite: return.yThresholdX < return.uThresholdX
-  known:
-    (panelX + 300): 300..1300
-    (panelX + 100): 100..1100
-    assumed from input: given panelX: 0..1000
-    inferred from code: (panelX + 300) >= panelX
-    inferred from code: (panelX + 300) >= 300
-    inferred from code: (panelX + 100) >= panelX
-    inferred from code: (panelX + 100) >= 100
-  missing fact: (panelX + 300) < (panelX + 100)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePairedObjectReturnShape: return: {x: 0, width: 100} | {x: 20, width: 80}
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(141,4): error TS2322: Type '{ readonly x: 20; readonly width: 81; }' is not assignable to type '{ x: 0; width: 100; } | { x: 20; width: 80; }'.
-    Type '{ readonly x: 20; readonly width: 81; }' is not assignable to type '{ x: 20; width: 80; }'.
-      Types of property 'width' are incompatible.
-        Type '81' is not assignable to type '80'.
-FAIL tests/source-checking/negative-patterns.ts:negativeHelperSummaryComparisonIsNotStrict: return > minWidth
-  result: is false by exact linear facts
-  known:
-    minWidth: 0..1000
-    assumed from input: given minWidth: 0..1000
-    assumed from input: given width: 0..1000
-    inferred from branch: minWidth - width >= 0
-    inferred from code: max(minWidth, width) >= minWidth
-    inferred from code: max(minWidth, width) >= width
-    checked helper contract: tests/source-checking/negative-patterns.ts#negativeAtLeastMinWidth: return >= minWidth
-  missing: strict comparison cannot hold when both sides are minWidth
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayIndexNeedsUpperBound: return < items.length
-  known:
-    index: int 0..10
-    items.length: int 0..10
-    assumed from input: given items[]: -Infinity<..<Infinity
-    assumed from input: given items.length: int 0..10
-    assumed from input: given index: int 0..10
-  missing fact: index < items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayLengthCallGiven: negativeNeedsShortArray(items): requires items.length: int 0..10
-  caller passed: items.length: int 0..20
-  missing: items.length <= 10
-FAIL tests/source-checking/negative-patterns.ts:negativeHalfOpenUpperExcludesLength: return: int 0..<items.length
-  range was int 1..50 as items.length, expected inside int 0..<items.length
-  known:
-    items.length: int 1..50
-    assumed from input: given items[]: -Infinity<..<Infinity
-    assumed from input: given items.length: int 1..50
-  missing: items.length < items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFloorDivisionDoesNotCoverTotal: return >= total
-  known:
-    (floor((total / count)) * count): int 0..1200000
-    total: int 0..6000
-    assumed from input: given total: int 0..6000
-    assumed from input: given count: int 1..200
-    inferred from code: floor((total / count)) <= (total / count)
-    inferred from code: floor((total / count)) > (total / count) - 1
-  missing fact: (floor((total / count)) * count) >= total
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCeilDivisionNeedsPositiveCount: return >= total
-  known:
-    (ceil((total / count)) * count): int 0..1200000
-    total: int 0..6000
-    assumed from input: given total: int 0..6000
-    assumed from input: given count: int -200..-1
-    inferred from code: ceil((total / count)) >= (total / count)
-    inferred from code: ceil((total / count)) < (total / count) + 1
-  missing fact: (ceil((total / count)) * count) >= total
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFloorHitIndexNeedsUpperBound: return < count
-  known:
-    floor((pointer / cellSize)): int 0..1000
-    count: int 1..10
-    assumed from input: given pointer: 0..1000
-    assumed from input: given cellSize: int 1..100
-    assumed from input: given count: int 1..10
-    inferred from branch: -(count * cellSize) + pointer >= 0
-  missing: (pointer / cellSize) < count
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeScaleNeedsNonNegativeFactor: return.scaled <= return.limit
-  known:
-    (content * scale): -2000..2000
-    (available * scale): -2000..2000
-    assumed from input: given content: 0..1000
-    assumed from input: given available: 0..1000
-    assumed from input: given scale: -2..2
-    assumed from input: given content <= available
-  missing: scale >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeScaleFlipNeedsNegativeFactor: return <= content * scale
-  known:
-    (available * scale): any non-NaN number
-    (content * scale): any non-NaN number
-    assumed from input: given content: -Infinity<..<Infinity
-    assumed from input: given available: -Infinity<..<Infinity
-    assumed from input: given scale: -Infinity<..<Infinity
-    assumed from input: given content <= available
-  missing: scale < 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeModuloNeedsPositiveCount: return < count
-  Remainder by a range containing zero is unsupported
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRoundingDoesNotKeepStrictOrder: return.floorLeft < return.floorRight
-  known:
-    floor(x): int -1.7976931348623157e+308..1.7976931348623157e+308
-    floor(right): int -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given x: -Infinity<..<Infinity
-    assumed from input: given right: -Infinity<..<Infinity
-    assumed from input: given x < right
-    inferred from code: floor(x) <= x
-    inferred from code: floor(x) > x - 1
-    inferred from code: floor(right) <= right
-    inferred from code: floor(right) > right - 1
-  missing: x < floor(right)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGuardNeedsReturnOnSmallSide: return >= minWidth
-  known:
-    width: 0..1000
-    minWidth: 0..1000
-    assumed from input: given width: 0..1000
-    assumed from input: given minWidth: 0..1000
-    inferred from branch: -minWidth + width <= 0
-  missing fact: width >= minWidth
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLogicalOrTrueOnlyCarriesOneSide: return >= 0
-  known:
-    (x + y): -20..20
-    assumed from input: given x: -10..10
-    assumed from input: given y: -10..10
-  missing fact: (x + y) >= 0
-FAIL tests/source-checking/negative-patterns.ts:negativeBranchAssignmentJoinsBothSides: return: 0..100
-  range was 140..200 as (width + 100), expected inside 0..100
-  known:
-    (width + 100): 140..200
-    assumed from input: given width: 0..100
-    inferred from branch: width - 40 > 0
-    inferred from code: (width + 100) >= width
-    inferred from code: (width + 100) >= 100
-  missing: (width + 100) <= 100
-FAIL tests/source-checking/negative-patterns.ts:negativeBranchStateDoesNotInventCrossProduct: return.total: 12 | 21
-  value was int 11..11 as (1 + 10), expected one of 12 | 21
-  branches produced 11
-  missing: (1 + 10) in {12, 21}
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateConditionalExpressionsDoNotReconnect: return.total: 11 | 22
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeEquivalentComparisonsDoNotReconnect: return: -100 | -9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateHelperCallsDoNotReconnect: return: -100 | -9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateGroupedHelperCallsDoNotReconnect: return.value <= return.bound
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeConditionalAndIfDoNotReconnect: return: 22 | 33
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateIfStatementsDoNotReconnect: return: 22 | 33
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeDifferentCollectionSlotsDoNotReconnect: return: 2 | 4
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-FAIL tests/source-checking/negative-patterns.ts:negativeGuardedColumnWidthRejectsWrongBound: return >= 400
-  result: is false
-  known:
-    ((availableWidth - (16 * (2 - 1))) / 2): 152..291.5
-    assumed from input: given availableWidth: int 320..1200
-    inferred from branch: availableWidth - 600 < 0
-  missing fact: ((availableWidth - (16 * (2 - 1))) / 2) >= 400
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateNumericGuardOutcomesStayUnknown: return <= 0
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCompoundNumericGuardCorrelationStaysUnknown: return: -100 | -9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBooleanGuardArithmeticStaysUnknown: return: -100..-9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBooleanGuardComparisonStaysUnknown: return.left < return.right
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBooleanGuardHelperCorrelationStaysUnknown: return: -100..-9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBooleanGuardMathMinStaysUnknown: return: 1 | 100
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBooleanGuardMapCorrelationStaysUnknown: return[].value: -100..-9
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeStatePartitionBudgetDoesNotSilentlyPass: return: int 0..15
-  State partition budget exceeded: 16 branch states exceed limit 8; Freerange refuses to summarize branch states silently
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeThrowGuardOnlyProvesPositive: return > 1
-  known:
-    step: 5e-324..10
-    assumed from input: given step: -10..10
-    inferred from branch: step > 0
-  missing fact: step > 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMathSignCanBeNegative: return: int 0..1
-  range was int -1..1 as sign(value), expected inside int 0..1
-  known:
-    sign(value): int -1..1
-    assumed from input: given value: -10..10
-  missing: sign(value) >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNumericLimitRangeLoopCanIncludeZero: return[]: int 1..<limit
-  range was int 0..999 as values[], expected inside int 1..<limit
-  known:
-    values[]: int 0..999
-    limit: int 1..1000
-    assumed from input: given limit: int 1..1000
-    inferred from code: values[] - i@values@loop == 0
-    inferred from code: i@values@loop >= 0
-    inferred from code: i@values@loop - limit < 0
-  missing: values[] >= 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeUnboundedWidthNeedsCap: return <= 500
-  known:
-    (width / 2): 0.5..Infinity
-    assumed from input: given width: 1..Infinity
-  missing fact: (width / 2) <= 500
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRunningSumNeedsNonNegativeStep: nondecreasing(return.rows.y)
-  nondecreasing(return.rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    row advance for .y: -40..40 as step
-    sequence facts: nondecreasing(.height), spaced(0)
-  missing: given step >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNestedRowRectNeedsNonNegativeAdvance: return.rows[$i].rowRect.y <= return.rows[$i + 1].rowRect.y
-  return.rows[$i + 1].rowRect.y >= return.rows[$i].rowRect.y was not inferred
-  need: a matching adjacent sequence relation
-  known:
-    sequence facts: lastEnd = -2000..3000 as cursor
-    adjacent: return.rows[$i + 1].rowRect.y == return.rows[$i].rowRect.y + return.rows[$i].rowRect.height
-  missing: recognized adjacent row relation
-UNKNOWN tests/source-checking/negative-patterns.ts:NegativeClassMethodNeedsThisGiven.bottom: return >= this.y
-  known:
-    (this.y + this.height): -100..2000
-    this.y: 0..1000
-    assumed from input: given this.y: 0..1000
-    assumed from input: given this.height: -100..1000
-    inferred from code: (this.y + this.height) >= this.height
-  missing fact: (this.y + this.height) >= this.y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeClassGetterSummaryNeedsThisGiven: return: 0..2000
-  Class getter call is not analyzed: box.bottom
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeClassMethodCallIsUnknown: return == 1
-  Unsupported call box.value
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeClassSetterCallIsUnknown: return == 0
-  known:
-    box.current: any number
-  missing fact: box.current == 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSpacedNeedsMatchingGap: spaced(return.rows, otherGap)
-  spaced(return.rows, otherGap) was not inferred
-  need: every next row top == previous top + previous height + otherGap
-  known:
-    loop proved: next.y = previous.y + previous.height + gap
-    sequence facts: nondecreasing(.height), nondecreasing(.y), spaced(gap)
-  missing: given gap == otherGap
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingBottom: return.rows[].bottom == return.rows[].y + return.rows[].height
-  applies to: every item in return.rows
-  known:
-    rows[].bottom: 1..3540
-    (rows[].y + rows[].height): 0..3539
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    assumed from input: given y: 0..1000
-    assumed from input: given gap: 0..10
-    inferred from code: rows[].y - nextRowTop@loop@rows@loop == 0
-    inferred from code: rows[].height - rowHeight#5@loop@rows@loop == 0
-    inferred from code: rows[].bottom - ((nextRowTop + max(rowHeight, items[i].height)) + 1)@rows@loop == 0
-    inferred from code: rows.length <= items.length
-    inferred from code: nextRowTop >= y
-    inferred from code: (rows[].y + rows[].height) >= rows[].y
-    inferred from code: (rows[].y + rows[].height) >= rows[].height
-  missing fact: rows[].bottom == (rows[].y + rows[].height)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSegmentedStackRowsInlineBottomNeedsMatchingBottom: return.rows[].bottom == return.rows[].y + return.rows[].height
-  applies to: every item in return.rows
-  known:
-    rows[].bottom: 1..3491
-    (rows[].y + rows[].height): 0..3490
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    assumed from input: given y: 0..1000
-    assumed from input: given gap: 0..10
-    inferred from code: rows[].y - nextRowTop@loop@rows@loop == 0
-    inferred from code: rows[].height - rowHeight#5@loop@rows@loop == 0
-    inferred from code: rows[].bottom - ((nextRowTop + max(rowHeight, items[i].height)) + 1)@rows@loop == 0
-    inferred from code: rows.length <= items.length
-    inferred from code: nextRowTop >= y
-    inferred from code: (rows[].y + rows[].height) >= rows[].y
-    inferred from code: (rows[].y + rows[].height) >= rows[].height
-  missing fact: rows[].bottom == (rows[].y + rows[].height)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: return.rows[$i + 1].y == return.rows[$i].bottom + gap
-  return.rows[$i + 1].y == return.rows[$i].bottom + gap was not inferred
-  need: a matching adjacent sequence relation
-  known:
-    sequence facts: nondecreasing(.y), spaced(otherGap)
-    adjacent: return.rows[$i + 1].y == (return.rows[$i].y + return.rows[$i].height) + otherGap
-    adjacent: return.rows[$i + 1].y == return.rows[$i].bottom + otherGap
-  missing: recognized adjacent row relation
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSegmentedStackRowsNeedMatchingGap: spaced(return.rows, gap)
-  spaced(return.rows, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    loop proved: next.y = previous.y + previous.height + otherGap
-    sequence facts: nondecreasing(.y), spaced(otherGap)
-  missing: given otherGap == gap
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGuardedFlushCannotMixSameArrayAppend: spaced(return.rows, gap)
-  spaced(return.rows, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    sequence facts: no sequence facts
-  missing: recognized adjacent row spacing
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLastEndNeedsHeightInRows: lastEnd(return.rows) == return.bottom
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(757,4): error TS2322: Type '{ y: number; source: number; }' is not assignable to type '{ y: number; height: number; } | { x: number; width: number; } | { top: number; height: number; } | { start: number; size: number; }'.
-    Property 'height' is missing in type '{ y: number; source: number; }' but required in type '{ y: number; height: number; }'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeObjectFieldDomainTooWide: return.height >= 0
-  known:
-    item.height: -20..40
-    assumed from input: given item.height: -20..40
-  missing fact: item.height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeObjectSpreadNeedsFieldDomain: return.x: 0..100
-  range was -10..100 as base.x, expected inside 0..100
-  known:
-    base.x: -10..100
-    assumed from input: given base.x: -10..100
-    assumed from input: given y: 0..100
-  missing: base.x >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayIdentityNeedsSameSource: return.rows == other.rows
-  Non-number equality is only proven for the same source expression
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOptionalStructuralCallShape: return.rows.length >= 0
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(801,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePerItemFieldNeedsDomain: return: 0..40
-  range was -1.7976931348623157e+308..1.7976931348623157e+308 as items[index].height, expected inside 0..40
-  known:
-    items[index].height: -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given items[].height: -Infinity<..<Infinity
-    assumed from input: given items.length: int 1..50
-    assumed from input: given index: int 0..49
-    assumed from input: given index < items.length
-    inferred from code: items[index].height >= -1.7976931348623157e+308
-    inferred from code: items[index].height <= 1.7976931348623157e+308
-  missing: items[index].height >= 0
-  missing: items[index].height <= 40
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRunningSumPerItemHeightNeedsNonNegative: nondecreasing(return.rows.y)
-  nondecreasing(return.rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    row advance for .y: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = -2000..3000 as cursor
-  missing: given items[].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRunningTotalNeedsNonNegativeItem: return >= 0
-  known:
-    total: -2000..2000
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-  missing fact: total >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSelfReferentialAccumulatorRhs: return: 0..10
-  total += total is unknown because opposite infinities may meet, producing NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopGuardMutationIsNotPure: return == 10
-  Loop condition has effects or unknown behavior: --cap > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeCompoundAssignmentWrites: return == 10
-  result: is false
-  known:
-    (10 - 2): int 8..8
-  missing fact: (10 - 2) == 10
-FAIL tests/source-checking/negative-patterns.ts:negativePrefixIncrementWrites: return == 10
-  result: is false
-  known:
-    (10 + 1): int 11..11
-  missing fact: (10 + 1) == 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCalleeMutatesArgument: return == 1
-  known:
-    box.size: any number
-  missing fact: box.size == 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMapCallbackMutatesCaptured: return == 0
-  known:
-    total: any number
-    assumed from input: given items[]: -Infinity<..<Infinity
-    assumed from input: given items.length: int 0..50
-  missing fact: total == 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNamedMapCallbackMutatesElement: return == 1
-  known:
-    boxes[0]!.size: any number
-  missing fact: boxes[0]!.size == 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayFromMapperMutatesElement: return == 1
-  known:
-    boxes[0]!.size: any number
-  missing fact: boxes[0]!.size == 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGivenSurvivesParamMutation: return: 0..10
-  range was any number as box.size, expected inside 0..10
-  known:
-    box.size: any number
-  missing: box.size >= 0
-  missing: box.size <= 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayElementAliasMutatedThroughArray: return == 1
-  known:
-    box.size: any number
-  missing fact: box.size == 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSnapshotCancelsAcrossMutation: return: 0..0
-  before - after is unknown because an operand may be NaN
-FAIL tests/source-checking/negative-patterns.ts:negativePureClaimOnEnvironmentObserver: pure
-  not pure: observes the environment (I/O, the clock, or randomness)
-FAIL tests/source-checking/negative-patterns.ts:negativePureClaimOnParameterMutator: pure
-  not pure: mutates parameter `box`
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePureClaimWithUnanalyzableCall: pure
-  not pure: calls a function whose body cannot be analyzed
-FAIL tests/source-checking/negative-patterns.ts:negativeArrayAliasPush: return == 3
-  result: is false
-  known:
-    xs.length: int 4..4
-  missing fact: xs.length == 3
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeDynamicIndexWrite: return == 1
-  known:
-    slots[0]: any number
-  missing fact: slots[0] == 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeededArrayBreaksAdjacency: nondecreasing(return.y)
-  nondecreasing(return.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    sequence facts: no sequence facts
-  missing: sequence facts for .y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeConditionalSumGuardMayNeverFire: return >= 5
-  known:
-    total: int 0..500
-    assumed from input: given rows.length: int 1..100
-    assumed from input: given rows[].height: 1..100
-    inferred from code: total >= 0
-  missing fact: total >= 5
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBothAxesAreAmbiguous: noOverlap(return)
-  noOverlap(...) is ambiguous: elements carry both y/height and x/width; map to one axis first
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePartialRenameLosesTheRelation: spaced(return, gap)
-  spaced(return, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    sequence facts: nondecreasing(.y)
-  missing: recognized adjacent row spacing
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeTinyCoefficientIsNotZero: return == 0
-  known:
-    (1e-10 * x): -100..100
-    assumed from input: given x: -1000000000000..1000000000000
-  missing fact: (1e-10 * x) == 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCallbackFitPlacementIsReported: @fit > 0
-  Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeTrailingCommentBelongsToItsOwnDeclaration: annotated == 99
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1116,46): error TS2367: This comparison appears to be unintentional because the types '1' and '99' have no overlap.
-FAIL tests/source-checking/negative-patterns.ts:negativeFloatSumIsNotItsDecimalLook: return == 0.3
-  result: is false
-  known:
-    (0.1 + 0.2): 0.30000000000000004..0.30000000000000004
-    inferred from code: (0.1 + 0.2) >= 0.1
-    inferred from code: (0.1 + 0.2) >= 0.2
-  missing fact: (0.1 + 0.2) == 0.3
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFirstIterationCoincidenceIsNotARelation: return[$i + 1].y <= return[$i].height + gap
-  return[$i + 1].y <= return[$i].height + gap was not inferred
-  need: a matching adjacent sequence relation
-  known:
-    sequence facts: nondecreasing(.y), spaced(gap)
-    adjacent: return[$i + 1].y == return[$i].y + (return[$i].height + gap)
-  missing: recognized adjacent row relation
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopResetAssignmentIsNotAccumulator: return >= 10
-  known:
-    total: 0..10
-    assumed from input: given items.length: int 1..10
-    assumed from input: given items[].height: 0..5
-    assumed from input: given minHeight: 0..5
-  missing fact: total >= 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeScalarPushLoopNeedsNonNegativeStep: return[] >= 0
-  applies to: every item in return
-  known:
-    rows[]: -1960..2960
-    assumed from input: given items[]: -Infinity<..<Infinity
-    assumed from input: given items.length: int 0..50
-    assumed from input: given y: 0..1000
-    assumed from input: given step: -40..40
-    inferred from code: rows[] - cursor@loop@rows@loop == 0
-  missing: cursor@loop@rows@loop >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeConditionalRunningTotalNeedsNonNegativeItem: return >= 0
-  known:
-    total: -2000..2000
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-  missing fact: total >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRunningMaxNeedsItemBound: return: 0..80
-  range was 0..120 as maxWidth, expected inside 0..80
-  known:
-    maxWidth: 0..120
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].width: 0..120
-  missing: maxWidth <= 80
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRunningMinNeedsItemBound: return >= 0
-  known:
-    minWidth: -20..80
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].width: -20..80
-  missing fact: minWidth >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLocalLoopAnnotationNeedsNonNegativeItem > loop: nondecreasing(rows.y)
-  nondecreasing(rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    row advance for .y: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = -2000..3000 as cursor
-  missing: given items[].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopFitHasNoReturn > loop: given return.rows.length == items.length
-  loop @fit specs do not have return; name local values directly
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeWildcardRowsNeedParentBottom: return.rows[].y + return.rows[].height <= parent.bottom
-  applies to: every item in return.rows
-  known:
-    (rows[].y + items[].height): 0..3490
-    parent.bottom: 0..2000
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..40
-    assumed from input: given y: 0..1000
-    assumed from input: given gap: 0..10
-    assumed from input: given parent.bottom: 0..2000
-    inferred from code: rows[].y - cursor@loop@rows@loop == 0
-    inferred from code: -items[].height@rows@loop + rows[].height == 0
-    inferred from code: -items[].height + rows[].height == 0
-    assumed from input: items[].height@rows@loop >= 0
-    assumed from input: items[].height@rows@loop - 40 <= 0
-    inferred from code: cursor >= y
-    inferred from code: (cursor - gap) <= cursor
-    inferred from code: (rows[].y + items[].height) >= rows[].y
-    inferred from code: (rows[].y + items[].height) >= items[].height
-  missing fact: (rows[].y + items[].height) <= parent.bottom
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNestedWildcardRowsNeedScalarBound: return.sections[].rows[].height <= maxHeight
-  applies to: every item in return.sections[].rows
-  known:
-    sections[].rows[].height: 0..40
-    maxHeight: 0..30
-    assumed from input: given sections[].rows[].height: 0..40
-    assumed from input: given maxHeight: 0..30
-  missing fact: sections[].rows[].height <= maxHeight
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeWildcardComparisonNeedsScalar: return.rows[].y <= return.boxes[].bottom
-  Wildcard comparisons support one wildcard side and one scalar side
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSameIndexNeedsMatchingLengths: return.rows[$i].y <= return.boxes[$i].bottom
-  Bound index label $i needs matching lengths for return.rows and return.boxes
-  known:
-    rows.length: int 0..10
-    boxes.length: int 0..20
-    assumed from input: given rows.length: int 0..10
-    assumed from input: given boxes.length: int 0..20
-    assumed from input: given rows[].y: 0..10
-    assumed from input: given boxes[].bottom: 0..10
-  missing fact: rows.length == boxes.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeAdjacentBoundIndexNeedsNondecreasingRows: return.rows[$i].y <= return.rows[$i + 1].y
-  return.rows[$i].y <= return.rows[$i + 1].y was not inferred
-  need: every next .y >= previous .y
-  known:
-    row advance for .y: -40..40 as items[].height
-    sequence facts: spaced(0), lastEnd = -2000..2000 as y
-  missing: given items[].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCallGiven: negativeNeedsSmallValue(value): requires value: 0..10
-  caller passed: value: 0..20
-  missing: value <= 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInlineParamCallGiven: negativeInlineParamNeedsSmall(value): requires value: 0..10
-  caller passed: value: 0..20
-  missing: value <= 10
-FAIL tests/source-checking/negative-patterns.ts:negativeElseIfBranchCanReturnUpper: return: -1..<1
-  range was 1, expected inside -1..<1
-  known:
-    assumed from input: given value: -100..100
-    assumed from input: given min: 1..100
-    assumed from input: given max: 1..100
-    assumed from input: given min <= max
-    inferred from branch: min + value >= 0
-    inferred from branch: -max + value > 0
-  missing: 1 < 1
-FAIL tests/source-checking/negative-patterns.ts:negativeRelationalCallGiven: negativeNeedsContainerFit(containee, container): requires container >= containee
-  caller passed: container: 0..50, containee: 100..200
-  missing: container >= containee
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLinearReductionNeedsNonNegativePadding: return.offset >= 0
-  known:
-    ((container - containee) / 2): -500..600
-    assumed from input: given containee: 0..1000
-    assumed from input: given padding: -100..100
-    assumed from input: given container: 0..1200
-    inferred from code: (containee + padding) >= padding
-    assumed from input: given container >= containee + padding
-    inferred from code: (container - containee) <= container
-  missing fact: ((container - containee) / 2) >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeExtentEndCatchesEmptyRows: extentEnd(return.rows, y) == return.bottom
-  extentEnd(return.rows, y) was not inferred
-  need: an append-only row loop plus the empty fallback used by the source
-  known:
-    rows length: int 0..50 as items.length
-    sequence facts: nondecreasing(.y), spaced(gap)
-  missing: empty-safe row end
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMapRowsNeedFieldDomain: return.rows[].height: 0..40
-  range was -40..40 as items[].height, expected inside 0..40
-  known:
-    items[].height: -40..40
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
-  missing: items[].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMapIndexCanBeZero: return.rows[].index: int 1..49
-  range was int 0..49 as mapIndex(items), expected inside int 1..49
-  known:
-    mapIndex(items): int 0..49
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
-  missing: mapIndex(items) >= 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMapBlockRowsNeedFieldDomain: return.rows[].height: 0..40
-  range was -40..40 as items[].height, expected inside 0..40
-  known:
-    items[].height: -40..40
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
-  missing: items[].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMapFunctionRowsNeedFieldDomain: return.rows[].height: 0..40
-  range was -40..40 as items[].height, expected inside 0..40
-  known:
-    items[].height: -40..40
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-    inferred from code: mapIndex(items) >= 0
-    inferred from code: -items.length + mapIndex(items) < 0
-  missing: items[].height >= 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldReturnCheck: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldCallBoundary: negativeNeedsTypeFieldSpring(spring): requires spring.k > 0
-  caller passed: spring.k: -1
-  missing: spring.k > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldLocalBoundary: spring.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldSatisfiesReturn: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldAsReturn: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeFieldArrayElement: return.rows[].height: 0..40
-  range was 100, expected inside 0..40
-  missing: 100 <= 40
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeRelationReturnCheck: return.k > return.b
-  result: is false
-  missing fact: 1 > 2
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeRelationCallBoundary: negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b
-  caller passed: spring.k: 1, spring.b: 2
-  missing: spring.k > spring.b
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeRelationArrayPathReturnCheck: return.rows[].bottom >= return.rows[].y
-  applies to: every item in return.rows
-  result: is false
-  missing fact: 0 >= 10
-FAIL tests/source-checking/negative-patterns.ts:negativeTypeRelationArrayPathReturnCheck: return.rows[].cells[].right >= return.rows[].cells[].x
-  applies to: every item in return.rows[].cells
-  result: is false
-  missing fact: 1 >= 4
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeTypeRelationOptional: >= 0
-  type @fit on optional fields is not supported yet
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIfClampCanReturnMax: return < max
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-FAIL tests/source-checking/negative-patterns.ts:negativeLocalHelperPostconditionTooNarrow: return.cols: int 1..6
-  range was 7, expected inside int 1..6
-  known:
-    assumed from input: given containerWidth: 320..2000
-    inferred from code: floor((containerWidth / 240)) <= (containerWidth / 240)
-    inferred from code: floor((containerWidth / 240)) > (containerWidth / 240) - 1
-    inferred from branch: floor((containerWidth / 240)) - 7 > 0
-    checked helper contract: tests/source-checking/negative-patterns.ts#negativeConditionalClampLayoutValue: return >= min
-    checked helper contract: tests/source-checking/negative-patterns.ts#negativeConditionalClampLayoutValue: return <= max
-  missing: 7 <= 6
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(low, value, high): requires max >= min
-  caller passed: max: -1000..1000, min: -1000..1000
-  missing: bounds.max >= bounds.min
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeAliasHelperPreconditionNeedsComparison: return >= bounds.min
-  known:
-    bounds.max: -1000..1000
-    bounds.min: -1000..1000
-    assumed from input: given bounds.min: -1000..1000
-    assumed from input: given bounds.max: -1000..1000
-    assumed from input: given value: -1000..1000
-    inferred from branch: -bounds.max + value > 0
-  missing fact: bounds.max >= bounds.min
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min
-  caller passed: max: -1000..1000, min: -1000..1000
-  missing: (extent[1][0] - width) >= extent[0][0]
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFixedElementHelperPreconditionNeedsComparison: return >= extent[0][0]
-  known:
-    (extent[1][0] - width): -1000..1000
-    extent[0][0]: -1000..1000
-    assumed from input: given extent[0][1]: -Infinity<..<Infinity
-    assumed from input: given extent[1][1]: -Infinity<..<Infinity
-    assumed from input: given extent[0][0]: -1000..1000
-    assumed from input: given extent[1][0]: -990..1000
-    assumed from input: given width: 0..10
-    assumed from input: given value: -1000..1000
-    inferred from code: (extent[1][0] - width) <= extent[1][0]
-    inferred from branch: -(extent[1][0] - width) + value > 0
-  missing fact: (extent[1][0] - width) >= extent[0][0]
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFixedElementPathCannotHideDynamicIndex: given _items[_index][0]: 0..10
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1625,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
-    Type 'undefined' is not assignable to type 'number'.
-  tests/source-checking/negative-patterns.ts(1625,4): error TS2532: Object is possibly 'undefined'.
-FAIL tests/source-checking/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: return.clamped <= 2
-  result: is false
-  missing fact: 10 <= 2
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNullableBranchNeedsPresentGuard: return: int 0..49
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1641,4): error TS2322: Type 'number | null' is not assignable to type 'number'.
-    Type 'null' is not assignable to type 'number'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeNullablePropertyNeedsPresentGuard: return: int 0..49
-  Nullable value {targetIndex: focused - 1} was not proven present
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOptionalNumberNeedsPresentGuard: return >= max
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1662,30): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
-    Type 'undefined' is not assignable to type 'number'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeScalarStringishMutationForgetsMutatedRoot: return: 0
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1673,18): error TS2322: Type 'string' is not assignable to type 'number'.
-FAIL tests/source-checking/negative-patterns.ts:negativeObjectMutationForgetsInputPath: return >= 0
-  result: is false
-  known:
-    assumed from input: given box.width: 0..10
-  missing fact: -1 >= 0
-FAIL tests/source-checking/negative-patterns.ts:negativeLocalHelperPreconditionViolation: negativeConditionalClampLayoutValue(10, width, 5): requires max >= min
-  caller passed: max: 5, min: 10
-  missing: 5 >= 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedLoopIndexCanBeZero: return.rows[].index: int 1..49
-  range was int 0..49 as rows[].index, expected inside int 1..49
-  known:
-    rows[].index: int 0..49
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: rows[].index - i@rows@loop == 0
-    inferred from code: i@rows@loop >= 0
-    inferred from code: i@rows@loop - items.length < 0
-  missing: rows[].index >= 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedLoopNamedIndexTooHigh: return.rows[].rowIndex: int 0..<items.length
-  range was int 1..50 as rows[].rowIndex, expected inside int 0..<items.length
-  known:
-    rows[].rowIndex: int 1..50
-    items.length: int 1..50
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: rows[].rowIndex - rowIndex@rows@loop - 1 == 0
-    inferred from code: rowIndex@rows@loop >= 0
-    inferred from code: -items.length + rowIndex@rows@loop < 0
-  missing: rows[].rowIndex < items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: return.bottom >= params.y
-  known:
-    y: -2000..3000
-    params.y: 0..1000
-    assumed from input: given params.items.length: int 1..50
-    assumed from input: given params.items[].height: -40..40
-    assumed from input: given params.y: 0..1000
-    inferred from code: rows[].y - y@loop@rows@loop == 0
-    inferred from code: rows[].height - item.height#1@loop@rows@loop == 0
-  missing fact: y >= params.y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedLoopAliasNeedsNonNegativeItem: nondecreasing(return.rows.y)
-  nondecreasing(return.rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    row advance for .y: -40..40 as params.items[i].height
-    sequence facts: spaced(0), lastEnd = -2000..3000 as y
-  missing: given params.items[i].height >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeStaleGapAfterRefactor: spaced(return.rows, gap)
-  spaced(return.rows, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    loop proved: next.y = previous.y + previous.height + (gap + 1)
-    sequence facts: nondecreasing(.y), spaced((gap + 1))
-  missing: given (gap + 1) == gap
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOffByOneTargetIndex: return.targetIndex: int 0..<items.length
-  range was int 1..50 as (focused + 1), expected inside int 0..<items.length
-  known:
-    (focused + 1): int 1..50
-    items.length: int 1..50
-    assumed from input: given items[]: -Infinity<..<Infinity
-    assumed from input: given items.length: int 1..50
-    assumed from input: given focused: int 0..<items.length
-  missing: (focused + 1) < items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeMissingRowBottom: return.bottom == return.y + return.height
-  known:
-    ((row.y + row.height) - 1): -1..1039
-    (row.y + row.height): 0..1040
-    assumed from input: given row.y: 0..1000
-    assumed from input: given row.height: 0..40
-    inferred from code: (row.y + row.height) >= row.y
-    inferred from code: (row.y + row.height) >= row.height
-    inferred from code: ((row.y + row.height) - 1) <= (row.y + row.height)
-  missing fact: ((row.y + row.height) - 1) == (row.y + row.height)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeUnboundedPromptHeight: return.visibleHeight <= availableHeight
-  known:
-    prompt.height: 0..Infinity
-    availableHeight: 0..200
-    assumed from input: given prompt.height: 0..Infinity
-    assumed from input: given availableHeight: 0..200
-  missing fact: prompt.height <= availableHeight
-FAIL tests/source-checking/negative-patterns.ts:negativeInvertedClampBounds: negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min
-  caller passed: max: 0, min: 1
-  missing: 0 >= 1
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeUnsupportedForLoopForgetsScalar: return: 0..0
-  Indexed for loops support for (let i = 0; i < limit; i++) style loops
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeConditionalPushIsNotSameLength: return.rows.length == items.length
-  known:
-    rows.length: int 0..50
-    items.length: int 0..50
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: -items[].height@rows@loop + rows[].height == 0
-    inferred from code: -items[].height + rows[].height == 0
-    assumed from input: items[].height@rows@loop >= 0
-    assumed from input: items[].height@rows@loop - 40 <= 0
-    inferred from code: rows.length <= items.length
-  missing fact: rows.length == items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeConditionalPushCursorNeedsNonNegativeItem: return.bottom >= y
-  known:
-    cursor: -2000..3000
-    y: 0..1000
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-    assumed from input: given y: 0..1000
-    inferred from code: rows[].y - cursor@loop@rows@loop == 0
-    inferred from code: -items[].height@rows@loop + rows[].height == 0
-    inferred from code: -items[].height + rows[].height == 0
-    assumed from input: items[].height@rows@loop + 40 >= 0
-    assumed from input: items[].height@rows@loop - 40 <= 0
-    inferred from code: rows.length <= items.length
-  missing fact: cursor >= y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedConditionalPushIsNotSameLength: return.rows.length == items.length
-  known:
-    rows.length: int 0..50
-    items.length: int 0..50
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: rows[].height - item.height#1@loop@rows@loop == 0
-    inferred from code: rows.length <= items.length
-  missing fact: rows.length == items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFilteredRowsAreNotAlwaysSameLength: return.rows.length == items.length
-  known:
-    items.filter(item => item.visible).length: int 0..50
-    items.length: int 0..50
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: items.filter(item => item.visible).length <= items.length
-  missing fact: items.filter(item => item.visible).length == items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFilteredPredicateIsNotStrongerThanSource: return.rows[].height > 0
-  applies to: every item in return.rows
-  known:
-    items[].height: 0..40
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: -40..40
-    inferred from code: items.filter(item => item.height >= 0).length <= items.length
-    inferred from branch: items[].height >= 0
-  missing fact: items[].height > 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFilteredMappedRowsAreNotAlwaysSameLength: return.rows.length == items.length
-  known:
-    items
-      .filter(item => item.visible).length: int 0..50
-    items.length: int 0..50
-    assumed from input: given items.length: int 0..50
-    assumed from input: given items[].height: 0..40
-    inferred from code: items
-      .filter(item => item.visible).length <= items.length
-  missing fact: items
-      .filter(item => item.visible).length == items.length
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeForOfConditionalPushNeedsItemBound: return.rows[].height: 0..40
-  range was 0..100 as rows[].height, expected inside 0..40
-  known:
-    rows[].height: 0..100
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..100
-    inferred from code: rows[].height - rowHeight#1@loop@rows@loop == 0
-    inferred from code: rows.length <= items.length
-  missing: rows[].height <= 40
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeReverseKillsRowOrder: nondecreasing(return.rows.y)
-  nondecreasing(return.rows.y) was not inferred
-  need: every next .y >= previous .y
-  known:
-    sequence facts: no sequence facts
-  missing: sequence facts for .y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeIndexedAssignmentKillsRowDomain: return.rows[].height: 0..40
-  range was any number as return.rows[].height, expected inside 0..40
-  known:
-    return.rows[].height: any number
-    assumed from input: given height: -Infinity<..<Infinity
-    assumed from input: given items.length: int 1..50
-    assumed from input: given items[].height: 0..40
-  missing: return.rows[].height >= 0
-  missing: return.rows[].height <= 40
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFunctionGivenCannotNameReturn: given return: 0..10
-  return not found in this contract scope
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenRangeCannotBeEmpty: given width: 500..400
-  no input can satisfy this: empty range 500..400
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenComparisonCannotFit: given width <= 50
-  no input can satisfy this with the earlier given lines
-  result: is false
-  known:
-    width: 100..200
-    assumed from input: given width: 100..200
-  missing fact: width <= 50
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenComparisonsCannotBothHold: given width <= 50
-  no input can satisfy this with the earlier given lines
-  result: is false
-  known:
-    width: 100..1.7976931348623157e+308
-    assumed from input: given width: -Infinity<..<Infinity
-    assumed from input: given width >= 100
-  missing fact: width <= 50
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenComparisonsCannotTransitivelyHold: given right > x
-  no input can satisfy this with the earlier given lines; they already rule out right > x
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGivenRangeCannotDescribeDerivedExpression: given width + 1: 0..10
-  given range must name one input path, not a derived expression
-FAIL tests/source-checking/negative-patterns.ts:negativeGivenRangeCannotFitEarlierChain: given x: 0..10
-  no input can satisfy this with the earlier given lines; they already rule out x: 0..10
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineSideRange: index: int 0..3
-  range was 4, expected inside int 0..3
-  missing: 4 <= 3
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineObjectFieldRange: return.width: 0..3
-  range was 4, expected inside 0..3
-  missing: 4 <= 3
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineLocalComparison: value < 4
-  result: is false
-  missing: strict comparison cannot hold when both sides are 4
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineObjectFieldComparison: return.width > 4
-  result: is false
-  missing: strict comparison cannot hold when both sides are 4
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineReturnComparison: return < 5
-  result: is false
-  missing: strict comparison cannot hold when both sides are 5
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrowFunctionContract: return >= min
-  known:
-    (min - 1): -1.7976931348623157e+308..1.7976931348623157e+308
-    min: -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given value: -Infinity<..<Infinity
-    assumed from input: given min: -Infinity<..<Infinity
-    inferred from code: (min - 1) <= min
-    inferred from code: min(value, (min - 1)) <= value
-    inferred from code: min(value, (min - 1)) <= (min - 1)
-    inferred from branch: (min - 1) - value <= 0
-  missing fact: (min - 1) >= min
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeDestructuredArrowParamClaim: return >= width
-  known:
-    (width - 1): -1.7976931348623157e+308..1.7976931348623157e+308
-    width: -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given width: -Infinity<..<Infinity
-    inferred from code: (width - 1) <= width
-  missing fact: (width - 1) >= width
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayDestructuredLocalClaim: return >= value
-  known:
-    (value - 1): -1..9
-    value: 0..10
-    assumed from input: given value: 0..10
-    inferred from code: (value - 1) <= value
-  missing fact: (value - 1) >= value
-FAIL tests/source-checking/negative-patterns.ts:negativeInlineParamComparison: given max: 100..200
-  no input can satisfy this with the earlier given lines; they already rule out max: 100..200
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGivenRangeBoundCannotCallInputMethod: given items[].height: 0..max.toString()
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(2038,4): error TS2322: Type 'string' is not assignable to type 'number'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGivenComparisonCannotIndexArray: given items[index] >= 0
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(2047,4): error TS2322: Type 'number | undefined' is not assignable to type 'number'.
-    Type 'undefined' is not assignable to type 'number'.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeArrayAtNegativeIndexNeedsEnoughLength: return: 0..40
-  Array.at(-2) expected length >= 2
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeTypedArrayConstructorKeepsExactLength: return.length == count + 1
-  known:
-    count: int 0..100
-    (count + 1): int 1..101
-    assumed from input: given count: int 0..100
-  missing fact: count == (count + 1)
-FAIL tests/source-checking/negative-patterns.ts:negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot: return: 20 | 40
-  value was 10 | 30, expected one of 20 | 40
-  branches produced 10, 30
-  missing: 10 | 30 in {20, 40}
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePredecessorIndexNeedsStrictPositiveBranch: return: 0..40
-  Array index int -1..48 as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeDifferentSymbolicSlotsAreNotSamePath: return.current == return.previous
-  known:
-    items[focused].y: 0..1000
-    items[focused - 1].y: 0..1000
-    assumed from input: given items.length: int 2..50
-    assumed from input: given items[].y: 0..1000
-    assumed from input: given focused: int 1..<items.length
-    inferred from code: items[focused].y >= 0
-    inferred from code: items[focused].y <= 1000
-    inferred from code: items[focused - 1].y >= 0
-    inferred from code: items[focused - 1].y <= 1000
-  missing fact: items[focused].y == items[focused - 1].y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeForwardSymbolicSlotsAreNotSamePath: return.nextTop == return.currentTop
-  known:
-    rows[focused+1].y: 0..1960
-    rows[focused].y: 0..1960
-    assumed from input: given items.length: int 2..50
-    assumed from input: given items[].height: 0..40
-    assumed from input: given focused: int 0..<items.length
-    assumed from input: given focused + 1 < items.length
-    inferred from code: rows[].y - y@loop@rows@loop == 0
-    inferred from code: -items[].height@rows@loop + rows[].height == 0
-    inferred from code: -items[].height + rows[].height == 0
-    assumed from input: items[].height@rows@loop >= 0
-    assumed from input: items[].height@rows@loop - 40 <= 0
-    inferred from code: y >= 0
-    inferred from code: rows[focused + 1].y - (rows[focused].y + rows[focused].height) == 0
-    inferred from code: rows[focused + 1].y - rows[focused].y >= 0
-    inferred from code: rows[focused].y >= 0
-    inferred from code: rows[focused].y <= 1960
-    inferred from code: rows[].height >= 0
-    inferred from code: rows[].height - 40 <= 0
-    inferred from code: rows[focused+1].y >= 0
-    inferred from code: rows[focused+1].y <= 1960
-  missing fact: rows[focused+1].y == rows[focused].y
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return >= 0
-  known:
-    (focused - 1): int -1..999
-    assumed from input: given focused: int 0..1000
-  missing fact: (focused - 1) >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeBranchLocalReturnNeedsStrictPositiveBranch: return: int 0..1000
-  range was int -1..999 as (focused - 1), expected inside int 0..1000
-  known:
-    (focused - 1): int -1..999
-    assumed from input: given focused: int 0..1000
-  missing: (focused - 1) >= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeGivenComparisonCannotCallInputMethod: given width.toString() == 10
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(2144,4): error TS2367: This comparison appears to be unintentional because the types 'string' and 'number' have no overlap.
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopGivenCannotNameRows > loop: given rows.length == items.length
-  rows not found in this contract scope
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeTypedTupleShapeIsNotNumeric: return[1].height: 0..40
-  range was -1.7976931348623157e+308..1.7976931348623157e+308 as input[1].height, expected inside 0..40
-  known:
-    input[1].height: -1.7976931348623157e+308..1.7976931348623157e+308
-    assumed from input: given input[0].height: -Infinity<..<Infinity
-    assumed from input: given input[1].height: -Infinity<..<Infinity
-  missing: input[1].height >= 0
-  missing: input[1].height <= 40
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOptionalTupleShapeIsNotExactLength: return.length == 2
-  Optional and rest tuple elements are unsupported: return
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRestTupleShapeIsNotExactLength: return.length == 2
-  Optional and rest tuple elements are unsupported: return
-FAIL tests/source-checking/negative-patterns.ts:negativeUnionReturnOutsideSet: return: 40 | 120
-  value was 82 | 214 as navSizeX, expected one of 40 | 120
-  branches produced 82, 214
-  missing: navSizeX in {40, 120}
-FAIL tests/source-checking/negative-patterns.ts:negativeUnionBranchInsideBoundsOutsideSet: return: 0 | 100
-  value was 0 | 50, expected one of 0 | 100
-  branches produced 0, 50
-  missing: 0 | 50 in {0, 100}
-FAIL tests/source-checking/negative-patterns.ts:negativeUnionGivenCallerOutsideSet: negativeUnionGivenCallee(150): requires navSizeX: 82 | 214
-  caller passed: navSizeX: 150
-  missing: 150 in {82, 214}
-FAIL tests/source-checking/negative-patterns.ts:negativeDefaultArgumentViolatesGiven: negativeDefaultSpring(): requires k > 0
-  caller passed: k: -1
-  missing: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeDefaultArgumentViolatesGiven: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringDefault: negativeStrictSpringBadDefault(): requires b > 0
-  caller passed: b: 0
-  missing: 0 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringDefault: return.b > 0
-  result: is false
-  missing: strict comparison cannot hold when both sides are 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringCallArg: negativeStrictSpring(-1): requires k > 0
-  caller passed: k: -1
-  missing: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringCallArg: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringObjectArg: negativeStrictSpring(params.k, params.b): requires b > 0
-  caller passed: b: 0
-  missing: 0 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringObjectArg: return.b > 0
-  result: is false
-  missing: strict comparison cannot hold when both sides are 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringManualObject: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeStrictSpringMutation: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeStrictSpringObjectAssign: return.k > 0
-  known:
-    return.k: any number
-  missing fact: return.k > 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeStrictSpringObjectAssign: return.b > 0
-  known:
-    return.b: any number
-  missing fact: return.b > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeMapCallbackMutationForgetsReturnedFact: return[].value > 0
-  applies to: every item in return
-  result: is false
-  known:
-    inferred from code: mapIndex([item]) >= 0
-    inferred from code: mapIndex([item]) - 1 < 0
-  missing fact: -1 > 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativePlainClientWidthIsNotAmbient: return: 0..<Infinity
-  range was 0..Infinity as box.clientWidth, expected inside 0..<Infinity
-  known:
-    box.clientWidth: 0..Infinity
-    Infinity: Infinity..Infinity
-    assumed from input: given box.clientWidth: 0..Infinity
-  missing: box.clientWidth < Infinity
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeAmbientResizeObserverInlineSizeMayBeInfinite: return: 0..<Infinity
-  range was 0..Infinity as size.inlineSize, expected inside 0..<Infinity
-  known:
-    size.inlineSize: 0..Infinity
-    Infinity: Infinity..Infinity
-    assumed from input: given size.inlineSize: 0..Infinity
-  missing: size.inlineSize < Infinity
-UNKNOWN tests/source-checking/negative-patterns.ts:default: return.x: 50..100
-  range was -50..150 as (rect.x + ((rect.right - rect.x) / 2)), expected inside 50..100
-  known:
-    (rect.x + ((rect.right - rect.x) / 2)): -50..150
-    assumed from input: given rect.x: 0..100
-    assumed from input: given rect.right: 0..100
-    assumed from input: given rect.y: 0..100
-    assumed from input: given rect.bottom: 0..100
-    inferred from code: (rect.right - rect.x) <= rect.right
-    inferred from code: (rect.x + ((rect.right - rect.x) / 2)) >= ((rect.right - rect.x) / 2)
-    inferred from code: (rect.bottom - rect.y) <= rect.bottom
-    inferred from code: (rect.y + ((rect.bottom - rect.y) / 2)) >= ((rect.bottom - rect.y) / 2)
-  missing: (rect.x + ((rect.right - rect.x) / 2)) >= 50
-  missing: (rect.x + ((rect.right - rect.x) / 2)) <= 100
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopCursorMovesWithoutPush: spaced(return.rows, gap)
-  spaced(return.rows, gap) was not inferred
-  need: every next row top == previous top + previous height + gap
-  known:
-    sequence facts: no sequence facts
-  missing: recognized adjacent row spacing
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopStaleBodyClaim: snapshot: 0..0
-  range was any non-NaN number as y, expected inside 0..0
-  known:
-    y: any non-NaN number
-    assumed from input: given items[].height: 1..100
-    assumed from input: given items.length: 1..50
-  missing: y >= 0
-  missing: y <= 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeLoopStaleBodyClaim: return: 0..5000
-  range was any number as y, expected inside 0..5000
-  known:
-    y: any number
-    assumed from input: given items[].height: 1..100
-    assumed from input: given items.length: 1..50
-  missing: y >= 0
-  missing: y <= 5000
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInlineCallBudget > chain1 > chain2 > chain3 > chain4 > chain5 > chain6 > chain7 > chain8 > chain9 > chain10 > chain11: chain12(value)
-  Inline call budget exceeded: 12 nested calls reach limit 12; facts through chain12 become unknown
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInlineCallBudget: return: 0..10
-  range was any number as chain11Result, expected inside 0..10
-  known:
-    chain11Result: any number
-    assumed from input: given value: 0..10
-  missing: chain11Result >= 0
-  missing: chain11Result <= 10
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeCeilDivisionRoundsAcrossTotal: return >= total
-  known:
-    (ceil((total / count)) * count): int 0..1200000
-    total: int 0..6000
-    assumed from input: given total: int 0..6000
-    assumed from input: given count: int 1..200
-    inferred from code: ceil((total / count)) >= (total / count)
-    inferred from code: ceil((total / count)) < (total / count) + 1
-  missing fact: (ceil((total / count)) * count) >= total
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeFloorHitIndexRoundsAcrossCount: return < count
-  known:
-    floor((pointer / cellSize)): int 0..100000
-    count: int 1..1000
-    assumed from input: given pointer: 0..100000
-    assumed from input: given cellSize: int 1..1000
-    assumed from input: given count: int 1..1000
-    assumed from input: given pointer < count * cellSize
-    inferred from code: floor((pointer / cellSize)) <= (pointer / cellSize)
-    inferred from code: floor((pointer / cellSize)) > (pointer / cellSize) - 1
-  missing: (pointer / cellSize) < count
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeDivisionCancellationRounds: return == x
-  known:
-    ((x / 3) * 3): 0..100
-    x: 0..100
-    assumed from input: given x: 0..100
-  missing fact: ((x / 3) * 3) == x
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeAddSubtractCancellationRounds: return == x
-  known:
-    ((x + y) - y): 0..1000000100
-    x: 0..100
-    assumed from input: given x: 0..100
-    assumed from input: given y: 0..1000000000
-    inferred from code: (x + y) >= x
-    inferred from code: (x + y) >= y
-    inferred from code: ((x + y) - y) <= (x + y)
-    inferred from code: ((x + y) - y) >= 0
-  missing fact: ((x + y) - y) == x
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSubUlpMarginIsAbsorbed: return > x
-  known:
-    (x + 1e-30): 1..100
-    x: 1..100
-    assumed from input: given x: 1..100
-    inferred from code: (x + 1e-30) >= x
-    inferred from code: (x + 1e-30) >= 1e-30
-  missing fact: (x + 1e-30) > x
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeRepeatedAdditionIsNotMultiplication: return == n * 0.1
-  known:
-    total: 0..Infinity
-    (n * 0.1): 0..10
-    assumed from input: given n: int 0..100
-    inferred from code: total >= 0
-  missing fact: total == (n * 0.1)
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInfinityMinusInfinityIsNaN: return >= 0
-  a - b is unknown because equal infinities may meet, producing NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeZeroTimesInfinityIsNaN: return >= 0
-  a * b is unknown because zero and infinity may meet, producing NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInfinityModuloIsNaN: return >= 0
-  a % b is unknown because an infinite dividend produces NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOppositeInfinitySumIsNaN: return == a + b
-  a + b is unknown because opposite infinities may meet, producing NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeInfinityOverInfinityEchoIsNaN: return == a / b
-  a / b is unknown because two infinities may meet, producing NaN
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeOneMarkerIsNotFinite: return < Infinity
-  known:
-    pos: -1.7976931348623157e+308..Infinity
-    Infinity: Infinity..Infinity
-    assumed from input: given pos: -Infinity<..Infinity
-  missing fact: pos < Infinity
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeUnionTieIsNotStrict: return > 0
-  known:
-    x: 0..5
-    assumed from input: given x: 0<..5 | 0..3
-  missing fact: x > 0
-UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateLayoutCallsDoNotReconnect: return: 216 | 324
-  Numeric alternatives came from separate branch constructs and are not assumed to match
-UNKNOWN tests/source-checking/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
-  TypeScript rejected @fit contract:
-  tests/source-checking/negative-patterns.ts(1517,2): error TS2304: Cannot find name 'row'.
-FAIL tests/source-checking/negative-patterns.ts:<top-level>: negativeNeedsContainerFit(4, 3): requires container >= containee
-  caller passed: container: 3, containee: 4
-  missing: 3 >= 4
-FAIL tests/source-checking/negative-patterns.ts:<top-level>: negativeIifeDefaultArgumentViolatesType.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-shadowed-catalog.ts:negativeUserFunctionNotHijackedByCatalog: return >= 0
-  result: is false
-  known:
-    (0 - 10): int -10..-10
-    assumed from input: given items.length: int 1..10
-    assumed from input: given items[].height: 10..10
-    inferred from code: rows[].y - y@loop@rows@loop == 0
-    inferred from code: -items[].height@rows@loop + rows[].height == 0
-    inferred from code: -items[].height + rows[].height == 0
-    assumed from input: items[].height@rows@loop - 10 >= 0
-    assumed from input: items[].height@rows@loop - 10 <= 0
-    inferred from code: y >= 0
-    inferred from code: rows[rows.length - 1].y >= 0
-    inferred from code: rows[rows.length - 1].y <= 90
-    inferred from code: rows[rows.length - 1].height >= 10
-    inferred from code: rows[rows.length - 1].height <= 10
-  missing fact: (0 - 10) >= 0
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperNeedsFit: return: 0..320
-  range was any number as unannotatedImportedClamp(width), expected inside 0..320
-  known:
-    unannotatedImportedClamp(width): any number
-    assumed from input: given width: 0..1000
-  missing: unannotatedImportedClamp(width) >= 0
-  missing: unannotatedImportedClamp(width) <= 320
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperUnresolved: return: 0..320
-  Could not resolve @fit-fixtures/missing-import-helper from tests/imports/negative-import-patterns.ts with TypeScript module resolution
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperDeclarationMapMissing: return: 0..320
-  Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportNeedsFit: return: 0..320
-  range was any number as barrelUnannotatedClamp(width), expected inside 0..320
-  known:
-    barrelUnannotatedClamp(width): any number
-    assumed from input: given width: 0..1000
-  missing: barrelUnannotatedClamp(width) >= 0
-  missing: barrelUnannotatedClamp(width) <= 320
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperDefaultImportNeedsFit: return: 0..320
-  range was any number as unannotatedDefaultImportedClamp(width), expected inside 0..320
-  known:
-    unannotatedDefaultImportedClamp(width): any number
-    assumed from input: given width: 0..1000
-  missing: unannotatedDefaultImportedClamp(width) >= 0
-  missing: unannotatedDefaultImportedClamp(width) <= 320
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperSourceContractFails: return: 0..100
-  imported helper contract failed in source before this call could use it
-  helper: importedClampWithBadContract from ./negative-import-helpers
-  failed check: tests/imports/negative-import-helpers.ts:importedClampWithBadContract: return: 0..100
-  range was 320, expected inside 0..100
-  known:
-    assumed from input: given width: 0..1000
-    inferred from code: min(width, 320) <= width
-    inferred from code: min(width, 320) <= 320
-    inferred from branch: -width + 320 <= 0
-  missing: 320 <= 100
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperContractTooWide: return: 0..100
-  range was 0..320 as importedClampWidth(width), expected inside 0..100
-  known:
-    importedClampWidth(width): 0..320
-    checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
-    assumed from input: given width: 0..1000
-  missing: importedClampWidth(width) <= 100
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedClassGetterNeedsThisGiven: return >= box.top
-  Class getter call is not analyzed: box.bottom
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedHelperReExportContractTooWide: return: 0..100
-  range was 0..320 as barrelClampWidth(width), expected inside 0..100
-  known:
-    barrelClampWidth(width): 0..320
-    checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
-    assumed from input: given width: 0..1000
-  missing: barrelClampWidth(width) <= 100
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeNamespaceImportedHelperReExportContractTooWide: return: 0..100
-  range was 0..320 as importPatternBarrel.barrelClampWidth(width), expected inside 0..100
-  known:
-    importPatternBarrel.barrelClampWidth(width): 0..320
-    checked imported contract: tests/imports/import-pattern-helpers.ts#importedClampWidth: return: 0..320
-    assumed from input: given width: 0..1000
-  missing: importPatternBarrel.barrelClampWidth(width) <= 100
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedNumericConstantMismatch: return == width + importedChromeX + 1
-  known:
-    (width + importedChromeX): 16..1016
-    ((width + importedChromeX) + 1): 17..1017
-    assumed from input: given width: 0..1000
-    inferred from code: (width + importedChromeX) >= width
-    inferred from code: (width + importedChromeX) >= importedChromeX
-    inferred from code: ((width + importedChromeX) + 1) >= (width + importedChromeX)
-    inferred from code: ((width + importedChromeX) + 1) >= 1
-  missing fact: (width + importedChromeX) == ((width + importedChromeX) + 1)
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeOptionalImportedShape: return.rows.length >= 0
-  TypeScript rejected @fit contract:
-  tests/imports/negative-import-patterns.ts(103,4): error TS18048: '__fit_return.rows' is possibly 'undefined'.
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldReturnCheck: return.k > 0
-  result: is false
-  missing fact: -1 > 0
-FAIL tests/imports/negative-import-patterns.ts:negativeImportedTypeFieldArrayElement: return.rows[].height: 0..40
-  range was 100, expected inside 0..40
-  missing: 100 <= 40
-UNKNOWN tests/imports/negative-import-patterns.ts:negativeImportedTupleSummaryDoesNotApplyToEverySlot: return[4] >= 0
-  known:
-    importedTupleWithOneOffset(value)[3]: any number
-    assumed from input: given value: -Infinity<..<Infinity
-  missing fact: importedTupleWithOneOffset(value)[3] >= 0
-FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: matrixNegativeDefault(): requires value >= 0
-  caller passed: value: -1
-  missing: -1 >= 0
-FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixDefaultViolatesType: return.value >= 0
-  result: is false
-  missing fact: -1 >= 0
-FAIL tests/interpreter-matrix/interpreter-matrix-negative.ts:negativeMatrixMapMutationForgetsAlias: return[].value > 0
-  applies to: every item in return
-  result: is false
-  known:
-    inferred from code: mapIndex(source) >= 0
-    inferred from code: mapIndex(source) - 1 < 0
-  missing fact: -1 > 0
-FAIL tests/source-checking/negative-patterns.ts:negativeSilentHelperSummaryRequiresPrecondition: negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min
-  caller passed: max: 2, min: 10
-  missing: 2 >= 10
+["file","tests/imports/negative-import-patterns.ts"]
+["negativeImportedClassGetterNeedsThisGiven","return >= box.top","unknown",["Class getter call is not analyzed: box.bottom"]]
+["negativeImportedHelperContractTooWide","importedClampWidth(width): requires width: 0..1000","pass",[]]
+["negativeImportedHelperContractTooWide","return: 0..100","unknown",["range was 0..320 as importedClampWidth(width), expected inside 0..100","missing: importedClampWidth(width) <= 100"]]
+["negativeImportedHelperDeclarationMapMissing","return: 0..320","unknown",["Declaration-only imports cannot be checked as @fit helpers: @fit-fixtures/import-pattern-declared-package-no-map"]]
+["negativeImportedHelperDefaultImportNeedsFit","return: 0..320","unknown",["range was any number as unannotatedDefaultImportedClamp(width), expected inside 0..320","missing: unannotatedDefaultImportedClamp(width) >= 0","missing: unannotatedDefaultImportedClamp(width) <= 320"]]
+["negativeImportedHelperNeedsFit","return: 0..320","unknown",["range was any number as unannotatedImportedClamp(width), expected inside 0..320","missing: unannotatedImportedClamp(width) >= 0","missing: unannotatedImportedClamp(width) <= 320"]]
+["negativeImportedHelperReExportContractTooWide","barrelClampWidth(width): requires width: 0..1000","pass",[]]
+["negativeImportedHelperReExportContractTooWide","return: 0..100","unknown",["range was 0..320 as barrelClampWidth(width), expected inside 0..100","missing: barrelClampWidth(width) <= 100"]]
+["negativeImportedHelperReExportNeedsFit","return: 0..320","unknown",["range was any number as barrelUnannotatedClamp(width), expected inside 0..320","missing: barrelUnannotatedClamp(width) >= 0","missing: barrelUnannotatedClamp(width) <= 320"]]
+["negativeImportedHelperSourceContractFails","return: 0..100","unknown",["imported helper contract failed in source before this call could use it","helper: importedClampWithBadContract from ./negative-import-helpers","failed check: tests/imports/negative-import-helpers.ts:importedClampWithBadContract: return: 0..100","range was 320, expected inside 0..100","missing: 320 <= 100"]]
+["negativeImportedHelperUnresolved","return: 0..320","unknown",["Could not resolve @fit-fixtures/missing-import-helper from tests/imports/negative-import-patterns.ts with TypeScript module resolution"]]
+["negativeImportedNumericConstantMismatch","return == width + importedChromeX + 1","unknown",["missing fact: (width + importedChromeX) == ((width + importedChromeX) + 1)"]]
+["negativeImportedTupleSummaryDoesNotApplyToEverySlot","return[4] >= 0","unknown",["missing fact: importedTupleWithOneOffset(value)[3] >= 0"]]
+["negativeImportedTypeFieldArrayElement","return.rows[].height: 0..40","fail",["range was 100, expected inside 0..40","missing: 100 <= 40"]]
+["negativeImportedTypeFieldReturnCheck","return.b > 0","pass",[]]
+["negativeImportedTypeFieldReturnCheck","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeNamespaceImportedHelperReExportContractTooWide","importPatternBarrel.barrelClampWidth(width): requires width: 0..1000","pass",[]]
+["negativeNamespaceImportedHelperReExportContractTooWide","return: 0..100","unknown",["range was 0..320 as importPatternBarrel.barrelClampWidth(width), expected inside 0..100","missing: importPatternBarrel.barrelClampWidth(width) <= 100"]]
+["negativeOptionalImportedShape","return.rows.length >= 0","unknown",["TypeScript rejected @fit contract:"]]
+["file","tests/interpreter-matrix/interpreter-matrix-negative.ts"]
+["matrixNegativeDefault","return.value >= 0","pass",[]]
+["negativeMatrixDefaultViolatesType","matrixNegativeDefault(): requires value >= 0","fail",["caller passed: value: -1","missing: -1 >= 0"]]
+["negativeMatrixDefaultViolatesType","return.value >= 0","fail",["result: is false","missing fact: -1 >= 0"]]
+["negativeMatrixMapMutationForgetsAlias","return[].value > 0","fail",["applies to: every item in return","result: is false","missing fact: -1 > 0"]]
+["file","tests/source-checking/negative-patterns.ts"]
+["<top-level>","negativeIifeDefaultArgumentViolatesType.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["<top-level>","negativeNeedsContainerFit(4, 3): requires containee: 0..1000","pass",[]]
+["<top-level>","negativeNeedsContainerFit(4, 3): requires container >= containee","fail",["caller passed: container: 3, containee: 4","missing: 3 >= 4"]]
+["<top-level>","negativeNeedsContainerFit(4, 3): requires container: 0..1000","pass",[]]
+["<top-level>","negativeTopLevelInlineCallGiven: -1..0","pass",[]]
+["<type>","type @fit rows[].cells[].x >= row.x","unknown",["TypeScript rejected @fit contract:"]]
+["default","return.x: 50..100","unknown",["range was -50..150 as (rect.x + ((rect.right - rect.x) / 2)), expected inside 50..100","missing: (rect.x + ((rect.right - rect.x) / 2)) >= 50","missing: (rect.x + ((rect.right - rect.x) / 2)) <= 100"]]
+["negativeAddSubtractCancellationRounds","return == x","unknown",["missing fact: ((x + y) - y) == x"]]
+["negativeAdjacentBoundIndexNeedsNondecreasingRows","return.rows[$i].y <= return.rows[$i + 1].y","unknown",["return.rows[$i].y <= return.rows[$i + 1].y was not inferred","need: every next .y >= previous .y","missing: given items[].height >= 0"]]
+["negativeAliasHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(low, value, high): requires max >= min","unknown",["caller passed: max: -1000..1000, min: -1000..1000","missing: bounds.max >= bounds.min"]]
+["negativeAliasHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(low, value, high): requires max: -1000..1000","pass",[]]
+["negativeAliasHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(low, value, high): requires min: -1000..1000","pass",[]]
+["negativeAliasHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(low, value, high): requires value: -1000..1000","pass",[]]
+["negativeAliasHelperPreconditionNeedsComparison","return >= bounds.min","unknown",["missing fact: bounds.max >= bounds.min"]]
+["negativeAmbientResizeObserverInlineSizeMayBeInfinite","return: 0..<Infinity","unknown",["range was 0..Infinity as size.inlineSize, expected inside 0..<Infinity","missing: size.inlineSize < Infinity"]]
+["negativeArrayAliasPush","return == 3","fail",["result: is false","missing fact: xs.length == 3"]]
+["negativeArrayAtNegativeIndexNeedsEnoughLength","return: 0..40","unknown",["Array.at(-2) expected length >= 2"]]
+["negativeArrayDestructuredLocalClaim","return >= value","unknown",["missing fact: (value - 1) >= value"]]
+["negativeArrayElementAliasMutatedThroughArray","return == 1","unknown",["missing fact: box.size == 1"]]
+["negativeArrayFromMapperMutatesElement","return == 1","unknown",["missing fact: boxes[0]!.size == 1"]]
+["negativeArrayIdentityNeedsSameSource","return.rows == other.rows","unknown",["Non-number equality is only proven for the same source expression"]]
+["negativeArrayIndexNeedsUpperBound","return < items.length","unknown",["missing fact: index < items.length"]]
+["negativeArrayLengthCallGiven","negativeNeedsShortArray(items): requires items.length: int 0..10","unknown",["caller passed: items.length: int 0..20","missing: items.length <= 10"]]
+["negativeArrayLengthCallGiven","return: int 0..20","pass",[]]
+["negativeArrayLiteralFiniteIndexDoesNotReadSkippedSlot","return: 20 | 40","fail",["value was 10 | 30, expected one of 20 | 40","branches produced 10, 30","missing: 10 | 30 in {20, 40}"]]
+["negativeArrowFunctionContract","return >= min","unknown",["missing fact: (min - 1) >= min"]]
+["negativeAtLeastMinWidth","return >= minWidth","pass",[]]
+["negativeBooleanGuardArithmeticStaysUnknown","return: -100..-9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeBooleanGuardComparisonStaysUnknown","return.left < return.right","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeBooleanGuardHelperCorrelationStaysUnknown","return: -100..-9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeBooleanGuardMapCorrelationStaysUnknown","return[].value: -100..-9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeBooleanGuardMathMinStaysUnknown","return: 1 | 100","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeBothAxesAreAmbiguous","noOverlap(return)","unknown",["noOverlap(...) is ambiguous: elements carry both y/height and x/width; map to one axis first"]]
+["negativeBranchAssignmentJoinsBothSides","return: 0..100","fail",["range was 140..200 as (width + 100), expected inside 0..100","missing: (width + 100) <= 100"]]
+["negativeBranchLocalReturnNeedsStrictPositiveBranch","return >= 0","unknown",["missing fact: (focused - 1) >= 0"]]
+["negativeBranchLocalReturnNeedsStrictPositiveBranch","return: int 0..1000","unknown",["range was int -1..999 as (focused - 1), expected inside int 0..1000","missing: (focused - 1) >= 0"]]
+["negativeBranchStateDoesNotInventCrossProduct","return.total: 12 | 21","fail",["value was int 11..11 as (1 + 10), expected one of 12 | 21","branches produced 11","missing: (1 + 10) in {12, 21}"]]
+["negativeBroadStringDoesNotBecomeFinite","return.yThresholdX < return.uThresholdX","unknown",["missing fact: (panelX + 300) < (panelX + 100)"]]
+["negativeCallbackFitPlacementIsReported","@fit > 0","unknown",["Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function"]]
+["negativeCallbackFitPlacementIsReported","return.length: int 0..10","pass",[]]
+["negativeCalleeMutatesArgument","return == 1","unknown",["missing fact: box.size == 1"]]
+["negativeCallGiven","negativeNeedsSmallValue(value): requires value: 0..10","unknown",["caller passed: value: 0..20","missing: value <= 10"]]
+["negativeCallGiven","return: 0..20","pass",[]]
+["negativeCeilDivisionNeedsPositiveCount","return >= total","unknown",["missing fact: (ceil((total / count)) * count) >= total"]]
+["negativeCeilDivisionRoundsAcrossTotal","return >= total","unknown",["missing fact: (ceil((total / count)) * count) >= total"]]
+["negativeClassGetterSummaryNeedsThisGiven","return: 0..2000","unknown",["Class getter call is not analyzed: box.bottom"]]
+["negativeClassMethodCallIsUnknown","return == 1","unknown",["Unsupported call box.value"]]
+["NegativeClassMethodNeedsThisGiven.bottom","return >= this.y","unknown",["missing fact: (this.y + this.height) >= this.y"]]
+["negativeClassSetterCallIsUnknown","return == 0","unknown",["missing fact: box.current == 0"]]
+["negativeComparison","return.high < return.low","fail",["result: is false","missing fact: (value + 10) < value"]]
+["negativeCompoundAssignmentWrites","return == 10","fail",["result: is false","missing fact: (10 - 2) == 10"]]
+["negativeCompoundNumericGuardCorrelationStaysUnknown","return: -100 | -9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeConditionalAndIfDoNotReconnect","return: 22 | 33","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeConditionalClampLayoutValue","return <= max","pass",[]]
+["negativeConditionalClampLayoutValue","return >= min","pass",[]]
+["negativeConditionalPushCursorNeedsNonNegativeItem","return.bottom >= y","unknown",["missing fact: cursor >= y"]]
+["negativeConditionalPushIsNotSameLength","return.rows.length == items.length","unknown",["missing fact: rows.length == items.length"]]
+["negativeConditionalRunningTotalNeedsNonNegativeItem","return >= 0","unknown",["missing fact: total >= 0"]]
+["negativeConditionalSumGuardMayNeverFire","return >= 5","unknown",["missing fact: total >= 5"]]
+["negativeDefaultArgumentViolatesGiven","negativeDefaultSpring(): requires k > 0","fail",["caller passed: k: -1","missing: -1 > 0"]]
+["negativeDefaultArgumentViolatesGiven","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeDefaultSpring","return.k > 0","pass",[]]
+["negativeDestructuredArrowParamClaim","return >= width","unknown",["missing fact: (width - 1) >= width"]]
+["negativeDifferentCollectionSlotsDoNotReconnect","return: 2 | 4","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeDifferentSymbolicSlotsAreNotSamePath","return.current == return.previous","unknown",["missing fact: items[focused].y == items[focused - 1].y"]]
+["negativeDivisionCancellationRounds","return == x","unknown",["missing fact: ((x / 3) * 3) == x"]]
+["negativeDynamicIndexWrite","return == 1","unknown",["missing fact: slots[0] == 1"]]
+["negativeElseIfBranchCanReturnUpper","return: -1..<1","fail",["range was 1, expected inside -1..<1","missing: 1 < 1"]]
+["negativeEquivalentComparisonsDoNotReconnect","return: -100 | -9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeExtentEndCatchesEmptyRows","extentEnd(return.rows, y) == return.bottom","unknown",["extentEnd(return.rows, y) was not inferred","need: an append-only row loop plus the empty fallback used by the source","missing: empty-safe row end"]]
+["negativeFilteredMappedRowsAreNotAlwaysSameLength","return.rows.length == items.length","unknown",["missing fact: items"]]
+["negativeFilteredPredicateIsNotStrongerThanSource","return.rows[].height > 0","unknown",["applies to: every item in return.rows","missing fact: items[].height > 0"]]
+["negativeFilteredRowsAreNotAlwaysSameLength","return.rows.length == items.length","unknown",["missing fact: items.filter(item => item.visible).length == items.length"]]
+["negativeFiniteLiteralDiscriminantWrongBranch","return.ordered.yThresholdX > return.ordered.uThresholdX","unknown",["missing fact: (panelX + 100) > (panelX + 300)"]]
+["negativeFirstIterationCoincidenceIsNotARelation","return[$i + 1].y <= return[$i].height + gap","unknown",["return[$i + 1].y <= return[$i].height + gap was not inferred","need: a matching adjacent sequence relation","missing: recognized adjacent row relation"]]
+["negativeFixedElementHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max >= min","unknown",["caller passed: max: -1000..1000, min: -1000..1000","missing: (extent[1][0] - width) >= extent[0][0]"]]
+["negativeFixedElementHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires max: -1000..1000","pass",[]]
+["negativeFixedElementHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires min: -1000..1000","pass",[]]
+["negativeFixedElementHelperPreconditionNeedsComparison","negativeConditionalClampLayoutValue(extent[0][0], value, extent[1][0] - width): requires value: -1000..1000","pass",[]]
+["negativeFixedElementHelperPreconditionNeedsComparison","return >= extent[0][0]","unknown",["missing fact: (extent[1][0] - width) >= extent[0][0]"]]
+["negativeFixedElementPathCannotHideDynamicIndex","given _items[_index][0]: 0..10","unknown",["TypeScript rejected @fit contract:"]]
+["negativeFloatSumIsNotItsDecimalLook","return == 0.3","fail",["result: is false","missing fact: (0.1 + 0.2) == 0.3"]]
+["negativeFloorDivisionDoesNotCoverTotal","return >= total","unknown",["missing fact: (floor((total / count)) * count) >= total"]]
+["negativeFloorHitIndexNeedsUpperBound","return < count","unknown",["missing: (pointer / cellSize) < count"]]
+["negativeFloorHitIndexRoundsAcrossCount","return < count","unknown",["missing: (pointer / cellSize) < count"]]
+["negativeForOfConditionalPushNeedsItemBound","return.rows[].height: 0..40","unknown",["range was 0..100 as rows[].height, expected inside 0..40","missing: rows[].height <= 40"]]
+["negativeForwardSymbolicSlotsAreNotSamePath","return.nextTop == return.currentTop","unknown",["missing fact: rows[focused+1].y == rows[focused].y"]]
+["negativeFunctionGivenCannotNameReturn","given return: 0..10","unknown",["return not found in this contract scope"]]
+["negativeGivenComparisonCannotCallInputMethod","given width.toString() == 10","unknown",["TypeScript rejected @fit contract:"]]
+["negativeGivenComparisonCannotFit","given width <= 50","fail",["no input can satisfy this with the earlier given lines","result: is false","missing fact: width <= 50"]]
+["negativeGivenComparisonCannotIndexArray","given items[index] >= 0","unknown",["TypeScript rejected @fit contract:"]]
+["negativeGivenComparisonsCannotBothHold","given width <= 50","fail",["no input can satisfy this with the earlier given lines","result: is false","missing fact: width <= 50"]]
+["negativeGivenComparisonsCannotTransitivelyHold","given right > x","fail",["no input can satisfy this with the earlier given lines; they already rule out right > x"]]
+["negativeGivenGraphContradiction","given _high * scale < low * scale","fail",["no input can satisfy this with the earlier given lines; they already rule out _high * scale < low * scale"]]
+["negativeGivenGraphContradiction","return == low * scale","pass",[]]
+["negativeGivenRangeBoundCannotCallInputMethod","given items[].height: 0..max.toString()","unknown",["TypeScript rejected @fit contract:"]]
+["negativeGivenRangeCannotBeEmpty","given width: 500..400","fail",["no input can satisfy this: empty range 500..400"]]
+["negativeGivenRangeCannotDescribeDerivedExpression","given width + 1: 0..10","unknown",["given range must name one input path, not a derived expression"]]
+["negativeGivenRangeCannotFitEarlierChain","given x: 0..10","fail",["no input can satisfy this with the earlier given lines; they already rule out x: 0..10"]]
+["negativeGivenSurvivesParamMutation","return: 0..10","unknown",["range was any number as box.size, expected inside 0..10","missing: box.size >= 0","missing: box.size <= 10"]]
+["negativeGuardedColumnWidthRejectsWrongBound","return >= 400","fail",["result: is false","missing fact: ((availableWidth - (16 * (2 - 1))) / 2) >= 400"]]
+["negativeGuardedFlushCannotMixSameArrayAppend","spaced(return.rows, gap)","unknown",["spaced(return.rows, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: recognized adjacent row spacing"]]
+["negativeGuardNeedsReturnOnSmallSide","return >= minWidth","unknown",["missing fact: width >= minWidth"]]
+["negativeHalfOpenUpperExcludesLength","return: int 0..<items.length","fail",["range was int 1..50 as items.length, expected inside int 0..<items.length","missing: items.length < items.length"]]
+["negativeHandwrittenMinOperandBoundIsNotStrict","return < 4","fail",["result: is false","missing: strict comparison cannot hold when both sides are 4"]]
+["negativeHelperResultComparisonNeedsBridge","negativePartialOrderedTriple(low, mid, high): requires low <= mid","pass",[]]
+["negativeHelperResultComparisonNeedsBridge","return.low <= return.high","unknown",["missing fact: low <= high"]]
+["negativeHelperSummaryComparisonIsNotStrict","negativeAtLeastMinWidth(minWidth, width): requires minWidth: 0..1000","pass",[]]
+["negativeHelperSummaryComparisonIsNotStrict","negativeAtLeastMinWidth(minWidth, width): requires width: 0..1000","pass",[]]
+["negativeHelperSummaryComparisonIsNotStrict","return > minWidth","fail",["result: is false by exact linear facts","missing: strict comparison cannot hold when both sides are minWidth"]]
+["negativeIfClampCanReturnMax","return < max","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeIfClampCanReturnMax","return >= min","pass",[]]
+["negativeIndexedAssignmentKillsRowDomain","return.rows[].height: 0..40","unknown",["range was any number as return.rows[].height, expected inside 0..40","missing: return.rows[].height >= 0","missing: return.rows[].height <= 40"]]
+["negativeIndexedConditionalPushIsNotSameLength","return.rows.length == items.length","unknown",["missing fact: rows.length == items.length"]]
+["negativeIndexedLoopAliasNeedsNonNegativeItem","nondecreasing(return.rows.y)","unknown",["nondecreasing(return.rows.y) was not inferred","need: every next .y >= previous .y","missing: given params.items[i].height >= 0"]]
+["negativeIndexedLoopAliasNeedsNonNegativeItem","return.bottom >= params.y","unknown",["missing fact: y >= params.y"]]
+["negativeIndexedLoopIndexCanBeZero","return.rows[].index: int 1..49","unknown",["range was int 0..49 as rows[].index, expected inside int 1..49","missing: rows[].index >= 1"]]
+["negativeIndexedLoopNamedIndexTooHigh","return.rows[].rowIndex: int 0..<items.length","unknown",["range was int 1..50 as rows[].rowIndex, expected inside int 0..<items.length","missing: rows[].rowIndex < items.length"]]
+["negativeInfinityMinusInfinityIsNaN","return >= 0","unknown",["a - b is unknown because equal infinities may meet, producing NaN"]]
+["negativeInfinityModuloIsNaN","return >= 0","unknown",["a % b is unknown because an infinite dividend produces NaN"]]
+["negativeInfinityOverInfinityEchoIsNaN","return == a / b","unknown",["a / b is unknown because two infinities may meet, producing NaN"]]
+["negativeInlineCallBudget","return: 0..10","unknown",["range was any number as chain11Result, expected inside 0..10","missing: chain11Result >= 0","missing: chain11Result <= 10"]]
+["negativeInlineCallBudget > chain1 > chain2 > chain3 > chain4 > chain5 > chain6 > chain7 > chain8 > chain9 > chain10 > chain11","chain12(value)","unknown",["Inline call budget exceeded: 12 nested calls reach limit 12; facts through chain12 become unknown"]]
+["negativeInlineLocalComparison","value < 4","fail",["result: is false","missing: strict comparison cannot hold when both sides are 4"]]
+["negativeInlineObjectFieldComparison","return.width > 4","fail",["result: is false","missing: strict comparison cannot hold when both sides are 4"]]
+["negativeInlineObjectFieldRange","return.width: 0..3","fail",["range was 4, expected inside 0..3","missing: 4 <= 3"]]
+["negativeInlineParamCallGiven","negativeInlineParamNeedsSmall(value): requires value: 0..10","unknown",["caller passed: value: 0..20","missing: value <= 10"]]
+["negativeInlineParamCallGiven","return: 0..20","pass",[]]
+["negativeInlineParamComparison","given max: 100..200","fail",["no input can satisfy this with the earlier given lines; they already rule out max: 100..200"]]
+["negativeInlineReturnComparison","return < 5","fail",["result: is false","missing: strict comparison cannot hold when both sides are 5"]]
+["negativeInlineSideRange","index: int 0..3","fail",["range was 4, expected inside int 0..3","missing: 4 <= 3"]]
+["negativeInvertedClampBounds","negativeConditionalClampLayoutValue(1, opacity, 0): requires max >= min","fail",["caller passed: max: 0, min: 1","missing: 0 >= 1"]]
+["negativeInvertedClampBounds","negativeConditionalClampLayoutValue(1, opacity, 0): requires max: -1000..1000","pass",[]]
+["negativeInvertedClampBounds","negativeConditionalClampLayoutValue(1, opacity, 0): requires min: -1000..1000","pass",[]]
+["negativeInvertedClampBounds","negativeConditionalClampLayoutValue(1, opacity, 0): requires value: -1000..1000","pass",[]]
+["negativeInvertedClampBounds","return: 0..1","pass",[]]
+["negativeLastEndNeedsHeightInRows","lastEnd(return.rows) == return.bottom","unknown",["TypeScript rejected @fit contract:"]]
+["negativeLinearReductionNeedsNonNegativePadding","return.offset >= 0","unknown",["missing fact: ((container - containee) / 2) >= 0"]]
+["negativeLocalHelperPostconditionTooNarrow","negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7): requires max >= min","pass",[]]
+["negativeLocalHelperPostconditionTooNarrow","negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7): requires max: -1000..1000","pass",[]]
+["negativeLocalHelperPostconditionTooNarrow","negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7): requires min: -1000..1000","pass",[]]
+["negativeLocalHelperPostconditionTooNarrow","negativeConditionalClampLayoutValue(1, Math.floor(containerWidth / 240), 7): requires value: -1000..1000","pass",[]]
+["negativeLocalHelperPostconditionTooNarrow","return.cols: int 1..6","fail",["range was 7, expected inside int 1..6","missing: 7 <= 6"]]
+["negativeLocalHelperPreconditionViolation","negativeConditionalClampLayoutValue(10, width, 5): requires max >= min","fail",["caller passed: max: 5, min: 10","missing: 5 >= 10"]]
+["negativeLocalHelperPreconditionViolation","negativeConditionalClampLayoutValue(10, width, 5): requires max: -1000..1000","pass",[]]
+["negativeLocalHelperPreconditionViolation","negativeConditionalClampLayoutValue(10, width, 5): requires min: -1000..1000","pass",[]]
+["negativeLocalHelperPreconditionViolation","negativeConditionalClampLayoutValue(10, width, 5): requires value: -1000..1000","pass",[]]
+["negativeLocalHelperPreconditionViolation","return: 0..100","pass",[]]
+["negativeLocalLoopAnnotationNeedsNonNegativeItem","return.rows.length == items.length","pass",[]]
+["negativeLocalLoopAnnotationNeedsNonNegativeItem > loop","nondecreasing(rows.y)","unknown",["nondecreasing(rows.y) was not inferred","need: every next .y >= previous .y","missing: given items[].height >= 0"]]
+["negativeLocalNamedMapCallbackIsUnknown","return == 0","pass",[]]
+["negativeLogicalOrTrueOnlyCarriesOneSide","return >= 0","unknown",["missing fact: (x + y) >= 0"]]
+["negativeLoopCursorMovesWithoutPush","spaced(return.rows, gap)","unknown",["spaced(return.rows, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: recognized adjacent row spacing"]]
+["negativeLoopFitHasNoReturn","return.rows.length == items.length","pass",[]]
+["negativeLoopFitHasNoReturn > loop","given return.rows.length == items.length","unknown",["loop @fit specs do not have return; name local values directly"]]
+["negativeLoopGivenCannotNameRows > loop","given rows.length == items.length","unknown",["rows not found in this contract scope"]]
+["negativeLoopGuardMutationIsNotPure","return == 10","unknown",["Loop condition has effects or unknown behavior: --cap > 0"]]
+["negativeLoopLengthDerivedIndexDoesNotUseInitialArray","last: 0","pass",[]]
+["negativeLoopResetAssignmentIsNotAccumulator","return >= 10","unknown",["missing fact: total >= 10"]]
+["negativeLoopStaleBodyClaim","return: 0..5000","unknown",["range was any number as y, expected inside 0..5000","missing: y >= 0","missing: y <= 5000"]]
+["negativeLoopStaleBodyClaim","snapshot: 0..0","unknown",["range was any non-NaN number as y, expected inside 0..0","missing: y >= 0","missing: y <= 0"]]
+["negativeMapBlockRowsNeedFieldDomain","return.rows[].height: 0..40","unknown",["range was -40..40 as items[].height, expected inside 0..40","missing: items[].height >= 0"]]
+["negativeMapCallbackMutatesCaptured","return == 0","unknown",["missing fact: total == 0"]]
+["negativeMapCallbackMutationForgetsReturnedFact","return[].value > 0","fail",["applies to: every item in return","result: is false","missing fact: -1 > 0"]]
+["negativeMapFunctionRowsNeedFieldDomain","return.rows[].height: 0..40","unknown",["range was -40..40 as items[].height, expected inside 0..40","missing: items[].height >= 0"]]
+["negativeMapIndexCanBeZero","return.rows[].index: int 1..49","unknown",["range was int 0..49 as mapIndex(items), expected inside int 1..49","missing: mapIndex(items) >= 1"]]
+["negativeMapRowsNeedFieldDomain","return.rows[].height: 0..40","unknown",["range was -40..40 as items[].height, expected inside 0..40","missing: items[].height >= 0"]]
+["negativeMathMinOperandBoundIsNotStrict","return < 4","fail",["result: is false","missing: strict comparison cannot hold when both sides are 4"]]
+["negativeMathSignCanBeNegative","return: int 0..1","unknown",["range was int -1..1 as sign(value), expected inside int 0..1","missing: sign(value) >= 0"]]
+["negativeMissingRowBottom","return.bottom == return.y + return.height","unknown",["missing fact: ((row.y + row.height) - 1) == (row.y + row.height)"]]
+["negativeModuloNeedsPositiveCount","return < count","unknown",["Remainder by a range containing zero is unsupported"]]
+["negativeMutableMathAlias","return >= 0","unknown",["mutableMaxAlias is a mutable helper alias; Freerange only follows const helper aliases"]]
+["negativeNamedMapCallbackMutatesElement","return == 1","unknown",["missing fact: boxes[0]!.size == 1"]]
+["negativeNaNCapableFalseGuardStaysUnknown","return >= 0","pass",[]]
+["negativeNeedsContainerFit","return >= 0","pass",[]]
+["negativeNeedsShortArray","return: int 0..10","pass",[]]
+["negativeNeedsSmallValue","return: 0..10","pass",[]]
+["negativeNeedsWideViewport","return: 320..2000","pass",[]]
+["negativeNestedRowRectNeedsNonNegativeAdvance","return.rows[$i].rowRect.y <= return.rows[$i + 1].rowRect.y","unknown",["return.rows[$i + 1].rowRect.y >= return.rows[$i].rowRect.y was not inferred","need: a matching adjacent sequence relation","missing: recognized adjacent row relation"]]
+["negativeNestedWildcardRowsNeedScalarBound","return.sections[].rows[].height <= maxHeight","unknown",["applies to: every item in return.sections[].rows","missing fact: sections[].rows[].height <= maxHeight"]]
+["negativeNullableBranchNeedsPresentGuard","return: int 0..49","unknown",["TypeScript rejected @fit contract:"]]
+["negativeNullablePropertyNeedsPresentGuard","return: int 0..49","unknown",["Nullable value {targetIndex: focused - 1} was not proven present"]]
+["negativeNumericLimitRangeLoopCanIncludeZero","return[]: int 1..<limit","unknown",["range was int 0..999 as values[], expected inside int 1..<limit","missing: values[] >= 1"]]
+["negativeObjectFieldDomainTooWide","return.height >= 0","unknown",["missing fact: item.height >= 0"]]
+["negativeObjectMutationForgetsInputPath","return >= 0","fail",["result: is false","missing fact: -1 >= 0"]]
+["negativeObjectSpreadNeedsFieldDomain","return.x: 0..100","unknown",["range was -10..100 as base.x, expected inside 0..100","missing: base.x >= 0"]]
+["negativeOffByOneTargetIndex","return.targetIndex: int 0..<items.length","unknown",["range was int 1..50 as (focused + 1), expected inside int 0..<items.length","missing: (focused + 1) < items.length"]]
+["negativeOneMarkerIsNotFinite","return < Infinity","unknown",["missing fact: pos < Infinity"]]
+["negativeOpaqueInequalityGraphLoosePathIsNotStrict","return < _high * scale","unknown",["missing fact: (low * scale) < (_high * scale)"]]
+["negativeOppositeInfinitySumIsNaN","return == a + b","unknown",["a + b is unknown because opposite infinities may meet, producing NaN"]]
+["negativeOptionalNumberNeedsPresentGuard","return >= max","unknown",["TypeScript rejected @fit contract:"]]
+["negativeOptionalStructuralCallShape","return.rows.length >= 0","unknown",["TypeScript rejected @fit contract:"]]
+["negativeOptionalTupleShapeIsNotExactLength","return.length == 2","unknown",["Optional and rest tuple elements are unsupported: return"]]
+["negativeOutputRange","return: int 0..4","fail",["range was int 5..15 as (value + 5), expected inside int 0..4","missing: (value + 5) <= 4","counterexample within the known facts: value = 10"]]
+["negativePairedObjectReturnShape","return: {x: 0, width: 100} | {x: 20, width: 80}","unknown",["TypeScript rejected @fit contract:"]]
+["negativePartialOrderedTriple","return.low <= return.mid","pass",[]]
+["negativePartialRenameLosesTheRelation","spaced(return, gap)","unknown",["spaced(return, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: recognized adjacent row spacing"]]
+["negativePathSensitiveMinOverflow","return.overflow < 0","fail",["result: is false","missing: width <= 0"]]
+["negativePerItemFieldNeedsDomain","return: 0..40","unknown",["range was -1.7976931348623157e+308..1.7976931348623157e+308 as items[index].height, expected inside 0..40","missing: items[index].height >= 0","missing: items[index].height <= 40"]]
+["negativePlainClientWidthIsNotAmbient","return: 0..<Infinity","unknown",["range was 0..Infinity as box.clientWidth, expected inside 0..<Infinity","missing: box.clientWidth < Infinity"]]
+["negativePredecessorIndexNeedsStrictPositiveBranch","return: 0..40","unknown",["Array index int -1..48 as (focused - 1) was not proven inside length int 1..50 as items.length; prove 0 <= index < length or use a finite literal index"]]
+["negativePrefixIncrementWrites","return == 10","fail",["result: is false","missing fact: (10 + 1) == 10"]]
+["negativePureClaimOnEnvironmentObserver","pure","fail",["not pure: observes the environment (I/O, the clock, or randomness)"]]
+["negativePureClaimOnParameterMutator","pure","fail",["not pure: mutates parameter `box`"]]
+["negativePureClaimWithUnanalyzableCall","pure","unknown",["not pure: calls a function whose body cannot be analyzed"]]
+["negativeRelationalCallGiven","negativeNeedsContainerFit(containee, container): requires containee: 0..1000","pass",[]]
+["negativeRelationalCallGiven","negativeNeedsContainerFit(containee, container): requires container >= containee","fail",["caller passed: container: 0..50, containee: 100..200","missing: container >= containee"]]
+["negativeRelationalCallGiven","negativeNeedsContainerFit(containee, container): requires container: 0..1000","pass",[]]
+["negativeRelationalCallGiven","return: -100..0","pass",[]]
+["negativeRepeatedAdditionIsNotMultiplication","return == n * 0.1","unknown",["missing fact: total == (n * 0.1)"]]
+["negativeRestTupleShapeIsNotExactLength","return.length == 2","unknown",["Optional and rest tuple elements are unsupported: return"]]
+["negativeReverseKillsRowOrder","nondecreasing(return.rows.y)","unknown",["nondecreasing(return.rows.y) was not inferred","need: every next .y >= previous .y","missing: sequence facts for .y"]]
+["negativeRoundingDoesNotKeepStrictOrder","return.floorLeft < return.floorRight","unknown",["missing: x < floor(right)"]]
+["negativeRunningMaxNeedsItemBound","return: 0..80","unknown",["range was 0..120 as maxWidth, expected inside 0..80","missing: maxWidth <= 80"]]
+["negativeRunningMinNeedsItemBound","return >= 0","unknown",["missing fact: minWidth >= 0"]]
+["negativeRunningSumNeedsNonNegativeStep","nondecreasing(return.rows.y)","unknown",["nondecreasing(return.rows.y) was not inferred","need: every next .y >= previous .y","missing: given step >= 0"]]
+["negativeRunningSumPerItemHeightNeedsNonNegative","nondecreasing(return.rows.y)","unknown",["nondecreasing(return.rows.y) was not inferred","need: every next .y >= previous .y","missing: given items[].height >= 0"]]
+["negativeRunningTotalNeedsNonNegativeItem","return >= 0","unknown",["missing fact: total >= 0"]]
+["negativeSameIndexNeedsMatchingLengths","return.rows[$i].y <= return.boxes[$i].bottom","unknown",["Bound index label $i needs matching lengths for return.rows and return.boxes","missing fact: rows.length == boxes.length"]]
+["negativeScalarPushLoopNeedsNonNegativeStep","return[] >= 0","unknown",["applies to: every item in return","missing: cursor@loop@rows@loop >= 0"]]
+["negativeScalarStringishMutationForgetsMutatedRoot","return: 0","unknown",["TypeScript rejected @fit contract:"]]
+["negativeScaleFlipNeedsNegativeFactor","return <= content * scale","unknown",["missing: scale < 0"]]
+["negativeScaleNeedsNonNegativeFactor","return.scaled <= return.limit","unknown",["missing: scale >= 0"]]
+["negativeSeededArrayBreaksAdjacency","nondecreasing(return.y)","unknown",["nondecreasing(return.y) was not inferred","need: every next .y >= previous .y","missing: sequence facts for .y"]]
+["negativeSegmentedStackRowsInlineBottomNeedsMatchingBottom","return.rows[].bottom == return.rows[].y + return.rows[].height","unknown",["applies to: every item in return.rows","missing fact: rows[].bottom == (rows[].y + rows[].height)"]]
+["negativeSegmentedStackRowsNeedMatchingBottom","return.rows[].bottom == return.rows[].y + return.rows[].height","unknown",["applies to: every item in return.rows","missing fact: rows[].bottom == (rows[].y + rows[].height)"]]
+["negativeSegmentedStackRowsNeedMatchingGap","return.rows[$i + 1].y == return.rows[$i].bottom + gap","unknown",["return.rows[$i + 1].y == return.rows[$i].bottom + gap was not inferred","need: a matching adjacent sequence relation","missing: recognized adjacent row relation"]]
+["negativeSegmentedStackRowsNeedMatchingGap","spaced(return.rows, gap)","unknown",["spaced(return.rows, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: given otherGap == gap"]]
+["negativeSelfReferentialAccumulatorRhs","return: 0..10","unknown",["total += total is unknown because opposite infinities may meet, producing NaN"]]
+["negativeSeparateConditionalExpressionsDoNotReconnect","return.total: 11 | 22","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSeparateGroupedHelperCallsDoNotReconnect","return.value <= return.bound","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSeparateHelperCallsDoNotReconnect","return: -100 | -9","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSeparateIfStatementsDoNotReconnect","return: 22 | 33","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSeparateLayoutCallsDoNotReconnect","return: 216 | 324","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSeparateNumericGuardOutcomesStayUnknown","return <= 0","unknown",["Numeric alternatives came from separate branch constructs and are not assumed to match"]]
+["negativeSilentHelperSummaryRequiresPrecondition","negativeConditionalClampLayoutValue(10, 0, 2): requires max >= min","fail",["caller passed: max: 2, min: 10","missing: 2 >= 10"]]
+["negativeSilentHelperSummaryRequiresPrecondition","negativeConditionalClampLayoutValue(10, 0, 2): requires max: -1000..1000","pass",[]]
+["negativeSilentHelperSummaryRequiresPrecondition","negativeConditionalClampLayoutValue(10, 0, 2): requires min: -1000..1000","pass",[]]
+["negativeSilentHelperSummaryRequiresPrecondition","negativeConditionalClampLayoutValue(10, 0, 2): requires value: -1000..1000","pass",[]]
+["negativeSilentHelperSummaryRequiresPrecondition","return.clamped <= 2","fail",["result: is false","missing fact: 10 <= 2"]]
+["negativeSnapshotCancelsAcrossMutation","return: 0..0","unknown",["before - after is unknown because an operand may be NaN"]]
+["negativeSpacedNeedsMatchingGap","spaced(return.rows, otherGap)","unknown",["spaced(return.rows, otherGap) was not inferred","need: every next row top == previous top + previous height + otherGap","missing: given gap == otherGap"]]
+["negativeStaleGapAfterRefactor","spaced(return.rows, gap)","unknown",["spaced(return.rows, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: given (gap + 1) == gap"]]
+["negativeStatePartitionBudgetDoesNotSilentlyPass","return: int 0..15","unknown",["State partition budget exceeded: 16 branch states exceed limit 8; Freerange refuses to summarize branch states silently"]]
+["negativeStrictSpring","return.b > 0","pass",[]]
+["negativeStrictSpring","return.k > 0","pass",[]]
+["negativeStrictSpringBadDefault","return.b > 0","pass",[]]
+["negativeStrictSpringBadDefault","return.k > 0","pass",[]]
+["negativeStrictSpringCallArg","negativeStrictSpring(-1): requires b > 0","pass",[]]
+["negativeStrictSpringCallArg","negativeStrictSpring(-1): requires k > 0","fail",["caller passed: k: -1","missing: -1 > 0"]]
+["negativeStrictSpringCallArg","return.b > 0","pass",[]]
+["negativeStrictSpringCallArg","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeStrictSpringDefault","negativeStrictSpringBadDefault(): requires b > 0","fail",["caller passed: b: 0","missing: 0 > 0"]]
+["negativeStrictSpringDefault","return.b > 0","fail",["result: is false","missing: strict comparison cannot hold when both sides are 0"]]
+["negativeStrictSpringDefault","return.k > 0","pass",[]]
+["negativeStrictSpringManualObject","return.b > 0","pass",[]]
+["negativeStrictSpringManualObject","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeStrictSpringMutation","negativeStrictSpring(): requires b > 0","pass",[]]
+["negativeStrictSpringMutation","negativeStrictSpring(): requires k > 0","pass",[]]
+["negativeStrictSpringMutation","return.b > 0","pass",[]]
+["negativeStrictSpringMutation","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeStrictSpringObjectArg","negativeStrictSpring(params.k, params.b): requires b > 0","fail",["caller passed: b: 0","missing: 0 > 0"]]
+["negativeStrictSpringObjectArg","negativeStrictSpring(params.k, params.b): requires k > 0","pass",[]]
+["negativeStrictSpringObjectArg","return.b > 0","fail",["result: is false","missing: strict comparison cannot hold when both sides are 0"]]
+["negativeStrictSpringObjectArg","return.k > 0","pass",[]]
+["negativeStrictSpringObjectAssign","negativeStrictSpring(): requires b > 0","pass",[]]
+["negativeStrictSpringObjectAssign","negativeStrictSpring(): requires k > 0","pass",[]]
+["negativeStrictSpringObjectAssign","return.b > 0","unknown",["missing fact: return.b > 0"]]
+["negativeStrictSpringObjectAssign","return.k > 0","unknown",["missing fact: return.k > 0"]]
+["negativeSubUlpMarginIsAbsorbed","return > x","unknown",["missing fact: (x + 1e-30) > x"]]
+["negativeThrowGuardOnlyProvesPositive","return > 1","unknown",["missing fact: step > 1"]]
+["negativeTinyCoefficientIsNotZero","return == 0","unknown",["missing fact: (1e-10 * x) == 0"]]
+["negativeTrailingCommentBelongsToItsOwnDeclaration","annotated == 99","unknown",["TypeScript rejected @fit contract:"]]
+["negativeTypedArrayConstructorKeepsExactLength","return.length == count + 1","unknown",["missing fact: count == (count + 1)"]]
+["negativeTypedTupleShapeIsNotNumeric","return[1].height: 0..40","unknown",["range was -1.7976931348623157e+308..1.7976931348623157e+308 as input[1].height, expected inside 0..40","missing: input[1].height >= 0","missing: input[1].height <= 40"]]
+["negativeTypeFieldArrayElement","return.rows[].height: 0..40","fail",["range was 100, expected inside 0..40","missing: 100 <= 40"]]
+["negativeTypeFieldAsReturn","return.b >= 0","pass",[]]
+["negativeTypeFieldAsReturn","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeTypeFieldCallBoundary","negativeNeedsTypeFieldSpring(spring): requires spring.b >= 0","pass",[]]
+["negativeTypeFieldCallBoundary","negativeNeedsTypeFieldSpring(spring): requires spring.k > 0","fail",["caller passed: spring.k: -1","missing: spring.k > 0"]]
+["negativeTypeFieldCallBoundary","return < 0","pass",[]]
+["negativeTypeFieldLocalBoundary","spring.b >= 0","pass",[]]
+["negativeTypeFieldLocalBoundary","spring.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeTypeFieldReturnCheck","return.b >= 0","pass",[]]
+["negativeTypeFieldReturnCheck","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeTypeFieldSatisfiesReturn","return.b >= 0","pass",[]]
+["negativeTypeFieldSatisfiesReturn","return.k > 0","fail",["result: is false","missing fact: -1 > 0"]]
+["negativeTypeRelationArrayPathReturnCheck","return.rows[].bottom >= return.rows[].y","fail",["applies to: every item in return.rows","result: is false","missing fact: 0 >= 10"]]
+["negativeTypeRelationArrayPathReturnCheck","return.rows[].cells[].right >= return.rows[].cells[].x","fail",["applies to: every item in return.rows[].cells","result: is false","missing fact: 1 >= 4"]]
+["negativeTypeRelationCallBoundary","negativeNeedsTypeRelationSpring(spring): requires spring.k > spring.b","fail",["caller passed: spring.k: 1, spring.b: 2","missing: spring.k > spring.b"]]
+["negativeTypeRelationCallBoundary","return > 0","pass",[]]
+["negativeTypeRelationOptional",">= 0","unknown",["type @fit on optional fields is not supported yet"]]
+["negativeTypeRelationReturnCheck","return.k > return.b","fail",["result: is false","missing fact: 1 > 2"]]
+["negativeUnboundedPromptHeight","return.visibleHeight <= availableHeight","unknown",["missing fact: prompt.height <= availableHeight"]]
+["negativeUnboundedWidthNeedsCap","return <= 500","unknown",["missing fact: (width / 2) <= 500"]]
+["negativeUnionBranchInsideBoundsOutsideSet","return: 0 | 100","fail",["value was 0 | 50, expected one of 0 | 100","branches produced 0, 50","missing: 0 | 50 in {0, 100}"]]
+["negativeUnionGivenCallee","return >= 82","pass",[]]
+["negativeUnionGivenCallerOutsideSet","negativeUnionGivenCallee(150): requires navSizeX: 82 | 214","fail",["caller passed: navSizeX: 150","missing: 150 in {82, 214}"]]
+["negativeUnionGivenCallerOutsideSet","return >= 82","pass",[]]
+["negativeUnionReturnOutsideSet","return: 40 | 120","fail",["value was 82 | 214 as navSizeX, expected one of 40 | 120","branches produced 82, 214","missing: navSizeX in {40, 120}"]]
+["negativeUnionTieIsNotStrict","return > 0","unknown",["missing fact: x > 0"]]
+["negativeUnsupportedForLoopForgetsScalar","return: 0..0","unknown",["Indexed for loops support for (let i = 0; i < limit; i++) style loops"]]
+["negativeWildcardComparisonNeedsScalar","return.rows[].y <= return.boxes[].bottom","unknown",["Wildcard comparisons support one wildcard side and one scalar side"]]
+["negativeWildcardRowsNeedParentBottom","return.rows[].y + return.rows[].height <= parent.bottom","unknown",["applies to: every item in return.rows","missing fact: (rows[].y + items[].height) <= parent.bottom"]]
+["negativeZeroTimesInfinityIsNaN","return >= 0","unknown",["a * b is unknown because zero and infinity may meet, producing NaN"]]
+["separateGroupedValueAndBound","return.bound: 5 | 20","pass",[]]
+["separateGroupedValueAndBound","return.value: 4 | 20","pass",[]]
+["file","tests/source-checking/negative-shadowed-catalog.ts"]
+["negativeUserFunctionNotHijackedByCatalog","return >= 0","fail",["result: is false","missing fact: (0 - 10) >= 0"]]
+["userFunctionWinsOverCatalogName","return: -10..100","pass",[]]

@@ -1,168 +1,170 @@
-infer matrix nested iife/map/defaults
-  return return.length == matrixInput.groups.length
-  return return.length: int 0..4294967295
-  return return[].length == group.items.length
-  return return[].length: int 0..4294967295
-  return return[][].index == mapIndex(group.items)
-  return return[][].index: int 0..4294967294
-  return return[][].spring.b == 30
-  return return[][].spring.b: int 30..30
-  return return[][].spring.k == 290
-  return return[][].spring.k: int 290..290
-  return return[][].spring.pos: -1.7976931348623157e+308..1.7976931348623157e+308
-  return return[] follows group.items by index
-  return return follows matrixInput.groups by index
-  unsupported unsupported matrixNestedIifeMapDefaults > <iife> > <map-element> > <map-element> line 44: touched.count + 1 is unknown because an operand may be NaN
-infer matrix default param order
-  return return.b == (10 + 1)
-  return return.b: int 11..11
-  return return.k == 10
-  return return.k: int 10..10
-  return return.pos == 0
-  return return.pos: int 0..0
-  local base == 10
-  local base: int 10..10
-infer matrix explicit undefined defaults
-  return return.b == 30
-  return return.b: int 30..30
-  return return.k == 290
-  return return.k: int 290..290
-  return return.pos == 0
-  return return.pos: int 0..0
-infer matrix for-of push visible rows
-  return return.length == rows.length
-  return return.length: int 0..3
-  return return[].height == rows[].height
-  return return[].height: int 2..6
-  return return is an order-preserving subset of items
-  local items.length: int 3..3
-  local items[].height: 2 | 4 | 6
-  local rows.length: int 0..3
-  local rows[].height: int 2..6
-  local rows is an order-preserving subset of items
-infer matrix abstract for-of param rows
-  return return.rows.length == items.length
-  return return.rows.length: int 0..4294967295
-  return return.rows[].height == rows[].height
-  return return.rows follows items by index
-  local rows.length == items.length
-  local rows.length: int 0..4294967295
-  local rows follows items by index
-infer matrix abstract guarded for-of rows
-  return return.rows.length == rows.length
-  return return.rows.length: int 0..4294967295
-  return return.rows[].height == rows[].height
-  return return.rows is an order-preserving subset of items
-  local rows.length: int 0..4294967295
-  local rows is an order-preserving subset of items
-infer matrix abstract for-of cursor values
-  return return.bottom == y
-  return return.bottom: 0..3000
-  return return.rows.length == items.length
-  return return.rows.length: int 0..50
-  return return.rows[] == rows[]
-  return return.rows[]: 0..2960
-  return return.rows follows items by index
-  return nondecreasing(return.rows)
-  return spaced(return.rows, step)
-  return return.rows[$i + 1] == return.rows[$i] + step
-  local rows.length == items.length
-  local rows.length: int 0..50
-  local rows[]: 0..2960
-  local rows follows items by index
-  local nondecreasing(rows)
-  local spaced(rows, step)
-  local rows[$i + 1] == rows[$i] + step
-  local y: 0..3000
-infer matrix abstract conditional count
-  return return == count
-  return return: int 0..50
-  local count: int 0..50
-infer matrix abstract running max
-  return return == maxWidth
-  return return: 0..80
-  local maxWidth: 0..80
-infer matrix indexed conditional count
-  return return == count
-  return return: int 0..50
-  local count: int 0..50
-infer matrix indexed running max
-  return return == maxWidth
-  return return: 0..80
-  local maxWidth: 0..80
-infer matrix indexed limit range
-  return return.length == limit
-  return return.length: int 0..30
-  return return[] == values[]
-  return return[]: int 0..29
-  local values.length == limit
-  local values.length: int 0..30
-  local values[]: int 0..29
-infer matrix indexed array param rows
-  return return.rows.length == items.length
-  return return.rows.length: int 0..20
-  return return.rows[].height == rows[].height
-  return return.rows[].height: 0..80
-  return return.rows[].sourceIndex == rows[].sourceIndex
-  return return.rows[].sourceIndex: int 0..19
-  return return.rows follows items by index
-  local rows.length == items.length
-  local rows.length: int 0..20
-  local rows[].height: 0..80
-  local rows[].sourceIndex: int 0..19
-  local rows follows items by index
-infer matrix indexed array guarded rows
-  return return.rows.length == rows.length
-  return return.rows.length: int 0..20
-  return return.rows[].height == rows[].height
-  return return.rows[].height: 0..80
-  return return.rows[].sourceIndex == rows[].sourceIndex
-  return return.rows[].sourceIndex: int 0..19
-  return return.rows is an order-preserving subset of items
-  local rows.length: int 0..20
-  local rows[].height: 0..80
-  local rows[].sourceIndex: int 0..19
-  local rows is an order-preserving subset of items
-infer matrix indexed array guarded cursor values
-  return return.bottom == y
-  return return.bottom: 0..3000
-  return return.rows.length == rows.length
-  return return.rows.length: int 0..50
-  return return.rows[] == rows[]
-  return return.rows[]: 0..2960
-  return return.rows is an order-preserving subset of items
-  local rows.length: int 0..50
-  local rows[]: 0..2960
-  local rows is an order-preserving subset of items
-  local y: 0..3000
-infer matrix indexed array cursor values
-  return return.bottom == y
-  return return.bottom: 0..3000
-  return return.rows.length == items.length
-  return return.rows.length: int 0..50
-  return return.rows[] == rows[]
-  return return.rows[]: 0..2960
-  return return.rows follows items by index
-  return nondecreasing(return.rows)
-  return spaced(return.rows, step)
-  return return.rows[$i + 1] == return.rows[$i] + step
-  local rows.length == items.length
-  local rows.length: int 0..50
-  local rows[]: 0..2960
-  local rows follows items by index
-  local nondecreasing(rows)
-  local spaced(rows, step)
-  local rows[$i + 1] == rows[$i] + step
-  local y: 0..3000
-infer imported literal nested map/defaults
-  return return.length == importedNestedLiteralSpringData.groups.length
-  return return.length: int 0..4294967295
-  return return[].springs.length == group.items.length
-  return return[].springs.length: int 0..4294967295
-  return return[].springs[].b == 30
-  return return[].springs[].b: int 30..30
-  return return[].springs[].k == 290
-  return return[].springs[].k: int 290..290
-  return return[].springs[].pos: -1.7976931348623157e+308..1.7976931348623157e+308
-  return return[].springs follows group.items by index
-  return return follows importedNestedLiteralSpringData.groups by index
+@ "tests/interpreter-matrix/interpreter-matrix-patterns.ts"
+# ["matrixNestedIifeMapDefaults"]
+f "return.length == matrixInput.groups.length"
+f "return.length: int 0..4294967295"
+f "return[].length == group.items.length"
+f "return[].length: int 0..4294967295"
+f "return[][].index == mapIndex(group.items)"
+f "return[][].index: int 0..4294967294"
+f "return[][].spring.b == 30"
+f "return[][].spring.b: int 30..30"
+f "return[][].spring.k == 290"
+f "return[][].spring.k: int 290..290"
+f "return[][].spring.pos: -1.7976931348623157e+308..1.7976931348623157e+308"
+f "return[] follows group.items by index"
+f "return follows matrixInput.groups by index"
+! "unsupported matrixNestedIifeMapDefaults > <iife> > <map-element> > <map-element> line 44: touched.count + 1 is unknown because an operand may be NaN"
+# ["matrixDefaultParamOrder"]
+f "return.b == (10 + 1)"
+f "return.b: int 11..11"
+f "return.k == 10"
+f "return.k: int 10..10"
+f "return.pos == 0"
+f "return.pos: int 0..0"
+l "base == 10"
+l "base: int 10..10"
+# ["matrixExplicitUndefinedDefaults"]
+f "return.b == 30"
+f "return.b: int 30..30"
+f "return.k == 290"
+f "return.k: int 290..290"
+f "return.pos == 0"
+f "return.pos: int 0..0"
+# ["matrixForOfPushVisibleRows"]
+f "return.length == rows.length"
+f "return.length: int 0..3"
+f "return[].height == rows[].height"
+f "return[].height: int 2..6"
+f "return is an order-preserving subset of items"
+l "items.length: int 3..3"
+l "items[].height: 2 | 4 | 6"
+l "rows.length: int 0..3"
+l "rows[].height: int 2..6"
+l "rows is an order-preserving subset of items"
+# ["matrixForOfParamRows"]
+f "return.rows.length == items.length"
+f "return.rows.length: int 0..4294967295"
+f "return.rows[].height == rows[].height"
+f "return.rows follows items by index"
+l "rows.length == items.length"
+l "rows.length: int 0..4294967295"
+l "rows follows items by index"
+# ["matrixForOfParamVisibleRows"]
+f "return.rows.length == rows.length"
+f "return.rows.length: int 0..4294967295"
+f "return.rows[].height == rows[].height"
+f "return.rows is an order-preserving subset of items"
+l "rows.length: int 0..4294967295"
+l "rows is an order-preserving subset of items"
+# ["matrixForOfParamCursorValues"]
+f "return.bottom == y"
+f "return.bottom: 0..3000"
+f "return.rows.length == items.length"
+f "return.rows.length: int 0..50"
+f "return.rows[] == rows[]"
+f "return.rows[]: 0..2960"
+f "return.rows follows items by index"
+f "nondecreasing(return.rows)"
+f "spaced(return.rows, step)"
+f "return.rows[$i + 1] == return.rows[$i] + step"
+l "rows.length == items.length"
+l "rows.length: int 0..50"
+l "rows[]: 0..2960"
+l "rows follows items by index"
+l "nondecreasing(rows)"
+l "spaced(rows, step)"
+l "rows[$i + 1] == rows[$i] + step"
+l "y: 0..3000"
+# ["matrixForOfParamConditionalCount"]
+f "return == count"
+f "return: int 0..50"
+l "count: int 0..50"
+# ["matrixForOfParamRunningMax"]
+f "return == maxWidth"
+f "return: 0..80"
+l "maxWidth: 0..80"
+# ["matrixIndexedArrayConditionalCount"]
+f "return == count"
+f "return: int 0..50"
+l "count: int 0..50"
+# ["matrixIndexedArrayRunningMax"]
+f "return == maxWidth"
+f "return: 0..80"
+l "maxWidth: 0..80"
+# ["matrixIndexedLimitRange"]
+f "return.length == limit"
+f "return.length: int 0..30"
+f "return[] == values[]"
+f "return[]: int 0..29"
+l "values.length == limit"
+l "values.length: int 0..30"
+l "values[]: int 0..29"
+# ["matrixIndexedArrayParamRows"]
+f "return.rows.length == items.length"
+f "return.rows.length: int 0..20"
+f "return.rows[].height == rows[].height"
+f "return.rows[].height: 0..80"
+f "return.rows[].sourceIndex == rows[].sourceIndex"
+f "return.rows[].sourceIndex: int 0..19"
+f "return.rows follows items by index"
+l "rows.length == items.length"
+l "rows.length: int 0..20"
+l "rows[].height: 0..80"
+l "rows[].sourceIndex: int 0..19"
+l "rows follows items by index"
+# ["matrixIndexedArrayGuardedRows"]
+f "return.rows.length == rows.length"
+f "return.rows.length: int 0..20"
+f "return.rows[].height == rows[].height"
+f "return.rows[].height: 0..80"
+f "return.rows[].sourceIndex == rows[].sourceIndex"
+f "return.rows[].sourceIndex: int 0..19"
+f "return.rows is an order-preserving subset of items"
+l "rows.length: int 0..20"
+l "rows[].height: 0..80"
+l "rows[].sourceIndex: int 0..19"
+l "rows is an order-preserving subset of items"
+# ["matrixIndexedArrayGuardedCursorValues"]
+f "return.bottom == y"
+f "return.bottom: 0..3000"
+f "return.rows.length == rows.length"
+f "return.rows.length: int 0..50"
+f "return.rows[] == rows[]"
+f "return.rows[]: 0..2960"
+f "return.rows is an order-preserving subset of items"
+l "rows.length: int 0..50"
+l "rows[]: 0..2960"
+l "rows is an order-preserving subset of items"
+l "y: 0..3000"
+# ["matrixIndexedArrayCursorValues"]
+f "return.bottom == y"
+f "return.bottom: 0..3000"
+f "return.rows.length == items.length"
+f "return.rows.length: int 0..50"
+f "return.rows[] == rows[]"
+f "return.rows[]: 0..2960"
+f "return.rows follows items by index"
+f "nondecreasing(return.rows)"
+f "spaced(return.rows, step)"
+f "return.rows[$i + 1] == return.rows[$i] + step"
+l "rows.length == items.length"
+l "rows.length: int 0..50"
+l "rows[]: 0..2960"
+l "rows follows items by index"
+l "nondecreasing(rows)"
+l "spaced(rows, step)"
+l "rows[$i + 1] == rows[$i] + step"
+l "y: 0..3000"
+@ "tests/imports/import-patterns.ts"
+# ["importedNestedLiteralArrayMapDefaultFields"]
+f "return.length == importedNestedLiteralSpringData.groups.length"
+f "return.length: int 0..4294967295"
+f "return[].springs.length == group.items.length"
+f "return[].springs.length: int 0..4294967295"
+f "return[].springs[].b == 30"
+f "return[].springs[].b: int 30..30"
+f "return[].springs[].k == 290"
+f "return[].springs[].k: int 290..290"
+f "return[].springs[].pos: -1.7976931348623157e+308..1.7976931348623157e+308"
+f "return[].springs follows group.items by index"
+f "return follows importedNestedLiteralSpringData.groups by index"

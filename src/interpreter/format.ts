@@ -6,18 +6,11 @@ import {
   type ObjectValue,
   type Value,
 } from '../domain.ts'
-import {factsFromValue, type FitInferFact} from '../facts.ts'
 import {formatRange} from '../reporting.ts'
 import type {InterpreterEffect, InterpreterIssue} from './context.ts'
 
 export function formatInterpreterValue(value: Value, root = 'return'): string[] {
   return formatValue(value, root)
-}
-
-export function formatInterpreterFacts(value: Value, root = 'return'): string[] {
-  return factsFromValue(root, value)
-    .filter(interpreterSnapshotFact)
-    .map(fact => `fact ${fact.text}`)
 }
 
 export function formatInterpreterIssues(issues: InterpreterIssue[]): string[] {
@@ -74,8 +67,4 @@ function formatArray(value: ArrayValue, path: string): string[] {
   const element = arrayElement(value)
   if (element != null) lines.push(...formatValue(element, `${path}[]`))
   return lines
-}
-
-function interpreterSnapshotFact(fact: FitInferFact): boolean {
-  return fact.kind === 'origin'
 }
