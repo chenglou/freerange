@@ -2277,8 +2277,9 @@ function publishRoundedMonotoneFacts(result: Value, op: '+' | '-', left: NumberV
     if (fact != null) facts.push(fact)
   }
   if (op === '+') {
-    // The >= pair carries the corpus's sign chains; the <= mirror images are
-    // goal-time recoverable and not worth growing every Farkas call for.
+    // These two facts support chains of additions that can only make a value
+    // larger. The <= mirror images are goal-time recoverable and not worth
+    // growing every Farkas call for.
     if (right.min >= 0) push(comparisonConstraint(result, '>=', left, `${result.expr} >= ${left.expr ?? '?'}`))
     if (left.min >= 0) push(comparisonConstraint(result, '>=', right, `${result.expr} >= ${right.expr ?? '?'}`))
   } else {
