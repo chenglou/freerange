@@ -3,7 +3,7 @@ import {inferFitFiles} from '../../src/check-core.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {verifySnapshot} from '../../snapshot.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -56,16 +56,20 @@ function bounded(value: number /* intentionally not @fit syntax here */) {
 }
 const x = one() // @fit 1
 `)
-const obligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'one')
-const tracedObligationCheck = obligationChecks.find(check => check.text === 'return: 1' && check.functionName === 'identity')
-const inlineObligationCheck = obligationChecks.find(check => check.text === 'x: 1')
-const sequenceObligationCheck = positiveReport.checks.find(check => check.functionName === 'runningSumLoop' && check.text === 'spaced(return.rows, gap)')
+const obligationCheck = requiredCheck(obligationChecks, {functionName: 'one', text: 'return: 1'})
+const tracedObligationCheck = requiredCheck(obligationChecks, {functionName: 'identity', text: 'return: 1'})
+const inlineObligationCheck = requiredCheck(obligationChecks, {functionName: '<top-level>', text: 'x: 1'})
+const sequenceObligationCheck = requiredCheck(positiveReport.checks, {
+  functionName: 'runningSumLoop',
+  text: 'spaced(return.rows, gap)',
+  file: 'tests/loops/loop-patterns.ts',
+})
 if (
-  obligationCheck?.obligation?.boundary !== 'function-contract'
+  obligationCheck.obligation?.boundary !== 'function-contract'
   || obligationCheck.trace?.obligationId !== obligationCheck.obligation.id
-  || tracedObligationCheck?.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
-  || inlineObligationCheck?.obligation?.boundary !== 'inline-check'
-  || sequenceObligationCheck?.obligation?.goal.kind !== 'expression'
+  || tracedObligationCheck.trace?.usedFacts.some(fact => fact.includes('assumed from input: given value: 1..1')) !== true
+  || inlineObligationCheck.obligation?.boundary !== 'inline-check'
+  || sequenceObligationCheck.obligation?.goal.kind !== 'expression'
   || sequenceObligationCheck.trace?.steps.some(step => step.message === 'checked boolean expression') !== true
   || sequenceObligationCheck.trace.usedFacts.some(fact => fact.startsWith('sequence facts:')) !== true
 ) {

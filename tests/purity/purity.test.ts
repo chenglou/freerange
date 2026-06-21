@@ -21,7 +21,7 @@ import {
   importedWrapperMutationImpure,
   importedWrapperReplacementPure,
 } from './imported-caller.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -278,33 +278,40 @@ if (
 
 test('keeps source identity through imports, aliases, callbacks, and re-exports', async () => {
 const importedPurity = await verifyFitFiles(['tests/purity/imported-caller.ts'])
-const pureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasPure' && check.text === 'pure')
-const impureClaim = importedPurity.checks.find(check => check.functionName === 'importedAliasImpure' && check.text === 'pure')
-const namespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespacePure' && check.text === 'pure')
-const impureNamespaceClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespaceImpure' && check.text === 'pure')
-const defaultClaim = importedPurity.checks.find(check => check.functionName === 'importedDefaultAliasPure' && check.text === 'pure')
-const primitiveClaim = importedPurity.checks.find(check => check.functionName === 'importedPrimitivePure' && check.text === 'pure')
-const namespacePrimitiveClaim = importedPurity.checks.find(check => check.functionName === 'importedNamespacePrimitivePure' && check.text === 'pure')
-const pureContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedAlias' && check.text === 'return <= identity()')
-const impureContract = importedPurity.checks.find(check => check.functionName === 'contractRejectsImportedAlias' && check.text === 'return <= noisy()')
-const callbackContract = importedPurity.checks.find(check => check.functionName === 'contractUsesImportedCallbackAfterMap' && check.text === 'return <= importedPureCallback(0)')
-const importedWrapperReplacement = importedPurity.checks.find(check =>
-  check.functionName === 'importedWrapperReplacementPure' && check.text === 'pure')
-const importedWrapperMutation = importedPurity.checks.find(check =>
-  check.functionName === 'importedWrapperMutationImpure' && check.text === 'pure')
+const pureClaim = requiredCheck(importedPurity.checks, {functionName: 'importedAliasPure', text: 'pure'})
+const impureClaim = requiredCheck(importedPurity.checks, {functionName: 'importedAliasImpure', text: 'pure'})
+const namespaceClaim = requiredCheck(importedPurity.checks, {functionName: 'importedNamespacePure', text: 'pure'})
+const impureNamespaceClaim = requiredCheck(importedPurity.checks, {functionName: 'importedNamespaceImpure', text: 'pure'})
+const defaultClaim = requiredCheck(importedPurity.checks, {functionName: 'importedDefaultAliasPure', text: 'pure'})
+const primitiveClaim = requiredCheck(importedPurity.checks, {functionName: 'importedPrimitivePure', text: 'pure'})
+const namespacePrimitiveClaim = requiredCheck(importedPurity.checks, {functionName: 'importedNamespacePrimitivePure', text: 'pure'})
+const pureContract = requiredCheck(importedPurity.checks, {functionName: 'contractUsesImportedAlias', text: 'return <= identity()'})
+const impureContract = requiredCheck(importedPurity.checks, {functionName: 'contractRejectsImportedAlias', text: 'return <= noisy()'})
+const callbackContract = requiredCheck(importedPurity.checks, {
+  functionName: 'contractUsesImportedCallbackAfterMap',
+  text: 'return <= importedPureCallback(0)',
+})
+const importedWrapperReplacement = requiredCheck(importedPurity.checks, {
+  functionName: 'importedWrapperReplacementPure',
+  text: 'pure',
+})
+const importedWrapperMutation = requiredCheck(importedPurity.checks, {
+  functionName: 'importedWrapperMutationImpure',
+  text: 'pure',
+})
 if (
-  pureClaim?.status !== 'pass'
-  || impureClaim?.status !== 'fail'
-  || namespaceClaim?.status !== 'pass'
-  || impureNamespaceClaim?.status !== 'fail'
-  || defaultClaim?.status !== 'pass'
-  || primitiveClaim?.status !== 'pass'
-  || namespacePrimitiveClaim?.status !== 'pass'
-  || pureContract?.status !== 'pass'
-  || impureContract?.status !== 'unknown'
-  || callbackContract?.status !== 'pass'
-  || importedWrapperReplacement?.status !== 'pass'
-  || importedWrapperMutation?.status !== 'fail'
+  pureClaim.status !== 'pass'
+  || impureClaim.status !== 'fail'
+  || namespaceClaim.status !== 'pass'
+  || impureNamespaceClaim.status !== 'fail'
+  || defaultClaim.status !== 'pass'
+  || primitiveClaim.status !== 'pass'
+  || namespacePrimitiveClaim.status !== 'pass'
+  || pureContract.status !== 'pass'
+  || impureContract.status !== 'unknown'
+  || callbackContract.status !== 'pass'
+  || importedWrapperReplacement.status !== 'pass'
+  || importedWrapperMutation.status !== 'fail'
   || importedWrapperMutation.reason?.includes('mutates parameter `value`') !== true
   || impureClaim.reason?.includes('observes the environment') !== true
   || impureNamespaceClaim.reason?.includes('observes the environment') !== true
@@ -332,8 +339,8 @@ function bounded(value: number) {
   return value
 }
 `)
-const pureContractHelperCheck = pureContractHelperChecks.find(check => check.functionName === 'bounded' && check.text === 'return <= safeLimit(value)')
-if (pureContractHelperCheck?.status !== 'pass') {
+const pureContractHelperCheck = requiredCheck(pureContractHelperChecks, {functionName: 'bounded', text: 'return <= safeLimit(value)'})
+if (pureContractHelperCheck.status !== 'pass') {
   throw testDiagnosticError('expected pure unannotated helper calls to work in contracts', pureContractHelperChecks)
 }
 })
@@ -378,9 +385,9 @@ function bad() {
   return 0
 }
 `)
-const impureContractHelperCheck = impureContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= bump()')
+const impureContractHelperCheck = requiredCheck(impureContractHelperChecks, {functionName: 'bad', text: 'return <= bump()'})
 if (
-  impureContractHelperCheck?.status !== 'unknown'
+  impureContractHelperCheck.status !== 'unknown'
   || impureContractHelperCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
   || impureContractHelperCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
@@ -402,9 +409,9 @@ function bad() {
   return 0
 }
 `)
-const mutableReadContractHelperCheck = mutableReadContractHelperChecks.find(check => check.functionName === 'bad' && check.text === 'return <= currentLimit()')
+const mutableReadContractHelperCheck = requiredCheck(mutableReadContractHelperChecks, {functionName: 'bad', text: 'return <= currentLimit()'})
 if (
-  mutableReadContractHelperCheck?.status !== 'unknown'
+  mutableReadContractHelperCheck.status !== 'unknown'
   || mutableReadContractHelperCheck.reason?.includes('Unsupported @fit contract expression: currentLimit()') !== true
   || mutableReadContractHelperCheck.reason.includes('helper currentLimit is not pure: reads mutable outside state') !== true
 ) {

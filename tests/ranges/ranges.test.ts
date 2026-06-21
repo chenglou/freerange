@@ -1,6 +1,6 @@
 import {describe, setDefaultTimeout, test} from 'bun:test'
 import {verifyFitSource} from '../../src/reports.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -74,19 +74,19 @@ function missesRangeAlternative() {
   return 15
 }
 `)
-const dynamicSummaryCheck = dynamicRangeContractChecks.find(check => check.functionName === 'usesDynamicSummary' && check.text === 'return: 10..20')
-const intDynamicSummaryCheck = dynamicRangeContractChecks.find(check => check.functionName === 'usesIntDynamicSummary' && check.text === 'return: int 10..20')
-const dynamicAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'picksAlternative' && check.text === 'return: low() | high()')
-const missedAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'missesAlternative' && check.text === 'return: low() | high()')
-const dynamicRangeAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'picksRangeAlternative' && check.text === 'return: 0..10 | 20..30')
-const missedRangeAlternativeCheck = dynamicRangeContractChecks.find(check => check.functionName === 'missesRangeAlternative' && check.text === 'return: 0..10 | 20..30')
+const dynamicSummaryCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'usesDynamicSummary', text: 'return: 10..20'})
+const intDynamicSummaryCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'usesIntDynamicSummary', text: 'return: int 10..20'})
+const dynamicAlternativeCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'picksAlternative', text: 'return: low() | high()'})
+const missedAlternativeCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'missesAlternative', text: 'return: low() | high()'})
+const dynamicRangeAlternativeCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'picksRangeAlternative', text: 'return: 0..10 | 20..30'})
+const missedRangeAlternativeCheck = requiredCheck(dynamicRangeContractChecks, {functionName: 'missesRangeAlternative', text: 'return: 0..10 | 20..30'})
 if (
-  dynamicSummaryCheck?.status !== 'pass'
-  || intDynamicSummaryCheck?.status !== 'pass'
-  || dynamicAlternativeCheck?.status !== 'pass'
-  || missedAlternativeCheck?.status !== 'fail'
-  || dynamicRangeAlternativeCheck?.status !== 'pass'
-  || missedRangeAlternativeCheck?.status !== 'fail'
+  dynamicSummaryCheck.status !== 'pass'
+  || intDynamicSummaryCheck.status !== 'pass'
+  || dynamicAlternativeCheck.status !== 'pass'
+  || missedAlternativeCheck.status !== 'fail'
+  || dynamicRangeAlternativeCheck.status !== 'pass'
+  || missedRangeAlternativeCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected dynamic range summaries and numeric alternatives to be checked', dynamicRangeContractChecks)
 }
@@ -149,18 +149,18 @@ function redundantAlternativeCaller(flag: boolean) {
   return redundantAlternative(flag)
 }
 `)
-const broadCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'broadCaller' && check.text === 'return: 5 | 20')
-const shiftedCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'shiftedCaller' && check.text === 'return: 6 | 21')
-const gapCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'gapCaller' && check.text === 'return: 7..20')
-const redundantAlternativeCallerCheck = numericUnionPropagationChecks.find(check => check.functionName === 'redundantAlternativeCaller' && check.text === 'return: 20..30')
+const broadCallerCheck = requiredCheck(numericUnionPropagationChecks, {functionName: 'broadCaller', text: 'return: 5 | 20'})
+const shiftedCallerCheck = requiredCheck(numericUnionPropagationChecks, {functionName: 'shiftedCaller', text: 'return: 6 | 21'})
+const gapCallerCheck = requiredCheck(numericUnionPropagationChecks, {functionName: 'gapCaller', text: 'return: 7..20'})
+const redundantAlternativeCallerCheck = requiredCheck(numericUnionPropagationChecks, {functionName: 'redundantAlternativeCaller', text: 'return: 20..30'})
 if (
-  broadCallerCheck?.status !== 'pass'
+  broadCallerCheck.status !== 'pass'
   || broadCallerCheck.trace?.usedFacts.includes('5 | 20') !== true
-  || shiftedCallerCheck?.status !== 'pass'
+  || shiftedCallerCheck.status !== 'pass'
   || shiftedCallerCheck.trace?.usedFacts.includes('6 | 21') !== true
-  || gapCallerCheck?.status !== 'fail'
+  || gapCallerCheck.status !== 'fail'
   || gapCallerCheck.reason?.includes('int 6..6') !== true
-  || redundantAlternativeCallerCheck?.status !== 'fail'
+  || redundantAlternativeCallerCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected pure numeric range unions to propagate, normalize, and reject gaps', numericUnionPropagationChecks)
 }
@@ -187,11 +187,11 @@ function outside(width: number) {
   return 50
 }
 `)
-const insideHelperBoundCheck = unannotatedHelperBoundChecks.find(check => check.functionName === 'inside' && check.text === 'return: 0..limit(width)')
-const outsideHelperBoundCheck = unannotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(width)')
+const insideHelperBoundCheck = requiredCheck(unannotatedHelperBoundChecks, {functionName: 'inside', text: 'return: 0..limit(width)'})
+const outsideHelperBoundCheck = requiredCheck(unannotatedHelperBoundChecks, {functionName: 'outside', text: 'return: 0..limit(width)'})
 if (
-  insideHelperBoundCheck?.status !== 'pass'
-  || outsideHelperBoundCheck?.status !== 'fail'
+  insideHelperBoundCheck.status !== 'pass'
+  || outsideHelperBoundCheck.status !== 'fail'
   || outsideHelperBoundCheck.reason?.includes('50 <= (width * 2)') !== true
 ) {
   throw testDiagnosticError('expected pure unannotated helpers to work as dynamic range bounds', unannotatedHelperBoundChecks)
@@ -227,12 +227,12 @@ function outside(flag: boolean) {
   return 21
 }
 `)
-const insideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'inside' && check.text === 'return: 0..limit(flag)')
-const outsideAnnotatedHelperBoundCheck = annotatedHelperBoundChecks.find(check => check.functionName === 'outside' && check.text === 'return: 0..limit(flag)')
+const insideAnnotatedHelperBoundCheck = requiredCheck(annotatedHelperBoundChecks, {functionName: 'inside', text: 'return: 0..limit(flag)'})
+const outsideAnnotatedHelperBoundCheck = requiredCheck(annotatedHelperBoundChecks, {functionName: 'outside', text: 'return: 0..limit(flag)'})
 if (
-  insideAnnotatedHelperBoundCheck?.status !== 'unknown'
+  insideAnnotatedHelperBoundCheck.status !== 'unknown'
   || insideAnnotatedHelperBoundCheck.reason?.includes('came from separate branch constructs') !== true
-  || outsideAnnotatedHelperBoundCheck?.status !== 'fail'
+  || outsideAnnotatedHelperBoundCheck.status !== 'fail'
   || outsideAnnotatedHelperBoundCheck.reason?.includes('21 <= int 5..5') !== true
 ) {
   throw testDiagnosticError('expected uncorrelated annotated helper bounds to stay unknown', annotatedHelperBoundChecks)
@@ -282,17 +282,17 @@ function outsideHigh(flag: boolean) {
   return 26
 }
 `)
-const insideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'insideLow' && check.text === 'return: lower(flag)..upper(flag)')
-const insideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'insideHigh' && check.text === 'return: lower(flag)..upper(flag)')
-const outsideLowTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideLow' && check.text === 'return: lower(flag)..upper(flag)')
-const outsideHighTwoSidedBoundCheck = twoSidedHelperBoundChecks.find(check => check.functionName === 'outsideHigh' && check.text === 'return: lower(flag)..upper(flag)')
+const insideLowTwoSidedBoundCheck = requiredCheck(twoSidedHelperBoundChecks, {functionName: 'insideLow', text: 'return: lower(flag)..upper(flag)'})
+const insideHighTwoSidedBoundCheck = requiredCheck(twoSidedHelperBoundChecks, {functionName: 'insideHigh', text: 'return: lower(flag)..upper(flag)'})
+const outsideLowTwoSidedBoundCheck = requiredCheck(twoSidedHelperBoundChecks, {functionName: 'outsideLow', text: 'return: lower(flag)..upper(flag)'})
+const outsideHighTwoSidedBoundCheck = requiredCheck(twoSidedHelperBoundChecks, {functionName: 'outsideHigh', text: 'return: lower(flag)..upper(flag)'})
 if (
-  insideLowTwoSidedBoundCheck?.status !== 'unknown'
+  insideLowTwoSidedBoundCheck.status !== 'unknown'
   || insideLowTwoSidedBoundCheck.reason?.includes('came from separate branch constructs') !== true
-  || insideHighTwoSidedBoundCheck?.status !== 'unknown'
+  || insideHighTwoSidedBoundCheck.status !== 'unknown'
   || insideHighTwoSidedBoundCheck.reason?.includes('came from separate branch constructs') !== true
-  || outsideLowTwoSidedBoundCheck?.status !== 'fail'
-  || outsideHighTwoSidedBoundCheck?.status !== 'fail'
+  || outsideLowTwoSidedBoundCheck.status !== 'fail'
+  || outsideHighTwoSidedBoundCheck.status !== 'fail'
   || outsideLowTwoSidedBoundCheck.reason?.includes('5 >= int 10..10') !== true
   || outsideHighTwoSidedBoundCheck.reason?.includes('26 <= int 20..20') !== true
 ) {
@@ -321,14 +321,12 @@ function outside(n: number) {
   return 10
 }
 `)
-const separateInside = separateDynamicBoundChecks.find(check =>
-  check.functionName === 'inside' && check.text === 'return: 0..limit(n)')
-const separateOutside = separateDynamicBoundChecks.find(check =>
-  check.functionName === 'outside' && check.text === 'return: 0..limit(n)')
+const separateInside = requiredCheck(separateDynamicBoundChecks, {functionName: 'inside', text: 'return: 0..limit(n)'})
+const separateOutside = requiredCheck(separateDynamicBoundChecks, {functionName: 'outside', text: 'return: 0..limit(n)'})
 if (
-  separateInside?.status !== 'unknown'
+  separateInside.status !== 'unknown'
   || separateInside.reason?.includes('came from separate branch constructs') !== true
-  || separateOutside?.status !== 'fail'
+  || separateOutside.status !== 'fail'
 ) {
   throw testDiagnosticError('expected separate returned values and helper bounds not to reconnect', separateDynamicBoundChecks)
 }
@@ -370,16 +368,13 @@ function mixed(a: number, b: number) {
   return 1
 }
 `)
-const budgetInside = dynamicRangeBudgetChecks.find(check =>
-  check.functionName === 'alwaysInside' && check.text === 'return: lower(a)..upper(b)')
-const budgetOutside = dynamicRangeBudgetChecks.find(check =>
-  check.functionName === 'alwaysOutside' && check.text === 'return: lower(a)..upper(b)')
-const budgetMixed = dynamicRangeBudgetChecks.find(check =>
-  check.functionName === 'mixed' && check.text === 'return: lower(a)..upper(b)')
+const budgetInside = requiredCheck(dynamicRangeBudgetChecks, {functionName: 'alwaysInside', text: 'return: lower(a)..upper(b)'})
+const budgetOutside = requiredCheck(dynamicRangeBudgetChecks, {functionName: 'alwaysOutside', text: 'return: lower(a)..upper(b)'})
+const budgetMixed = requiredCheck(dynamicRangeBudgetChecks, {functionName: 'mixed', text: 'return: lower(a)..upper(b)'})
 if (
-  budgetInside?.status !== 'pass'
-  || budgetOutside?.status !== 'fail'
-  || budgetMixed?.status !== 'unknown'
+  budgetInside.status !== 'pass'
+  || budgetOutside.status !== 'fail'
+  || budgetMixed.status !== 'unknown'
   || budgetMixed.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
   throw testDiagnosticError('expected broad dynamic bounds to decide obvious over-budget cases', dynamicRangeBudgetChecks)
@@ -401,9 +396,9 @@ function bad() {
   return 2
 }
 `)
-const unsupportedRangeExpressionCheck = unsupportedRangeExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return: bump() | 2')
+const unsupportedRangeExpressionCheck = requiredCheck(unsupportedRangeExpressionChecks, {functionName: 'bad', text: 'return: bump() | 2'})
 if (
-  unsupportedRangeExpressionCheck?.status !== 'unknown'
+  unsupportedRangeExpressionCheck.status !== 'unknown'
   || unsupportedRangeExpressionCheck.reason?.includes('Unsupported @fit contract expression: bump()') !== true
   || unsupportedRangeExpressionCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
 ) {
@@ -440,13 +435,11 @@ function exact(n: number) {
   return choice(n)
 }
 `)
-const broadNumericAlternatives = numericAlternativeBudgetChecks.find(check =>
-  check.functionName === 'broad' && check.text === 'return: 0..8')
-const exactNumericAlternatives = numericAlternativeBudgetChecks.find(check =>
-  check.functionName === 'exact' && check.text.includes('0 | 1 | 2'))
+const broadNumericAlternatives = requiredCheck(numericAlternativeBudgetChecks, {functionName: 'broad', text: 'return: 0..8'})
+const exactNumericAlternatives = requiredCheck(numericAlternativeBudgetChecks, {functionName: 'exact', text: 'return: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8'})
 if (
-  broadNumericAlternatives?.status !== 'pass'
-  || exactNumericAlternatives?.status !== 'unknown'
+  broadNumericAlternatives.status !== 'pass'
+  || exactNumericAlternatives.status !== 'unknown'
   || exactNumericAlternatives.reason?.includes('Numeric alternative budget exceeded') !== true
 ) {
   throw testDiagnosticError('expected numeric alternative overflow to keep its range and report lost exact choices', numericAlternativeBudgetChecks)

@@ -18,7 +18,7 @@ const testFiles = [
   {path: 'tests/orchestration/orchestration.test.ts', registrations: 5},
   {path: 'tests/snapshot/eval.test.ts', registrations: 1},
   {path: 'tests/snapshot/interpreter-snapshots.test.ts', registrations: 1},
-  {path: 'tests/snapshot/snapshot.test.ts', registrations: 6},
+  {path: 'tests/snapshot/snapshot.test.ts', registrations: 7},
 ]
 const discoveredTestPaths = testFiles.map(file => file.path).sort()
 

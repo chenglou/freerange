@@ -1,3 +1,27 @@
+import type {FitCheck} from '../src/reports.ts'
+
+export type FitCheckIdentity = Pick<FitCheck, 'functionName' | 'text'>
+  & Partial<Pick<FitCheck, 'file' | 'line'>>
+
+export function requiredCheck(checks: readonly FitCheck[], identity: FitCheckIdentity) {
+  const matches: FitCheck[] = []
+  for (const check of checks) {
+    if (
+      check.functionName === identity.functionName
+      && check.text === identity.text
+      && (identity.file == null || check.file === identity.file)
+      && (identity.line == null || check.line === identity.line)
+    ) matches.push(check)
+  }
+  if (matches.length !== 1) {
+    throw testDiagnosticError(
+      `expected exactly one check matching ${JSON.stringify(identity)}; found ${matches.length}`,
+      matches.length === 0 ? checks : matches,
+    )
+  }
+  return matches[0]!
+}
+
 export function formatTestDiagnostics(value: unknown) {
   if (typeof value === 'string') return boundTestDiagnostics(value)
   // oxlint-disable-next-line typescript/no-unnecessary-condition

@@ -1,6 +1,6 @@
 import {expect, test} from 'bun:test'
 import {formatSnapshotDiff, verifySnapshot} from '../../snapshot.ts'
-import {formatTestDiagnostics} from '../test-diagnostics.ts'
+import {formatTestDiagnostics, requiredCheck} from '../test-diagnostics.ts'
 
 test('snapshot differences show one focused hunk', () => {
   const expected = [
@@ -67,4 +67,31 @@ test('test diagnostics bound text and show collections', () => {
   expect(boundedText).not.toContain('line 99')
   expect(formatTestDiagnostics(new Set(['missing height']))).toContain('missing height')
   expect(formatTestDiagnostics(new Map([['height', 'missing']]))).toContain('height')
+})
+
+test('required checks reject missing and duplicate identities', () => {
+  const matching = {
+    file: 'layout.ts',
+    line: 3,
+    functionName: 'layout',
+    text: 'return.width > 0',
+    status: 'pass' as const,
+  }
+  const identity = {functionName: 'layout', text: 'return.width > 0', file: 'layout.ts', line: 3}
+  expect(requiredCheck([
+    matching,
+    {...matching, text: 'return.height > 0'},
+    {...matching, file: 'other.ts'},
+    {...matching, line: 4},
+  ], identity)).toBe(matching)
+  expect(() => requiredCheck([matching], {functionName: 'missing', text: 'return.width > 0'}))
+    .toThrow('expected exactly one check matching {"functionName":"missing","text":"return.width > 0"}; found 0')
+  expect(() => requiredCheck([matching, {...matching}], identity)).toThrow('found 2')
+  const failing = {...matching, status: 'fail' as const}
+  expect(() => requiredCheck([failing, {...failing}], identity)).toThrow('found 2')
+  expect(() => requiredCheck([
+    matching,
+    failing,
+  ], identity))
+    .toThrow(/found 2[\s\S]*"status": "pass"[\s\S]*"status": "fail"/)
 })

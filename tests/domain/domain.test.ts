@@ -22,7 +22,7 @@ import {farkasProvesNonNegative, linearMaximum} from '../../src/farkas.ts'
 import {linearAdd, linearConstant, linearScale, linearSubtract, linearVariable} from '../../src/linear.ts'
 import {rationalEquals} from '../../src/rational.ts'
 import {verifyFitSource} from '../../src/reports.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -584,14 +584,14 @@ function uncheckedSquare(text: string) {
   return value ** 2
 }
 `)
-const zeroTimesInfinity = checkedNumberOperationChecks.find(check => check.functionName === 'zeroTimesInfinity')
-const infiniteSine = checkedNumberOperationChecks.find(check => check.functionName === 'infiniteSine')
-const benignOverflow = checkedNumberOperationChecks.find(check => check.functionName === 'benignOverflow')
-const parsedFinite = checkedNumberOperationChecks.find(check => check.functionName === 'parsedFinite')
-const deliberateNaN = checkedNumberOperationChecks.find(check => check.functionName === 'deliberateNaN')
-const oneNaNBranch = checkedNumberOperationChecks.find(check => check.functionName === 'oneNaNBranch')
-const integerGuard = checkedNumberOperationChecks.find(check => check.functionName === 'integerGuard')
-const safeIntegerGuard = checkedNumberOperationChecks.find(check => check.functionName === 'safeIntegerGuard')
+const zeroTimesInfinity = requiredCheck(checkedNumberOperationChecks, {functionName: 'zeroTimesInfinity', text: 'return >= 0'})
+const infiniteSine = requiredCheck(checkedNumberOperationChecks, {functionName: 'infiniteSine', text: 'return: -1..1'})
+const benignOverflow = requiredCheck(checkedNumberOperationChecks, {functionName: 'benignOverflow', text: 'return: 0..Infinity'})
+const parsedFinite = requiredCheck(checkedNumberOperationChecks, {functionName: 'parsedFinite', text: 'return: -Infinity<..<Infinity'})
+const deliberateNaN = requiredCheck(checkedNumberOperationChecks, {functionName: 'deliberateNaN', text: 'return: 0..10'})
+const oneNaNBranch = requiredCheck(checkedNumberOperationChecks, {functionName: 'oneNaNBranch', text: 'return: 0..10'})
+const integerGuard = requiredCheck(checkedNumberOperationChecks, {functionName: 'integerGuard', text: 'return: int -Infinity<..<Infinity'})
+const safeIntegerGuard = requiredCheck(checkedNumberOperationChecks, {functionName: 'safeIntegerGuard', text: 'return: int -9007199254740991..9007199254740991'})
 const expectedPassingNumberFunctions = new Set([
   'inclusiveIntegerInfinity',
   'acceptsIntegerInfinity',
@@ -610,30 +610,30 @@ const expectedPassingNumberFunctions = new Set([
 ])
 const missingPassingNumberFunctions = [...expectedPassingNumberFunctions].filter(functionName =>
   !checkedNumberOperationChecks.some(check => check.functionName === functionName))
-const nanUnderUnary = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderUnary')
-const nanUnderCompound = checkedNumberOperationChecks.find(check => check.functionName === 'nanUnderCompound')
-const uncheckedSquare = checkedNumberOperationChecks.find(check => check.functionName === 'uncheckedSquare')
+const nanUnderUnary = requiredCheck(checkedNumberOperationChecks, {functionName: 'nanUnderUnary', text: 'return >= 0'})
+const nanUnderCompound = requiredCheck(checkedNumberOperationChecks, {functionName: 'nanUnderCompound', text: 'return >= 0'})
+const uncheckedSquare = requiredCheck(checkedNumberOperationChecks, {functionName: 'uncheckedSquare', text: 'return >= 0'})
 if (
-  zeroTimesInfinity?.status !== 'unknown'
+  zeroTimesInfinity.status !== 'unknown'
   || zeroTimesInfinity.reason?.includes('zero and infinity may meet') !== true
   || zeroTimesInfinity.reason.includes('+ 1')
-  || infiniteSine?.status !== 'unknown'
+  || infiniteSine.status !== 'unknown'
   || infiniteSine.reason?.includes('expected a finite number') !== true
-  || benignOverflow?.status !== 'pass'
-  || parsedFinite?.status !== 'pass'
-  || deliberateNaN?.status !== 'unknown'
+  || benignOverflow.status !== 'pass'
+  || parsedFinite.status !== 'pass'
+  || deliberateNaN.status !== 'unknown'
   || deliberateNaN.reason !== 'NaN is outside the checked numerical domain'
-  || oneNaNBranch?.status !== 'unknown'
+  || oneNaNBranch.status !== 'unknown'
   || oneNaNBranch.reason !== 'NaN is outside the checked numerical domain'
-  || integerGuard?.status !== 'pass'
-  || safeIntegerGuard?.status !== 'pass'
+  || integerGuard.status !== 'pass'
+  || safeIntegerGuard.status !== 'pass'
   || missingPassingNumberFunctions.length > 0
   || checkedNumberOperationChecks.some(check => expectedPassingNumberFunctions.has(check.functionName) && check.status !== 'pass')
-  || nanUnderUnary?.status !== 'unknown'
+  || nanUnderUnary.status !== 'unknown'
   || nanUnderUnary.reason?.startsWith('0 * Infinity is unknown because') !== true
-  || nanUnderCompound?.status !== 'unknown'
+  || nanUnderCompound.status !== 'unknown'
   || nanUnderCompound.reason?.startsWith('0 * Infinity is unknown because') !== true
-  || uncheckedSquare?.status !== 'unknown'
+  || uncheckedSquare.status !== 'unknown'
   || uncheckedSquare.reason?.includes('operand may be NaN') !== true
 ) {
   throw testDiagnosticError('expected NaN hazards to stop at their source while overflow and guarded parsing remain usable', checkedNumberOperationChecks)
@@ -724,13 +724,11 @@ function unsupportedNamedIndexGiven(items: {height: number}[]) {
 const collectionExpressionPasses = [
   'twice(return.rows[$i].height) == twice(items[$i].height)',
   'twice(return.rows[].height) <= 80',
-].map(text => collectionExpressionChecks.find(check => check.functionName === 'copyRows' && check.text === text)?.status)
+].map(text => requiredCheck(collectionExpressionChecks, {functionName: 'copyRows', text}).status)
 collectionExpressionPasses.push(...[
   'return[$i].height >= 0',
   'return[$i].height: 0..40',
-].map(text => collectionExpressionChecks.find(check =>
-  check.functionName === 'namedIndexForms'
-  && check.text === text)?.status))
+].map(text => requiredCheck(collectionExpressionChecks, {functionName: 'namedIndexForms', text}).status))
 const unsupportedNamedIndexChecks = [
   ['copyRows', 'return.rows[$i + 1].height: 0..40'],
   ['copyRows', 'return.rows[$i + 1].height >= 0'],
@@ -753,21 +751,24 @@ const unsupportedNamedIndexChecks = [
   ['nestedNamedIndexes', 'return[$i].rows[$j].height >= 0'],
   ['namedIndexTuple', 'return[$i].height == return[$i].height'],
   ['unsupportedNamedIndexGiven', 'given items[$i + 2].height == items[$i].height'],
-].map(([functionName, text]) => collectionExpressionChecks.find(check =>
-  check.functionName === functionName && check.text === text))
-const acceptedMinusOneWithoutFact = collectionExpressionChecks.find(check =>
-  check.functionName === 'namedIndexForms'
-  && check.text === 'return[$i - 1].height <= return[$i].height')
-const customLabelFailure = collectionExpressionChecks.find(check =>
-  check.functionName === 'namedIndexForms'
-  && check.text === 'twice(return[$row].height) >= twice(return[$row - 1].height)')
+] as const
+const unsupportedNamedIndexCheckResults = unsupportedNamedIndexChecks.map(([functionName, text]) =>
+  requiredCheck(collectionExpressionChecks, {functionName, text}))
+const acceptedMinusOneWithoutFact = requiredCheck(collectionExpressionChecks, {
+  functionName: 'namedIndexForms',
+  text: 'return[$i - 1].height <= return[$i].height',
+})
+const customLabelFailure = requiredCheck(collectionExpressionChecks, {
+  functionName: 'namedIndexForms',
+  text: 'twice(return[$row].height) >= twice(return[$row - 1].height)',
+})
 if (
   collectionExpressionPasses.some(status => status !== 'pass')
-  || acceptedMinusOneWithoutFact?.status !== 'unknown'
+  || acceptedMinusOneWithoutFact.status !== 'unknown'
   || acceptedMinusOneWithoutFact.reason?.toLowerCase().includes('named index') === true
-  || customLabelFailure?.reason?.includes('$row - 1') !== true
-  || unsupportedNamedIndexChecks.some(check =>
-    check?.status !== 'unknown'
+  || customLabelFailure.reason?.includes('$row - 1') !== true
+  || unsupportedNamedIndexCheckResults.some(check =>
+    check.status !== 'unknown'
     || check.reason?.toLowerCase().includes('named index') !== true)
 ) {
   throw testDiagnosticError('expected named indexes to support only matching positions and direct adjacent relationships', collectionExpressionChecks)
@@ -797,11 +798,11 @@ function missingFrame(width: number, gap: number) {
   return {inner, outer}
 }
 `)
-const simplifiedRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'frame' && check.text === 'return.outer >= return.inner')
-const missingRoundingCheck = simplifiedRoundingChecks.find(check => check.functionName === 'missingFrame' && check.text === 'return.outer >= return.inner')
+const simplifiedRoundingCheck = requiredCheck(simplifiedRoundingChecks, {functionName: 'frame', text: 'return.outer >= return.inner'})
+const missingRoundingCheck = requiredCheck(simplifiedRoundingChecks, {functionName: 'missingFrame', text: 'return.outer >= return.inner'})
 if (
-  simplifiedRoundingCheck?.status !== 'pass'
-  || missingRoundingCheck?.status !== 'unknown'
+  simplifiedRoundingCheck.status !== 'pass'
+  || missingRoundingCheck.status !== 'unknown'
   || missingRoundingCheck.reason?.includes('missing: (width / 2) <= gap') !== true
 ) {
   throw testDiagnosticError('expected proof simplification to reduce rounding comparisons to smaller arithmetic', simplifiedRoundingChecks)
@@ -884,13 +885,13 @@ function roundMonotonicityIsNotStrict(left: number, right: number) {
 }
 `)
 const roundingFamilyFailures = roundingFamilyChecks.filter(check => check.functionName !== 'truncNeedsSign' && check.functionName !== 'roundMonotonicityIsNotStrict' && check.status !== 'pass')
-const truncNeedsSignCheck = roundingFamilyChecks.find(check => check.functionName === 'truncNeedsSign' && check.text === 'return <= value')
-const roundStrictCheck = roundingFamilyChecks.find(check => check.functionName === 'roundMonotonicityIsNotStrict' && check.text === 'return < Math.round(right)')
+const truncNeedsSignCheck = requiredCheck(roundingFamilyChecks, {functionName: 'truncNeedsSign', text: 'return <= value'})
+const roundStrictCheck = requiredCheck(roundingFamilyChecks, {functionName: 'roundMonotonicityIsNotStrict', text: 'return < Math.round(right)'})
 if (
   roundingFamilyFailures.length > 0
-  || truncNeedsSignCheck?.status !== 'unknown'
+  || truncNeedsSignCheck.status !== 'unknown'
   || truncNeedsSignCheck.reason?.includes('missing fact: trunc(value) <= value') !== true
-  || roundStrictCheck?.status !== 'unknown'
+  || roundStrictCheck.status !== 'unknown'
   || roundStrictCheck.reason?.includes('missing: left < (round(right) - 0.5)') !== true
 ) {
   throw testDiagnosticError('expected rounding family proof rules to cover floor/ceil/round/trunc and reject unsafe strict/sign cases', roundingFamilyChecks)
@@ -966,10 +967,10 @@ function logNeedsPositive(value: number) {
 }
 `)
 const expandedMathFailures = expandedMathChecks.filter(check => check.functionName !== 'logNeedsPositive' && check.status !== 'pass')
-const logNeedsPositiveCheck = expandedMathChecks.find(check => check.functionName === 'logNeedsPositive' && check.text === 'return: -Infinity..Infinity')
+const logNeedsPositiveCheck = requiredCheck(expandedMathChecks, {functionName: 'logNeedsPositive', text: 'return: -Infinity..Infinity'})
 if (
   expandedMathFailures.length > 0
-  || logNeedsPositiveCheck?.status !== 'unknown'
+  || logNeedsPositiveCheck.status !== 'unknown'
   || logNeedsPositiveCheck.reason?.includes('Math.log expected a non-negative number') !== true
 ) {
   throw testDiagnosticError('expected expanded Math builtin families to infer ranges and reject unsafe domains', expandedMathChecks)
@@ -988,10 +989,11 @@ function wildcardIdentityCollision(rows: {height: number}[], __fit_domain_rows__
   return rows
 }
 `)
-const wildcardIdentityCollisionCheck = wildcardIdentityCollisionChecks.find(check =>
-  check.functionName === 'wildcardIdentityCollision'
-  && check.text === 'rows[].height == __fit_domain_rows___item_height')
-if (wildcardIdentityCollisionCheck?.status !== 'fail') {
+const wildcardIdentityCollisionCheck = requiredCheck(wildcardIdentityCollisionChecks, {
+  functionName: 'wildcardIdentityCollision',
+  text: 'rows[].height == __fit_domain_rows___item_height',
+})
+if (wildcardIdentityCollisionCheck.status !== 'fail') {
   throw testDiagnosticError('expected a source identifier not to share proof identity with a wildcard path placeholder', wildcardIdentityCollisionChecks)
 }
 })

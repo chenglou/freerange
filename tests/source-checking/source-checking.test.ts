@@ -4,7 +4,7 @@ import {isFunctionImplementation} from '../../src/function-shape.ts'
 import {buildFitSourceFile, TypeScriptUserlandError} from '../../src/modules.ts'
 import {preparedProgramContracts} from '../../src/prepared-contracts.ts'
 import {verifyFitSource} from '../../src/reports.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -147,30 +147,31 @@ function missingCallbackItemField(items: {}[]) {
 `)
 const typedGivenPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedGivenPath' && check.status !== 'pass')
 const typedAliasPathFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedAliasPath' && check.status !== 'pass')
-const optionalGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'optionalGivenField' && check.text === 'given input.width: 0..10')
-const optionalGivenReturnCheck = shortcutCleanupChecks.find(check => check.functionName === 'optionalGivenField' && check.text === 'return: 0..10')
-const missingGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingGivenField' && check.text === 'given input.width: 0..10')
-const stringGivenFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'stringGivenField' && check.text === 'given input.width: 0..10')
-const nonArrayGivenPathCheck = shortcutCleanupChecks.find(check => check.functionName === 'nonArrayGivenPath' && check.text === 'given rows[].height: 0..10')
-const unknownParamGivenCheck = shortcutCleanupChecks.find(check => check.functionName === 'unknownParamGiven' && check.text === 'given input: 0..10')
+const optionalGivenFieldCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'optionalGivenField', text: 'given input.width: 0..10'})
+const optionalGivenReturnCheckExists = shortcutCleanupChecks.some(check =>
+  check.functionName === 'optionalGivenField' && check.text === 'return: 0..10')
+const missingGivenFieldCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'missingGivenField', text: 'given input.width: 0..10'})
+const stringGivenFieldCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'stringGivenField', text: 'given input.width: 0..10'})
+const nonArrayGivenPathCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'nonArrayGivenPath', text: 'given rows[].height: 0..10'})
+const unknownParamGivenCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'unknownParamGiven', text: 'given input: 0..10'})
 const typedCallbackItemFailures = shortcutCleanupChecks.filter(check => check.functionName === 'typedCallbackItem' && check.status !== 'pass')
-const missingCallbackItemFieldCheck = shortcutCleanupChecks.find(check => check.functionName === 'missingCallbackItemField' && check.text === 'given items[].width: 0..10')
+const missingCallbackItemFieldCheck = requiredCheck(shortcutCleanupChecks, {functionName: 'missingCallbackItemField', text: 'given items[].width: 0..10'})
 if (
   typedGivenPathFailures.length > 0
   || typedAliasPathFailures.length > 0
-  || optionalGivenFieldCheck?.status !== 'unknown'
+  || optionalGivenFieldCheck.status !== 'unknown'
   || optionalGivenFieldCheck.reason?.includes("TS2322: Type 'number | undefined' is not assignable to type 'number'") !== true
-  || optionalGivenReturnCheck != null
-  || missingGivenFieldCheck?.status !== 'unknown'
+  || optionalGivenReturnCheckExists
+  || missingGivenFieldCheck.status !== 'unknown'
   || missingGivenFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
-  || stringGivenFieldCheck?.status !== 'unknown'
+  || stringGivenFieldCheck.status !== 'unknown'
   || stringGivenFieldCheck.reason?.includes("TS2322: Type 'string' is not assignable to type 'number'") !== true
-  || nonArrayGivenPathCheck?.status !== 'unknown'
+  || nonArrayGivenPathCheck.status !== 'unknown'
   || nonArrayGivenPathCheck.reason?.includes("TS7053: Element implicitly has an 'any' type") !== true
-  || unknownParamGivenCheck?.status !== 'unknown'
+  || unknownParamGivenCheck.status !== 'unknown'
   || unknownParamGivenCheck.reason?.includes("TS2322: Type 'unknown' is not assignable to type 'number'") !== true
   || typedCallbackItemFailures.length > 0
-  || missingCallbackItemFieldCheck?.status !== 'unknown'
+  || missingCallbackItemFieldCheck.status !== 'unknown'
   || missingCallbackItemFieldCheck.reason?.includes("TS2339: Property 'width' does not exist on type '{}'") !== true
 ) {
   throw testDiagnosticError('expected @fit paths and callback item facts to come from TypeScript or real source values, not invented shape', shortcutCleanupChecks)
@@ -222,8 +223,8 @@ const expectedTypeLayerErrors = [
   ['<top-level>', 'topWidth: 0..10', "TS2322: Type 'string' is not assignable to type 'number'"],
 ] as const
 const missingTypeLayerErrors = expectedTypeLayerErrors.filter(([functionName, text, reason]) => {
-  const check = contractTypeLayerChecks.find(item => item.functionName === functionName && item.text === text)
-  return check?.status !== 'unknown'
+  const check = requiredCheck(contractTypeLayerChecks, {functionName, text})
+  return check.status !== 'unknown'
     || check.reason?.includes(reason) !== true
     || check.reason.includes('contract-type-layer.ts(') !== true
     || check.reason.includes(': error TS') !== true
@@ -304,15 +305,17 @@ const mapped = [1].map(value => {
 void layout
 void mapped
 `)
-const topPropertyPass = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === 'layout.width: 0..10' && check.status === 'pass')
-const topPropertyTypeError = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === '@fit 0..10' && check.status === 'unknown')
-const topLoopPass = topLevelContractChecks.find(check => check.functionName === '<top-level> > loop' && check.text === 'total: 0..10')
-const topNestedPlacement = topLevelContractChecks.find(check => check.functionName === '<top-level>' && check.text === '@fit 0..10' && check.reason?.includes('nested function'))
+const topPropertyPass = requiredCheck(topLevelContractChecks, {functionName: '<top-level>', text: 'layout.width: 0..10'})
+const topPropertyTypeError = requiredCheck(topLevelContractChecks, {functionName: '<top-level>', text: '@fit 0..10', line: 3})
+const topLoopPass = requiredCheck(topLevelContractChecks, {functionName: '<top-level> > loop', text: 'total: 0..10'})
+const topNestedPlacement = requiredCheck(topLevelContractChecks, {functionName: '<top-level>', text: '@fit 0..10', line: 15})
 if (
-  topPropertyPass == null
-  || topPropertyTypeError?.reason?.includes("Type 'string' is not assignable to type 'number'") !== true
-  || topLoopPass?.status !== 'pass'
-  || topNestedPlacement?.status !== 'unknown'
+  topPropertyPass.status !== 'pass'
+  || topPropertyTypeError.status !== 'unknown'
+  || topPropertyTypeError.reason?.includes("Type 'string' is not assignable to type 'number'") !== true
+  || topLoopPass.status !== 'pass'
+  || topNestedPlacement.status !== 'unknown'
+  || topNestedPlacement.reason?.includes('nested function') !== true
 ) {
   throw testDiagnosticError('expected top-level properties, loops, and nested placements to use the prepared body index', topLevelContractChecks)
 }
@@ -362,18 +365,18 @@ function numericExpression() {
   return {width: 10}
 }
 `)
-const validLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'validLayout' && check.text === 'isValidLayout(return)')
-const invalidLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'invalidLayout' && check.text === 'isValidLayout(return)')
-const unknownLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unknownLayout' && check.text === 'isValidLayout(return)')
-const unsupportedLayoutCheck = booleanCallContractChecks.find(check => check.functionName === 'unsupportedLayout' && check.text === 'randomLayoutCheck(return)')
-const numericExpressionCheck = booleanCallContractChecks.find(check => check.functionName === 'numericExpression' && check.text === '1 + 2')
+const validLayoutCheck = requiredCheck(booleanCallContractChecks, {functionName: 'validLayout', text: 'isValidLayout(return)'})
+const invalidLayoutCheck = requiredCheck(booleanCallContractChecks, {functionName: 'invalidLayout', text: 'isValidLayout(return)'})
+const unknownLayoutCheck = requiredCheck(booleanCallContractChecks, {functionName: 'unknownLayout', text: 'isValidLayout(return)'})
+const unsupportedLayoutCheck = requiredCheck(booleanCallContractChecks, {functionName: 'unsupportedLayout', text: 'randomLayoutCheck(return)'})
+const numericExpressionCheck = requiredCheck(booleanCallContractChecks, {functionName: 'numericExpression', text: '1 + 2'})
 if (
-  validLayoutCheck?.status !== 'pass'
-  || invalidLayoutCheck?.status !== 'fail'
-  || unknownLayoutCheck?.status !== 'unknown'
-  || unsupportedLayoutCheck?.status !== 'unknown'
+  validLayoutCheck.status !== 'pass'
+  || invalidLayoutCheck.status !== 'fail'
+  || unknownLayoutCheck.status !== 'unknown'
+  || unsupportedLayoutCheck.status !== 'unknown'
   || unsupportedLayoutCheck.reason?.includes('helper randomLayoutCheck is not pure: observes the environment') !== true
-  || numericExpressionCheck?.status !== 'unknown'
+  || numericExpressionCheck.status !== 'unknown'
   || numericExpressionCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
 ) {
   throw testDiagnosticError('expected bare pure boolean call contracts to be checked', booleanCallContractChecks)
@@ -421,12 +424,12 @@ function bad() {
   return 0
 }
 `)
-const randomContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= randomLimit()')
-const dynamicContractCheck = unsupportedContractExpressionChecks.find(check => check.functionName === 'bad' && check.text === 'return <= Math[method](1, 2)')
+const randomContractCheck = requiredCheck(unsupportedContractExpressionChecks, {functionName: 'bad', text: 'return <= randomLimit()'})
+const dynamicContractCheck = requiredCheck(unsupportedContractExpressionChecks, {functionName: 'bad', text: 'return <= Math[method](1, 2)'})
 if (
-  randomContractCheck?.status !== 'unknown'
+  randomContractCheck.status !== 'unknown'
   || randomContractCheck.reason?.includes('helper randomLimit is not pure: observes the environment') !== true
-  || dynamicContractCheck?.status !== 'unknown'
+  || dynamicContractCheck.status !== 'unknown'
   || dynamicContractCheck.reason?.includes('Unsupported call Math[method]') !== true
 ) {
   throw testDiagnosticError('expected unsupported contract expressions to explain the unsupported step', unsupportedContractExpressionChecks)
@@ -443,9 +446,9 @@ function bad() {
   return 0
 }
 `)
-const mutableAliasContractCheck = mutableAliasContractChecks.find(check => check.functionName === 'bad' && check.text === 'return <= max(1, 2)')
+const mutableAliasContractCheck = requiredCheck(mutableAliasContractChecks, {functionName: 'bad', text: 'return <= max(1, 2)'})
 if (
-  mutableAliasContractCheck?.status !== 'unknown'
+  mutableAliasContractCheck.status !== 'unknown'
   || mutableAliasContractCheck.reason?.includes('max is a mutable helper alias') !== true
 ) {
   throw testDiagnosticError('expected mutable helper aliases in contracts to be rejected loudly', mutableAliasContractChecks)
@@ -499,22 +502,22 @@ function noInputBoolean(value: number) {
   return value
 }
 `)
-const impureGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impure' && check.text === 'given max >= bump(min)')
-const noInputGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInput' && check.text === 'given double(10) > 0')
-const derivedRangeTargetCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'derivedRangeTarget' && check.text === 'given double(value): 0..10')
-const impureBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'impureBoolean' && check.text === 'given bump(value)')
-const noInputBooleanGivenCheck = unsupportedGivenExpressionChecks.find(check => check.functionName === 'noInputBoolean' && check.text === 'given true')
+const impureGivenCheck = requiredCheck(unsupportedGivenExpressionChecks, {functionName: 'impure', text: 'given max >= bump(min)'})
+const noInputGivenCheck = requiredCheck(unsupportedGivenExpressionChecks, {functionName: 'noInput', text: 'given double(10) > 0'})
+const derivedRangeTargetCheck = requiredCheck(unsupportedGivenExpressionChecks, {functionName: 'derivedRangeTarget', text: 'given double(value): 0..10'})
+const impureBooleanGivenCheck = requiredCheck(unsupportedGivenExpressionChecks, {functionName: 'impureBoolean', text: 'given bump(value)'})
+const noInputBooleanGivenCheck = requiredCheck(unsupportedGivenExpressionChecks, {functionName: 'noInputBoolean', text: 'given true'})
 if (
-  impureGivenCheck?.status !== 'unknown'
+  impureGivenCheck.status !== 'unknown'
   || impureGivenCheck.reason?.includes('Unsupported @fit contract expression: bump(min)') !== true
   || impureGivenCheck.reason.includes('helper bump is not pure: writes outside state `box`') !== true
-  || noInputGivenCheck?.status !== 'unknown'
+  || noInputGivenCheck.status !== 'unknown'
   || noInputGivenCheck.reason !== 'given must mention an input'
-  || derivedRangeTargetCheck?.status !== 'unknown'
+  || derivedRangeTargetCheck.status !== 'unknown'
   || derivedRangeTargetCheck.reason !== 'given range must name one input path, not a derived expression'
-  || impureBooleanGivenCheck?.status !== 'unknown'
+  || impureBooleanGivenCheck.status !== 'unknown'
   || impureBooleanGivenCheck.reason?.includes("TS2322: Type 'number' is not assignable to type 'boolean'") !== true
-  || noInputBooleanGivenCheck?.status !== 'unknown'
+  || noInputBooleanGivenCheck.status !== 'unknown'
   || noInputBooleanGivenCheck.reason !== 'given must mention an input'
 ) {
   throw testDiagnosticError('expected given helper expressions to reject impure, input-independent, and derived range target cases', unsupportedGivenExpressionChecks)
@@ -535,11 +538,12 @@ function emptySpreadCannotProveNumber(items: number[]) {
   return 0
 }
 `)
-const unsupportedSpreadContractCheck = unsupportedSpreadContractChecks.find(check =>
-  check.functionName === 'emptySpreadCannotProveNumber'
-  && check.text === 'typeof first(...items) === "number"')
+const unsupportedSpreadContractCheck = requiredCheck(unsupportedSpreadContractChecks, {
+  functionName: 'emptySpreadCannotProveNumber',
+  text: 'typeof first(...items) === "number"',
+})
 if (
-  unsupportedSpreadContractCheck?.status !== 'unknown'
+  unsupportedSpreadContractCheck.status !== 'unknown'
   || unsupportedSpreadContractCheck.reason?.includes('Call spread needs an exact tuple') !== true
 ) {
   throw testDiagnosticError('expected every interpreter rejection in a contract expression to stop the proof', unsupportedSpreadContractChecks)
@@ -618,30 +622,26 @@ function reservedReturnBinding(__fit_return: number) {
   return 1
 }
 `)
-const boundedLengthCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'boundedLength' && check.text === 'return: int 0..2')
-const numericObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'numericObjectProperty' && check.text === 'return: 0..10')
-const decimalObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'decimalObjectProperty' && check.text === 'return: 0..10')
-const negativeObjectPropertyCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'negativeObjectProperty' && check.text === 'return: 0..10')
-const functionScopedVarCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'functionScopedVar' && check.text === 'return == 5')
-const uninitializedFunctionScopedVarCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'uninitializedFunctionScopedVar' && check.text === 'return == 5')
-const structurallyEqualBooleanGivenCheck = structuredPathRegressionChecks.find(check =>
-  check.functionName === 'structurallyEqualBooleanGiven' && check.text === 'typeof (value) === "number"')
+const boundedLengthCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'boundedLength', text: 'return: int 0..2'})
+const numericObjectPropertyCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'numericObjectProperty', text: 'return: 0..10'})
+const decimalObjectPropertyCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'decimalObjectProperty', text: 'return: 0..10'})
+const negativeObjectPropertyCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'negativeObjectProperty', text: 'return: 0..10'})
+const functionScopedVarCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'functionScopedVar', text: 'return == 5'})
+const uninitializedFunctionScopedVarCheck = requiredCheck(structuredPathRegressionChecks, {functionName: 'uninitializedFunctionScopedVar', text: 'return == 5'})
+const structurallyEqualBooleanGivenCheck = requiredCheck(structuredPathRegressionChecks, {
+  functionName: 'structurallyEqualBooleanGiven',
+  text: 'typeof (value) === "number"',
+})
 const reservedReturnBindingChecks = structuredPathRegressionChecks.filter(check =>
   check.functionName === 'reservedReturnBinding')
 if (
-  boundedLengthCheck?.status !== 'pass'
-  || numericObjectPropertyCheck?.status !== 'pass'
-  || decimalObjectPropertyCheck?.status !== 'pass'
-  || negativeObjectPropertyCheck?.status !== 'pass'
-  || functionScopedVarCheck?.status !== 'fail'
-  || uninitializedFunctionScopedVarCheck?.status !== 'pass'
-  || structurallyEqualBooleanGivenCheck?.status !== 'pass'
+  boundedLengthCheck.status !== 'pass'
+  || numericObjectPropertyCheck.status !== 'pass'
+  || decimalObjectPropertyCheck.status !== 'pass'
+  || negativeObjectPropertyCheck.status !== 'pass'
+  || functionScopedVarCheck.status !== 'fail'
+  || uninitializedFunctionScopedVarCheck.status !== 'pass'
+  || structurallyEqualBooleanGivenCheck.status !== 'pass'
   || reservedReturnBindingChecks.length !== 1
   || reservedReturnBindingChecks[0]?.status !== 'unknown'
   || reservedReturnBindingChecks[0].reason?.includes('is reserved for Freerange contract evaluation') !== true
@@ -651,7 +651,7 @@ if (
 })
 
 test('includes TypeScript suggestions for unambiguous given typos', () => {
-const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+const suggestedGivenRootChecks = verifyFitSource('given-typo.ts', `const boxesGapX = 24
 
 /** @fit
  * given containerSizX >= 2 * boxesGapX
@@ -659,7 +659,11 @@ const suggestedGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGa
 function layout(containerSizeX: number) {
   return containerSizeX
 }
-`).find(check => check.text === 'given containerSizX >= 2 * boxesGapX')?.reason
+`)
+const suggestedGivenRootReason = requiredCheck(suggestedGivenRootChecks, {
+  functionName: 'layout',
+  text: 'given containerSizX >= 2 * boxesGapX',
+}).reason
 if (
   suggestedGivenRootReason?.includes("TS2552: Cannot find name 'containerSizX'") !== true
   || suggestedGivenRootReason.includes("Did you mean 'containerSizeX'?") !== true
@@ -669,7 +673,7 @@ if (
 })
 
 test('uses TypeScript diagnostics for ambiguous given typos', () => {
-const ambiguousGivenRootReason = verifyFitSource('given-typo.ts', `const boxesGapX = 24
+const ambiguousGivenRootChecks = verifyFitSource('given-typo.ts', `const boxesGapX = 24
 const boxesGapY = 24
 
 /** @fit
@@ -678,7 +682,11 @@ const boxesGapY = 24
 function layout(containerSizeX: number) {
   return containerSizeX
 }
-`).find(check => check.text === 'given containerSizeX >= 2 * boxesGap')?.reason
+`)
+const ambiguousGivenRootReason = requiredCheck(ambiguousGivenRootChecks, {
+  functionName: 'layout',
+  text: 'given containerSizeX >= 2 * boxesGap',
+}).reason
 if (ambiguousGivenRootReason?.includes("TS2552: Cannot find name 'boxesGap'") !== true) {
   throw testDiagnosticError('expected ambiguous given typo to use TypeScript diagnostics', ambiguousGivenRootReason ?? '<missing>')
 }
@@ -843,9 +851,9 @@ function sample() {
   return 1
 }
 `)
-const unsupportedBranchConditionCheck = unsupportedBranchConditionChecks.find(check => check.functionName === 'sample' && check.text === 'return: 1')
+const unsupportedBranchConditionCheck = requiredCheck(unsupportedBranchConditionChecks, {functionName: 'sample', text: 'return: 1'})
 if (
-  unsupportedBranchConditionCheck?.status !== 'unknown'
+  unsupportedBranchConditionCheck.status !== 'unknown'
   || unsupportedBranchConditionCheck.reason !== 'Unsupported branch condition: externalPredicate()'
 ) {
   throw testDiagnosticError('expected unsupported branch conditions to stop before speculating through branch bodies', unsupportedBranchConditionChecks)
@@ -937,17 +945,17 @@ function unavailableCallThroughHelper() {
 }
 `)
 const aliasClaims = referenceAliasChecks.filter(check => check.text === 'return == 1')
-const readOnlyAlias = aliasClaims.find(check => check.functionName === 'readOnlyElementAliasesKeepFacts')
+const readOnlyAlias = requiredCheck(aliasClaims, {functionName: 'readOnlyElementAliasesKeepFacts', text: 'return == 1'})
 const staleMutationProofs = aliasClaims.filter(check =>
   check.functionName !== 'readOnlyElementAliasesKeepFacts'
   && check.status === 'pass'
 )
-const conditionalAlias = referenceAliasChecks.find(check => check.functionName === 'conditionalAliasDoesNotNarrow' && check.text === 'return == 999')
+const conditionalAlias = requiredCheck(referenceAliasChecks, {functionName: 'conditionalAliasDoesNotNarrow', text: 'return == 999'})
 if (
   staleMutationProofs.length > 0
   || aliasClaims.length !== 6
-  || readOnlyAlias?.status !== 'pass'
-  || conditionalAlias?.status === 'pass'
+  || readOnlyAlias.status !== 'pass'
+  || conditionalAlias.status === 'pass'
 ) {
   throw testDiagnosticError('expected definite, conditional, and unavailable-call mutations to forget every reachable alias without narrowing branches', referenceAliasChecks)
 }
@@ -979,11 +987,11 @@ function nestedClassMemberContracts() {
   return Local
 }
 `)
-const purePlacement = purePlacementChecks.find(check => check.text === 'pure')
+const purePlacement = requiredCheck(purePlacementChecks, {functionName: 'misplacedPure', text: 'pure'})
 const nestedClassPlacements = purePlacementChecks.filter(check => check.functionName === 'nestedClassMemberContracts')
 const nestedPlacementReason = 'Unsupported @fit placement: contracts inside a nested function are not checked; move the contract onto the enclosing statement or a named function'
 if (
-  purePlacement?.status !== 'unknown'
+  purePlacement.status !== 'unknown'
   || purePlacement.reason !== 'Unsupported @fit placement: `pure` can only appear in a function-level @fit block'
   || nestedClassPlacements.length !== 2
   || nestedClassPlacements.some(check => check.status !== 'unknown' || check.reason !== nestedPlacementReason)

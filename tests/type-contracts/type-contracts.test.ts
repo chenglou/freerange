@@ -1,6 +1,6 @@
 import {describe, setDefaultTimeout, test} from 'bun:test'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -53,13 +53,13 @@ function genericAliasMiss() {
   return {value: {tile: {width: 30}}}
 }
 `)
-const intersectionValueCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'intersectionValue' && check.text.startsWith('return: {left'))
-const genericAliasValueCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'genericAliasValue' && check.text.startsWith('return: Box'))
-const genericAliasMissCheck = wholeValueTypeSyntaxChecks.find(check => check.functionName === 'genericAliasMiss' && check.text.startsWith('return: Box'))
+const intersectionValueCheck = requiredCheck(wholeValueTypeSyntaxChecks, {functionName: 'intersectionValue', text: 'return: {left: 0..10} & {width: int 1..5}'})
+const genericAliasValueCheck = requiredCheck(wholeValueTypeSyntaxChecks, {functionName: 'genericAliasValue', text: 'return: Box<{tile: ImportedLookingTile & {width: 10..20}}>'})
+const genericAliasMissCheck = requiredCheck(wholeValueTypeSyntaxChecks, {functionName: 'genericAliasMiss', text: 'return: Box<{tile: ImportedLookingTile & {width: 10..20}}>'})
 if (
-  intersectionValueCheck?.status !== 'pass'
-  || genericAliasValueCheck?.status !== 'pass'
-  || genericAliasMissCheck?.status !== 'fail'
+  intersectionValueCheck.status !== 'pass'
+  || genericAliasValueCheck.status !== 'pass'
+  || genericAliasMissCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected whole-value contracts to use TypeScript type syntax with range leaves', wholeValueTypeSyntaxChecks)
 }
@@ -135,27 +135,27 @@ function badRelationReturn(): OrderedSpring {
   return {k: 1, b: 2}
 }
 `)
-const inputFieldCheck = typeContractBoundaryChecks.find(check => check.functionName === 'inputField' && check.text === 'return > 0')
+const inputFieldCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'inputField', text: 'return > 0'})
 const goodReturnFailures = typeContractBoundaryChecks.filter(check => check.functionName === 'goodReturn' && check.status !== 'pass')
-const badReturnCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badReturn' && check.status === 'fail')
-const badLocalCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badLocal' && check.status === 'fail')
-const badSatisfiesCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badSatisfies' && check.status === 'fail')
-const badAsCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badAs' && check.status === 'fail')
-const inputArrayCheck = typeContractBoundaryChecks.find(check => check.functionName === 'inputArray' && check.text === 'return.rows[].height: 0..40')
-const badArrayReturnCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badArrayReturn' && check.status === 'fail')
-const inputRelationCheck = typeContractBoundaryChecks.find(check => check.functionName === 'inputRelation' && check.text === 'return > spring.b')
-const badRelationReturnCheck = typeContractBoundaryChecks.find(check => check.functionName === 'badRelationReturn' && check.status === 'fail')
+const badReturnCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badReturn', text: 'return.k > 0'})
+const badLocalCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badLocal', text: 'spring.k > 0'})
+const badSatisfiesCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badSatisfies', text: 'return.k > 0'})
+const badAsCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badAs', text: 'return.k > 0'})
+const inputArrayCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'inputArray', text: 'return.rows[].height: 0..40'})
+const badArrayReturnCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badArrayReturn', text: 'return.rows[].height: 0..40'})
+const inputRelationCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'inputRelation', text: 'return > spring.b'})
+const badRelationReturnCheck = requiredCheck(typeContractBoundaryChecks, {functionName: 'badRelationReturn', text: 'return.k > return.b'})
 if (
-  inputFieldCheck?.status !== 'pass'
+  inputFieldCheck.status !== 'pass'
   || goodReturnFailures.length > 0
-  || badReturnCheck == null
-  || badLocalCheck == null
-  || badSatisfiesCheck == null
-  || badAsCheck == null
-  || inputArrayCheck?.status !== 'pass'
-  || badArrayReturnCheck == null
-  || inputRelationCheck?.status !== 'pass'
-  || badRelationReturnCheck == null
+  || badReturnCheck.status !== 'fail'
+  || badLocalCheck.status !== 'fail'
+  || badSatisfiesCheck.status !== 'fail'
+  || badAsCheck.status !== 'fail'
+  || inputArrayCheck.status !== 'pass'
+  || badArrayReturnCheck.status !== 'fail'
+  || inputRelationCheck.status !== 'pass'
+  || badRelationReturnCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected type @fit contracts to inline through inputs, returns, locals, satisfies, as, arrays, and relations', typeContractBoundaryChecks)
 }
@@ -228,15 +228,15 @@ const badGenericTypeFunctions = ['badAlias', 'badInterface', 'badConstrained', '
 const missingGenericTypeFailures = badGenericTypeFunctions.filter(functionName =>
   !genericTypeContractChecks.some(check => check.functionName === functionName && check.status === 'fail')
 )
-const constrainedGenericReadCheck = genericTypeContractChecks.find(check => check.functionName === 'readConstrained' && check.text === 'return > 0')
-const unsafeGenericDeclarationCheck = genericTypeContractChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit > 0')
-const unsafeGenericUseNoise = genericTypeContractChecks.find(check => check.functionName === 'unsafeUse')
+const constrainedGenericReadCheck = requiredCheck(genericTypeContractChecks, {functionName: 'readConstrained', text: 'return > 0'})
+const unsafeGenericDeclarationCheck = requiredCheck(genericTypeContractChecks, {functionName: '<type>', text: 'type @fit > 0', line: 29})
+const unsafeGenericUseNoise = genericTypeContractChecks.some(check => check.functionName === 'unsafeUse')
 if (
   missingGenericTypeFailures.length > 0
-  || constrainedGenericReadCheck?.status !== 'pass'
-  || unsafeGenericDeclarationCheck?.status !== 'unknown'
+  || constrainedGenericReadCheck.status !== 'pass'
+  || unsafeGenericDeclarationCheck.status !== 'unknown'
   || unsafeGenericDeclarationCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
-  || unsafeGenericUseNoise != null
+  || unsafeGenericUseNoise
 ) {
   throw testDiagnosticError('expected generic type contracts to preserve constraints without representative type arguments', genericTypeContractChecks)
 }
@@ -257,13 +257,16 @@ type GenericFactory = <T>() => {
   value: T // @fit > 0
 }
 `)
-const conditionalTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('conditional type branch'))
-const mappedTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('mapped type'))
-const nestedGenericTypeContextCheck = unsupportedGenericTypeContextChecks.find(check => check.text === 'type @fit > 0' && check.reason?.includes('nested generic type member'))
+const conditionalTypeContextCheck = requiredCheck(unsupportedGenericTypeContextChecks, {functionName: '<type>', text: 'type @fit > 0', line: 2})
+const mappedTypeContextCheck = requiredCheck(unsupportedGenericTypeContextChecks, {functionName: '<type>', text: 'type @fit > 0', line: 7})
+const nestedGenericTypeContextCheck = requiredCheck(unsupportedGenericTypeContextChecks, {functionName: '<type>', text: 'type @fit > 0', line: 12})
 if (
-  conditionalTypeContextCheck?.status !== 'unknown'
-  || mappedTypeContextCheck?.status !== 'unknown'
-  || nestedGenericTypeContextCheck?.status !== 'unknown'
+  conditionalTypeContextCheck.status !== 'unknown'
+  || conditionalTypeContextCheck.reason?.includes('conditional type branch') !== true
+  || mappedTypeContextCheck.status !== 'unknown'
+  || mappedTypeContextCheck.reason?.includes('mapped type') !== true
+  || nestedGenericTypeContextCheck.status !== 'unknown'
+  || nestedGenericTypeContextCheck.reason?.includes('nested generic type member') !== true
 ) {
   throw testDiagnosticError('expected type contracts with unpreserved inner generic context to be rejected directly', unsupportedGenericTypeContextChecks)
 }
@@ -288,9 +291,9 @@ function read(foo: Foo) {
   return foo.a.b
 }
 `)
-const typeGivenKeywordCheck = typeGivenKeywordChecks.find(check => check.text === 'given Bar.a > 10')
+const typeGivenKeywordCheck = requiredCheck(typeGivenKeywordChecks, {functionName: 'read', text: 'given Bar.a > 10'})
 if (
-  typeGivenKeywordCheck?.status !== 'unknown'
+  typeGivenKeywordCheck.status !== 'unknown'
   || typeGivenKeywordCheck.reason !== 'type @fit lines do not use given; write the field fact without given'
 ) {
   throw testDiagnosticError('expected type @fit given keyword to be rejected directly', typeGivenKeywordChecks)
@@ -342,11 +345,11 @@ function rejectsUsageLocal() {
   return tile.width
 }
 `)
-const scopedTypeReadCheck = typeContractScopeChecks.find(check => check.functionName === 'readsScopedType' && check.text === 'return >= 160')
-const usageLocalCaptureCheck = typeContractScopeChecks.find(check => check.functionName === 'rejectsUsageLocal' && check.text === 'tile.width: typeScopedDouble(typeScopedMin)..Infinity')
+const scopedTypeReadCheck = requiredCheck(typeContractScopeChecks, {functionName: 'readsScopedType', text: 'return >= 160'})
+const usageLocalCaptureCheck = requiredCheck(typeContractScopeChecks, {functionName: 'rejectsUsageLocal', text: 'tile.width: typeScopedDouble(typeScopedMin)..Infinity'})
 if (
-  scopedTypeReadCheck?.status !== 'pass'
-  || usageLocalCaptureCheck?.status !== 'fail'
+  scopedTypeReadCheck.status !== 'pass'
+  || usageLocalCaptureCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected type @fit contracts to evaluate free names where the type is declared', typeContractScopeChecks)
 }
@@ -374,13 +377,13 @@ export function badReturn(): ImportedWidth {
 }
 `,
 })
-const importedGoodCheck = importedDeclarationScopeChecks.find(check => check.functionName === 'goodReturn' && check.text === 'return.width: lowerBound(return.width)..Infinity')
-const importedBadCheck = importedDeclarationScopeChecks.find(check => check.functionName === 'badReturn' && check.text === 'return.width: lowerBound(return.width)..Infinity')
-const importedScopeLeak = importedDeclarationScopeChecks.find(check => check.reason?.includes("Cannot find name 'lowerBound'"))
+const importedGoodCheck = requiredCheck(importedDeclarationScopeChecks, {functionName: 'goodReturn', text: 'return.width: lowerBound(return.width)..Infinity'})
+const importedBadCheck = requiredCheck(importedDeclarationScopeChecks, {functionName: 'badReturn', text: 'return.width: lowerBound(return.width)..Infinity'})
+const importedScopeLeak = importedDeclarationScopeChecks.some(check => check.reason?.includes("Cannot find name 'lowerBound'"))
 if (
-  importedGoodCheck?.status !== 'pass'
-  || importedBadCheck?.status !== 'fail'
-  || importedScopeLeak != null
+  importedGoodCheck.status !== 'pass'
+  || importedBadCheck.status !== 'fail'
+  || importedScopeLeak
 ) {
   throw testDiagnosticError('expected imported type @fit helper calls to be checked where the type is declared and proven where values are used', importedDeclarationScopeChecks)
 }
@@ -404,14 +407,14 @@ export function badReturn(): ImportedWidth {
 }
 `,
 })
-const importedTypeErrorCheck = importedDeclarationTypeErrorChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit 0..needsString(width)')
-const importedUseSiteNameError = importedDeclarationTypeErrorChecks.find(check => check.reason?.includes("Cannot find name 'needsString'"))
-const importedSkippedBadReturn = importedDeclarationTypeErrorChecks.find(check => check.functionName === 'badReturn')
+const importedTypeErrorCheck = requiredCheck(importedDeclarationTypeErrorChecks, {functionName: '<type>', text: 'type @fit 0..needsString(width)', line: 7})
+const importedUseSiteNameError = importedDeclarationTypeErrorChecks.some(check => check.reason?.includes("Cannot find name 'needsString'"))
+const importedSkippedBadReturn = importedDeclarationTypeErrorChecks.some(check => check.functionName === 'badReturn')
 if (
-  importedTypeErrorCheck?.status !== 'unknown'
+  importedTypeErrorCheck.status !== 'unknown'
   || importedTypeErrorCheck.reason?.includes("TS2345: Argument of type 'number' is not assignable to parameter of type 'string'") !== true
-  || importedUseSiteNameError != null
-  || importedSkippedBadReturn != null
+  || importedUseSiteNameError
+  || importedSkippedBadReturn
 ) {
   throw testDiagnosticError('expected imported type @fit helper parameter mistakes to be reported at the type declaration', importedDeclarationTypeErrorChecks)
 }
@@ -454,13 +457,13 @@ export function buildHeight(): HeightBox {
 }
 `,
 })
-const widthAttribution = multiHelperAttributionChecks.find(check => check.text === 'type @fit 0..needsString(width)')
-const heightAttribution = multiHelperAttributionChecks.find(check => check.text === 'type @fit 0..needsBoolean(height)')
+const widthAttribution = requiredCheck(multiHelperAttributionChecks, {functionName: '<type>', text: 'type @fit 0..needsString(width)', line: 7})
+const heightAttribution = requiredCheck(multiHelperAttributionChecks, {functionName: '<type>', text: 'type @fit 0..needsBoolean(height)', line: 7})
 if (
-  widthAttribution?.status !== 'unknown'
+  widthAttribution.status !== 'unknown'
   || !widthAttribution.file.endsWith('width-helper.ts')
   || widthAttribution.reason?.includes("not assignable to parameter of type 'string'") !== true
-  || heightAttribution?.status !== 'unknown'
+  || heightAttribution.status !== 'unknown'
   || !heightAttribution.file.endsWith('height-helper.ts')
   || heightAttribution.reason?.includes("not assignable to parameter of type 'boolean'") !== true
 ) {
@@ -501,16 +504,16 @@ export function unsafeImportedBox(): ImportedUnsafe<string> {
 }
 `,
 })
-const badImportedGenericCheck = importedGenericTypeChecks.find(check => check.functionName === 'badImportedBox' && check.status === 'fail')
-const importedConstrainedReadCheck = importedGenericTypeChecks.find(check => check.functionName === 'readImportedPositive' && check.text === 'return > 0')
-const unsafeImportedGenericCheck = importedGenericTypeChecks.find(check => check.functionName === '<type>' && check.text === 'type @fit > 0')
-const unsafeImportedUseNoise = importedGenericTypeChecks.find(check => check.functionName === 'unsafeImportedBox')
+const badImportedGenericCheck = requiredCheck(importedGenericTypeChecks, {functionName: 'badImportedBox', text: 'return.width > 0'})
+const importedConstrainedReadCheck = requiredCheck(importedGenericTypeChecks, {functionName: 'readImportedPositive', text: 'return > 0'})
+const unsafeImportedGenericCheck = requiredCheck(importedGenericTypeChecks, {functionName: '<type>', text: 'type @fit > 0', line: 11})
+const unsafeImportedUseNoise = importedGenericTypeChecks.some(check => check.functionName === 'unsafeImportedBox')
 if (
-  badImportedGenericCheck == null
-  || importedConstrainedReadCheck?.status !== 'pass'
-  || unsafeImportedGenericCheck?.status !== 'unknown'
+  badImportedGenericCheck.status !== 'fail'
+  || importedConstrainedReadCheck.status !== 'pass'
+  || unsafeImportedGenericCheck.status !== 'unknown'
   || unsafeImportedGenericCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
-  || unsafeImportedUseNoise != null
+  || unsafeImportedUseNoise
 ) {
   throw testDiagnosticError('expected imported generic type contracts to keep their declaration constraints', importedGenericTypeChecks)
 }
@@ -531,10 +534,10 @@ function badSize(): Size {
 }
 `)
 const typeFieldRelationGoodFailures = typeFieldRelationChecks.filter(check => check.functionName === 'goodSize' && check.status !== 'pass')
-const typeFieldRelationBadCheck = typeFieldRelationChecks.find(check => check.functionName === 'badSize' && check.text === 'return.width <= return.maxWidth')
+const typeFieldRelationBadCheck = requiredCheck(typeFieldRelationChecks, {functionName: 'badSize', text: 'return.width <= return.maxWidth'})
 if (
   typeFieldRelationGoodFailures.length > 0
-  || typeFieldRelationBadCheck?.status !== 'fail'
+  || typeFieldRelationBadCheck.status !== 'fail'
 ) {
   throw testDiagnosticError('expected type @fit field relations to compare against the same object', typeFieldRelationChecks)
 }
@@ -560,9 +563,9 @@ function badNumericLimit(): Limits {
 }
 `)
 const goodStaticPropertyFailures = staticPropertyContractChecks.filter(check => check.functionName === 'goodLimits' && check.status !== 'pass')
-const badQuotedProperty = staticPropertyContractChecks.find(check => check.functionName === 'badQuotedLimit' && check.status === 'fail')
-const badNumericProperty = staticPropertyContractChecks.find(check => check.functionName === 'badNumericLimit' && check.status === 'fail')
-if (goodStaticPropertyFailures.length > 0 || badQuotedProperty == null || badNumericProperty == null) {
+const badQuotedProperty = requiredCheck(staticPropertyContractChecks, {functionName: 'badQuotedLimit', text: 'return["available-width"]: 0..10'})
+const badNumericProperty = requiredCheck(staticPropertyContractChecks, {functionName: 'badNumericLimit', text: 'return["0"] > 0'})
+if (goodStaticPropertyFailures.length > 0 || badQuotedProperty.status !== 'fail' || badNumericProperty.status !== 'fail') {
   throw testDiagnosticError('expected quoted and numeric static properties to keep their exact contract paths', staticPropertyContractChecks)
 }
 })

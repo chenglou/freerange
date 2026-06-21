@@ -3,7 +3,7 @@ import {inferFitFiles} from '../../src/check-core.ts'
 import {numberValue} from '../../src/domain.ts'
 import {runningSumNumber} from '../../src/loop-summary.ts'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -32,16 +32,18 @@ if (previousIndexReport.phase !== 'ready') {
 
 test('preserves imported adjacent summaries and rejects a different recurrence', async () => {
 const negativeAdjacentSummaryReport = await verifyFitFiles(['tests/imports/negative-adjacent-summary.ts'], {annotationsOnly: true})
-const negativeAdjacentSummaryCheck = negativeAdjacentSummaryReport.checks.find(check =>
-  check.functionName === 'negativeImportedPreviousNamedIndexSummary'
-  && check.text === 'return.rows[$i].top == return.rows[$i - 1].top + (return.rows[$i - 1].height + spacing + 1)')
-const negativeAdjacentFirstItemCheck = negativeAdjacentSummaryReport.checks.find(check =>
-  check.functionName === 'negativeAdjacentSummaryDoesNotDescribeFirstItem'
-  && check.text === 'return.rows[].top >= 1')
+const negativeAdjacentSummaryCheck = requiredCheck(negativeAdjacentSummaryReport.checks, {
+  functionName: 'negativeImportedPreviousNamedIndexSummary',
+  text: 'return.rows[$i].top == return.rows[$i - 1].top + (return.rows[$i - 1].height + spacing + 1)',
+})
+const negativeAdjacentFirstItemCheck = requiredCheck(negativeAdjacentSummaryReport.checks, {
+  functionName: 'negativeAdjacentSummaryDoesNotDescribeFirstItem',
+  text: 'return.rows[].top >= 1',
+})
 if (
-  negativeAdjacentSummaryCheck?.status !== 'unknown'
+  negativeAdjacentSummaryCheck.status !== 'unknown'
   || negativeAdjacentSummaryCheck.reason?.includes('adjacent: return.rows[$i + 1].top == return.rows[$i].top + (return.rows[$i].height + spacing)') !== true
-  || negativeAdjacentFirstItemCheck?.status !== 'unknown'
+  || negativeAdjacentFirstItemCheck.status !== 'unknown'
 ) {
   throw testDiagnosticError('expected imported adjacent summaries to preserve the caller spelling and reject a different recurrence', negativeAdjacentSummaryReport.checks)
 }
@@ -273,7 +275,7 @@ function unaryGroupedUpdate(items: {height: number}[]) {
 }
 `)
 const sequenceOperationStatus = (functionName: string, text: string) =>
-  sequenceOperationChecks.find(check => check.functionName === functionName && check.text === text)?.status
+  requiredCheck(sequenceOperationChecks, {functionName, text}).status
 if (
   sequenceOperationStatus('rightGrouped', 'spaced(return, gap)') !== 'pass'
   || sequenceOperationStatus('rightGrouped', 'return[$i + 1].y == return[$i].y + (return[$i].height + gap)') !== 'pass'

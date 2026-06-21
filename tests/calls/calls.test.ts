@@ -9,7 +9,7 @@ import {
   importedDefaultRunsOnce,
   importedDestructuredDefaultUsesFinalBinding,
 } from './imported-caller.ts'
-import {testDiagnosticError} from '../test-diagnostics.ts'
+import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
@@ -631,8 +631,8 @@ function negativeTupleIndexWriteIsUnsupported() {
   return pair
 }
 `)
-const boundaryStatus = (name: string) =>
-  arrayTupleBoundaryChecks.find(check => check.functionName === name)
+const boundaryCheck = (functionName: string, text: string) =>
+  requiredCheck(arrayTupleBoundaryChecks, {functionName, text})
 const expectedBoundaryPasses = [
   'fixedIndexGivenOnTupleIsSupported',
   'quotedIndexGivenOnTupleIsSupported',
@@ -649,54 +649,52 @@ const expectedBoundaryPasses = [
   'equalLengthTupleUnionKeepsPositions',
 ]
 const expectedBoundaryNonPasses = [
-  'arrayParameterDoesNotKeepFirstPosition',
-  'fixedIndexGivenOnCollectionIsUnsupported',
-  'negativePropertyGivenOnCollectionIsUnsupported',
-  'fractionalPropertyGivenOnCollectionIsUnsupported',
-  'quotedIndexGivenOnCollectionIsUnsupported',
-  'fixedIndexReturnOnCollectionIsUnsupported',
-  'arrayReturnDoesNotKeepFirstPosition',
-  'nestedArrayBoundaryDoesNotKeepFirstPosition',
-  'assignmentToArrayDoesNotKeepFirstPosition',
-  'assertionToArrayDoesNotKeepFirstPosition',
-  'readonlyArrayDoesNotKeepFirstPosition',
-  'tupleWriteDoesNotGiveArrayAliasPositions',
-  'collectionReadWithoutLengthProof',
-  'collectionDestructureWithoutLengthProof',
-  'negativeCollectionIndexIsNotAnItem',
-  'nonArrayIndexIsNotAnItem',
-  'differentLengthTupleUnionDoesNotKeepPositions',
-]
+  ['arrayParameterDoesNotKeepFirstPosition', 'return == 10'],
+  ['fixedIndexGivenOnCollectionIsUnsupported', 'given values[0]: 0..10'],
+  ['negativePropertyGivenOnCollectionIsUnsupported', 'given values[-1]: 0..10'],
+  ['fractionalPropertyGivenOnCollectionIsUnsupported', 'given values[1.5]: 0..10'],
+  ['quotedIndexGivenOnCollectionIsUnsupported', 'given values["0"]: 0..10'],
+  ['fixedIndexReturnOnCollectionIsUnsupported', 'return[0]: 0..10'],
+  ['arrayReturnDoesNotKeepFirstPosition', 'return == 10'],
+  ['nestedArrayBoundaryDoesNotKeepFirstPosition', 'return == 10'],
+  ['assignmentToArrayDoesNotKeepFirstPosition', 'return == 10'],
+  ['assertionToArrayDoesNotKeepFirstPosition', 'return == 10'],
+  ['readonlyArrayDoesNotKeepFirstPosition', 'return == 10'],
+  ['tupleWriteDoesNotGiveArrayAliasPositions', 'return == 30'],
+  ['collectionReadWithoutLengthProof', 'return: 0..10'],
+  ['collectionDestructureWithoutLengthProof', 'return: 0..10'],
+  ['negativeCollectionIndexIsNotAnItem', 'return: 0..10'],
+  ['nonArrayIndexIsNotAnItem', 'return: 0..10'],
+  ['differentLengthTupleUnionDoesNotKeepPositions', 'return == 10'],
+] as const
 const missingBoundaryPasses = expectedBoundaryPasses.filter(name =>
   !arrayTupleBoundaryChecks.some(check => check.functionName === name))
 const invalidBoundaryPasses = expectedBoundaryPasses.filter(name =>
   arrayTupleBoundaryChecks.some(check => check.functionName === name && check.status !== 'pass'))
-const missingBoundaryNonPasses = expectedBoundaryNonPasses.filter(name => boundaryStatus(name) == null)
-const invalidBoundaryNonPasses = expectedBoundaryNonPasses.filter(name => boundaryStatus(name)?.status === 'pass')
+const invalidBoundaryNonPasses = expectedBoundaryNonPasses.filter(([functionName, text]) =>
+  boundaryCheck(functionName, text).status === 'pass')
 if (
   missingBoundaryPasses.length > 0
   || invalidBoundaryPasses.length > 0
-  || missingBoundaryNonPasses.length > 0
   || invalidBoundaryNonPasses.length > 0
-  || boundaryStatus('assertionCannotCreateTuple')?.status !== 'unknown'
-  || !boundaryStatus('optionalTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
-  || !boundaryStatus('restTupleIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
-  || !boundaryStatus('optionalTupleAliasIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
-  || !boundaryStatus('optionalTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
-  || !boundaryStatus('restTupleUnionIsUnsupported')?.reason?.includes('Optional and rest tuple elements are unsupported')
-  || !boundaryStatus('fixedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
-  || !boundaryStatus('negativePropertyGivenOnCollectionIsUnsupported')?.reason?.includes('requires an object, not an array')
-  || !boundaryStatus('fractionalPropertyGivenOnCollectionIsUnsupported')?.reason?.includes('requires an object, not an array')
-  || !boundaryStatus('quotedIndexGivenOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
-  || !boundaryStatus('fixedIndexReturnOnCollectionIsUnsupported')?.reason?.includes('requires a fixed tuple type')
-  || boundaryStatus('indexedCollectionWriteIsUnsupported')?.status !== 'unknown'
-  || boundaryStatus('nestedCollectionWriteIsUnsupported')?.status !== 'unknown'
-  || boundaryStatus('negativeTupleIndexWriteIsUnsupported')?.status !== 'unknown'
+  || boundaryCheck('assertionCannotCreateTuple', 'return[0] == 10').status !== 'unknown'
+  || !boundaryCheck('optionalTupleIsUnsupported', 'return.length >= 0').reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryCheck('restTupleIsUnsupported', 'return.length >= 1').reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryCheck('optionalTupleAliasIsUnsupported', 'return.length >= 1').reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryCheck('optionalTupleUnionIsUnsupported', 'return.length >= 1').reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryCheck('restTupleUnionIsUnsupported', 'return.length >= 1').reason?.includes('Optional and rest tuple elements are unsupported')
+  || !boundaryCheck('fixedIndexGivenOnCollectionIsUnsupported', 'given values[0]: 0..10').reason?.includes('requires a fixed tuple type')
+  || !boundaryCheck('negativePropertyGivenOnCollectionIsUnsupported', 'given values[-1]: 0..10').reason?.includes('requires an object, not an array')
+  || !boundaryCheck('fractionalPropertyGivenOnCollectionIsUnsupported', 'given values[1.5]: 0..10').reason?.includes('requires an object, not an array')
+  || !boundaryCheck('quotedIndexGivenOnCollectionIsUnsupported', 'given values["0"]: 0..10').reason?.includes('requires a fixed tuple type')
+  || !boundaryCheck('fixedIndexReturnOnCollectionIsUnsupported', 'return[0]: 0..10').reason?.includes('requires a fixed tuple type')
+  || boundaryCheck('indexedCollectionWriteIsUnsupported', 'return == 2').status !== 'unknown'
+  || boundaryCheck('nestedCollectionWriteIsUnsupported', 'return == 1').status !== 'unknown'
+  || boundaryCheck('negativeTupleIndexWriteIsUnsupported', 'return.length == 2').status !== 'unknown'
 ) {
   throw testDiagnosticError('expected arrays and fixed tuples to keep separate guarantees at every type boundary', {
     missingBoundaryPasses,
     invalidBoundaryPasses,
-    missingBoundaryNonPasses,
     invalidBoundaryNonPasses,
     arrayTupleBoundaryChecks,
   })
@@ -807,13 +805,19 @@ function sameParameterNameKeepsCallerMeaning(value: number) {
   return bounded(value)
 }
 `)
-const sameNameRequirement = sameParameterNameChecks.find(check => check.text.includes('bounded(value): requires'))
-const defaultRequirement = sameParameterNameChecks.find(check => check.text.includes('ordered(value): requires'))
+const sameNameRequirement = requiredCheck(sameParameterNameChecks, {
+  functionName: 'sameParameterNameKeepsCallerMeaning',
+  text: 'bounded(value): requires value: 0..10',
+})
+const defaultRequirement = requiredCheck(sameParameterNameChecks, {
+  functionName: 'sameParameterNameKeepsCallerMeaning',
+  text: 'ordered(value): requires right <= left',
+})
 if (
-  sameNameRequirement?.status !== 'fail'
+  sameNameRequirement.status !== 'fail'
   || !sameNameRequirement.reason?.includes('missing: value <= 10')
   || sameNameRequirement.reason.includes('value +')
-  || defaultRequirement?.status !== 'unknown'
+  || defaultRequirement.status !== 'unknown'
   || !defaultRequirement.reason?.includes('(value + 1) <= value')
 ) {
   throw testDiagnosticError('expected caller and default text to remain distinct from callee parameter names', sameParameterNameChecks)
@@ -847,8 +851,8 @@ function defaultReadsEarlierCalleeParameter(value: number) {
   return copy(value)
 }
 `)
-const exchangedArgumentCheck = simultaneousParameterChecks.find(check => check.functionName === 'exchangedArgumentsStayInCallerScope' && check.text === 'return >= 0')
-const defaultParameterCheck = simultaneousParameterChecks.find(check => check.functionName === 'defaultReadsEarlierCalleeParameter' && check.text === 'return == value')
+const exchangedArgumentCheck = requiredCheck(simultaneousParameterChecks, {functionName: 'exchangedArgumentsStayInCallerScope', text: 'return >= 0'})
+const defaultParameterCheck = requiredCheck(simultaneousParameterChecks, {functionName: 'defaultReadsEarlierCalleeParameter', text: 'return == value'})
 const quotedPropertyRebase = callSiteText('obj["x"] + x', new Map([['obj', 'item'], ['x', 'amount']]))
 const namedPropertyRebase = callSiteText('({x: x, x})', new Map([['x', 'amount']]))
 const shadowedCallbackRebase = callSiteText('[1].map(x => x + outside)', new Map([['x', 'wrong'], ['outside', 'amount']]))
@@ -863,8 +867,8 @@ const switchBindingRebase = callSiteText('(() => { switch (outside) { case 0: co
 const classBindingRebase = callSiteText('(class x { static value() { return x } })', new Map([['x', 'wrong']]))
 const methodFreeVariableRebase = callSiteText('({x() { return x + outside }})', new Map([['x', 'amount'], ['outside', 'total']]))
 if (
-  exchangedArgumentCheck?.status === 'pass'
-  || defaultParameterCheck?.status !== 'pass'
+  exchangedArgumentCheck.status === 'pass'
+  || defaultParameterCheck.status !== 'pass'
   || quotedPropertyRebase !== 'item["x"] + amount'
   || namedPropertyRebase !== '({x: amount, x: amount})'
   || shadowedCallbackRebase !== '[1].map(x => x + amount)'
@@ -915,8 +919,11 @@ function tooFew() {
   return exactlyTwo(1)
 }
 `)
-const restRequirement = restContractChecks.find(check => check.text.includes('exactlyTwo(1): requires'))
-if (restRequirement?.status !== 'fail' || !restRequirement.reason?.includes('([1]).length >= 2')) {
+const restRequirement = requiredCheck(restContractChecks, {
+  functionName: 'tooFew',
+  text: 'exactlyTwo(1): requires values.length: int 2..2',
+})
+if (restRequirement.status !== 'fail' || !restRequirement.reason?.includes('([1]).length >= 2')) {
   throw testDiagnosticError('expected rest parameter contracts to retain caller argument text', restContractChecks)
 }
 })
@@ -1197,8 +1204,8 @@ function overflowingDouble(value: number) {
 }
 `)
 const finiteDefaultAllChecks = [...finiteDefaultChecks.annotationChecks, ...finiteDefaultChecks.callsiteChecks]
-const finiteDefaultStatus = (functionName: string, text: string) => finiteDefaultAllChecks.find(check =>
-  check.functionName.includes(functionName) && check.text.includes(text))?.status
+const finiteDefaultStatus = (functionName: string, text: string) =>
+  requiredCheck(finiteDefaultAllChecks, {functionName, text}).status
 const expectedPassingFiniteDefaultFunctions = new Set([
   'forwardsChecked',
   'guardedExternal',
@@ -1208,7 +1215,7 @@ const expectedPassingFiniteDefaultFunctions = new Set([
 ])
 if (
   finiteDefaultStatus('needsFinite', 'return: -Infinity<..<Infinity') !== 'pass'
-  || finiteDefaultStatus('unguardedExternal', 'requires value to be finite') !== 'requires'
+  || finiteDefaultStatus('unguardedExternal', 'needsFinite(value): requires value to be finite') !== 'requires'
   || !finiteDefaultAllChecks.some(check => check.functionName.includes('overflowingDouble')
     && check.text.includes('to be finite')
     && (check.status === 'unknown' || check.status === 'requires'))
@@ -1254,17 +1261,32 @@ allowsInfiniteWidth({width: 1, height: Infinity})
 destructuredWidth({width: Infinity})
 `)
 const finiteLeafCallChecks = finiteLeafChecks.callsiteChecks
-const infiniteWidth = finiteLeafCallChecks.find(check => check.text.startsWith('reads({width: Infinity') && check.text.includes('.width to be finite'))
-const infiniteHeight = finiteLeafCallChecks.find(check => check.text.startsWith('reads({width: 1') && check.text.includes('.rows[].height to be finite'))
-const allowedWidth = finiteLeafCallChecks.find(check => check.text.startsWith('allowsInfiniteWidth({width: Infinity') && check.text.includes('input.width: 0..Infinity'))
-const rejectedSibling = finiteLeafCallChecks.find(check => check.text.startsWith('allowsInfiniteWidth({width: 1') && check.text.includes('.height to be finite'))
-const rejectedDestructured = finiteLeafCallChecks.find(check => check.text.startsWith('destructuredWidth({width: Infinity') && check.text.includes('requires Infinity to be finite'))
+const infiniteWidth = requiredCheck(finiteLeafCallChecks, {
+  functionName: '<top-level>',
+  text: 'reads({width: Infinity, rows: [{height: 1}]}): requires ({width: Infinity, rows: [{height: 1}]}).width to be finite',
+})
+const infiniteHeight = requiredCheck(finiteLeafCallChecks, {
+  functionName: '<top-level>',
+  text: 'reads({width: 1, rows: [{height: Infinity}]}): requires ({width: 1, rows: [{height: Infinity}]}).rows[].height to be finite',
+})
+const allowedWidth = requiredCheck(finiteLeafCallChecks, {
+  functionName: '<top-level>',
+  text: 'allowsInfiniteWidth({width: Infinity, height: 1}): requires input.width: 0..Infinity',
+})
+const rejectedSibling = requiredCheck(finiteLeafCallChecks, {
+  functionName: '<top-level>',
+  text: 'allowsInfiniteWidth({width: 1, height: Infinity}): requires ({width: 1, height: Infinity}).height to be finite',
+})
+const rejectedDestructured = requiredCheck(finiteLeafCallChecks, {
+  functionName: '<top-level>',
+  text: 'destructuredWidth({width: Infinity}): requires Infinity to be finite',
+})
 if (
-  infiniteWidth?.status !== 'fail'
-  || infiniteHeight?.status !== 'fail'
-  || allowedWidth?.status !== 'pass'
-  || rejectedSibling?.status !== 'fail'
-  || rejectedDestructured?.status !== 'fail'
+  infiniteWidth.status !== 'fail'
+  || infiniteHeight.status !== 'fail'
+  || allowedWidth.status !== 'pass'
+  || rejectedSibling.status !== 'fail'
+  || rejectedDestructured.status !== 'fail'
 ) {
   throw testDiagnosticError('expected finite defaults on nested numeric leaves and exact-path range replacement', finiteLeafChecks)
 }
@@ -1416,15 +1438,18 @@ function badGenericCall() {
   return positiveIdentity(-1)
 }
 `)
-const constrainedGenericReturnCheck = constrainedGenericFunctionResult.annotationChecks.find(check =>
-  check.functionName === 'positiveIdentity' && check.text === 'return > 0'
-)
-const goodGenericCallCheck = constrainedGenericFunctionResult.callsiteChecks.find(check =>
-  check.functionName === 'goodGenericCall' && check.text === 'positiveIdentity(1): requires value > 0'
-)
-const badGenericCallCheck = constrainedGenericFunctionResult.callsiteChecks.find(check =>
-  check.functionName === 'badGenericCall' && check.text === 'positiveIdentity(-1): requires value > 0'
-)
+const constrainedGenericReturnCheck = requiredCheck(constrainedGenericFunctionResult.annotationChecks, {
+  functionName: 'positiveIdentity',
+  text: 'return > 0',
+})
+const goodGenericCallCheck = requiredCheck(constrainedGenericFunctionResult.callsiteChecks, {
+  functionName: 'goodGenericCall',
+  text: 'positiveIdentity(1): requires value > 0',
+})
+const badGenericCallCheck = requiredCheck(constrainedGenericFunctionResult.callsiteChecks, {
+  functionName: 'badGenericCall',
+  text: 'positiveIdentity(-1): requires value > 0',
+})
 const unconstrainedGenericFunctionChecks = verifyFitSource('unconstrained-generic-function.ts', `/** @fit
  * given value > 0
  */
@@ -1432,14 +1457,15 @@ function unsafeIdentity<T>(value: T) {
   return value
 }
 `)
-const unconstrainedGenericGivenCheck = unconstrainedGenericFunctionChecks.find(check =>
-  check.functionName === 'unsafeIdentity' && check.text === 'given value > 0'
-)
+const unconstrainedGenericGivenCheck = requiredCheck(unconstrainedGenericFunctionChecks, {
+  functionName: 'unsafeIdentity',
+  text: 'given value > 0',
+})
 if (
-  constrainedGenericReturnCheck?.status !== 'pass'
-  || goodGenericCallCheck?.status !== 'pass'
-  || badGenericCallCheck?.status !== 'fail'
-  || unconstrainedGenericGivenCheck?.status !== 'unknown'
+  constrainedGenericReturnCheck.status !== 'pass'
+  || goodGenericCallCheck.status !== 'pass'
+  || badGenericCallCheck.status !== 'fail'
+  || unconstrainedGenericGivenCheck.status !== 'unknown'
   || unconstrainedGenericGivenCheck.reason?.includes("Type 'T' is not assignable to type 'number'") !== true
 ) {
   throw testDiagnosticError('expected TypeScript generic constraints to drive function contracts and call checks', {
@@ -1482,17 +1508,20 @@ function assumesInvalidLayout(layout: {width: number}) {
   return layout
 }
 `)
-const assumedBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesValidLayout' && check.text === 'isValidLayout((layout))')
-const conflictingBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'conflictingLayout' && check.text === 'given !isValidLayout((layout))')
-const assumedNegativeBooleanGivenCheck = booleanGivenContractResult.annotationChecks.find(check => check.functionName === 'assumesInvalidLayout' && check.text === '!isValidLayout(layout)')
-const invalidBooleanGivenCall = booleanGivenContractResult.callsiteChecks.find(check => check.functionName === 'invalidCaller' && check.text === 'assumesValidLayout({width: 0}): requires isValidLayout(layout)')
+const assumedBooleanGivenCheck = requiredCheck(booleanGivenContractResult.annotationChecks, {functionName: 'assumesValidLayout', text: 'isValidLayout((layout))'})
+const conflictingBooleanGivenCheck = requiredCheck(booleanGivenContractResult.annotationChecks, {functionName: 'conflictingLayout', text: 'given !isValidLayout((layout))'})
+const assumedNegativeBooleanGivenCheck = requiredCheck(booleanGivenContractResult.annotationChecks, {functionName: 'assumesInvalidLayout', text: '!isValidLayout(layout)'})
+const invalidBooleanGivenCall = requiredCheck(booleanGivenContractResult.callsiteChecks, {
+  functionName: 'invalidCaller',
+  text: 'assumesValidLayout({width: 0}): requires isValidLayout(layout)',
+})
 if (
-  assumedBooleanGivenCheck?.status !== 'pass'
+  assumedBooleanGivenCheck.status !== 'pass'
   || assumedBooleanGivenCheck.trace?.steps.some(step => step.rule === 'assumption') !== true
-  || conflictingBooleanGivenCheck?.status !== 'fail'
+  || conflictingBooleanGivenCheck.status !== 'fail'
   || conflictingBooleanGivenCheck.reason?.includes('no input can satisfy both given isValidLayout((layout)) and given !isValidLayout((layout))') !== true
-  || assumedNegativeBooleanGivenCheck?.status !== 'pass'
-  || invalidBooleanGivenCall?.status !== 'fail'
+  || assumedNegativeBooleanGivenCheck.status !== 'pass'
+  || invalidBooleanGivenCall.status !== 'fail'
   || invalidBooleanGivenCall.reason?.includes('given isValidLayout(layout) returned false') !== true
 ) {
   throw testDiagnosticError('expected boolean given predicates to be assumed in the callee and checked at callers', booleanGivenContractResult)
