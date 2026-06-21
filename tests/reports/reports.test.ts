@@ -10,7 +10,7 @@ setDefaultTimeout(300_000)
 describe('reports', () => {
 test('checks every positive catalog obligation and trace', async () => {
 const positiveCatalogs = [
-  {path: 'tests/source-checking/patterns.ts', expectedChecks: 340},
+  {path: 'tests/source-checking/patterns.ts', expectedChecks: 341},
   {path: 'tests/loops/loop-patterns.ts', expectedChecks: 115},
   {path: 'tests/imports/import-patterns.ts', expectedChecks: 66},
   {path: 'tests/interpreter-matrix/interpreter-matrix-patterns.ts', expectedChecks: 19},

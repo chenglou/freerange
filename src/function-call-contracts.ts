@@ -76,7 +76,6 @@ import {
   type FitSpec,
   type FitValueSpec,
 } from './parser.ts'
-import {assumptionsAreReachable} from './proof.ts'
 import {
   createFitValueSpecTypeEnv,
   fitValueSpecTupleElementType,
@@ -88,10 +87,13 @@ import {
 } from './obligations.ts'
 import {preparedFunctionContracts} from './prepared-contracts.ts'
 import {
+  assumptionsAreReachable,
   comparisonConstraint,
   flipComparison,
   proveComparison,
   proveObligation,
+  reachableNumberCasePairs,
+  reachableNumberCases,
 } from './proof.ts'
 import {proofFactsFromValues} from './proof-facts.ts'
 import {proveBooleanTrue} from './boolean-claims.ts'
@@ -149,14 +151,14 @@ export function verifyCallGivenSpecs(
             spec.range,
             calleeContext,
           )
-      status = withCallRangeDetail(status, callText, value, spec, options.callSiteBindings)
+      status = withCallRangeDetail(status, callText, value, spec, options.callSiteBindings, calleeContext, evaluators)
     }
     if (spec.kind === 'comparison') {
       const left = evaluators.evaluateSpecExpression(spec.left, calleeContext)
       const right = evaluators.evaluateSpecExpression(spec.right, calleeContext)
       usedFacts = proofFactsFromValues([left, right], calleeContext.assumptions)
       status = proveComparison(left, spec.op, right, calleeContext.assumptions)
-      status = withCallComparisonDetail(status, callText, left, right, spec, options.callSiteBindings)
+      status = withCallComparisonDetail(status, callText, left, right, spec, options.callSiteBindings, calleeContext)
     }
     if (spec.kind === 'expression') {
       const value = evaluators.evaluateSpecExpression(spec.expression, calleeContext)
@@ -213,6 +215,8 @@ function withCallRangeDetail(
   value: Value,
   spec: FitRangeGivenSpec,
   callSiteBindings: CallSiteBindings | undefined,
+  context: EvalContext,
+  evaluators: CallContractEvaluators,
 ): CallPreconditionStatus {
   if (value.kind !== 'number') return withUnsupportedCallDetail(status, callText, callRequirementText(spec, callSiteBindings), formatCallBinding(spec.expression.text, value), [
     `${callSiteText(spec.expression.text, callSiteBindings)}: ${callSiteText(formatRangeSpec(spec.range), callSiteBindings)}`,
@@ -224,9 +228,25 @@ function withCallRangeDetail(
     requirement: callRequirementText(spec, callSiteBindings),
     callerPassed: formatCallBinding(spec.expression.text, value),
     missing,
-    definiteFailure: status.status === 'fail' && exactNumber(value) != null,
+    definiteFailure: rangePreconditionDefinitelyFails(status, value, spec.range, context, evaluators),
     unsupported: false,
   })
+}
+
+function rangePreconditionDefinitelyFails(
+  status: CallPreconditionStatus,
+  value: NumberValue,
+  range: FitRange,
+  context: EvalContext,
+  evaluators: CallContractEvaluators,
+) {
+  if (status.status !== 'fail') return false
+  const cases = fitRangeCases(range)
+  const staticCase = cases.length === 1 ? cases[0]! : null
+  if (staticCase?.lowerValue == null || staticCase.upperValue == null) return exactNumber(value) != null
+  const branches = reachableNumberCases(value, context.assumptions)
+  return branches.length > 0 && branches.every(branch =>
+    evaluators.proveRangeSpec(branch.value, range, {...context, assumptions: branch.assumptions}).status === 'fail')
 }
 
 function missingBoundsForRange(value: NumberValue, range: FitRange, callSiteBindings: CallSiteBindings | undefined) {
@@ -259,6 +279,7 @@ function withCallComparisonDetail(
   right: Value,
   spec: FitComparisonGivenSpec,
   callSiteBindings: CallSiteBindings | undefined,
+  context: EvalContext,
 ): CallPreconditionStatus {
   if (left.kind !== 'number' || right.kind !== 'number') {
     return withUnsupportedCallDetail(status, callText, callRequirementText(spec, callSiteBindings), formatCallComparisonBinding(spec, left, right), [
@@ -272,9 +293,22 @@ function withCallComparisonDetail(
     requirement: callRequirementText(spec, callSiteBindings),
     callerPassed: formatCallComparisonBinding(spec, left, right),
     missing,
-    definiteFailure: status.status === 'fail' && exactNumber(left) != null && exactNumber(right) != null,
+    definiteFailure: comparisonPreconditionDefinitelyFails(status, left, right, spec.op, context),
     unsupported: false,
   })
+}
+
+function comparisonPreconditionDefinitelyFails(
+  status: CallPreconditionStatus,
+  left: NumberValue,
+  right: NumberValue,
+  op: ComparisonOperator,
+  context: EvalContext,
+) {
+  if (status.status !== 'fail') return false
+  const pairs = reachableNumberCasePairs(left, right, context.assumptions)
+  return pairs.length > 0 && pairs.every(pair =>
+    proveComparison(pair.left, op, pair.right, pair.assumptions).status === 'fail')
 }
 
 function withCallExpressionDetail(

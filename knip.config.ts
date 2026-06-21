@@ -11,6 +11,7 @@ const config: KnipConfig = {
     'snapshot.ts',
     'tests/orchestration/fixtures/*.ts',
     // Fixture files loaded by file path inside test suites
+    'tests/calls/call-requirement-outcomes.ts',
     'tests/source-checking/patterns.ts',
     'tests/loops/loop-patterns.ts',
     'tests/loops/previous-index-patterns.ts',

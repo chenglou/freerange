@@ -2564,3 +2564,22 @@ export function negativeOneMarkerIsNotFinite(pos: number) {
 export function negativeUnionTieIsNotStrict(x: number) {
   return x
 }
+
+function separateConditionalLayout(wide: boolean) {
+  return wide
+    ? {columns: 3, gap: 24}
+    : {columns: 2, gap: 16}
+}
+
+function separateLayoutScore(layout: {columns: number; gap: number}) {
+  return layout.columns * 100 + layout.gap
+}
+
+/** @fit
+ * return: 216 | 324
+ */
+export function negativeSeparateLayoutCallsDoNotReconnect(wide: boolean) {
+  const columns = separateConditionalLayout(wide).columns
+  const gap = separateConditionalLayout(wide).gap
+  return separateLayoutScore({columns, gap})
+}

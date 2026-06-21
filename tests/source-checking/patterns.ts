@@ -550,6 +550,23 @@ function switchLayout(kind: 'compact' | 'wide') {
   }
 }
 
+function conditionalLayout(wide: boolean) {
+  return wide
+    ? {columns: 3, gap: 24}
+    : {columns: 2, gap: 16}
+}
+
+function layoutScore(layout: {columns: number; gap: number}) {
+  return layout.columns * 100 + layout.gap
+}
+
+/** @fit
+ * return: 216 | 324
+ */
+export function conditionalLayoutStaysTogetherThroughHelpers(wide: boolean) {
+  return layoutScore(conditionalLayout(wide))
+}
+
 /** @fit
  * return: 18 | 27
  */

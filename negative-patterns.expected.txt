@@ -1280,6 +1280,8 @@ UNKNOWN tests/source-checking/negative-patterns.ts:negativeUnionTieIsNotStrict: 
     x: 0..5
     assumed from input: given x: 0<..5 | 0..3
   missing fact: x > 0
+UNKNOWN tests/source-checking/negative-patterns.ts:negativeSeparateLayoutCallsDoNotReconnect: return: 216 | 324
+  Numeric alternatives came from separate branch constructs and are not assumed to match
 UNKNOWN tests/source-checking/negative-patterns.ts:<type>: type @fit rows[].cells[].x >= row.x
   TypeScript rejected @fit contract:
   tests/source-checking/negative-patterns.ts(1517,2): error TS2304: Cannot find name 'row'.

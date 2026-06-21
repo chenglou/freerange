@@ -19,6 +19,34 @@ function verifyFitSourceWithCallsites(file: string, sourceText: string) {
 }
 
 describe('calls', () => {
+test('reports every call requirement outcome with its reason', async () => {
+const report = await verifyFitFiles(['tests/calls/call-requirement-outcomes.ts'])
+const expected = [
+  {functionName: 'passes', text: 'accepts(5): requires value: 0..10', status: 'pass', reason: undefined},
+  {functionName: 'failsWithRange', text: 'accepts(value): requires value: 0..10', status: 'fail', reason: 'caller passed: value: 20..30\nmissing: value <= 10'},
+  {functionName: 'requiresMixedRange', text: 'accepts(flag ? 5 : 20): requires value: 0..10', status: 'requires', reason: 'caller passed: value: 5 | 20\nmissing: (flag ? 5 : 20) <= 10'},
+  {functionName: 'requiresOverlappingRange', text: 'accepts(value): requires value: 0..10', status: 'requires', reason: 'caller passed: value: 5..15\nmissing: value <= 10'},
+  {functionName: 'passesWithComparison', text: 'acceptsOrder(0, 1): requires left <= right', status: 'pass', reason: undefined},
+  {functionName: 'failsWithComparison', text: 'acceptsOrder(left, right): requires left <= right', status: 'fail', reason: 'caller passed: left: 20..30, right: 0..10\nmissing: left <= right'},
+  {functionName: 'requiresMixedComparison', text: 'acceptsOrder(flag ? 5 : 20, 10): requires left <= right', status: 'requires', reason: 'caller passed: left: 5 | 20, right: 10\nmissing: (flag ? 5 : 20) <= 10'},
+  {functionName: 'requiresOverlappingComparison', text: 'acceptsOrder(value, 10): requires left <= right', status: 'requires', reason: 'caller passed: left: 5..15, right: 10\nmissing: value <= 10'},
+  {functionName: 'requires', text: 'accepts(value): requires value: 0..10', status: 'requires', reason: 'caller passed: value: any number\nmissing: value: 0..10'},
+  {
+    functionName: 'unknown',
+    text: 'accepts(getValue()): requires value: 0..10',
+    status: 'unknown',
+    reason: 'caller passed: value: unknown (Unsupported function value getValue)\nmissing: (getValue()): 0..10',
+  },
+] as const
+const actual = expected.map(({functionName, text}) => requiredCheck(report.checks, {functionName, text}))
+if (actual.some((check, index) => {
+  const wanted = expected[index]!
+  return check.status !== wanted.status || check.reason !== wanted.reason
+}) || JSON.stringify(report.summary) !== JSON.stringify({pass: 4, fail: 2, requires: 5, unknown: 1, audit: 0})) {
+  throw testDiagnosticError('expected the public report to preserve each call status and reason', {actual, summary: report.summary})
+}
+})
+
 test('prepares source call operands and parameters once', () => {
 const sourceCallChecks = verifyFitSource('source-call-evaluation.ts', `
 function id(value: number) {

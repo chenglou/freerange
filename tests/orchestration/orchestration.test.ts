@@ -4,7 +4,7 @@ import {snapshotUpdateRequested} from '../../snapshot.ts'
 
 const repoDir = new URL('../..', import.meta.url).pathname
 const testFiles = [
-  {path: 'tests/calls/calls.test.ts', registrations: 17},
+  {path: 'tests/calls/calls.test.ts', registrations: 18},
   {path: 'tests/cli/cli.test.ts', registrations: 29},
   {path: 'tests/domain/domain.test.ts', registrations: 12},
   {path: 'tests/interpreter/interpreter.test.ts', registrations: 4},
