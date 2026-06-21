@@ -8,7 +8,7 @@
     "fr": "./fr.ts"
   },
   "scripts": {
-    "test": "bun test --only-failures --parallel=3 --parallel-delay=0 ./tests",
+    "test": "bun test --only-failures --parallel=4 --parallel-delay=0 ./tests",
     "test:update": "FREERANGE_UPDATE_SNAPSHOTS=1 bun run test",
     "bench": "bun bench.ts",
     "check": "tsc && oxlint --type-aware && bun knip && bun run test"
