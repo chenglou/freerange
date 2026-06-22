@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Mandatory read of our coding guideline: `engineering.md`.
+Read and ackowledge our `engineering.md`, and `goal-prompt.md`. Use the latter for extensive clearly-defined tasks.
 
 This project is private. Do NOT consider legacy and interop when refactoring.
 
