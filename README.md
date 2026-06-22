@@ -36,6 +36,4 @@ Use `fr check --annotations-only` when you want the quieter local pass that only
 Use `fr check --audit` when you want advisory cleanup for redundant selector guards like `Math.min`, `Math.max`, exact min/max ternaries, always-known `if` conditions, and `??` fallbacks whose left side is already present.
 Use `fr infer path/to/file.ts` when you want inferred facts for every function in that file: what Freerange found, which explicit checks they cover, and where proof stopped. Add `--annotations-only` for the quieter annotated-function view, or `--function name` for one function. Use no-path `fr infer --all` when you want a project summary instead of a per-function dump.
 
-See [DOCUMENTATION.md](./DOCUMENTATION.md) for the language guide, glossary, and adoption playbook.
-
-See [DEVELOPMENT.md](./DEVELOPMENT.md) for setup, tests, demo checks, and repo notes.
+See [DOCUMENTATION.md](./DOCUMENTATION.md) for more.
