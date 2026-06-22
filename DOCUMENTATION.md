@@ -223,8 +223,8 @@ rows.length: int 0..200
 ```
 
 `rows[].height: 0..40` means "the rows array, which contains objects with a field `height`, has that `height` between 0 and 40".
-`$i` designates any item index. Reusing `$i` means the same position. Across differing arrays, their lengths must be proven equal.
-`$i + 1` designates the next item, `$i - 1` the previous item, and are supported in direct comparisons with `$i` from the same array. You can't currently do `$i + 2`, or `$i + 1` across differing arrays.
+`$i` means any item index. Reusing `$i` means "the same position". Across differing arrays, their lengths must be proven equal.
+`$i + 1` means the next item, and `$i - 1` means the previous item. Both are supported in direct comparisons with `$i` from the same array. You can't currently do `$i + 2`, or `$i + 1` across differing arrays.
 
 Array elements require homogeneous (aka the same) contracts. To have differing contracts per array element, use tuples instead, just like you'd do it in regular TypeScript.
 
@@ -332,13 +332,13 @@ function columnWidth(availableWidth: number) {
 
 Here, Freerange reads the `given` contract line plus the function body itself, and attempts to use various proof techniques to ensure that the returned value abides by the contract.
 
-Freerange inferred lots of facts! Here's what we infer:
-- Input facts, aka `given`s, are not proven from the function body. Freerange trusts them in the function, then checks them at visible call sites. Boolean givens like `given isValidLayout(input)` are kept as that exact fact. A few known built-ins, e.g. `given spaced(rows, gap)`, also add their documented row/order facts.
-- Source calls follow JavaScript order: evaluate the receiver, then each written argument from left to right, once. Parameter defaults run in the called function only when the argument is omitted or `undefined`; a later default can read or change an earlier identifier or destructured binding. Exact tuple call spreads and function rest parameters are supported. Rest elements inside tuple types, unknown-length call spreads, and defaults inside destructuring parameters are reported as unsupported.
-- Loop facts follow the values used when each expression ran. E.g. a segmented row loop may compute `bottom = top + height`, reset `height`, then set `nextTop = bottom + gap`; Freerange still derives the row-bottom identity and spacing from the captured values.
+Here's how Freerange goes through this code:
+- Input contracts, aka `given`s, are not proven from the function body. Freerange trusts them in the function, then checks them at visible call sites. Boolean givens like `given isValidLayout(input)` are kept exactly as written. A few known built-ins, e.g. `given spaced(rows, gap)`, also add their documented row and ordering rules.
+- Function calls follow JavaScript order: evaluate the receiver, then each written argument from left to right, once. Parameter defaults run in the called function only when the argument is omitted or `undefined`; a later default can read or change an earlier identifier or destructured binding. Exact tuple call spreads and function rest parameters are supported. Rest elements inside tuple types, unknown-length call spreads, and defaults inside destructuring parameters are reported as unsupported.
+- Loops use the values each expression had when it ran. E.g. a segmented row loop may compute `bottom = top + height`, reset `height`, then set `nextTop = bottom + gap`; Freerange still derives the row-bottom identity and spacing from the captured values.
 - Rechecking the same numeric operation still works after a branch narrows an input. Swapping the two operands of numeric `+` or `*` also names the same result; regrouping nested operations does not.
-- Every returned field that's a number, be it array of numbers or object with nested number fields, gets their inferred range and number type, e.g. `0..<10` or `int 5..20`, and disjoint union values if applicable, e.g. `1 | 3 | 5` if the returned value is one of those 3 numbers inferred from some if-else in the function body.
-- In the future, we can and might infer more convenience facts, such as `return.array1.length == return.array2.length`. But for now, to preserve a simple mental model and avoid bad surprises during code changes, we ask the user/agent to write those out explicitly in the function's `@fit` contracts.
+- Every returned number, including numbers in arrays and nested object fields, gets its inferred range and number type, e.g. `0..<10` or `int 5..20`, and disjoint union values if applicable, e.g. `1 | 3 | 5` if the returned value is one of those 3 numbers inferred from some if-else in the function body.
+- In the future, Freerange might infer more automatically, e.g. `return.array1.length == return.array2.length`. For now, write such lines explicitly in the function's `@fit` contracts so code changes don't produce surprises.
 
 Freerange comes out of the box understanding the relevant DOM and JS apis, e.g. it knows that `array.length` is `int 0..4294967295` (the JS cap) and DOM `element.offsetWidth` is `int 0..<Infinity`. Full glossary at the end of the docs.
 It also understands useful `Math.*` calls. For example, it can prove `Math.floor(x) <= x`, `x < Math.floor(x) + 1`, `x <= Math.ceil(x)`, `Math.ceil(x) <= x + 1`, and `x - 0.5 <= Math.round(x) <= x + 0.5`. Claims follow how JS evaluates them: `x + 1` in a claim rounds like the code would, so the strict ceil bound holds as `<=`.
@@ -363,7 +363,7 @@ function layout(pinned: boolean) {
 
 This infers `{left: 0, width: 100} | {left: 20, width: 80}` instead of broadening each field separately to `{left: 0..20, width: 80..100}`.
 
-Freerange keeps up to 8 branch states. Beyond that, it reports that the branch-state limit was exceeded, then only keeps facts that are uniformly true in every branch. This is to avoid combinatorial explosion of states later on.
+Freerange tracks up to 8 branch outcomes separately. Above that, it only keeps what is true in every branch. For example, `width >= 0` remains only if it's true in every branch.
 
 #### Loops
 
