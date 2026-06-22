@@ -4,7 +4,7 @@ This document specifies the intended behavior for JavaScript numbers in checked 
 
 Plain TypeScript `number` inputs to a checked function contract are finite by default. They exclude `NaN`, `Infinity`, and `-Infinity`.
 
-An explicit range can admit either infinity. `NaN` stays outside Freerange's checked numerical domain: there is no `NaN` literal or `0..3 | NaN` contract syntax. If an operation may produce `NaN`, Freerange reports the operation as unknown unless an earlier check proves it safe.
+An explicitly written range can include either infinity. Freerange does not support `NaN` in checked arithmetic: there is no `NaN` literal or `0..3 | NaN` contract syntax. If an operation may produce `NaN`, Freerange reports its result as unknown unless an earlier check proves the operation safe.
 
 This is not exact-real arithmetic. Floating-point rounding, overflow, underflow, and signed zero still follow JavaScript.
 
@@ -21,7 +21,7 @@ function absolute(value: number) {
 }
 ```
 
-An explicit range states the full accepted set for that path and replaces the finite default:
+An explicitly written range, e.g. `0..Infinity`, replaces the finite default:
 
 ```ts
 /** @fit
@@ -41,7 +41,7 @@ function place(position: number) {
 }
 ```
 
-Infinity endpoints keep their literal meaning:
+The range operators say whether either infinity is included:
 
 ```ts
 0..<Infinity               // finite and nonnegative
@@ -50,13 +50,13 @@ Infinity endpoints keep their literal meaning:
 -Infinity..Infinity        // any non-NaN JavaScript number
 ```
 
-Contract uses of `NaN` or `Number.NaN`, including `NaN` in a range alternative, are rejected with a direct message that `NaN` is outside the checked numerical domain.
+Freerange rejects `NaN` or `Number.NaN` in a contract, including `NaN` in a range alternative, because checked arithmetic does not support `NaN`.
 
-`int` constrains the finite members of a range to integers. An infinity endpoint remains admitted when it is inclusive, so `int 0..Infinity` differs from the finite `int 0..<Infinity`.
+`int` makes every finite value in the range an integer. `int 0..Infinity` includes `Infinity`, while `int 0..<Infinity` does not.
 
 ## Where The Default Applies
 
-The finite default covers numeric leaves at a checked function's input boundary:
+The finite default applies to every number in a checked function's inputs:
 
 - parameters
 - fields reached through parameter object types
@@ -65,9 +65,9 @@ The finite default covers numeric leaves at a checked function's input boundary:
 
 For `number | null`, `number | undefined`, and optional numeric fields, the numeric value is finite when present. Passing `null`, `undefined`, or omitting the field does not create a finite-number requirement.
 
-Freerange rejects a checked recursive input type when it cannot publish one finite precondition that covers every recursive numeric leaf. It does not silently constrain only the first level.
+Freerange rejects a checked recursive input type when it cannot apply the finite default to every number inside it. It does not silently check only the first level.
 
-A checked function contract with finite-default parameters publishes an implicit finite precondition. Calls that use that contract must prove the corresponding arguments finite. An explicit parameter range publishes that requirement instead.
+Calls to a checked function must prove that every number in its arguments fits an explicitly written range, or is finite when no range is written.
 
 ```ts
 /** @fit
@@ -125,13 +125,13 @@ function checkedDouble(value: number) {
 
 An ordinary local or return annotation such as `: number` does not erase what Freerange inferred. If a computation overflows, its result remains infinite even though TypeScript calls it `number`.
 
-Unannotated same-file helpers do not publish implicit call requirements merely because their parameters use TypeScript `number`. Freerange evaluates those helpers from the actual argument values when their source is available.
+An unannotated helper in the same file does not assume its `number` parameters are finite. When Freerange can read the helper's source, it checks the helper using the values passed at each call.
 
 ## Operations That May Produce NaN
 
-An operation that may produce `NaN` is unknown until its inputs rule out the invalid cases. Freerange reports the missing premise at that operation instead of assigning the result an invented broad range.
+The result of an operation that may produce `NaN` stays unknown until its inputs rule out those cases. Freerange reports which condition is missing instead of inventing a range for the result.
 
-The arithmetic family includes:
+These operations can produce `NaN`:
 
 - addition: opposite infinities may produce `NaN`
 - subtraction: equal infinities may produce `NaN`
@@ -165,9 +165,9 @@ Overflow alone is not an error:
 Number.MAX_VALUE * 2      // Infinity
 ```
 
-That result can continue through operations that accept infinity, but it cannot satisfy an explicitly finite result range such as `return: -Infinity<..<Infinity` or enter a finite-default parameter.
+That result can continue through operations that accept infinity, but it cannot satisfy an explicitly finite result range such as `return: -Infinity<..<Infinity` or be passed to a parameter assumed to be finite.
 
-Later arithmetic does not restore finiteness merely because its real-number form would cancel:
+Later arithmetic does not necessarily make a value finite again. For example, if `value * 2` overflows to `Infinity`, dividing it by `2` still returns `Infinity` (`Infinity / 2 === Infinity`):
 
 ```ts
 /** @fit
@@ -193,11 +193,11 @@ return: unknown
 reason: NaN is outside the checked numerical domain
 ```
 
-A numeric `@fit` return claim over that result is `UNKNOWN`. If only one return path may produce `NaN`, the joined result is still unknown; Freerange does not retain the other paths as a union such as `0..3 | NaN`.
+A numeric `@fit` claim about that return value is `UNKNOWN`. If any return path may produce `NaN`, the return value stays unknown; Freerange does not keep the other paths as a union such as `0..3 | NaN`.
 
 ## Math Functions
 
-Freerange models JavaScript `Math` functions by their input domains and output guarantees:
+Freerange checks supported JavaScript `Math` functions using their inputs and possible results:
 
 - `abs`, `sign`, `min`, `max`, and rounding preserve non-`NaN` inputs
 - `sin` and `cos` require finite inputs because either infinity returns `NaN`
@@ -206,10 +206,10 @@ Freerange models JavaScript `Math` functions by their input domains and output g
 - `log1p` requires an input at least `-1`
 - `asin` and `acos` require an input between `-1` and `1`
 - `acosh` requires an input at least `1`
-- `atanh` requires an input between `-1` and `1`; either endpoint returns an infinity
+- `atanh` requires an input between `-1` and `1`; `-1` and `1` return infinities
 - integer coercions such as `clz32` and `imul` return their documented finite integer ranges for supported inputs
 
-Guards provide domain facts in ordinary source:
+Checks in ordinary code can prove that an input is valid:
 
 ```ts
 /** @fit
@@ -224,9 +224,9 @@ function logarithm(value: number) {
 
 ## Validation
 
-Parsing, declaration-only library results, browser values without a documented platform fact, and values changed by unknown code are not assumed finite from their TypeScript `number` type. Validate them before checked arithmetic or before passing them to a finite-default parameter.
+A TypeScript `number` type alone does not make a value finite when it came from parsing, a library with only declarations, a browser API Freerange does not know, or unknown code. Check the value before doing arithmetic or passing it to a parameter assumed to be finite.
 
-An unannotated function that Freerange scans only as a caller does not receive the finite input default. Its parameters must come from actual caller facts or be validated before entering a checked contract:
+Freerange does not assume that an unannotated caller's parameters are finite. They need a proven finite range from a call site, or a check before they are passed to a checked function:
 
 ```ts
 function externalEntry(value: number) {
@@ -235,7 +235,7 @@ function externalEntry(value: number) {
 }
 ```
 
-The supported validation family is:
+These checks narrow a value as follows:
 
 | Check | True branch | False branch |
 | --- | --- | --- |
@@ -261,7 +261,7 @@ The coercive global `isFinite` and `isNaN` functions are outside this specificat
 
 ## Comparisons And Control Flow
 
-Every value in the checked numerical domain excludes `NaN`, so ordinary comparison complements hold:
+Checked numbers exclude `NaN`, so these opposite comparisons mean the same thing:
 
 ```ts
 !(left >= right) == (left < right)
@@ -277,7 +277,7 @@ value == value
 left < right || left == right || left > right
 ```
 
-These facts apply to explicit infinities as well as finite values. They do not imply exact-real algebra or strict progress through floating-point addition.
+These comparison rules apply to explicit infinities as well as finite values. They do not imply exact-real algebra or strict progress through floating-point addition.
 
 The finite default makes this loop provable without a written `value == value` assumption:
 
@@ -308,7 +308,7 @@ Likewise, Freerange does not cancel `value * 2 / 2` to `value` unless it proves 
 
 ## Diagnostics
 
-Reports name the operation and the missing premise:
+Reports name the operation and the condition Freerange could not prove:
 
 ```txt
 Math.asin(value) is unknown
@@ -326,25 +326,25 @@ reason: zero and infinity may meet, producing NaN
 needsFinite(value * 2): requires value * 2 to be finite
 ```
 
-Keep the first operation that leaves the checked numerical domain so later expression failures do not repeat the same cause.
+Report the first operation that may produce `NaN`, rather than repeating the same cause for every later expression that uses its result.
 
 ## Boundary
 
 This specification supports:
 
 - finite numbers by default at checked contract inputs
-- explicit infinity endpoints in ranges
+- ranges that explicitly include either infinity
 - arithmetic whose JavaScript `NaN` cases have been ruled out
 - validation through `Number.isFinite`, `Number.isNaN`, `Number.isInteger`, and `Number.isSafeInteger`
 - comparisons, branches, loops, and checked calls over those values
 
-It deliberately leaves out:
+Not supported:
 
 - `NaN` in contract syntax
 - intentional `NaN` returns or container elements
-- arithmetic before validation on parsing or foreign results
+- arithmetic before checking values from parsing or unknown code
 - numerical reasoning inside the true branch of `Number.isNaN`
 - coercive global `isFinite` and `isNaN`
 - exact-real identities that JavaScript rounding can break
 
-If a checked use needs intentional `NaN`, define the concrete call, storage, and control-flow requirements before extending this boundary.
+Before adding intentional `NaN`, show where it comes from, where it is stored, and how the code branches on it.
