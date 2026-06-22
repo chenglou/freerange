@@ -4,7 +4,7 @@ This document specifies the intended behavior for JavaScript numbers in checked 
 
 Plain TypeScript `number` inputs to a checked function contract are finite by default. They exclude `NaN`, `Infinity`, and `-Infinity`.
 
-An explicitly written range can include either infinity. Freerange does not support `NaN` in checked arithmetic: there is no `NaN` literal or `0..3 | NaN` contract syntax. If an operation may produce `NaN`, Freerange reports its result as unknown unless an earlier check proves the operation safe.
+An explicitly written range can include either infinity. Freerange does not support `NaN` in checked arithmetic: there is no `NaN` literal or `0..3 | NaN` contract syntax. If an operation may produce `NaN`, Freerange reports its result as unknown unless an earlier check proves that the operation cannot produce `NaN`.
 
 This is not exact-real arithmetic. Floating-point rounding, overflow, underflow, and signed zero still follow JavaScript.
 
@@ -41,7 +41,7 @@ function place(position: number) {
 }
 ```
 
-The range operators say whether either infinity is included:
+The range operators say whether `Infinity` and `-Infinity` are included:
 
 ```ts
 0..<Infinity               // finite and nonnegative
@@ -63,7 +63,7 @@ The finite default applies to every number in a checked function's inputs:
 - array elements reached through parameter array types
 - callback parameters when Freerange checks the callback and its caller
 
-For `number | null`, `number | undefined`, and optional numeric fields, the numeric value is finite when present. Passing `null`, `undefined`, or omitting the field does not create a finite-number requirement.
+For `number | null`, `number | undefined`, and optional numeric fields, the number is finite when present. `null`, `undefined`, and a missing field are still allowed.
 
 Freerange rejects a checked recursive input type when it cannot apply the finite default to every number inside it. It does not silently check only the first level.
 
@@ -101,7 +101,7 @@ function doubled(value: number) {
 }
 ```
 
-The caller can provide a tighter bound, handle the overflow, or call a function whose explicit input range admits infinity:
+The caller can provide a tighter bound, handle the overflow, or call a function whose explicitly written input range includes infinity:
 
 ```ts
 /** @fit
@@ -136,7 +136,7 @@ These operations can produce `NaN`:
 - addition: opposite infinities may produce `NaN`
 - subtraction: equal infinities may produce `NaN`
 - multiplication: zero and either infinity may produce `NaN`
-- division: the supported form requires a nonzero divisor, and two infinite operands may produce `NaN`
+- division: Freerange requires a nonzero divisor, and two infinite operands may produce `NaN`
 - remainder: a zero divisor or infinite dividend may produce `NaN`
 - exponentiation: some negative-base and exponent combinations may produce `NaN`
 
@@ -244,7 +244,7 @@ These checks narrow a value as follows:
 | `Number.isInteger(value)` | `value` is a finite integer | no additional guarantee |
 | `Number.isSafeInteger(value)` | `value` is an integer in JavaScript's safe range | no additional guarantee |
 
-This supports validation at the boundary without treating `NaN` as ordinary data:
+For example, check a parsed number before using it, without treating `NaN` as ordinary data:
 
 ```ts
 const parsed = Number.parseFloat(text)
@@ -257,7 +257,7 @@ The branch where `Number.isNaN(value)` is true may return, throw, or perform non
 
 When Freerange already knows a value excludes `NaN`, `Number.isNaN(value)` is always false. `Number.isFinite`, `Number.isInteger`, and `Number.isSafeInteger` still refine explicit ranges that include infinities or non-integers.
 
-The coercive global `isFinite` and `isNaN` functions are outside this specification. Their string, null, and boolean conversions are a separate family.
+This specification does not cover the global `isFinite` and `isNaN` functions because they coerce strings, `null`, and booleans.
 
 ## Comparisons And Control Flow
 
@@ -277,7 +277,7 @@ value == value
 left < right || left == right || left > right
 ```
 
-These comparison rules apply to explicit infinities as well as finite values. They do not imply exact-real algebra or strict progress through floating-point addition.
+These comparison rules apply to `Infinity` and `-Infinity` as well as finite values. They do not imply exact-real algebra or strict progress through floating-point addition.
 
 The finite default makes this loop provable without a written `value == value` assumption:
 
@@ -326,7 +326,7 @@ reason: zero and infinity may meet, producing NaN
 needsFinite(value * 2): requires value * 2 to be finite
 ```
 
-Report the first operation that may produce `NaN`, rather than repeating the same cause for every later expression that uses its result.
+Freerange reports the first operation that may produce `NaN`, rather than repeating the same cause for every later expression that uses its result.
 
 ## Boundary
 

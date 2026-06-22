@@ -24,6 +24,8 @@ You're free to think in whatever terms you're comfortable with, but when writing
   - Good doc: "An explicitly written range, e.g. 0..Infinity, replaces the default."
   - Bad: "Finite-default parameters publish an implicit finite precondition."
   - Good: "A function's number param is assumed to be finite."
+  - Bad: "The table lists the supported checks and their effects on each branch. This supports validation at the boundary"
+  - Good: "The table shows what each check proves in its true and false branches. E.g. after `const parsed = Number.parseFloat(text)`, the true branch of `if (Number.isFinite(parsed))` knows that `parsed` is finite."
 - Don’t state the obvious just to sound thorough
 - Preserve the author's tone. Remove generic filler, but don't shorten an explanation so much that it loses context.
 - Use descriptive variable names that make the example understandable on its own.
@@ -38,4 +40,7 @@ You're free to think in whatever terms you're comfortable with, but when writing
 - A general point accompanied by long examples is fine/desirable when the general point's too abstract for most people:
   - Bad: "Later arithmetic does not restore finiteness."
   - Good: "Later arithmetic doesn't necessarily make the value finite again. For example, if `value * 2` may be `Infinity`, dividing it by 2 may still return `Infinity` (`Infinity / 2 === Infinity`). You can make it finite again with e.g. `Math.max(-100, -Infinity)`". Notice the pattern "e.g."/"for example"/"like" + a trailing example; those are nice turns of sentence that point to the general idea of what users can write.
+- Avoid unclear pronouns like `this` `it` and others when they can refer to multiple things
+  - Bad: "If an operation may produce `NaN`, we report its result as unknown unless an earlier check rules that out"
+  - Good: "If an operation may produce `NaN`, we report its result as unknown unless an earlier check proves that the operation cannot produce `NaN`". See how we swapped out "that" with "the operation" and rephrased accordingly. Alternatively, attach a noun: write "these checks" instead of bare "these"
 - For markdown files, don't do hard line breaks
