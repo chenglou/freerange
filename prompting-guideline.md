@@ -1,10 +1,6 @@
-# Prompting A Goal-Loop Subagent
+# Goal Loop Template
 
-Create the subagent with fresh context and no history from the parent conversation. Pass the concrete task as its first user message and the text below as its goal. No custom developer message is needed for ordinary Freerange work.
-
-Controlled experiments may still add repository and history isolation through their runner setup.
-
-## Goal
+Empirically, this prompt template has proven very effective at finding various correctness issues when we need to achieve a goal. The subagents with differing perspectives help a lot, as well as the other model's independent verification.
 
 ```text
 Accomplish this task in a principled way.
@@ -23,5 +19,5 @@ Use fresh subagents before editing to independently explore important scope, rep
 
 After implementation, freeze the diff and use fresh subagents to review correctness, architecture, consequences, and test gaps. Ask them to run concrete counterexamples. Fix required problems, but do not expand product scope merely because reviewers find nearby opportunities. Have one fresh reviewer inspect substantial review fixes.
 
-Run the full verification suite and remove temporary or redundant code. Reread `engineering.md` against the finished diff and judge in hindsight, by yourself, and more importantly, **also spawn a `claude -p "ultracode <your task>"` (very slow, give it lots of time) and give it enough context to judge the changes**! Judge whether the result is worthwhile; revert it if not. If it is worthwhile, commit it. Report deviations from the request, remaining gaps, and exact `DOCUMENTATION.md` changes without editing it.
+Run the full verification suite and remove temporary or redundant code. Reread `engineering.md` against the finished diff and judge in hindsight, by yourself, and more importantly, **also spawn a `CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS=0 claude -p "ultracode <your task>"` (very slow, give it lots of time) and give it enough context to judge the changes**! Judge whether the result is worthwhile; revert it if not. If it is worthwhile, commit it. Report deviations from the request, remaining gaps, and exact `DOCUMENTATION.md` changes without editing it.
 ```
