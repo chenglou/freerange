@@ -18,6 +18,8 @@ You're free to think in whatever terms you're comfortable with, but when writing
 - Avoid using common words in uncommon situations, as pseudo-jargons. Established technical terms in their field (e.g. compiler terms) are fine.
   - Bad: `earn`, `win`, `teach`, `road signs`, `seam`, `source-backed`, `source-shaped`, `browser-owned`
   - Good/fine: `call site`, `control flow`, `type narrowing`, `invariant`
+  - Bad: `input facts`, `source calls`, `loop facts`
+  - Good: `input contracts`, `function calls`, `loops`
   - Bad doc: "An inclusive infinity endpoint overrides the finite default."
   - Good doc: "An explicitly written range, e.g. 0..Infinity, replaces the default."
   - Bad: "Finite-default parameters publish an implicit finite precondition."
