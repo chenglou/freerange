@@ -1,8 +1,11 @@
-# Development Setup
+# Development
 
 ```sh
 bun install
+bun check
 ```
+
+Check package.json for the relevant scripts.
 
 ## Day-To-Day
 
