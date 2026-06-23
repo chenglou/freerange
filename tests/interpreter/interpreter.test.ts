@@ -10,8 +10,10 @@ import {
   rootFrame,
 } from '../../src/interpreter/context.ts'
 import {evaluateInterpreterFunction} from '../../src/interpreter/evaluate.ts'
+import {callTargetImplementation, resolveCallTarget} from '../../src/interpreter/call-targets.ts'
+import {expressionIsRepeatable} from '../../src/interpreter/expression-effects.ts'
 import {frameForStateCase} from '../../src/interpreter/state-cases.ts'
-import {buildFitSourceFile} from '../../src/modules.ts'
+import {buildFitSourceFile, loadFitProject} from '../../src/modules.ts'
 import {valueAtTypeNodeBoundary} from '../../src/type-boundaries.ts'
 import {testDiagnosticError} from '../test-diagnostics.ts'
 
@@ -251,4 +253,171 @@ if (
 }
 })
 
+test('resolves only stable source function implementations', async () => {
+const sourceProgram = buildFitSourceFile('function-targets.ts', `
+function declaration() { return 1 }
+function reassignedDeclaration() { return 10 }
+;(reassignedDeclaration satisfies typeof reassignedDeclaration) = () => 20
+async function asyncDeclaration() { return 0 }
+const functionBinding = () => 2
+const alias = functionBinding
+let mutableBinding = () => 3
+mutableBinding = () => 30
+var mutableAlias = declaration
+const holder = {declaration}
+const functions = [declaration]
+function makeFunction() { return declaration }
+function callableEffects() { return (Math.random(), declaration)() }
+class Counter { method() { return 1 } }
+
+function inspect(condition: boolean, counter: Counter) {
+  function nestedDeclaration() { return 4 }
+  const nestedBinding = function () { return 5 }
+  const nestedAlias = nestedDeclaration
+  const targets = [
+    declaration,
+    functionBinding,
+    alias,
+    nestedDeclaration,
+    nestedBinding,
+    nestedAlias,
+    () => 6,
+    function () { return 7 },
+    mutableBinding,
+    mutableAlias,
+    reassignedDeclaration,
+    holder.declaration,
+    functions[0]!,
+    condition ? declaration : functionBinding,
+    makeFunction(),
+    Counter,
+    counter.method,
+    declaration.call,
+    declaration.apply,
+    declaration.bind,
+    asyncDeclaration,
+    async () => 8,
+    function* () { yield 9 },
+  ]
+  return targets.length
+}
+`, readTopLevelGlobal)
+const sourceTargets = namedArrayElements(sourceProgram.sourceFile, 'targets')
+const sourceResults = sourceTargets.map(target =>
+  callTargetImplementation(resolveCallTarget(target, sourceProgram)))
+const resolvedTexts = sourceResults.map(result => result?.node.getText(result.program.sourceFile) ?? null)
+const mutableCallTarget = resolveCallTarget(sourceTargets[8]!, sourceProgram)
+const nestedCallTarget = resolveCallTarget(sourceTargets[3]!, sourceProgram)
+const indexedCallTarget = resolveCallTarget(sourceTargets[1]!, sourceProgram)
+const asyncCallTarget = resolveCallTarget(sourceTargets[20]!, sourceProgram)
+const callableEffects = sourceProgram.functions.get('callableEffects')
+const callableReturn = callableEffects != null && ts.isBlock(callableEffects.node.body)
+  ? callableEffects.node.body.statements.find(ts.isReturnStatement)?.expression
+  : null
+if (
+  sourceResults.slice(0, 8).some(result => result == null)
+  || sourceResults.slice(8).some(result => result != null)
+  || !sourceProgram.functions.has('mutableBinding')
+  || sourceProgram.functions.has('mutableAlias')
+  || !sourceProgram.functions.has('functionBinding')
+  || !sourceProgram.functions.has('asyncDeclaration')
+  || mutableCallTarget.kind !== 'unresolved'
+  || nestedCallTarget.kind !== 'function'
+  || nestedCallTarget.interpretation !== 'effects-only'
+  || indexedCallTarget.kind !== 'function'
+  || indexedCallTarget.interpretation !== 'interpreted'
+  || asyncCallTarget.kind !== 'unresolved'
+  || callableReturn == null
+  || expressionIsRepeatable(callableReturn, sourceProgram)
+) {
+  throw testDiagnosticError('source function resolution should accept only stable declarations and const aliases', {
+    targets: sourceTargets.map(target => target.getText(sourceProgram.sourceFile)),
+    resolvedTexts,
+    indexedFunctions: [...sourceProgram.functions.keys()],
+    mutableCallTarget,
+    nestedCallTarget,
+    indexedCallTarget,
+    asyncCallTarget,
+  })
+}
+
+const fixtureDir = pathJoin('/tmp', `freerange-function-targets-${Date.now()}-${Math.floor(Math.random() * 1_000_000)}`)
+const mkdir = Bun.spawnSync({cmd: ['mkdir', '-p', fixtureDir]})
+if (mkdir.exitCode !== 0) throw new Error(`Could not create ${fixtureDir}`)
+try {
+  await Bun.write(pathJoin(fixtureDir, 'tsconfig.json'), JSON.stringify({compilerOptions: {
+    strict: true,
+    target: 'ESNext',
+    module: 'ESNext',
+    moduleResolution: 'Bundler',
+    allowImportingTsExtensions: true,
+    noEmit: true,
+  }}))
+  await Bun.write(pathJoin(fixtureDir, 'helpers.ts'), `
+export function original() { return 1 }
+export const bound = () => 2
+export const alias = original
+export let mutable = () => 3
+export default () => 4
+`)
+  await Bun.write(pathJoin(fixtureDir, 'barrel.ts'), `
+export {default, default as defaultRenamed, original as renamed, bound, alias, mutable} from './helpers.ts'
+`)
+  const callerPath = pathJoin(fixtureDir, 'caller.ts')
+  await Bun.write(callerPath, `
+import defaultHelper, {defaultRenamed, renamed, bound, alias, mutable} from './barrel.ts'
+import * as helpers from './barrel.ts'
+const importedAlias = renamed
+const targets = [renamed, bound, alias, importedAlias, helpers.renamed, defaultHelper, defaultRenamed, helpers.default, mutable]
+`)
+  const project = loadFitProject([callerPath], readTopLevelGlobal)
+  const caller = project.entries[0]!
+  const importedTargets = namedArrayElements(caller.sourceFile, 'targets')
+  const importedResults = importedTargets.map(target =>
+    callTargetImplementation(resolveCallTarget(target, caller)))
+  if (
+    importedResults.slice(0, 8).some(result => result == null || !result.program.file.endsWith('helpers.ts'))
+    || importedResults[8] != null
+    || importedResults.slice(0, 8).some(result => result!.node.getSourceFile() !== result!.program.sourceFile)
+  ) {
+    throw testDiagnosticError('imported function resolution should preserve the implementation source program', {
+      targets: importedTargets.map(target => target.getText(caller.sourceFile)),
+      results: importedResults.map(result => result == null ? null : {
+        file: result.program.file,
+        node: result.node.getText(result.program.sourceFile),
+        ownsNode: result.node.getSourceFile() === result.program.sourceFile,
+      }),
+    })
+  }
+} finally {
+  Bun.spawnSync({cmd: ['rm', '-rf', fixtureDir]})
+}
 })
+
+})
+
+function namedArrayElements(sourceFile: ts.SourceFile, name: string): ts.Expression[] {
+  const pending: ts.Node[] = [sourceFile]
+  while (pending.length > 0) {
+    const node = pending.pop()!
+    if (
+      ts.isVariableDeclaration(node)
+      && ts.isIdentifier(node.name)
+      && node.name.text === name
+      && node.initializer != null
+      && ts.isArrayLiteralExpression(node.initializer)
+    ) {
+      return [...node.initializer.elements].filter(ts.isExpression)
+    }
+    ts.forEachChild(node, child => {
+      pending.push(child)
+    })
+  }
+  throw new Error(`expected array declaration ${name}`)
+}
+
+function pathJoin(first: string, ...rest: string[]) {
+  let path = first.endsWith('/') ? first.slice(0, -1) : first
+  for (const part of rest) path += '/' + part.replace(/^\/+/, '')
+  return path
+}

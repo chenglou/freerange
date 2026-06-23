@@ -1,30 +1,23 @@
+import * as ts from 'typescript'
+import type {Program} from '../check-types.ts'
 import type {DefaultLibraryOwner} from './call-targets.ts'
+import {unwrapExpression} from './source-syntax.ts'
 
 export type PlatformValueSource =
   | {kind: 'receiver'}
   | {kind: 'receiver-elements'}
   | {kind: 'argument'; index: number}
 
-export type PlatformResultSource =
-  | PlatformValueSource
-  | {kind: 'arguments-from'; index: number}
-  | {kind: 'callback-return'; argumentIndex: number}
-
-// Apply `selections` property/element reads to the source, then place the
-// result behind `containers` object or array layers.
-export type PlatformResultReference = {
-  source: PlatformResultSource
-  selections: number
-  containers: number
-}
-
-export type PlatformResultEffect = {
-  references: readonly PlatformResultReference[]
-}
+export type PlatformResultEffect =
+  | {kind: 'none'}
+  | {kind: 'fresh'}
+  | {kind: 'receiver'}
+  | {kind: 'argument'; index: number}
+  | {kind: 'unknown'; reason: string}
 
 export type PlatformCallbackEffect = {
   argumentIndex: number
-  thisSource: PlatformValueSource | null
+  thisArgumentIndex: number | null
   parameterSources: readonly (readonly PlatformValueSource[])[]
 }
 
@@ -42,7 +35,9 @@ export type PlatformCallClassification =
   | {kind: 'unsupported'; reason: string}
   | {kind: 'unrecognized'}
 
-const noReferenceResult: PlatformResultEffect = {references: []}
+const noResult: PlatformResultEffect = {kind: 'none'}
+const freshResult: PlatformResultEffect = {kind: 'fresh'}
+const receiverResult: PlatformResultEffect = {kind: 'receiver'}
 
 const noPlatformEffects: PlatformCallEffect = {
   mutatesReceiver: false,
@@ -50,34 +45,12 @@ const noPlatformEffects: PlatformCallEffect = {
   retainsArgumentIndexes: 'none',
   callbacks: [],
   observesEnvironment: false,
-  result: noReferenceResult,
+  result: noResult,
 }
-
-const freshResult = (...sources: PlatformResultSource[]): PlatformResultEffect => ({
-  references: sources.map(source => ({source, selections: 0, containers: 1})),
-})
-
-const aliasResult = (...sources: PlatformResultSource[]): PlatformResultEffect => ({
-  references: sources.map(source => ({source, selections: 0, containers: 0})),
-})
-
-const aliasResultRetaining = (
-  alias: PlatformResultSource,
-  ...retains: PlatformResultSource[]
-): PlatformResultEffect => ({
-  references: [
-    {source: alias, selections: 0, containers: 0},
-    ...retains.map(source => ({source, selections: 0, containers: 1})),
-  ],
-})
-
-const receiverResult = aliasResult({kind: 'receiver'})
-const receiverElementResult = aliasResult({kind: 'receiver-elements'})
-const freshReceiverElementsResult = freshResult({kind: 'receiver-elements'})
 
 const arrayCallback = (argumentIndex: number, thisArgumentIndex: number | null): PlatformCallbackEffect => ({
   argumentIndex,
-  thisSource: thisArgumentIndex == null ? null : {kind: 'argument', index: thisArgumentIndex},
+  thisArgumentIndex,
   parameterSources: [
     [{kind: 'receiver-elements'}],
     [],
@@ -87,7 +60,7 @@ const arrayCallback = (argumentIndex: number, thisArgumentIndex: number | null):
 
 const comparatorCallback = (argumentIndex: number): PlatformCallbackEffect => ({
   argumentIndex,
-  thisSource: null,
+  thisArgumentIndex: null,
   parameterSources: [
     [{kind: 'receiver-elements'}],
     [{kind: 'receiver-elements'}],
@@ -95,43 +68,44 @@ const comparatorCallback = (argumentIndex: number): PlatformCallbackEffect => ({
 })
 
 const arrayMethodEffects = new Map<string, PlatformCallEffect>([
-  ['at', {...noPlatformEffects, result: receiverElementResult}],
-  ['slice', {...noPlatformEffects, result: freshReceiverElementsResult}],
+  ['at', {...noPlatformEffects, result: {kind: 'unknown', reason: 'Array.at can expose a stored element directly'}}],
+  ['slice', {...noPlatformEffects, result: freshResult}],
   ['indexOf', noPlatformEffects],
   ['lastIndexOf', noPlatformEffects],
   ['includes', noPlatformEffects],
-  ['keys', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
-  ['values', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
-  ['toReversed', {...noPlatformEffects, result: freshReceiverElementsResult}],
-  ['toSpliced', {...noPlatformEffects, result: freshResult(
-    {kind: 'receiver-elements'},
-    {kind: 'arguments-from', index: 2},
-  )}],
-  ['with', {...noPlatformEffects, result: freshResult(
-    {kind: 'receiver-elements'},
-    {kind: 'argument', index: 1},
-  )}],
+  ['keys', {...noPlatformEffects, result: freshResult}],
+  ['toReversed', {...noPlatformEffects, result: freshResult}],
+  ['toSpliced', {...noPlatformEffects, retainsArgumentIndexes: 'from-2', result: freshResult}],
+  ['with', {...noPlatformEffects, retainsArgumentIndexes: [1], result: freshResult}],
   ['map', {
     ...noPlatformEffects,
     callbacks: [arrayCallback(0, 1)],
-    result: freshResult({kind: 'callback-return', argumentIndex: 0}),
+    result: freshResult,
   }],
   ['filter', {
     ...noPlatformEffects,
     callbacks: [arrayCallback(0, 1)],
-    result: freshReceiverElementsResult,
+    result: freshResult,
   }],
   ['every', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
   ['some', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
   ['forEach', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
-  ['find', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)], result: receiverElementResult}],
+  ['find', {
+    ...noPlatformEffects,
+    callbacks: [arrayCallback(0, 1)],
+    result: {kind: 'unknown', reason: 'Array.find can expose a stored element directly'},
+  }],
   ['findIndex', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
-  ['findLast', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)], result: receiverElementResult}],
+  ['findLast', {
+    ...noPlatformEffects,
+    callbacks: [arrayCallback(0, 1)],
+    result: {kind: 'unknown', reason: 'Array.findLast can expose a stored element directly'},
+  }],
   ['findLastIndex', {...noPlatformEffects, callbacks: [arrayCallback(0, 1)]}],
   ['toSorted', {
     ...noPlatformEffects,
     callbacks: [comparatorCallback(0)],
-    result: freshReceiverElementsResult,
+    result: freshResult,
   }],
   ['push', {
     ...noPlatformEffects,
@@ -147,19 +121,24 @@ const arrayMethodEffects = new Map<string, PlatformCallEffect>([
     ...noPlatformEffects,
     mutatesReceiver: true,
     retainsArgumentIndexes: 'from-2',
-    result: freshReceiverElementsResult,
+    result: freshResult,
   }],
   ['fill', {
     ...noPlatformEffects,
     mutatesReceiver: true,
     retainsArgumentIndexes: [0],
-    result: aliasResultRetaining(
-      {kind: 'receiver'},
-      {kind: 'argument', index: 0},
-    ),
+    result: receiverResult,
   }],
-  ['pop', {...noPlatformEffects, mutatesReceiver: true, result: receiverElementResult}],
-  ['shift', {...noPlatformEffects, mutatesReceiver: true, result: receiverElementResult}],
+  ['pop', {
+    ...noPlatformEffects,
+    mutatesReceiver: true,
+    result: {kind: 'unknown', reason: 'Array.pop can expose a stored element directly'},
+  }],
+  ['shift', {
+    ...noPlatformEffects,
+    mutatesReceiver: true,
+    result: {kind: 'unknown', reason: 'Array.shift can expose a stored element directly'},
+  }],
   ['reverse', {...noPlatformEffects, mutatesReceiver: true, result: receiverResult}],
   ['sort', {
     ...noPlatformEffects,
@@ -175,19 +154,16 @@ const readonlyArrayMethodEffects = new Map(
 )
 
 const mapMethodEffects = new Map<string, PlatformCallEffect>([
-  ['get', {...noPlatformEffects, result: receiverElementResult}],
+  ['get', {...noPlatformEffects, result: {kind: 'unknown', reason: 'Map.get can expose a stored value directly'}}],
   ['has', noPlatformEffects],
-  ['keys', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
-  ['values', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
+  ['keys', {...noPlatformEffects, result: freshResult}],
+  ['values', {...noPlatformEffects, result: freshResult}],
+  ['entries', {...noPlatformEffects, result: freshResult}],
   ['set', {
     ...noPlatformEffects,
     mutatesReceiver: true,
     retainsArgumentIndexes: [0, 1],
-    result: aliasResultRetaining(
-      {kind: 'receiver'},
-      {kind: 'argument', index: 0},
-      {kind: 'argument', index: 1},
-    ),
+    result: receiverResult,
   }],
   ['delete', {...noPlatformEffects, mutatesReceiver: true}],
   ['clear', {...noPlatformEffects, mutatesReceiver: true}],
@@ -196,16 +172,14 @@ const readonlyMapMethodEffects = readonlyMethods(mapMethodEffects)
 
 const setMethodEffects = new Map<string, PlatformCallEffect>([
   ['has', noPlatformEffects],
-  ['keys', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
-  ['values', {...noPlatformEffects, result: freshResult({kind: 'receiver'})}],
+  ['keys', {...noPlatformEffects, result: freshResult}],
+  ['values', {...noPlatformEffects, result: freshResult}],
+  ['entries', {...noPlatformEffects, result: freshResult}],
   ['add', {
     ...noPlatformEffects,
     mutatesReceiver: true,
     retainsArgumentIndexes: [0],
-    result: aliasResultRetaining(
-      {kind: 'receiver'},
-      {kind: 'argument', index: 0},
-    ),
+    result: receiverResult,
   }],
   ['delete', {...noPlatformEffects, mutatesReceiver: true}],
   ['clear', {...noPlatformEffects, mutatesReceiver: true}],
@@ -244,18 +218,13 @@ const globalEffects = new Map<string, Map<string, PlatformCallEffect>>([
     observesEnvironment: true,
   }]])],
   ['Object', new Map([
-    ['keys', noPlatformEffects],
+    ['keys', {...noPlatformEffects, result: freshResult}],
     ['isFrozen', noPlatformEffects],
-    ['getOwnPropertyNames', noPlatformEffects],
-    ['freeze', {
-      ...noPlatformEffects,
-      mutatesArgumentIndexes: [0],
-      result: aliasResult({kind: 'argument', index: 0}),
-    }],
+    ['getOwnPropertyNames', {...noPlatformEffects, result: freshResult}],
   ])],
   ['Array', new Map([
     ['isArray', noPlatformEffects],
-    ['of', {...noPlatformEffects, result: freshResult({kind: 'arguments-from', index: 0})}],
+    ['of', {...noPlatformEffects, retainsArgumentIndexes: 'all', result: freshResult}],
   ])],
 ])
 
@@ -265,20 +234,32 @@ const unsupportedGlobalCallReasons = new Map<string, string>([
   ['JSON.stringify', 'JSON.stringify is unsupported because it can run getters or toJSON methods'],
   ['Object.entries', 'Object.entries is unsupported because reading property values can run getters'],
   ['Object.values', 'Object.values is unsupported because reading property values can run getters'],
+  ['Object.freeze', 'Object.freeze is unsupported because freezing some built-in objects can throw'],
   ['Date.parse', "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats"],
 ])
 
 export function classifyPlatformMethodCall(
   owner: DefaultLibraryOwner,
   name: string,
-  argumentCount: number,
+  arguments_: readonly ts.Expression[],
+  program: Program,
 ): PlatformCallClassification {
+  if ((owner === 'Array' || owner === 'ReadonlyArray') && name === 'concat') {
+    return {
+      kind: 'unsupported',
+      reason: 'Array.concat is unsupported because it can read Symbol.isConcatSpreadable or indexed getters',
+    }
+  }
   if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'flat' || name === 'flatMap')) {
     return {
       kind: 'unsupported',
-      reason: name === 'flat'
-        ? 'Array.flat is unsupported because it conditionally removes nested array containers'
-        : 'Array.flatMap is unsupported because it conditionally removes an array returned by its callback',
+      reason: `Array.${name} is unsupported because flattening can read indexed getters`,
+    }
+  }
+  if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'entries' || name === 'values')) {
+    return {
+      kind: 'unsupported',
+      reason: `Array.${name} is unsupported because iterating the result can read indexed getters`,
     }
   }
   if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'reduce' || name === 'reduceRight')) {
@@ -288,22 +269,10 @@ export function classifyPlatformMethodCall(
     }
   }
   if (
-    (
-      owner === 'Array'
-      || owner === 'ReadonlyArray'
-      || owner === 'Map'
-      || owner === 'ReadonlyMap'
-      || owner === 'Set'
-      || owner === 'ReadonlySet'
-    )
-    && name === 'entries'
+    (owner === 'Array' || owner === 'ReadonlyArray')
+    && (name === 'sort' || name === 'toSorted')
+    && usesDefaultSort(arguments_, program)
   ) {
-    return {
-      kind: 'unsupported',
-      reason: 'Collection.entries is unsupported because each result is wrapped in a new pair',
-    }
-  }
-  if ((owner === 'Array' || owner === 'ReadonlyArray') && (name === 'sort' || name === 'toSorted') && argumentCount === 0) {
     return {
       kind: 'unsupported',
       reason: `Array.${name} without a comparator is unsupported because default sorting converts elements to strings and can run user code`,
@@ -312,6 +281,25 @@ export function classifyPlatformMethodCall(
   const effects = switchMethodEffects(owner)
   const effect = effects?.get(name) ?? null
   return effect == null ? {kind: 'unrecognized'} : {kind: 'supported', effect}
+}
+
+function usesDefaultSort(arguments_: readonly ts.Expression[], program: Program) {
+  const comparator = arguments_[0]
+  if (comparator == null || ts.isSpreadElement(comparator)) return true
+  const current = unwrapExpression(comparator)
+  if (ts.isVoidExpression(current)) return true
+  const checker = program.typeChecker
+  if (checker == null) return ts.isIdentifier(current) && current.text === 'undefined'
+  try {
+    return typeIncludesUndefined(checker.getTypeAtLocation(current))
+  } catch {
+    return true
+  }
+}
+
+function typeIncludesUndefined(type: ts.Type): boolean {
+  if (type.isUnion()) return type.types.some(typeIncludesUndefined)
+  return (type.flags & ts.TypeFlags.Undefined) !== 0
 }
 
 export function isPlatformGlobalNamespace(name: string): boolean {

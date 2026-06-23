@@ -1101,12 +1101,46 @@ function callbackExpressionEffectsRun(values: number[]) {
   return count
 }
 
+function localFunctionEffectsInvalidateCapturedState() {
+  let count = 0
+  const increment = () => count++
+  increment()
+  return count
+}
+
 function sortComparatorEffectsInvalidateCapturedState(values: number[]) {
   let count = 0
   values.sort(() => {
     count++
     return 0
   })
+  return count
+}
+
+function namedSortComparatorEffectsInvalidateCapturedState(values: number[]) {
+  let count = 0
+  const compare = (left: number, right: number) => {
+    count++
+    return left - right
+  }
+  values.sort(compare)
+  return count
+}
+
+function namedSortComparatorReadPreservesCapturedState(values: number[]) {
+  const offset = 0
+  const compare = (left: number, right: number) => left - right + offset
+  values.sort(compare)
+  return offset
+}
+
+function unresolvedSortComparatorDoesNotPreserveCapturedState(values: number[]) {
+  let count = 0
+  const compare = (left: number, right: number) => {
+    count++
+    return left - right
+  }
+  values.sort((count++, compare))
   return count
 }
 
@@ -1130,30 +1164,80 @@ function unknownCallableTargetStillRuns() {
   makeCallable(state)(0)
   return state.value
 }
+
+let nondecreasing = (_values: number[]) => 1
+nondecreasing = () => 2
+
+function mutableCatalogNameIsNotBuiltin() {
+  return nondecreasing([])
+}
+
+function mutateNestedState(holder: {state: {value: number}}) {
+  holder.state.value = 10
+}
+
+function readNestedState(holder: {state: {value: number}}) {
+  return holder.state.value
+}
+
+function nestedArgumentMutationInvalidatesAlias() {
+  const state = {value: 0}
+  const holder = {state}
+  mutateNestedState(holder)
+  return state.value
+}
+
+function nestedArgumentReadPreservesAlias() {
+  const state = {value: 0}
+  const holder = {state}
+  readNestedState(holder)
+  return state.value
+}
 `, readTopLevelGlobal)
 
 const localCallback = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'localCallbackIsRejected'})
 const callbackExpression = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'callbackExpressionEffectsRun'})
+const localFunction = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'localFunctionEffectsInvalidateCapturedState'})
 const sortComparator = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'sortComparatorEffectsInvalidateCapturedState'})
+const namedSortComparator = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'namedSortComparatorEffectsInvalidateCapturedState'})
+const readOnlySortComparator = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'namedSortComparatorReadPreservesCapturedState'})
+const unresolvedSortComparator = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'unresolvedSortComparatorDoesNotPreserveCapturedState'})
 const callbackThis = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'callbackThisMutationInvalidatesArgument'})
 const unknownTarget = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'unknownCallableTargetStillRuns'})
+const mutableCatalogName = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'mutableCatalogNameIsNotBuiltin'})
+const nestedMutation = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'nestedArgumentMutationInvalidatesAlias'})
+const nestedRead = evaluateInterpreterFunction({program: callbackBoundaryProgram, functionName: 'nestedArgumentReadPreservesAlias'})
 const isExactNumber = (value: typeof callbackExpression.value, expected: number) =>
   value.kind === 'number' && value.min === expected && value.max === expected
 if (
   !localCallback.output.issues.some(issue => issue.message.includes('map callback must be an inline function'))
-  || !isExactNumber(callbackExpression.value, 1)
+  || isExactNumber(callbackExpression.value, 0)
   || !callbackExpression.output.issues.some(issue => issue.message.includes('map callback must be an inline function'))
+  || isExactNumber(localFunction.value, 0)
   || isExactNumber(sortComparator.value, 0)
+  || isExactNumber(namedSortComparator.value, 0)
+  || !isExactNumber(readOnlySortComparator.value, 0)
+  || isExactNumber(unresolvedSortComparator.value, 1)
   || isExactNumber(callbackThis.value, 0)
   || isExactNumber(unknownTarget.value, 0)
   || unknownTarget.output.issues.length === 0
+  || mutableCatalogName.output.issues.length === 0
+  || isExactNumber(nestedMutation.value, 0)
+  || !isExactNumber(nestedRead.value, 0)
 ) {
   throw testDiagnosticError('expected unsupported callbacks and callable targets to preserve operand effects without stale facts', {
     localCallback,
     callbackExpression,
+    localFunction,
     sortComparator,
+    namedSortComparator,
+    readOnlySortComparator,
+    unresolvedSortComparator,
     callbackThis,
     unknownTarget,
+    mutableCatalogName,
+    nestedMutation,
+    nestedRead,
   })
 }
 })

@@ -31,6 +31,24 @@ export function forgetRoot(env: Map<string, Value>, root: string) {
   forgetSymbolicReferences(env, root)
 }
 
+export function forgetBinding(env: Map<string, Value>, root: string) {
+  const current = env.get(root)
+  if (current?.kind === 'array') {
+    env.set(root, collectionValue(
+      unknownArrayLength(current.expr ?? root),
+      null,
+      current.expr,
+    ))
+  } else if (current?.kind === 'object') {
+    env.set(root, unknownObject(root))
+  } else if (current?.kind === 'number') {
+    env.set(root, unknownNumber(root))
+  } else {
+    env.set(root, unknown(`Unsupported reassignment changed ${root}`))
+  }
+  forgetSymbolicReferences(env, root)
+}
+
 // A regex matching the root as a standalone identifier inside an expression
 // text, so a path or computation reading through it is recognized: `box`,
 // `box.v`, and `Math.min(box, y)` all match `box`, but `boxes` and `mybox` do

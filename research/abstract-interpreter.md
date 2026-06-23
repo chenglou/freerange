@@ -45,6 +45,8 @@ Call evaluation has four paths:
 - class method/getter bodies with `this`; calls through class values stay unknown
 - selected built-ins such as `Math`, array reads, `map`, and `filter`
 
+Purity checks reject user constructors, methods, getters, setters, and every use of `this`. Calls through values stored in object or array properties also stay unknown.
+
 Default parameter initializers run in parameter order in the callee env. Omitted args and explicit `undefined` / optional args fall through to those defaults; rest params and destructured defaults stay outside the surface until real pressure earns them.
 
 ## Mutation

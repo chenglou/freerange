@@ -1,7 +1,8 @@
 import * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
-import {functionImplementationReference, isInlineFunction} from '../function-shape.ts'
+import {isInlineFunction} from '../function-shape.ts'
 import {
+  callTargetImplementation,
   defaultLibraryOwner,
   elementAccessHasSourceAccessor,
   isDefaultLibraryMemberAccess,
@@ -36,9 +37,8 @@ export function expressionIsRepeatable(expression: ts.Expression, program: Progr
   if (ts.isPropertyAccessExpression(current)) {
     if (!expressionIsRepeatable(current.expression, program)) return false
     if (!propertyAccessHasSourceAccessor(current, 'get', program)) return true
-    const resolved = resolveCallTarget(current, program)
-    return resolved.kind === 'function'
-      && functionPurity(functionImplementationReference(resolved.program, resolved.fn.node)).kind === 'pure'
+    const implementation = callTargetImplementation(resolveCallTarget(current, program))
+    return implementation != null && functionPurity(implementation).kind === 'pure'
   }
   if (ts.isElementAccessExpression(current)) {
     if (elementAccessHasSourceAccessor(current, 'get', program)) return false
@@ -102,15 +102,20 @@ function callIsRepeatable(call: ts.CallExpression, program: Program): boolean {
     const classification = classifyPlatformMethodCall(
       defaultLibraryOwner(target, program),
       target.name.text,
-      call.arguments.length,
+      call.arguments,
+      program,
     )
     return classification.kind === 'supported' && platformEffectIsRepeatable(call, classification.effect, program)
   }
 
   const resolved = resolveCallTarget(target, program)
-  if (resolved.kind === 'math') return resolved.name !== 'random'
-  if (resolved.kind !== 'function') return false
-  return functionPurity(functionImplementationReference(resolved.program, resolved.fn.node)).kind === 'pure'
+  if (resolved.kind === 'platform-global') {
+    const classification = classifyPlatformGlobalCall(resolved.base, resolved.name, call.arguments.length)
+    return classification.kind === 'supported'
+      && platformEffectIsRepeatable(call, classification.effect, program)
+  }
+  const implementation = callTargetImplementation(resolved)
+  return implementation != null && functionPurity(implementation).kind === 'pure'
 }
 
 function platformEffectIsRepeatable(
@@ -122,21 +127,8 @@ function platformEffectIsRepeatable(
   for (const callback of effect.callbacks) {
     const argument = call.arguments[callback.argumentIndex]
     if (argument == null || ts.isSpreadElement(argument)) return false
-    const current = unwrapExpression(argument)
-    const implementation = isInlineFunction(current)
-      ? functionImplementationReference(program, current)
-      : resolvedFunctionReference(current, program)
+    const implementation = callTargetImplementation(resolveCallTarget(unwrapExpression(argument), program))
     if (implementation == null || functionPurity(implementation).kind !== 'pure') return false
   }
   return true
-}
-
-function resolvedFunctionReference(
-  expression: ts.Expression,
-  program: Program,
-): ReturnType<typeof functionImplementationReference> | null {
-  const resolved = resolveCallTarget(expression, program)
-  return resolved.kind === 'function'
-    ? functionImplementationReference(resolved.program, resolved.fn.node)
-    : null
 }

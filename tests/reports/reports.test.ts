@@ -82,7 +82,7 @@ const negativeFiles = ['tests/source-checking/negative-patterns.ts', 'tests/sour
 const negativeExpectedPath = 'negative-patterns.expected.txt'
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = formatCheckManifest(negativeReport.checks)
-const expectedSummary = {pass: 82, fail: 69, requires: 0, unknown: 181, audit: 0}
+const expectedSummary = {pass: 81, fail: 69, requires: 0, unknown: 182, audit: 0}
 const checksWithoutReasons = negativeReport.checks.filter(check =>
   check.status !== 'pass' && (check.reason == null || check.reason.trim().length === 0))
 const reasonCases = [

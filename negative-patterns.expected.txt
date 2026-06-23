@@ -174,7 +174,7 @@
 ["negativeLocalHelperPreconditionViolation","return: 0..100","pass",[]]
 ["negativeLocalLoopAnnotationNeedsNonNegativeItem","return.rows.length == items.length","pass",[]]
 ["negativeLocalLoopAnnotationNeedsNonNegativeItem > loop","nondecreasing(rows.y)","unknown",["nondecreasing(rows.y) was not inferred","need: every next .y >= previous .y","missing: given items[].height >= 0"]]
-["negativeLocalNamedMapCallbackIsUnknown","return == 0","pass",[]]
+["negativeLocalNamedMapCallbackIsUnknown","return == 0","unknown",["missing fact: count == 0"]]
 ["negativeLogicalOrTrueOnlyCarriesOneSide","return >= 0","unknown",["missing fact: (x + y) >= 0"]]
 ["negativeLoopCursorMovesWithoutPush","spaced(return.rows, gap)","unknown",["spaced(return.rows, gap) was not inferred","need: every next row top == previous top + previous height + gap","missing: recognized adjacent row spacing"]]
 ["negativeLoopFitHasNoReturn","return.rows.length == items.length","pass",[]]

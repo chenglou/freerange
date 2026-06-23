@@ -3,6 +3,27 @@ import * as ts from 'typescript'
 export function expressionRootNames(expression: ts.Expression, ignored: string[]): string[] {
   if (ts.isIdentifier(expression)) return ignored.includes(expression.text) ? [] : [expression.text]
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return ignored.includes('this') ? [] : ['this']
+  if (ts.isObjectLiteralExpression(expression)) {
+    const roots: string[] = []
+    for (const property of expression.properties) {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        roots.push(...expressionRootNames(property.name, ignored))
+      } else if (ts.isPropertyAssignment(property)) {
+        roots.push(...expressionRootNames(property.initializer, ignored))
+      } else if (ts.isSpreadAssignment(property)) {
+        roots.push(...expressionRootNames(property.expression, ignored))
+      }
+    }
+    return roots
+  }
+  if (ts.isArrayLiteralExpression(expression)) {
+    const roots: string[] = []
+    for (const element of expression.elements) {
+      if (ts.isOmittedExpression(element)) continue
+      roots.push(...expressionRootNames(ts.isSpreadElement(element) ? element.expression : element, ignored))
+    }
+    return roots
+  }
   if (ts.isPropertyAccessExpression(expression)) return expressionRootNames(expression.expression, ignored)
   if (ts.isElementAccessExpression(expression)) {
     const roots = expressionRootNames(expression.expression, ignored)
@@ -22,26 +43,6 @@ export function expressionRootNames(expression: ts.Expression, ignored: string[]
   return roots
 }
 
-export function expressionMentionsArrayParam(expression: ts.Expression, name: string): boolean {
-  const lengthRoot = arrayLengthRoot(expression)
-  if (lengthRoot === name) return true
-  if (ts.isElementAccessExpression(expression) && expressionRootName(expression.expression) === name) return true
-
-  for (const child of expression.getChildren()) {
-    if (ts.isExpression(child) && expressionMentionsArrayParam(child, name)) return true
-  }
-  return false
-}
-
-export function expressionMentionsObjectParam(expression: ts.Expression, name: string): boolean {
-  if (ts.isPropertyAccessExpression(expression) && expressionRootNameDeep(expression.expression) === name) return true
-
-  for (const child of expression.getChildren()) {
-    if (ts.isExpression(child) && expressionMentionsObjectParam(child, name)) return true
-  }
-  return false
-}
-
 export function arrayLengthRoot(expression: ts.Expression): string | null {
   if (!ts.isPropertyAccessExpression(expression)) return null
   if (expression.name.text !== 'length') return null
@@ -52,13 +53,5 @@ export function expressionRootName(expression: ts.Expression): string | null {
   if (ts.isIdentifier(expression)) return expression.text
   if (expression.kind === ts.SyntaxKind.ThisKeyword) return 'this'
   if (ts.isParenthesizedExpression(expression)) return expressionRootName(expression.expression)
-  return null
-}
-
-export function expressionRootNameDeep(expression: ts.Expression): string | null {
-  if (ts.isIdentifier(expression)) return expression.text
-  if (expression.kind === ts.SyntaxKind.ThisKeyword) return 'this'
-  if (ts.isParenthesizedExpression(expression)) return expressionRootNameDeep(expression.expression)
-  if (ts.isPropertyAccessExpression(expression)) return expressionRootNameDeep(expression.expression)
   return null
 }

@@ -162,6 +162,7 @@ import {
   functionEffects,
   lengthBearingConstructorNames,
   mutationRootsForProgram,
+  reassignedRootsForProgram,
   type FunctionEffects,
 } from './function-effects.ts'
 import {
@@ -181,6 +182,7 @@ import {
 import {admitsNaN, comparisonConstraint, mayBeInfinite, nonNegativeConstraints, proveComparisonPlain, proveNonNegativeFromConstraints, reachableNumberCasePairs, reachableNumberCases} from '../proof.ts'
 import {formatRange} from '../reporting.ts'
 import {
+  forgetBinding,
   forgetRoot,
   rootMentionPattern,
 } from './forget.ts'
@@ -188,13 +190,16 @@ import {evaluateMathCall, evaluateMathProperty} from './math.ts'
 import {evaluateNumberCasePairs} from './number-cases.ts'
 import {evaluateNumberPredicate, numberPredicateCall} from './number-predicates.ts'
 import {
+  callTargetImplementation,
+  callTargetHasUserBinding,
   defaultLibraryOwner,
   elementAccessHasSourceAccessor,
   isDefaultLibraryMemberAccess,
+  isDefaultLibraryElementAccess,
   isDefaultLibrarySymbol,
   propertyAccessHasSourceAccessor,
   resolveCallTarget,
-  type InterpreterCallTarget,
+  type ResolvedFunctionTarget,
 } from './call-targets.ts'
 import {auditBranchCondition, auditConditionalSelector, auditNullishFallback} from './audit.ts'
 import {
@@ -2311,13 +2316,24 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
     havocReferenceAliases(frame, valueReferenceIds(right))
     return noteUnsupported(frame, `Class setter call is not analyzed: ${expression.getText(frame.program.sourceFile)}`, expression)
   }
+  const target = unwrapExpression(expression.left)
+  const builtInMethodWrite = (ts.isPropertyAccessExpression(target) && isDefaultLibraryMemberAccess(target, frame.program))
+    || (ts.isElementAccessExpression(target) && isDefaultLibraryElementAccess(target, frame.program))
+  if (builtInMethodWrite) {
+    evaluateExpression(expression.right, frame)
+    havocExpressionAliases(frame, target.expression)
+    return noteUnsupported(frame, 'Replacing a built-in method is unsupported', expression)
+  }
   const path = pathFromExpression(expression.left, frame)
   if (path == null) {
+    const receiver = evaluateUnsupportedAssignmentReceiver(expression.left, frame)
     const value = noteUnsupported(frame, `Unsupported assignment target ${expression.left.getText(frame.program.sourceFile)}`, expression.left)
     evaluateExpression(expression.right, frame)
     havocRoots(frame, expressionRootNames(expression.left, []))
+    havocReferenceAliases(frame, reachableReferenceIds(receiver))
     return value
   }
+  const receiver = assignmentTargetReceiverValue(expression.left, frame)
   const right = evaluateExpression(expression.right, frame)
   const assigned = assignedValue(expression.operatorToken.kind, path, right, frame, expression)
   const value = valueAtNodeTypeBoundary(
@@ -2329,7 +2345,7 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
   const unsupportedWrite = unsupportedArrayWrite(path, frame)
   if (unsupportedWrite != null) {
     const result = noteUnsupported(frame, unsupportedWrite.reason, expression.left)
-    havocReferenceAliases(frame, valueReferenceIds(unsupportedWrite.container))
+    havocReferenceAliases(frame, reachableReferenceIds(unsupportedWrite.container))
     havocRoots(frame, expressionRootNames(expression.left, []))
     return result
   }
@@ -2337,7 +2353,29 @@ function evaluateAssignmentExpression(expression: ts.BinaryExpression, frame: In
     noteEffect(frame, `assignment mutates ${valuePathExpression(path)}: ${expression.getText()}`, expression)
   }
   writePath(path, value, frame)
+  if (readPath(path, frame).kind === 'unknown') {
+    havocReferenceAliases(frame, reachableReferenceIds(receiver))
+  }
   return value
+}
+
+function evaluateUnsupportedAssignmentReceiver(expression: ts.Expression, frame: InterpreterFrame): Value | null {
+  const target = unwrapExpression(expression)
+  if (ts.isPropertyAccessExpression(target)) return evaluateExpression(target.expression, frame)
+  if (ts.isElementAccessExpression(target)) {
+    const receiver = evaluateExpression(target.expression, frame)
+    evaluateExpression(target.argumentExpression, frame)
+    return receiver
+  }
+  return null
+}
+
+function assignmentTargetReceiverValue(expression: ts.Expression, frame: InterpreterFrame): Value | null {
+  const target = unwrapExpression(expression)
+  if (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target)) {
+    return valueForAliasExpression(target.expression, frame)
+  }
+  return null
 }
 
 function unsupportedArrayWrite(
@@ -2424,11 +2462,42 @@ function havocRoots(frame: InterpreterFrame, names: string[]) {
   }
 }
 
+function havocBindings(frame: InterpreterFrame, names: string[]) {
+  for (const name of new Set(names)) {
+    if (!frame.env.has(name)) continue
+    forgetBinding(frame.env, name)
+    forgetRootAssumptions(frame, name)
+  }
+}
+
 function valueReferenceIds(value: Value | null | undefined): readonly number[] {
   if (value == null) return []
   if (value.kind === 'object' || value.kind === 'array') return value.referenceIds
   if (value.kind === 'nullable') return valueReferenceIds(value.present)
   return []
+}
+
+function reachableReferenceIds(value: Value | null | undefined): number[] {
+  if (value == null) return []
+  const referenceIds: number[] = []
+  const add = (current: Value) => {
+    for (const referenceId of valueReferenceIds(current)) {
+      if (!referenceIds.includes(referenceId)) referenceIds.push(referenceId)
+    }
+    if (current.kind === 'object') {
+      for (const property of current.props.values()) add(property)
+    } else if (current.kind === 'array') {
+      if (current.layout === 'tuple') {
+        for (const element of current.elements) add(element)
+      } else if (current.element != null) {
+        add(current.element)
+      }
+    } else if (current.kind === 'nullable') {
+      add(current.present)
+    }
+  }
+  add(value)
+  return referenceIds
 }
 
 function valueContainsReferenceIds(value: Value, referenceIds: readonly number[]): boolean {
@@ -2476,7 +2545,7 @@ function valueForAliasExpression(expression: ts.Expression, frame: InterpreterFr
 function havocExpressionAliases(frame: InterpreterFrame, expression: ts.Expression) {
   const value = valueForAliasExpression(expression, frame)
   havocRoots(frame, expressionRootNames(expression, []))
-  havocReferenceAliases(frame, valueReferenceIds(value))
+  havocReferenceAliases(frame, reachableReferenceIds(value))
 }
 
 function havocArrayElementAliases(frame: InterpreterFrame, expression: ts.Expression) {
@@ -2489,7 +2558,7 @@ function arrayElementReferenceIds(frame: InterpreterFrame, expression: ts.Expres
   const value = valueForAliasExpression(expression, frame)
   const array = value?.kind === 'array' ? value : null
   const referenceIds: number[] = []
-  for (const referenceId of valueReferenceIds(array == null ? null : arrayElement(array))) {
+  for (const referenceId of reachableReferenceIds(array == null ? null : arrayElement(array))) {
     if (!referenceIds.includes(referenceId)) referenceIds.push(referenceId)
   }
   return referenceIds
@@ -2520,12 +2589,20 @@ function applyFunctionCallEffects(
 ) {
   const certain = effects.mutations.certain
   const uncertain = effects.mutations.uncertain
-  if (certain.thisValue || uncertain.thisValue) {
+  const retained = effects.retained
+  if (certain.thisValue || uncertain.thisValue || retained.thisValue) {
     if (receiverExpression != null) havocExpressionAliases(frame, receiverExpression)
     else havocRoots(frame, ['this'])
   }
   const hasSpread = argumentExpressions.some(argument => ts.isSpreadElement(argument))
-  for (const index of new Set([...certain.paramIndexes, ...uncertain.paramIndexes])) {
+  for (const index of new Set([
+    ...certain.paramIndexes,
+    ...certain.containedParamIndexes,
+    ...uncertain.paramIndexes,
+    ...uncertain.containedParamIndexes,
+    ...retained.paramIndexes,
+    ...retained.containedParamIndexes,
+  ])) {
     const rest = parameters[index]?.dotDotDotToken != null
     const targets = hasSpread
       ? argumentExpressions
@@ -2538,7 +2615,14 @@ function applyFunctionCallEffects(
   }
   const certainOuterRoots = mutationRootsForProgram(certain, frame.program)
   const uncertainOuterRoots = mutationRootsForProgram(uncertain, frame.program)
-  havocRoots(frame, [...new Set([...certainOuterRoots, ...uncertainOuterRoots])])
+  const retainedOuterRoots = mutationRootsForProgram(retained, frame.program)
+  const reassignedOuterRoots = reassignedRootsForProgram(effects, frame.program)
+  havocRoots(frame, [...new Set([
+    ...certainOuterRoots,
+    ...uncertainOuterRoots,
+    ...retainedOuterRoots,
+  ])])
+  havocBindings(frame, reassignedOuterRoots)
 }
 
 // Inline callbacks run per element on a copy of the caller's environment, so
@@ -2553,10 +2637,18 @@ function applyCallbackEffects(
   receiverParamIndexes: readonly number[] = [2],
 ): FunctionEffects {
   const effects = functionEffects(callback)
-  applyFunctionCallEffects(effects, [], callback.node.parameters, thisExpression, frame)
+  applyFunctionCallEffects(
+    effects,
+    [],
+    callback.node.parameters,
+    ts.isArrowFunction(callback.node) ? null : thisExpression,
+    frame,
+  )
   const mutated = new Set([
     ...effects.mutations.certain.paramIndexes,
+    ...effects.mutations.certain.containedParamIndexes,
     ...effects.mutations.uncertain.paramIndexes,
+    ...effects.mutations.uncertain.containedParamIndexes,
   ])
   if (receiverExpression != null) {
     if (elementParamIndexes.some(index => mutated.has(index))) havocArrayElementAliases(frame, receiverExpression)
@@ -2575,7 +2667,9 @@ function sourceAfterCallback(
 ): ArrayValue {
   const mutated = new Set([
     ...effects.mutations.certain.paramIndexes,
+    ...effects.mutations.certain.containedParamIndexes,
     ...effects.mutations.uncertain.paramIndexes,
+    ...effects.mutations.uncertain.containedParamIndexes,
   ])
   const mutatesSource = callback.parameterSources.some((sources, index) =>
     mutated.has(index) && sources.some(source => source.kind === 'receiver'))
@@ -2628,7 +2722,12 @@ function applyUnknownCallEffects(
     if (callback == null) continue
     const callbackEffects = functionEffects(callback)
     applyFunctionCallEffects(callbackEffects, [], callback.node.parameters, null, frame)
-    if (callbackEffects.mutations.certain.paramIndexes.size > 0 || callbackEffects.mutations.uncertain.paramIndexes.size > 0) {
+    if (
+      callbackEffects.mutations.certain.paramIndexes.size > 0
+      || callbackEffects.mutations.certain.containedParamIndexes.size > 0
+      || callbackEffects.mutations.uncertain.paramIndexes.size > 0
+      || callbackEffects.mutations.uncertain.containedParamIndexes.size > 0
+    ) {
       havocAllInputs()
       // The callback mutates the elements it runs over; forget the bindings that
       // alias the receiver's held objects too (e.g. arr.forEach mutating box in
@@ -2639,18 +2738,13 @@ function applyUnknownCallEffects(
 }
 
 function passedFunctionReference(expression: ts.Expression, frame: InterpreterFrame): FunctionImplementationRef | null {
-  if (isInlineFunction(expression)) return functionImplementationReference(frame.program, expression)
-  if (!ts.isIdentifier(expression)) return null
-  const resolved = resolveCallTarget(expression, frame.program)
-  return resolved.kind === 'function'
-    ? functionImplementationReference(resolved.program, resolved.fn.node)
-    : null
+  return callTargetImplementation(resolveCallTarget(expression, frame.program))
 }
 
 function userBindingForCallTarget(target: ts.Expression, frame: InterpreterFrame): boolean {
   if (!ts.isIdentifier(target)) return false
   if (frame.env.has(target.text)) return true
-  return resolveCallTarget(target, frame.program).kind === 'function'
+  return callTargetHasUserBinding(target, frame.program)
 }
 
 function assignmentHasExternalEffect(path: ValuePath, target: ts.Expression, frame: InterpreterFrame) {
@@ -2859,7 +2953,7 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   let platformRejectionReason: string | null = null
   if (defaultLibraryMethod) {
     const owner = defaultLibraryOwner(target, frame.program)
-    const classification = classifyPlatformMethodCall(owner, target.name.text, expression.arguments.length)
+    const classification = classifyPlatformMethodCall(owner, target.name.text, expression.arguments, frame.program)
     if (classification.kind === 'supported') {
       const effect = classification.effect
       const operands = evaluatePlatformMethodOperands(expression, target, frame)
@@ -2871,7 +2965,17 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       if (handled != null) return handled
       applyPlatformMethodRuntimeEffects(expression, target, effect, receiver, argumentValues, frame)
       const typed = fallback()
-      if (typed?.kind === 'object' || typed?.kind === 'array') return typed
+      if (typed?.kind === 'object' || typed?.kind === 'array') {
+        if (effect.result.kind === 'receiver' || effect.result.kind === 'argument') return typed
+        if (effect.result.kind === 'fresh' && typed.kind === 'array') {
+          return freshPlatformResultArray(expression, effect, receiver, argumentValues, typed, frame)
+        }
+        return noteUnsupported(
+          frame,
+          `Platform result contents are not interpreted: ${expression.getText(frame.program.sourceFile)}`,
+          expression,
+        )
+      }
       if (typed?.kind === 'number') {
         noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
         return typed
@@ -2880,7 +2984,9 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     }
     if (classification.kind === 'unsupported') platformRejectionReason = classification.reason
   }
-  if (isInlineFunction(target)) {
+  const resolved = resolveCallTarget(target, frame.program)
+  const inlineTarget = callTargetImplementation(resolved)
+  if (inlineTarget != null && inlineTarget.node === target && isInlineFunction(target)) {
     const operands = evaluateInvocationOperands(expression.arguments, frame)
     if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
     const prepared = prepareFunctionNodeInvocation(
@@ -2901,11 +3007,42 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     )
     return result
   }
-  const resolved = resolveCallTarget(target, frame.program)
-  if (resolved.kind === 'math') {
-    return evaluateMathCall(resolved.name, evaluatedArguments(expression.arguments, frame), frame, expression)
+  const writtenPlatformGlobal = ts.isPropertyAccessExpression(target)
+    && ts.isIdentifier(target.expression)
+    && isDefaultLibrarySymbol(target.expression, frame.program)
+    && isDefaultLibraryMemberAccess(target, frame.program)
+  if (resolved.kind === 'platform-global' && !writtenPlatformGlobal) {
+    const argumentValues = evaluatedArguments(expression.arguments, frame)
+    if (resolved.base === 'Math') {
+      return evaluateMathCall(resolved.name, argumentValues, frame, expression)
+    }
+    const classification = classifyPlatformGlobalCall(resolved.base, resolved.name, expression.arguments.length)
+    if (classification.kind !== 'supported') {
+      const reason = classification.kind === 'unsupported'
+        ? classification.reason
+        : `Unsupported platform call ${resolved.base}.${resolved.name}`
+      return noteUnsupported(frame, reason, expression)
+    }
+    for (const index of classification.effect.mutatesArgumentIndexes) {
+      const argument = expression.arguments[index]
+      if (argument != null && !ts.isSpreadElement(argument)) havocExpressionAliases(frame, argument)
+    }
+    const typed = fallback()
+    if (classification.effect.result.kind === 'fresh' && typed?.kind === 'array') {
+      return freshPlatformResultArray(
+        expression,
+        classification.effect,
+        null,
+        argumentValues,
+        typed,
+        frame,
+      )
+    }
+    return typed ?? noteUnsupported(frame, `Platform call is not interpreted: ${expression.getText(frame.program.sourceFile)}`, expression)
   }
-  if (resolved.kind === 'function') return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback(), frame)
+  if (resolved.kind === 'function' && resolved.interpretation === 'interpreted') {
+    return evaluateResolvedFunctionCall(expression, target.getText(frame.program.sourceFile), resolved, fallback(), frame)
+  }
   // Supported platform globals use their shared effect description. Deliberate
   // rejections and calls we cannot classify receive the unknown-call treatment.
   const platformGlobal = ts.isPropertyAccessExpression(target)
@@ -2951,17 +3088,96 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
   )
   if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
   const argumentValues = operands.arguments.map(argument => argument.value)
-  if (!factPreservingGlobal) applyUnknownCallEffects(expression, target, argumentValues, receiver, frame)
+  const sourceImplementation = callTargetImplementation(resolved)
+  if (sourceImplementation != null) {
+    applyFunctionCallEffects(
+      functionEffects(sourceImplementation),
+      expression.arguments,
+      sourceImplementation.node.parameters,
+      receiverExpression,
+      frame,
+    )
+  } else if (!factPreservingGlobal) {
+    applyUnknownCallEffects(expression, target, argumentValues, receiver, frame)
+  }
   const platformRejection = platformRejectionReason == null
     ? null
     : noteUnsupported(frame, platformRejectionReason, expression)
   const unresolvedFallback = fallback()
+  if (
+    platformGlobal.kind === 'supported'
+    && platformGlobal.effect.result.kind === 'fresh'
+    && unresolvedFallback?.kind === 'array'
+  ) {
+    return freshPlatformResultArray(
+      expression,
+      platformGlobal.effect,
+      null,
+      argumentValues,
+      unresolvedFallback,
+      frame,
+    )
+  }
   if (unresolvedFallback?.kind === 'object' || unresolvedFallback?.kind === 'array') return unresolvedFallback
-  if (unresolvedFallback?.kind === 'number' && resolved.cause === 'unknown-function') {
+  if (
+    unresolvedFallback?.kind === 'number'
+    && resolved.kind === 'unresolved'
+    && resolved.cause === 'unknown-function'
+  ) {
     noteUnsupported(frame, resolved.reason, expression)
     return unresolvedFallback
   }
-  return platformRejection ?? noteUnsupported(frame, resolved.reason, expression)
+  const unresolvedReason = resolved.kind === 'function'
+    ? `Local function calls are not interpreted: ${target.getText(frame.program.sourceFile)}`
+    : resolved.kind === 'unresolved'
+      ? resolved.reason
+      : `Platform call is not interpreted: ${target.getText(frame.program.sourceFile)}`
+  return platformRejection ?? noteUnsupported(frame, unresolvedReason, expression)
+}
+
+function freshPlatformResultArray(
+  expression: ts.CallExpression,
+  effect: PlatformCallEffect,
+  receiver: Value | null,
+  argumentValues: readonly Value[],
+  typed: ArrayValue,
+  frame: InterpreterFrame,
+): ArrayValue {
+  noteUnsupported(
+    frame,
+    `Platform result contents are not interpreted: ${expression.getText(frame.program.sourceFile)}`,
+    expression,
+  )
+  let element = receiver?.kind === 'array' ? opaqueRetainedValue(arrayElement(receiver)) : null
+  const retainedIndexes = new Set(retainedArgumentIndexes(effect, argumentValues.length))
+  argumentValues.forEach((argument, index) => {
+    if (retainedIndexes.has(index) && valueCanBeMutated(argument)) {
+      element = mergeElementValue(element, opaqueRetainedValue(argument))
+    }
+  })
+  return collectionValue(
+    arrayLength(typed),
+    element,
+    expression.getText(frame.program.sourceFile),
+  )
+}
+
+function opaqueRetainedValue(value: Value | null): Value | null {
+  // Keep alias identity so later writes invalidate the source, but do not keep
+  // fields or elements that the platform result deliberately leaves opaque.
+  if (value == null) return null
+  if (value.kind === 'object') {
+    return {kind: 'object', referenceIds: value.referenceIds, props: new Map(), expr: value.expr}
+  }
+  if (value.kind === 'array') {
+    const expr = value.expr ?? 'array'
+    return collectionValue(unknownArrayLength(expr), null, value.expr, value.referenceIds)
+  }
+  if (value.kind === 'nullable') {
+    const present = opaqueRetainedValue(value.present)
+    return present == null ? value : {...value, present}
+  }
+  return value
 }
 
 function numberStaticProperty(name: string): number | null {
@@ -3008,14 +3224,20 @@ function evaluatePlatformMethodOperands(
     expression.arguments,
     frame,
     {value: receiver, sourceText: target.expression.getText(frame.program.sourceFile)},
-    argument => {
-      const current = unwrapExpression(argument)
-      if (isInlineFunction(current) || passedFunctionReference(current, frame) != null) {
-        return unknown('Function value')
-      }
-      return evaluateExpression(argument, frame)
-    },
+    argument => evaluatePlatformMethodArgument(argument, frame),
   )
+}
+
+function evaluatePlatformMethodArgument(argument: ts.Expression, frame: InterpreterFrame): Value {
+  const current = unwrapExpression(argument)
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.CommaToken) {
+    evaluateExpression(current.left, frame)
+    return evaluatePlatformMethodArgument(current.right, frame)
+  }
+  if (isInlineFunction(current) || passedFunctionReference(current, frame) != null) {
+    return unknown('Function value')
+  }
+  return evaluateExpression(current, frame)
 }
 
 function applyPlatformMethodRuntimeEffects(
@@ -3066,9 +3288,9 @@ function applyPlatformCallbackRuntimeEffect(
     if (sources.some(source => source.kind === 'receiver-elements')) elementParams.push(index)
     if (sources.some(source => source.kind === 'receiver')) receiverParams.push(index)
   })
-  const thisArgument = callback.thisSource?.kind === 'argument'
-    ? expression.arguments[callback.thisSource.index] ?? null
-    : null
+  const thisArgument = callback.thisArgumentIndex == null
+    ? null
+    : expression.arguments[callback.thisArgumentIndex] ?? null
   const thisExpression = thisArgument != null && !ts.isSpreadElement(thisArgument) ? thisArgument : null
   if (callbackRef != null) {
     return applyCallbackEffects(
@@ -3080,6 +3302,10 @@ function applyPlatformCallbackRuntimeEffect(
       receiverParams,
     )
   }
+  // An unresolved callback may close over any mutable value visible at its
+  // declaration. The interpreter cannot identify that declaration, so no
+  // caller-local fact can safely survive the callback.
+  if (argument != null) havocRoots(frame, [...frame.env.keys()])
   if (elementParams.length > 0) havocArrayElementAliases(frame, target.expression)
   if (receiverParams.length > 0) havocExpressionAliases(frame, target.expression)
   if (thisExpression != null) havocExpressionAliases(frame, thisExpression)
@@ -3123,7 +3349,7 @@ function evaluateArrayMutationCall(
 function evaluateResolvedFunctionCall(
   expression: ts.CallExpression,
   callName: string,
-  target: Extract<InterpreterCallTarget, {kind: 'function'}>,
+  target: ResolvedFunctionTarget,
   fallback: Value | null,
   frame: InterpreterFrame,
   thisValue?: Value,
@@ -3145,7 +3371,7 @@ function evaluateResolvedFunctionCall(
 function evaluateResolvedFunctionCallResult(
   expression: ts.CallExpression,
   callName: string,
-  target: Extract<InterpreterCallTarget, {kind: 'function'}>,
+  target: ResolvedFunctionTarget,
   fallback: Value | null,
   frame: InterpreterFrame,
   thisValue?: Value,

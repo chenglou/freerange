@@ -1,1 +1,1 @@
-export {importedImpure, importedPure, importedPureCallback, importedStable, importedWrap} from './imported-helper.ts'
+export {importedImpure, importedPure, importedPureCallback, importedReassigned, importedStable} from './imported-helper.ts'

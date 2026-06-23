@@ -59,6 +59,52 @@ export type FitFile<TGlobal> = FitProjectFile<TGlobal> & {
   imports: Map<string, FitImportBinding<FitFile<TGlobal>>>
 }
 
+export type DefaultLibraryMemberIdentity = {
+  owner: string
+  name: string
+}
+
+export function defaultLibraryMemberIdentity<TGlobal>(
+  symbol: ts.Symbol | undefined,
+  checker: ts.TypeChecker,
+  project: FitProjectIndex<TGlobal>,
+): DefaultLibraryMemberIdentity | null {
+  let resolved = symbol
+  const seen = new Set<ts.Symbol>()
+  while (resolved != null && (resolved.flags & ts.SymbolFlags.Alias) !== 0 && !seen.has(resolved)) {
+    seen.add(resolved)
+    resolved = checker.getAliasedSymbol(resolved)
+  }
+  if (resolved == null) return null
+  for (const declaration of resolved.declarations ?? []) {
+    if (project.typeProgram?.isSourceFileDefaultLibrary(declaration.getSourceFile()) !== true) continue
+    const owner = containingDefaultLibraryDeclaration(declaration)
+    const ownerName = owner?.name != null && ts.isIdentifier(owner.name)
+      ? normalizeDefaultLibraryOwner(owner.name.text)
+      : null
+    if (ownerName != null) return {owner: ownerName, name: resolved.getName()}
+  }
+  return null
+}
+
+function containingDefaultLibraryDeclaration(
+  declaration: ts.Declaration,
+): ts.ClassDeclaration | ts.InterfaceDeclaration | null {
+  // oxlint-disable-next-line typescript/no-unnecessary-condition
+  for (let current: ts.Node | undefined = declaration.parent; current != null; current = current.parent) {
+    if (ts.isInterfaceDeclaration(current) || ts.isClassDeclaration(current)) return current
+    if (ts.isSourceFile(current)) return null
+  }
+  return null
+}
+
+function normalizeDefaultLibraryOwner(name: string) {
+  if (name.endsWith('Constructor')) return name.slice(0, -'Constructor'.length)
+  if (name === 'Console') return 'console'
+  if (name === 'Performance') return 'performance'
+  return name
+}
+
 export type FitProject<TGlobal> = FitProjectIndex<TGlobal> & {
   entries: FitFile<TGlobal>[]
   configFile: string | null
@@ -102,7 +148,8 @@ export type FitImportSource<TFile> = {
 
 export type FitCallAlias =
   | {
-      kind: 'math'
+      kind: 'platform-global'
+      base: string
       name: string
     }
   | {
@@ -374,7 +421,7 @@ function parseFitFile<TGlobal>(
     if (ts.isExportAssignment(statement) && !statement.isExportEquals) {
       const functionInitializer = supportedFunctionInitializer(statement.expression)
       if (functionInitializer == null) {
-        const alias = callAliasFromExpression(statement.expression)
+        const alias = callAliasFromExpression(statement.expression, typeChecker, project)
         if (alias != null) callAliases.set('default', alias)
         continue
       }
@@ -388,14 +435,24 @@ function parseFitFile<TGlobal>(
         const functionInitializer = declaration.initializer == null ? null : supportedFunctionInitializer(declaration.initializer)
         if (functionInitializer != null) {
           collectFitFunction(sourceText, file, declaration.name.text, functionInitializer, statement, functions)
+          if (!isConst) unsupportedCallAliases.set(declaration.name.text, mutableCallAliasReason(declaration.name.text))
         }
         const alias = functionInitializer == null && declaration.initializer != null
-          ? callAliasFromExpression(declaration.initializer)
+          ? callAliasFromExpression(declaration.initializer, typeChecker, project)
           : null
         if (alias != null) collectCallAlias(declaration.name.text, alias, isConst, callAliases, unsupportedCallAliases)
-      } else if (ts.isObjectBindingPattern(declaration.name) && declaration.initializer != null && isIdentifierText(declaration.initializer, 'Math')) {
+      } else if (
+        ts.isObjectBindingPattern(declaration.name)
+        && declaration.initializer != null
+        && isIdentifierText(declaration.initializer, 'Math')
+        && isDefaultLibraryBinding(declaration.initializer, typeChecker, project)
+      ) {
         for (const alias of mathDestructuringAliases(declaration.name)) {
-          collectCallAlias(alias.localName, {kind: 'math', name: alias.exportedName}, isConst, callAliases, unsupportedCallAliases)
+          collectCallAlias(alias.localName, {
+            kind: 'platform-global',
+            base: 'Math',
+            name: alias.exportedName,
+          }, isConst, callAliases, unsupportedCallAliases)
         }
       }
       const global = readGlobal(declaration, typeChecker)
@@ -442,7 +499,8 @@ function collectFitFunction(
 }
 
 function supportedFunctionInitializer(expression: ts.Expression): InlineFunctionNode | null {
-  return isInlineFunction(expression) ? expression : null
+  const current = unwrapAliasExpression(expression)
+  return isInlineFunction(current) ? current : null
 }
 
 function isConstVariableStatement(statement: ts.VariableStatement) {
@@ -464,16 +522,34 @@ function mutableCallAliasReason(name: string) {
   return `${name} is a mutable helper alias; Freerange only follows const helper aliases`
 }
 
-function callAliasFromExpression(expression: ts.Expression): FitCallAlias | null {
+function callAliasFromExpression<TGlobal>(
+  expression: ts.Expression,
+  checker: ts.TypeChecker | null,
+  project: FitProjectIndex<TGlobal>,
+): FitCallAlias | null {
   const unwrapped = unwrapAliasExpression(expression)
   if (ts.isIdentifier(unwrapped)) return {kind: 'identifier', name: unwrapped.text}
   if (!ts.isPropertyAccessExpression(unwrapped)) return null
   if (!ts.isIdentifier(unwrapped.name)) return null
-  if (isIdentifierText(unwrapped.expression, 'Math')) return {kind: 'math', name: unwrapped.name.text}
+  if (
+    ts.isIdentifier(unwrapped.expression)
+    && isDefaultLibraryBinding(unwrapped.expression, checker, project)
+  ) return {kind: 'platform-global', base: unwrapped.expression.text, name: unwrapped.name.text}
   if (ts.isIdentifier(unwrapped.expression)) {
     return {kind: 'namespace-member', namespace: unwrapped.expression.text, exportedName: unwrapped.name.text}
   }
   return null
+}
+
+function isDefaultLibraryBinding<TGlobal>(
+  identifier: ts.Identifier,
+  checker: ts.TypeChecker | null,
+  project: FitProjectIndex<TGlobal>,
+): boolean {
+  const symbol = checker?.getSymbolAtLocation(identifier)
+  return symbol?.declarations?.some(declaration =>
+    project.typeProgram?.isSourceFileDefaultLibrary(declaration.getSourceFile()) === true,
+  ) === true
 }
 
 function unwrapAliasExpression(expression: ts.Expression): ts.Expression {
