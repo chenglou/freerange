@@ -22,7 +22,7 @@ import {
   linearVariable,
   type LinearExpr,
 } from './linear.ts'
-import {rationalAdd, rationalMultiply} from './rational.ts'
+import {rationalAdd, rationalMultiply} from './numeric/rational.ts'
 
 type MutableCallSiteBindings = Map<string, string>
 

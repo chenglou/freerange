@@ -67,10 +67,11 @@ import {
   singleUnitAtom,
   type LinearExpr,
 } from './linear.ts'
-import {farkasProvesNonNegative, linearMaximum} from './farkas.ts'
+import {farkasProvesNonNegative, linearFeasiblePoint, linearMaximum} from './numeric/solver.ts'
 import {
   rationalCompare,
   rationalDivide,
+  rationalEquals,
   rationalIsPositive,
   rationalIsZero,
   rationalIsNegative,
@@ -80,7 +81,7 @@ import {
   rationalToNumberFloor,
   rationalZero,
   type Rational,
-} from './rational.ts'
+} from './numeric/rational.ts'
 
 export type Truth = 'true' | 'false' | 'maybe'
 
@@ -554,13 +555,9 @@ function singleFactScales(target: LinearExpr, fact: LinearExpr): Rational[] {
     if (factCoefficient == null || rationalIsZero(factCoefficient)) continue
     const scale = rationalDivide(targetCoefficient, factCoefficient)
     if (scale == null || !rationalIsPositive(scale)) continue
-    if (!scales.some(existing => rationalIsZero(rationalSubtractLocal(existing, scale)))) scales.push(scale)
+    if (!scales.some(existing => rationalEquals(existing, scale))) scales.push(scale)
   }
   return scales
-}
-
-function rationalSubtractLocal(left: Rational, right: Rational): Rational {
-  return {num: left.num * right.den - right.num * left.den, den: left.den * right.den}
 }
 
 function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: NumberValue): LinearExpr | null {
@@ -767,18 +764,32 @@ export function comparisonCounterexample(
   }
   const extremum = linearMaximum(violation, facts)
   if (extremum.kind === 'infeasible') return null
-  if (extremum.kind === 'unbounded') return {kind: 'unbounded'}
-  const sign = rationalCompare(extremum.value, rationalZero)
+  if (extremum.kind === 'unbounded') {
+    const admittedPoint = linearFeasiblePoint(facts)
+    if (admittedPoint == null) return null
+    for (const value of admittedPoint.values()) {
+      if (value.den !== 1n) return null
+    }
+    return {kind: 'unbounded'}
+  }
   const strictClaim = op === '>' || op === '<'
-  if (!(strictClaim ? sign >= 0 : sign > 0)) return null
-  for (const value of extremum.point.values()) {
+  const sign = rationalCompare(extremum.value, rationalZero)
+  const extremumViolatesClaim = strictClaim ? sign >= 0 : sign > 0
+  const witnessPoint = extremum.kind === 'optimum' && extremumViolatesClaim
+    ? extremum.point
+    : linearFeasiblePoint([
+        ...facts,
+        {diff: violation, strict: !strictClaim},
+      ])
+  if (witnessPoint == null) return null
+  for (const value of witnessPoint.values()) {
     if (value.den !== 1n) return null
   }
   // Report the claim's own variables; the rest of the assignment is real but
   // not informative.
   const point = new Map<string, Rational>()
   for (const name of violation.terms.keys()) {
-    const assigned = extremum.point.get(name)
+    const assigned = witnessPoint.get(name)
     if (assigned != null) point.set(name, assigned)
   }
   return {kind: 'point', point}
@@ -800,9 +811,9 @@ export function provableBounds(value: NumberValue, assumptions: Assumption[]): {
   let min = value.min
   let max = value.max
   const upper = linearMaximum(value.linear, facts)
-  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumberCeil(upper.value))
+  if (upper.kind === 'optimum' || upper.kind === 'supremum') max = Math.min(max, rationalToNumberCeil(upper.value))
   const lower = linearMaximum(linearScaleExact(value.linear, rationalNegate(rationalOne)), facts)
-  if (lower.kind === 'optimum') min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
+  if (lower.kind === 'optimum' || lower.kind === 'supremum') min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
   return min <= max ? {min, max} : {min: value.min, max: value.max}
 }
 
@@ -927,12 +938,12 @@ function numberWithProjectedBounds(
   let min = value.min
   let max = value.max
   const upper = linearMaximum(value.linear, facts)
-  if (upper.kind === 'optimum') max = Math.min(max, rationalToNumberCeil(upper.value))
+  if (upper.kind === 'optimum' || upper.kind === 'supremum') max = Math.min(max, rationalToNumberCeil(upper.value))
   const lower = linearMaximum(
     linearScaleExact(value.linear, rationalNegate(rationalOne)),
     facts,
   )
-  if (lower.kind === 'optimum') {
+  if (lower.kind === 'optimum' || lower.kind === 'supremum') {
     min = Math.max(min, rationalToNumberFloor(rationalNegate(lower.value)))
   }
   return min === value.min && max === value.max

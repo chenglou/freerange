@@ -18,9 +18,9 @@ import {
   type CollectionValue,
   type SequenceRelation,
 } from '../../src/domain.ts'
-import {farkasProvesNonNegative, linearMaximum} from '../../src/farkas.ts'
+import {farkasProvesNonNegative, linearMaximum} from '../../src/numeric/solver.ts'
 import {linearAdd, linearConstant, linearScale, linearSubtract, linearVariable} from '../../src/linear.ts'
-import {rationalEquals} from '../../src/rational.ts'
+import {rationalEquals, rationalFromParts} from '../../src/numeric/rational.ts'
 import {verifyFitSource} from '../../src/reports.ts'
 import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
@@ -70,23 +70,23 @@ const simplexFeasibleBoundary = linearMaximum(simplexX, [
 ])
 if (
   simplexOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexOptimum.value, {num: 5n, den: 1n})
-  || !rationalEquals(simplexOptimum.point.get('simplex.x')!, {num: 2n, den: 1n})
-  || !rationalEquals(simplexOptimum.point.get('simplex.y')!, {num: 3n, den: 1n})
+  || !rationalEquals(simplexOptimum.value, rationalFromParts(5n, 1n))
+  || !rationalEquals(simplexOptimum.point.get('simplex.x')!, rationalFromParts(2n, 1n))
+  || !rationalEquals(simplexOptimum.point.get('simplex.y')!, rationalFromParts(3n, 1n))
   || simplexFractionalOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexFractionalOptimum.value, {num: 8n, den: 3n})
-  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.x')!, {num: 4n, den: 3n})
-  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.y')!, {num: 4n, den: 3n})
+  || !rationalEquals(simplexFractionalOptimum.value, rationalFromParts(8n, 3n))
+  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.x')!, rationalFromParts(4n, 3n))
+  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.y')!, rationalFromParts(4n, 3n))
   || simplexDegenerateOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexDegenerateOptimum.value, {num: 1n, den: 1n})
+  || !rationalEquals(simplexDegenerateOptimum.value, rationalFromParts(1n, 1n))
   || simplexNegativeRhsOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexNegativeRhsOptimum.value, {num: -1n, den: 1n})
+  || !rationalEquals(simplexNegativeRhsOptimum.value, rationalFromParts(-1n, 1n))
   || simplexNegativeRhsMinimum.kind !== 'optimum'
-  || !rationalEquals(simplexNegativeRhsMinimum.value, {num: 2n, den: 1n})
+  || !rationalEquals(simplexNegativeRhsMinimum.value, rationalFromParts(2n, 1n))
   || simplexUnbounded.kind !== 'unbounded'
   || simplexInfeasible.kind !== 'infeasible'
   || simplexFeasibleBoundary.kind !== 'optimum'
-  || !rationalEquals(simplexFeasibleBoundary.value, {num: 1n, den: 1n})
+  || !rationalEquals(simplexFeasibleBoundary.value, rationalFromParts(1n, 1n))
   || !farkasProvesNonNegative(simplexSum, false, simplexNonnegativeFacts)
   || farkasProvesNonNegative(linearSubtract(simplexX, simplexY)!, false, simplexNonnegativeFacts)
   || !farkasProvesNonNegative(simplexX, true, [

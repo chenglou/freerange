@@ -3,12 +3,12 @@ import {
   rationalCompare,
   rationalDivide,
   rationalFromNumber,
-  rationalIsExactNumber,
+  rationalFromParts,
   rationalMultiply,
   rationalOne,
-  rationalToNumber,
+  rationalToExactNumber,
   type Rational,
-} from './rational.ts'
+} from './numeric/rational.ts'
 import {
   domainPathLinearName,
   parseDomainPathText,
@@ -72,6 +72,10 @@ function withNaNStatus(value: NumberValue, excluded: boolean): NumberValue {
   return {...value, nan: excluded ? 'excluded' : 'possible'}
 }
 
+function operandsExcludeNaN(left: NumberValue, right: NumberValue): boolean {
+  return !possiblyNaN(left) && !possiblyNaN(right)
+}
+
 // Union of two values keeps only the grid both sit on (the finer exponent);
 // intersection keeps the coarser of the two claims.
 export function gridJoin(left: number | null, right: number | null): number | null {
@@ -109,9 +113,9 @@ export function gridOfNumber(value: number): number | null {
 // the op rounds nothing and its algebraic linear form is the runtime double.
 export function withinGridWindow(magnitude: Rational, grid: number): boolean {
   const exponent = 53 + grid
-  const threshold: Rational = exponent >= 0
-    ? {num: 1n << BigInt(exponent), den: 1n}
-    : {num: 1n, den: 1n << BigInt(-exponent)}
+  const threshold = exponent >= 0
+    ? rationalFromParts(1n << BigInt(exponent), 1n)
+    : rationalFromParts(1n, 1n << BigInt(-exponent))
   return rationalCompare(magnitude, threshold) <= 0
 }
 
@@ -164,7 +168,10 @@ function foldBinary(
   if (!Number.isFinite(left.min) || !Number.isFinite(right.min)) return null
   const result = apply(left.min, right.min)
   if (Number.isNaN(result)) return null
-  return numberValue(result, result, gridOfNumber(result), expr, linearConstant(result), null, origin)
+  return withNaNStatus(
+    numberValue(result, result, gridOfNumber(result), expr, linearConstant(result), null, origin),
+    operandsExcludeNaN(left, right),
+  )
 }
 
 export function numberValue(
@@ -181,9 +188,11 @@ export function numberValue(
   const cleanOrigin = [...new Set(origin)]
   const cleanMin = Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max
-  if (clean != null && clean.terms.size === 0 && rationalIsExactNumber(clean.constant)) {
-    const exact = rationalToNumber(clean.constant)
-    return {kind: 'number', min: exact, max: exact, grid: gridOfNumber(exact), nan: 'excluded', expr, linear: clean, computation, cases, origin: cleanOrigin}
+  if (clean != null && clean.terms.size === 0) {
+    const exact = rationalToExactNumber(clean.constant)
+    if (exact != null) {
+      return {kind: 'number', min: exact, max: exact, grid: gridOfNumber(exact), nan: 'excluded', expr, linear: clean, computation, cases, origin: cleanOrigin}
+    }
   }
   if (cleanMin > cleanMax) {
     return {kind: 'number', min: Number.NEGATIVE_INFINITY, max: Number.POSITIVE_INFINITY, grid: null, nan: 'excluded', expr, linear: clean, computation, cases, origin: cleanOrigin}
@@ -508,7 +517,10 @@ function isUsefulNumberCase(value: NumberValue) {
 // and hull all survive.
 function zeroIdentity(other: NumberValue, zero: NumberValue, expr: string | null, origin: string[]): NumberValue | null {
   if (zero.min !== 0 || zero.max !== 0) return null
-  return withNaNStatus(numberValue(other.min, other.max, other.grid, expr, other.linear, null, origin), !possiblyNaN(other))
+  return withNaNStatus(
+    numberValue(other.min, other.max, other.grid, expr, other.linear, null, origin),
+    operandsExcludeNaN(other, zero),
+  )
 }
 
 export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
@@ -521,7 +533,7 @@ export function addNumbers(left: NumberValue, right: NumberValue): NumberValue {
   const grid = gridJoin(left.grid, right.grid)
   const linear = sumIsExact(left, right, grid) ? linearAdd(left.linear, right.linear) : opaqueLinear(expr)
   // Addition is NaN only from opposite infinities (or an operand already NaN).
-  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+  const noNaN = operandsExcludeNaN(left, right)
     && !(left.max === Number.POSITIVE_INFINITY && right.min === Number.NEGATIVE_INFINITY)
     && !(left.min === Number.NEGATIVE_INFINITY && right.max === Number.POSITIVE_INFINITY)
   return withNaNStatus(numberValue(left.min + right.min, left.max + right.max, grid, expr, linear, null, origin), noNaN)
@@ -537,12 +549,15 @@ export function subtractNumbers(left: NumberValue, right: NumberValue): NumberVa
   // within one evaluation.
   if (left.linear != null && right.linear != null && sameLinear(left.linear, right.linear)
     && Number.isFinite(left.min) && Number.isFinite(left.max)) {
-    return numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin)
+    return withNaNStatus(
+      numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin),
+      operandsExcludeNaN(left, right),
+    )
   }
   const grid = gridJoin(left.grid, right.grid)
   const linear = sumIsExact(left, right, grid) ? linearSubtract(left.linear, right.linear) : opaqueLinear(expr)
   // Subtraction is NaN only from same-side infinities (or an operand NaN).
-  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
+  const noNaN = operandsExcludeNaN(left, right)
     && !(left.max === Number.POSITIVE_INFINITY && right.max === Number.POSITIVE_INFINITY)
     && !(left.min === Number.NEGATIVE_INFINITY && right.min === Number.NEGATIVE_INFINITY)
   return withNaNStatus(numberValue(left.min - right.max, left.max - right.min, grid, expr, linear, null, origin), noNaN)
@@ -579,7 +594,10 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
   for (const [zero, other] of [[left, right], [right, left]] as const) {
     if (zero.min === 0 && zero.max === 0) {
       return Number.isFinite(other.min) && Number.isFinite(other.max)
-        ? numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin)
+        ? withNaNStatus(
+            numberValue(0, 0, zeroGrid, expr, linearConstant(0), null, origin),
+            operandsExcludeNaN(zero, other),
+          )
         : withNaNStatus(numberValue(Number.NEGATIVE_INFINITY, Number.POSITIVE_INFINITY, null, expr, opaqueLinear(expr), null, origin), false)
     }
   }
@@ -600,8 +618,10 @@ export function multiplyNumbers(left: NumberValue, right: NumberValue): NumberVa
     ?? (right.min === right.max ? scaledLinear(left, right.min, resultFinite) : null)
     ?? opaqueLinear(expr)
   // The 0 * Infinity widenings returned above, so only an operand NaN remains.
-  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
-  return withNaNStatus(numberValue(products.min, products.max, grid, expr, linear, null, origin), noNaN)
+  return withNaNStatus(
+    numberValue(products.min, products.max, grid, expr, linear, null, origin),
+    operandsExcludeNaN(left, right),
+  )
 }
 
 function touchesZero(value: NumberValue): boolean {
@@ -647,8 +667,10 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
   }
   // The divisor excludes zero and the Infinity / Infinity widening returned
   // above, so only an operand NaN remains.
-  const noNaN = !possiblyNaN(left) && !possiblyNaN(right)
-  return withNaNStatus(numberValue(quotients.min, quotients.max, grid, expr, linear ?? opaqueLinear(expr), null, origin), noNaN)
+  return withNaNStatus(
+    numberValue(quotients.min, quotients.max, grid, expr, linear ?? opaqueLinear(expr), null, origin),
+    operandsExcludeNaN(left, right),
+  )
 }
 
 // % never rounds: the exact remainder is always representable (verified
@@ -657,7 +679,7 @@ export function divideNumbers(left: NumberValue, right: NumberValue): Value {
 export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   if (right.min <= 0 && right.max >= 0) return unknownValue('Remainder by a range containing zero is unsupported')
   const expr = binaryExpr(left, '%', right)
-  const linear = expr == null ? null : linearVariable(linearNameForExpression(expr))
+  const linear = opaqueLinear(expr)
   const origin = mergeOrigin(left, right)
   const folded = foldBinary(left, right, (a, b) => a % b, expr, origin)
   if (folded != null) return folded
@@ -674,7 +696,7 @@ export function moduloNumbers(left: NumberValue, right: NumberValue): Value {
   const max = left.max > 0 ? Math.min(left.max, remainderMagnitude) : 0
   return withNaNStatus(
     numberValue(min, max, gridJoin(left.grid, right.grid), expr, linear, null, origin),
-    !possiblyNaN(left) && !possiblyNaN(right),
+    operandsExcludeNaN(left, right),
   )
 }
 
@@ -718,14 +740,17 @@ export function powerNumbers(left: NumberValue, right: NumberValue): Value {
     const upper = Math.max(left.min ** 2, left.max ** 2)
     return withNaNStatus(
       numberValue(lower, upper, null, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right)),
-      !possiblyNaN(left) && !possiblyNaN(right),
+      operandsExcludeNaN(left, right),
     )
   }
   if (left.min === left.max) {
     const result = left.min ** right.min
     return Number.isNaN(result)
       ? unknownValue('Exponentiation may produce NaN for this base and exponent')
-      : numberValue(result, result, null, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right))
+      : withNaNStatus(
+          numberValue(result, result, null, binaryExpr(left, '**', right), null, null, mergeOrigin(left, right)),
+          operandsExcludeNaN(left, right),
+        )
   }
   return unknownValue('Only square of non-negative ranges is supported')
 }

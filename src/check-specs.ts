@@ -76,7 +76,7 @@ import {
   proveComparisonWithStep,
   reachableNumberCases,
 } from './proof.ts'
-import {rationalToNumber, type Rational} from './rational.ts'
+import {rationalToNumber, type Rational} from './numeric/rational.ts'
 import {
   booleanExpressionIsAssumed,
   proveBooleanTrue,

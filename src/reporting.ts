@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 import {parseExpression, publicFitText, publicLinearName, type ComparisonOperator, type FitRange} from './parser.ts'
-import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} from './rational.ts'
+import {rationalIsNegative, rationalIsZero, rationalToNumber, type Rational} from './numeric/rational.ts'
 import type {SequenceRelation} from './domain-types.ts'
 import {
   nondecreasingPropsFromRelations,

@@ -89,19 +89,24 @@ function isRoundingFunctionName(name: string): name is RoundingName {
 
 function roundingFacts(name: RoundingName, result: NumberValue, input: NumberValue): LinearConstraint[] {
   if (result.linear == null || input.linear == null || result.expr == null || input.expr == null) return []
+  const inputIsFinite = Number.isFinite(input.min) && Number.isFinite(input.max)
   const inputPlus = (offset: number) => numberValue(input.min + offset, input.max + offset, gridJoin(input.grid, gridOfNumber(offset)), null, linearAdd(input.linear, linearConstant(offset)))
   const facts: LinearConstraint[] = []
   const floorStyle = () => {
     const upper = comparisonConstraint(result, '<=', input, `${result.expr} <= ${input.expr}`)
     if (upper != null) facts.push(upper)
-    const lower = comparisonConstraint(result, '>', inputPlus(-1), `${result.expr} > ${input.expr} - 1`)
-    if (lower != null) facts.push(lower)
+    if (inputIsFinite) {
+      const lower = comparisonConstraint(result, '>', inputPlus(-1), `${result.expr} > ${input.expr} - 1`)
+      if (lower != null) facts.push(lower)
+    }
   }
   const ceilStyle = () => {
     const lower = comparisonConstraint(result, '>=', input, `${result.expr} >= ${input.expr}`)
     if (lower != null) facts.push(lower)
-    const upper = comparisonConstraint(result, '<', inputPlus(1), `${result.expr} < ${input.expr} + 1`)
-    if (upper != null) facts.push(upper)
+    if (inputIsFinite) {
+      const upper = comparisonConstraint(result, '<', inputPlus(1), `${result.expr} < ${input.expr} + 1`)
+      if (upper != null) facts.push(upper)
+    }
   }
   switch (name) {
     case 'floor':
@@ -112,8 +117,10 @@ function roundingFacts(name: RoundingName, result: NumberValue, input: NumberVal
       return facts
     case 'round': {
       // JS Math.round rounds half toward positive infinity, so the lower bound is strict.
-      const lower = comparisonConstraint(result, '>', inputPlus(-0.5), `${result.expr} > ${input.expr} - 0.5`)
-      if (lower != null) facts.push(lower)
+      if (inputIsFinite) {
+        const lower = comparisonConstraint(result, '>', inputPlus(-0.5), `${result.expr} > ${input.expr} - 0.5`)
+        if (lower != null) facts.push(lower)
+      }
       const upper = comparisonConstraint(result, '<=', inputPlus(0.5), `${result.expr} <= ${input.expr} + 0.5`)
       if (upper != null) facts.push(upper)
       return facts
@@ -198,6 +205,10 @@ function monotoneMath(
   domain?: MathDomainSpec,
   direction: 'increasing' | 'decreasing' = 'increasing',
 ): UnaryNumberEvaluator {
+  // These implementation-approximated Math functions intentionally remain an
+  // interpreter policy, not part of the numeric kernel. Freerange trusts the
+  // host implementation to be monotone over the accepted domain; ECMAScript
+  // does not provide an error bound that outward rounding could make portable.
   return (value, _frame, name) => monotoneNumber(name, value, evaluate, domain?.(name), direction)
 }
 

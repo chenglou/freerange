@@ -1,4 +1,4 @@
-import {rationalEquals, rationalOne} from './rational.ts'
+import {rationalEquals, rationalOne} from './numeric/rational.ts'
 import {
   addNumbers,
   arrayLength,

@@ -20,7 +20,7 @@ import {
   rationalMultiply,
   rationalToNumber,
   type Rational,
-} from './rational.ts'
+} from './numeric/rational.ts'
 
 // Closed forms for classified loop recurrences. The loop analysis in
 // interpreter/loop-transfer.ts decides which recurrence a variable follows;

@@ -43,7 +43,8 @@ import {
   linearVariable,
   sameExpressionText,
 } from './linear.ts'
-import {nextDoubleDown, nextDoubleUp, rationalCompare, rationalNegate, rationalOne, rationalZero} from './rational.ts'
+import {nextDoubleDown, nextDoubleUp} from './numeric/float64.ts'
+import {rationalCompare, rationalNegate, rationalOne, rationalZero} from './numeric/rational.ts'
 import {
   fitSpecIsAssumption,
   fitExpressionDomainPath,

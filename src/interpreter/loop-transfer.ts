@@ -63,16 +63,15 @@ import {
   rationalAdd,
   rationalEquals,
   rationalFromNumber,
-  rationalIsExactNumber,
   rationalIsNegative,
   rationalIsZero,
   rationalMultiply,
   rationalOne,
-  rationalToNumber,
+  rationalToExactNumber,
   rationalToNumberCeil,
   rationalToNumberFloor,
   type Rational,
-} from '../rational.ts'
+} from '../numeric/rational.ts'
 import {
   deriveFrame,
   emptyInterpreterOutput,
@@ -1918,12 +1917,12 @@ function relationFromCandidate(fieldPaths: string[][], candidate: RelationCandid
 // claim text, and a lossy print could match the wrong number; the relation is
 // dropped instead.
 function renderLinear(linear: LinearExpr): string | null {
-  if (!rationalIsExactNumber(linear.constant)) return null
+  const constant = rationalToExactNumber(linear.constant)
+  if (constant == null) return null
   const parts: string[] = []
-  const constant = rationalToNumber(linear.constant)
   for (const [name, coefficient] of [...linear.terms.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    if (!rationalIsExactNumber(coefficient)) return null
-    const value = rationalToNumber(coefficient)
+    const value = rationalToExactNumber(coefficient)
+    if (value == null) return null
     const publicName = publicLinearName(name)
     parts.push(value === 1 ? publicName : `${value} * (${publicName})`)
   }

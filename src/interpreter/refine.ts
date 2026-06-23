@@ -12,7 +12,7 @@ import {
   integerValued,
 } from '../domain.ts'
 import {linearConstant} from '../linear.ts'
-import {nextDoubleDown, nextDoubleUp} from '../rational.ts'
+import {nextDoubleDown, nextDoubleUp} from '../numeric/float64.ts'
 import {mergeAssumptions, sharedAssumptions} from '../assumptions.ts'
 import type {ComparisonOperator} from '../parser.ts'
 import {

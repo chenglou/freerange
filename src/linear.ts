@@ -12,27 +12,45 @@ import {
   type ParsedFitExpression,
 } from './parser.ts'
 import {
-  rationalAdd,
-  rationalCompare,
-  rationalDivide,
-  rationalEquals,
-  rationalFromNumber,
-  rationalIsExactNumber,
-  rationalIsZero,
   rationalKey,
-  rationalMultiply,
   rationalNegate,
   rationalOne,
-  rationalToNumber,
-  rationalZero,
-  type Rational,
-} from './rational.ts'
+  rationalToExactNumber,
+} from './numeric/rational.ts'
+import {
+  cleanLinear,
+  isZeroLinear,
+  linearAdd,
+  linearConstant,
+  linearConstantStatus,
+  linearDivide,
+  linearScale,
+  linearScaleExact,
+  linearSubtract,
+  linearVariable,
+  sameLinear,
+  singleUnitAtom as numericSingleUnitAtom,
+  type LinearExpr as NumericLinearExpr,
+} from './numeric/linear.ts'
 
-// Coefficients are exact rationals. A proof layer must never drop or blur a
-// term by magnitude: 1e-10 * x over x: ±1e12 is ±100, not 0.
-export type LinearExpr = {
-  constant: Rational
-  terms: Map<string, Rational>
+export {
+  cleanLinear,
+  isZeroLinear,
+  linearAdd,
+  linearConstant,
+  linearConstantStatus,
+  linearDivide,
+  linearScale,
+  linearScaleExact,
+  linearSubtract,
+  linearVariable,
+  sameLinear,
+}
+
+export type LinearExpr = NumericLinearExpr<string>
+
+export function singleUnitAtom(linear: LinearExpr | null): string | null {
+  return numericSingleUnitAtom(linear)?.atom ?? null
 }
 
 export function numericLiteralValue(expression: ts.Expression): number | null {
@@ -41,16 +59,6 @@ export function numericLiteralValue(expression: ts.Expression): number | null {
     return -Number(expression.operand.text)
   }
   return null
-}
-
-// Infinity and NaN have no linear form.
-export function linearConstant(value: number): LinearExpr | null {
-  const constant = rationalFromNumber(value)
-  return constant == null ? null : {constant, terms: new Map()}
-}
-
-export function linearVariable(name: string): LinearExpr {
-  return {constant: rationalZero, terms: new Map([[name, rationalOne]])}
 }
 
 export function linearFromExpressionText(text: FitExpressionLike): LinearExpr | null {
@@ -102,7 +110,7 @@ export function linearFromExpression(expression: ts.Expression, domainPaths: Rea
 
 function constantOnlyValue(linear: LinearExpr): number | null {
   if (linear.terms.size > 0) return null
-  return rationalIsExactNumber(linear.constant) ? rationalToNumber(linear.constant) : null
+  return rationalToExactNumber(linear.constant)
 }
 
 function foldArithmetic(op: ts.SyntaxKind, left: number, right: number): number | null {
@@ -188,74 +196,6 @@ export function isFixedElementPathExpression(expression: ts.Expression): boolean
     return numericLiteralValue(current.argumentExpression) != null && isFixedElementPathExpression(current.expression)
   }
   return false
-}
-
-export function linearAdd(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
-  if (left == null || right == null) return null
-  const terms = new Map(left.terms)
-  for (const [name, coefficient] of right.terms) {
-    terms.set(name, rationalAdd(terms.get(name) ?? rationalZero, coefficient))
-  }
-  return cleanLinear({constant: rationalAdd(left.constant, right.constant), terms})
-}
-
-export function linearSubtract(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
-  if (left == null || right == null) return null
-  return linearAdd(left, linearScaleExact(right, rationalNegate(rationalOne)))
-}
-
-export function linearScale(linear: LinearExpr | null, factor: number): LinearExpr | null {
-  if (linear == null) return null
-  const rationalFactor = rationalFromNumber(factor)
-  return rationalFactor == null ? null : linearScaleExact(linear, rationalFactor)
-}
-
-export function linearDivide(linear: LinearExpr | null, divisor: number): LinearExpr | null {
-  if (linear == null) return null
-  const rationalDivisor = rationalFromNumber(divisor)
-  if (rationalDivisor == null || rationalIsZero(rationalDivisor)) return null
-  const inverse = rationalDivide(rationalOne, rationalDivisor)
-  return inverse == null ? null : linearScaleExact(linear, inverse)
-}
-
-export function linearScaleExact(linear: LinearExpr, factor: Rational): LinearExpr {
-  const terms = new Map<string, Rational>()
-  for (const [name, coefficient] of linear.terms) terms.set(name, rationalMultiply(coefficient, factor))
-  return cleanLinear({constant: rationalMultiply(linear.constant, factor), terms})
-}
-
-export function sameLinear(left: LinearExpr, right: LinearExpr) {
-  const diff = linearSubtract(left, right)
-  return diff != null && isZeroLinear(diff)
-}
-
-// The one atom a linear form IS (coefficient one, no constant), or null. Atom
-// names are computation texts, so callers can recurse into the expression a
-// relabeled value still denotes (a callee parameter bound to a caller
-// argument keeps the caller's atom).
-export function singleUnitAtom(linear: LinearExpr | null): string | null {
-  if (linear == null || linear.terms.size !== 1 || !rationalIsZero(linear.constant)) return null
-  const [name, coefficient] = [...linear.terms.entries()][0]!
-  return rationalEquals(coefficient, rationalOne) ? name : null
-}
-
-// Removes exactly-zero terms; nothing else is droppable.
-export function cleanLinear(linear: LinearExpr): LinearExpr {
-  const terms = new Map<string, Rational>()
-  for (const [name, coefficient] of linear.terms) {
-    if (!rationalIsZero(coefficient)) terms.set(name, coefficient)
-  }
-  return {constant: linear.constant, terms}
-}
-
-export function isZeroLinear(linear: LinearExpr) {
-  return rationalIsZero(linear.constant) && linear.terms.size === 0
-}
-
-export function linearConstantStatus(linear: LinearExpr, strict: boolean) {
-  if (linear.terms.size > 0) return false
-  const sign = rationalCompare(linear.constant, rationalZero)
-  return strict ? sign > 0 : sign >= 0
 }
 
 export function linearKey(linear: LinearExpr) {
