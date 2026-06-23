@@ -11,7 +11,7 @@ import {
   type NumberValue,
   type Value,
 } from '../../src/domain.ts'
-import {linearConstant, linearDivide, linearVariable, sameLinear} from '../../src/linear.ts'
+import {linearAdd, linearConstant, linearDivide, linearVariable, sameLinear, type LinearExpr} from '../../src/linear.ts'
 import {nextDoubleDown, nextDoubleUp} from '../../src/numeric/float64.ts'
 import {
   rationalAdd,
@@ -26,12 +26,38 @@ function expectNumber(value: Value): NumberValue {
   return value
 }
 
+function expectLinear(linear: LinearExpr | null): LinearExpr {
+  expect(linear).not.toBe(null)
+  if (linear == null) throw new Error('Expected a linear identity')
+  return linear
+}
+
 describe('numeric operation invariants', () => {
   test('keeps Float64 conversion failures at the Freerange linear boundary', () => {
     expect(linearConstant(Number.POSITIVE_INFINITY)).toBe(null)
     expect(linearConstant(Number.NaN)).toBe(null)
     expect(linearDivide(linearVariable('input'), 0)).toBe(null)
     expect(sameLinear(linearDivide(linearVariable('input'), 1)!, linearVariable('input'))).toBe(true)
+  })
+
+  test('drops exact addition identities before a grid can overflow', () => {
+    const leftLinear = linearVariable('left')
+    const rightLinear = linearVariable('right')
+    const expectedSum = expectLinear(linearAdd(leftLinear, rightLinear))
+    const safeLeft = numberValue(2 ** 1020, 2 ** 1021, 1020, 'left', leftLinear)
+    const safeRight = numberValue(2 ** 1020, 2 ** 1021, 1020, 'right', rightLinear)
+    const safeSum = addNumbers(safeLeft, safeRight)
+    expect(safeSum.max).toBe(2 ** 1022)
+    expect(sameLinear(expectLinear(safeSum.linear), expectedSum)).toBe(true)
+    const repeatedSafeSum = addNumbers(safeSum, safeRight)
+    expect(repeatedSafeSum.max).toBe(3 * 2 ** 1021)
+    expect(sameLinear(expectLinear(repeatedSafeSum.linear), expectLinear(linearAdd(expectedSum, rightLinear)))).toBe(true)
+
+    const overflowingLeft = numberValue(2 ** 1022, 2 ** 1023, 1022, 'left', leftLinear)
+    const overflowingRight = numberValue(2 ** 1022, 2 ** 1023, 1022, 'right', rightLinear)
+    const overflowingSum = addNumbers(overflowingLeft, overflowingRight)
+    expect(overflowingSum.max).toBe(Number.POSITIVE_INFINITY)
+    expect(sameLinear(expectLinear(overflowingSum.linear), expectedSum)).toBe(false)
   })
 
   test('preserves possible NaN through folded operations and composition', () => {

@@ -7,7 +7,7 @@ const testFiles = [
   {path: 'tests/calls/calls.test.ts', registrations: 18},
   {path: 'tests/cli/cli.test.ts', registrations: 29},
   {path: 'tests/domain/domain.test.ts', registrations: 12},
-  {path: 'tests/domain/number-domain.test.ts', registrations: 5},
+  {path: 'tests/domain/number-domain.test.ts', registrations: 6},
   {path: 'tests/interpreter/interpreter.test.ts', registrations: 4},
   {path: 'tests/interpreter/math-numeric.test.ts', registrations: 1},
   {path: 'tests/loops/loops.test.ts', registrations: 10},

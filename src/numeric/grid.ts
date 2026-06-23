@@ -2,6 +2,7 @@ import {
   rationalCompare,
   rationalFromNumber,
   rationalFromParts,
+  rationalIsZero,
   type Rational,
 } from './rational.ts'
 
@@ -40,14 +41,22 @@ export function gridOfNumber(value: number): number | null {
   return grid
 }
 
-// 2^(53+grid) bounds the magnitudes where every multiple of 2^grid is
-// representable. An exact real result on the grid and inside the window IS
-// what the runtime returns (ECMA defines + - * / as round-of-exact-real), so
-// the operation rounds nothing and its algebraic form is the runtime double.
+const maximumFiniteSignificand = (1n << 53n) - 1n
+
+// Every multiple of 2^grid through this magnitude is a finite double. The
+// usual 2^(53+grid) precision window applies through grid 970; coarser grids
+// near overflow stop at their largest finite multiple instead.
 export function withinGridWindow(magnitude: Rational, grid: number): boolean {
+  if (rationalIsZero(magnitude)) return true
+  if (grid < -1074 || grid > 1023) return false
   const exponent = 53 + grid
-  const threshold = exponent >= 0
-    ? rationalFromParts(1n << BigInt(exponent), 1n)
-    : rationalFromParts(1n, 1n << BigInt(-exponent))
+  const threshold = grid <= 970
+    ? exponent >= 0
+      ? rationalFromParts(1n << BigInt(exponent), 1n)
+      : rationalFromParts(1n, 1n << BigInt(-exponent))
+    : rationalFromParts(
+        (maximumFiniteSignificand >> BigInt(grid - 971)) << BigInt(grid),
+        1n,
+      )
   return rationalCompare(magnitude, threshold) <= 0
 }
