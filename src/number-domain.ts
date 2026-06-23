@@ -1,20 +1,23 @@
 import {
   rationalAdd,
-  rationalCompare,
   rationalDivide,
   rationalFromNumber,
-  rationalFromParts,
   rationalMultiply,
   rationalOne,
   rationalToExactNumber,
   type Rational,
 } from './numeric/rational.ts'
 import {
+  gridJoin,
+  gridOfNumber,
+  withinGridWindow,
+  zeroGrid,
+} from './numeric/grid.ts'
+import {
   domainPathLinearName,
   parseDomainPathText,
 } from './parser.ts'
 import {
-  cleanLinear,
   linearAdd,
   linearConstant,
   linearScale,
@@ -50,10 +53,6 @@ export function linearNameForExpression(text: string) {
   return domainPath?.segments.some(segment => segment.kind === 'item') === true ? domainPathLinearName(text) : text
 }
 
-// A value pinned to zero sits on every grid; coarser than any nonzero
-// double's grid (whose exponents reach 1024 - 53 at most).
-const zeroGrid = 1075
-
 export function integerValued(value: NumberValue): boolean {
   return value.grid != null && value.grid >= 0
 }
@@ -74,49 +73,6 @@ function withNaNStatus(value: NumberValue, excluded: boolean): NumberValue {
 
 function operandsExcludeNaN(left: NumberValue, right: NumberValue): boolean {
   return !possiblyNaN(left) && !possiblyNaN(right)
-}
-
-// Union of two values keeps only the grid both sit on (the finer exponent);
-// intersection keeps the coarser of the two claims.
-export function gridJoin(left: number | null, right: number | null): number | null {
-  return left == null || right == null ? null : Math.min(left, right)
-}
-
-export function gridMeet(left: number | null, right: number | null): number | null {
-  if (left == null) return right
-  if (right == null) return left
-  return Math.max(left, right)
-}
-
-// The finest dyadic grid one double sits on: value = m * 2^grid with m odd.
-export function gridOfNumber(value: number): number | null {
-  if (!Number.isFinite(value)) return null
-  if (value === 0) return zeroGrid
-  const rational = rationalFromNumber(value)!
-  let num = rational.num < 0n ? -rational.num : rational.num
-  let grid = 0
-  while ((num & 1n) === 0n) {
-    num >>= 1n
-    grid++
-  }
-  let den = rational.den
-  while (den > 1n) {
-    den >>= 1n
-    grid--
-  }
-  return grid
-}
-
-// 2^(53+grid) bounds the magnitudes where every multiple of 2^grid is
-// representable. An exact real result on the grid and inside the window IS
-// what the runtime returns (ECMA defines + - * / as round-of-exact-real), so
-// the op rounds nothing and its algebraic linear form is the runtime double.
-export function withinGridWindow(magnitude: Rational, grid: number): boolean {
-  const exponent = 53 + grid
-  const threshold = exponent >= 0
-    ? rationalFromParts(1n << BigInt(exponent), 1n)
-    : rationalFromParts(1n, 1n << BigInt(-exponent))
-  return rationalCompare(magnitude, threshold) <= 0
 }
 
 // Largest magnitude the hull admits, exactly; null when unbounded.
@@ -184,7 +140,7 @@ export function numberValue(
   origin: string[] = [],
   computation: NumberComputation | null = null,
 ): NumberValue {
-  const clean = linear == null ? null : cleanLinear(linear)
+  const clean = linear
   const cleanOrigin = [...new Set(origin)]
   const cleanMin = Number.isNaN(min) ? Number.NEGATIVE_INFINITY : min
   const cleanMax = Number.isNaN(max) ? Number.POSITIVE_INFINITY : max

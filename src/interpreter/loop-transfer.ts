@@ -34,10 +34,10 @@ import {
 } from '../domain.ts'
 import {filterOrigin, mapOrigin} from '../array-summary.ts'
 import {
-  cleanLinear,
   isZeroLinear,
   linearAdd,
   linearConstant,
+  linearConstantExact,
   linearScaleExact,
   linearSubtract,
   linearVariable,
@@ -1404,7 +1404,7 @@ function publishElementFormFacts(arrayName: string, leafForms: Map<string, Linea
     const renamed = renamedElementLinear(form, arrayName, renames, analysis)
     if (renamed != null) {
       const diff = linearSubtract(canonical, renamed)
-      if (diff != null) facts.push({diff: cleanLinear(diff), op: '==', source: 'code', leftExpr: expr})
+      if (diff != null) facts.push({diff, op: '==', source: 'code', leftExpr: expr})
     }
     // A leaf override names the same computation over the element's own
     // fields (bottom reads as rows[].y + rows[].height); the equality is the
@@ -1413,7 +1413,7 @@ function publishElementFormFacts(arrayName: string, leafForms: Map<string, Linea
     if (override != null) {
       const overrideDiff = linearSubtract(canonical, linearVariable(linearNameForExpression(override)))
       if (overrideDiff != null && !isZeroLinear(overrideDiff)) {
-        facts.push({diff: cleanLinear(overrideDiff), op: '==', source: 'code', leftExpr: expr, rightExpr: override})
+        facts.push({diff: overrideDiff, op: '==', source: 'code', leftExpr: expr, rightExpr: override})
       }
     }
   }
@@ -1421,7 +1421,7 @@ function publishElementFormFacts(arrayName: string, leafForms: Map<string, Linea
 }
 
 function renamedElementLinear(linear: LinearExpr, arrayName: string, renames: Map<string, LinearExpr>, analysis: Analysis): LinearExpr | null {
-  let result: LinearExpr | null = {constant: linear.constant, terms: new Map()}
+  let result: LinearExpr | null = linearConstantExact(linear.constant)
   for (const [name, coefficient] of linear.terms) {
     let replacement = renames.get(name)
     if (replacement == null) {
@@ -1433,7 +1433,7 @@ function renamedElementLinear(linear: LinearExpr, arrayName: string, renames: Ma
     result = linearAdd(result, linearScaleExact(replacement, coefficient))
     if (result == null) return null
   }
-  return cleanLinear(result)
+  return result
 }
 
 // Per-iteration facts about quantities that became element fields hold for
@@ -1446,7 +1446,7 @@ function liftElementAssumptions(renames: Map<string, LinearExpr>, analysis: Anal
     if (assumption.diff == null) continue
     let touchesRename = false
     let liftable = true
-    let diff: LinearExpr | null = {constant: assumption.diff.constant, terms: new Map()}
+    let diff: LinearExpr | null = linearConstantExact(assumption.diff.constant)
     for (const [name, coefficient] of assumption.diff.terms) {
       const replacement = renames.get(name)
       if (replacement != null) {
@@ -1462,7 +1462,7 @@ function liftElementAssumptions(renames: Map<string, LinearExpr>, analysis: Anal
     }
     if (!touchesRename || !liftable || diff == null) continue
     lifted.push({
-      diff: cleanLinear(diff),
+      diff,
       op: assumption.op,
       source: assumption.source,
       ...(assumption.integerStrict == null ? {} : {integerStrict: assumption.integerStrict}),
@@ -1819,7 +1819,7 @@ function pairResidue(field: number, terms: number[], pair: RelationPair, analysi
 // pre-state symbol advances by that path's transfer, and every per-iteration
 // name is renamed apart so values from different iterations can never cancel.
 function substituteNextForm(form: LinearExpr, transfer: Map<string, TransferStep>, analysis: Analysis): {linear: LinearExpr; rounded: boolean} | null {
-  let result: LinearExpr | null = {constant: form.constant, terms: new Map()}
+  let result: LinearExpr | null = linearConstantExact(form.constant)
   let rounded = false
   for (const [name, coefficient] of form.terms) {
     let replacement: LinearExpr | null
@@ -1835,7 +1835,7 @@ function substituteNextForm(form: LinearExpr, transfer: Map<string, TransferStep
     result = replacement == null ? null : linearAdd(result, linearScaleExact(replacement, coefficient))
     if (result == null) return null
   }
-  return {linear: cleanLinear(result), rounded}
+  return {linear: result, rounded}
 }
 
 // A residue is loop-invariant when every name in it denotes a value untouched

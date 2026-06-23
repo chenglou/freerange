@@ -12,45 +12,74 @@ import {
   type ParsedFitExpression,
 } from './parser.ts'
 import {
+  rationalDivide,
+  rationalFromNumber,
+  rationalIsZero,
   rationalKey,
   rationalNegate,
   rationalOne,
   rationalToExactNumber,
+  type Rational,
 } from './numeric/rational.ts'
 import {
-  cleanLinear,
   isZeroLinear,
-  linearAdd,
-  linearConstant,
+  linearAdd as numericLinearAdd,
+  linearConstant as numericLinearConstant,
   linearConstantStatus,
-  linearDivide,
-  linearScale,
-  linearScaleExact,
-  linearSubtract,
-  linearVariable,
+  linearFromTerms as numericLinearFromTerms,
+  linearScale as numericLinearScale,
+  linearSubtract as numericLinearSubtract,
+  linearVariable as numericLinearVariable,
   sameLinear,
   singleUnitAtom as numericSingleUnitAtom,
   type LinearExpr as NumericLinearExpr,
 } from './numeric/linear.ts'
 
 export {
-  cleanLinear,
   isZeroLinear,
-  linearAdd,
-  linearConstant,
   linearConstantStatus,
-  linearDivide,
-  linearScale,
-  linearScaleExact,
-  linearSubtract,
-  linearVariable,
   sameLinear,
 }
 
 export type LinearExpr = NumericLinearExpr<string>
+export const linearConstantExact = numericLinearConstant<string>
+export const linearScaleExact = numericLinearScale<string>
+
+export function linearFromTerms(constant: Rational, terms: ReadonlyMap<string, Rational>): LinearExpr {
+  return numericLinearFromTerms(constant, terms)
+}
+
+export function linearConstant(value: number): LinearExpr | null {
+  const rational = rationalFromNumber(value)
+  return rational == null ? null : numericLinearConstant(rational)
+}
+
+export const linearVariable = numericLinearVariable<string>
+
+export function linearAdd(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
+  return left == null || right == null ? null : numericLinearAdd(left, right)
+}
+
+export function linearSubtract(left: LinearExpr | null, right: LinearExpr | null): LinearExpr | null {
+  return left == null || right == null ? null : numericLinearSubtract(left, right)
+}
+
+export function linearScale(linear: LinearExpr | null, factor: number): LinearExpr | null {
+  if (linear == null) return null
+  const rational = rationalFromNumber(factor)
+  return rational == null ? null : numericLinearScale(linear, rational)
+}
+
+export function linearDivide(linear: LinearExpr | null, divisor: number): LinearExpr | null {
+  if (linear == null) return null
+  const rationalDivisor = rationalFromNumber(divisor)
+  if (rationalDivisor == null || rationalIsZero(rationalDivisor)) return null
+  const inverse = rationalDivide(rationalOne, rationalDivisor)
+  return inverse == null ? null : numericLinearScale(linear, inverse)
+}
 
 export function singleUnitAtom(linear: LinearExpr | null): string | null {
-  return numericSingleUnitAtom(linear)?.atom ?? null
+  return linear == null ? null : numericSingleUnitAtom(linear)?.atom ?? null
 }
 
 export function numericLiteralValue(expression: ts.Expression): number | null {

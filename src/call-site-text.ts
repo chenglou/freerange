@@ -17,7 +17,7 @@ import type {PreparedCallSite} from './prepared-call.ts'
 import {formatNumber} from './reporting.ts'
 import {mapSequenceAddition} from './sequence-relation.ts'
 import {
-  cleanLinear,
+  linearFromTerms,
   linearFromExpressionText,
   linearVariable,
   type LinearExpr,
@@ -141,7 +141,7 @@ function linearWithCallSiteText(
       )
     }
   }
-  return cleanLinear({constant, terms})
+  return linearFromTerms(constant, terms)
 }
 
 function arraySummaryWithCallSiteText(summary: ArraySummary | null, bindings: CallSiteBindings): ArraySummary | null {

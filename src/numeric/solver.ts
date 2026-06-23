@@ -12,9 +12,9 @@ import {
   rationalZero,
   type Rational,
 } from './rational.ts'
-import {linearSubtract, type LinearExpr} from './linear.ts'
+import {linearConstant, linearSubtract, type LinearExpr} from './linear.ts'
 
-export type NonNegativeFact<Atom = string> = {
+export type NonNegativeFact<Atom> = {
   diff: LinearExpr<Atom>
   strict: boolean
 }
@@ -26,7 +26,7 @@ export type NonNegativeFact<Atom = string> = {
 // fact sets: only an explicit decomposition target = sum(lambda_i * fact_i) + c
 // with lambda, c >= 0 proves, with strictness from a strict fact used at
 // lambda_i > 0 or from c > 0.
-export function farkasProvesNonNegative<Atom>(target: LinearExpr<Atom>, strict: boolean, facts: NonNegativeFact<Atom>[]): boolean {
+export function farkasProvesNonNegative<Atom>(target: LinearExpr<Atom>, strict: boolean, facts: readonly NonNegativeFact<Atom>[]): boolean {
   // Trivial decomposition with every lambda zero.
   if (target.terms.size === 0) {
     const sign = rationalCompare(target.constant, rationalZero)
@@ -59,8 +59,8 @@ export function farkasProvesNonNegative<Atom>(target: LinearExpr<Atom>, strict: 
   return solved.unbounded || rationalIsPositive(solved.objectiveValue)
 }
 
-export type LinearExtremum<Atom = string> =
-  | {kind: 'optimum'; value: Rational; point: Map<Atom, Rational>}
+export type LinearExtremum<Atom> =
+  | {kind: 'optimum'; value: Rational; point: ReadonlyMap<Atom, Rational>}
   | {kind: 'supremum'; value: Rational}
   | {kind: 'unbounded'}
   | {kind: 'infeasible'}
@@ -70,7 +70,7 @@ export type LinearExtremum<Atom = string> =
 // optimum includes an admitted point; strict facts may instead produce an
 // unattained supremum. Free variables are encoded as differences of two
 // nonnegative ones; each fact gets a slack.
-export function linearMaximum<Atom>(objective: LinearExpr<Atom>, facts: NonNegativeFact<Atom>[]): LinearExtremum<Atom> {
+export function linearMaximum<Atom>(objective: LinearExpr<Atom>, facts: readonly NonNegativeFact<Atom>[]): LinearExtremum<Atom> {
   const hasStrictFact = facts.some(fact => fact.strict)
   const atoms = new Set<Atom>()
   for (const atom of objective.terms.keys()) atoms.add(atom)
@@ -116,11 +116,11 @@ export function linearMaximum<Atom>(objective: LinearExpr<Atom>, facts: NonNegat
   if (!hasStrictFact || pointSatisfiesFacts(point, facts)) return {kind: 'optimum', value, point}
   if (linearFeasiblePoint(facts) == null) return {kind: 'infeasible'}
 
-  const maximum = {constant: value, terms: new Map<Atom, Rational>()}
+  const maximum = linearConstant<Atom>(value)
   const attainingPoint = linearFeasiblePoint([
     ...facts,
-    {diff: linearSubtract(objective, maximum)!, strict: false},
-    {diff: linearSubtract(maximum, objective)!, strict: false},
+    {diff: linearSubtract(objective, maximum), strict: false},
+    {diff: linearSubtract(maximum, objective), strict: false},
   ])
   return attainingPoint == null
     ? {kind: 'supremum', value}
@@ -130,9 +130,9 @@ export function linearMaximum<Atom>(objective: LinearExpr<Atom>, facts: NonNegat
 // Finds one rational valuation satisfying every closed and strict fact. A
 // shared positive margin handles strict inequalities without pretending their
 // excluded boundaries are feasible.
-export function linearFeasiblePoint<Atom>(facts: NonNegativeFact<Atom>[]): Map<Atom, Rational> | null {
+export function linearFeasiblePoint<Atom>(facts: readonly NonNegativeFact<Atom>[]): ReadonlyMap<Atom, Rational> | null {
   if (!facts.some(fact => fact.strict)) {
-    const zero: LinearExpr<Atom> = {constant: rationalZero, terms: new Map()}
+    const zero = linearConstant<Atom>(rationalZero)
     const solved = linearMaximum(zero, facts)
     return solved.kind === 'optimum' ? solved.point : null
   }
@@ -191,7 +191,7 @@ function pointFromSolution<Atom>(variableAtoms: Atom[], solvedPoint: Rational[])
   return point
 }
 
-function pointSatisfiesFacts<Atom>(point: Map<Atom, Rational>, facts: NonNegativeFact<Atom>[]): boolean {
+function pointSatisfiesFacts<Atom>(point: ReadonlyMap<Atom, Rational>, facts: readonly NonNegativeFact<Atom>[]): boolean {
   for (const fact of facts) {
     let value = fact.diff.constant
     for (const [atom, coefficient] of fact.diff.terms) {

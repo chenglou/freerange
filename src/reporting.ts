@@ -20,7 +20,7 @@ export type ReportNumberValue = {
 
 export type ReportLinearExpr = {
   constant: Rational
-  terms: Map<string, Rational>
+  terms: ReadonlyMap<string, Rational>
 }
 
 export type ReportLinearConstraint = {

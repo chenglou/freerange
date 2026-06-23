@@ -14,9 +14,6 @@ export {
   finiteNumberSet,
   finiteMembersAreIntegers,
   finiteNumberValue,
-  gridJoin,
-  gridMeet,
-  gridOfNumber,
   integerValued,
   linearNameForExpression,
   maxNumberCases,
@@ -43,8 +40,13 @@ export {
   withCombinedNumberCaseInfo,
   withNumberCaseLoss,
   numberCaseLossMessage,
-  withinGridWindow,
 } from './number-domain.ts'
+export {
+  gridJoin,
+  gridMeet,
+  gridOfNumber,
+  withinGridWindow,
+} from './numeric/grid.ts'
 export {
   arrayAsCollection,
   arrayElement,

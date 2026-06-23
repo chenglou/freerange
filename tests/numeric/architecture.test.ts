@@ -38,4 +38,39 @@ describe('numeric module boundary', () => {
     }
     expect(outsideImports).toEqual([])
   })
+
+  test('keeps numeric tests independent from Freerange modules', async () => {
+    const testRoot = new URL('./', import.meta.url)
+    const sourceRoot = new URL('../../src/', import.meta.url)
+    const numericRoot = new URL('../../src/numeric/', import.meta.url)
+    const outsideImports: string[] = []
+    const files = ts.sys.readDirectory(testRoot.pathname, ['.ts'])
+      .filter(filePath => !filePath.endsWith('/architecture.test.ts'))
+    for (const filePath of files) {
+      const source = ts.createSourceFile(
+        filePath,
+        await Bun.file(filePath).text(),
+        ts.ScriptTarget.Latest,
+        true,
+      )
+      const checkSpecifier = (specifier: ts.Expression) => {
+        if (!ts.isStringLiteralLike(specifier) || !specifier.text.startsWith('.')) return
+        const resolved = new URL(specifier.text, `file://${filePath}`)
+        if (resolved.pathname.startsWith(sourceRoot.pathname) && !resolved.pathname.startsWith(numericRoot.pathname)) {
+          outsideImports.push(`${filePath.slice(testRoot.pathname.length)}: ${specifier.text}`)
+        }
+      }
+      const visit = (node: ts.Node) => {
+        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+          if (node.moduleSpecifier != null) checkSpecifier(node.moduleSpecifier)
+        } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+          const [specifier] = node.arguments
+          if (specifier != null) checkSpecifier(specifier)
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
+    }
+    expect(outsideImports).toEqual([])
+  })
 })

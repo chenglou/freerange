@@ -18,98 +18,68 @@ import {
   type CollectionValue,
   type SequenceRelation,
 } from '../../src/domain.ts'
-import {farkasProvesNonNegative, linearMaximum} from '../../src/numeric/solver.ts'
 import {linearAdd, linearConstant, linearScale, linearSubtract, linearVariable} from '../../src/linear.ts'
 import {rationalEquals, rationalFromParts} from '../../src/numeric/rational.ts'
+import {comparisonCounterexample} from '../../src/proof.ts'
 import {verifyFitSource} from '../../src/reports.ts'
 import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)
 
 describe('domain', () => {
-test('preserves simplex bounded, unbounded, infeasible, and proof results', () => {
-const simplexX = linearVariable('simplex.x')
-const simplexY = linearVariable('simplex.y')
-const simplexNonnegativeFacts = [
-  {diff: simplexX, strict: false},
-  {diff: simplexY, strict: false},
+test('keeps solver counterexamples admitted by Freerange constraints', () => {
+const value = numberValue(
+  Number.NEGATIVE_INFINITY,
+  Number.POSITIVE_INFINITY,
+  null,
+  'value',
+  linearVariable('value'),
+)
+const zero = numberValue(0, 0, 1075, '0', linearConstant(0))
+const witness = comparisonCounterexample(value, '<', zero, [{
+  diff: linearSubtract(value.linear, linearConstant(1))!,
+  op: '<',
+  text: 'given value < 1',
+  leftExpr: 'value',
+  rightExpr: '1',
+  source: 'function-given',
+}])
+const integerInput = linearVariable('integerInput')
+const unboundedValue = numberValue(
+  0,
+  Number.POSITIVE_INFINITY,
+  0,
+  'unboundedValue',
+  linearVariable('unboundedValue'),
+)
+const fractionalFacts = [
+  {
+    diff: linearSubtract(linearScale(integerInput, 2), linearConstant(1))!,
+    op: '==' as const,
+    source: 'function-given' as const,
+  },
+  {
+    diff: linearAdd(integerInput, linearConstant(100))!,
+    op: '>' as const,
+    source: 'function-given' as const,
+    integerStrict: true as const,
+  },
+  {
+    diff: unboundedValue.linear,
+    op: '>=' as const,
+    source: 'function-given' as const,
+  },
 ]
-const simplexBoundedFacts = [
-  ...simplexNonnegativeFacts,
-  {diff: linearSubtract(linearConstant(2), simplexX)!, strict: false},
-  {diff: linearSubtract(linearConstant(3), simplexY)!, strict: false},
-]
-const simplexSum = linearAdd(simplexX, simplexY)!
-const simplexOptimum = linearMaximum(simplexSum, simplexBoundedFacts)
-const simplexFractionalOptimum = linearMaximum(simplexSum, [
-  ...simplexNonnegativeFacts,
-  {diff: linearSubtract(linearConstant(4), linearAdd(linearScale(simplexX, 2), simplexY))!, strict: false},
-  {diff: linearSubtract(linearConstant(4), linearAdd(simplexX, linearScale(simplexY, 2)))!, strict: false},
-])
-const simplexDegenerateOptimum = linearMaximum(simplexSum, [
-  ...simplexNonnegativeFacts,
-  {diff: linearSubtract(linearConstant(1), simplexX)!, strict: false},
-  {diff: linearSubtract(linearConstant(1), simplexY)!, strict: false},
-  {diff: linearSubtract(linearConstant(1), simplexSum)!, strict: false},
-  {diff: linearSubtract(linearConstant(2), simplexSum)!, strict: false},
-])
-const simplexNegativeRhsFacts = [
-  {diff: linearAdd(simplexX, linearConstant(2))!, strict: false},
-  {diff: linearSubtract(linearConstant(-1), simplexX)!, strict: false},
-]
-const simplexNegativeRhsOptimum = linearMaximum(simplexX, [...simplexNegativeRhsFacts])
-const simplexNegativeRhsMinimum = linearMaximum(linearScale(simplexX, -1)!, [...simplexNegativeRhsFacts])
-const simplexUnbounded = linearMaximum(simplexX, [{diff: simplexX, strict: false}])
-const simplexInfeasible = linearMaximum(simplexX, [
-  {diff: linearSubtract(simplexX, linearConstant(1))!, strict: false},
-  {diff: linearSubtract(linearConstant(0), simplexX)!, strict: false},
-])
-const simplexFeasibleBoundary = linearMaximum(simplexX, [
-  {diff: linearSubtract(simplexX, linearConstant(1))!, strict: false},
-  {diff: linearSubtract(linearConstant(1), simplexX)!, strict: false},
-])
+const unboundedWitness = comparisonCounterexample(unboundedValue, '<=', zero, [fractionalFacts[2]!])
 if (
-  simplexOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexOptimum.value, rationalFromParts(5n, 1n))
-  || !rationalEquals(simplexOptimum.point.get('simplex.x')!, rationalFromParts(2n, 1n))
-  || !rationalEquals(simplexOptimum.point.get('simplex.y')!, rationalFromParts(3n, 1n))
-  || simplexFractionalOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexFractionalOptimum.value, rationalFromParts(8n, 3n))
-  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.x')!, rationalFromParts(4n, 3n))
-  || !rationalEquals(simplexFractionalOptimum.point.get('simplex.y')!, rationalFromParts(4n, 3n))
-  || simplexDegenerateOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexDegenerateOptimum.value, rationalFromParts(1n, 1n))
-  || simplexNegativeRhsOptimum.kind !== 'optimum'
-  || !rationalEquals(simplexNegativeRhsOptimum.value, rationalFromParts(-1n, 1n))
-  || simplexNegativeRhsMinimum.kind !== 'optimum'
-  || !rationalEquals(simplexNegativeRhsMinimum.value, rationalFromParts(2n, 1n))
-  || simplexUnbounded.kind !== 'unbounded'
-  || simplexInfeasible.kind !== 'infeasible'
-  || simplexFeasibleBoundary.kind !== 'optimum'
-  || !rationalEquals(simplexFeasibleBoundary.value, rationalFromParts(1n, 1n))
-  || !farkasProvesNonNegative(simplexSum, false, simplexNonnegativeFacts)
-  || farkasProvesNonNegative(linearSubtract(simplexX, simplexY)!, false, simplexNonnegativeFacts)
-  || !farkasProvesNonNegative(simplexX, true, [
-    {diff: linearSubtract(simplexX, simplexY)!, strict: false},
-    {diff: simplexY, strict: true},
-  ])
-  || farkasProvesNonNegative(simplexX, true, [
-    {diff: linearSubtract(simplexX, simplexY)!, strict: false},
-    {diff: simplexY, strict: false},
-  ])
-  || !farkasProvesNonNegative(simplexX, true, [
-    {diff: linearSubtract(linearScale(simplexX, 2), simplexY)!, strict: false},
-    {diff: simplexY, strict: true},
-  ])
-  || farkasProvesNonNegative(simplexX, true, [
-    {diff: linearSubtract(linearScale(simplexX, 2), simplexY)!, strict: false},
-    {diff: simplexY, strict: false},
-  ])
+  witness?.kind !== 'point'
+  || !rationalEquals(witness.point.get('value')!, rationalFromParts(0n, 1n))
+  || comparisonCounterexample(unboundedValue, '<=', zero, fractionalFacts) != null
+  || unboundedWitness?.kind !== 'unbounded'
 ) {
-  throw testDiagnosticError('expected simplex pivots to preserve bounded, unbounded, infeasible, and proof results', [])
+  throw testDiagnosticError('expected solver counterexamples to satisfy Freerange constraints', [])
 }
 })
-
 test('widens arithmetic ranges that admit infinity hazards', () => {
 const unboundedNonnegativeProduct = multiplyNumbers(
   numberValue(0, Number.POSITIVE_INFINITY, null, 'left'),

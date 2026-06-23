@@ -38,7 +38,6 @@ import {
 } from './domain-paths.ts'
 import {linearConstraints} from './assumptions.ts'
 import {
-  cleanLinear,
   linearScaleExact,
   linearVariable,
   sameExpressionText,
@@ -632,7 +631,7 @@ function givenComparisonContradictionReason(fact: LinearConstraint, assumptions:
 }
 
 function nonNegativeConstraintIsImpossible(fact: NonNegativeConstraint) {
-  const clean = cleanLinear(fact.diff)
+  const clean = fact.diff
   if (clean.terms.size > 0) return false
   const sign = rationalCompare(clean.constant, rationalZero)
   return fact.strict ? sign <= 0 : sign < 0

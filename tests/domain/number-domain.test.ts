@@ -11,7 +11,7 @@ import {
   type NumberValue,
   type Value,
 } from '../../src/domain.ts'
-import {linearConstant, linearVariable} from '../../src/linear.ts'
+import {linearConstant, linearDivide, linearVariable, sameLinear} from '../../src/linear.ts'
 import {nextDoubleDown, nextDoubleUp} from '../../src/numeric/float64.ts'
 import {
   rationalAdd,
@@ -27,6 +27,13 @@ function expectNumber(value: Value): NumberValue {
 }
 
 describe('numeric operation invariants', () => {
+  test('keeps Float64 conversion failures at the Freerange linear boundary', () => {
+    expect(linearConstant(Number.POSITIVE_INFINITY)).toBe(null)
+    expect(linearConstant(Number.NaN)).toBe(null)
+    expect(linearDivide(linearVariable('input'), 0)).toBe(null)
+    expect(sameLinear(linearDivide(linearVariable('input'), 1)!, linearVariable('input'))).toBe(true)
+  })
+
   test('preserves possible NaN through folded operations and composition', () => {
     const maybeOne = {
       ...numberValue(1, 1, 0, 'value', linearConstant(1)),

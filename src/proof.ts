@@ -52,7 +52,6 @@ import {
 } from './branch-context.ts'
 import {
   binaryExpression,
-  cleanLinear,
   isZeroLinear,
   linearConstantStatus,
   linearAdd,
@@ -532,7 +531,7 @@ function strictSelfComparisonMissing(left: NumberValue, op: ComparisonOperator, 
 function missingLinearFact(left: NumberValue, op: ComparisonOperator, right: NumberValue, assumptions: Assumption[]) {
   const diff = comparisonDiff(left, op, right)
   if (diff == null) return null
-  const target = cleanLinear(diff)
+  const target = diff
   for (const fact of linearConstraints(assumptions).filter(assumption => assumption.fromRange !== true).flatMap(nonNegativeConstraints)) {
     for (const scale of singleFactScales(target, fact.diff)) {
       const scaledFact = linearScaleExact(fact.diff, scale)
@@ -574,7 +573,7 @@ function comparisonDiff(left: NumberValue, op: ComparisonOperator, right: Number
 }
 
 function singleLinearBound(linear: LinearExpr) {
-  const clean = cleanLinear(linear)
+  const clean = linear
   if (!rationalIsZero(clean.constant) || clean.terms.size !== 1) return null
   const first = [...clean.terms.entries()][0]
   if (first == null) return null
@@ -710,7 +709,7 @@ function provesNonNegative(diff: LinearExpr, strict: boolean, assumptions: Assum
 // combination exists if and only if the claim follows (Farkas), so there is no
 // depth cap to tune and no restatement that flips the verdict.
 export function proveNonNegativeFromConstraints(diff: LinearExpr, strict: boolean, facts: NonNegativeConstraint[]) {
-  const cleanDiff = cleanLinear(diff)
+  const cleanDiff = diff
   if (linearConstantStatus(cleanDiff, strict)) return true
   return farkasProvesNonNegative(cleanDiff, strict, facts)
 }
@@ -740,7 +739,7 @@ export function comparisonCounterexample(
     ? linearSubtract(rightLinear, leftLinear)
     : linearSubtract(leftLinear, rightLinear)
   if (satisfied == null || op === '==') return null
-  const violation = cleanLinear(linearScaleExact(satisfied, rationalNegate(rationalOne)))
+  const violation = linearScaleExact(satisfied, rationalNegate(rationalOne))
   if (violation.terms.size === 0) return null
   const facts = [
     ...linearConstraints(assumptions).flatMap(nonNegativeConstraints),
