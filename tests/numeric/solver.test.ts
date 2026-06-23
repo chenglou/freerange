@@ -17,11 +17,17 @@ import {
   farkasProvesNonNegative,
   linearFeasiblePoint,
   linearMaximum,
+  type LinearExtremum,
 } from '../../src/numeric/solver.ts'
 
 const integer = (value: number) => rationalFromParts(BigInt(value), 1n)
 const constant = <Atom>(value: number) => linearConstant<Atom>(integer(value))
 const scale = <Atom>(linear: LinearExpr<Atom>, factor: number) => linearScale(linear, integer(factor))
+function expectOptimum<Atom>(result: LinearExtremum<Atom>): Extract<LinearExtremum<Atom>, {kind: 'optimum'}> {
+  expect(result.kind).toBe('optimum')
+  if (result.kind !== 'optimum') throw new Error(`Expected an optimum, got ${result.kind}`)
+  return result
+}
 
 describe('linear solver', () => {
   test('preserves strictness through repeated Farkas composition', () => {
@@ -62,37 +68,31 @@ describe('linear solver', () => {
     ]
     const sum = linearAdd(x, y)
 
-    const bounded = linearMaximum(sum, [
+    const bounded = expectOptimum(linearMaximum(sum, [
       ...nonnegativeFacts,
       {diff: linearSubtract(constant(2), x), strict: false},
       {diff: linearSubtract(constant(3), y), strict: false},
-    ])
-    expect(bounded.kind).toBe('optimum')
-    if (bounded.kind !== 'optimum') throw new Error(`Expected an optimum, got ${bounded.kind}`)
+    ]))
     expect(rationalEquals(bounded.value, integer(5))).toBe(true)
     expect(rationalEquals(bounded.point.get('x')!, integer(2))).toBe(true)
     expect(rationalEquals(bounded.point.get('y')!, integer(3))).toBe(true)
 
-    const fractional = linearMaximum(sum, [
+    const fractional = expectOptimum(linearMaximum(sum, [
       ...nonnegativeFacts,
       {diff: linearSubtract(constant(4), linearAdd(scale(x, 2), y)), strict: false},
       {diff: linearSubtract(constant(4), linearAdd(x, scale(y, 2))), strict: false},
-    ])
-    expect(fractional.kind).toBe('optimum')
-    if (fractional.kind !== 'optimum') throw new Error(`Expected an optimum, got ${fractional.kind}`)
+    ]))
     expect(rationalEquals(fractional.value, rationalFromParts(8n, 3n))).toBe(true)
     expect(rationalEquals(fractional.point.get('x')!, rationalFromParts(4n, 3n))).toBe(true)
     expect(rationalEquals(fractional.point.get('y')!, rationalFromParts(4n, 3n))).toBe(true)
 
-    const degenerate = linearMaximum(sum, [
+    const degenerate = expectOptimum(linearMaximum(sum, [
       ...nonnegativeFacts,
       {diff: linearSubtract(constant(1), x), strict: false},
       {diff: linearSubtract(constant(1), y), strict: false},
       {diff: linearSubtract(constant(1), sum), strict: false},
       {diff: linearSubtract(constant(2), sum), strict: false},
-    ])
-    expect(degenerate.kind).toBe('optimum')
-    if (degenerate.kind !== 'optimum') throw new Error(`Expected an optimum, got ${degenerate.kind}`)
+    ]))
     expect(rationalEquals(degenerate.value, integer(1))).toBe(true)
 
     expect(linearMaximum(x, [{diff: x, strict: false}]).kind).toBe('unbounded')
@@ -105,22 +105,15 @@ describe('linear solver', () => {
       {diff: linearAdd(x, constant(2)), strict: false},
       {diff: linearSubtract(constant(-1), x), strict: false},
     ]
-    const negativeMaximum = linearMaximum(x, negativeRhsFacts)
-    const negativeMinimum = linearMaximum(scale(x, -1), negativeRhsFacts)
-    expect(negativeMaximum.kind).toBe('optimum')
-    expect(negativeMinimum.kind).toBe('optimum')
-    if (negativeMaximum.kind !== 'optimum' || negativeMinimum.kind !== 'optimum') {
-      throw new Error('Expected bounded negative-RHS optima')
-    }
+    const negativeMaximum = expectOptimum(linearMaximum(x, negativeRhsFacts))
+    const negativeMinimum = expectOptimum(linearMaximum(scale(x, -1), negativeRhsFacts))
     expect(rationalEquals(negativeMaximum.value, integer(-1))).toBe(true)
     expect(rationalEquals(negativeMinimum.value, integer(2))).toBe(true)
 
-    const equalityBoundary = linearMaximum(x, [
+    const equalityBoundary = expectOptimum(linearMaximum(x, [
       {diff: linearSubtract(x, constant(1)), strict: false},
       {diff: linearSubtract(constant(1), x), strict: false},
-    ])
-    expect(equalityBoundary.kind).toBe('optimum')
-    if (equalityBoundary.kind !== 'optimum') throw new Error(`Expected an optimum, got ${equalityBoundary.kind}`)
+    ]))
     expect(rationalEquals(equalityBoundary.value, integer(1))).toBe(true)
   })
 
@@ -136,9 +129,7 @@ describe('linear solver', () => {
 
     expect(farkasProvesNonNegative(linearSubtract(input, constant(2)), true, facts)).toBe(true)
     expect(farkasProvesNonNegative(linearSubtract(input, constant(3)), false, facts)).toBe(false)
-    const maximum = linearMaximum(input, facts)
-    expect(maximum.kind).toBe('optimum')
-    if (maximum.kind !== 'optimum') throw new Error(`Expected an optimum, got ${maximum.kind}`)
+    const maximum = expectOptimum(linearMaximum(input, facts))
     expect(rationalEquals(maximum.value, integer(3))).toBe(true)
   })
 
@@ -160,9 +151,7 @@ describe('linear solver', () => {
       {diff: input, strict: true},
       {diff: linearSubtract(constant(1), input), strict: true},
     ]
-    const constantMaximum = linearMaximum(constant<string>(0), openIntervalFacts)
-    expect(constantMaximum.kind).toBe('optimum')
-    if (constantMaximum.kind !== 'optimum') throw new Error(`Expected an optimum, got ${constantMaximum.kind}`)
+    const constantMaximum = expectOptimum(linearMaximum(constant<string>(0), openIntervalFacts))
     const interiorInput = constantMaximum.point.get('input')!
     expect(rationalCompare(interiorInput, rationalZero) > 0).toBe(true)
     expect(rationalCompare(interiorInput, integer(1)) < 0).toBe(true)
@@ -176,22 +165,18 @@ describe('linear solver', () => {
   test('uses opaque atoms when returning points', () => {
     const atom = {id: 1}
     const variable = linearVariable(atom)
-    const result = linearMaximum(variable, [
+    const result = expectOptimum(linearMaximum(variable, [
       {diff: variable, strict: false},
       {diff: linearSubtract(constant(10), variable), strict: false},
-    ])
-    expect(result.kind).toBe('optimum')
-    if (result.kind !== 'optimum') throw new Error(`Expected an optimum, got ${result.kind}`)
+    ]))
     expect(rationalEquals(result.point.get(atom)!, integer(10))).toBe(true)
 
     const nanAtom = Number.NaN
     const nanVariable = linearVariable(nanAtom)
-    const nanResult = linearMaximum(nanVariable, [
+    const nanResult = expectOptimum(linearMaximum(nanVariable, [
       {diff: nanVariable, strict: false},
       {diff: linearSubtract(constant(1), nanVariable), strict: false},
-    ])
-    expect(nanResult.kind).toBe('optimum')
-    if (nanResult.kind !== 'optimum') throw new Error(`Expected an optimum, got ${nanResult.kind}`)
+    ]))
     expect(rationalEquals(nanResult.point.get(nanAtom)!, integer(1))).toBe(true)
   })
 })

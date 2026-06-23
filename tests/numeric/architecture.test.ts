@@ -1,6 +1,29 @@
 import {describe, expect, test} from 'bun:test'
 import * as ts from 'typescript'
 
+async function moduleSpecifiers(filePath: string): Promise<string[]> {
+  const source = ts.createSourceFile(
+    filePath,
+    await Bun.file(filePath).text(),
+    ts.ScriptTarget.Latest,
+    true,
+  )
+  const specifiers: string[] = []
+  const visit = (node: ts.Node) => {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      if (node.moduleSpecifier != null && ts.isStringLiteralLike(node.moduleSpecifier)) {
+        specifiers.push(node.moduleSpecifier.text)
+      }
+    } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
+      const [specifier] = node.arguments
+      if (specifier != null && ts.isStringLiteralLike(specifier)) specifiers.push(specifier.text)
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  return specifiers
+}
+
 describe('numeric module boundary', () => {
   test('imports only other numeric modules', async () => {
     const numericRoot = new URL('../../src/numeric/', import.meta.url)
@@ -8,33 +31,16 @@ describe('numeric module boundary', () => {
     const files = ts.sys.readDirectory(numericRoot.pathname, ['.ts'])
     for (const filePath of files) {
       const relativePath = filePath.slice(numericRoot.pathname.length)
-      const source = ts.createSourceFile(
-        filePath,
-        await Bun.file(filePath).text(),
-        ts.ScriptTarget.Latest,
-        true,
-      )
-      const checkSpecifier = (specifier: ts.Expression) => {
-        if (!ts.isStringLiteralLike(specifier)) return
-        if (!specifier.text.startsWith('.')) {
-          outsideImports.push(`${relativePath}: ${specifier.text}`)
-          return
+      for (const specifier of await moduleSpecifiers(filePath)) {
+        if (!specifier.startsWith('.')) {
+          outsideImports.push(`${relativePath}: ${specifier}`)
+          continue
         }
-        const resolved = new URL(specifier.text, `file://${filePath}`)
+        const resolved = new URL(specifier, `file://${filePath}`)
         if (!resolved.pathname.startsWith(numericRoot.pathname)) {
-          outsideImports.push(`${relativePath}: ${specifier.text}`)
+          outsideImports.push(`${relativePath}: ${specifier}`)
         }
       }
-      const visit = (node: ts.Node) => {
-        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-          if (node.moduleSpecifier != null) checkSpecifier(node.moduleSpecifier)
-        } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-          const [specifier] = node.arguments
-          if (specifier != null) checkSpecifier(specifier)
-        }
-        ts.forEachChild(node, visit)
-      }
-      visit(source)
     }
     expect(outsideImports).toEqual([])
   })
@@ -47,29 +53,13 @@ describe('numeric module boundary', () => {
     const files = ts.sys.readDirectory(testRoot.pathname, ['.ts'])
       .filter(filePath => !filePath.endsWith('/architecture.test.ts'))
     for (const filePath of files) {
-      const source = ts.createSourceFile(
-        filePath,
-        await Bun.file(filePath).text(),
-        ts.ScriptTarget.Latest,
-        true,
-      )
-      const checkSpecifier = (specifier: ts.Expression) => {
-        if (!ts.isStringLiteralLike(specifier) || !specifier.text.startsWith('.')) return
-        const resolved = new URL(specifier.text, `file://${filePath}`)
+      for (const specifier of await moduleSpecifiers(filePath)) {
+        if (!specifier.startsWith('.')) continue
+        const resolved = new URL(specifier, `file://${filePath}`)
         if (resolved.pathname.startsWith(sourceRoot.pathname) && !resolved.pathname.startsWith(numericRoot.pathname)) {
-          outsideImports.push(`${filePath.slice(testRoot.pathname.length)}: ${specifier.text}`)
+          outsideImports.push(`${filePath.slice(testRoot.pathname.length)}: ${specifier}`)
         }
       }
-      const visit = (node: ts.Node) => {
-        if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-          if (node.moduleSpecifier != null) checkSpecifier(node.moduleSpecifier)
-        } else if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-          const [specifier] = node.arguments
-          if (specifier != null) checkSpecifier(specifier)
-        }
-        ts.forEachChild(node, visit)
-      }
-      visit(source)
     }
     expect(outsideImports).toEqual([])
   })
