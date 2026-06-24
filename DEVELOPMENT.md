@@ -54,7 +54,7 @@ Dev tools and harnesses:
 - [bench.ts](./bench.ts) and [bench-core.ts](./bench-core.ts) — dev-only timing tools
 - [tests/domain](./tests/domain), [tests/calls](./tests/calls), [tests/interpreter](./tests/interpreter), [tests/loops](./tests/loops), [tests/ranges](./tests/ranges), [tests/type-contracts](./tests/type-contracts), [tests/purity](./tests/purity), [tests/reports](./tests/reports), and [tests/cli](./tests/cli) — domain operations, calls, interpreter state, loops, ranges, type contracts, purity, reports, and CLI behavior
 - [tests/parser](./tests/parser), [tests/source-checking](./tests/source-checking), [tests/imports](./tests/imports), [tests/interpreter-matrix](./tests/interpreter-matrix), and [tests/orchestration](./tests/orchestration) — parser, runnable source examples, imports, interpreter combinations, and test inventory checks
-- [tests/snapshot](./tests/snapshot) and [snapshot.ts](./snapshot.ts) — local snapshot comparisons and infrastructure
+- [tests/snapshot](./tests/snapshot) and [snapshot.ts](./tests/snapshot/snapshot.ts) — local snapshot comparisons and infrastructure
 
 ## Infer Tool
 

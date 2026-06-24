@@ -8,7 +8,6 @@ import type {KnipConfig} from 'knip'
 // Real dead code (unused files, unused exports, unused deps/binaries) still gets flagged.
 const config: KnipConfig = {
   entry: [
-    'snapshot.ts',
     'tests/orchestration/fixtures/*.ts',
     // Fixture files loaded by file path inside test suites
     'tests/calls/call-requirement-outcomes.ts',
@@ -30,7 +29,7 @@ const config: KnipConfig = {
   ],
   ignore: [
     // Workspace-package fixtures: source and generated .d.ts loaded via @fit-fixtures/* aliases
-    'import-pattern-declared-package*/**',
+    'tests/imports/fixtures/declared-package*/**',
   ],
   ignoreExportsUsedInFile: true,
 }

@@ -1,6 +1,6 @@
 import {test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
-import {verifySnapshot} from '../../snapshot.ts'
+import {verifySnapshot} from './snapshot.ts'
 import {changedSnapshotObservation, testDiagnosticError} from '../test-diagnostics.ts'
 
 test('evaluation snapshots', async () => {

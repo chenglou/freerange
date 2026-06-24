@@ -8,7 +8,7 @@ import {
 import {factsFromValue} from '../../src/facts.ts'
 import {loadFitProject} from '../../src/modules.ts'
 import {readTopLevelGlobal} from '../../src/module-values.ts'
-import {verifySnapshot} from '../../snapshot.ts'
+import {verifySnapshot} from './snapshot.ts'
 import {changedSnapshotObservation, testDiagnosticError} from '../test-diagnostics.ts'
 
 test('interpreter snapshots', async () => {

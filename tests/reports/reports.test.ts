@@ -2,7 +2,7 @@ import {describe, setDefaultTimeout, test} from 'bun:test'
 import {inferFitFiles} from '../../src/check-core.ts'
 import {uniqueUnsupported} from '../../src/infer-report.ts'
 import {type FitCheck, verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
-import {verifySnapshot} from '../../snapshot.ts'
+import {verifySnapshot} from '../snapshot/snapshot.ts'
 import {requiredCheck, testDiagnosticError} from '../test-diagnostics.ts'
 
 setDefaultTimeout(300_000)

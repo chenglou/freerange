@@ -1,5 +1,5 @@
 import {expect, test} from 'bun:test'
-import {formatSnapshotDiff, verifySnapshot} from '../../snapshot.ts'
+import {formatSnapshotDiff, verifySnapshot} from './snapshot.ts'
 import {changedSnapshotObservation, formatTestDiagnostics, requiredCheck} from '../test-diagnostics.ts'
 
 test('snapshot differences show one focused hunk', () => {

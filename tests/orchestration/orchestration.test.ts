@@ -1,6 +1,6 @@
 import {test} from 'bun:test'
 import ts from 'typescript'
-import {snapshotUpdateRequested} from '../../snapshot.ts'
+import {snapshotUpdateRequested} from '../snapshot/snapshot.ts'
 
 const repoDir = new URL('../..', import.meta.url).pathname
 const testFiles = [
