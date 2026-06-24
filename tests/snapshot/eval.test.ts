@@ -38,7 +38,7 @@ test('evaluation snapshots', async () => {
     'importedNestedLiteralArrayMapDefaultFields',
   ))
 
-  const snapshotPath = 'eval-snapshots.expected.txt'
+  const snapshotPath = 'tests/snapshot/eval-snapshots.expected.txt'
   const serialized = serializeObservations(observations)
   if (!await verifySnapshot(snapshotPath, serialized, 'evaluation observations')) {
     throw testDiagnosticError('evaluation observations changed', changedSnapshotObservation(

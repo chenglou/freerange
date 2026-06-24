@@ -26,10 +26,10 @@ bun check
 - [spec/number.md](./spec/number.md) — public rules for finite numbers, infinities, `NaN`, and floating-point arithmetic
 - [tests/source-checking/patterns.ts](./tests/source-checking/patterns.ts), [tests/loops/loop-patterns.ts](./tests/loops/loop-patterns.ts), and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) — runnable source examples; the loop catalog is a fast focused `fr check` target during loop work
 - [tests/source-checking/negative-patterns.ts](./tests/source-checking/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) — intentionally bad source examples
-- [negative-patterns.expected.txt](./negative-patterns.expected.txt) — expected results for all negative checks
-- [infer-snapshots.expected.txt](./infer-snapshots.expected.txt) — stable dev-only snapshots of inferred ranges and relationships
-- [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) — selected results from evaluating source code
-- [interpreter-snapshots.expected.txt](./interpreter-snapshots.expected.txt) — interpreter values, counts and hashes of all derived facts, origin facts, issues, and effects
+- [negative-patterns.expected.txt](./tests/snapshot/negative-patterns.expected.txt) — expected results for all negative checks
+- [infer-snapshots.expected.txt](./tests/snapshot/infer-snapshots.expected.txt) — stable dev-only snapshots of inferred ranges and relationships
+- [eval-snapshots.expected.txt](./tests/snapshot/eval-snapshots.expected.txt) — selected results from evaluating source code
+- [interpreter-snapshots.expected.txt](./tests/snapshot/interpreter-snapshots.expected.txt) — interpreter values, counts and hashes of all derived facts, origin facts, issues, and effects
 - [todo.md](./todo.md) — current priorities and limitations
 - [research.md](./research.md) — durable direction notes
 
@@ -64,9 +64,9 @@ Dev tools and harnesses:
 
 `bun fr.ts infer path/to/file.ts` is for adoption and debugging, not public annotation generation. The user-facing command behavior lives in [DOCUMENTATION.md](./DOCUMENTATION.md); this section is only the maintenance policy.
 
-Selected inference functions are snapshotted in [infer-snapshots.expected.txt](./infer-snapshots.expected.txt), including every fact reported for each function. Add a function when its inferred behavior becomes important enough that we would notice losing it. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
+Selected inference functions are snapshotted in [infer-snapshots.expected.txt](./tests/snapshot/infer-snapshots.expected.txt), including every fact reported for each function. Add a function when its inferred behavior becomes important enough that we would notice losing it. Unsupported snapshots should keep the first missing root and the next distinct blocker, not every property-access echo from the same root.
 
-Use [eval-snapshots.expected.txt](./eval-snapshots.expected.txt) for results from evaluating source code that are too specific for the public `infer` catalog: summarized literal data, IIFEs, default parameters, loop results, and unsupported stops.
+Use [eval-snapshots.expected.txt](./tests/snapshot/eval-snapshots.expected.txt) for results from evaluating source code that are too specific for the public `infer` catalog: summarized literal data, IIFEs, default parameters, loop results, and unsupported stops.
 
 `infer` must stay total. Recursive helper cycles should report an unsupported recursion stop. Do not recursively copy TypeScript object or array structure just to make `infer` prettier; ask TypeScript only for the exact node or path the checker is using.
 
@@ -84,7 +84,7 @@ Audit findings are advisory and do not change the normal `check` exit status. Ad
 
 [tests/source-checking/patterns.ts](./tests/source-checking/patterns.ts), [tests/loops/loop-patterns.ts](./tests/loops/loop-patterns.ts), and [tests/imports/import-patterns.ts](./tests/imports/import-patterns.ts) are the runnable source examples; loop fixtures go in the loop catalog.
 
-[tests/source-checking/negative-patterns.ts](./tests/source-checking/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) have intentionally bad source examples. Their expected results live in [negative-patterns.expected.txt](./negative-patterns.expected.txt).
+[tests/source-checking/negative-patterns.ts](./tests/source-checking/negative-patterns.ts) and [tests/imports/negative-import-patterns.ts](./tests/imports/negative-import-patterns.ts) have intentionally bad source examples. Their expected results live in [negative-patterns.expected.txt](./tests/snapshot/negative-patterns.expected.txt).
 
 Put a regression in the suite that owns the behavior. Add a runnable source example when the behavior belongs in a catalog, and add a negative example when its diagnostic matters.
 

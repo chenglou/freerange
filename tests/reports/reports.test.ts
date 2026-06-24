@@ -79,7 +79,7 @@ if (
 
 test('matches the complete negative check manifest', async () => {
 const negativeFiles = ['tests/source-checking/negative-patterns.ts', 'tests/source-checking/negative-shadowed-catalog.ts', 'tests/imports/negative-import-patterns.ts', 'tests/interpreter-matrix/interpreter-matrix-negative.ts']
-const negativeExpectedPath = 'negative-patterns.expected.txt'
+const negativeExpectedPath = 'tests/snapshot/negative-patterns.expected.txt'
 const negativeReport = await verifyFitFiles(negativeFiles)
 const actualNegative = formatCheckManifest(negativeReport.checks)
 const expectedSummary = {pass: 81, fail: 69, requires: 0, unknown: 182, audit: 0}
@@ -149,7 +149,7 @@ if (collapsedUnsupported.join('\n') !== expectedCollapsedUnsupported.join('\n'))
 })
 
 test('matches the inference snapshot', async () => {
-const inferSnapshotExpectedPath = 'infer-snapshots.expected.txt'
+const inferSnapshotExpectedPath = 'tests/snapshot/infer-snapshots.expected.txt'
 const actualInferSnapshot = normalizeText([
   formatInferSnapshot(['tests/source-checking/patterns.ts'], 'propertyAccessCallShape'),
   formatInferSnapshot(['tests/source-checking/patterns.ts'], 'mapCallbackReturnShape'),

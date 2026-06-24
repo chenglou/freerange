@@ -76,7 +76,7 @@ test('interpreter snapshots', async () => {
     observations.push(observeInterpreter(label, negativePaths[0]!, negativeProject, functionName))
   }
 
-  const snapshotPath = 'interpreter-snapshots.expected.txt'
+  const snapshotPath = 'tests/snapshot/interpreter-snapshots.expected.txt'
   const serialized = serializeObservations(observations)
   if (!await verifySnapshot(snapshotPath, serialized, 'interpreter observations')) {
     throw testDiagnosticError('interpreter observations changed', changedSnapshotObservation(
