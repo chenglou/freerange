@@ -1,9 +1,11 @@
 // Pure-function classification. Each case is source -> pure | impure | unknown,
 // with no interpreter run or proof needed.
 import {describe, setDefaultTimeout, test} from 'bun:test'
+import ts from 'typescript'
 import {readTopLevelGlobal} from '../../src/check-core.ts'
 import {functionImplementationReference} from '../../src/function-shape.ts'
 import {functionEffects, functionPurity, type Purity} from '../../src/interpreter/function-effects.ts'
+import {expressionIsRepeatable} from '../../src/interpreter/expression-effects.ts'
 import {buildFitSourceFile, loadFitProject} from '../../src/modules.ts'
 import {verifyFitFiles, verifyFitSource} from '../../src/reports.ts'
 import {
@@ -69,27 +71,39 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'keeps named array methods after a numeric element write', kind: 'pure', source: `function replace(values: number[], index: number) { values[index] = 1 }\nfunction f(values: number[]) { return values.includes(1) }`},
   {label: 'callback changes a local closure value', kind: 'pure', source: `function f(values: number[]) { let count = 0; values.forEach(() => count++); return count }`},
   {label: 'unused impure closure does not run', kind: 'pure', source: `function f() { const random = () => Math.random(); return 1 }`},
+  {label: 'unused unsupported closures do not run', kind: 'pure', source: `function f() { function recursive(): number { return recursive() }; const usesThis = function (this: {value: number}) { return this.value }; const throws = () => { throw 1 }; return 1 }`},
   {label: 'mutates the outer container returned by slice', kind: 'pure', source: `function copyArray(values: number[]) { return values.slice() }\nfunction f(values: number[]) { return copyArray(values).push(1) }`},
   {label: 'keeps a new outer container through two helpers', kind: 'pure', source: `function copyArray(values: number[]) { return values.slice() }\nfunction relay(values: number[]) { return copyArray(values) }\nfunction f(values: number[]) { return relay(values).push(1) }`},
   {label: 'mutates the outer container returned by map', kind: 'pure', source: `function f(values: number[]) { const copies = values.map(value => ({value})); copies.push({value: 1}); return copies.length }`},
   {label: 'uses a numeric comparator with toSorted', kind: 'pure', source: `function f(values: number[]) { return values.toSorted((left, right) => left - right).length }`},
+  {label: 'uses an exact spread comparator with toSorted', kind: 'pure', source: `function f(values: number[]) { return values.toSorted(...[(left: number, right: number) => left - right]).length }`},
   {label: 'uses a shadowed undefined comparator with toSorted', kind: 'pure', source: `function f(values: number[]) { const undefined = (left: number, right: number) => left - right; return values.toSorted(undefined).length }`},
   {label: 'for-of over an array uses the built-in iterator', kind: 'pure', source: `function f(values: number[]) { let total = 0; for (const value of values) total += value; return total }`},
+  {label: 'array spread uses the built-in iterator', kind: 'pure', source: `function f(values: number[]) { return [...values].length }`},
+  {label: 'array destructuring uses the built-in iterator', kind: 'pure', source: `function f(values: number[]) { const [first] = values; return first }`},
   {label: 'destructures ordinary data', kind: 'pure', source: `function f({nested: {value}}: {nested: {value: number}}) { return value }`},
   {label: 'replaces a parameter before mutating it', kind: 'pure', source: `function f(row: {height: number}) { row = {height: 0}; row.height = 1 }`},
-  {label: 'replaces a parameter in every branch before mutating it', kind: 'pure', source: `function f(row: {height: number}, flag: boolean) { if (flag) row = {height: 0}; else row = {height: 1}; row.height = 2 }`},
-  {label: 'replaces a parameter in every switch path before mutating it', kind: 'pure', source: `function f(row: {height: number}, mode: number) { switch (mode) { case 0: row = {height: 0}; break; default: row = {height: 1} } row.height = 2 }`},
-  {label: 'replaces a parameter in a do-while body before mutating it', kind: 'pure', source: `function f(row: {height: number}, flag: boolean) { do { row = {height: 0} } while (flag); row.height = 1 }`},
   {label: 'passes a replacement to a mutating helper', kind: 'pure', source: `function setHeight(row: {height: number}) { row.height = 1 }\nfunction f(row: {height: number}) { row = {height: 0}; setHeight(row) }`},
   {label: 'captures a replacement in a local function call', kind: 'pure', source: `function f(row: {height: number}) { row = {height: 0}; const setHeight = () => row.height = 1; setHeight() }`},
   {label: 'reassigns a parameter from a local function', kind: 'pure', source: `function f(row: {height: number}) { const replace = () => row = {height: 0}; replace(); return row.height }`},
   {label: 'returns a replacement from a helper', kind: 'pure', source: `function replace(row: {height: number}) { row = {height: 0}; return row }\nfunction f(row: {height: number}) { replace(row).height = 1 }`},
   {label: 'mutates a fresh object returned by a helper', kind: 'pure', source: `function copyRow(row: {height: number}) { return {height: row.height} }\nfunction f(row: {height: number}) { copyRow(row).height = 1 }`},
-  {label: 'replaces a parameter in an endless loop before breaking', kind: 'pure', source: `function f(row: {height: number}) { for (;;) { row = {height: 0}; break } row.height = 1 }`},
   {label: 'stores an argument in an initially empty local holder', kind: 'pure', source: `function f(row: {height: number}) { const holder: {row: {height: number} | null} = {row: null}; holder.row = row }`},
+  {label: 'nested function changes an unrelated local field', kind: 'pure', source: `function f(row: {height: number}) { const tableState = {row, count: 0}; const increment = () => tableState.count++; increment(); return tableState.count }`},
+  {label: 'stores an argument in a fresh array through a helper', kind: 'pure', source: `type Row = {height: number}\nfunction append(values: Row[], row: Row) { values.push(row) }\nfunction f(values: Row[], row: Row) { const copy = values.slice(); append(copy, row) }`},
+  {label: 'stores an exact spread argument in a fresh array', kind: 'pure', source: `function f(row: {height: number}) { const rows: {height: number}[] = []; rows.push(...[row]) }`},
+  {label: 'stores an exact spread argument in an Array.of result', kind: 'pure', source: `function f(row: {height: number}) { Array.of(...[row]) }`},
+  {label: 'stores an argument in a local holder through a helper', kind: 'pure', source: `type Row = {height: number}\nfunction store(holder: {row: Row | null}, row: Row) { holder.row = row }\nfunction f(row: Row) { const holder = {row: null as Row | null}; store(holder, row) }`},
+  {label: 'stores an inexact primitive spread in a fresh array', kind: 'pure', source: `function f(values: number[]) { const copy: number[] = []; copy.push(...values) }`},
+  {label: 'stores an inexact primitive spread in an Array.of result', kind: 'pure', source: `function f(values: number[]) { Array.of(...values) }`},
+  {label: 'mutates a rest parameter array', kind: 'pure', source: `function f(...values: number[]) { values.push(1); return values.length }`},
+  {label: 'calls a read-only helper with an inexact spread', kind: 'pure', source: `function count(...values: number[]) { return values.length }\nfunction f(values: number[]) { return count(...values) }`},
+  {label: 'calls a mutating helper with an exact fresh spread', kind: 'pure', source: `function clear(row: {height: number}) { row.height = 0 }\nfunction f() { clear(...[{height: 1}]) }`},
+  {label: 'converts primitives to strings implicitly', kind: 'pure', source: `function f(value: number) { return \`Value: \${value}\` }`},
   {label: 'keeps unrelated local allocations separate', kind: 'pure', source: `function f(row: {height: number}) { const holder = {row}; const other = {child: {height: 0}}; other.child.height = 1; return holder.row.height }`},
   {label: 'keeps a whole-container reassignment separate from its old value', kind: 'pure', source: `function f(row: {height: number}) { let holder = {row}; holder = {row: {height: 0}}; holder.row.height = 1 }`},
   {label: 'ignores unreachable effects after return', kind: 'pure', source: `function f() { return 1; Math.random() }`},
+  {label: 'ignores unreachable effects after a switch break', kind: 'pure', source: `function f(mode: number) { switch (mode) { case 0: break; Math.random(); default: break } }`},
   {label: 'ignores an unreachable return when describing a helper result', kind: 'pure', source: `function fresh(row: {height: number}) { return {height: 0}; return row }\nfunction f(row: {height: number}) { fresh(row).height = 1 }`},
   {label: 'checks all case expressions before entering a default clause', kind: 'impure', source: `function f(row: {height: number}, mode: number) { switch (mode) { default: row = {height: 0}; break; case (row.height = 1): break } }`},
 
@@ -133,6 +147,22 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'may retain the original parameter when a do-while breaks before replacement', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, stop: boolean) { do { if (stop) break; row = {height: 0} } while (false); row.height = 1 }`},
   {label: 'may retain the original parameter after a for-of loop', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, values: number[]) { for (const value of values) { row = {height: value} } row.height = 1 }`},
   {label: 'maps a reassigned parameter mutation to the replacement', kind: 'impure', reasonIncludes: '`replacement`', source: `function f(row: {height: number}, replacement: {height: number}) { row = replacement; row.height = 1 }`},
+  {label: 'does not prove branch replacement removed a parameter', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, flag: boolean) { if (flag) row = {height: 0}; else row = {height: 1}; row.height = 2 }`},
+  {label: 'does not prove switch replacement removed a parameter', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, mode: number) { switch (mode) { case 0: row = {height: 0}; break; default: row = {height: 1} } row.height = 2 }`},
+  {label: 'does not prove loop replacement removed a parameter', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, flag: boolean) { do { row = {height: 0} } while (flag); row.height = 1 }`},
+  {label: 'does not prove a loop break replacement removed a parameter', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}) { for (;;) { row = {height: 0}; break } row.height = 1 }`},
+  {label: 'mutates a result that may be new or an argument', kind: 'impure', source: `function maybeCopy(values: number[], copy: boolean) { return copy ? values.slice() : values }\nfunction f(values: number[], copy: boolean) { maybeCopy(values, copy).push(1); return 1 }`},
+  {label: 'mutates a literal result that may be new or an argument', kind: 'impure', source: `function maybeCopy(row: {height: number}, copy: boolean) { return copy ? {height: row.height} : row }\nfunction f(row: {height: number}, copy: boolean) { maybeCopy(row, copy).height = 1 }`},
+  {label: 'mutates an object received through a rest parameter', kind: 'impure', source: `function f(...rows: {height: number}[]) { rows[0]!.height = 0 }`},
+  {label: 'calls a mutating helper with an exact argument spread', kind: 'impure', source: `function clear(row: {height: number}) { row.height = 0 }\nfunction f(row: {height: number}) { clear(...[row]) }`},
+  {label: 'uses JSON.parse', kind: 'impure', reasonIncludes: 'throws', source: `function f(value: string) { return JSON.parse(value) }`},
+  {label: 'keeps a known mutation ahead of an unsupported this use', kind: 'impure', reasonIncludes: '`row`', source: `function f(this: {value: number}, row: {height: number}) { void this.value; row.height = 0 }`},
+  {label: 'keeps a known mutation ahead of unsupported recursion', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}, stop: boolean) { row.height = 0; if (!stop) f(row, true) }`},
+  {label: 'mutates a value stored by an exact platform spread', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}) { const rows: {height: number}[] = []; rows.push(...[row]); rows[0]!.height = 0 }`},
+  {label: 'keeps a mutation before a later field replacement', kind: 'impure', reasonIncludes: '`row`', source: `function f(row: {height: number}) { const tableState = {row}; tableState.row.height = 1; tableState.row = {height: 0} }`},
+  {label: 'keeps a mutation before a later helper call', kind: 'impure', reasonIncludes: '`row`', source: `type Row = {height: number}\nfunction storeOther(tableState: {row: Row; other: Row | null}, row: Row) { tableState.other = row }\nfunction f(row: Row) { const tableState = {row, other: null as Row | null}; tableState.row.height = 1; storeOther(tableState, row) }`},
+  {label: 'keeps a known destination mutation with an inexact spread', kind: 'impure', reasonIncludes: '`tableState`', source: `type Row = {height: number}\nfunction store(tableState: {row: Row | null}, ...rows: Row[]) { tableState.row = rows[0]! }\nfunction f(tableState: {row: Row | null}, rows: Row[]) { store(tableState, ...rows) }`},
+  {label: 'calls a helper that replaces an array method', kind: 'impure', reasonIncludes: '`values`', source: `function replace(values: number[]) { values.includes = () => false }\nfunction f(values: number[]) { replace(values); return values.includes(1) }`},
 
   // Deliberately unsupported operations.
   {label: 'reads this', kind: 'unknown', reasonIncludes: '`this`', source: `function f(this: {value: number}) { return this.value }`},
@@ -163,16 +193,25 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'mutates inside a map result', kind: 'unknown', source: `function f(rows: {height: number}[]) { rows.map(row => ({row}))[0]!.row.height = 0; return 1 }`},
   {label: 'mutates a slice element through a callback', kind: 'unknown', source: `function f(rows: {height: number}[]) { rows.slice().forEach(row => row.height = 0) }`},
   {label: 'mutates a slice element through a named comparator', kind: 'unknown', source: `function clear(left: {height: number}, right: {height: number}) { left.height = 0; return left.height - right.height }\nfunction f(rows: {height: number}[]) { rows.slice().sort(clear) }`},
-  {label: 'mutates a result that may be new or an argument', kind: 'unknown', source: `function maybeCopy(values: number[], copy: boolean) { return copy ? values.slice() : values }\nfunction f(values: number[], copy: boolean) { maybeCopy(values, copy).push(1); return 1 }`},
-  {label: 'mutates a literal result that may be new or an argument', kind: 'unknown', source: `function maybeCopy(row: {height: number}, copy: boolean) { return copy ? {height: row.height} : row }\nfunction f(row: {height: number}, copy: boolean) { maybeCopy(row, copy).height = 1 }`},
-  {label: 'replaces a field in a local wrapper that also contains an argument', kind: 'unknown', reasonIncludes: 'local container', source: `function f(row: {height: number}) { const holder = {row}; holder.row = {height: 0}; holder.row.height = 1 }`},
-  {label: 'replaces an array slot in a local wrapper that also contains an argument', kind: 'unknown', reasonIncludes: 'local container', source: `function f(row: {height: number}) { const holder = [row]; holder[0] = {height: 0}; holder[0]!.height = 1 }`},
-  {label: 'changes a local wrapper containing an argument through a nested function', kind: 'unknown', reasonIncludes: 'nested function', source: `function f(row: {height: number}) { const holder = {row, count: 0}; const increment = () => holder.count++; increment(); return holder.count }`},
-  {label: 'stores an argument in a fresh array through a helper', kind: 'unknown', reasonIncludes: 'storing an existing', source: `type Row = {height: number}\nfunction append(values: Row[], row: Row) { values.push(row) }\nfunction f(values: Row[], row: Row) { const copy = values.slice(); append(copy, row) }`},
+  {label: 'replaces a field in a local wrapper that also contains an argument', kind: 'unknown', reasonIncludes: 'replaced field or entry', source: `function f(row: {height: number}) { const holder = {row}; holder.row = {height: 0}; holder.row.height = 1 }`},
+  {label: 'replaces an array slot in a local wrapper that also contains an argument', kind: 'unknown', reasonIncludes: 'replaced field or entry', source: `function f(row: {height: number}) { const holder = [row]; holder[0] = {height: 0}; holder[0]!.height = 1 }`},
+  {label: 'mutates a value stored in a local holder through a helper', kind: 'unknown', reasonIncludes: 'function changed', source: `type Row = {height: number}\nfunction store(tableState: {row: Row | null}, row: Row) { tableState.row = row }\nfunction f(row: Row) { const tableState = {row: null as Row | null}; store(tableState, row); tableState.row!.height = 0 }`},
+  {label: 'mutates shallow copied contents stored through a helper', kind: 'unknown', reasonIncludes: 'function changed', source: `type Row = {height: number}\nfunction copyAndStore(tableState: {rows: Row[] | null}, rows: Row[]) { tableState.rows = rows.slice() }\nfunction f(rows: Row[]) { const tableState = {rows: null as Row[] | null}; copyAndStore(tableState, rows); tableState.rows![0]!.height = 0 }`},
+  {label: 'mutates a field of a fresh wrapper stored through helpers', kind: 'unknown', reasonIncludes: 'function changed', source: `type Row = {height: number}; type Wrapper = {row: Row; height: number}\nfunction store(tableState: {value: Wrapper | null}, value: Wrapper) { tableState.value = value }\nfunction wrapAndStore(tableState: {value: Wrapper | null}, row: Row) { store(tableState, {row, height: 0}) }\nfunction f(row: Row) { const tableState = {value: null as Wrapper | null}; wrapAndStore(tableState, row); tableState.value!.height = 1 }`},
+  {label: 'mutates a value retained by a callback', kind: 'unknown', reasonIncludes: 'callback changed', source: `function f(rows: {height: number}[]) { const tableState = {row: null as {height: number} | null}; rows.forEach(row => tableState.row = row); tableState.row!.height = 0 }`},
+  {label: 'extracts a field replacement into a helper', kind: 'unknown', reasonIncludes: 'function changed', source: `function replace(tableState: {row: {height: number}}) { tableState.row = {height: 0} }\nfunction f(row: {height: number}) { const tableState = {row}; replace(tableState); tableState.row.height = 1 }`},
+  {label: 'does not guess which sibling field a helper changed', kind: 'unknown', reasonIncludes: 'function changed', source: `type Row = {height: number}\nfunction storeOther(tableState: {row: Row; other: Row | null}, row: Row) { tableState.other = row }\nfunction f(row: Row) { const tableState = {row: {height: 0}, other: null as Row | null}; storeOther(tableState, row); tableState.row.height = 1 }`},
+  {label: 'does not use source order as loop execution order', kind: 'unknown', reasonIncludes: 'replaced field or entry', source: `function f(row: {height: number}) { const tableState = {row: {height: 0}}; for (const height of [1, 2]) { tableState.row.height = height; tableState.row = row } }`},
+  {label: 'does not use source order as switch execution order', kind: 'unknown', reasonIncludes: 'replaced field or entry', source: `function f(row: {height: number}, mode: number) { const tableState = {row: {height: 0}}; switch (mode) { default: tableState.row.height = 1; break; case (tableState.row = row, 1): break } }`},
+  {label: 'checks a nested mutation after a local container replacement', kind: 'unknown', reasonIncludes: 'replaced field or entry', source: `function f(row: {height: number}) { const tableState = {row: {height: 0}}; tableState.row = row; const increment = () => tableState.row.height++; increment() }`},
   {label: 'uses Array.at returned contents', kind: 'unknown', source: `function f(rows: {height: number}[]) { rows.at(0)!.height = 0; return 1 }`},
   {label: 'uses Array.find returned contents', kind: 'unknown', source: `function f(rows: {height: number}[]) { rows.find(() => true)!.height = 0; return 1 }`},
   {label: 'uses Array.from', kind: 'unknown', reasonIncludes: 'Array.from', source: `function f(values: number[]) { return Array.from(values).length }`},
-  {label: 'uses JSON.parse', kind: 'unknown', reasonIncludes: 'JSON.parse', source: `function f(value: string) { return JSON.parse(value) }`},
+  {label: 'uses JSON.stringify', kind: 'unknown', reasonIncludes: 'JSON.stringify', source: `function f(value: {name: string}) { return JSON.stringify(value) }`},
+  {label: 'implicitly converts an object in a template', kind: 'unknown', reasonIncludes: 'string', source: `function f(user: {name: string}) { return \`\${user}\` }`},
+  {label: 'implicitly converts an object with addition', kind: 'unknown', reasonIncludes: 'string', source: `function f(user: {name: string}) { return "User: " + user }`},
+  {label: 'implicitly converts an object with addition assignment', kind: 'unknown', reasonIncludes: 'string', source: `function f(user: {name: string}) { let text = "User: "; text += user; return text }`},
+  {label: 'uses a tagged template', kind: 'unknown', reasonIncludes: 'tagged template', source: `function tag(parts: TemplateStringsArray, user: {name: string}) { return parts[0]! + user.name }\nfunction f(user: {name: string}) { return tag\`User: \${user}\` }`},
   {label: 'sorts without a comparator', kind: 'unknown', reasonIncludes: 'without a comparator', source: `function f(values: number[]) { return values.sort().length }`},
   {label: 'sorts with explicit undefined', kind: 'unknown', reasonIncludes: 'without a comparator', source: `function f(values: number[]) { return values.sort(undefined).length }`},
   {label: 'uses toSorted with explicit undefined', kind: 'unknown', reasonIncludes: 'without a comparator', source: `function f(values: number[]) { return values.toSorted(undefined).length }`},
@@ -202,9 +241,14 @@ const cases: {label: string; source: string; kind: Purity['kind']; reasonInclude
   {label: 'overwrites a built-in method through array assignment', kind: 'unknown', source: `function f() { const values: number[] = []; const replacement = () => false; [values.includes] = [replacement]; return values.includes(1) }`},
   {label: 'overwrites a built-in method through a for-of target', kind: 'unknown', source: `function f() { const values: number[] = []; const replacement = () => false; for (values.includes of [replacement]) break; return values.includes(1) }`},
   {label: 'ignores an unused built-in replacement helper', kind: 'pure', source: `function replaceFinite() { Number.isFinite = () => false }\nfunction f(value: number) { return Number.isFinite(value) }`},
-  {label: 'calls a helper that replaces an array method', kind: 'unknown', source: `function replace(values: number[]) { values.includes = () => false }\nfunction f(values: number[]) { replace(values); return values.includes(1) }`},
-  {label: 'stores an argument in a local holder through a helper', kind: 'unknown', reasonIncludes: 'storing an existing', source: `type Row = {height: number}\nfunction store(holder: {row: Row | null}, row: Row) { holder.row = row }\nfunction f(row: Row) { const holder = {row: null as Row | null}; store(holder, row) }`},
   {label: 'spreads an arbitrary iterable', kind: 'unknown', reasonIncludes: 'iterator', source: `function f(values: Iterable<number>) { return [...values].length }`},
+  {label: 'destructures an arbitrary iterable', kind: 'unknown', reasonIncludes: 'iterator', source: `function f(values: Iterable<number>) { const [first] = values; return first }`},
+  {label: 'loops over an arbitrary iterable', kind: 'unknown', reasonIncludes: 'iterator', source: `function f(values: Iterable<number>) { for (const value of values) void value }`},
+  {label: 'calls a mutating helper with an inexact spread', kind: 'unknown', reasonIncludes: 'spread', source: `function clear(...rows: {height: number}[]) { rows[0]!.height = 0 }\nfunction f(rows: {height: number}[]) { clear(...rows) }`},
+  {label: 'uses a value stored in a local holder through an inexact spread', kind: 'unknown', reasonIncludes: 'function changed', source: `type Row = {height: number}\nfunction store(tableState: {row: Row | null}, ...rows: Row[]) { tableState.row = rows[0]! }\nfunction f(rows: Row[]) { const tableState = {row: null as Row | null}; store(tableState, ...rows); tableState.row!.height = 0 }`},
+  {label: 'stores an inexact platform spread', kind: 'unknown', reasonIncludes: 'spread', source: `function f(rows: {height: number}[]) { const copy: {height: number}[] = []; copy.push(...rows) }`},
+  {label: 'stores an inexact composite spread in an Array.of result', kind: 'unknown', reasonIncludes: 'spread', source: `function f(rows: {height: number}[]) { Array.of(...rows) }`},
+  {label: 'stores an inexact composite spread in a toSpliced result', kind: 'unknown', reasonIncludes: 'spread', source: `function f(base: {height: number}[], rows: {height: number}[]) { base.toSpliced(0, 0, ...rows) }`},
   {label: 'reads through object destructuring when a getter may run', kind: 'unknown', reasonIncludes: 'getter', source: `class Source { get value() { return 1 } }\nfunction f(source: Source) { const {value} = source; return value }`},
 ]
 
@@ -218,6 +262,84 @@ for (const {label, source, kind, reasonIncludes} of cases) {
 }
 if (failures.length > 0) {
   throw testDiagnosticError('expected the purity classification table to match', failures)
+}
+
+const repeatableProgram = buildFitSourceFile('repeatable-spread-callback.ts', `
+function direct(values: number[]) { return values.every(value => value > 0) }
+function spread(values: number[]) { return values.every(...[(value: number) => value > 0]) }
+`, readTopLevelGlobal)
+const repeatableResults = ['direct', 'spread'].map(name => {
+  const fn = repeatableProgram.functions.get(name)
+  const statement = fn != null && ts.isBlock(fn.node.body)
+    ? fn.node.body.statements.find(ts.isReturnStatement)
+    : null
+  return {
+    name,
+    repeatable: statement?.expression != null
+      && expressionIsRepeatable(statement.expression, repeatableProgram),
+  }
+})
+if (repeatableResults.some(result => !result.repeatable)) {
+  throw testDiagnosticError('expected exact spread callbacks to preserve repeatability', repeatableResults)
+}
+})
+
+test('reports the purity boundary through @fit pure', () => {
+const checks = verifyFitSource('purity-boundary.ts', `type Row = {height: number}
+
+function store(tableState: {row: Row | null}, row: Row) {
+  tableState.row = row
+}
+
+function clearFirst(...rows: Row[]) {
+  rows[0]!.height = 0
+}
+
+/** @fit
+ * pure
+ */
+function storesWithoutChanging(row: Row) {
+  const tableState = {row: null as Row | null}
+  store(tableState, row)
+}
+
+/** @fit
+ * pure
+ */
+function changesStoredArgument(row: Row) {
+  const tableState = {row: null as Row | null}
+  store(tableState, row)
+  tableState.row!.height = 0
+}
+
+/** @fit
+ * pure
+ */
+function usesInexactSpread(rows: Row[]) {
+  clearFirst(...rows)
+}
+
+/** @fit
+ * pure
+ */
+function parsesJSON(text: string) {
+  return JSON.parse(text)
+}
+`)
+const accepted = requiredCheck(checks, {functionName: 'storesWithoutChanging', text: 'pure'})
+const changedArgument = requiredCheck(checks, {functionName: 'changesStoredArgument', text: 'pure'})
+const inexactSpread = requiredCheck(checks, {functionName: 'usesInexactSpread', text: 'pure'})
+const parsing = requiredCheck(checks, {functionName: 'parsesJSON', text: 'pure'})
+if (
+  accepted.status !== 'pass'
+  || changedArgument.status !== 'unknown'
+  || changedArgument.reason?.includes('function changed') !== true
+  || inexactSpread.status !== 'unknown'
+  || inexactSpread.reason?.includes('spread') !== true
+  || parsing.status !== 'fail'
+  || parsing.reason?.includes('throws') !== true
+) {
+  throw testDiagnosticError('expected @fit pure to expose pass, fail, and unknown classifications', checks)
 }
 })
 
@@ -308,6 +430,207 @@ if (
   || temporaryCallbackReturn.status === 'pass'
 ) {
   throw testDiagnosticError('expected opaque platform contents to prevent both purity and return proofs', checks)
+}
+})
+
+test('forgets facts after spread and retained-reference effects', () => {
+const checks = verifyFitSource('purity-effect-invalidation.ts', `type Row = {height: number}
+
+function store(tableState: {row: Row | null}, row: Row) {
+  tableState.row = row
+}
+
+function clear(row: Row) {
+  row.height = 2
+}
+
+function readHeight(row: Row) {
+  return row.height
+}
+
+const outsideState: {saved: Row[]} = {saved: []}
+function storeFreshResultOutside(row: Row) {
+  outsideState.saved = Array.of(row)
+}
+function storeRowsOutside(rows: Row[]) {
+  outsideState.saved = rows
+}
+function relayArrayOfOutside(row: Row) {
+  storeRowsOutside(Array.of(row))
+}
+function relaySliceOutside(rows: Row[]) {
+  storeRowsOutside(rows.slice())
+}
+function makeRows(row: Row) {
+  return [row]
+}
+function relayHelperResultOutside(row: Row) {
+  storeRowsOutside(makeRows(row))
+}
+const nestedOutsideState: {saved: Row[][]} = {saved: []}
+function storeNestedRowsOutside(rows: Row[][]) {
+  nestedOutsideState.saved = rows
+}
+function relayNestedFreshResultOutside(row: Row) {
+  storeNestedRowsOutside([Array.of(row)])
+}
+function mutateSavedOutside() {
+  outsideState.saved[0]!.height = 2
+}
+function mutateNestedSavedOutside() {
+  nestedOutsideState.saved[0]![0]!.height = 2
+}
+const makeArray = Array.of
+
+/** @fit
+ * return == 1
+ */
+function retainedByHelper() {
+  const row = {height: 1}
+  const tableState = {row: null as Row | null}
+  store(tableState, row)
+  tableState.row!.height = 2
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function retainedByCallback() {
+  const row = {height: 1}
+  const tableState = {row: null as Row | null}
+  ;[row].forEach(current => tableState.row = current)
+  tableState.row!.height = 2
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function exactSpreadMutation() {
+  const row = {height: 1}
+  clear(...[row])
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function spliceRetainsSpreadValue() {
+  const row = {height: 1}
+  const rows = [{height: 0}]
+  rows.splice(0, 1, ...[row])
+  rows[0]!.height = 2
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function freshResultEscapesOutside() {
+  const row = {height: 1}
+  storeFreshResultOutside(row)
+  mutateSavedOutside()
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function arrayOfResultEscapesThroughHelper() {
+  const row = {height: 1}
+  relayArrayOfOutside(row)
+  mutateSavedOutside()
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function sliceResultEscapesThroughHelper() {
+  const row = {height: 1}
+  relaySliceOutside([row])
+  mutateSavedOutside()
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function helperResultEscapesThroughHelper() {
+  const row = {height: 1}
+  relayHelperResultOutside(row)
+  mutateSavedOutside()
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function nestedFreshResultEscapesThroughHelper() {
+  const row = {height: 1}
+  relayNestedFreshResultOutside(row)
+  mutateNestedSavedOutside()
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function readOnlyControl() {
+  const row = {height: 1}
+  readHeight(row)
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function sortPreservesElementControl() {
+  const row = {height: 1}
+  const rows = [row]
+  rows.sort(() => 0)
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function aliasedArrayOfExactSpreadControl() {
+  const row = {height: 1}
+  makeArray(...[row])
+  return row.height
+}
+
+/** @fit
+ * return == 1
+ */
+function unrelatedFreshResultControl() {
+  const row = {height: 1}
+  storeRowsOutside(Array.of({height: 0}))
+  mutateSavedOutside()
+  return row.height
+}
+`)
+const readOnly = requiredCheck(checks, {functionName: 'readOnlyControl', text: 'return == 1'})
+const sorted = requiredCheck(checks, {functionName: 'sortPreservesElementControl', text: 'return == 1'})
+const aliasedArrayOf = requiredCheck(checks, {functionName: 'aliasedArrayOfExactSpreadControl', text: 'return == 1'})
+const unrelatedFreshResult = requiredCheck(checks, {functionName: 'unrelatedFreshResultControl', text: 'return == 1'})
+const staleProofs = checks.filter(check =>
+  check.text === 'return == 1'
+  && check.functionName !== 'readOnlyControl'
+  && check.functionName !== 'sortPreservesElementControl'
+  && check.functionName !== 'aliasedArrayOfExactSpreadControl'
+  && check.functionName !== 'unrelatedFreshResultControl'
+  && check.status === 'pass')
+if (
+  readOnly.status !== 'pass'
+  || sorted.status !== 'pass'
+  || aliasedArrayOf.status !== 'pass'
+  || unrelatedFreshResult.status !== 'pass'
+  || staleProofs.length > 0
+) {
+  throw testDiagnosticError('expected retained references and exact spreads to invalidate old facts', checks)
 }
 })
 

@@ -163,8 +163,10 @@ import {
   lengthBearingConstructorNames,
   mutationRootsForProgram,
   reassignedRootsForProgram,
+  retainedValues,
   type FunctionEffects,
 } from './function-effects.ts'
+import {callExpressionsForPosition} from './call-arguments.ts'
 import {
   classifyPlatformGlobalCall,
   classifyPlatformMethodCall,
@@ -2589,12 +2591,11 @@ function applyFunctionCallEffects(
 ) {
   const certain = effects.mutations.certain
   const uncertain = effects.mutations.uncertain
-  const retained = effects.retained
+  const retained = retainedValues(effects)
   if (certain.thisValue || uncertain.thisValue || retained.thisValue) {
     if (receiverExpression != null) havocExpressionAliases(frame, receiverExpression)
     else havocRoots(frame, ['this'])
   }
-  const hasSpread = argumentExpressions.some(argument => ts.isSpreadElement(argument))
   for (const index of new Set([
     ...certain.paramIndexes,
     ...certain.containedParamIndexes,
@@ -2603,15 +2604,12 @@ function applyFunctionCallEffects(
     ...retained.paramIndexes,
     ...retained.containedParamIndexes,
   ])) {
-    const rest = parameters[index]?.dotDotDotToken != null
-    const targets = hasSpread
-      ? argumentExpressions
-      : rest
-        ? argumentExpressions.slice(index)
-        : argumentExpressions[index] == null ? [] : [argumentExpressions[index]]
-    for (const argument of targets) {
-      havocExpressionAliases(frame, ts.isSpreadElement(argument) ? argument.expression : argument)
-    }
+    const mapped = callExpressionsForPosition(
+      argumentExpressions,
+      index,
+      parameters[index]?.dotDotDotToken != null,
+    )
+    for (const argument of mapped.expressions) havocExpressionAliases(frame, argument)
   }
   const certainOuterRoots = mutationRootsForProgram(certain, frame.program)
   const uncertainOuterRoots = mutationRootsForProgram(uncertain, frame.program)
@@ -2644,11 +2642,14 @@ function applyCallbackEffects(
     ts.isArrowFunction(callback.node) ? null : thisExpression,
     frame,
   )
+  const retained = retainedValues(effects)
   const mutated = new Set([
     ...effects.mutations.certain.paramIndexes,
     ...effects.mutations.certain.containedParamIndexes,
     ...effects.mutations.uncertain.paramIndexes,
     ...effects.mutations.uncertain.containedParamIndexes,
+    ...retained.paramIndexes,
+    ...retained.containedParamIndexes,
   ])
   if (receiverExpression != null) {
     if (elementParamIndexes.some(index => mutated.has(index))) havocArrayElementAliases(frame, receiverExpression)
@@ -2665,11 +2666,14 @@ function sourceAfterCallback(
   effects: FunctionEffects,
   callback: PlatformCallbackEffect,
 ): ArrayValue {
+  const retained = retainedValues(effects)
   const mutated = new Set([
     ...effects.mutations.certain.paramIndexes,
     ...effects.mutations.certain.containedParamIndexes,
     ...effects.mutations.uncertain.paramIndexes,
     ...effects.mutations.uncertain.containedParamIndexes,
+    ...retained.paramIndexes,
+    ...retained.containedParamIndexes,
   ])
   const mutatesSource = callback.parameterSources.some((sources, index) =>
     mutated.has(index) && sources.some(source => source.kind === 'receiver'))
@@ -2962,7 +2966,16 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       if (receiver == null) return noteUnsupported(frame, 'Platform method receiver was not evaluated', expression)
       const argumentValues = operands.arguments.map(argument => argument.value)
       const handled = evaluateKnownPlatformMethod(expression, target, owner, effect, receiver, argumentValues, frame)
-      if (handled != null) return handled
+      if (handled != null) {
+        if (target.name.text === 'sort') {
+          for (const callback of effect.callbacks) {
+            applyPlatformCallbackRuntimeEffect(expression, target, callback, frame)
+          }
+        } else if (target.name.text === 'splice') {
+          applyPlatformMethodRuntimeEffects(expression, target, effect, receiver, argumentValues, frame)
+        }
+        return handled
+      }
       applyPlatformMethodRuntimeEffects(expression, target, effect, receiver, argumentValues, frame)
       const typed = fallback()
       if (typed?.kind === 'object' || typed?.kind === 'array') {
@@ -3012,7 +3025,9 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
     && isDefaultLibrarySymbol(target.expression, frame.program)
     && isDefaultLibraryMemberAccess(target, frame.program)
   if (resolved.kind === 'platform-global' && !writtenPlatformGlobal) {
-    const argumentValues = evaluatedArguments(expression.arguments, frame)
+    const operands = evaluateInvocationOperands(expression.arguments, frame)
+    if (operands.kind === 'invalid') return noteUnsupported(frame, operands.reason, expression)
+    const argumentValues = operands.arguments.map(argument => argument.value)
     if (resolved.base === 'Math') {
       return evaluateMathCall(resolved.name, argumentValues, frame, expression)
     }
@@ -3024,8 +3039,9 @@ function evaluateCallExpression(expression: ts.CallExpression, frame: Interprete
       return noteUnsupported(frame, reason, expression)
     }
     for (const index of classification.effect.mutatesArgumentIndexes) {
-      const argument = expression.arguments[index]
-      if (argument != null && !ts.isSpreadElement(argument)) havocExpressionAliases(frame, argument)
+      for (const argument of callExpressionsForPosition(expression.arguments, index).expressions) {
+        havocExpressionAliases(frame, argument)
+      }
     }
     const typed = fallback()
     if (classification.effect.result.kind === 'fresh' && typed?.kind === 'array') {
@@ -3204,7 +3220,7 @@ function evaluateKnownPlatformMethod(
 ): Value | null {
   if (owner !== 'Array' && owner !== 'ReadonlyArray') return null
   if (target.name.text === 'push') return evaluatePushCall(expression, target, receiver, argumentValues, frame)
-  const mutation = evaluateArrayMutationCall(expression, target, effect, receiver, frame)
+  const mutation = evaluateArrayMutationCall(expression, target, receiver, frame)
   if (mutation != null) return mutation
   if (target.name.text === 'at') return evaluateArrayAtCall(expression, receiver, argumentValues, frame)
   if (target.name.text === 'map') return evaluateMapCall(expression, target, effect, receiver, frame)
@@ -3253,17 +3269,15 @@ function applyPlatformMethodRuntimeEffects(
     havocReferenceAliases(frame, valueReferenceIds(receiver))
   }
   for (const index of effect.mutatesArgumentIndexes) {
-    const argument = expression.arguments[index]
-    if (argument == null) continue
-    const source = ts.isSpreadElement(argument) ? argument.expression : argument
-    havocExpressionAliases(frame, source)
+    const mapped = callExpressionsForPosition(expression.arguments, index)
+    for (const source of mapped.expressions) havocExpressionAliases(frame, source)
     havocReferenceAliases(frame, valueReferenceIds(argumentValues[index]))
   }
-  for (const index of retainedArgumentIndexes(effect, expression.arguments.length)) {
-    const argument = expression.arguments[index]
-    if (argument == null) continue
-    const source = ts.isSpreadElement(argument) ? argument.expression : argument
-    havocExpressionAliases(frame, source)
+  for (const position of effect.retainedParameters) {
+    const mapped = callExpressionsForPosition(expression.arguments, position.index, position.rest)
+    for (const source of mapped.expressions) havocExpressionAliases(frame, source)
+  }
+  for (const index of retainedArgumentIndexes(effect, argumentValues.length)) {
     havocReferenceAliases(frame, valueReferenceIds(argumentValues[index]))
   }
   for (const callback of effect.callbacks) {
@@ -3277,10 +3291,9 @@ function applyPlatformCallbackRuntimeEffect(
   callback: PlatformCallbackEffect,
   frame: InterpreterFrame,
 ): FunctionEffects | null {
-  const argument = expression.arguments[callback.argumentIndex]
-  const callbackExpression = argument == null
-    ? null
-    : unwrapExpression(ts.isSpreadElement(argument) ? argument.expression : argument)
+  const mappedCallback = callExpressionsForPosition(expression.arguments, callback.argumentIndex)
+  const argument = mappedCallback.expressions[0]
+  const callbackExpression = argument == null ? null : unwrapExpression(argument)
   const callbackRef = callbackExpression == null ? null : passedFunctionReference(callbackExpression, frame)
   const elementParams: number[] = []
   const receiverParams: number[] = []
@@ -3290,8 +3303,8 @@ function applyPlatformCallbackRuntimeEffect(
   })
   const thisArgument = callback.thisArgumentIndex == null
     ? null
-    : expression.arguments[callback.thisArgumentIndex] ?? null
-  const thisExpression = thisArgument != null && !ts.isSpreadElement(thisArgument) ? thisArgument : null
+    : callExpressionsForPosition(expression.arguments, callback.thisArgumentIndex).expressions[0] ?? null
+  const thisExpression = thisArgument
   if (callbackRef != null) {
     return applyCallbackEffects(
       callbackRef,
@@ -3315,7 +3328,6 @@ function applyPlatformCallbackRuntimeEffect(
 function evaluateArrayMutationCall(
   expression: ts.CallExpression,
   target: ts.PropertyAccessExpression,
-  effect: PlatformCallEffect,
   receiver: Value,
   frame: InterpreterFrame,
 ): Value | null {
@@ -3323,10 +3335,6 @@ function evaluateArrayMutationCall(
   if (receiver.kind !== 'array') {
     havocExpressionAliases(frame, target.expression)
     return noteUnsupported(frame, `${target.name.text} expected an array: ${target.expression.getText(frame.program.sourceFile)}`, target.expression)
-  }
-  if (target.name.text === 'sort') {
-    const comparator = effect.callbacks[0]
-    if (comparator != null) applyPlatformCallbackRuntimeEffect(expression, target, comparator, frame)
   }
   noteEffect(frame, `${target.name.text} mutates ${target.expression.getText(frame.program.sourceFile)}: ${expression.getText()}`, expression)
   if (target.name.text === 'splice') {

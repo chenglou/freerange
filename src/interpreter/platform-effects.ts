@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {Program} from '../check-types.ts'
 import type {DefaultLibraryOwner} from './call-targets.ts'
+import {callExpressionsForPosition} from './call-arguments.ts'
 import {unwrapExpression} from './source-syntax.ts'
 
 export type PlatformValueSource =
@@ -24,7 +25,7 @@ export type PlatformCallbackEffect = {
 export type PlatformCallEffect = {
   mutatesReceiver: boolean
   mutatesArgumentIndexes: readonly number[]
-  retainsArgumentIndexes: 'none' | 'all' | 'from-2' | readonly number[]
+  retainedParameters: readonly {index: number; rest: boolean}[]
   callbacks: readonly PlatformCallbackEffect[]
   observesEnvironment: boolean
   result: PlatformResultEffect
@@ -32,7 +33,7 @@ export type PlatformCallEffect = {
 
 export type PlatformCallClassification =
   | {kind: 'supported'; effect: PlatformCallEffect}
-  | {kind: 'unsupported'; reason: string}
+  | {kind: 'unsupported'; reason: string; throws?: true}
   | {kind: 'unrecognized'}
 
 const noResult: PlatformResultEffect = {kind: 'none'}
@@ -42,7 +43,7 @@ const receiverResult: PlatformResultEffect = {kind: 'receiver'}
 const noPlatformEffects: PlatformCallEffect = {
   mutatesReceiver: false,
   mutatesArgumentIndexes: [],
-  retainsArgumentIndexes: 'none',
+  retainedParameters: [],
   callbacks: [],
   observesEnvironment: false,
   result: noResult,
@@ -75,8 +76,8 @@ const arrayMethodEffects = new Map<string, PlatformCallEffect>([
   ['includes', noPlatformEffects],
   ['keys', {...noPlatformEffects, result: freshResult}],
   ['toReversed', {...noPlatformEffects, result: freshResult}],
-  ['toSpliced', {...noPlatformEffects, retainsArgumentIndexes: 'from-2', result: freshResult}],
-  ['with', {...noPlatformEffects, retainsArgumentIndexes: [1], result: freshResult}],
+  ['toSpliced', {...noPlatformEffects, retainedParameters: [{index: 2, rest: true}], result: freshResult}],
+  ['with', {...noPlatformEffects, retainedParameters: [{index: 1, rest: false}], result: freshResult}],
   ['map', {
     ...noPlatformEffects,
     callbacks: [arrayCallback(0, 1)],
@@ -110,23 +111,23 @@ const arrayMethodEffects = new Map<string, PlatformCallEffect>([
   ['push', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: 'all',
+    retainedParameters: [{index: 0, rest: true}],
   }],
   ['unshift', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: 'all',
+    retainedParameters: [{index: 0, rest: true}],
   }],
   ['splice', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: 'from-2',
+    retainedParameters: [{index: 2, rest: true}],
     result: freshResult,
   }],
   ['fill', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: [0],
+    retainedParameters: [{index: 0, rest: false}],
     result: receiverResult,
   }],
   ['pop', {
@@ -162,7 +163,7 @@ const mapMethodEffects = new Map<string, PlatformCallEffect>([
   ['set', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: [0, 1],
+    retainedParameters: [{index: 0, rest: false}, {index: 1, rest: false}],
     result: receiverResult,
   }],
   ['delete', {...noPlatformEffects, mutatesReceiver: true}],
@@ -178,7 +179,7 @@ const setMethodEffects = new Map<string, PlatformCallEffect>([
   ['add', {
     ...noPlatformEffects,
     mutatesReceiver: true,
-    retainsArgumentIndexes: [0],
+    retainedParameters: [{index: 0, rest: false}],
     result: receiverResult,
   }],
   ['delete', {...noPlatformEffects, mutatesReceiver: true}],
@@ -224,18 +225,21 @@ const globalEffects = new Map<string, Map<string, PlatformCallEffect>>([
   ])],
   ['Array', new Map([
     ['isArray', noPlatformEffects],
-    ['of', {...noPlatformEffects, retainsArgumentIndexes: 'all', result: freshResult}],
+    ['of', {...noPlatformEffects, retainedParameters: [{index: 0, rest: true}], result: freshResult}],
   ])],
 ])
 
-const unsupportedGlobalCallReasons = new Map<string, string>([
-  ['Array.from', 'Array.from is unsupported because it can call an iterator or mapper supplied by user code'],
-  ['JSON.parse', 'JSON.parse is unsupported because its result values are not modeled and its optional callback can run user code'],
-  ['JSON.stringify', 'JSON.stringify is unsupported because it can run getters or toJSON methods'],
-  ['Object.entries', 'Object.entries is unsupported because reading property values can run getters'],
-  ['Object.values', 'Object.values is unsupported because reading property values can run getters'],
-  ['Object.freeze', 'Object.freeze is unsupported because freezing some built-in objects can throw'],
-  ['Date.parse', "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats"],
+const unsupportedGlobalCalls = new Map<string, {reason: string; throws?: true}>([
+  ['Array.from', {reason: 'Array.from is unsupported because it can call an iterator or mapper supplied by user code'}],
+  ['JSON.parse', {
+    reason: 'JSON.parse is unsupported because its result values are not modeled and its optional callback can run user code',
+    throws: true,
+  }],
+  ['JSON.stringify', {reason: 'JSON.stringify is unsupported because it can run getters or toJSON methods'}],
+  ['Object.entries', {reason: 'Object.entries is unsupported because reading property values can run getters'}],
+  ['Object.values', {reason: 'Object.values is unsupported because reading property values can run getters'}],
+  ['Object.freeze', {reason: 'Object.freeze is unsupported because freezing some built-in objects can throw'}],
+  ['Date.parse', {reason: "Date.parse is unsupported because some date strings depend on the machine's time zone or accepted formats"}],
 ])
 
 export function classifyPlatformMethodCall(
@@ -284,8 +288,10 @@ export function classifyPlatformMethodCall(
 }
 
 function usesDefaultSort(arguments_: readonly ts.Expression[], program: Program) {
-  const comparator = arguments_[0]
-  if (comparator == null || ts.isSpreadElement(comparator)) return true
+  const mapped = callExpressionsForPosition(arguments_, 0)
+  if (mapped.inexactSpread) return true
+  const comparator = mapped.expressions[0]
+  if (comparator == null) return true
   const current = unwrapExpression(comparator)
   if (ts.isVoidExpression(current)) return true
   const checker = program.typeChecker
@@ -322,22 +328,20 @@ export function classifyPlatformGlobalCall(
   const members = globalEffects.get(base)
   const effect = members?.get(member) ?? members?.get('*')
   if (effect != null) return {kind: 'supported', effect}
-  const reason = unsupportedGlobalCallReasons.get(`${base}.${member}`)
-  return reason == null ? {kind: 'unrecognized'} : {kind: 'unsupported', reason}
+  const unsupported = unsupportedGlobalCalls.get(`${base}.${member}`)
+  return unsupported == null ? {kind: 'unrecognized'} : {kind: 'unsupported', ...unsupported}
 }
 
 export function retainedArgumentIndexes(
   effect: PlatformCallEffect,
   argumentCount: number,
 ): number[] {
-  if (effect.retainsArgumentIndexes === 'none') return []
-  if (effect.retainsArgumentIndexes === 'all') {
-    return Array.from({length: argumentCount}, (_, index) => index)
+  const indexes: number[] = []
+  for (const position of effect.retainedParameters) {
+    const end = position.rest ? argumentCount : Math.min(argumentCount, position.index + 1)
+    for (let index = position.index; index < end; index++) indexes.push(index)
   }
-  if (effect.retainsArgumentIndexes === 'from-2') {
-    return Array.from({length: Math.max(0, argumentCount - 2)}, (_, index) => index + 2)
-  }
-  return [...effect.retainsArgumentIndexes]
+  return indexes
 }
 
 function switchMethodEffects(owner: DefaultLibraryOwner): Map<string, PlatformCallEffect> | null {

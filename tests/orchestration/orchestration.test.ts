@@ -17,7 +17,7 @@ const testFiles = [
   {path: 'tests/numeric/rational.test.ts', registrations: 7},
   {path: 'tests/numeric/solver.test.ts', registrations: 5},
   {path: 'tests/parser/parser.test.ts', registrations: 17},
-  {path: 'tests/purity/purity.test.ts', registrations: 12},
+  {path: 'tests/purity/purity.test.ts', registrations: 14},
   {path: 'tests/ranges/ranges.test.ts', registrations: 9},
   {path: 'tests/reports/reports.test.ts', registrations: 4},
   {path: 'tests/source-checking/source-checking.test.ts', registrations: 29},

@@ -11,6 +11,7 @@ import {
   resolveCallTarget,
 } from './call-targets.ts'
 import {functionPurity} from './function-effects.ts'
+import {callExpressionsForPosition} from './call-arguments.ts'
 import {classifyPlatformGlobalCall, classifyPlatformMethodCall, type PlatformCallEffect} from './platform-effects.ts'
 import {isAssignmentOperator, unwrapExpression} from './source-syntax.ts'
 
@@ -125,8 +126,10 @@ function platformEffectIsRepeatable(
 ): boolean {
   if (effect.mutatesReceiver || effect.mutatesArgumentIndexes.length > 0 || effect.observesEnvironment) return false
   for (const callback of effect.callbacks) {
-    const argument = call.arguments[callback.argumentIndex]
-    if (argument == null || ts.isSpreadElement(argument)) return false
+    const mapped = callExpressionsForPosition(call.arguments, callback.argumentIndex)
+    if (mapped.inexactSpread) return false
+    const argument = mapped.expressions[0]
+    if (argument == null) return false
     const implementation = callTargetImplementation(resolveCallTarget(unwrapExpression(argument), program))
     if (implementation == null || functionPurity(implementation).kind !== 'pure') return false
   }
