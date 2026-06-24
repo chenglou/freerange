@@ -9,15 +9,11 @@ bun check
 
 - `bun run test` — run every Bun test and local snapshot in four worker processes
 - `bun run test:update` — update every local test snapshot
-- `bun fr.ts --help` — print the CLI command shapes
-- `bun fr.ts check path/to/file.ts` — check one or more files and print only failures plus a pass/fail/requires/unknown summary
-- `bun fr.ts check` — read the nearest `tsconfig.json`, like `tsc`, and check those source files
-- `bun fr.ts check --annotations-only path/to/file.ts` — quieter local pass that proves written annotations without the broad callsite scan
-- `bun fr.ts check --audit path/to/file.ts` — advisory cleanup for redundant `Math.min`, `Math.max`, exact min/max ternary choices, always-known `if` conditions, and redundant `??` fallbacks; composes with `--annotations-only`
-- `bun fr.ts infer path/to/file.ts` — show inferred ranges and relationships, explicit checks, redundancy, and unsupported code for every function in a file; add `--function name` for one function, or `--annotations-only` for the quieter annotated-function view
 - `bun run bench -- --runs 3 path/to/file.ts` — dev-only timing for explicit files, including cold load, warmed load/verify medians, and a load-phase split
 - `bun knip` — flag unused files, exports, types, dependencies, and binaries (config in [knip.config.ts](./knip.config.ts))
 - `bun run check` — local gate: typecheck, lint, knip, and every Bun test and snapshot
+
+See [Commands](./DOCUMENTATION.md#commands) for CLI usage.
 
 ## Current Sources Of Truth
 
