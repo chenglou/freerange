@@ -1,10 +1,6 @@
 {
   "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "ignorePatterns": [
-    "**/*.js",
-    "import-pattern-declared-package/**",
-    "import-pattern-declared-package-no-map/**"
-  ],
+  "ignorePatterns": ["**/*.js"],
   "plugins": ["typescript", "oxc", "promise"],
   "options": {
     "denyWarnings": true

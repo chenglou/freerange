@@ -1,5 +1,0 @@
-{
-  "name": "@fit-fixtures/import-pattern-declared-package-no-map",
-  "type": "module",
-  "types": "./.tsbuild/index.d.ts"
-}

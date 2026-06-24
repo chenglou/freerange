@@ -6,12 +6,6 @@
     "moduleResolution": "bundler",
     "lib": ["ESNext", "DOM", "DOM.Iterable"],
     "types": [],
-    "jsx": "preserve",
-    "paths": {
-      "@fit-fixtures/import-pattern-declared-package": ["./tests/imports/fixtures/declared-package"],
-      "@fit-fixtures/import-pattern-declared-package-no-map": ["./tests/imports/fixtures/declared-package-no-map"],
-      "@fit-fixtures/*": ["./tests/imports/*"]
-    },
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
@@ -28,5 +22,5 @@
     "noPropertyAccessFromIndexSignature": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "*.ts", "*.tsx", "tests/**/*.ts", "tests/**/*.tsx"]
+  "include": ["*.ts", "src/**/*.ts", "tests/**/*.ts"]
 }
