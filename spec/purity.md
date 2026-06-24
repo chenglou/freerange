@@ -62,6 +62,7 @@
 - Calls with spread arguments when Freerange cannot determine which spread element the called function mutates or stores
 - Implicitly converting an object to a string, e.g. `` `${user}` `` or `"User: " + user`, because the conversion may call user code. This includes `sort` and `toSorted` without a comparator
 - Built-ins whose relevant behavior Freerange does not model, including `Array.from` and `JSON.stringify`
+- Tagged templates
 
 ## Notes
 
