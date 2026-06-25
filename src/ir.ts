@@ -17,6 +17,7 @@ type InstructionBase = {
 }
 
 export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal'
+export type ArithmeticOperator = 'add' | 'subtract' | 'multiply' | 'divide'
 
 type ObjectPropertyIR = {
   name: string
@@ -27,7 +28,7 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
   | (InstructionBase & {
       kind: 'binary'
-      operator: 'add' | 'subtract' | 'multiply' | 'divide'
+      operator: ArithmeticOperator
       left: ValueID
       right: ValueID
     })

@@ -1,9 +1,11 @@
 import type {ProgramAnalysis} from './analyze.ts'
 import type {AbstractHeap, AbstractNumber, AbstractValue} from './domain.ts'
+import {formatPrecondition} from './preconditions.ts'
 
 type FunctionReport = {
   name: string
   assumptions: string[]
+  requires: string[]
   ensures: string[]
 }
 
@@ -17,6 +19,7 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
     file: analysis.file,
     functions: analysis.functions.map(fn => {
       const assumptions: string[] = []
+      const parameterNames = fn.parameters.map(parameter => parameter.name)
       for (const parameter of fn.parameters) {
         switch (parameter.type.kind) {
           case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
@@ -31,6 +34,7 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
       return {
         name: fn.name,
         assumptions,
+        requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames)),
         ensures: returnSummaries('return', fn.returnValue, fn.heap),
       }
     }),
@@ -42,6 +46,7 @@ export function formatReport(report: AnalysisReport): string {
   for (const fn of report.functions) {
     lines.push('', fn.name)
     for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
+    for (const precondition of fn.requires) lines.push(`  requires: ${precondition}`)
     for (const guarantee of fn.ensures) lines.push(`  ensures: ${guarantee}`)
   }
   return lines.join('\n')

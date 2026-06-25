@@ -4,6 +4,7 @@ import {
   divideNumbers,
   finiteInputNumber,
   floorNumber,
+  includesZero,
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
@@ -25,6 +26,14 @@ import type {
   ValueID,
   ValueTypeIR,
 } from './ir.ts'
+import {
+  addPrecondition,
+  createExpressionContext,
+  numericExpression,
+  type ExpressionContext,
+  type InferredPrecondition,
+  type NumericExpression,
+} from './preconditions.ts'
 
 type State = {
   values: Array<AbstractValue | undefined>
@@ -34,6 +43,7 @@ type State = {
 type FunctionAnalysis = {
   name: string
   parameters: Array<{name: string; type: ValueTypeIR}>
+  preconditions: InferredPrecondition[]
   returnValue: AbstractValue
   heap: AbstractHeap
 }
@@ -46,6 +56,7 @@ export type ProgramAnalysis = {
 type FunctionEvaluation = {
   returnValue: AbstractValue
   heap: AbstractHeap
+  preconditions: InferredPrecondition[]
 }
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
@@ -53,26 +64,33 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
     const arguments_: AbstractValue[] = []
+    const argumentExpressions: Array<NumericExpression | null> = []
     const heap: AbstractHeap = []
     const parameters: FunctionAnalysis['parameters'] = []
     for (const parameter of fn.parameters) {
       parameters.push({name: parameter.name, type: parameter.type})
       switch (parameter.type.kind) {
-        case 'number': arguments_.push(finiteInputNumber()); break
+        case 'number': {
+          arguments_.push(finiteInputNumber())
+          argumentExpressions.push({kind: 'parameter', index: parameters.length - 1})
+          break
+        }
         case 'object': {
           const allocation = heap.length
           heap.push({
             properties: parameter.type.properties.map(name => ({name, value: finiteInputNumber()})),
           })
           arguments_.push({kind: 'reference', allocation})
+          argumentExpressions.push(null)
           break
         }
       }
     }
-    const evaluation = evaluateFunction(functionID, arguments_, heap, program.functions, [])
+    const evaluation = evaluateFunction(functionID, arguments_, argumentExpressions, heap, program.functions, [])
     functions.push({
       name: fn.name,
       parameters,
+      preconditions: evaluation.preconditions,
       returnValue: evaluation.returnValue,
       heap: evaluation.heap,
     })
@@ -83,6 +101,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
 function evaluateFunction(
   functionID: FunctionID,
   arguments_: AbstractValue[],
+  argumentExpressions: Array<NumericExpression | null>,
   heap: AbstractHeap,
   functions: FunctionIR[],
   callStack: FunctionID[],
@@ -94,11 +113,13 @@ function evaluateFunction(
     throw new Error(`Recursive function analysis is unsupported: ${names.join(' → ')}`)
   }
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
+  if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: State = {values: [], heap: cloneHeap(heap)}
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.values[fn.parameters[index]!.value] = arguments_[index]!
   }
   const comparisons: Array<Extract<InstructionIR, {kind: 'compare'}> | undefined> = []
+  const expressionContext = createExpressionContext(fn, argumentExpressions)
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
       if (instruction.kind === 'compare') comparisons[instruction.result] = instruction
@@ -108,6 +129,7 @@ function evaluateFunction(
   incoming[fn.entry] = initial
   const queue: BlockID[] = [fn.entry]
   let queueIndex = 0
+  const preconditions: InferredPrecondition[] = []
   let returnValue: AbstractValue | null = null
   let returnHeap: AbstractHeap | null = null
   while (queueIndex < queue.length) {
@@ -120,6 +142,8 @@ function evaluateFunction(
       state.values[instruction.result] = evaluateInstruction(
         instruction,
         state,
+        expressionContext,
+        preconditions,
         functions,
         [...callStack, functionID],
       )
@@ -149,12 +173,14 @@ function evaluateFunction(
     }
   }
   if (returnValue == null || returnHeap == null) throw new Error(`Function ${fn.name} has no reachable return`)
-  return {returnValue, heap: returnHeap}
+  return {returnValue, heap: returnHeap, preconditions}
 }
 
 function evaluateInstruction(
   instruction: InstructionIR,
   state: State,
+  expressionContext: ExpressionContext,
+  preconditions: InferredPrecondition[],
   functions: FunctionIR[],
   callStack: FunctionID[],
 ): AbstractValue {
@@ -199,13 +225,27 @@ function evaluateInstruction(
       const callee = functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
-      const evaluation = evaluateFunction(instruction.function, arguments_, state.heap, functions, callStack)
+      const argumentExpressions = instruction.arguments.map(value => numericExpression(value, expressionContext))
+      const evaluation = evaluateFunction(
+        instruction.function,
+        arguments_,
+        argumentExpressions,
+        state.heap,
+        functions,
+        callStack,
+      )
       state.heap = evaluation.heap
+      for (const precondition of evaluation.preconditions) addPrecondition(preconditions, precondition)
       return evaluation.returnValue
     }
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
       const right = requiredNumber(state, instruction.right)
+      if (instruction.operator === 'divide' && includesZero(right)) {
+        const expression = numericExpression(instruction.right, expressionContext)
+        if (expression == null) throw new Error(`Cannot infer a nonzero precondition for IR value ${instruction.right}`)
+        addPrecondition(preconditions, {kind: 'nonzero', expression})
+      }
       return evaluateBinary(instruction.operator, left, right)
     }
   }

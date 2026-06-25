@@ -4,6 +4,7 @@ import {analyzeFile, analyzeSource, formatReport} from '../src/index.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
 const mutationFixture = new URL('./fixtures/object-mutation.ts', import.meta.url).pathname
+const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.url).pathname
 
 describe('analyzeFile', () => {
   test('reports inferred properties of a returned object', () => {
@@ -25,6 +26,7 @@ describe('analyzeFile', () => {
     const source = readFileSync(fixture, 'utf8').replace('/ columnCount', '/ containerWidth')
     const report = analyzeSource('unsafe-grid-metrics.ts', source)
     const fn = report.functions.find(candidate => candidate.name === 'calculateGridMetrics')
+    expect(fn?.requires).toEqual(['containerWidth is nonzero'])
     expect(fn?.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from -Infinity through Infinity')
   })
 
@@ -53,5 +55,21 @@ describe('analyzeFile', () => {
 
     const unrelated = report.functions.find(candidate => candidate.name === 'unrelatedDestinationStaysUnchanged')
     expect(unrelated?.ensures).toEqual(['return is a finite integer number from 0 through 0'])
+  })
+
+  test('infers, propagates, and discharges nonzero preconditions', () => {
+    const report = analyzeFile(preconditionsFixture)
+    expect(report.functions.find(fn => fn.name === 'divideWidth')?.requires)
+      .toEqual(['columnCount is nonzero'])
+    expect(report.functions.find(fn => fn.name === 'divideThroughCaller')?.requires)
+      .toEqual(['columnCount is nonzero'])
+    expect(report.functions.find(fn => fn.name === 'divideThroughTwoCallers')?.requires)
+      .toEqual(['columnCount is nonzero'])
+    expect(report.functions.find(fn => fn.name === 'divideAfterGap')?.requires)
+      .toEqual(['(width - gap) is nonzero'])
+
+    const provedCall = report.functions.find(fn => fn.name === 'divideByClampedColumnCount')
+    expect(provedCall?.requires).toEqual([])
+    expect(provedCall?.ensures).toEqual(['return is a finite number'])
   })
 })

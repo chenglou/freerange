@@ -124,7 +124,7 @@ export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
   )
 }
 
-function includesZero(value: AbstractNumber): boolean {
+export function includesZero(value: AbstractNumber): boolean {
   return value.lower <= 0 && value.upper >= 0
 }
 
