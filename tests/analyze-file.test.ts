@@ -15,20 +15,17 @@ describe('analyzeFile', () => {
       'return.columnCount is a finite integer number from 1 through 7',
       'return.maximumBoxWidth is a finite number at least 1',
     ])
-    expect(fn?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
     expect(formatReport(report)).toContain('ensures: return.maximumBoxWidth is a finite number at least 1')
 
     const consumer = report.functions.find(candidate => candidate.name === 'maximumBoxWidthForContainer')
     expect(consumer?.ensures).toEqual(['return is a finite number at least 1'])
-    expect(consumer?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
   })
 
-  test('keeps an unsafe divisor unresolved through the same lowering path', () => {
+  test('degrades the inferred result when a divisor may be zero', () => {
     const source = readFileSync(fixture, 'utf8').replace('/ columnCount', '/ containerWidth')
     const report = analyzeSource('unsafe-grid-metrics.ts', source)
-    const obligations = report.functions.find(candidate => candidate.name === 'calculateGridMetrics')?.obligations ?? []
-    expect(obligations.some(obligation => obligation.kind === 'nonzero-divisor' && obligation.status === 'unknown')).toBe(true)
-    expect(obligations.some(obligation => obligation.kind === 'finite-result' && obligation.status === 'unknown')).toBe(true)
+    const fn = report.functions.find(candidate => candidate.name === 'calculateGridMetrics')
+    expect(fn?.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from -Infinity through Infinity')
   })
 
   test('rejects TypeScript type errors before lowering', () => {
@@ -53,7 +50,6 @@ describe('analyzeFile', () => {
     const fn = report.functions.find(candidate => candidate.name === 'destinationAfterUpdate')
     expect(fn?.assumptions).toEqual(['containerWidth is finite and not NaN'])
     expect(fn?.ensures).toEqual(['return is a finite number at least 1'])
-    expect(fn?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
 
     const unrelated = report.functions.find(candidate => candidate.name === 'unrelatedDestinationStaysUnchanged')
     expect(unrelated?.ensures).toEqual(['return is a finite integer number from 0 through 0'])

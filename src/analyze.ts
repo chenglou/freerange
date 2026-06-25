@@ -4,7 +4,6 @@ import {
   divideNumbers,
   finiteInputNumber,
   floorNumber,
-  includesZero,
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
@@ -23,7 +22,6 @@ import type {
   FunctionIR,
   InstructionIR,
   ProgramIR,
-  SourceSpan,
   ValueID,
   ValueTypeIR,
 } from './ir.ts'
@@ -33,19 +31,11 @@ type State = {
   heap: AbstractHeap
 }
 
-export type Obligation = {
-  kind: 'nonzero-divisor' | 'finite-result' | 'finite-argument'
-  status: 'proved' | 'unknown'
-  span: SourceSpan
-  description: string
-}
-
-export type FunctionAnalysis = {
+type FunctionAnalysis = {
   name: string
   parameters: Array<{name: string; type: ValueTypeIR}>
   returnValue: AbstractValue
   heap: AbstractHeap
-  obligations: Obligation[]
 }
 
 export type ProgramAnalysis = {
@@ -56,7 +46,6 @@ export type ProgramAnalysis = {
 type FunctionEvaluation = {
   returnValue: AbstractValue
   heap: AbstractHeap
-  obligations: Obligation[]
 }
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
@@ -86,7 +75,6 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       parameters,
       returnValue: evaluation.returnValue,
       heap: evaluation.heap,
-      obligations: evaluation.obligations,
     })
   }
   return {file: program.file, functions}
@@ -120,7 +108,6 @@ function evaluateFunction(
   incoming[fn.entry] = initial
   const queue: BlockID[] = [fn.entry]
   let queueIndex = 0
-  const obligationMap = new Map<string, Obligation>()
   let returnValue: AbstractValue | null = null
   let returnHeap: AbstractHeap | null = null
   while (queueIndex < queue.length) {
@@ -133,7 +120,6 @@ function evaluateFunction(
       state.values[instruction.result] = evaluateInstruction(
         instruction,
         state,
-        obligationMap,
         functions,
         [...callStack, functionID],
       )
@@ -163,13 +149,12 @@ function evaluateFunction(
     }
   }
   if (returnValue == null || returnHeap == null) throw new Error(`Function ${fn.name} has no reachable return`)
-  return {returnValue, heap: returnHeap, obligations: [...obligationMap.values()]}
+  return {returnValue, heap: returnHeap}
 }
 
 function evaluateInstruction(
   instruction: InstructionIR,
   state: State,
-  obligations: Map<string, Obligation>,
   functions: FunctionIR[],
   callStack: FunctionID[],
 ): AbstractValue {
@@ -206,9 +191,7 @@ function evaluateInstruction(
       instruction.operator,
     )
     case 'floor': {
-      const result = floorNumber(requiredNumber(state, instruction.value))
-      recordFiniteObligation(result, instruction.span, obligations)
-      return result
+      return floorNumber(requiredNumber(state, instruction.value))
     }
     case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(state, value)))
@@ -216,37 +199,14 @@ function evaluateInstruction(
       const callee = functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
-      for (let index = 0; index < arguments_.length; index++) {
-        const argument = arguments_[index]!
-        if (argument.kind !== 'number') continue
-        recordObligation(obligations, {
-          kind: 'finite-argument',
-          status: argument.finite && !argument.mayBeNaN ? 'proved' : 'unknown',
-          span: instruction.span,
-          description: argument.finite && !argument.mayBeNaN
-            ? `Argument ${index + 1} to ${callee.name} is finite.`
-            : `Argument ${index + 1} to ${callee.name} may be NaN or infinite.`,
-        })
-      }
       const evaluation = evaluateFunction(instruction.function, arguments_, state.heap, functions, callStack)
       state.heap = evaluation.heap
-      for (const obligation of evaluation.obligations) recordObligation(obligations, obligation)
       return evaluation.returnValue
     }
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
       const right = requiredNumber(state, instruction.right)
-      if (instruction.operator === 'divide') {
-        recordObligation(obligations, {
-          kind: 'nonzero-divisor',
-          status: includesZero(right) ? 'unknown' : 'proved',
-          span: instruction.span,
-          description: includesZero(right) ? 'The divisor may be zero.' : 'The divisor is nonzero.',
-        })
-      }
-      const result = evaluateBinary(instruction.operator, left, right)
-      recordFiniteObligation(result, instruction.span, obligations)
-      return result
+      return evaluateBinary(instruction.operator, left, right)
     }
   }
 }
@@ -353,29 +313,9 @@ function strictUpper(value: number, integer: boolean): number {
 }
 
 function propagate(state: State, block: BlockID, incoming: Array<State | undefined>, queue: BlockID[]): void {
-  const previous = incoming[block]
-  if (previous == null) {
-    incoming[block] = state
-    queue.push(block)
-    return
-  }
-  const joined = joinStates(previous, state)
-  if (!sameState(previous, joined)) {
-    incoming[block] = joined
-    queue.push(block)
-  }
-}
-
-function joinStates(left: State, right: State): State {
-  const values: State['values'] = []
-  for (let id = 0; id < left.values.length; id++) {
-    const leftValue = left.values[id]
-    const rightValue = right.values[id]
-    if (leftValue == null) continue
-    if (rightValue == null || leftValue.kind !== rightValue.kind) continue
-    values[id] = joinValues(leftValue, rightValue)
-  }
-  return {values, heap: joinHeaps(left.heap, right.heap)}
+  if (incoming[block] != null) throw new Error(`Control-flow join at block ${block} is unsupported`)
+  incoming[block] = state
+  queue.push(block)
 }
 
 function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
@@ -427,38 +367,6 @@ function joinObjects(left: AbstractObject, right: AbstractObject): AbstractObjec
   return {properties}
 }
 
-function sameState(left: State, right: State): boolean {
-  const length = Math.max(left.values.length, right.values.length)
-  for (let id = 0; id < length; id++) {
-    const value = left.values[id]
-    const other = right.values[id]
-    if (value == null || other == null) {
-      if (value !== other) return false
-    } else if (!sameValue(value, other)) return false
-  }
-  return sameHeap(left.heap, right.heap)
-}
-
-function sameValue(left: AbstractValue, right: AbstractValue): boolean {
-  if (left.kind !== right.kind) return false
-  switch (left.kind) {
-    case 'number': {
-      const number = right as AbstractNumber
-      return left.lower === number.lower
-        && left.upper === number.upper
-        && left.integer === number.integer
-        && left.finite === number.finite
-        && left.mayBeNaN === number.mayBeNaN
-    }
-    case 'boolean': {
-      const boolean = right as AbstractBoolean
-      return left.canBeTrue === boolean.canBeTrue && left.canBeFalse === boolean.canBeFalse
-    }
-    case 'reference': return left.allocation === (right as AbstractReference).allocation
-    case 'void': return true
-  }
-}
-
 function cloneState(state: State): State {
   return {values: state.values.slice(), heap: cloneHeap(state.heap)}
 }
@@ -482,36 +390,8 @@ function joinHeaps(left: AbstractHeap, right: AbstractHeap): AbstractHeap {
   return heap
 }
 
-function sameHeap(left: AbstractHeap, right: AbstractHeap): boolean {
-  if (left.length !== right.length) return false
-  return left.every((object, index) => sameObject(object, right[index]!))
-}
-
-function sameObject(left: AbstractObject, right: AbstractObject): boolean {
-  return left.properties.length === right.properties.length
-    && left.properties.every((property, index) => {
-      const other = right.properties[index]!
-      return property.name === other.name && sameValue(property.value, other.value)
-    })
-}
-
 function cloneObject(object: AbstractObject): AbstractObject {
   return {properties: object.properties.map(property => ({...property}))}
-}
-
-function recordFiniteObligation(value: AbstractNumber, span: SourceSpan, obligations: Map<string, Obligation>): void {
-  recordObligation(obligations, {
-    kind: 'finite-result',
-    status: value.finite && !value.mayBeNaN ? 'proved' : 'unknown',
-    span,
-    description: value.finite && !value.mayBeNaN ? 'The result is finite.' : 'The result may be NaN or infinite.',
-  })
-}
-
-function recordObligation(obligations: Map<string, Obligation>, obligation: Obligation): void {
-  const key = `${obligation.kind}:${obligation.span.file}:${obligation.span.start}`
-  const previous = obligations.get(key)
-  obligations.set(key, previous?.status === 'unknown' ? previous : obligation)
 }
 
 function requiredNumber(state: State, id: ValueID): AbstractNumber {

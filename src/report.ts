@@ -1,11 +1,10 @@
 import type {ProgramAnalysis} from './analyze.ts'
 import type {AbstractHeap, AbstractNumber, AbstractValue} from './domain.ts'
 
-export type FunctionReport = {
+type FunctionReport = {
   name: string
   assumptions: string[]
   ensures: string[]
-  obligations: ProgramAnalysis['functions'][number]['obligations']
 }
 
 export type AnalysisReport = {
@@ -33,7 +32,6 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
         name: fn.name,
         assumptions,
         ensures: returnSummaries('return', fn.returnValue, fn.heap),
-        obligations: fn.obligations,
       }
     }),
   }
@@ -45,11 +43,6 @@ export function formatReport(report: AnalysisReport): string {
     lines.push('', fn.name)
     for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
     for (const guarantee of fn.ensures) lines.push(`  ensures: ${guarantee}`)
-    for (const obligation of fn.obligations) {
-      if (obligation.status !== 'proved') {
-        lines.push(`  unknown: ${obligation.description} (${obligation.span.line}:${obligation.span.column})`)
-      }
-    }
   }
   return lines.join('\n')
 }

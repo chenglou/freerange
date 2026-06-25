@@ -13,7 +13,7 @@ export type AbstractBoolean = {
   canBeFalse: boolean
 }
 
-export type AbstractObjectProperty = {
+type AbstractObjectProperty = {
   name: string
   value: AbstractValue
 }
@@ -27,7 +27,7 @@ export type AbstractReference = {
   allocation: number
 }
 
-export type AbstractVoid = {
+type AbstractVoid = {
   kind: 'void'
 }
 
@@ -124,7 +124,7 @@ export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
   )
 }
 
-export function includesZero(value: AbstractNumber): boolean {
+function includesZero(value: AbstractNumber): boolean {
   return value.lower <= 0 && value.upper >= 0
 }
 

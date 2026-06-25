@@ -2,19 +2,10 @@ export type ValueID = number
 export type BlockID = number
 export type FunctionID = number
 
-export type SourceSpan = {
-  file: string
-  start: number
-  end: number
-  line: number
-  column: number
-}
-
-export type ParameterIR = {
+type ParameterIR = {
   value: ValueID
   name: string
   type: ValueTypeIR
-  span: SourceSpan
 }
 
 export type ValueTypeIR =
@@ -23,12 +14,11 @@ export type ValueTypeIR =
 
 type InstructionBase = {
   result: ValueID
-  span: SourceSpan
 }
 
 export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal'
 
-export type ObjectPropertyIR = {
+type ObjectPropertyIR = {
   name: string
   value: ValueID
 }
@@ -50,8 +40,8 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'store'; object: ValueID; property: string; value: ValueID})
 
 export type TerminatorIR =
-  | {kind: 'return'; value: ValueID | null; span: SourceSpan}
-  | {kind: 'branch'; condition: ValueID; whenTrue: BlockID; whenFalse: BlockID; span: SourceSpan}
+  | {kind: 'return'; value: ValueID | null}
+  | {kind: 'branch'; condition: ValueID; whenTrue: BlockID; whenFalse: BlockID}
 
 export type BlockIR = {
   instructions: InstructionIR[]
@@ -63,7 +53,6 @@ export type FunctionIR = {
   parameters: ParameterIR[]
   entry: BlockID
   blocks: BlockIR[]
-  span: SourceSpan
 }
 
 export type ProgramIR = {

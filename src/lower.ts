@@ -7,7 +7,6 @@ import type {
   FunctionIR,
   InstructionIR,
   ProgramIR,
-  SourceSpan,
   TerminatorIR,
   ValueID,
   ValueTypeIR,
@@ -30,7 +29,7 @@ type FunctionContext = {
   parameters: FunctionIR['parameters']
 }
 
-type WithoutResult<T> = T extends unknown ? Omit<T, 'result' | 'span'> : never
+type WithoutResult<T> = T extends unknown ? Omit<T, 'result'> : never
 type InstructionInput = WithoutResult<InstructionIR>
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
@@ -78,7 +77,7 @@ function lowerFunction(
     }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
-    context.parameters.push({value, name: parameter.name.text, type, span: span(sourceFile, parameter)})
+    context.parameters.push({value, name: parameter.name.text, type})
   }
   for (const statement of declaration.body.statements) {
     if (context.currentBlock.terminator != null) throw unsupported(statement, 'Statements after return')
@@ -98,7 +97,7 @@ function lowerFunction(
   }
   if (context.currentBlock.terminator == null) {
     if (!functionReturnsVoid(declaration, checker)) throw unsupported(declaration, 'Function path without a return')
-    terminate(context.currentBlock, {kind: 'return', value: null, span: span(sourceFile, declaration.body)})
+    terminate(context.currentBlock, {kind: 'return', value: null})
   }
   const blocks: BlockIR[] = []
   for (const block of context.blocks) {
@@ -110,7 +109,6 @@ function lowerFunction(
     parameters: context.parameters,
     entry: 0,
     blocks,
-    span: span(sourceFile, declaration),
   }
 }
 
@@ -135,7 +133,6 @@ function lowerReturnExpression(expression: ts.Expression, context: FunctionConte
       condition,
       whenTrue,
       whenFalse,
-      span: span(context.sourceFile, current.condition),
     })
     context.currentBlock = context.blocks[whenTrue]!
     lowerReturnExpression(current.whenTrue, context)
@@ -144,18 +141,18 @@ function lowerReturnExpression(expression: ts.Expression, context: FunctionConte
     return
   }
   const value = lowerExpression(current, context)
-  terminate(context.currentBlock, {kind: 'return', value, span: span(context.sourceFile, current)})
+  terminate(context.currentBlock, {kind: 'return', value})
 }
 
 function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression)
   if (ts.isNumericLiteral(current)) {
-    return addInstruction(context, {kind: 'constant', value: Number(current.text)}, current)
+    return addInstruction(context, {kind: 'constant', value: Number(current.text)})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
-    const zero = addInstruction(context, {kind: 'constant', value: 0}, current)
+    const zero = addInstruction(context, {kind: 'constant', value: 0})
     const value = lowerExpression(current.operand, context)
-    return addInstruction(context, {kind: 'binary', operator: 'subtract', left: zero, right: value}, current)
+    return addInstruction(context, {kind: 'binary', operator: 'subtract', left: zero, right: value})
   }
   if (ts.isIdentifier(current)) {
     return requiredBinding(requiredSymbol(current, context.checker), current, context)
@@ -172,7 +169,7 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
       }
       throw unsupported(property, 'Object property')
     })
-    return addInstruction(context, {kind: 'object', properties}, current)
+    return addInstruction(context, {kind: 'object', properties})
   }
   if (
     ts.isBinaryExpression(current)
@@ -181,7 +178,7 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
   ) {
     const object = lowerExpression(current.left.expression, context)
     const value = lowerExpression(current.right, context)
-    return addInstruction(context, {kind: 'store', object, property: current.left.name.text, value}, current)
+    return addInstruction(context, {kind: 'store', object, property: current.left.name.text, value})
   }
   if (ts.isBinaryExpression(current)) {
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
@@ -194,8 +191,8 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     const left = lowerExpression(current.left, context)
     const right = lowerExpression(current.right, context)
     return arithmetic != null
-      ? addInstruction(context, {kind: 'binary', operator: arithmetic, left, right}, current)
-      : addInstruction(context, {kind: 'compare', operator: comparison!, left, right}, current)
+      ? addInstruction(context, {kind: 'binary', operator: arithmetic, left, right})
+      : addInstruction(context, {kind: 'compare', operator: comparison!, left, right})
   }
   if (ts.isCallExpression(current)) {
     if (ts.isIdentifier(current.expression)) {
@@ -203,7 +200,7 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
       const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (functionID == null) throw unsupported(current, `Function call ${current.expression.text}`)
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
-      return addInstruction(context, {kind: 'call', function: functionID, arguments: arguments_}, current)
+      return addInstruction(context, {kind: 'call', function: functionID, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
       const method = current.expression.name.text
@@ -211,12 +208,12 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
       if (standardMath && method === 'floor' && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker, 'Math.floor argument')
         const value = lowerExpression(current.arguments[0]!, context)
-        return addInstruction(context, {kind: 'floor', value}, current)
+        return addInstruction(context, {kind: 'floor', value})
       }
       if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
         for (const argument of current.arguments) requireNumberType(argument, context.checker, `Math.${method} argument`)
         const values = current.arguments.map(argument => lowerExpression(argument, context))
-        return addInstruction(context, {kind: method === 'min' ? 'minimum' : 'maximum', values}, current)
+        return addInstruction(context, {kind: method === 'min' ? 'minimum' : 'maximum', values})
       }
       throw unsupported(current, `Function call ${current.expression.getText(context.sourceFile)}`)
     }
@@ -227,7 +224,7 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
       throw unsupported(current.expression, `Property read from ${context.checker.typeToString(objectType)}`)
     }
     const object = lowerExpression(current.expression, context)
-    return addInstruction(context, {kind: 'property', object, property: current.name.text}, current)
+    return addInstruction(context, {kind: 'property', object, property: current.name.text})
   }
   throw unsupported(current, 'Expression')
 }
@@ -292,9 +289,9 @@ function propertyName(name: ts.PropertyName): string {
   throw unsupported(name, 'Computed object property name')
 }
 
-function addInstruction(context: FunctionContext, instruction: InstructionInput, source: ts.Node): ValueID {
+function addInstruction(context: FunctionContext, instruction: InstructionInput): ValueID {
   const result = context.nextValue++
-  context.currentBlock.instructions.push({...instruction, result, span: span(context.sourceFile, source)} as InstructionIR)
+  context.currentBlock.instructions.push({...instruction, result} as InstructionIR)
   return result
 }
 
@@ -343,19 +340,17 @@ function unwrap(expression: ts.Expression): ts.Expression {
   return current
 }
 
-function span(sourceFile: ts.SourceFile, node: ts.Node): SourceSpan {
+function sourceLocation(sourceFile: ts.SourceFile, node: ts.Node): {file: string; line: number; column: number} {
   const start = node.getStart(sourceFile)
   const position = sourceFile.getLineAndCharacterOfPosition(start)
   return {
     file: sourceFile.fileName,
-    start,
-    end: node.getEnd(),
     line: position.line + 1,
     column: position.character + 1,
   }
 }
 
 function unsupported(node: ts.Node, description: string): Error {
-  const location = span(node.getSourceFile(), node)
+  const location = sourceLocation(node.getSourceFile(), node)
   return new Error(`Unsupported ${description} at ${location.file}:${location.line}:${location.column}`)
 }
