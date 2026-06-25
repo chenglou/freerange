@@ -82,4 +82,47 @@ describe('analyzeFile', () => {
     `)
     expect(report.functions[0]?.ensures).toEqual(['return is a finite number at least 24'])
   })
+
+  test('merges reassigned locals after an if statement', () => {
+    const report = analyzeSource('if-assignment.ts', `
+      export function minimumWidth(width: number): number {
+        let result = 10
+        if (width > 10) result = width
+        return result
+      }
+
+      export function nonnegativeWidth(width: number): number {
+        if (width < 0) return 0
+        return width
+      }
+    `)
+    expect(report.functions.find(fn => fn.name === 'minimumWidth')?.ensures)
+      .toEqual(['return is a finite number at least 10'])
+    expect(report.functions.find(fn => fn.name === 'nonnegativeWidth')?.ensures)
+      .toEqual(['return is a finite number at least 0'])
+  })
+
+  test('converges on a numeric for loop without unrolling it', () => {
+    const report = analyzeSource('numeric-loop.ts', `
+      function increment(state: {value: number}): void {
+        state.value = state.value + 1
+      }
+
+      export function iterationsBeforeLimit(limit: number): number {
+        let iteration = 0
+        for (; iteration < limit; iteration += 1) {}
+        return iteration
+      }
+
+      export function updatesBeforeLimit(limit: number): number {
+        const state = {value: 0}
+        for (let iteration = 0; iteration < limit; iteration++) increment(state)
+        return state.value
+      }
+    `)
+    expect(report.functions.find(fn => fn.name === 'iterationsBeforeLimit')?.ensures)
+      .toEqual(['return is a finite integer number at least 0'])
+    expect(report.functions.find(fn => fn.name === 'updatesBeforeLimit')?.ensures)
+      .toEqual(['return is a finite integer number at least 0'])
+  })
 })

@@ -51,6 +51,7 @@ export type TerminatorIR =
   | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR}
 
 export type BlockIR = {
+  loopHeader: boolean
   parameters: ValueID[]
   instructions: InstructionIR[]
   terminator: TerminatorIR

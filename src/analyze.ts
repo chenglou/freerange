@@ -12,7 +12,6 @@ import {
   type AbstractBoolean,
   type AbstractHeap,
   type AbstractNumber,
-  type AbstractObject,
   type AbstractReference,
   type AbstractValue,
 } from './domain.ts'
@@ -35,11 +34,7 @@ import {
   type InferredPrecondition,
   type NumericExpression,
 } from './preconditions.ts'
-
-type State = {
-  values: Array<AbstractValue | undefined>
-  heap: AbstractHeap
-}
+import {cloneHeap, cloneState, joinHeaps, joinStates, joinValues, sameState, widenState, type State} from './state.ts'
 
 type FunctionAnalysis = {
   name: string
@@ -59,6 +54,8 @@ type FunctionEvaluation = {
   heap: AbstractHeap
   preconditions: InferredPrecondition[]
 }
+
+const maximumLoopHeaderUpdates = 16
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   const functions: FunctionAnalysis[] = []
@@ -127,6 +124,7 @@ function evaluateFunction(
     }
   }
   const incoming: Array<State | undefined> = []
+  const updateCounts: number[] = []
   incoming[fn.entry] = initial
   const queue: BlockID[] = [fn.entry]
   let queueIndex = 0
@@ -159,7 +157,7 @@ function evaluateFunction(
         break
       }
       case 'jump': {
-        propagate(state, block.terminator.target, fn, incoming, queue)
+        propagate(state, block.terminator.target, fn, incoming, updateCounts, queue)
         break
       }
       case 'branch': {
@@ -167,11 +165,11 @@ function evaluateFunction(
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
-          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, incoming, queue)
+          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, incoming, updateCounts, queue)
         }
         if (condition.canBeFalse) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
-          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, incoming, queue)
+          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, incoming, updateCounts, queue)
         }
         break
       }
@@ -362,6 +360,7 @@ function propagate(
   edge: EdgeIR,
   fn: FunctionIR,
   incoming: Array<State | undefined>,
+  updateCounts: number[],
   queue: BlockID[],
 ): void {
   const target = fn.blocks[edge.block]
@@ -379,141 +378,17 @@ function propagate(
     queue.push(edge.block)
     return
   }
-  const joined = joinStates(previous, candidate)
+  const updateCount = updateCounts[edge.block] ?? 0
+  const joined = target.loopHeader && updateCount >= 1
+    ? widenState(previous, candidate)
+    : joinStates(previous, candidate)
   if (!sameState(previous, joined)) {
+    if (target.loopHeader && updateCount >= maximumLoopHeaderUpdates) {
+      throw new Error(`Loop header ${edge.block} in ${fn.name} did not converge after ${maximumLoopHeaderUpdates} updates`)
+    }
     incoming[edge.block] = joined
+    updateCounts[edge.block] = updateCount + 1
     queue.push(edge.block)
-  }
-}
-
-function joinStates(left: State, right: State): State {
-  const values: State['values'] = []
-  const length = Math.max(left.values.length, right.values.length)
-  for (let index = 0; index < length; index++) {
-    const leftValue = left.values[index]
-    const rightValue = right.values[index]
-    if (leftValue == null) values[index] = rightValue
-    else if (rightValue == null) values[index] = leftValue
-    else values[index] = joinValues(leftValue, rightValue)
-  }
-  return {values, heap: joinHeaps(left.heap, right.heap)}
-}
-
-function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
-  if (left.kind !== right.kind) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
-  switch (left.kind) {
-    case 'number': return joinNumbers(left, right as AbstractNumber)
-    case 'boolean': return joinBooleans(left, right as AbstractBoolean)
-    case 'reference': return joinReferences(left, right as AbstractReference)
-    case 'void': return left
-  }
-}
-
-function joinReferences(left: AbstractReference, right: AbstractReference): AbstractReference {
-  if (left.allocation !== right.allocation) throw new Error('Joining different object allocations is unsupported')
-  return left
-}
-
-function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  return {
-    kind: 'number',
-    lower: Math.min(left.lower, right.lower),
-    upper: Math.max(left.upper, right.upper),
-    integer: left.integer && right.integer,
-    finite: left.finite && right.finite,
-    mayBeNaN: left.mayBeNaN || right.mayBeNaN,
-  }
-}
-
-function joinBooleans(left: AbstractBoolean, right: AbstractBoolean): AbstractBoolean {
-  return {
-    kind: 'boolean',
-    canBeTrue: left.canBeTrue || right.canBeTrue,
-    canBeFalse: left.canBeFalse || right.canBeFalse,
-  }
-}
-
-function joinObjects(left: AbstractObject, right: AbstractObject): AbstractObject {
-  if (left.properties.length !== right.properties.length) throw new Error('Cannot join objects with different properties')
-  const properties: AbstractObject['properties'] = []
-  for (let index = 0; index < left.properties.length; index++) {
-    const property = left.properties[index]!
-    const other = right.properties[index]!
-    if (property.name !== other.name) throw new Error('Cannot join objects with different properties')
-    properties.push({
-      name: property.name,
-      value: joinValues(property.value, other.value),
-    })
-  }
-  return {properties}
-}
-
-function cloneState(state: State): State {
-  return {values: state.values.slice(), heap: cloneHeap(state.heap)}
-}
-
-function cloneHeap(heap: AbstractHeap): AbstractHeap {
-  return heap.map(object => ({
-    properties: object.properties.map(property => ({...property})),
-  }))
-}
-
-function joinHeaps(left: AbstractHeap, right: AbstractHeap): AbstractHeap {
-  const heap: AbstractHeap = []
-  const length = Math.max(left.length, right.length)
-  for (let allocation = 0; allocation < length; allocation++) {
-    const leftObject = left[allocation]
-    const rightObject = right[allocation]
-    if (leftObject == null) heap.push(cloneObject(rightObject!))
-    else if (rightObject == null) heap.push(cloneObject(leftObject))
-    else heap.push(joinObjects(leftObject, rightObject))
-  }
-  return heap
-}
-
-function cloneObject(object: AbstractObject): AbstractObject {
-  return {properties: object.properties.map(property => ({...property}))}
-}
-
-function sameState(left: State, right: State): boolean {
-  if (left.values.length !== right.values.length || left.heap.length !== right.heap.length) return false
-  for (let index = 0; index < left.values.length; index++) {
-    const leftValue = left.values[index]
-    const rightValue = right.values[index]
-    if (leftValue == null || rightValue == null) {
-      if (leftValue !== rightValue) return false
-    } else if (!sameValue(leftValue, rightValue)) return false
-  }
-  for (let allocation = 0; allocation < left.heap.length; allocation++) {
-    const leftObject = left.heap[allocation]!
-    const rightObject = right.heap[allocation]!
-    if (leftObject.properties.length !== rightObject.properties.length) return false
-    for (let index = 0; index < leftObject.properties.length; index++) {
-      const leftProperty = leftObject.properties[index]!
-      const rightProperty = rightObject.properties[index]!
-      if (leftProperty.name !== rightProperty.name || !sameValue(leftProperty.value, rightProperty.value)) return false
-    }
-  }
-  return true
-}
-
-function sameValue(left: AbstractValue, right: AbstractValue): boolean {
-  if (left.kind !== right.kind) return false
-  switch (left.kind) {
-    case 'number': {
-      const other = right as AbstractNumber
-      return left.lower === other.lower
-        && left.upper === other.upper
-        && left.integer === other.integer
-        && left.finite === other.finite
-        && left.mayBeNaN === other.mayBeNaN
-    }
-    case 'boolean': {
-      const other = right as AbstractBoolean
-      return left.canBeTrue === other.canBeTrue && left.canBeFalse === other.canBeFalse
-    }
-    case 'reference': return left.allocation === (right as AbstractReference).allocation
-    case 'void': return true
   }
 }
 
