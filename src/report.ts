@@ -1,5 +1,5 @@
 import type {ProgramAnalysis} from './analyze.ts'
-import type {AbstractNumber} from './domain.ts'
+import type {AbstractNumber, AbstractValue} from './domain.ts'
 
 export type FunctionReport = {
   name: string
@@ -19,7 +19,7 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
     functions: analysis.functions.map(fn => ({
       name: fn.name,
       assumptions: fn.parameters.map(parameter => `${parameter} is finite and not NaN`),
-      ensures: [returnSummary(fn.returnValue)],
+      ensures: returnSummaries('return', fn.returnValue),
       obligations: fn.obligations,
     })),
   }
@@ -38,10 +38,26 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
-function returnSummary(value: AbstractNumber): string {
+function returnSummaries(path: string, value: AbstractValue): string[] {
+  switch (value.kind) {
+    case 'number': return [numberSummary(path, value)]
+    case 'boolean': return [`${path} is boolean`]
+    case 'object': {
+      const summaries: string[] = []
+      for (const property of value.properties) summaries.push(...returnSummaries(`${path}.${property.name}`, property.value))
+      return summaries
+    }
+  }
+}
+
+function numberSummary(path: string, value: AbstractNumber): string {
   const kind = value.integer ? 'integer ' : ''
   const domain = value.finite && !value.mayBeNaN ? 'finite ' : 'possibly non-finite '
-  return `return is a ${domain}${kind}number from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}`
+  const subject = `${path} is a ${domain}${kind}number`
+  if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return subject
+  if (value.upper === Number.MAX_VALUE) return `${subject} at least ${formatNumber(value.lower)}`
+  if (value.lower === -Number.MAX_VALUE) return `${subject} at most ${formatNumber(value.upper)}`
+  return `${subject} from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}`
 }
 
 function formatNumber(value: number): string {

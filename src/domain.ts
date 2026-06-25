@@ -7,6 +7,24 @@ export type AbstractNumber = {
   mayBeNaN: boolean
 }
 
+export type AbstractBoolean = {
+  kind: 'boolean'
+  canBeTrue: boolean
+  canBeFalse: boolean
+}
+
+export type AbstractObjectProperty = {
+  name: string
+  value: AbstractValue
+}
+
+export type AbstractObject = {
+  kind: 'object'
+  properties: AbstractObjectProperty[]
+}
+
+export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractObject
+
 export function finiteInputNumber(): AbstractNumber {
   return {
     kind: 'number',

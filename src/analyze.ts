@@ -9,7 +9,10 @@ import {
   minimumNumbers,
   multiplyNumbers,
   subtractNumbers,
+  type AbstractBoolean,
   type AbstractNumber,
+  type AbstractObject,
+  type AbstractValue,
 } from './domain.ts'
 import type {
   BlockID,
@@ -21,13 +24,6 @@ import type {
   ValueID,
 } from './ir.ts'
 
-type AbstractBoolean = {
-  kind: 'boolean'
-  canBeTrue: boolean
-  canBeFalse: boolean
-}
-
-type AbstractValue = AbstractNumber | AbstractBoolean
 type State = Map<ValueID, AbstractValue>
 
 export type Obligation = {
@@ -40,7 +36,7 @@ export type Obligation = {
 export type FunctionAnalysis = {
   name: string
   parameters: string[]
-  returnValue: AbstractNumber
+  returnValue: AbstractValue
   obligations: Obligation[]
 }
 
@@ -50,7 +46,7 @@ export type ProgramAnalysis = {
 }
 
 type FunctionEvaluation = {
-  returnValue: AbstractNumber
+  returnValue: AbstractValue
   obligations: Obligation[]
 }
 
@@ -97,7 +93,7 @@ function evaluateFunction(
   const incoming = new Map<BlockID, State>([[fn.entry, initial]])
   const queue: BlockID[] = [fn.entry]
   const obligationMap = new Map<string, Obligation>()
-  let returnValue: AbstractNumber | null = null
+  let returnValue: AbstractValue | null = null
   while (queue.length > 0) {
     const blockID = queue.shift()!
     const block = blocks.get(blockID)
@@ -115,8 +111,8 @@ function evaluateFunction(
     }
     switch (block.terminator.kind) {
       case 'return': {
-        const value = requiredNumber(state, block.terminator.value)
-        returnValue = returnValue == null ? value : joinNumbers(returnValue, value)
+        const value = requiredValue(state, block.terminator.value)
+        returnValue = returnValue == null ? value : joinValues(returnValue, value)
         break
       }
       case 'branch': {
@@ -147,6 +143,13 @@ function evaluateInstruction(
 ): AbstractValue {
   switch (instruction.kind) {
     case 'constant': return constantNumber(instruction.value)
+    case 'object': return {
+      kind: 'object',
+      properties: instruction.properties.map(property => ({
+        name: property.name,
+        value: requiredValue(values, property.value),
+      })),
+    }
     case 'compare': return compareNumbers(
       requiredNumber(values, instruction.left),
       requiredNumber(values, instruction.right),
@@ -316,11 +319,18 @@ function joinStates(left: State, right: State): State {
   for (const [id, leftValue] of left) {
     const rightValue = right.get(id)
     if (rightValue == null || leftValue.kind !== rightValue.kind) continue
-    result.set(id, leftValue.kind === 'number'
-      ? joinNumbers(leftValue, rightValue as AbstractNumber)
-      : joinBooleans(leftValue, rightValue as AbstractBoolean))
+    result.set(id, joinValues(leftValue, rightValue))
   }
   return result
+}
+
+function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
+  if (left.kind !== right.kind) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
+  switch (left.kind) {
+    case 'number': return joinNumbers(left, right as AbstractNumber)
+    case 'boolean': return joinBooleans(left, right as AbstractBoolean)
+    case 'object': return joinObjects(left, right as AbstractObject)
+  }
 }
 
 function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -342,13 +352,53 @@ function joinBooleans(left: AbstractBoolean, right: AbstractBoolean): AbstractBo
   }
 }
 
+function joinObjects(left: AbstractObject, right: AbstractObject): AbstractObject {
+  if (
+    left.properties.length !== right.properties.length
+    || left.properties.some((property, index) => property.name !== right.properties[index]!.name)
+  ) throw new Error('Cannot join objects with different properties')
+  return {
+    kind: 'object',
+    properties: left.properties.map((property, index) => ({
+      name: property.name,
+      value: joinValues(property.value, right.properties[index]!.value),
+    })),
+  }
+}
+
 function sameState(left: State, right: State): boolean {
   if (left.size !== right.size) return false
   for (const [id, value] of left) {
     const other = right.get(id)
-    if (other == null || JSON.stringify(value) !== JSON.stringify(other)) return false
+    if (other == null || !sameValue(value, other)) return false
   }
   return true
+}
+
+function sameValue(left: AbstractValue, right: AbstractValue): boolean {
+  if (left.kind !== right.kind) return false
+  switch (left.kind) {
+    case 'number': {
+      const number = right as AbstractNumber
+      return left.lower === number.lower
+        && left.upper === number.upper
+        && left.integer === number.integer
+        && left.finite === number.finite
+        && left.mayBeNaN === number.mayBeNaN
+    }
+    case 'boolean': {
+      const boolean = right as AbstractBoolean
+      return left.canBeTrue === boolean.canBeTrue && left.canBeFalse === boolean.canBeFalse
+    }
+    case 'object': {
+      const object = right as AbstractObject
+      return left.properties.length === object.properties.length
+        && left.properties.every((property, index) => {
+          const other = object.properties[index]!
+          return property.name === other.name && sameValue(property.value, other.value)
+        })
+    }
+  }
 }
 
 function recordFiniteObligation(value: AbstractNumber, span: SourceSpan, obligations: Map<string, Obligation>): void {
@@ -367,13 +417,19 @@ function recordObligation(obligations: Map<string, Obligation>, obligation: Obli
 }
 
 function requiredNumber(values: State, id: ValueID): AbstractNumber {
-  const value = values.get(id)
-  if (value?.kind !== 'number') throw new Error(`IR value ${id} is not a number`)
+  const value = requiredValue(values, id)
+  if (value.kind !== 'number') throw new Error(`IR value ${id} is not a number`)
   return value
 }
 
 function requiredBoolean(values: State, id: ValueID): AbstractBoolean {
+  const value = requiredValue(values, id)
+  if (value.kind !== 'boolean') throw new Error(`IR value ${id} is not a boolean`)
+  return value
+}
+
+function requiredValue(values: State, id: ValueID): AbstractValue {
   const value = values.get(id)
-  if (value?.kind !== 'boolean') throw new Error(`IR value ${id} is not a boolean`)
+  if (value == null) throw new Error(`Missing IR value ${id}`)
   return value
 }

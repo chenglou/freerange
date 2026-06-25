@@ -12,4 +12,4 @@ TypeScript source → control-flow graph with SSA values → forward numeric ana
 
 Every function number parameter is assumed to be finite and not `NaN`. Explicit infinity support will be added separately rather than weakening the default.
 
-The current lowering supports numeric constants, parameters, local constants, arithmetic, comparisons, conditional returns, local function calls, `Math.floor`, `Math.min`, and `Math.max`. Loops, objects, mutation, modules, and inferred preconditions are intentionally unsupported in this stage.
+The current lowering supports numeric constants, parameters, local constants, arithmetic, comparisons, conditional returns, local function calls, `Math.floor`, `Math.min`, `Math.max`, and simple object literals. Returned objects are summarized property by property. Property reads, mutation, general heap behavior, loops, modules, and inferred preconditions are intentionally unsupported in this stage.

@@ -129,6 +129,18 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     if (value == null) throw unsupported(current, `Unknown identifier ${current.text}`)
     return value
   }
+  if (ts.isObjectLiteralExpression(current)) {
+    const properties = current.properties.map(property => {
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return {name: property.name.text, value: lowerExpression(property.name, context)}
+      }
+      if (ts.isPropertyAssignment(property)) {
+        return {name: propertyName(property.name), value: lowerExpression(property.initializer, context)}
+      }
+      throw unsupported(property, 'Object property')
+    })
+    return addInstruction(context, {kind: 'object', properties}, current)
+  }
   if (ts.isBinaryExpression(current)) {
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
@@ -159,6 +171,11 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     }
   }
   throw unsupported(current, 'Expression')
+}
+
+function propertyName(name: ts.PropertyName): string {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
+  throw unsupported(name, 'Computed object property name')
 }
 
 function addInstruction(context: FunctionContext, instruction: InstructionInput, source: ts.Node): ValueID {

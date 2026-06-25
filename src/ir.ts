@@ -22,6 +22,11 @@ type InstructionBase = {
 
 export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal'
 
+export type ObjectPropertyIR = {
+  name: string
+  value: ValueID
+}
+
 export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
   | (InstructionBase & {
@@ -34,6 +39,7 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'floor'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; functionName: string; arguments: ValueID[]})
+  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
 
 export type TerminatorIR =
   | {kind: 'return'; value: ValueID; span: SourceSpan}
