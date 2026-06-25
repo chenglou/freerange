@@ -31,8 +31,10 @@ export function formatReport(report: AnalysisReport): string {
     lines.push('', fn.name)
     for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
     for (const guarantee of fn.ensures) lines.push(`  ensures: ${guarantee}`)
-    for (const obligation of fn.obligations.filter(item => item.status !== 'proved')) {
-      lines.push(`  unknown: ${obligation.description} (${obligation.span.line}:${obligation.span.column})`)
+    for (const obligation of fn.obligations) {
+      if (obligation.status !== 'proved') {
+        lines.push(`  unknown: ${obligation.description} (${obligation.span.line}:${obligation.span.column})`)
+      }
     }
   }
   return lines.join('\n')

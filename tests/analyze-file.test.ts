@@ -25,4 +25,21 @@ describe('analyzeFile', () => {
     expect(obligations.some(obligation => obligation.kind === 'nonzero-divisor' && obligation.status === 'unknown')).toBe(true)
     expect(obligations.some(obligation => obligation.kind === 'finite-result' && obligation.status === 'unknown')).toBe(true)
   })
+
+  test('rejects TypeScript type errors before lowering', () => {
+    expect(() => analyzeSource('invalid.ts', `
+      export function invalidWidth(containerWidth: string): number {
+        return containerWidth
+      }
+    `)).toThrow('TypeScript: Type \'string\' is not assignable to type \'number\'.')
+  })
+
+  test('does not confuse a shadowed Math object with the standard library', () => {
+    expect(() => analyzeSource('shadowed-math.ts', `
+      const Math = {max: (left: number, _right: number): number => left}
+      export function chooseWidth(containerWidth: number): number {
+        return Math.max(1, containerWidth)
+      }
+    `)).toThrow('Unsupported Function call Math.max')
+  })
 })

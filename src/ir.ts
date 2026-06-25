@@ -1,5 +1,6 @@
 export type ValueID = number
 export type BlockID = number
+export type FunctionID = number
 
 export type SourceSpan = {
   file: string
@@ -38,7 +39,7 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'compare'; operator: ComparisonOperator; left: ValueID; right: ValueID})
   | (InstructionBase & {kind: 'floor'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
-  | (InstructionBase & {kind: 'call'; functionName: string; arguments: ValueID[]})
+  | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
 
 export type TerminatorIR =
@@ -46,7 +47,6 @@ export type TerminatorIR =
   | {kind: 'branch'; condition: ValueID; whenTrue: BlockID; whenFalse: BlockID; span: SourceSpan}
 
 export type BlockIR = {
-  id: BlockID
   instructions: InstructionIR[]
   terminator: TerminatorIR
 }

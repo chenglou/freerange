@@ -3,6 +3,7 @@ import type {
   BlockID,
   BlockIR,
   ComparisonOperator,
+  FunctionID,
   FunctionIR,
   InstructionIR,
   ProgramIR,
@@ -10,42 +11,58 @@ import type {
   TerminatorIR,
   ValueID,
 } from './ir.ts'
+import type {CheckedSource} from './typescript.ts'
 
 type MutableBlock = {
-  id: BlockID
   instructions: InstructionIR[]
   terminator: TerminatorIR | null
 }
 
 type FunctionContext = {
   sourceFile: ts.SourceFile
+  checker: ts.TypeChecker
+  functionsBySymbol: Map<ts.Symbol, FunctionID>
   nextValue: number
-  nextBlock: number
   currentBlock: MutableBlock
   blocks: MutableBlock[]
-  bindings: Map<string, ValueID>
+  bindings: Map<ts.Symbol, ValueID>
   parameters: FunctionIR['parameters']
 }
 
 type WithoutResult<T> = T extends unknown ? Omit<T, 'result' | 'span'> : never
 type InstructionInput = WithoutResult<InstructionIR>
 
-export function lowerSource(file: string, source: string): ProgramIR {
-  const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
-  const functions: FunctionIR[] = []
+export function lowerSource(checked: CheckedSource): ProgramIR {
+  const {sourceFile, checker} = checked
+  const declarations: ts.FunctionDeclaration[] = []
   for (const statement of sourceFile.statements) {
-    if (ts.isFunctionDeclaration(statement) && statement.name != null) functions.push(lowerFunction(statement, sourceFile))
+    if (ts.isFunctionDeclaration(statement) && statement.name != null) declarations.push(statement)
   }
-  return {file, functions}
+  const functionsBySymbol = new Map<ts.Symbol, FunctionID>()
+  for (let index = 0; index < declarations.length; index++) {
+    const declaration = declarations[index]!
+    functionsBySymbol.set(requiredSymbol(declaration.name!, checker), index)
+  }
+  const functions: FunctionIR[] = []
+  for (const declaration of declarations) {
+    functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol))
+  }
+  return {file: sourceFile.fileName, functions}
 }
 
-function lowerFunction(declaration: ts.FunctionDeclaration, sourceFile: ts.SourceFile): FunctionIR {
+function lowerFunction(
+  declaration: ts.FunctionDeclaration,
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  functionsBySymbol: Map<ts.Symbol, FunctionID>,
+): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, 'Function declarations need bodies')
-  const entry: MutableBlock = {id: 0, instructions: [], terminator: null}
+  const entry: MutableBlock = {instructions: [], terminator: null}
   const context: FunctionContext = {
     sourceFile,
+    checker,
+    functionsBySymbol,
     nextValue: 0,
-    nextBlock: 1,
     currentBlock: entry,
     blocks: [entry],
     bindings: new Map(),
@@ -53,8 +70,9 @@ function lowerFunction(declaration: ts.FunctionDeclaration, sourceFile: ts.Sourc
   }
   for (const parameter of declaration.parameters) {
     if (!ts.isIdentifier(parameter.name)) throw unsupported(parameter.name, 'Destructured parameters')
+    requireNumberType(parameter, checker, 'Function parameter')
     const value = context.nextValue++
-    context.bindings.set(parameter.name.text, value)
+    context.bindings.set(requiredSymbol(parameter.name, checker), value)
     context.parameters.push({value, name: parameter.name.text, span: span(sourceFile, parameter)})
   }
   for (const statement of declaration.body.statements) {
@@ -69,14 +87,16 @@ function lowerFunction(declaration: ts.FunctionDeclaration, sourceFile: ts.Sourc
     }
     throw unsupported(statement, 'Statement')
   }
+  const blocks: BlockIR[] = []
   for (const block of context.blocks) {
-    if (block.terminator == null) throw unsupported(declaration, `Function path without a return in block ${block.id}`)
+    if (block.terminator == null) throw unsupported(declaration, 'Function path without a return')
+    blocks.push({instructions: block.instructions, terminator: block.terminator})
   }
   return {
     name: declaration.name!.text,
     parameters: context.parameters,
-    entry: entry.id,
-    blocks: context.blocks as BlockIR[],
+    entry: 0,
+    blocks,
     span: span(sourceFile, declaration),
   }
 }
@@ -87,7 +107,7 @@ function lowerVariableStatement(statement: ts.VariableStatement, context: Functi
       throw unsupported(declaration, 'Variables without identifier names and initializers')
     }
     const value = lowerExpression(declaration.initializer, context)
-    context.bindings.set(declaration.name.text, value)
+    context.bindings.set(requiredSymbol(declaration.name, context.checker), value)
   }
 }
 
@@ -100,13 +120,13 @@ function lowerReturnExpression(expression: ts.Expression, context: FunctionConte
     terminate(context.currentBlock, {
       kind: 'branch',
       condition,
-      whenTrue: whenTrue.id,
-      whenFalse: whenFalse.id,
+      whenTrue,
+      whenFalse,
       span: span(context.sourceFile, current.condition),
     })
-    context.currentBlock = whenTrue
+    context.currentBlock = context.blocks[whenTrue]!
     lowerReturnExpression(current.whenTrue, context)
-    context.currentBlock = whenFalse
+    context.currentBlock = context.blocks[whenFalse]!
     lowerReturnExpression(current.whenFalse, context)
     return
   }
@@ -125,14 +145,14 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     return addInstruction(context, {kind: 'binary', operator: 'subtract', left: zero, right: value}, current)
   }
   if (ts.isIdentifier(current)) {
-    const value = context.bindings.get(current.text)
-    if (value == null) throw unsupported(current, `Unknown identifier ${current.text}`)
-    return value
+    return requiredBinding(requiredSymbol(current, context.checker), current, context)
   }
   if (ts.isObjectLiteralExpression(current)) {
     const properties = current.properties.map(property => {
       if (ts.isShorthandPropertyAssignment(property)) {
-        return {name: property.name.text, value: lowerExpression(property.name, context)}
+        const symbol = context.checker.getShorthandAssignmentValueSymbol(property)
+        if (symbol == null) throw unsupported(property, 'Shorthand property without a value symbol')
+        return {name: property.name.text, value: requiredBinding(symbol, property.name, context)}
       }
       if (ts.isPropertyAssignment(property)) {
         return {name: propertyName(property.name), value: lowerExpression(property.initializer, context)}
@@ -147,6 +167,8 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     if (arithmetic == null && comparison == null) {
       throw unsupported(current, `Binary operator ${current.operatorToken.getText(context.sourceFile)}`)
     }
+    requireNumberType(current.left, context.checker, 'Left operand')
+    requireNumberType(current.right, context.checker, 'Right operand')
     const left = lowerExpression(current.left, context)
     const right = lowerExpression(current.right, context)
     return arithmetic != null
@@ -155,22 +177,59 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
   }
   if (ts.isCallExpression(current)) {
     if (ts.isIdentifier(current.expression)) {
+      const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
+      const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
+      if (functionID == null) throw unsupported(current, `Function call ${current.expression.text}`)
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
-      return addInstruction(context, {kind: 'call', functionName: current.expression.text, arguments: arguments_}, current)
+      return addInstruction(context, {kind: 'call', function: functionID, arguments: arguments_}, current)
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
-      const target = current.expression.getText(context.sourceFile)
-      if (target === 'Math.floor' && current.arguments.length === 1) {
+      const method = current.expression.name.text
+      const standardMath = isStandardMathObject(current.expression.expression, context.checker)
+      if (standardMath && method === 'floor' && current.arguments.length === 1) {
+        requireNumberType(current.arguments[0]!, context.checker, 'Math.floor argument')
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, {kind: 'floor', value}, current)
       }
-      if ((target === 'Math.min' || target === 'Math.max') && current.arguments.length > 0) {
+      if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
+        for (const argument of current.arguments) requireNumberType(argument, context.checker, `Math.${method} argument`)
         const values = current.arguments.map(argument => lowerExpression(argument, context))
-        return addInstruction(context, {kind: target === 'Math.min' ? 'minimum' : 'maximum', values}, current)
+        return addInstruction(context, {kind: method === 'min' ? 'minimum' : 'maximum', values}, current)
       }
+      throw unsupported(current, `Function call ${current.expression.getText(context.sourceFile)}`)
     }
   }
   throw unsupported(current, 'Expression')
+}
+
+function requireNumberType(node: ts.Node, checker: ts.TypeChecker, description: string): void {
+  const type = checker.getTypeAtLocation(node)
+  if ((type.flags & ts.TypeFlags.NumberLike) === 0) throw unsupported(node, `${description} with type ${checker.typeToString(type)}`)
+}
+
+function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | null {
+  if (symbol == null) return null
+  return (symbol.flags & ts.SymbolFlags.Alias) === 0 ? symbol : checker.getAliasedSymbol(symbol)
+}
+
+function requiredSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol {
+  const symbol = checker.getSymbolAtLocation(node)
+  if (symbol == null) throw unsupported(node, 'Node without a TypeScript symbol')
+  return symbol
+}
+
+function requiredBinding(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
+  const value = context.bindings.get(symbol)
+  if (value == null) throw unsupported(node, `Unknown identifier ${node.text}`)
+  return value
+}
+
+function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
+  const symbol = checker.getSymbolAtLocation(expression)
+  const declarations = symbol?.declarations
+  if (declarations == null || declarations.length === 0) return false
+  return declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)
 }
 
 function propertyName(name: ts.PropertyName): string {
@@ -184,14 +243,14 @@ function addInstruction(context: FunctionContext, instruction: InstructionInput,
   return result
 }
 
-function createBlock(context: FunctionContext): MutableBlock {
-  const block: MutableBlock = {id: context.nextBlock++, instructions: [], terminator: null}
+function createBlock(context: FunctionContext): BlockID {
+  const block: MutableBlock = {instructions: [], terminator: null}
   context.blocks.push(block)
-  return block
+  return context.blocks.length - 1
 }
 
 function terminate(block: MutableBlock, terminator: TerminatorIR): void {
-  if (block.terminator != null) throw new Error(`IR block ${block.id} already has a terminator`)
+  if (block.terminator != null) throw new Error('IR block already has a terminator')
   block.terminator = terminator
 }
 
