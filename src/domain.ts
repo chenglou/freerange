@@ -19,11 +19,21 @@ export type AbstractObjectProperty = {
 }
 
 export type AbstractObject = {
-  kind: 'object'
   properties: AbstractObjectProperty[]
 }
 
-export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractObject
+export type AbstractReference = {
+  kind: 'reference'
+  allocation: number
+}
+
+export type AbstractVoid = {
+  kind: 'void'
+}
+
+export type AbstractHeap = AbstractObject[]
+
+export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractReference | AbstractVoid
 
 export function finiteInputNumber(): AbstractNumber {
   return {

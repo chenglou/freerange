@@ -10,6 +10,7 @@ import type {
   SourceSpan,
   TerminatorIR,
   ValueID,
+  ValueTypeIR,
 } from './ir.ts'
 import type {CheckedSource} from './typescript.ts'
 
@@ -68,12 +69,16 @@ function lowerFunction(
     bindings: new Map(),
     parameters: [],
   }
+  let objectParameterCount = 0
   for (const parameter of declaration.parameters) {
     if (!ts.isIdentifier(parameter.name)) throw unsupported(parameter.name, 'Destructured parameters')
-    requireNumberType(parameter, checker, 'Function parameter')
+    const type = lowerParameterType(parameter, checker)
+    if (type.kind === 'object' && ++objectParameterCount > 1) {
+      throw unsupported(parameter, 'More than one object parameter')
+    }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
-    context.parameters.push({value, name: parameter.name.text, span: span(sourceFile, parameter)})
+    context.parameters.push({value, name: parameter.name.text, type, span: span(sourceFile, parameter)})
   }
   for (const statement of declaration.body.statements) {
     if (context.currentBlock.terminator != null) throw unsupported(statement, 'Statements after return')
@@ -85,7 +90,15 @@ function lowerFunction(
       lowerReturnExpression(statement.expression, context)
       continue
     }
+    if (ts.isExpressionStatement(statement)) {
+      lowerExpression(statement.expression, context)
+      continue
+    }
     throw unsupported(statement, 'Statement')
+  }
+  if (context.currentBlock.terminator == null) {
+    if (!functionReturnsVoid(declaration, checker)) throw unsupported(declaration, 'Function path without a return')
+    terminate(context.currentBlock, {kind: 'return', value: null, span: span(sourceFile, declaration.body)})
   }
   const blocks: BlockIR[] = []
   for (const block of context.blocks) {
@@ -161,6 +174,15 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     })
     return addInstruction(context, {kind: 'object', properties}, current)
   }
+  if (
+    ts.isBinaryExpression(current)
+    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && ts.isPropertyAccessExpression(current.left)
+  ) {
+    const object = lowerExpression(current.left.expression, context)
+    const value = lowerExpression(current.right, context)
+    return addInstruction(context, {kind: 'store', object, property: current.left.name.text, value}, current)
+  }
   if (ts.isBinaryExpression(current)) {
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
@@ -208,6 +230,31 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     return addInstruction(context, {kind: 'property', object, property: current.name.text}, current)
   }
   throw unsupported(current, 'Expression')
+}
+
+function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): ValueTypeIR {
+  const type = checker.getTypeAtLocation(parameter)
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return {kind: 'number'}
+  if ((type.flags & ts.TypeFlags.Object) === 0) {
+    throw unsupported(parameter, `Function parameter with type ${checker.typeToString(type)}`)
+  }
+  const properties: string[] = []
+  for (const property of checker.getPropertiesOfType(type)) {
+    const propertyType = checker.getTypeOfSymbolAtLocation(property, parameter)
+    if ((property.flags & ts.SymbolFlags.Optional) !== 0 || (propertyType.flags & ts.TypeFlags.NumberLike) === 0) {
+      throw unsupported(parameter, `Object parameter property ${property.name} with type ${checker.typeToString(propertyType)}`)
+    }
+    properties.push(property.name)
+  }
+  if (properties.length === 0) throw unsupported(parameter, 'Object parameter without numeric properties')
+  return {kind: 'object', properties}
+}
+
+function functionReturnsVoid(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): boolean {
+  const signature = checker.getSignatureFromDeclaration(declaration)
+  if (signature == null) throw unsupported(declaration, 'Function without a TypeScript signature')
+  const flags = checker.getReturnTypeOfSignature(signature).flags
+  return (flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
 }
 
 function requireNumberType(node: ts.Node, checker: ts.TypeChecker, description: string): void {

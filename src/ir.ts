@@ -13,8 +13,13 @@ export type SourceSpan = {
 export type ParameterIR = {
   value: ValueID
   name: string
+  type: ValueTypeIR
   span: SourceSpan
 }
+
+export type ValueTypeIR =
+  | {kind: 'number'}
+  | {kind: 'object'; properties: string[]}
 
 type InstructionBase = {
   result: ValueID
@@ -42,9 +47,10 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
+  | (InstructionBase & {kind: 'store'; object: ValueID; property: string; value: ValueID})
 
 export type TerminatorIR =
-  | {kind: 'return'; value: ValueID; span: SourceSpan}
+  | {kind: 'return'; value: ValueID | null; span: SourceSpan}
   | {kind: 'branch'; condition: ValueID; whenTrue: BlockID; whenFalse: BlockID; span: SourceSpan}
 
 export type BlockIR = {

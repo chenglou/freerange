@@ -3,6 +3,7 @@ import {readFileSync} from 'node:fs'
 import {analyzeFile, analyzeSource, formatReport} from '../src/index.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
+const mutationFixture = new URL('./fixtures/object-mutation.ts', import.meta.url).pathname
 
 describe('analyzeFile', () => {
   test('reports inferred properties of a returned object', () => {
@@ -45,5 +46,16 @@ describe('analyzeFile', () => {
         return Math.max(1, containerWidth)
       }
     `)).toThrow('Unsupported Function call Math.max')
+  })
+
+  test('carries a property write through an alias and local function call', () => {
+    const report = analyzeFile(mutationFixture)
+    const fn = report.functions.find(candidate => candidate.name === 'destinationAfterUpdate')
+    expect(fn?.assumptions).toEqual(['containerWidth is finite and not NaN'])
+    expect(fn?.ensures).toEqual(['return is a finite number at least 1'])
+    expect(fn?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
+
+    const unrelated = report.functions.find(candidate => candidate.name === 'unrelatedDestinationStaysUnchanged')
+    expect(unrelated?.ensures).toEqual(['return is a finite integer number from 0 through 0'])
   })
 })

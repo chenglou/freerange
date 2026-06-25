@@ -1,5 +1,5 @@
 import type {ProgramAnalysis} from './analyze.ts'
-import type {AbstractNumber, AbstractValue} from './domain.ts'
+import type {AbstractHeap, AbstractNumber, AbstractValue} from './domain.ts'
 
 export type FunctionReport = {
   name: string
@@ -16,12 +16,26 @@ export type AnalysisReport = {
 export function createReport(analysis: ProgramAnalysis): AnalysisReport {
   return {
     file: analysis.file,
-    functions: analysis.functions.map(fn => ({
-      name: fn.name,
-      assumptions: fn.parameters.map(parameter => `${parameter} is finite and not NaN`),
-      ensures: returnSummaries('return', fn.returnValue),
-      obligations: fn.obligations,
-    })),
+    functions: analysis.functions.map(fn => {
+      const assumptions: string[] = []
+      for (const parameter of fn.parameters) {
+        switch (parameter.type.kind) {
+          case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
+          case 'object': {
+            for (const property of parameter.type.properties) {
+              assumptions.push(`${parameter.name}.${property} is finite and not NaN`)
+            }
+            break
+          }
+        }
+      }
+      return {
+        name: fn.name,
+        assumptions,
+        ensures: returnSummaries('return', fn.returnValue, fn.heap),
+        obligations: fn.obligations,
+      }
+    }),
   }
 }
 
@@ -40,15 +54,20 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
-function returnSummaries(path: string, value: AbstractValue): string[] {
+function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap): string[] {
   switch (value.kind) {
     case 'number': return [numberSummary(path, value)]
     case 'boolean': return [`${path} is boolean`]
-    case 'object': {
+    case 'reference': {
+      const object = heap[value.allocation]
+      if (object == null) throw new Error(`Missing returned heap allocation ${value.allocation}`)
       const summaries: string[] = []
-      for (const property of value.properties) summaries.push(...returnSummaries(`${path}.${property.name}`, property.value))
+      for (const property of object.properties) {
+        summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, heap))
+      }
       return summaries
     }
+    case 'void': return []
   }
 }
 

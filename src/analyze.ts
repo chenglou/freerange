@@ -10,8 +10,10 @@ import {
   multiplyNumbers,
   subtractNumbers,
   type AbstractBoolean,
+  type AbstractHeap,
   type AbstractNumber,
   type AbstractObject,
+  type AbstractReference,
   type AbstractValue,
 } from './domain.ts'
 import type {
@@ -23,9 +25,13 @@ import type {
   ProgramIR,
   SourceSpan,
   ValueID,
+  ValueTypeIR,
 } from './ir.ts'
 
-type State = Array<AbstractValue | undefined>
+type State = {
+  values: Array<AbstractValue | undefined>
+  heap: AbstractHeap
+}
 
 export type Obligation = {
   kind: 'nonzero-divisor' | 'finite-result' | 'finite-argument'
@@ -36,8 +42,9 @@ export type Obligation = {
 
 export type FunctionAnalysis = {
   name: string
-  parameters: string[]
+  parameters: Array<{name: string; type: ValueTypeIR}>
   returnValue: AbstractValue
+  heap: AbstractHeap
   obligations: Obligation[]
 }
 
@@ -48,6 +55,7 @@ export type ProgramAnalysis = {
 
 type FunctionEvaluation = {
   returnValue: AbstractValue
+  heap: AbstractHeap
   obligations: Obligation[]
 }
 
@@ -55,21 +63,39 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   const functions: FunctionAnalysis[] = []
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
-    const arguments_: AbstractNumber[] = []
-    const parameters: string[] = []
+    const arguments_: AbstractValue[] = []
+    const heap: AbstractHeap = []
+    const parameters: FunctionAnalysis['parameters'] = []
     for (const parameter of fn.parameters) {
-      arguments_.push(finiteInputNumber())
-      parameters.push(parameter.name)
+      parameters.push({name: parameter.name, type: parameter.type})
+      switch (parameter.type.kind) {
+        case 'number': arguments_.push(finiteInputNumber()); break
+        case 'object': {
+          const allocation = heap.length
+          heap.push({
+            properties: parameter.type.properties.map(name => ({name, value: finiteInputNumber()})),
+          })
+          arguments_.push({kind: 'reference', allocation})
+          break
+        }
+      }
     }
-    const evaluation = evaluateFunction(functionID, arguments_, program.functions, [])
-    functions.push({name: fn.name, parameters, returnValue: evaluation.returnValue, obligations: evaluation.obligations})
+    const evaluation = evaluateFunction(functionID, arguments_, heap, program.functions, [])
+    functions.push({
+      name: fn.name,
+      parameters,
+      returnValue: evaluation.returnValue,
+      heap: evaluation.heap,
+      obligations: evaluation.obligations,
+    })
   }
   return {file: program.file, functions}
 }
 
 function evaluateFunction(
   functionID: FunctionID,
-  arguments_: AbstractNumber[],
+  arguments_: AbstractValue[],
+  heap: AbstractHeap,
   functions: FunctionIR[],
   callStack: FunctionID[],
 ): FunctionEvaluation {
@@ -80,9 +106,9 @@ function evaluateFunction(
     throw new Error(`Recursive function analysis is unsupported: ${names.join(' → ')}`)
   }
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
-  const initial: State = []
+  const initial: State = {values: [], heap: cloneHeap(heap)}
   for (let index = 0; index < fn.parameters.length; index++) {
-    initial[fn.parameters[index]!.value] = arguments_[index]!
+    initial.values[fn.parameters[index]!.value] = arguments_[index]!
   }
   const comparisons: Array<Extract<InstructionIR, {kind: 'compare'}> | undefined> = []
   for (const block of fn.blocks) {
@@ -96,14 +122,15 @@ function evaluateFunction(
   let queueIndex = 0
   const obligationMap = new Map<string, Obligation>()
   let returnValue: AbstractValue | null = null
+  let returnHeap: AbstractHeap | null = null
   while (queueIndex < queue.length) {
     const blockID = queue[queueIndex++]!
     const block = fn.blocks[blockID]
     const entry = incoming[blockID]
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
-    const state = entry.slice()
+    const state = cloneState(entry)
     for (const instruction of block.instructions) {
-      state[instruction.result] = evaluateInstruction(
+      state.values[instruction.result] = evaluateInstruction(
         instruction,
         state,
         obligationMap,
@@ -113,69 +140,85 @@ function evaluateFunction(
     }
     switch (block.terminator.kind) {
       case 'return': {
-        const value = requiredValue(state, block.terminator.value)
+        const value = block.terminator.value == null
+          ? {kind: 'void'} as const
+          : requiredValue(state, block.terminator.value)
         returnValue = returnValue == null ? value : joinValues(returnValue, value)
+        returnHeap = returnHeap == null ? cloneHeap(state.heap) : joinHeaps(returnHeap, state.heap)
         break
       }
       case 'branch': {
         const condition = requiredBoolean(state, block.terminator.condition)
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
-          const branch = comparison == null ? state.slice() : refineComparison(state, comparison, true)
+          const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
           if (branch != null) propagate(branch, block.terminator.whenTrue, incoming, queue)
         }
         if (condition.canBeFalse) {
-          const branch = comparison == null ? state.slice() : refineComparison(state, comparison, false)
+          const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
           if (branch != null) propagate(branch, block.terminator.whenFalse, incoming, queue)
         }
         break
       }
     }
   }
-  if (returnValue == null) throw new Error(`Function ${fn.name} has no reachable return`)
-  return {returnValue, obligations: [...obligationMap.values()]}
+  if (returnValue == null || returnHeap == null) throw new Error(`Function ${fn.name} has no reachable return`)
+  return {returnValue, heap: returnHeap, obligations: [...obligationMap.values()]}
 }
 
 function evaluateInstruction(
   instruction: InstructionIR,
-  values: State,
+  state: State,
   obligations: Map<string, Obligation>,
   functions: FunctionIR[],
   callStack: FunctionID[],
 ): AbstractValue {
   switch (instruction.kind) {
     case 'constant': return constantNumber(instruction.value)
-    case 'object': return {
-      kind: 'object',
-      properties: instruction.properties.map(property => ({
-        name: property.name,
-        value: requiredValue(values, property.value),
-      })),
+    case 'object': {
+      const allocation = state.heap.length
+      state.heap.push({
+        properties: instruction.properties.map(property => ({
+          name: property.name,
+          value: requiredValue(state, property.value),
+        })),
+      })
+      return {kind: 'reference', allocation}
     }
-    case 'property': {
-      const object = requiredObject(values, instruction.object)
+    case 'property': return readProperty(
+      state.heap,
+      requiredReference(state, instruction.object),
+      instruction.property,
+    )
+    case 'store': {
+      const reference = requiredReference(state, instruction.object)
+      const assigned = requiredValue(state, instruction.value)
+      const object = state.heap[reference.allocation]
+      if (object == null) throw new Error(`Missing heap allocation ${reference.allocation}`)
       const property = object.properties.find(candidate => candidate.name === instruction.property)
       if (property == null) throw new Error(`Abstract object has no property ${instruction.property}`)
-      return property.value
+      property.value = assigned
+      return assigned
     }
     case 'compare': return compareNumbers(
-      requiredNumber(values, instruction.left),
-      requiredNumber(values, instruction.right),
+      requiredNumber(state, instruction.left),
+      requiredNumber(state, instruction.right),
       instruction.operator,
     )
     case 'floor': {
-      const result = floorNumber(requiredNumber(values, instruction.value))
+      const result = floorNumber(requiredNumber(state, instruction.value))
       recordFiniteObligation(result, instruction.span, obligations)
       return result
     }
-    case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(values, value)))
-    case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(values, value)))
+    case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(state, value)))
+    case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'call': {
       const callee = functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
-      const arguments_ = instruction.arguments.map(value => requiredNumber(values, value))
+      const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
       for (let index = 0; index < arguments_.length; index++) {
         const argument = arguments_[index]!
+        if (argument.kind !== 'number') continue
         recordObligation(obligations, {
           kind: 'finite-argument',
           status: argument.finite && !argument.mayBeNaN ? 'proved' : 'unknown',
@@ -185,13 +228,14 @@ function evaluateInstruction(
             : `Argument ${index + 1} to ${callee.name} may be NaN or infinite.`,
         })
       }
-      const evaluation = evaluateFunction(instruction.function, arguments_, functions, callStack)
+      const evaluation = evaluateFunction(instruction.function, arguments_, state.heap, functions, callStack)
+      state.heap = evaluation.heap
       for (const obligation of evaluation.obligations) recordObligation(obligations, obligation)
       return evaluation.returnValue
     }
     case 'binary': {
-      const left = requiredNumber(values, instruction.left)
-      const right = requiredNumber(values, instruction.right)
+      const left = requiredNumber(state, instruction.left)
+      const right = requiredNumber(state, instruction.right)
       if (instruction.operator === 'divide') {
         recordObligation(obligations, {
           kind: 'nonzero-divisor',
@@ -248,8 +292,8 @@ function refineComparison(
   comparison: Extract<InstructionIR, {kind: 'compare'}>,
   truth: boolean,
 ): State | null {
-  if (!truth && comparison.operator === 'equal') return state.slice()
-  const result = state.slice()
+  if (!truth && comparison.operator === 'equal') return cloneState(state)
+  const result = cloneState(state)
   const left = requiredNumber(result, comparison.left)
   const right = requiredNumber(result, comparison.right)
   const operator = truth ? comparison.operator : invertedComparison(comparison.operator)
@@ -281,8 +325,8 @@ function refineComparison(
     }
   }
   if (refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper) return null
-  result[comparison.left] = refinedLeft
-  result[comparison.right] = refinedRight
+  result.values[comparison.left] = refinedLeft
+  result.values[comparison.right] = refinedRight
   return result
 }
 
@@ -323,15 +367,15 @@ function propagate(state: State, block: BlockID, incoming: Array<State | undefin
 }
 
 function joinStates(left: State, right: State): State {
-  const result: State = []
-  for (let id = 0; id < left.length; id++) {
-    const leftValue = left[id]
-    const rightValue = right[id]
+  const values: State['values'] = []
+  for (let id = 0; id < left.values.length; id++) {
+    const leftValue = left.values[id]
+    const rightValue = right.values[id]
     if (leftValue == null) continue
     if (rightValue == null || leftValue.kind !== rightValue.kind) continue
-    result[id] = joinValues(leftValue, rightValue)
+    values[id] = joinValues(leftValue, rightValue)
   }
-  return result
+  return {values, heap: joinHeaps(left.heap, right.heap)}
 }
 
 function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
@@ -339,8 +383,14 @@ function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
-    case 'object': return joinObjects(left, right as AbstractObject)
+    case 'reference': return joinReferences(left, right as AbstractReference)
+    case 'void': return left
   }
+}
+
+function joinReferences(left: AbstractReference, right: AbstractReference): AbstractReference {
+  if (left.allocation !== right.allocation) throw new Error('Joining different object allocations is unsupported')
+  return left
 }
 
 function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -374,19 +424,19 @@ function joinObjects(left: AbstractObject, right: AbstractObject): AbstractObjec
       value: joinValues(property.value, other.value),
     })
   }
-  return {kind: 'object', properties}
+  return {properties}
 }
 
 function sameState(left: State, right: State): boolean {
-  const length = Math.max(left.length, right.length)
+  const length = Math.max(left.values.length, right.values.length)
   for (let id = 0; id < length; id++) {
-    const value = left[id]
-    const other = right[id]
+    const value = left.values[id]
+    const other = right.values[id]
     if (value == null || other == null) {
       if (value !== other) return false
     } else if (!sameValue(value, other)) return false
   }
-  return true
+  return sameHeap(left.heap, right.heap)
 }
 
 function sameValue(left: AbstractValue, right: AbstractValue): boolean {
@@ -404,15 +454,49 @@ function sameValue(left: AbstractValue, right: AbstractValue): boolean {
       const boolean = right as AbstractBoolean
       return left.canBeTrue === boolean.canBeTrue && left.canBeFalse === boolean.canBeFalse
     }
-    case 'object': {
-      const object = right as AbstractObject
-      return left.properties.length === object.properties.length
-        && left.properties.every((property, index) => {
-          const other = object.properties[index]!
-          return property.name === other.name && sameValue(property.value, other.value)
-        })
-    }
+    case 'reference': return left.allocation === (right as AbstractReference).allocation
+    case 'void': return true
   }
+}
+
+function cloneState(state: State): State {
+  return {values: state.values.slice(), heap: cloneHeap(state.heap)}
+}
+
+function cloneHeap(heap: AbstractHeap): AbstractHeap {
+  return heap.map(object => ({
+    properties: object.properties.map(property => ({...property})),
+  }))
+}
+
+function joinHeaps(left: AbstractHeap, right: AbstractHeap): AbstractHeap {
+  const heap: AbstractHeap = []
+  const length = Math.max(left.length, right.length)
+  for (let allocation = 0; allocation < length; allocation++) {
+    const leftObject = left[allocation]
+    const rightObject = right[allocation]
+    if (leftObject == null) heap.push(cloneObject(rightObject!))
+    else if (rightObject == null) heap.push(cloneObject(leftObject))
+    else heap.push(joinObjects(leftObject, rightObject))
+  }
+  return heap
+}
+
+function sameHeap(left: AbstractHeap, right: AbstractHeap): boolean {
+  if (left.length !== right.length) return false
+  return left.every((object, index) => sameObject(object, right[index]!))
+}
+
+function sameObject(left: AbstractObject, right: AbstractObject): boolean {
+  return left.properties.length === right.properties.length
+    && left.properties.every((property, index) => {
+      const other = right.properties[index]!
+      return property.name === other.name && sameValue(property.value, other.value)
+    })
+}
+
+function cloneObject(object: AbstractObject): AbstractObject {
+  return {properties: object.properties.map(property => ({...property}))}
 }
 
 function recordFiniteObligation(value: AbstractNumber, span: SourceSpan, obligations: Map<string, Obligation>): void {
@@ -430,26 +514,34 @@ function recordObligation(obligations: Map<string, Obligation>, obligation: Obli
   obligations.set(key, previous?.status === 'unknown' ? previous : obligation)
 }
 
-function requiredNumber(values: State, id: ValueID): AbstractNumber {
-  const value = requiredValue(values, id)
+function requiredNumber(state: State, id: ValueID): AbstractNumber {
+  const value = requiredValue(state, id)
   if (value.kind !== 'number') throw new Error(`IR value ${id} is not a number`)
   return value
 }
 
-function requiredBoolean(values: State, id: ValueID): AbstractBoolean {
-  const value = requiredValue(values, id)
+function requiredBoolean(state: State, id: ValueID): AbstractBoolean {
+  const value = requiredValue(state, id)
   if (value.kind !== 'boolean') throw new Error(`IR value ${id} is not a boolean`)
   return value
 }
 
-function requiredObject(values: State, id: ValueID): AbstractObject {
-  const value = requiredValue(values, id)
-  if (value.kind !== 'object') throw new Error(`IR value ${id} is not an object`)
+function requiredReference(state: State, id: ValueID): AbstractReference {
+  const value = requiredValue(state, id)
+  if (value.kind !== 'reference') throw new Error(`IR value ${id} is not an object reference`)
   return value
 }
 
-function requiredValue(values: State, id: ValueID): AbstractValue {
-  const value = values[id]
+function requiredValue(state: State, id: ValueID): AbstractValue {
+  const value = state.values[id]
   if (value == null) throw new Error(`Missing IR value ${id}`)
   return value
+}
+
+function readProperty(heap: AbstractHeap, reference: AbstractReference, name: string): AbstractValue {
+  const object = heap[reference.allocation]
+  if (object == null) throw new Error(`Missing heap allocation ${reference.allocation}`)
+  const property = object.properties.find(candidate => candidate.name === name)
+  if (property == null) throw new Error(`Abstract object has no property ${name}`)
+  return property.value
 }
