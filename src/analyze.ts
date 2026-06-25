@@ -19,6 +19,7 @@ import {
 import type {
   BlockID,
   ComparisonOperator,
+  EdgeIR,
   FunctionID,
   FunctionIR,
   InstructionIR,
@@ -157,16 +158,20 @@ function evaluateFunction(
         returnHeap = returnHeap == null ? cloneHeap(state.heap) : joinHeaps(returnHeap, state.heap)
         break
       }
+      case 'jump': {
+        propagate(state, block.terminator.target, fn, incoming, queue)
+        break
+      }
       case 'branch': {
         const condition = requiredBoolean(state, block.terminator.condition)
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
-          if (branch != null) propagate(branch, block.terminator.whenTrue, incoming, queue)
+          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, incoming, queue)
         }
         if (condition.canBeFalse) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
-          if (branch != null) propagate(branch, block.terminator.whenFalse, incoming, queue)
+          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, incoming, queue)
         }
         break
       }
@@ -352,10 +357,46 @@ function strictUpper(value: number, integer: boolean): number {
   return integer ? Math.ceil(value) - 1 : value
 }
 
-function propagate(state: State, block: BlockID, incoming: Array<State | undefined>, queue: BlockID[]): void {
-  if (incoming[block] != null) throw new Error(`Control-flow join at block ${block} is unsupported`)
-  incoming[block] = state
-  queue.push(block)
+function propagate(
+  state: State,
+  edge: EdgeIR,
+  fn: FunctionIR,
+  incoming: Array<State | undefined>,
+  queue: BlockID[],
+): void {
+  const target = fn.blocks[edge.block]
+  if (target == null) throw new Error(`Missing block ${edge.block} in ${fn.name}`)
+  if (edge.arguments.length !== target.parameters.length) {
+    throw new Error(`Expected ${target.parameters.length} arguments for block ${edge.block} in ${fn.name}`)
+  }
+  const candidate = cloneState(state)
+  for (let index = 0; index < target.parameters.length; index++) {
+    candidate.values[target.parameters[index]!] = requiredValue(state, edge.arguments[index]!)
+  }
+  const previous = incoming[edge.block]
+  if (previous == null) {
+    incoming[edge.block] = candidate
+    queue.push(edge.block)
+    return
+  }
+  const joined = joinStates(previous, candidate)
+  if (!sameState(previous, joined)) {
+    incoming[edge.block] = joined
+    queue.push(edge.block)
+  }
+}
+
+function joinStates(left: State, right: State): State {
+  const values: State['values'] = []
+  const length = Math.max(left.values.length, right.values.length)
+  for (let index = 0; index < length; index++) {
+    const leftValue = left.values[index]
+    const rightValue = right.values[index]
+    if (leftValue == null) values[index] = rightValue
+    else if (rightValue == null) values[index] = leftValue
+    else values[index] = joinValues(leftValue, rightValue)
+  }
+  return {values, heap: joinHeaps(left.heap, right.heap)}
 }
 
 function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
@@ -432,6 +473,48 @@ function joinHeaps(left: AbstractHeap, right: AbstractHeap): AbstractHeap {
 
 function cloneObject(object: AbstractObject): AbstractObject {
   return {properties: object.properties.map(property => ({...property}))}
+}
+
+function sameState(left: State, right: State): boolean {
+  if (left.values.length !== right.values.length || left.heap.length !== right.heap.length) return false
+  for (let index = 0; index < left.values.length; index++) {
+    const leftValue = left.values[index]
+    const rightValue = right.values[index]
+    if (leftValue == null || rightValue == null) {
+      if (leftValue !== rightValue) return false
+    } else if (!sameValue(leftValue, rightValue)) return false
+  }
+  for (let allocation = 0; allocation < left.heap.length; allocation++) {
+    const leftObject = left.heap[allocation]!
+    const rightObject = right.heap[allocation]!
+    if (leftObject.properties.length !== rightObject.properties.length) return false
+    for (let index = 0; index < leftObject.properties.length; index++) {
+      const leftProperty = leftObject.properties[index]!
+      const rightProperty = rightObject.properties[index]!
+      if (leftProperty.name !== rightProperty.name || !sameValue(leftProperty.value, rightProperty.value)) return false
+    }
+  }
+  return true
+}
+
+function sameValue(left: AbstractValue, right: AbstractValue): boolean {
+  if (left.kind !== right.kind) return false
+  switch (left.kind) {
+    case 'number': {
+      const other = right as AbstractNumber
+      return left.lower === other.lower
+        && left.upper === other.upper
+        && left.integer === other.integer
+        && left.finite === other.finite
+        && left.mayBeNaN === other.mayBeNaN
+    }
+    case 'boolean': {
+      const other = right as AbstractBoolean
+      return left.canBeTrue === other.canBeTrue && left.canBeFalse === other.canBeFalse
+    }
+    case 'reference': return left.allocation === (right as AbstractReference).allocation
+    case 'void': return true
+  }
 }
 
 function requiredNumber(state: State, id: ValueID): AbstractNumber {

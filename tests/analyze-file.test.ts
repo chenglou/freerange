@@ -72,4 +72,14 @@ describe('analyzeFile', () => {
     expect(provedCall?.requires).toEqual([])
     expect(provedCall?.ensures).toEqual(['return is a finite number'])
   })
+
+  test('merges a conditional value before later arithmetic', () => {
+    const report = analyzeSource('conditional-value.ts', `
+      export function paddedWidth(width: number): number {
+        const nonnegativeWidth = width >= 0 ? width : 0
+        return nonnegativeWidth + 24
+      }
+    `)
+    expect(report.functions[0]?.ensures).toEqual(['return is a finite number at least 24'])
+  })
 })

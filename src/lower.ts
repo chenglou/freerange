@@ -14,6 +14,7 @@ import type {
 import type {CheckedSource} from './typescript.ts'
 
 type MutableBlock = {
+  parameters: ValueID[]
   instructions: InstructionIR[]
   terminator: TerminatorIR | null
 }
@@ -57,7 +58,7 @@ function lowerFunction(
   functionsBySymbol: Map<ts.Symbol, FunctionID>,
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, 'Function declarations need bodies')
-  const entry: MutableBlock = {instructions: [], terminator: null}
+  const entry: MutableBlock = {parameters: [], instructions: [], terminator: null}
   const context: FunctionContext = {
     sourceFile,
     checker,
@@ -102,7 +103,7 @@ function lowerFunction(
   const blocks: BlockIR[] = []
   for (const block of context.blocks) {
     if (block.terminator == null) throw unsupported(declaration, 'Function path without a return')
-    blocks.push({instructions: block.instructions, terminator: block.terminator})
+    blocks.push({parameters: block.parameters, instructions: block.instructions, terminator: block.terminator})
   }
   return {
     name: declaration.name!.text,
@@ -123,24 +124,7 @@ function lowerVariableStatement(statement: ts.VariableStatement, context: Functi
 }
 
 function lowerReturnExpression(expression: ts.Expression, context: FunctionContext): void {
-  const current = unwrap(expression)
-  if (ts.isConditionalExpression(current)) {
-    const condition = lowerExpression(current.condition, context)
-    const whenTrue = createBlock(context)
-    const whenFalse = createBlock(context)
-    terminate(context.currentBlock, {
-      kind: 'branch',
-      condition,
-      whenTrue,
-      whenFalse,
-    })
-    context.currentBlock = context.blocks[whenTrue]!
-    lowerReturnExpression(current.whenTrue, context)
-    context.currentBlock = context.blocks[whenFalse]!
-    lowerReturnExpression(current.whenFalse, context)
-    return
-  }
-  const value = lowerExpression(current, context)
+  const value = lowerExpression(expression, context)
   terminate(context.currentBlock, {kind: 'return', value})
 }
 
@@ -153,6 +137,26 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
     const zero = addInstruction(context, {kind: 'constant', value: 0})
     const value = lowerExpression(current.operand, context)
     return addInstruction(context, {kind: 'binary', operator: 'subtract', left: zero, right: value})
+  }
+  if (ts.isConditionalExpression(current)) {
+    const condition = lowerExpression(current.condition, context)
+    const whenTrue = createBlock(context)
+    const whenFalse = createBlock(context)
+    const continuation = createBlock(context, 1)
+    terminate(context.currentBlock, {
+      kind: 'branch',
+      condition,
+      whenTrue: {block: whenTrue, arguments: []},
+      whenFalse: {block: whenFalse, arguments: []},
+    })
+    context.currentBlock = context.blocks[whenTrue]!
+    const trueValue = lowerExpression(current.whenTrue, context)
+    terminate(context.currentBlock, {kind: 'jump', target: {block: continuation, arguments: [trueValue]}})
+    context.currentBlock = context.blocks[whenFalse]!
+    const falseValue = lowerExpression(current.whenFalse, context)
+    terminate(context.currentBlock, {kind: 'jump', target: {block: continuation, arguments: [falseValue]}})
+    context.currentBlock = context.blocks[continuation]!
+    return context.currentBlock.parameters[0]!
   }
   if (ts.isIdentifier(current)) {
     return requiredBinding(requiredSymbol(current, context.checker), current, context)
@@ -295,8 +299,10 @@ function addInstruction(context: FunctionContext, instruction: InstructionInput)
   return result
 }
 
-function createBlock(context: FunctionContext): BlockID {
-  const block: MutableBlock = {instructions: [], terminator: null}
+function createBlock(context: FunctionContext, parameterCount = 0): BlockID {
+  const parameters: ValueID[] = []
+  for (let index = 0; index < parameterCount; index++) parameters.push(context.nextValue++)
+  const block: MutableBlock = {parameters, instructions: [], terminator: null}
   context.blocks.push(block)
   return context.blocks.length - 1
 }

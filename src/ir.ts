@@ -40,11 +40,18 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
   | (InstructionBase & {kind: 'store'; object: ValueID; property: string; value: ValueID})
 
+export type EdgeIR = {
+  block: BlockID
+  arguments: ValueID[]
+}
+
 export type TerminatorIR =
   | {kind: 'return'; value: ValueID | null}
-  | {kind: 'branch'; condition: ValueID; whenTrue: BlockID; whenFalse: BlockID}
+  | {kind: 'jump'; target: EdgeIR}
+  | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR}
 
 export type BlockIR = {
+  parameters: ValueID[]
   instructions: InstructionIR[]
   terminator: TerminatorIR
 }
