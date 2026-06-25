@@ -16,6 +16,10 @@ describe('analyzeFile', () => {
     ])
     expect(fn?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
     expect(formatReport(report)).toContain('ensures: return.maximumBoxWidth is a finite number at least 1')
+
+    const consumer = report.functions.find(candidate => candidate.name === 'maximumBoxWidthForContainer')
+    expect(consumer?.ensures).toEqual(['return is a finite number at least 1'])
+    expect(consumer?.obligations.every(obligation => obligation.status === 'proved')).toBe(true)
   })
 
   test('keeps an unsafe divisor unresolved through the same lowering path', () => {

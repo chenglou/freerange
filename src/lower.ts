@@ -199,6 +199,14 @@ function lowerExpression(expression: ts.Expression, context: FunctionContext): V
       throw unsupported(current, `Function call ${current.expression.getText(context.sourceFile)}`)
     }
   }
+  if (ts.isPropertyAccessExpression(current)) {
+    const objectType = context.checker.getTypeAtLocation(current.expression)
+    if ((objectType.flags & ts.TypeFlags.Object) === 0) {
+      throw unsupported(current.expression, `Property read from ${context.checker.typeToString(objectType)}`)
+    }
+    const object = lowerExpression(current.expression, context)
+    return addInstruction(context, {kind: 'property', object, property: current.name.text}, current)
+  }
   throw unsupported(current, 'Expression')
 }
 

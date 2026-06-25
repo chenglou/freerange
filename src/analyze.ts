@@ -152,6 +152,12 @@ function evaluateInstruction(
         value: requiredValue(values, property.value),
       })),
     }
+    case 'property': {
+      const object = requiredObject(values, instruction.object)
+      const property = object.properties.find(candidate => candidate.name === instruction.property)
+      if (property == null) throw new Error(`Abstract object has no property ${instruction.property}`)
+      return property.value
+    }
     case 'compare': return compareNumbers(
       requiredNumber(values, instruction.left),
       requiredNumber(values, instruction.right),
@@ -433,6 +439,12 @@ function requiredNumber(values: State, id: ValueID): AbstractNumber {
 function requiredBoolean(values: State, id: ValueID): AbstractBoolean {
   const value = requiredValue(values, id)
   if (value.kind !== 'boolean') throw new Error(`IR value ${id} is not a boolean`)
+  return value
+}
+
+function requiredObject(values: State, id: ValueID): AbstractObject {
+  const value = requiredValue(values, id)
+  if (value.kind !== 'object') throw new Error(`IR value ${id} is not an object`)
   return value
 }
 

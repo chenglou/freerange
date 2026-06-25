@@ -19,3 +19,8 @@ export function calculateGridMetrics(containerWidth: number): {
   )
   return {columnCount, maximumBoxWidth}
 }
+
+export function maximumBoxWidthForContainer(containerWidth: number): number {
+  const gridMetrics = calculateGridMetrics(containerWidth)
+  return gridMetrics.maximumBoxWidth
+}

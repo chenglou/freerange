@@ -41,6 +41,7 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
+  | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
 
 export type TerminatorIR =
   | {kind: 'return'; value: ValueID; span: SourceSpan}
