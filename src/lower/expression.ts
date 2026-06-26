@@ -1,5 +1,6 @@
 import * as ts from 'typescript'
-import type {ComparisonOperator, InstructionIR, ValueID} from './ir.ts'
+import type {ValueID} from '../ir/ids.ts'
+import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {
   addInstruction,
   changedBindings,
@@ -10,7 +11,7 @@ import {
   terminate,
   unsupported,
   type FunctionContext,
-} from './lower-context.ts'
+} from './context.ts'
 
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression)

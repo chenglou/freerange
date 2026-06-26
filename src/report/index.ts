@@ -1,6 +1,8 @@
-import type {ProgramAnalysis} from './analyze.ts'
-import type {AbstractHeap, AbstractNumber, AbstractValue} from './domain.ts'
-import {formatPrecondition} from './preconditions.ts'
+import type {AbstractNumber} from '../domain/number.ts'
+import type {AbstractValue} from '../domain/value.ts'
+import type {ProgramAnalysis} from '../engine/outcome.ts'
+import type {AbstractHeap} from '../heap/model.ts'
+import {formatPrecondition} from './format-requirement.ts'
 
 type FunctionReport = {
   name: string
@@ -35,7 +37,7 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
         name: fn.name,
         assumptions,
         requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames)),
-        ensures: returnSummaries('return', fn.returnValue, fn.heap),
+        ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
       }
     }),
   }

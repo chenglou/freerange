@@ -1,8 +1,9 @@
 import * as ts from 'typescript'
-import type {BlockIR, FunctionID, FunctionIR, ProgramIR, ValueTypeIR} from './ir.ts'
-import {requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './lower-context.ts'
-import {lowerStatements} from './lower-statements.ts'
-import type {CheckedSource} from './typescript.ts'
+import type {FunctionID} from '../ir/ids.ts'
+import type {BlockIR, FunctionIR, ProgramIR, ValueTypeIR} from '../ir/program.ts'
+import type {CheckedSource} from '../typescript/check.ts'
+import {requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
+import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
   const {sourceFile, checker} = checked

@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import type {BlockID, ValueID} from './ir.ts'
+import type {BlockID, ValueID} from '../ir/ids.ts'
 import {
   bindingsVisibleAfterBranch,
   changedBindings,
@@ -10,8 +10,8 @@ import {
   unsupported,
   type FunctionContext,
   type MutableBlock,
-} from './lower-context.ts'
-import {compoundAssignmentOperator, lowerExpression} from './lower-expression.ts'
+} from './context.ts'
+import {compoundAssignmentOperator, lowerExpression} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {

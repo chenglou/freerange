@@ -2,11 +2,10 @@ import type * as ts from 'typescript'
 import type {
   BlockID,
   FunctionID,
-  FunctionIR,
-  InstructionIR,
-  TerminatorIR,
   ValueID,
-} from './ir.ts'
+} from '../ir/ids.ts'
+import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
+import type {FunctionIR} from '../ir/program.ts'
 
 export type MutableBlock = {
   loopHeader: boolean

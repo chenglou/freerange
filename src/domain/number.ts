@@ -7,34 +7,6 @@ export type AbstractNumber = {
   mayBeNaN: boolean
 }
 
-export type AbstractBoolean = {
-  kind: 'boolean'
-  canBeTrue: boolean
-  canBeFalse: boolean
-}
-
-type AbstractObjectProperty = {
-  name: string
-  value: AbstractValue
-}
-
-export type AbstractObject = {
-  properties: AbstractObjectProperty[]
-}
-
-export type AbstractReference = {
-  kind: 'reference'
-  allocation: number
-}
-
-type AbstractVoid = {
-  kind: 'void'
-}
-
-export type AbstractHeap = AbstractObject[]
-
-export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractReference | AbstractVoid
-
 export function finiteInputNumber(): AbstractNumber {
   return {
     kind: 'number',
@@ -126,6 +98,38 @@ export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
 
 export function includesZero(value: AbstractNumber): boolean {
   return value.lower <= 0 && value.upper >= 0
+}
+
+export function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
+  return {
+    kind: 'number',
+    lower: Math.min(left.lower, right.lower),
+    upper: Math.max(left.upper, right.upper),
+    integer: left.integer && right.integer,
+    finite: left.finite && right.finite,
+    mayBeNaN: left.mayBeNaN || right.mayBeNaN,
+  }
+}
+
+export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolean {
+  return left.lower === right.lower
+    && left.upper === right.upper
+    && left.integer === right.integer
+    && left.finite === right.finite
+    && left.mayBeNaN === right.mayBeNaN
+}
+
+export function widenNumber(previous: AbstractNumber, next: AbstractNumber): AbstractNumber {
+  const finite = previous.finite && next.finite
+  return {
+    ...next,
+    lower: next.lower < previous.lower
+      ? finite ? -Number.MAX_VALUE : Number.NEGATIVE_INFINITY
+      : next.lower,
+    upper: next.upper > previous.upper
+      ? finite ? Number.MAX_VALUE : Number.POSITIVE_INFINITY
+      : next.upper,
+  }
 }
 
 function boundedResult(

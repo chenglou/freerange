@@ -1,16 +1,4 @@
-export type ValueID = number
-export type BlockID = number
-export type FunctionID = number
-
-type ParameterIR = {
-  value: ValueID
-  name: string
-  type: ValueTypeIR
-}
-
-export type ValueTypeIR =
-  | {kind: 'number'}
-  | {kind: 'object'; properties: string[]}
+import type {BlockID, FunctionID, ValueID} from './ids.ts'
 
 type InstructionBase = {
   result: ValueID
@@ -49,22 +37,3 @@ export type TerminatorIR =
   | {kind: 'return'; value: ValueID | null}
   | {kind: 'jump'; target: EdgeIR}
   | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR}
-
-export type BlockIR = {
-  loopHeader: boolean
-  parameters: ValueID[]
-  instructions: InstructionIR[]
-  terminator: TerminatorIR
-}
-
-export type FunctionIR = {
-  name: string
-  parameters: ParameterIR[]
-  entry: BlockID
-  blocks: BlockIR[]
-}
-
-export type ProgramIR = {
-  file: string
-  functions: FunctionIR[]
-}
