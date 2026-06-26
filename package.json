@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "check": "tsc && oxlint --type-aware && bun knip && bun test",
+    "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
     "fr": "bun fr.ts"
   },
   "devDependencies": {
