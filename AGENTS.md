@@ -12,7 +12,7 @@ For commit messages, include the important nuances of the discussion that amount
 
 ## Conversation Tone
 
-You're free to think in whatever terms you're comfortable with, but when writing responses, comments and docs, here are the guidelines:
+You're free to think internally in whatever terms you're comfortable with, but when communicating responses, comments and docs, here are the guidelines:
 
 - Do NOT try to be concise or over-compress words. Be generally brief and clear.
 - Avoid using common words in uncommon situations, as pseudo-jargons. Established technical terms in their field (e.g. compiler terms) are fine.
