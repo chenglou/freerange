@@ -68,6 +68,14 @@ Reports should describe understandable consequences, such as possible aliasing o
 
 **warn:** Call contexts, abstract allocation identities, and reference target sets can grow with functions, call sites, branches, and recursion. Their representations and limits must be decided before heap support expands.
 
+## How should loops be analyzed?
+
+Do not unroll loops. Analyze the loop CFG until its abstract state stabilizes, then use supported recurrence or collection summaries. For example, one unconditional push per input can prove `output.length === input.length` without examining every item.
+
+Unrolling makes analysis depend on runtime collection length and still cannot prove iterations beyond an arbitrary cutoff. If fixed-point analysis does not stabilize and no supported summary applies, report the property as unresolved.
+
+**warn:** Fixed-point iteration and summary discovery need explicit limits before implementation.
+
 ## Additional decisions
 
 - Analysis runs forward, generates requirements, propagates unmet requirements backward, checks callers, and reports inferred guarantees.
