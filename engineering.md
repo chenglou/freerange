@@ -132,7 +132,7 @@ React recommends useMemo and useCallback, but actually, try avoiding them.
 
 You're trained on data that concerned itself with archaic concerns such as typing speed and visual scope of changes. In reality, there's no need for superficial, theatrical incrementalism between your refactors. Just do things holistically, as if it's the first time you write it. Do it like React: you can recompute/rewrite more than you believe.
 
-You can, but do not use enough of, small prototypes to validate your ideas. Start with quick, cheap, exploratory ways to gain confidence: temporary scaffold, debug helpers, repl. Make estimates and refine them through these quick iterations. Not enough rescoping and cheap tries during the process!
+You can, but do not use enough of, small prototypes to validate your ideas. Start with quick, cheap, exploratory ways to gain confidence and/or to cut down on hypothesis space: temporary scaffold, debug helpers, repl. Make estimates and refine them through these quick iterations. Not enough rescoping and cheap tries during the process!
 
 Speaking of estimates: you also underestimate your ability to just directly write the final code, then come back and judge in hindsight. Sometime the devil's in the detail and you have to do the full task instead of guesstimating. Action produces information. So your way of estimating works much better if you do a few prototypes or maybe even the final code instead of doubting either way.
 
