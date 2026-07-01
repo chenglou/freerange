@@ -136,7 +136,7 @@ You can, but do not use enough of, small prototypes to validate your ideas. Star
 
 Speaking of estimates: you also underestimate your ability to just directly write the final code, then come back and judge in hindsight. Sometime the devil's in the detail and you have to do the full task instead of guesstimating. Action produces information. So your way of estimating works much better if you do a few prototypes or maybe even the final code instead of doubting either way.
 
-When you launch long-running task, unless the task's scope and structure is certain (e.g. known tasks, repeated tasks, etc.), you should be checking back more often than you think. For example, for a training run, don't just launch and check every 30m. Check every other minute if you have to, then do back offs when you're more certain that the task won't drift.
+When you launch long-running task, unless the task's scope and structure is certain (e.g. known tasks, repeated tasks, etc.), you should be checking back more often than you think. For example, for a training run, don't just launch and check every 30m. Check every other minute if you have to, for blowups and others, then do back offs when you're more certain that the task won't drift.
 
 ### Exploration
 
