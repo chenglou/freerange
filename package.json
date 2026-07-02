@@ -4,12 +4,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsc && oxlint --type-aware && bun knip && bun test",
+    "check": "tsgo && oxlint --type-aware && bun knip && bun test",
     "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
     "fr": "bun fr.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
+    "@typescript/native-preview": "^7.0.0-dev.20260701.1",
     "knip": "^6.14.2",
     "oxlint": "latest",
     "oxlint-tsgolint": "latest",
