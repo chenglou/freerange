@@ -14,7 +14,7 @@ import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/
 import {allocateObject, readProperty, writeProperty} from '../heap/operations.ts'
 import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import type {FunctionIR} from '../ir/program.ts'
+import {siteLocation, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   numericExpression,
@@ -33,7 +33,7 @@ type EvaluateFunction = (
 ) => CompleteFunctionEvaluation
 
 export type TransferContext = {
-  functions: FunctionIR[]
+  program: ProgramIR
   callStack: FunctionID[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
@@ -90,7 +90,7 @@ export function evaluateInstruction(
     case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'call': {
-      const callee = context.functions[instruction.function]
+      const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
       const argumentExpressions = instruction.arguments.map(value => numericExpression(value, context.expressionContext))
@@ -110,8 +110,11 @@ export function evaluateInstruction(
       const right = requiredNumber(state, instruction.right)
       if (instruction.operator === 'divide' && includesZero(right)) {
         const expression = numericExpression(instruction.right, context.expressionContext)
-        if (expression == null) throw new Error(`Cannot infer a nonzero precondition for IR value ${instruction.right}`)
-        addPrecondition(context.preconditions, {kind: 'nonzero', expression})
+        if (expression == null) {
+          const {line, column} = siteLocation(context.program, instruction.site)
+          throw new Error(`Cannot infer a nonzero precondition for the division at ${context.program.file}:${line}:${column}`)
+        }
+        addPrecondition(context.preconditions, {kind: 'nonzero', expression, site: instruction.site})
       }
       return evaluateBinary(instruction.operator, left, right)
     }

@@ -16,12 +16,12 @@ import {
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression)
   if (ts.isNumericLiteral(current)) {
-    return addInstruction(context, {kind: 'constant', value: Number(current.text)})
+    return addInstruction(context, current, {kind: 'constant', value: Number(current.text)})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
-    const zero = addInstruction(context, {kind: 'constant', value: 0})
+    const zero = addInstruction(context, current, {kind: 'constant', value: 0})
     const value = lowerExpression(current.operand, context)
-    return addInstruction(context, {kind: 'binary', operator: 'subtract', left: zero, right: value})
+    return addInstruction(context, current, {kind: 'binary', operator: 'subtract', left: zero, right: value})
   }
   if (ts.isConditionalExpression(current)) {
     return lowerConditionalExpression(current, context)
@@ -41,7 +41,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       }
       throw unsupported(property, 'Object property')
     })
-    return addInstruction(context, {kind: 'object', properties})
+    return addInstruction(context, current, {kind: 'object', properties})
   }
   if (
     ts.isBinaryExpression(current)
@@ -50,7 +50,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   ) {
     const object = lowerExpression(current.left.expression, context)
     const value = lowerExpression(current.right, context)
-    return addInstruction(context, {kind: 'store', object, property: current.left.name.text, value})
+    return addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
   }
   if (
     ts.isBinaryExpression(current)
@@ -69,7 +69,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const symbol = requiredSymbol(current.left, context.checker)
       const left = requiredBinding(symbol, current.left, context)
       const right = lowerExpression(current.right, context)
-      const value = addInstruction(context, {kind: 'binary', operator, left, right})
+      const value = addInstruction(context, current, {kind: 'binary', operator, left, right})
       context.bindings.set(symbol, value)
       return value
     }
@@ -81,8 +81,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   ) {
     const symbol = requiredSymbol(current.operand, context.checker)
     const previous = requiredBinding(symbol, current.operand, context)
-    const one = addInstruction(context, {kind: 'constant', value: 1})
-    const value = addInstruction(context, {
+    const one = addInstruction(context, current, {kind: 'constant', value: 1})
+    const value = addInstruction(context, current, {
       kind: 'binary',
       operator: current.operator === ts.SyntaxKind.PlusPlusToken ? 'add' : 'subtract',
       left: previous,
@@ -102,8 +102,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     const left = lowerExpression(current.left, context)
     const right = lowerExpression(current.right, context)
     return arithmetic != null
-      ? addInstruction(context, {kind: 'binary', operator: arithmetic, left, right})
-      : addInstruction(context, {kind: 'compare', operator: comparison!, left, right})
+      ? addInstruction(context, current, {kind: 'binary', operator: arithmetic, left, right})
+      : addInstruction(context, current, {kind: 'compare', operator: comparison!, left, right})
   }
   if (ts.isCallExpression(current)) {
     if (ts.isIdentifier(current.expression)) {
@@ -111,7 +111,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (functionID == null) throw unsupported(current, `Function call ${current.expression.text}`)
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
-      return addInstruction(context, {kind: 'call', function: functionID, arguments: arguments_})
+      return addInstruction(context, current, {kind: 'call', function: functionID, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
       const method = current.expression.name.text
@@ -119,12 +119,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       if (standardMath && method === 'floor' && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker, 'Math.floor argument')
         const value = lowerExpression(current.arguments[0]!, context)
-        return addInstruction(context, {kind: 'floor', value})
+        return addInstruction(context, current, {kind: 'floor', value})
       }
       if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
         for (const argument of current.arguments) requireNumberType(argument, context.checker, `Math.${method} argument`)
         const values = current.arguments.map(argument => lowerExpression(argument, context))
-        return addInstruction(context, {kind: method === 'min' ? 'minimum' : 'maximum', values})
+        return addInstruction(context, current, {kind: method === 'min' ? 'minimum' : 'maximum', values})
       }
       throw unsupported(current, `Function call ${current.expression.getText(context.sourceFile)}`)
     }
@@ -135,7 +135,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       throw unsupported(current.expression, `Property read from ${context.checker.typeToString(objectType)}`)
     }
     const object = lowerExpression(current.expression, context)
-    return addInstruction(context, {kind: 'property', object, property: current.name.text})
+    return addInstruction(context, current, {kind: 'property', object, property: current.name.text})
   }
   throw unsupported(current, 'Expression')
 }

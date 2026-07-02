@@ -12,7 +12,6 @@ export type FunctionAnalysis = {
 }
 
 export type ProgramAnalysis = {
-  file: string
   functions: FunctionAnalysis[]
 }
 

@@ -56,6 +56,9 @@ export function addPrecondition(preconditions: InferredPrecondition[], candidate
   if (!preconditions.some(precondition => samePrecondition(precondition, candidate))) preconditions.push(candidate)
 }
 
+// Deduplication is by expression only: when two operations need the same requirement, the
+// first causing site wins. Switching to one record per operation is deferred until reports
+// group requirements per operation.
 function samePrecondition(left: InferredPrecondition, right: InferredPrecondition): boolean {
   return sameExpression(left.expression, right.expression)
 }

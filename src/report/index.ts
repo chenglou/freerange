@@ -2,6 +2,7 @@ import type {AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {ProgramAnalysis} from '../engine/outcome.ts'
 import type {AbstractHeap} from '../heap/model.ts'
+import type {ProgramIR} from '../ir/program.ts'
 import {formatPrecondition} from './format-requirement.ts'
 
 type FunctionReport = {
@@ -16,9 +17,9 @@ export type AnalysisReport = {
   functions: FunctionReport[]
 }
 
-export function createReport(analysis: ProgramAnalysis): AnalysisReport {
+export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   return {
-    file: analysis.file,
+    file: program.file,
     functions: analysis.functions.map(fn => {
       const assumptions: string[] = []
       const parameterNames = fn.parameters.map(parameter => parameter.name)
@@ -36,7 +37,7 @@ export function createReport(analysis: ProgramAnalysis): AnalysisReport {
       return {
         name: fn.name,
         assumptions,
-        requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames)),
+        requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
         ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
       }
     }),

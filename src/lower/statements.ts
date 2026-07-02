@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {BlockID, ValueID} from '../ir/ids.ts'
 import {
+  addSite,
   bindingsVisibleAfterBranch,
   changedBindings,
   createBlock,
@@ -109,7 +110,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   const bindingsBeforeLoop = new Map(context.bindings)
   const assigned = assignedSymbols([statement.condition, statement.statement, statement.incrementor], context.checker)
   const carried = [...bindingsBeforeLoop.keys()].filter(symbol => assigned.has(symbol))
-  const header = createBlock(context, carried.length, true)
+  const header = createBlock(context, carried.length, addSite(context, statement))
   terminate(context.currentBlock, {
     kind: 'jump',
     target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, bindingsBeforeLoop))},

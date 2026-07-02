@@ -1,5 +1,6 @@
 import {describe, expect, test} from 'bun:test'
 import {readFileSync} from 'node:fs'
+import {resolve} from 'node:path'
 import {analyzeFile, analyzeSource, formatReport} from '../src/index.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
@@ -26,7 +27,7 @@ describe('analyzeFile', () => {
     const source = readFileSync(fixture, 'utf8').replace('/ columnCount', '/ containerWidth')
     const report = analyzeSource('unsafe-grid-metrics.ts', source)
     const fn = report.functions.find(candidate => candidate.name === 'calculateGridMetrics')
-    expect(fn?.requires).toEqual(['containerWidth is nonzero'])
+    expect(fn?.requires).toEqual([`containerWidth is nonzero (division at ${resolve('unsafe-grid-metrics.ts')}:18:5)`])
     expect(fn?.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from -Infinity through Infinity')
   })
 
@@ -59,14 +60,17 @@ describe('analyzeFile', () => {
 
   test('infers, propagates, and discharges nonzero preconditions', () => {
     const report = analyzeFile(preconditionsFixture)
+    // The division lives inside divideWidth at 6:10. Callers that inherit the requirement
+    // keep that site, so their reports point at the actual division, not at their call.
+    const divisionLocation = `(division at ${preconditionsFixture}:6:10)`
     expect(report.functions.find(fn => fn.name === 'divideWidth')?.requires)
-      .toEqual(['columnCount is nonzero'])
+      .toEqual([`columnCount is nonzero ${divisionLocation}`])
     expect(report.functions.find(fn => fn.name === 'divideThroughCaller')?.requires)
-      .toEqual(['columnCount is nonzero'])
+      .toEqual([`columnCount is nonzero ${divisionLocation}`])
     expect(report.functions.find(fn => fn.name === 'divideThroughTwoCallers')?.requires)
-      .toEqual(['columnCount is nonzero'])
+      .toEqual([`columnCount is nonzero ${divisionLocation}`])
     expect(report.functions.find(fn => fn.name === 'divideAfterGap')?.requires)
-      .toEqual(['(width - gap) is nonzero'])
+      .toEqual([`(width - gap) is nonzero ${divisionLocation}`])
 
     const provedCall = report.functions.find(fn => fn.name === 'divideByClampedColumnCount')
     expect(provedCall?.requires).toEqual([])

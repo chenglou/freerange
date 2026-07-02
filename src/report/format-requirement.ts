@@ -1,8 +1,10 @@
 import type {ArithmeticOperator} from '../ir/instructions.ts'
+import {siteLocation, type ProgramIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
-export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[]): string {
-  return `${formatExpression(precondition.expression, parameterNames)} is nonzero`
+export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
+  const {line, column} = siteLocation(program, precondition.site)
+  return `${formatExpression(precondition.expression, parameterNames)} is nonzero (division at ${program.file}:${line}:${column})`
 }
 
 function formatExpression(expression: NumericExpression, parameterNames: string[]): string {

@@ -1,7 +1,8 @@
-import type {BlockID, FunctionID, ValueID} from './ids.ts'
+import type {BlockID, FunctionID, SiteID, ValueID} from './ids.ts'
 
 type InstructionBase = {
   result: ValueID
+  site: SiteID
 }
 
 export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal'

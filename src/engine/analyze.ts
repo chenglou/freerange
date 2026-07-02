@@ -3,7 +3,7 @@ import {joinValues, type AbstractValue} from '../domain/value.ts'
 import {allocateObject, joinHeaps} from '../heap/operations.ts'
 import type {BlockID, FunctionID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import type {FunctionIR, ProgramIR} from '../ir/program.ts'
+import {siteLocation, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import type {CompleteFunctionEvaluation, FunctionAnalysis, ProgramAnalysis} from './outcome.ts'
@@ -58,7 +58,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       arguments_,
       argumentExpressions,
       sharedState,
-      program.functions,
+      program,
       [],
     )
     functions.push({
@@ -69,7 +69,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       sharedState: evaluation.sharedState,
     })
   }
-  return {file: program.file, functions}
+  return {functions}
 }
 
 function evaluateFunction(
@@ -77,13 +77,13 @@ function evaluateFunction(
   arguments_: AbstractValue[],
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
-  functions: FunctionIR[],
+  program: ProgramIR,
   callStack: FunctionID[],
 ): CompleteFunctionEvaluation {
-  const fn = functions[functionID]
+  const fn = program.functions[functionID]
   if (fn == null) throw new Error(`Unknown function ${functionID}`)
   if (callStack.includes(functionID)) {
-    const names = [...callStack, functionID].map(id => functions[id]!.name)
+    const names = [...callStack, functionID].map(id => program.functions[id]!.name)
     throw new Error(`Recursive function analysis is unsupported: ${names.join(' → ')}`)
   }
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
@@ -97,9 +97,8 @@ function evaluateFunction(
   }
   const comparisons = collectComparisons(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
-  const incoming: Array<ExecutionState | undefined> = []
-  const updateCounts: number[] = []
-  incoming[fn.entry] = initial
+  const incoming: Array<IncomingState | undefined> = []
+  incoming[fn.entry] = {state: initial, updateCount: 0}
   const queue: BlockID[] = [fn.entry]
   let queueIndex = 0
   const preconditions: InferredPrecondition[] = []
@@ -110,10 +109,10 @@ function evaluateFunction(
     const block = fn.blocks[blockID]
     const entry = incoming[blockID]
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
-    const state = cloneState(entry)
+    const state = cloneState(entry.state)
     for (const instruction of block.instructions) {
       state.frame.values[instruction.result] = evaluateInstruction(instruction, state, {
-        functions,
+        program,
         callStack: [...callStack, functionID],
         expressionContext,
         preconditions,
@@ -122,7 +121,7 @@ function evaluateFunction(
           values,
           expressions,
           calleeState,
-          functions,
+          program,
           stack,
         ),
       })
@@ -139,7 +138,7 @@ function evaluateFunction(
         break
       }
       case 'jump': {
-        propagate(state, block.terminator.target, fn, incoming, updateCounts, queue)
+        propagate(state, block.terminator.target, fn, program, incoming, queue)
         break
       }
       case 'branch': {
@@ -147,11 +146,11 @@ function evaluateFunction(
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
-          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, incoming, updateCounts, queue)
+          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, program, incoming, queue)
         }
         if (condition.canBeFalse) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
-          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, incoming, updateCounts, queue)
+          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, program, incoming, queue)
         }
         break
       }
@@ -165,12 +164,19 @@ function evaluateFunction(
   }
 }
 
+// One entry per reachable block: the joined state flowing into the block, and how many
+// times that state has been updated (loop headers widen from the second update on).
+type IncomingState = {
+  state: ExecutionState
+  updateCount: number
+}
+
 function propagate(
   state: ExecutionState,
   edge: EdgeIR,
   fn: FunctionIR,
-  incoming: Array<ExecutionState | undefined>,
-  updateCounts: number[],
+  program: ProgramIR,
+  incoming: Array<IncomingState | undefined>,
   queue: BlockID[],
 ): void {
   const target = fn.blocks[edge.block]
@@ -184,20 +190,19 @@ function propagate(
   }
   const previous = incoming[edge.block]
   if (previous == null) {
-    incoming[edge.block] = candidate
+    incoming[edge.block] = {state: candidate, updateCount: 0}
     queue.push(edge.block)
     return
   }
-  const updateCount = updateCounts[edge.block] ?? 0
-  const joined = target.loopHeader && updateCount >= 1
-    ? widenState(previous, candidate)
-    : joinStates(previous, candidate)
-  if (!sameState(previous, joined)) {
-    if (target.loopHeader && updateCount >= maximumLoopHeaderUpdates) {
-      throw new Error(`Loop header ${edge.block} in ${fn.name} did not converge after ${maximumLoopHeaderUpdates} updates`)
+  const joined = target.loopHeader != null && previous.updateCount >= 1
+    ? widenState(previous.state, candidate)
+    : joinStates(previous.state, candidate)
+  if (!sameState(previous.state, joined)) {
+    if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
+      const {line, column} = siteLocation(program, target.loopHeader)
+      throw new Error(`Loop in ${fn.name} at ${program.file}:${line}:${column} did not converge after ${maximumLoopHeaderUpdates} updates`)
     }
-    incoming[edge.block] = joined
-    updateCounts[edge.block] = updateCount + 1
+    incoming[edge.block] = {state: joined, updateCount: previous.updateCount + 1}
     queue.push(edge.block)
   }
 }

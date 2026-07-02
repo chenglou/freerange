@@ -2,13 +2,14 @@ import type * as ts from 'typescript'
 import type {
   BlockID,
   FunctionID,
+  SiteID,
   ValueID,
 } from '../ir/ids.ts'
 import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
-import type {FunctionIR} from '../ir/program.ts'
+import type {FunctionIR, SourceSpan} from '../ir/program.ts'
 
 export type MutableBlock = {
-  loopHeader: boolean
+  loopHeader: SiteID | null
   parameters: ValueID[]
   instructions: InstructionIR[]
   terminator: TerminatorIR | null
@@ -18,6 +19,9 @@ export type FunctionContext = {
   sourceFile: ts.SourceFile
   checker: ts.TypeChecker
   functionsBySymbol: Map<ts.Symbol, FunctionID>
+  // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
+  // next dense SiteID.
+  sites: SourceSpan[]
   nextValue: number
   currentBlock: MutableBlock
   blocks: MutableBlock[]
@@ -25,16 +29,25 @@ export type FunctionContext = {
   parameters: FunctionIR['parameters']
 }
 
-type WithoutResult<T> = T extends unknown ? Omit<T, 'result'> : never
-type InstructionInput = WithoutResult<InstructionIR>
+export function addSite(context: FunctionContext, node: ts.Node): SiteID {
+  context.sites.push({start: node.getStart(context.sourceFile), end: node.getEnd()})
+  return context.sites.length - 1
+}
 
-export function addInstruction(context: FunctionContext, instruction: InstructionInput): ValueID {
+type WithoutResultAndSite<T> = T extends unknown ? Omit<T, 'result' | 'site'> : never
+type InstructionInput = WithoutResultAndSite<InstructionIR>
+
+// Every caller passes the AST node the instruction was lowered from. Desugared helpers
+// (the constant 0 in `-x`, the constant 1 in `count++`) pass the enclosing node:
+// distinct SiteIDs, shared span.
+export function addInstruction(context: FunctionContext, node: ts.Node, instruction: InstructionInput): ValueID {
   const result = context.nextValue++
-  context.currentBlock.instructions.push({...instruction, result} as InstructionIR)
+  const site = addSite(context, node)
+  context.currentBlock.instructions.push({...instruction, result, site} as InstructionIR)
   return result
 }
 
-export function createBlock(context: FunctionContext, parameterCount = 0, loopHeader = false): BlockID {
+export function createBlock(context: FunctionContext, parameterCount = 0, loopHeader: SiteID | null = null): BlockID {
   const parameters: ValueID[] = []
   for (let index = 0; index < parameterCount; index++) parameters.push(context.nextValue++)
   const block: MutableBlock = {loopHeader, parameters, instructions: [], terminator: null}

@@ -1,6 +1,6 @@
 import * as ts from 'typescript'
 import type {FunctionID} from '../ir/ids.ts'
-import type {BlockIR, FunctionIR, ProgramIR, ValueTypeIR} from '../ir/program.ts'
+import type {BlockIR, FunctionIR, ProgramIR, SourceSpan, ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
 import {lowerStatements} from './statements.ts'
@@ -16,11 +16,12 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     const declaration = declarations[index]!
     functionsBySymbol.set(requiredSymbol(declaration.name!, checker), index)
   }
+  const sites: SourceSpan[] = []
   const functions: FunctionIR[] = []
   for (const declaration of declarations) {
-    functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol))
+    functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, sites))
   }
-  return {file: sourceFile.fileName, functions}
+  return {file: sourceFile.fileName, lineStarts: [...sourceFile.getLineStarts()], sites, functions}
 }
 
 function lowerFunction(
@@ -28,13 +29,15 @@ function lowerFunction(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   functionsBySymbol: Map<ts.Symbol, FunctionID>,
+  sites: SourceSpan[],
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, 'Function declarations need bodies')
-  const entry: MutableBlock = {loopHeader: false, parameters: [], instructions: [], terminator: null}
+  const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   const context: FunctionContext = {
     sourceFile,
     checker,
     functionsBySymbol,
+    sites,
     nextValue: 0,
     currentBlock: entry,
     blocks: [entry],

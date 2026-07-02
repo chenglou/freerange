@@ -4,11 +4,13 @@ import {createReport, type AnalysisReport} from './report/index.ts'
 import {checkFile, checkSource} from './typescript/check.ts'
 
 export function analyzeFile(file: string): AnalysisReport {
-  return createReport(analyzeProgram(lowerSource(checkFile(file))))
+  const program = lowerSource(checkFile(file))
+  return createReport(program, analyzeProgram(program))
 }
 
 export function analyzeSource(file: string, source: string): AnalysisReport {
-  return createReport(analyzeProgram(lowerSource(checkSource(file, source))))
+  const program = lowerSource(checkSource(file, source))
+  return createReport(program, analyzeProgram(program))
 }
 
 export {formatReport} from './report/index.ts'
