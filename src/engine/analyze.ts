@@ -1,7 +1,7 @@
 import {finiteInputNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import {allocateObject, joinHeaps} from '../heap/operations.ts'
-import type {BlockID, FunctionID} from '../ir/ids.ts'
+import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {siteLocation, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
@@ -28,13 +28,23 @@ import {
 const maximumLoopHeaderUpdates = 16
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
+  const blocked = blockedCallers(program)
   const functions: FunctionAnalysis[] = []
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
+    if (fn.kind === 'unsupported') {
+      functions.push({kind: 'notLowered'})
+      continue
+    }
+    const blocking = blocked[functionID]
+    if (blocking != null) {
+      functions.push({kind: 'blockedByCallee', site: blocking.site, callee: blocking.callee})
+      continue
+    }
     const arguments_: AbstractValue[] = []
     const argumentExpressions: Array<NumericExpression | null> = []
     const sharedState = emptySharedState()
-    const parameters: FunctionAnalysis['parameters'] = []
+    const parameters: Extract<FunctionAnalysis, {kind: 'analyzed'}>['parameters'] = []
     for (const parameter of fn.parameters) {
       parameters.push({name: parameter.name, type: parameter.type})
       switch (parameter.type.kind) {
@@ -62,6 +72,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       [],
     )
     functions.push({
+      kind: 'analyzed',
       name: fn.name,
       parameters,
       preconditions: evaluation.preconditions,
@@ -70,6 +81,51 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     })
   }
   return {functions}
+}
+
+type BlockingCall = {
+  site: SiteID
+  callee: FunctionID
+}
+
+// A lowered function is blocked when any call instruction in its body targets an unsupported
+// or already-blocked function, transitively. Records one such call per function. Deliberately
+// whole-function and branch-insensitive: partial evaluation up to the blocking call will
+// replace this pass entirely.
+function blockedCallers(program: ProgramIR): Array<BlockingCall | undefined> {
+  const blocked: Array<BlockingCall | undefined> = []
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let functionID = 0; functionID < program.functions.length; functionID++) {
+      const fn = program.functions[functionID]!
+      if (fn.kind !== 'lowered' || blocked[functionID] != null) continue
+      const blocking = firstBlockingCall(fn, program, blocked)
+      if (blocking != null) {
+        blocked[functionID] = blocking
+        changed = true
+      }
+    }
+  }
+  return blocked
+}
+
+function firstBlockingCall(
+  fn: FunctionIR,
+  program: ProgramIR,
+  blocked: Array<BlockingCall | undefined>,
+): BlockingCall | null {
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      if (instruction.kind !== 'call') continue
+      const callee = program.functions[instruction.function]
+      if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
+      if (callee.kind === 'unsupported' || blocked[instruction.function] != null) {
+        return {site: instruction.site, callee: instruction.function}
+      }
+    }
+  }
+  return null
 }
 
 function evaluateFunction(
@@ -82,6 +138,9 @@ function evaluateFunction(
 ): CompleteFunctionEvaluation {
   const fn = program.functions[functionID]
   if (fn == null) throw new Error(`Unknown function ${functionID}`)
+  // Unreachable while blockedCallers keeps callers of unsupported functions out of the
+  // engine; the blocked pass and this invariant must move together.
+  if (fn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${fn.name}`)
   if (callStack.includes(functionID)) {
     const names = [...callStack, functionID].map(id => program.functions[id]!.name)
     throw new Error(`Recursive function analysis is unsupported: ${names.join(' → ')}`)

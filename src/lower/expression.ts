@@ -33,13 +33,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     const properties = current.properties.map(property => {
       if (ts.isShorthandPropertyAssignment(property)) {
         const symbol = context.checker.getShorthandAssignmentValueSymbol(property)
-        if (symbol == null) throw unsupported(property, 'Shorthand property without a value symbol')
+        if (symbol == null) throw unsupported(property, {kind: 'missingSymbol'})
         return {name: property.name.text, value: requiredBinding(symbol, property.name, context)}
       }
       if (ts.isPropertyAssignment(property)) {
         return {name: propertyName(property.name), value: lowerExpression(property.initializer, context)}
       }
-      throw unsupported(property, 'Object property')
+      throw unsupported(property, {kind: 'objectPropertyForm'})
     })
     return addInstruction(context, current, {kind: 'object', properties})
   }
@@ -95,10 +95,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
     if (arithmetic == null && comparison == null) {
-      throw unsupported(current, `Binary operator ${current.operatorToken.getText(context.sourceFile)}`)
+      throw unsupported(current, {kind: 'binaryOperator', operator: current.operatorToken.getText(context.sourceFile)})
     }
-    requireNumberType(current.left, context.checker, 'Left operand')
-    requireNumberType(current.right, context.checker, 'Right operand')
+    requireNumberType(current.left, context.checker)
+    requireNumberType(current.right, context.checker)
     const left = lowerExpression(current.left, context)
     const right = lowerExpression(current.right, context)
     return arithmetic != null
@@ -109,7 +109,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (ts.isIdentifier(current.expression)) {
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
-      if (functionID == null) throw unsupported(current, `Function call ${current.expression.text}`)
+      if (functionID == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
       return addInstruction(context, current, {kind: 'call', function: functionID, arguments: arguments_})
     }
@@ -117,27 +117,27 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const method = current.expression.name.text
       const standardMath = isStandardMathObject(current.expression.expression, context.checker)
       if (standardMath && method === 'floor' && current.arguments.length === 1) {
-        requireNumberType(current.arguments[0]!, context.checker, 'Math.floor argument')
+        requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, current, {kind: 'floor', value})
       }
       if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
-        for (const argument of current.arguments) requireNumberType(argument, context.checker, `Math.${method} argument`)
+        for (const argument of current.arguments) requireNumberType(argument, context.checker)
         const values = current.arguments.map(argument => lowerExpression(argument, context))
         return addInstruction(context, current, {kind: method === 'min' ? 'minimum' : 'maximum', values})
       }
-      throw unsupported(current, `Function call ${current.expression.getText(context.sourceFile)}`)
+      throw unsupported(current, {kind: 'call', callee: current.expression.getText(context.sourceFile)})
     }
   }
   if (ts.isPropertyAccessExpression(current)) {
     const objectType = context.checker.getTypeAtLocation(current.expression)
     if ((objectType.flags & ts.TypeFlags.Object) === 0) {
-      throw unsupported(current.expression, `Property read from ${context.checker.typeToString(objectType)}`)
+      throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})
     }
     const object = lowerExpression(current.expression, context)
     return addInstruction(context, current, {kind: 'property', object, property: current.name.text})
   }
-  throw unsupported(current, 'Expression')
+  throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
 }
 
 export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<InstructionIR, {kind: 'binary'}>['operator'] | null {
@@ -217,9 +217,11 @@ function comparisonOperator(kind: ts.SyntaxKind): ComparisonOperator | null {
   }
 }
 
-function requireNumberType(node: ts.Node, checker: ts.TypeChecker, description: string): void {
+function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
   const type = checker.getTypeAtLocation(node)
-  if ((type.flags & ts.TypeFlags.NumberLike) === 0) throw unsupported(node, `${description} with type ${checker.typeToString(type)}`)
+  if ((type.flags & ts.TypeFlags.NumberLike) === 0) {
+    throw unsupported(node, {kind: 'nonNumberOperand', typeText: checker.typeToString(type)})
+  }
 }
 
 function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | null {
@@ -237,7 +239,7 @@ function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker
 
 function propertyName(name: ts.PropertyName): string {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
-  throw unsupported(name, 'Computed object property name')
+  throw unsupported(name, {kind: 'computedPropertyName'})
 }
 
 function unwrap(expression: ts.Expression): ts.Expression {

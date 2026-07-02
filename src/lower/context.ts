@@ -6,7 +6,7 @@ import type {
   ValueID,
 } from '../ir/ids.ts'
 import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
-import type {FunctionIR, SourceSpan} from '../ir/program.ts'
+import type {FunctionIR, SourceSpan, UnsupportedReason} from '../ir/program.ts'
 
 export type MutableBlock = {
   loopHeader: SiteID | null
@@ -62,13 +62,13 @@ export function terminate(block: MutableBlock, terminator: TerminatorIR): void {
 
 export function requiredSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbol {
   const symbol = checker.getSymbolAtLocation(node)
-  if (symbol == null) throw unsupported(node, 'Node without a TypeScript symbol')
+  if (symbol == null) throw unsupported(node, {kind: 'missingSymbol'})
   return symbol
 }
 
 export function requiredBinding(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
   const value = context.bindings.get(symbol)
-  if (value == null) throw unsupported(node, `Unknown identifier ${node.text}`)
+  if (value == null) throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
   return value
 }
 
@@ -101,9 +101,25 @@ export function requiredBranchBinding(symbol: ts.Symbol, bindings: Map<ts.Symbol
   return value
 }
 
-export function unsupported(node: ts.Node, description: string): Error {
-  const sourceFile = node.getSourceFile()
-  const start = node.getStart(sourceFile)
-  const position = sourceFile.getLineAndCharacterOfPosition(start)
-  return new Error(`Unsupported ${description} at ${sourceFile.fileName}:${position.line + 1}:${position.character + 1}`)
+// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly one
+// place — the per-function loop in lowerSource — which discards the whole in-progress
+// FunctionContext and records an UnsupportedFunctionIR. No other try/catch may exist under
+// src/lower (a mid-lowering catch would silently truncate bodies), and nothing outside
+// src/lower may see this class. Extends Error only so an accidentally escaping stop has a
+// stack trace; the message is never parsed or matched.
+export class LoweringStop extends Error {
+  readonly node: ts.Node
+  readonly reason: UnsupportedReason
+
+  constructor(node: ts.Node, reason: UnsupportedReason) {
+    super(`Lowering stopped: ${reason.kind}`)
+    this.node = node
+    this.reason = reason
+  }
+}
+
+// Carrying the node (not a minted SiteID) means throw sites without a FunctionContext, like
+// requiredSymbol, need no plumbing; the SiteID is minted at the catch in lowerSource.
+export function unsupported(node: ts.Node, reason: UnsupportedReason): LoweringStop {
+  return new LoweringStop(node, reason)
 }

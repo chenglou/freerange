@@ -16,7 +16,7 @@ import {compoundAssignmentOperator, lowerExpression} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
-    if (context.currentBlock.terminator != null) throw unsupported(statement, 'Statements after return')
+    if (context.currentBlock.terminator != null) throw unsupported(statement, {kind: 'statementAfterReturn'})
     lowerStatement(statement, context)
   }
 }
@@ -47,7 +47,7 @@ function lowerStatement(statement: ts.Statement, context: FunctionContext): void
     lowerStatements(statement.statements, context)
     return
   }
-  throw unsupported(statement, 'Statement')
+  throw unsupported(statement, {kind: 'statementForm', syntax: ts.SyntaxKind[statement.kind]})
 }
 
 function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): void {
@@ -104,8 +104,8 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
       lowerExpression(statement.initializer, context)
     }
   }
-  if (statement.condition == null) throw unsupported(statement, 'For loop without a condition')
-  if (statement.incrementor == null) throw unsupported(statement, 'For loop without an incrementor')
+  if (statement.condition == null) throw unsupported(statement, {kind: 'forLoopWithoutCondition'})
+  if (statement.incrementor == null) throw unsupported(statement, {kind: 'forLoopWithoutIncrementor'})
 
   const bindingsBeforeLoop = new Map(context.bindings)
   const assigned = assignedSymbols([statement.condition, statement.statement, statement.incrementor], context.checker)
@@ -162,7 +162,7 @@ function lowerBranch(
 function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, context: FunctionContext): void {
   for (const declaration of declarations.declarations) {
     if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) {
-      throw unsupported(declaration, 'Variables without identifier names and initializers')
+      throw unsupported(declaration, {kind: 'variableDeclarationShape'})
     }
     const value = lowerExpression(declaration.initializer, context)
     context.bindings.set(requiredSymbol(declaration.name, context.checker), value)

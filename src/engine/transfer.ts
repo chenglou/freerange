@@ -90,6 +90,8 @@ export function evaluateInstruction(
     case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(state, value)))
     case 'call': {
+      // Calls to unsupported functions are unreachable here because analyzeProgram blocks
+      // their callers before evaluation; evaluateFunction holds the narrowing invariant.
       const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
       const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
