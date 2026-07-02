@@ -50,7 +50,7 @@ function lowerFunction(
   const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
   // Mixed return kinds (e.g. one branch returning a number and another a boolean) would
   // otherwise meet at the engine's return join instead of stopping here.
-  if (!returnsVoid && valueKind(returnType) == null) {
+  if (!returnsVoid && valueKind(returnType, checker) == null) {
     throw unsupported(declaration.type ?? declaration, {kind: 'valueType', typeText: checker.typeToString(returnType)})
   }
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}

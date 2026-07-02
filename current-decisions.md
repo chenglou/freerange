@@ -84,7 +84,7 @@ Do not unroll loops. Analyze the loop CFG until its abstract state stabilizes, t
 
 Unrolling makes analysis depend on runtime collection length and still cannot prove iterations beyond an arbitrary cutoff. If fixed-point analysis does not stabilize and no supported summary applies, report the property as unresolved.
 
-The convergence limit counts fixed-point rounds of one loop header's abstract state, not runtime iterations. Widening makes ordinary counting loops converge in two or three rounds regardless of how many times the loop runs at runtime; the limit exists only to guarantee termination when each round genuinely keeps changing the state. Known routes to it: a chain of loop-carried variables longer than the limit (widening settles one variable per round), and a loop that allocates an object each iteration behind a call — the heap grows every round until the limit. When the fresh object is instead held in a loop-carried binding, the loop stops earlier as a join conflict at the header on the second round. Both allocation forms are the allocation-identity gap rather than a loop problem, and disappear once allocations are keyed by their source site.
+The convergence limit counts fixed-point rounds of one loop header's abstract state, not runtime iterations. Widening makes ordinary counting loops converge in two or three rounds regardless of how many times the loop runs at runtime; the limit exists only to guarantee termination when each round genuinely keeps changing the state. The known route to it is a chain of loop-carried variables longer than the limit (widening settles one variable per round). The allocation-driven routes disappeared once allocations became keyed by their source site and call site: a loop that re-executes an allocation site now displaces the previous object into that site's summary and converges.
 
 When any path inside a loop stops, the loop header cannot reach its fixed point, and a stop can first appear on a late widening round after earlier rounds already propagated returns downstream. Returns reachable from such a header are therefore not evidence and are suppressed; returns before or bypassing the loop survive. This deliberately also suppresses zero-iteration evidence when the stop existed from the first round.
 
@@ -113,6 +113,8 @@ When any path inside a loop stops, the loop header cannot reach its fixed point,
 - Finiteness restoration rules, e.g. a `Math.max`/`Math.min` clamp recovering a finite range from a possibly non-finite input.
 - Not-equal branch narrowing, e.g. an explicit `if (columnCount === 0) return 0` guard discharging the nonzero requirement.
 - Reporting every unsupported construct in a function instead of only the first.
+- Optional object properties. Reading or writing a `y?: number` property is nullability the analyzer does not model, so those accesses are unsupported; objects declared with optional-property types remain analyzable through their required properties.
+- Property-level kind unions, e.g. a declared `{x: number | boolean}` property written with a number on one path and a boolean on another, still crash the analysis; the shape gate compares property names only.
 - Callback ordering and execution of callback sequences, including caller-selected bounded callback scenarios.
 - Runtime import cycles and top-level `await`.
 - Termination proofs and `decreases` clauses.

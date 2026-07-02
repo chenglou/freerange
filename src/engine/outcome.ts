@@ -1,5 +1,5 @@
 import type {AbstractValue} from '../domain/value.ts'
-import type {AbstractHeap, JoinConflict} from '../heap/model.ts'
+import type {AbstractHeap} from '../heap/model.ts'
 import type {FunctionID, SiteID} from '../ir/ids.ts'
 import type {InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState} from './state.ts'
@@ -15,8 +15,6 @@ export type StopReason =
   // (e.g. dividing by a property read). Revisit when requirement expressions support
   // property paths with mutation-awareness.
   | {kind: 'divisorUnknown'}
-  // A join met two objects it cannot merge.
-  | {kind: 'unjoinable'; conflict: JoinConflict}
   | {kind: 'loopLimit'; updates: number}
 
 export type Stop = {

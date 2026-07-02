@@ -1,7 +1,8 @@
 import {finiteInputNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
-import {allocateObject, joinHeaps, resolveReferenceConflict} from '../heap/operations.ts'
-import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
+import type {AllocationContext} from '../heap/model.ts'
+import {allocateParameter, joinHeaps} from '../heap/operations.ts'
+import type {BlockID, FunctionID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import type {FunctionIR, ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
@@ -56,9 +57,9 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
           break
         }
         case 'object': {
-          arguments_.push(allocateObject(
+          arguments_.push(allocateParameter(
             sharedState.heap,
-            {kind: 'parameter', name: parameter.name},
+            index,
             parameter.type.properties.map(name => ({name, value: finiteInputNumber()})),
           ))
           argumentExpressions.push(null)
@@ -66,7 +67,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
         }
       }
     }
-    const evaluation = evaluateFunction(functionID, arguments_, argumentExpressions, sharedState, program, [])
+    const evaluation = evaluateFunction(functionID, arguments_, argumentExpressions, sharedState, program, [], null)
     const completed = completedEvaluation(evaluation)
     if (completed != null) {
       functions.push({
@@ -125,6 +126,7 @@ function evaluateFunction(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
+  context: AllocationContext,
 ): FunctionEvaluation {
   const fn = program.functions[functionID]
   if (fn == null) throw new Error(`Unknown function ${functionID}`)
@@ -167,13 +169,15 @@ function evaluateFunction(
         callStack: [...callStack, functionID],
         expressionContext,
         preconditions,
-        evaluateFunction: (callee, values, expressions, calleeState, stack) => evaluateFunction(
+        allocationContext: context,
+        evaluateFunction: (callee, values, expressions, calleeState, stack, calleeContext) => evaluateFunction(
           callee,
           values,
           expressions,
           calleeState,
           program,
           stack,
+          calleeContext,
         ),
       })
       if (result.kind === 'stop') {
@@ -196,7 +200,7 @@ function evaluateFunction(
         break
       }
       case 'jump': {
-        propagate(state, blockID, block.terminator.site, block.terminator.target, run)
+        propagate(state, blockID, block.terminator.target, run)
         break
       }
       case 'branch': {
@@ -204,11 +208,11 @@ function evaluateFunction(
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
-          if (branch != null) propagate(branch, blockID, block.terminator.site, block.terminator.whenTrue, run)
+          if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
-          if (branch != null) propagate(branch, blockID, block.terminator.site, block.terminator.whenFalse, run)
+          if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break
       }
@@ -249,19 +253,10 @@ function evaluateFunction(
       normal = {returnValue: pending.value, sharedState: pending.shared}
       continue
     }
-    const terminatorSite = fn.blocks[blockID]!.terminator.site
-    const joinedValue = joinValues(normal.returnValue, pending.value)
-    if (joinedValue.kind === 'referenceConflict') {
-      const conflict = resolveReferenceConflict(joinedValue, normal.sharedState.heap, pending.shared.heap)
-      addStop(run, blockID, {site: terminatorSite, reason: {kind: 'unjoinable', conflict}})
-      continue
+    normal = {
+      returnValue: joinValues(normal.returnValue, pending.value),
+      sharedState: {heap: joinHeaps(normal.sharedState.heap, pending.shared.heap)},
     }
-    const joinedHeap = joinHeaps(normal.sharedState.heap, pending.shared.heap)
-    if ('kind' in joinedHeap) {
-      addStop(run, blockID, {site: terminatorSite, reason: {kind: 'unjoinable', conflict: joinedHeap}})
-      continue
-    }
-    normal = {returnValue: joinedValue, sharedState: {heap: joinedHeap}}
   }
 
   return {normal, preconditions, stops: run.stops}
@@ -277,7 +272,6 @@ function addStop(run: EvaluationRun, blockID: BlockID, stop: Stop): void {
 function propagate(
   state: ExecutionState,
   sourceBlock: BlockID,
-  terminatorSite: SiteID,
   edge: EdgeIR,
   run: EvaluationRun,
 ): void {
@@ -299,15 +293,6 @@ function propagate(
   const joined = target.loopHeader != null && previous.updateCount >= 1
     ? widenState(previous.state, candidate)
     : joinStates(previous.state, candidate)
-  if ('kind' in joined) {
-    // The arriving edge's contribution is dropped; the target keeps its previous state.
-    addStop(run, sourceBlock, {
-      site: target.loopHeader ?? terminatorSite,
-      reason: {kind: 'unjoinable', conflict: joined},
-    })
-    if (target.loopHeader != null) run.failedHeaders[edge.block] = true
-    return
-  }
   if (!sameState(previous.state, joined)) {
     if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
       addStop(run, sourceBlock, {

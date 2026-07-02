@@ -151,7 +151,7 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('records an unjoinable allocation in a loop and suppresses post-loop evidence', () => {
+  test('converges when a loop rebinds a fresh object each iteration', () => {
     const report = analyzeSource('loop-allocation.ts', `
       export function totalHeight(rowCount: number): number {
         let metrics = {height: 0}
@@ -161,13 +161,165 @@ describe('analyzeFile', () => {
         return metrics.height
       }
     `)
-    const file = resolve('loop-allocation.ts')
     expect(report.functions).toEqual([{
-      kind: 'partial',
+      kind: 'analyzed',
       name: 'totalHeight',
       assumptions: ['rowCount is finite and not NaN'],
-      stopped: [`cannot merge the object created at ${file}:3:23 with the object created at ${file}:5:21 (loop at ${file}:4:9)`],
+      requires: [],
+      ensures: ['return is a finite integer number at least 0'],
+    }])
+  })
+
+  test('keeps the convergence limit reachable through a long loop-carried chain', () => {
+    const report = analyzeSource('chain.ts', `
+      export function slowChain(count: number): number {
+        let a1 = 0; let a2 = 0; let a3 = 0; let a4 = 0; let a5 = 0; let a6 = 0
+        let a7 = 0; let a8 = 0; let a9 = 0; let a10 = 0; let a11 = 0; let a12 = 0
+        let a13 = 0; let a14 = 0; let a15 = 0; let a16 = 0; let a17 = 0; let a18 = 0
+        for (let index = 0; index < count; index += 1) {
+          a18 = a17; a17 = a16; a16 = a15; a15 = a14; a14 = a13; a13 = a12
+          a12 = a11; a11 = a10; a10 = a9; a9 = a8; a8 = a7; a7 = a6
+          a6 = a5; a5 = a4; a4 = a3; a3 = a2; a2 = a1; a1 = a1 + 1
+        }
+        return a18
+      }
+    `)
+    const file = resolve('chain.ts')
+    expect(report.functions).toEqual([{
+      kind: 'partial',
+      name: 'slowChain',
+      assumptions: ['count is finite and not NaN'],
+      stopped: [`the loop at ${file}:6:9 did not converge after 16 updates`],
       observed: [],
+    }])
+  })
+
+  test('joins a write into every target of a branch-merged reference', () => {
+    const report = analyzeSource('weak-write.ts', `
+      export function pick(flag: number): number {
+        const box = flag > 0 ? {value: 1} : {value: 2}
+        box.value = 5
+        return box.value
+      }
+    `)
+    expect(analyzedFunction(report, 'pick').ensures)
+      .toEqual(['return is a finite integer number from 1 through 5'])
+  })
+
+  test('keeps objects from different call sites distinct', () => {
+    const report = analyzeSource('double-call.ts', `
+      function makeBox(): {value: number} {
+        return {value: 1}
+      }
+      export function distinct(): number {
+        const first = makeBox()
+        const second = makeBox()
+        second.value = 7
+        return first.value
+      }
+    `)
+    expect(analyzedFunction(report, 'distinct').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+  })
+
+  test('keeps per-iteration precision on the freshest object', () => {
+    // Recency: within one iteration the fresh object takes strong updates, so the loop body
+    // reproduces an exact state each round and the header converges without widening `last`.
+    const report = analyzeSource('recency.ts', `
+      export function lastHeight(count: number): number {
+        let last = 0
+        for (let index = 0; index < count; index += 1) {
+          const point = {x: 1}
+          point.x = point.x + 1
+          last = point.x
+        }
+        return last
+      }
+    `)
+    expect(analyzedFunction(report, 'lastHeight').ensures)
+      .toEqual(['return is a finite integer number from 0 through 2'])
+  })
+
+  test('repairs a caller reference when a callee displaces its object', () => {
+    // The loop re-executes makeBox from one call site; each round displaces the previous
+    // object into the site's summary, and the caller's `first` reference — created at a
+    // different call site — must stay exactly 1 throughout.
+    const report = analyzeSource('adoption.ts', `
+      function makeBox(): {value: number} {
+        return {value: 1}
+      }
+      export function loopBoxes(count: number): number {
+        const first = makeBox()
+        let last = 0
+        for (let index = 0; index < count; index += 1) {
+          const box = makeBox()
+          box.value = box.value + 1
+          last = box.value
+        }
+        return first.value + last
+      }
+    `)
+    expect(analyzedFunction(report, 'loopBoxes').ensures)
+      .toEqual(['return is a finite integer number from 1 through 3'])
+  })
+
+  test('merges branch results whose branches allocate different objects', () => {
+    const report = analyzeSource('skew.ts', `
+      export function skewed(flag: number): number {
+        if (flag > 0) {
+          const extra = {pad: 9}
+          const box = {value: 1}
+          return box.value + extra.pad - 9
+        }
+        const box = {value: 2}
+        return box.value
+      }
+    `)
+    expect(analyzedFunction(report, 'skewed').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+  })
+
+  test('records optional-property access as unsupported but keeps shared-property reads', () => {
+    const gated = analyzeSource('optional-read.ts', `
+      type Box = {x: number; y?: number}
+      export function pick(flag: number): number {
+        let box: Box = {x: 1}
+        if (flag > 0) { box = {x: 2, y: 3} }
+        const maybe = box.y
+        return box.x
+      }
+    `)
+    const file = resolve('optional-read.ts')
+    expect(gated.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'pick',
+      unsupported: `value of type number | undefined at ${file}:6:23`,
+    }])
+
+    const benign = analyzeSource('optional-benign.ts', `
+      type Box = {x: number; y?: number}
+      export function shared(flag: number): number {
+        let box: Box = {x: 1}
+        if (flag > 0) { box = {x: 2, y: 3} }
+        return box.x
+      }
+    `)
+    expect(analyzedFunction(benign, 'shared').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+  })
+
+  test('records mixed object shapes as unsupported', () => {
+    const report = analyzeSource('mixed-shape.ts', `
+      export function pickShape(flag: number) {
+        if (flag > 0) return {x: 1}
+        return {x: 1, y: 2}
+      }
+    `)
+    const file = resolve('mixed-shape.ts')
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'pickShape',
+      unsupported: `value of type { x: number; y?: undefined; } | { x: number; y: number; } at ${file}:2:7`,
     }])
   })
 
@@ -209,7 +361,7 @@ describe('analyzeFile', () => {
     })
   })
 
-  test('keeps a pre-loop return when the loop itself does not converge', () => {
+  test('converges when a called helper allocates inside a loop', () => {
     const report = analyzeSource('loop-limit.ts', `
       function allocateTemporary(): number {
         const box = {value: 1}
@@ -224,15 +376,8 @@ describe('analyzeFile', () => {
         return total
       }
     `)
-    const file = resolve('loop-limit.ts')
-    const guarded = report.functions.find(fn => fn.name === 'guarded')
-    expect(guarded).toEqual({
-      kind: 'partial',
-      name: 'guarded',
-      assumptions: ['limit is finite and not NaN'],
-      stopped: [`the loop at ${file}:9:9 did not converge after 16 updates`],
-      observed: ['return is a finite integer number from -1 through -1'],
-    })
+    expect(analyzedFunction(report, 'guarded').ensures)
+      .toEqual(['return is a finite integer number at least -1'])
     expect(analyzedFunction(report, 'allocateTemporary').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
   })

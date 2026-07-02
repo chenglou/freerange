@@ -11,7 +11,8 @@ import {
   type AbstractNumber,
 } from '../domain/number.ts'
 import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/value.ts'
-import {allocateObject, readProperty, writeProperty} from '../heap/operations.ts'
+import type {AllocationContext} from '../heap/model.ts'
+import {adoptCalleeHeap, allocateAtSite, readProperty, writeProperty} from '../heap/operations.ts'
 import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR, ProgramIR} from '../ir/program.ts'
@@ -30,6 +31,7 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
+  context: AllocationContext,
 ) => FunctionEvaluation
 
 export type TransferContext = {
@@ -37,6 +39,9 @@ export type TransferContext = {
   callStack: FunctionID[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
+  // The call site that entered the function being evaluated; allocations inside it are
+  // distinguished by this context.
+  allocationContext: AllocationContext
   evaluateFunction: EvaluateFunction
 }
 
@@ -68,9 +73,11 @@ export function evaluateInstruction(
 ): StepResult {
   switch (instruction.kind) {
     case 'constant': return value(constantNumber(instruction.value))
-    case 'object': return value(allocateObject(
+    case 'object': return value(allocateAtSite(
+      state.frame.values,
       state.shared.heap,
-      {kind: 'site', site: instruction.site},
+      instruction.site,
+      context.allocationContext,
       instruction.properties.map(property => ({
         name: property.name,
         value: requiredValue(state, property.value),
@@ -116,6 +123,7 @@ export function evaluateInstruction(
         argumentExpressions,
         state.shared,
         context.callStack,
+        instruction.site,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
@@ -125,6 +133,7 @@ export function evaluateInstruction(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
+      adoptCalleeHeap(state.frame.values, state.shared.heap)
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       return value(completed.returnValue)
     }

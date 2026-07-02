@@ -49,6 +49,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
     && ts.isPropertyAccessExpression(current.left)
   ) {
+    requireAccessedPropertyKind(current.left, context.checker)
     const object = lowerExpression(current.left.expression, context)
     const value = lowerExpression(current.right, context)
     return addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
@@ -135,6 +136,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if ((objectType.flags & ts.TypeFlags.Object) === 0) {
       throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})
     }
+    requireAccessedPropertyKind(current, context.checker)
     const object = lowerExpression(current.expression, context)
     return addInstruction(context, current, {kind: 'property', object, property: current.name.text})
   }
@@ -154,7 +156,7 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
 function lowerConditionalExpression(expression: ts.ConditionalExpression, context: FunctionContext): ValueID {
   requireBooleanCondition(expression.condition, context.checker)
   const resultType = context.checker.getTypeAtLocation(expression)
-  if (valueKind(resultType) == null) {
+  if (valueKind(resultType, context.checker) == null) {
     throw unsupported(expression, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
   }
   const condition = lowerExpression(expression.condition, context)
@@ -234,16 +236,31 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 }
 
 // The single value kind a type describes, or null when the type mixes kinds (a union like
-// number | boolean) or falls outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type): 'number' | 'boolean' | 'object' | null {
+// number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
+// union that needs discriminant support, or an inconsistency worth naming), or falls
+// outside the accepted kinds entirely (e.g. string).
+export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   if ((type.flags & ts.TypeFlags.Object) !== 0) return 'object'
   if (type.isUnion()) {
     let shared: 'number' | 'boolean' | 'object' | null = null
+    let objectShape: string | null = null
     for (const member of type.types) {
-      const kind = valueKind(member)
+      const kind = valueKind(member, checker)
       if (kind == null || (shared != null && kind !== shared)) return null
+      if (kind === 'object') {
+        // TypeScript normalizes a union of disjoint shapes by adding each member's missing
+        // properties as optional-undefined, so only the required properties describe the
+        // member's real shape.
+        const shape = checker.getPropertiesOfType(member)
+          .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
+          .map(property => property.name)
+          .sort()
+          .join(',')
+        if (objectShape != null && shape !== objectShape) return null
+        objectShape = shape
+      }
       shared = kind
     }
     return shared
@@ -255,8 +272,18 @@ export function valueKind(type: ts.Type): 'number' | 'boolean' | 'object' | null
 // accepted subset; the engine represents conditions as booleans only.
 export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker): void {
   const type = checker.getTypeAtLocation(node)
-  if (valueKind(type) === 'boolean') return
+  if (valueKind(type, checker) === 'boolean') return
   throw unsupported(node, {kind: 'nonBooleanCondition', typeText: checker.typeToString(type)})
+}
+
+// An optional property reads or writes as `number | undefined` — nullability the subset
+// does not model. Across branch-merged objects declared with one optional-property type,
+// the property may genuinely be missing from some of the objects a reference addresses, so
+// letting the access through would observe objects the abstract heap cannot describe.
+function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
+  const type = checker.getTypeAtLocation(access)
+  if (valueKind(type, checker) != null) return
+  throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
 }
 
 function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | null {

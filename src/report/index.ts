@@ -1,7 +1,8 @@
 import type {AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import type {AbstractHeap, AllocationOrigin} from '../heap/model.ts'
+import type {AbstractHeap} from '../heap/model.ts'
+import {referenceProperties} from '../heap/operations.ts'
 import type {SiteID} from '../ir/ids.ts'
 import {siteLocation, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
@@ -48,7 +49,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           kind: 'partial',
           name: lowering.name,
           assumptions: assumptionLines(lowering),
-          stopped: fn.stops.map(stop => formatStop(stop, lowering, program, analysis)),
+          stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
         })
         break
@@ -113,7 +114,7 @@ function assumptionLines(fn: FunctionIR): string[] {
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.
-function formatStop(stop: Stop, fn: FunctionIR, program: ProgramIR, analysis: ProgramAnalysis): string {
+function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): string {
   const reason = stop.reason
   switch (reason.kind) {
     case 'recursion': {
@@ -127,19 +128,6 @@ function formatStop(stop: Stop, fn: FunctionIR, program: ProgramIR, analysis: Pr
     }
     case 'divisorUnknown': {
       return `cannot infer a nonzero requirement for the division at ${formatSite(program, stop.site)}`
-    }
-    case 'unjoinable': {
-      const conflict = reason.conflict
-      const where = fn.blocks.some(block => block.loopHeader === stop.site) ? 'loop' : 'merge'
-      const suffix = `(${where} at ${formatSite(program, stop.site)})`
-      if (
-        conflict.left.kind === 'site'
-        && conflict.right.kind === 'site'
-        && conflict.left.site === conflict.right.site
-      ) {
-        return `cannot merge two objects created at ${formatSite(program, conflict.left.site)} ${suffix}`
-      }
-      return `cannot merge ${originText(conflict.left, program)} with ${originText(conflict.right, program)} ${suffix}`
     }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
@@ -162,14 +150,6 @@ function functionName(program: ProgramIR, callee: number): string {
   const fn = program.functions[callee]
   if (fn == null) throw new Error(`Unknown function ${callee}`)
   return fn.name
-}
-
-function originText(origin: AllocationOrigin, program: ProgramIR): string {
-  switch (origin.kind) {
-    case 'site': return `the object created at ${formatSite(program, origin.site)}`
-    case 'parameter': return `the object from parameter ${origin.name}`
-    case 'merged': return 'an object merged from earlier paths'
-  }
 }
 
 function formatSite(program: ProgramIR, site: SiteID): string {
@@ -213,10 +193,8 @@ function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap)
     case 'number': return [numberSummary(path, value)]
     case 'boolean': return [`${path} is boolean`]
     case 'reference': {
-      const object = heap[value.allocation]
-      if (object == null) throw new Error(`Missing returned heap allocation ${value.allocation}`)
       const summaries: string[] = []
-      for (const property of object.properties) {
+      for (const property of referenceProperties(heap, value)) {
         summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, heap))
       }
       return summaries
