@@ -35,6 +35,6 @@ export type EdgeIR = {
 }
 
 export type TerminatorIR =
-  | {kind: 'return'; value: ValueID | null}
-  | {kind: 'jump'; target: EdgeIR}
-  | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR}
+  | {kind: 'return'; value: ValueID | null; site: SiteID}
+  | {kind: 'jump'; target: EdgeIR; site: SiteID}
+  | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR; site: SiteID}

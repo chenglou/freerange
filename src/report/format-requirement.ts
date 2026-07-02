@@ -7,6 +7,13 @@ export function formatPrecondition(precondition: InferredPrecondition, parameter
   return `${formatExpression(precondition.expression, parameterNames)} is nonzero (division at ${program.file}:${line}:${column})`
 }
 
+// The evidence wording for a requirement inferred before a stop — deliberately a different
+// sentence shape from the requires line above, and it names the guarantee it enables.
+export function formatObservedNeed(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
+  const {line, column} = siteLocation(program, precondition.site)
+  return `the division at ${program.file}:${line}:${column} gives a finite result only when ${formatExpression(precondition.expression, parameterNames)} is nonzero`
+}
+
 function formatExpression(expression: NumericExpression, parameterNames: string[]): string {
   switch (expression.kind) {
     case 'parameter': {

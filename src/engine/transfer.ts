@@ -14,14 +14,14 @@ import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/
 import {allocateObject, readProperty, writeProperty} from '../heap/operations.ts'
 import type {FunctionID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {siteLocation, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import type {FunctionIR, ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   numericExpression,
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
-import type {CompleteFunctionEvaluation} from './outcome.ts'
+import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
 import {cloneState, type ExecutionState, type SharedState} from './state.ts'
 
 type EvaluateFunction = (
@@ -30,7 +30,7 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
-) => CompleteFunctionEvaluation
+) => FunctionEvaluation
 
 export type TransferContext = {
   program: ProgramIR
@@ -38,6 +38,15 @@ export type TransferContext = {
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
   evaluateFunction: EvaluateFunction
+}
+
+// One instruction either produces a value or stops the current path.
+export type StepResult =
+  | {kind: 'value'; value: AbstractValue}
+  | {kind: 'stop'; stop: Stop}
+
+function value(result: AbstractValue): StepResult {
+  return {kind: 'value', value: result}
 }
 
 export function collectComparisons(
@@ -56,21 +65,22 @@ export function evaluateInstruction(
   instruction: InstructionIR,
   state: ExecutionState,
   context: TransferContext,
-): AbstractValue {
+): StepResult {
   switch (instruction.kind) {
-    case 'constant': return constantNumber(instruction.value)
-    case 'object': return allocateObject(
+    case 'constant': return value(constantNumber(instruction.value))
+    case 'object': return value(allocateObject(
       state.shared.heap,
+      {kind: 'site', site: instruction.site},
       instruction.properties.map(property => ({
         name: property.name,
         value: requiredValue(state, property.value),
       })),
-    )
-    case 'property': return readProperty(
+    ))
+    case 'property': return value(readProperty(
       state.shared.heap,
       requiredReference(state, instruction.object),
       instruction.property,
-    )
+    ))
     case 'store': {
       const assigned = requiredValue(state, instruction.value)
       writeProperty(
@@ -79,23 +89,27 @@ export function evaluateInstruction(
         instruction.property,
         assigned,
       )
-      return assigned
+      return value(assigned)
     }
-    case 'compare': return compareNumbers(
+    case 'compare': return value(compareNumbers(
       requiredNumber(state, instruction.left),
       requiredNumber(state, instruction.right),
       instruction.operator,
-    )
-    case 'floor': return floorNumber(requiredNumber(state, instruction.value))
-    case 'minimum': return minimumNumbers(instruction.values.map(value => requiredNumber(state, value)))
-    case 'maximum': return maximumNumbers(instruction.values.map(value => requiredNumber(state, value)))
+    ))
+    case 'floor': return value(floorNumber(requiredNumber(state, instruction.value)))
+    case 'minimum': return value(minimumNumbers(instruction.values.map(id => requiredNumber(state, id))))
+    case 'maximum': return value(maximumNumbers(instruction.values.map(id => requiredNumber(state, id))))
     case 'call': {
-      // Calls to unsupported functions are unreachable here because analyzeProgram blocks
-      // their callers before evaluation; evaluateFunction holds the narrowing invariant.
       const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
-      const arguments_ = instruction.arguments.map(value => requiredValue(state, value))
-      const argumentExpressions = instruction.arguments.map(value => numericExpression(value, context.expressionContext))
+      if (callee.kind === 'unsupported') {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
+      }
+      if (context.callStack.includes(instruction.function)) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'recursion', callee: instruction.function}}}
+      }
+      const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
+      const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
       const evaluation = context.evaluateFunction(
         instruction.function,
         arguments_,
@@ -103,9 +117,16 @@ export function evaluateInstruction(
         state.shared,
         context.callStack,
       )
-      state.shared = evaluation.sharedState
-      for (const precondition of evaluation.preconditions) addPrecondition(context.preconditions, precondition)
-      return evaluation.returnValue
+      // A partial callee's result is discarded wholesale: the callee ran on a clone, and
+      // state.shared is assigned only on the complete path below, so a partial callee's
+      // prefix mutations cannot become this caller's state.
+      const completed = completedEvaluation(evaluation)
+      if (completed == null) {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
+      }
+      state.shared = completed.sharedState
+      for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
+      return value(completed.returnValue)
     }
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
@@ -113,12 +134,11 @@ export function evaluateInstruction(
       if (instruction.operator === 'divide' && includesZero(right)) {
         const expression = numericExpression(instruction.right, context.expressionContext)
         if (expression == null) {
-          const {line, column} = siteLocation(context.program, instruction.site)
-          throw new Error(`Cannot infer a nonzero precondition for the division at ${context.program.file}:${line}:${column}`)
+          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
         }
         addPrecondition(context.preconditions, {kind: 'nonzero', expression, site: instruction.site})
       }
-      return evaluateBinary(instruction.operator, left, right)
+      return value(evaluateBinary(instruction.operator, left, right))
     }
   }
 }

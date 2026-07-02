@@ -14,9 +14,11 @@ Complete and partial results must have different data shapes so code cannot acci
 
 If a called function performs supported mutations and then reaches unsupported code, retain those mutations only in the called function's partial prefix. Mark the caller partial at that call site and do not analyze later caller statements. Do not present the called function's prefix mutations as the caller's final state.
 
+In reports, a partial function prints `stopped:` lines (where and why each path stopped) and `on analyzed paths:` lines (what the completed paths returned and required). Evidence lines deliberately read differently from `requires:`/`ensures:` lines, and the partial report shape has no fields for contract lines, so evidence cannot render as a contract.
+
 ## How should non-finite numbers be modeled?
 
-Number parameters default to finite and non-NaN. Numeric operations must prove that they preserve that property. If an operation may produce NaN or infinity, report the requirement needed to keep the result finite, or report that the result may be non-finite when no useful requirement can be inferred.
+Number parameters default to finite and non-NaN. Numeric operations must prove that they preserve that property. If an operation may produce NaN or infinity, report the requirement needed to keep the result finite. When the requirement cannot be named over the function's parameters — e.g. a division by a property read like `width / grid.columnCount` — analysis stops that path and reports the division's location instead of silently degrading the result. Revisit when requirement expressions can name property paths; doing that honestly needs to know the property is not written between function entry and the division.
 
 The analyzer must still represent possible NaN and infinities internally. This allows it to explain where the possibility came from, propagate requirements backward, and recognize later operations that restore a finite value. Do not stop analysis merely because an intermediate result may be non-finite.
 
@@ -73,6 +75,10 @@ Reports should describe understandable consequences, such as possible aliasing o
 Do not unroll loops. Analyze the loop CFG until its abstract state stabilizes, then use supported recurrence or collection summaries. For example, one unconditional push per input can prove `output.length === input.length` without examining every item.
 
 Unrolling makes analysis depend on runtime collection length and still cannot prove iterations beyond an arbitrary cutoff. If fixed-point analysis does not stabilize and no supported summary applies, report the property as unresolved.
+
+The convergence limit counts fixed-point rounds of one loop header's abstract state, not runtime iterations. Widening makes ordinary counting loops converge in two or three rounds regardless of how many times the loop runs at runtime; the limit exists only to guarantee termination when each round genuinely keeps changing the state. Two known ways to reach it: a chain of loop-carried variables longer than the limit (widening settles one variable per round), and a loop that allocates an object each iteration — which is really the allocation-identity gap rather than a loop problem, and disappears once allocations are keyed by their source site.
+
+When any path inside a loop stops, the loop header cannot reach its fixed point, and a stop can first appear on a late widening round after earlier rounds already propagated returns downstream. Returns reachable from such a header are therefore not evidence and are suppressed; returns before or bypassing the loop survive. This deliberately also suppresses zero-iteration evidence when the stop existed from the first round.
 
 **warn:** Fixed-point iteration and summary discovery need explicit limits before implementation.
 

@@ -1,20 +1,19 @@
 import type {AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
-import type {FunctionAnalysis, ProgramAnalysis} from '../engine/outcome.ts'
-import type {AbstractHeap} from '../heap/model.ts'
+import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
+import type {AbstractHeap, AllocationOrigin} from '../heap/model.ts'
 import type {SiteID} from '../ir/ids.ts'
-import {siteLocation, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
-import {formatPrecondition} from './format-requirement.ts'
+import {siteLocation, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
   | {kind: 'analyzed'; name: string; assumptions: string[]; requires: string[]; ensures: string[]}
   // e.g. 'unknown identifier scheduledRender at /abs/demo/index.ts:6:7'
   | {kind: 'unsupported'; name: string; unsupported: string}
-  // The function lowered, but a call in its body reaches a function that hit unsupported
-  // code, e.g. 'calls remainderWidth, which hit unsupported code (call at /abs/file.ts:3:16)'
-  // — or, when the callee was itself only skipped, 'calls middleWidth, which was itself
-  // skipped (call at …)'. Each entry names one hop; the chain is walkable across entries.
-  | {kind: 'skipped'; name: string; skipped: string}
+  // Some path stopped; `observed` lines are evidence from the paths that completed, never a
+  // contract. e.g. stopped: 'recursive call to countdown (call at /abs/file.ts:3:10)',
+  // observed: 'return is a finite integer number from 0 through 0'.
+  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; observed: string[]}
 
 export type AnalysisReport = {
   file: string
@@ -37,51 +36,38 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         })
         break
       }
-      case 'blockedByCallee': {
-        const callee = program.functions[fn.callee]
-        if (callee == null) throw new Error(`Unknown function ${fn.callee}`)
-        // A merely skipped callee did not itself hit unsupported code; saying so would send
-        // an agent hunting through a body whose constructs all lower.
-        const calleeState = analysis.functions[fn.callee]?.kind === 'blockedByCallee'
-          ? 'which was itself skipped'
-          : 'which hit unsupported code'
+      case 'partial': {
+        if (lowering.kind !== 'lowered') throw new Error(`${lowering.name} was analyzed without lowering`)
+        const parameterNames = lowering.parameters.map(parameter => parameter.name)
+        const observed: string[] = []
+        if (fn.observedReturn != null) {
+          observed.push(...returnSummaries('return', fn.observedReturn.value, fn.observedReturn.heap))
+        }
+        for (const need of fn.observedNeeds) observed.push(formatObservedNeed(need, parameterNames, program))
         functions.push({
-          kind: 'skipped',
+          kind: 'partial',
           name: lowering.name,
-          skipped: `calls ${callee.name}, ${calleeState} (call at ${formatSite(program, fn.site)})`,
+          assumptions: assumptionLines(lowering),
+          stopped: fn.stops.map(stop => formatStop(stop, lowering, program, analysis)),
+          observed,
         })
         break
       }
       case 'analyzed': {
-        functions.push(analyzedReport(fn, program))
+        if (lowering.kind !== 'lowered') throw new Error(`${lowering.name} was analyzed without lowering`)
+        const parameterNames = lowering.parameters.map(parameter => parameter.name)
+        functions.push({
+          kind: 'analyzed',
+          name: lowering.name,
+          assumptions: assumptionLines(lowering),
+          requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
+          ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
+        })
         break
       }
     }
   }
   return {file: program.file, functions}
-}
-
-function analyzedReport(fn: Extract<FunctionAnalysis, {kind: 'analyzed'}>, program: ProgramIR): FunctionReport {
-  const assumptions: string[] = []
-  const parameterNames = fn.parameters.map(parameter => parameter.name)
-  for (const parameter of fn.parameters) {
-    switch (parameter.type.kind) {
-      case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
-      case 'object': {
-        for (const property of parameter.type.properties) {
-          assumptions.push(`${parameter.name}.${property} is finite and not NaN`)
-        }
-        break
-      }
-    }
-  }
-  return {
-    kind: 'analyzed',
-    name: fn.name,
-    assumptions,
-    requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-    ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
-  }
 }
 
 export function formatReport(report: AnalysisReport): string {
@@ -99,13 +85,91 @@ export function formatReport(report: AnalysisReport): string {
         lines.push(`  unsupported: ${fn.unsupported}`)
         break
       }
-      case 'skipped': {
-        lines.push(`  skipped: ${fn.skipped}`)
+      case 'partial': {
+        for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
+        for (const stop of fn.stopped) lines.push(`  stopped: ${stop}`)
+        for (const evidence of fn.observed) lines.push(`  on analyzed paths: ${evidence}`)
         break
       }
     }
   }
   return lines.join('\n')
+}
+
+function assumptionLines(fn: FunctionIR): string[] {
+  const assumptions: string[] = []
+  for (const parameter of fn.parameters) {
+    switch (parameter.type.kind) {
+      case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
+      case 'object': {
+        for (const property of parameter.type.properties) {
+          assumptions.push(`${parameter.name}.${property} is finite and not NaN`)
+        }
+        break
+      }
+    }
+  }
+  return assumptions
+}
+
+// The only place stop prose exists; everything else branches on reason.kind.
+function formatStop(stop: Stop, fn: FunctionIR, program: ProgramIR, analysis: ProgramAnalysis): string {
+  const reason = stop.reason
+  switch (reason.kind) {
+    case 'recursion': {
+      return `recursive call to ${functionName(program, reason.callee)} (call at ${formatSite(program, stop.site)})`
+    }
+    case 'calleeStopped': {
+      // A merely stopped callee did not itself hit unsupported code; saying so would send an
+      // agent hunting through a body whose constructs all lower.
+      const calleeState = calleeStateText(analysis.functions[reason.callee])
+      return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
+    }
+    case 'divisorUnknown': {
+      return `cannot infer a nonzero requirement for the division at ${formatSite(program, stop.site)}`
+    }
+    case 'unjoinable': {
+      const conflict = reason.conflict
+      const where = fn.blocks.some(block => block.loopHeader === stop.site) ? 'loop' : 'merge'
+      const suffix = `(${where} at ${formatSite(program, stop.site)})`
+      if (
+        conflict.left.kind === 'site'
+        && conflict.right.kind === 'site'
+        && conflict.left.site === conflict.right.site
+      ) {
+        return `cannot merge two objects created at ${formatSite(program, conflict.left.site)} ${suffix}`
+      }
+      return `cannot merge ${originText(conflict.left, program)} with ${originText(conflict.right, program)} ${suffix}`
+    }
+    case 'loopLimit': {
+      return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
+    }
+  }
+}
+
+function calleeStateText(callee: FunctionAnalysis | undefined): string {
+  if (callee == null) return 'whose analysis stopped'
+  switch (callee.kind) {
+    case 'notLowered': return 'which hit unsupported code'
+    case 'partial': return 'whose analysis stopped'
+    // The callee analyzes completely for general inputs but stopped under this caller's
+    // arguments (e.g. an argument whose expression the requirement language cannot name).
+    case 'analyzed': return 'whose analysis stopped for these arguments'
+  }
+}
+
+function functionName(program: ProgramIR, callee: number): string {
+  const fn = program.functions[callee]
+  if (fn == null) throw new Error(`Unknown function ${callee}`)
+  return fn.name
+}
+
+function originText(origin: AllocationOrigin, program: ProgramIR): string {
+  switch (origin.kind) {
+    case 'site': return `the object created at ${formatSite(program, origin.site)}`
+    case 'parameter': return `the object from parameter ${origin.name}`
+    case 'merged': return 'an object merged from earlier paths'
+  }
 }
 
 function formatSite(program: ProgramIR, site: SiteID): string {

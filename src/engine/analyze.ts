@@ -1,12 +1,18 @@
 import {finiteInputNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
-import {allocateObject, joinHeaps} from '../heap/operations.ts'
+import {allocateObject, joinHeaps, resolveReferenceConflict} from '../heap/operations.ts'
 import type {BlockID, FunctionID, SiteID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {siteLocation, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import type {FunctionIR, ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
-import type {CompleteFunctionEvaluation, FunctionAnalysis, ProgramAnalysis} from './outcome.ts'
+import {
+  completedEvaluation,
+  type FunctionAnalysis,
+  type FunctionEvaluation,
+  type ProgramAnalysis,
+  type Stop,
+} from './outcome.ts'
 import {
   cloneSharedState,
   cloneState,
@@ -25,10 +31,12 @@ import {
   requiredValue,
 } from './transfer.ts'
 
+// A termination backstop, not an iteration budget: the count is fixed-point rounds of one
+// loop header's abstract state, unrelated to runtime iteration counts. Widening makes
+// ordinary counting loops converge in two or three rounds.
 const maximumLoopHeaderUpdates = 16
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
-  const blocked = blockedCallers(program)
   const functions: FunctionAnalysis[] = []
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
@@ -36,26 +44,21 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       functions.push({kind: 'notLowered'})
       continue
     }
-    const blocking = blocked[functionID]
-    if (blocking != null) {
-      functions.push({kind: 'blockedByCallee', site: blocking.site, callee: blocking.callee})
-      continue
-    }
     const arguments_: AbstractValue[] = []
     const argumentExpressions: Array<NumericExpression | null> = []
     const sharedState = emptySharedState()
-    const parameters: Extract<FunctionAnalysis, {kind: 'analyzed'}>['parameters'] = []
-    for (const parameter of fn.parameters) {
-      parameters.push({name: parameter.name, type: parameter.type})
+    for (let index = 0; index < fn.parameters.length; index++) {
+      const parameter = fn.parameters[index]!
       switch (parameter.type.kind) {
         case 'number': {
           arguments_.push(finiteInputNumber())
-          argumentExpressions.push({kind: 'parameter', index: parameters.length - 1})
+          argumentExpressions.push({kind: 'parameter', index})
           break
         }
         case 'object': {
           arguments_.push(allocateObject(
             sharedState.heap,
+            {kind: 'parameter', name: parameter.name},
             parameter.type.properties.map(name => ({name, value: finiteInputNumber()})),
           ))
           argumentExpressions.push(null)
@@ -63,69 +66,56 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
         }
       }
     }
-    const evaluation = evaluateFunction(
-      functionID,
-      arguments_,
-      argumentExpressions,
-      sharedState,
-      program,
-      [],
-    )
+    const evaluation = evaluateFunction(functionID, arguments_, argumentExpressions, sharedState, program, [])
+    const completed = completedEvaluation(evaluation)
+    if (completed != null) {
+      functions.push({
+        kind: 'analyzed',
+        preconditions: completed.preconditions,
+        returnValue: completed.returnValue,
+        sharedState: completed.sharedState,
+      })
+      continue
+    }
+    const [firstStop, ...laterStops] = evaluation.stops
+    if (firstStop == null) throw new Error(`Function ${fn.name} has no reachable return`)
     functions.push({
-      kind: 'analyzed',
-      name: fn.name,
-      parameters,
-      preconditions: evaluation.preconditions,
-      returnValue: evaluation.returnValue,
-      sharedState: evaluation.sharedState,
+      kind: 'partial',
+      stops: [firstStop, ...laterStops],
+      observedReturn: evaluation.normal == null
+        ? null
+        : {value: evaluation.normal.returnValue, heap: evaluation.normal.sharedState.heap},
+      observedNeeds: evaluation.preconditions,
     })
   }
   return {functions}
 }
 
-type BlockingCall = {
-  site: SiteID
-  callee: FunctionID
+// One entry per reachable block: the joined state flowing into the block, and how many
+// times that state has been updated (loop headers widen from the second update on).
+type IncomingState = {
+  state: ExecutionState
+  updateCount: number
 }
 
-// A lowered function is blocked when any call instruction in its body targets an unsupported
-// or already-blocked function, transitively. Records one such call per function. Deliberately
-// whole-function and branch-insensitive: partial evaluation up to the blocking call will
-// replace this pass entirely.
-function blockedCallers(program: ProgramIR): Array<BlockingCall | undefined> {
-  const blocked: Array<BlockingCall | undefined> = []
-  let changed = true
-  while (changed) {
-    changed = false
-    for (let functionID = 0; functionID < program.functions.length; functionID++) {
-      const fn = program.functions[functionID]!
-      if (fn.kind !== 'lowered' || blocked[functionID] != null) continue
-      const blocking = firstBlockingCall(fn, program, blocked)
-      if (blocking != null) {
-        blocked[functionID] = blocking
-        changed = true
-      }
-    }
-  }
-  return blocked
-}
-
-function firstBlockingCall(
-  fn: FunctionIR,
-  program: ProgramIR,
-  blocked: Array<BlockingCall | undefined>,
-): BlockingCall | null {
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) {
-      if (instruction.kind !== 'call') continue
-      const callee = program.functions[instruction.function]
-      if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
-      if (callee.kind === 'unsupported' || blocked[instruction.function] != null) {
-        return {site: instruction.site, callee: instruction.function}
-      }
-    }
-  }
-  return null
+// Everything one evaluateFunction call accumulates; created and discarded together.
+type EvaluationRun = {
+  fn: FunctionIR
+  incoming: Array<IncomingState | undefined>
+  queue: BlockID[]
+  stops: Stop[]
+  // By SiteID: the first stop at a site wins, so re-visits (loop rounds, both arms of a
+  // branch reaching one call) cannot grow the list past the function's site count.
+  stopRecordedBySite: boolean[]
+  // By BlockID: blocks whose visit recorded a stop, for the failed-header closure below.
+  stopBlocks: boolean[]
+  // By BlockID: loop headers whose state never stabilized. Returns reachable from a failed
+  // header are not evidence — they were computed from a state short of its fixed point.
+  failedHeaders: boolean[]
+  // By BlockID: the latest return recorded from each block; overwritten on re-visits
+  // (incoming states grow monotonically, so the last visit supersedes earlier ones) and
+  // joined only after the worklist drains.
+  pendingReturns: Array<{value: AbstractValue; shared: SharedState} | undefined>
 }
 
 function evaluateFunction(
@@ -135,16 +125,11 @@ function evaluateFunction(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
-): CompleteFunctionEvaluation {
+): FunctionEvaluation {
   const fn = program.functions[functionID]
   if (fn == null) throw new Error(`Unknown function ${functionID}`)
-  // Unreachable while blockedCallers keeps callers of unsupported functions out of the
-  // engine; the blocked pass and this invariant must move together.
+  // Callers turn calls to unlowered functions into calleeStopped records before evaluating.
   if (fn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${fn.name}`)
-  if (callStack.includes(functionID)) {
-    const names = [...callStack, functionID].map(id => program.functions[id]!.name)
-    throw new Error(`Recursive function analysis is unsupported: ${names.join(' → ')}`)
-  }
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
@@ -156,21 +141,28 @@ function evaluateFunction(
   }
   const comparisons = collectComparisons(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
-  const incoming: Array<IncomingState | undefined> = []
-  incoming[fn.entry] = {state: initial, updateCount: 0}
-  const queue: BlockID[] = [fn.entry]
-  let queueIndex = 0
   const preconditions: InferredPrecondition[] = []
-  let returnValue: AbstractValue | null = null
-  let returnSharedState: SharedState | null = null
-  while (queueIndex < queue.length) {
-    const blockID = queue[queueIndex++]!
+  const run: EvaluationRun = {
+    fn,
+    incoming: [],
+    queue: [fn.entry],
+    stops: [],
+    stopRecordedBySite: [],
+    stopBlocks: [],
+    failedHeaders: [],
+    pendingReturns: [],
+  }
+  run.incoming[fn.entry] = {state: initial, updateCount: 0}
+  let queueIndex = 0
+  while (queueIndex < run.queue.length) {
+    const blockID = run.queue[queueIndex++]!
     const block = fn.blocks[blockID]
-    const entry = incoming[blockID]
+    const entry = run.incoming[blockID]
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
     const state = cloneState(entry.state)
+    let stopped = false
     for (const instruction of block.instructions) {
-      state.frame.values[instruction.result] = evaluateInstruction(instruction, state, {
+      const result = evaluateInstruction(instruction, state, {
         program,
         callStack: [...callStack, functionID],
         expressionContext,
@@ -184,20 +176,27 @@ function evaluateFunction(
           stack,
         ),
       })
+      if (result.kind === 'stop') {
+        addStop(run, blockID, result.stop)
+        // A return recorded by an earlier visit of this block described a smaller incoming
+        // state; the stop supersedes it.
+        run.pendingReturns[blockID] = undefined
+        stopped = true
+        break
+      }
+      state.frame.values[instruction.result] = result.value
     }
+    if (stopped) continue
     switch (block.terminator.kind) {
       case 'return': {
         const value = block.terminator.value == null
           ? {kind: 'void'} as const
           : requiredValue(state, block.terminator.value)
-        returnValue = returnValue == null ? value : joinValues(returnValue, value)
-        returnSharedState = returnSharedState == null
-          ? cloneSharedState(state.shared)
-          : {heap: joinHeaps(returnSharedState.heap, state.shared.heap)}
+        run.pendingReturns[blockID] = {value, shared: cloneSharedState(state.shared)}
         break
       }
       case 'jump': {
-        propagate(state, block.terminator.target, fn, program, incoming, queue)
+        propagate(state, blockID, block.terminator.site, block.terminator.target, run)
         break
       }
       case 'branch': {
@@ -205,63 +204,146 @@ function evaluateFunction(
         const comparison = comparisons[block.terminator.condition]
         if (condition.canBeTrue) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
-          if (branch != null) propagate(branch, block.terminator.whenTrue, fn, program, incoming, queue)
+          if (branch != null) propagate(branch, blockID, block.terminator.site, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
           const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
-          if (branch != null) propagate(branch, block.terminator.whenFalse, fn, program, incoming, queue)
+          if (branch != null) propagate(branch, blockID, block.terminator.site, block.terminator.whenFalse, run)
         }
         break
       }
     }
   }
-  if (returnValue == null || returnSharedState == null) throw new Error(`Function ${fn.name} has no reachable return`)
-  return {
-    returnValue,
-    sharedState: returnSharedState,
-    preconditions,
+
+  const successors = blockSuccessors(fn)
+  // A stop inside a loop cuts the back edge, freezing the header short of its fixed point —
+  // and the stop may first appear on a late widening round, after earlier rounds already
+  // propagated returns downstream. Any header on a cycle through a stopping block is
+  // therefore failed too. Slightly conservative: zero-iteration evidence is also suppressed
+  // when the stop existed from the first round.
+  for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
+    if (fn.blocks[headerID]!.loopHeader == null || run.failedHeaders[headerID] === true) continue
+    const reachedFromHeader = reachableFrom(successors, headerID)
+    for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
+      if (run.stopBlocks[stopBlock] !== true || reachedFromHeader[stopBlock] !== true) continue
+      if (reachableFrom(successors, stopBlock)[headerID] === true) {
+        run.failedHeaders[headerID] = true
+        break
+      }
+    }
   }
+  const suppressed: boolean[] = []
+  for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
+    if (run.failedHeaders[headerID] !== true) continue
+    const reached = reachableFrom(successors, headerID)
+    for (let block = 0; block < fn.blocks.length; block++) {
+      if (reached[block] === true) suppressed[block] = true
+    }
+  }
+
+  let normal: FunctionEvaluation['normal'] = null
+  for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
+    const pending = run.pendingReturns[blockID]
+    if (pending == null || suppressed[blockID] === true) continue
+    if (normal == null) {
+      normal = {returnValue: pending.value, sharedState: pending.shared}
+      continue
+    }
+    const terminatorSite = fn.blocks[blockID]!.terminator.site
+    const joinedValue = joinValues(normal.returnValue, pending.value)
+    if (joinedValue.kind === 'referenceConflict') {
+      const conflict = resolveReferenceConflict(joinedValue, normal.sharedState.heap, pending.shared.heap)
+      addStop(run, blockID, {site: terminatorSite, reason: {kind: 'unjoinable', conflict}})
+      continue
+    }
+    const joinedHeap = joinHeaps(normal.sharedState.heap, pending.shared.heap)
+    if ('kind' in joinedHeap) {
+      addStop(run, blockID, {site: terminatorSite, reason: {kind: 'unjoinable', conflict: joinedHeap}})
+      continue
+    }
+    normal = {returnValue: joinedValue, sharedState: {heap: joinedHeap}}
+  }
+
+  return {normal, preconditions, stops: run.stops}
 }
 
-// One entry per reachable block: the joined state flowing into the block, and how many
-// times that state has been updated (loop headers widen from the second update on).
-type IncomingState = {
-  state: ExecutionState
-  updateCount: number
+function addStop(run: EvaluationRun, blockID: BlockID, stop: Stop): void {
+  run.stopBlocks[blockID] = true
+  if (run.stopRecordedBySite[stop.site] === true) return
+  run.stopRecordedBySite[stop.site] = true
+  run.stops.push(stop)
 }
 
 function propagate(
   state: ExecutionState,
+  sourceBlock: BlockID,
+  terminatorSite: SiteID,
   edge: EdgeIR,
-  fn: FunctionIR,
-  program: ProgramIR,
-  incoming: Array<IncomingState | undefined>,
-  queue: BlockID[],
+  run: EvaluationRun,
 ): void {
-  const target = fn.blocks[edge.block]
-  if (target == null) throw new Error(`Missing block ${edge.block} in ${fn.name}`)
+  const target = run.fn.blocks[edge.block]
+  if (target == null) throw new Error(`Missing block ${edge.block} in ${run.fn.name}`)
   if (edge.arguments.length !== target.parameters.length) {
-    throw new Error(`Expected ${target.parameters.length} arguments for block ${edge.block} in ${fn.name}`)
+    throw new Error(`Expected ${target.parameters.length} arguments for block ${edge.block} in ${run.fn.name}`)
   }
   const candidate = cloneState(state)
   for (let index = 0; index < target.parameters.length; index++) {
     candidate.frame.values[target.parameters[index]!] = requiredValue(state, edge.arguments[index]!)
   }
-  const previous = incoming[edge.block]
+  const previous = run.incoming[edge.block]
   if (previous == null) {
-    incoming[edge.block] = {state: candidate, updateCount: 0}
-    queue.push(edge.block)
+    run.incoming[edge.block] = {state: candidate, updateCount: 0}
+    run.queue.push(edge.block)
     return
   }
   const joined = target.loopHeader != null && previous.updateCount >= 1
     ? widenState(previous.state, candidate)
     : joinStates(previous.state, candidate)
+  if ('kind' in joined) {
+    // The arriving edge's contribution is dropped; the target keeps its previous state.
+    addStop(run, sourceBlock, {
+      site: target.loopHeader ?? terminatorSite,
+      reason: {kind: 'unjoinable', conflict: joined},
+    })
+    if (target.loopHeader != null) run.failedHeaders[edge.block] = true
+    return
+  }
   if (!sameState(previous.state, joined)) {
     if (target.loopHeader != null && previous.updateCount >= maximumLoopHeaderUpdates) {
-      const {line, column} = siteLocation(program, target.loopHeader)
-      throw new Error(`Loop in ${fn.name} at ${program.file}:${line}:${column} did not converge after ${maximumLoopHeaderUpdates} updates`)
+      addStop(run, sourceBlock, {
+        site: target.loopHeader,
+        reason: {kind: 'loopLimit', updates: maximumLoopHeaderUpdates},
+      })
+      run.failedHeaders[edge.block] = true
+      return
     }
-    incoming[edge.block] = {state: joined, updateCount: previous.updateCount + 1}
-    queue.push(edge.block)
+    run.incoming[edge.block] = {state: joined, updateCount: previous.updateCount + 1}
+    run.queue.push(edge.block)
   }
+}
+
+function blockSuccessors(fn: FunctionIR): BlockID[][] {
+  return fn.blocks.map(block => {
+    switch (block.terminator.kind) {
+      case 'return': return []
+      case 'jump': return [block.terminator.target.block]
+      case 'branch': return [block.terminator.whenTrue.block, block.terminator.whenFalse.block]
+    }
+  })
+}
+
+// Every block reachable from `start` through one or more static CFG edges. Static rather
+// than visited-during-analysis edges: a body whose back edge never fired because the body
+// stopped must still count as inside its loop.
+function reachableFrom(successors: BlockID[][], start: BlockID): boolean[] {
+  const reached: boolean[] = []
+  const queue = [...successors[start]!]
+  let index = 0
+  while (index < queue.length) {
+    const block = queue[index++]!
+    if (reached[block] === true) continue
+    reached[block] = true
+    queue.push(...successors[block]!)
+  }
+  return reached
 }

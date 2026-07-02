@@ -28,7 +28,7 @@ function lowerStatement(statement: ts.Statement, context: FunctionContext): void
   }
   if (ts.isReturnStatement(statement) && statement.expression != null) {
     const value = lowerExpression(statement.expression, context)
-    terminate(context.currentBlock, {kind: 'return', value})
+    terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, statement)})
     return
   }
   if (ts.isExpressionStatement(statement)) {
@@ -60,6 +60,7 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
     condition,
     whenTrue: {block: whenTrue, arguments: []},
     whenFalse: {block: whenFalse, arguments: []},
+    site: addSite(context, statement),
   })
 
   const trueBranch = lowerBranch(statement.thenStatement, whenTrue, bindingsBeforeBranch, context)
@@ -84,10 +85,12 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
   terminate(trueBranch.block, {
     kind: 'jump',
     target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, trueBranch.bindings))},
+    site: addSite(context, statement),
   })
   terminate(falseBranch.block, {
     kind: 'jump',
     target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, falseBranch.bindings))},
+    site: addSite(context, statement),
   })
   context.currentBlock = context.blocks[continuation]!
   context.bindings = new Map(bindingsBeforeBranch)
@@ -114,6 +117,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   terminate(context.currentBlock, {
     kind: 'jump',
     target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, bindingsBeforeLoop))},
+    site: addSite(context, statement),
   })
 
   context.currentBlock = context.blocks[header]!
@@ -130,6 +134,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
     condition,
     whenTrue: {block: body, arguments: []},
     whenFalse: {block: exit, arguments: []},
+    site: addSite(context, statement.condition),
   })
 
   context.currentBlock = context.blocks[body]!
@@ -140,6 +145,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
     terminate(context.currentBlock, {
       kind: 'jump',
       target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, context.bindings))},
+      site: addSite(context, statement),
     })
   }
 

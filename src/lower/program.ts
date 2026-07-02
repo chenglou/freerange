@@ -2,7 +2,7 @@ import * as ts from 'typescript'
 import type {FunctionID} from '../ir/ids.ts'
 import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
-import {LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
+import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
@@ -71,7 +71,7 @@ function lowerFunction(
   lowerStatements(declaration.body.statements, context)
   if (context.currentBlock.terminator == null) {
     if (!functionReturnsVoid(declaration, checker)) throw unsupported(declaration, {kind: 'missingReturn'})
-    terminate(context.currentBlock, {kind: 'return', value: null})
+    terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
   }
   const blocks: BlockIR[] = []
   for (const block of context.blocks) {

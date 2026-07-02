@@ -3,6 +3,7 @@ import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
 import {
   addInstruction,
+  addSite,
   changedBindings,
   createBlock,
   requiredBinding,
@@ -160,6 +161,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
     condition,
     whenTrue: {block: whenTrue, arguments: []},
     whenFalse: {block: whenFalse, arguments: []},
+    site: addSite(context, expression),
   })
   context.currentBlock = context.blocks[whenTrue]!
   context.bindings = new Map(bindingsBeforeBranch)
@@ -179,6 +181,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
       block: continuation,
       arguments: [trueValue, ...changed.map(symbol => requiredBranchBinding(symbol, trueBindings))],
     },
+    site: addSite(context, expression),
   })
   terminate(falseBlock, {
     kind: 'jump',
@@ -186,6 +189,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
       block: continuation,
       arguments: [falseValue, ...changed.map(symbol => requiredBranchBinding(symbol, falseBindings))],
     },
+    site: addSite(context, expression),
   })
   context.currentBlock = context.blocks[continuation]!
   context.bindings = new Map(bindingsBeforeBranch)
