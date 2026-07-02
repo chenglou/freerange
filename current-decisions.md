@@ -10,23 +10,31 @@ Keep information that was established before the unsupported operation, but mark
 
 For example, given `let width = 100; unsupportedOperation(); width = 200`, the report may say that `width` was `100` when analysis stopped. The report must not claim that the function returns with `width` equal to `100` or `200`.
 
+Today the retained information is the completed sibling paths' returns and requirements (the `on analyzed paths:` lines); a stop record carries only its location and a tagged reason, so rendering values at the stop — `width` being 100 above — is punted. An unsupported construct found during lowering discards the function's whole half-built body: prefix retention exists only for stops the engine records. Whether lowering should instead keep the analyzed prefix and end it with an explicit stop needs deciding before module initialization — real top-level code usually hits an unsupported call early, and discarding the whole synthetic initializer would leave every module binding unknown.
+
 Complete and partial results must have different data shapes so code cannot accidentally treat one as the other. The report should show the source location and reason for stopping. This gives an agent enough information to understand the supported prefix and, when useful, rewrite the unsupported code.
 
 If a called function performs supported mutations and then reaches unsupported code, retain those mutations only in the called function's partial prefix. Mark the caller partial at that call site and do not analyze later caller statements. Do not present the called function's prefix mutations as the caller's final state.
 
 In reports, a partial function prints `stopped:` lines (where and why each path stopped) and `on analyzed paths:` lines (what the completed paths returned and required). Evidence lines deliberately read differently from `requires:`/`ensures:` lines, and the partial report shape has no fields for contract lines, so evidence cannot render as a contract.
 
+Known report limits worth keeping in mind: mutually recursive functions currently blame each other — each entry says `calls <the other>, whose analysis stopped` — and neither names recursion (only direct recursion prints `recursive call to …`). An analyzed function's writes to its parameter objects are tracked by the analysis but not yet printed, so an entry with no ensures lines must not be read as effect-free. The CLI exits 0 whenever analysis ran, including reports full of unsupported and partial entries; only the whole-file TypeScript gate and genuine crashes exit nonzero.
+
 ## How should non-finite numbers be modeled?
 
-Number parameters default to finite and non-NaN. Numeric operations must prove that they preserve that property. If an operation may produce NaN or infinity, report the requirement needed to keep the result finite. When the requirement cannot be named over the function's parameters — e.g. a division by a property read like `width / grid.columnCount` — analysis stops that path and reports the division's location instead of silently degrading the result. Revisit when requirement expressions can name property paths; doing that honestly needs to know the property is not written between function entry and the division.
+Number parameters default to finite and non-NaN (object parameter properties get the same treatment). Numeric operations must prove that they preserve that property. If an operation may produce NaN or infinity, report the requirement needed to keep the result finite. When the requirement cannot be named over the function's parameters — e.g. a division by a property read like `width / grid.columnCount` — analysis stops that path and reports the division's location instead of silently degrading the result.
 
-The analyzer must still represent possible NaN and infinities internally. This allows it to explain where the possibility came from, propagate requirements backward, and recognize later operations that restore a finite value. Do not stop analysis merely because an intermediate result may be non-finite.
+Both the requirement and the stop are currently placed at the division itself, which is a forward approximation of the backward rule in the requirements section. A division whose non-finite result never reaches a reported guarantee needs no requirement and no stop: `a / b > 5 ? 1 : 0` returns a finite 0 or 1 for every input including a zero divisor, yet today reports a spurious nonzero requirement, and stops entirely when the divisor is a property read. Revisit when requirements anchor to the guarantee boundary; naming property paths additionally needs to know the property is not written between function entry and the division.
+
+The analyzer must still represent possible NaN and infinities internally. This allows it to explain where the possibility came from and propagate requirements backward, and eventually to recognize later operations that restore a finite value — no restoration rule exists yet: `Math.min`/`Math.max` currently return an unknown result when an input may be non-finite, so a clamp does not recover finiteness. Do not stop analysis merely because an intermediate result may be non-finite.
 
 ## How should module initialization be modeled?
 
 Lower each module's top-level runtime code into a synthetic initializer function. Execute that function with the same CFG and evaluator used for ordinary functions. A small module setup phase still allocates module variables and exported bindings, initializes runtime dependencies first, ensures each module runs once, preserves side-effect-only imports, and shares live module bindings with later functions and callbacks. Function declarations do not run during initialization unless top-level code calls them.
 
 For now, reject runtime import cycles and top-level `await`. Reject only the affected group of initialization dependencies; unrelated modules and self-contained function summaries remain analyzable. Type-only import cycles do not affect runtime initialization. Module slots must distinguish uninitialized values from initialized values so runtime cycle support can be added later without replacing the architecture.
+
+Before the module work starts, decide what a function summary may assume per binding kind. A `const` primitive's initializer value can flow into every function, and survives a partial initializer when it was assigned before the stop, since reassignment is impossible. A `const` object's identity flows, but its property values need a whole-module invariant. A mutable `let` gets no initial-value assumption — the callback rule below applies just as much to exported functions, which also run at arbitrary times after initialization.
 
 With runtime cycles and asynchronous initialization excluded, module top-level execution consists of ordinary calls, branches, loops, heap operations, and unsupported-code handling. Reusing the normal evaluator avoids a separate module interpreter and duplicated semantics. Setting up module dependencies and live bindings is module-specific, but executing their code is not.
 
@@ -46,11 +54,11 @@ The old documentation and thread define an upper bound, not a feature list for t
 
 ## What do inferred requirements mean?
 
-Every inferred requirement must say which guarantee it enables. A requirement does not mean that the program is otherwise invalid. For example, if a function divides `containerWidth` by `columnCount`, the report should explain what `columnCount` must satisfy to guarantee a finite, non-NaN return value.
+Every inferred requirement must say which guarantee it enables. A requirement does not mean that the program is otherwise invalid. For example, if a function divides `containerWidth` by `columnCount`, the report should explain what `columnCount` must satisfy to guarantee a finite, non-NaN return value. (Not implemented yet: today's requires line names the causing operation but no guarantee, and only the partial-report evidence wording — `gives a finite result only when` — names one.)
 
 Infer the requirement backward from the desired final guarantee. Do not report a requirement merely because an intermediate operation may produce a non-finite value; later code may restore a finite result. Restrictions needed only because Freerange does not support an operation are unsupported boundaries, not caller requirements.
 
-Derive the full safe range rather than stopping at an obvious local condition. A nonzero divisor avoids division by zero, but finite inputs can still overflow during division. If `containerWidth` may be any finite number, `Math.abs(columnCount) >= 1` is a sufficient condition for a finite quotient. If the possible magnitude of `containerWidth` is smaller, the minimum safe divisor magnitude can also be smaller. Without a known sign, the safe values may be two ranges: `columnCount <= -minimumMagnitude` or `columnCount >= minimumMagnitude`. Earlier facts such as positivity or integrality should simplify that requirement, e.g. to `columnCount >= 1`.
+Derive the full safe range rather than stopping at an obvious local condition. A nonzero divisor avoids division by zero, but finite inputs can still overflow during division. If `containerWidth` may be any finite number, `Math.abs(columnCount) >= 1` is a sufficient condition for a finite quotient. If the possible magnitude of `containerWidth` is smaller, the minimum safe divisor magnitude can also be smaller. Without a known sign, the safe values may be two ranges: `columnCount <= -minimumMagnitude` or `columnCount >= minimumMagnitude`. Earlier facts such as positivity or integrality should simplify that requirement, e.g. to `columnCount >= 1`. (Not implemented yet: only the nonzero condition is emitted, and ensures lines are computed without assuming the requires lines, so satisfying a requirement does not upgrade any printed guarantee — conditional ensures are future work. An explicit guard like `if (columnCount === 0) return 0` does not discharge the requirement either: an interval cannot represent 'nonzero', so not-equal branches refine nothing today.)
 
 The report should include the operation and source location that caused the requirement. At a call site, Freerange should prove the requirement, propagate the unmet part outward, or explain which guarantee can no longer be made.
 
@@ -76,7 +84,7 @@ Do not unroll loops. Analyze the loop CFG until its abstract state stabilizes, t
 
 Unrolling makes analysis depend on runtime collection length and still cannot prove iterations beyond an arbitrary cutoff. If fixed-point analysis does not stabilize and no supported summary applies, report the property as unresolved.
 
-The convergence limit counts fixed-point rounds of one loop header's abstract state, not runtime iterations. Widening makes ordinary counting loops converge in two or three rounds regardless of how many times the loop runs at runtime; the limit exists only to guarantee termination when each round genuinely keeps changing the state. Two known ways to reach it: a chain of loop-carried variables longer than the limit (widening settles one variable per round), and a loop that allocates an object each iteration — which is really the allocation-identity gap rather than a loop problem, and disappears once allocations are keyed by their source site.
+The convergence limit counts fixed-point rounds of one loop header's abstract state, not runtime iterations. Widening makes ordinary counting loops converge in two or three rounds regardless of how many times the loop runs at runtime; the limit exists only to guarantee termination when each round genuinely keeps changing the state. Known routes to it: a chain of loop-carried variables longer than the limit (widening settles one variable per round), and a loop that allocates an object each iteration behind a call — the heap grows every round until the limit. When the fresh object is instead held in a loop-carried binding, the loop stops earlier as a join conflict at the header on the second round. Both allocation forms are the allocation-identity gap rather than a loop problem, and disappear once allocations are keyed by their source site.
 
 When any path inside a loop stops, the loop header cannot reach its fixed point, and a stop can first appear on a late widening round after earlier rounds already propagated returns downstream. Returns reachable from such a header are therefore not evidence and are suppressed; returns before or bypassing the loop survive. This deliberately also suppresses zero-iteration evidence when the stop existed from the first round.
 
@@ -98,6 +106,13 @@ When any path inside a loop stops, the loop header cannot reach its fixed point,
 
 - Source annotations. Analysis remains annotation-free for now. Reconsider annotations only when a report can explain that one would avoid substantial analysis growth or unlock a useful guarantee.
 - Concrete counterexample search and replay.
+- Backward requirement inference anchored at the final guarantee, with conditional ensures. Requirements are currently generated at the causing operation, so a division whose non-finite result never escapes still reports a requirement.
+- Per-operation requirement records. Deduplication is by expression; the first causing site wins.
+- Stop payloads: rendering values at the stop (`width` was 100), and pin-and-rerun recovery of suppressed zero-iteration loop evidence.
+- Thrown-outcome modeling. A `throw` statement is currently a lowering rejection.
+- Finiteness restoration rules, e.g. a `Math.max`/`Math.min` clamp recovering a finite range from a possibly non-finite input.
+- Not-equal branch narrowing, e.g. an explicit `if (columnCount === 0) return 0` guard discharging the nonzero requirement.
+- Reporting every unsupported construct in a function instead of only the first.
 - Callback ordering and execution of callback sequences, including caller-selected bounded callback scenarios.
 - Runtime import cycles and top-level `await`.
 - Termination proofs and `decreases` clauses.
