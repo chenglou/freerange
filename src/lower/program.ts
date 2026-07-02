@@ -3,6 +3,7 @@ import type {FunctionID} from '../ir/ids.ts'
 import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
+import {valueKind} from './expression.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
@@ -45,6 +46,13 @@ function lowerFunction(
   sites: SourceSpan[],
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, {kind: 'functionWithoutBody'})
+  const returnType = functionReturnType(declaration, checker)
+  const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+  // Mixed return kinds (e.g. one branch returning a number and another a boolean) would
+  // otherwise meet at the engine's return join instead of stopping here.
+  if (!returnsVoid && valueKind(returnType) == null) {
+    throw unsupported(declaration.type ?? declaration, {kind: 'valueType', typeText: checker.typeToString(returnType)})
+  }
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   const context: FunctionContext = {
     sourceFile,
@@ -70,7 +78,7 @@ function lowerFunction(
   }
   lowerStatements(declaration.body.statements, context)
   if (context.currentBlock.terminator == null) {
-    if (!functionReturnsVoid(declaration, checker)) throw unsupported(declaration, {kind: 'missingReturn'})
+    if (!returnsVoid) throw unsupported(declaration, {kind: 'missingReturn'})
     terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
   }
   const blocks: BlockIR[] = []
@@ -114,9 +122,8 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
   return {kind: 'object', properties}
 }
 
-function functionReturnsVoid(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): boolean {
+function functionReturnType(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): ts.Type {
   const signature = checker.getSignatureFromDeclaration(declaration)
   if (signature == null) throw unsupported(declaration, {kind: 'functionWithoutSignature'})
-  const flags = checker.getReturnTypeOfSignature(signature).flags
-  return (flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+  return checker.getReturnTypeOfSignature(signature)
 }

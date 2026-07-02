@@ -286,6 +286,29 @@ describe('analyzeFile', () => {
     })
   })
 
+  test('records truthiness conditions and mixed-kind values as unsupported', () => {
+    const report = analyzeSource('gates.ts', `
+      export function truthy(width: number): number {
+        if (width) return 1
+        return 0
+      }
+      export function mixedTernary(flag: number): number {
+        const wide = flag > 0 ? flag : flag > -1
+        return 2
+      }
+      export function mixedReturns(flag: number) {
+        if (flag > 0) return flag
+        return flag > -1
+      }
+    `)
+    const file = resolve('gates.ts')
+    expect(report.functions).toEqual([
+      {kind: 'unsupported', name: 'truthy', unsupported: `condition of type number at ${file}:3:13`},
+      {kind: 'unsupported', name: 'mixedTernary', unsupported: `value of type number | boolean at ${file}:7:22`},
+      {kind: 'unsupported', name: 'mixedReturns', unsupported: `value of type number | boolean at ${file}:10:7`},
+    ])
+  })
+
   test('partial reports never contain contract lines', () => {
     const report = analyzeSource('no-contract.ts', `
       export function example(flag: number): number {

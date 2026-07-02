@@ -12,7 +12,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {compoundAssignmentOperator, lowerExpression} from './expression.ts'
+import {compoundAssignmentOperator, lowerExpression, requireBooleanCondition} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -51,6 +51,7 @@ function lowerStatement(statement: ts.Statement, context: FunctionContext): void
 }
 
 function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): void {
+  requireBooleanCondition(statement.expression, context.checker)
   const condition = lowerExpression(statement.expression, context)
   const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
@@ -109,6 +110,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   }
   if (statement.condition == null) throw unsupported(statement, {kind: 'forLoopWithoutCondition'})
   if (statement.incrementor == null) throw unsupported(statement, {kind: 'forLoopWithoutIncrementor'})
+  requireBooleanCondition(statement.condition, context.checker)
 
   const bindingsBeforeLoop = new Map(context.bindings)
   const assigned = assignedSymbols([statement.condition, statement.statement, statement.incrementor], context.checker)

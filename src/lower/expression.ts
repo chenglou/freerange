@@ -152,6 +152,11 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
 }
 
 function lowerConditionalExpression(expression: ts.ConditionalExpression, context: FunctionContext): ValueID {
+  requireBooleanCondition(expression.condition, context.checker)
+  const resultType = context.checker.getTypeAtLocation(expression)
+  if (valueKind(resultType) == null) {
+    throw unsupported(expression, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
+  }
   const condition = lowerExpression(expression.condition, context)
   const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
@@ -226,6 +231,32 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
   if ((type.flags & ts.TypeFlags.NumberLike) === 0) {
     throw unsupported(node, {kind: 'nonNumberOperand', typeText: checker.typeToString(type)})
   }
+}
+
+// The single value kind a type describes, or null when the type mixes kinds (a union like
+// number | boolean) or falls outside the accepted kinds entirely (e.g. string).
+export function valueKind(type: ts.Type): 'number' | 'boolean' | 'object' | null {
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
+  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  if ((type.flags & ts.TypeFlags.Object) !== 0) return 'object'
+  if (type.isUnion()) {
+    let shared: 'number' | 'boolean' | 'object' | null = null
+    for (const member of type.types) {
+      const kind = valueKind(member)
+      if (kind == null || (shared != null && kind !== shared)) return null
+      shared = kind
+    }
+    return shared
+  }
+  return null
+}
+
+// Truthiness conditions like `if (width)` on a number are legal TypeScript but outside the
+// accepted subset; the engine represents conditions as booleans only.
+export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker): void {
+  const type = checker.getTypeAtLocation(node)
+  if (valueKind(type) === 'boolean') return
+  throw unsupported(node, {kind: 'nonBooleanCondition', typeText: checker.typeToString(type)})
 }
 
 function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker): ts.Symbol | null {

@@ -69,6 +69,12 @@ export type UnsupportedReason =
   // e.g. the left side of `events.keydown == null` with type KeyboardEvent | null. The site
   // points at the exact operand, so no role tag is needed.
   | {kind: 'nonNumberOperand'; typeText: string}
+  // A branch condition whose type is not boolean, e.g. `if (width)` truthiness on a number.
+  | {kind: 'nonBooleanCondition'; typeText: string}
+  // A value position whose type mixes kinds or is outside numbers, booleans, and objects —
+  // e.g. a ternary with one number arm and one boolean arm, or a string return type. Left
+  // ungated, mixed kinds would meet at a join deep in the engine instead of stopping here.
+  | {kind: 'valueType'; typeText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}
   | {kind: 'forLoopWithoutCondition'}
