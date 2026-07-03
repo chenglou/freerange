@@ -1,7 +1,10 @@
 import {
+  absoluteNumber,
   addNumbers,
   constantNumber,
   divideNumbers,
+  divideNumbersNonzeroDivisor,
+  finiteInputNumber,
   floorNumber,
   includesZero,
   maximumNumbers,
@@ -101,6 +104,21 @@ export function evaluateInstruction(
       }
       return value(assigned)
     }
+    case 'moduleHavoc': {
+      const binding = context.program.moduleBindings[instruction.binding]
+      if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
+      const category = binding.category
+      state.shared.modules[instruction.binding] =
+        category.kind === 'value' || category.kind === 'kind'
+          ? {
+              kind: 'value',
+              value: category.declaredKind === 'number'
+                ? finiteInputNumber()
+                : {kind: 'boolean', canBeTrue: true, canBeFalse: true},
+            }
+          : {kind: 'uninitialized'}
+      return value({kind: 'void'})
+    }
     case 'object': return value(allocateAtSite(
       state.frame.values,
       state.shared.heap,
@@ -132,6 +150,11 @@ export function evaluateInstruction(
       instruction.operator,
     ))
     case 'floor': return value(floorNumber(requiredNumber(state, instruction.value)))
+    case 'absolute': return value(absoluteNumber(requiredNumber(state, instruction.value)))
+    case 'not': {
+      const operand = requiredBoolean(state, instruction.value)
+      return value({kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue})
+    }
     case 'minimum': return value(minimumNumbers(instruction.values.map(id => requiredNumber(state, id))))
     case 'maximum': return value(maximumNumbers(instruction.values.map(id => requiredNumber(state, id))))
     case 'call': {
@@ -174,6 +197,11 @@ export function evaluateInstruction(
           return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
         }
         addPrecondition(context.preconditions, {kind: 'nonzero', expression, site: instruction.site})
+        // Ensures assume the requires: with the nonzero requirement recorded, the quotient
+        // is computed over the divisor's range with zero cut out. An integer divisor gives
+        // a genuinely finite result; a non-integer one can still sit arbitrarily close to
+        // zero and stays possibly non-finite.
+        return value(divideNumbersNonzeroDivisor(left, right))
       }
       return value(evaluateBinary(instruction.operator, left, right))
     }

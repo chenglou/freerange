@@ -52,13 +52,14 @@ describe('analyzeFile', () => {
       }
     `)
     expect(report.functions).toEqual([
-      // The shadowing declaration itself is top-level code: its arrow function stops the
-      // module initializer's lowering.
+      // The shadowing declaration itself is top-level code: its arrow function cannot
+      // lower, so the initializer skips the statement and keeps going.
       {
         kind: 'partial',
         name: 'module initialization',
         assumptions: [],
-        stopped: [`expression (ArrowFunction) at ${resolve('shadowed-math.ts')}:2:26`],
+        stopped: [],
+        skipped: [`expression (ArrowFunction) at ${resolve('shadowed-math.ts')}:2:26`],
         observed: [],
       },
       {
@@ -679,6 +680,7 @@ describe('analyzeFile', () => {
       name: 'module initialization',
       assumptions: [],
       stopped: [`calls runsUnsupported, which hit unsupported code (call at ${file}:3:7)`],
+      skipped: [],
       observed: [],
     })
     // boxesGapY was written before the stop, so its value holds on every analyzed path.
@@ -709,7 +711,7 @@ describe('analyzeFile', () => {
     const file = resolve('module-eval.ts')
     const prose = `eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed at ${file}:7:9`
     expect(report.functions).toEqual([
-      {kind: 'partial', name: 'module initialization', assumptions: [], stopped: [prose], observed: []},
+      {kind: 'partial', name: 'module initialization', assumptions: [], stopped: [prose], skipped: [], observed: []},
       {kind: 'unsupported', name: 'readHeight', unsupported: prose},
       {kind: 'unsupported', name: 'poke', unsupported: prose},
     ])
@@ -761,7 +763,8 @@ describe('analyzeFile', () => {
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: [`var declarations (use let or const) at ${file}:2:7`],
+      stopped: [],
+      skipped: [`var declarations (use let or const) at ${file}:2:7`],
       observed: [],
     })
     expect(report.functions.find(fn => fn.name === 'currentMode')).toEqual({
@@ -786,6 +789,7 @@ describe('analyzeFile', () => {
       name: 'module initialization',
       assumptions: [],
       stopped: [`the loop at ${file}:3:7 never exits on any analyzed path`],
+      skipped: [],
       observed: [],
     })
     // boxesGapX was written before the loop and the loop writes nothing, so it publishes.
@@ -1017,6 +1021,120 @@ describe('analyzeFile', () => {
       stopped: [`the loop at ${file}:5:9 never exits on any analyzed path`],
       observed: [],
     }])
+  })
+
+  test('lowers boolean logical operators with short-circuit shape', () => {
+    const report = analyzeSource('logical.ts', `
+      export function inRange(v: number): boolean {
+        return 0 <= v && v <= 100
+      }
+      export function settled(v: number, target: number): number {
+        if (Math.abs(v) < 0.01 && Math.abs(target - v) < 0.01) return 0
+        return 1
+      }
+      export function either(v: number): boolean {
+        return !(v > 0) || v > 100
+      }
+    `)
+    expect(analyzedFunction(report, 'inRange').ensures).toEqual(['return is boolean'])
+    expect(analyzedFunction(report, 'settled').ensures)
+      .toEqual(['return is a finite integer number from 0 through 1'])
+    expect(analyzedFunction(report, 'either').ensures).toEqual(['return is boolean'])
+  })
+
+  test('Math.abs produces a nonnegative range', () => {
+    const report = analyzeSource('absolute.ts', `
+      export function distance(a: number, b: number): number {
+        return Math.abs(a - b)
+      }
+    `)
+    // The difference of two unbounded finite inputs can overflow, so the honest range is
+    // nonnegative but possibly non-finite.
+    expect(analyzedFunction(report, 'distance').ensures)
+      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+  })
+
+  test('lowers object destructuring declarations to property reads', () => {
+    const report = analyzeSource('destructure.ts', `
+      type Spring = {pos: number; dest: number}
+      export function gap(config: Spring): number {
+        const {pos, dest: destination} = config
+        return Math.abs(destination - pos)
+      }
+    `)
+    const fn = analyzedFunction(report, 'gap')
+    expect(fn.assumptions).toEqual(['config.pos is finite and not NaN', 'config.dest is finite and not NaN'])
+    expect(fn.ensures).toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+  })
+
+  test('prints writes to object parameters as ensures lines', () => {
+    // A void function's whole contract is its writes; properties still holding the entry
+    // assumption stay silent, so only the reset shows.
+    const report = analyzeSource('param-writes.ts', `
+      type Spring = {pos: number; dest: number; v: number}
+      export function goToEnd(config: Spring): void {
+        config.pos = config.dest
+        config.v = 0
+      }
+    `)
+    expect(analyzedFunction(report, 'goToEnd').ensures)
+      .toEqual(['config.v is a finite integer number from 0 through 0'])
+  })
+
+  test('publishes module values past skipped top-level statements and demotes what they write', () => {
+    const report = analyzeSource('module-skip.ts', `
+      const gap = 24
+      window.addEventListener('resize', () => {})
+      let after = 5
+      let poked = 10
+      document.title = String(poked = 20)
+      export function readGap(): number { return gap }
+      export function readAfter(): number { return after }
+      export function readPoked(): number { return poked }
+    `)
+    const file = resolve('module-skip.ts')
+    expect(report.functions[0]).toEqual({
+      kind: 'partial',
+      name: 'module initialization',
+      assumptions: [],
+      stopped: [],
+      skipped: [
+        `function call window.addEventListener at ${file}:3:7`,
+        `value of type string at ${file}:6:7`,
+      ],
+      observed: [],
+    })
+    // Bindings around the skipped statements still publish exactly...
+    expect(analyzedFunction(report, 'readGap').ensures)
+      .toEqual(['return is a finite integer number from 24 through 24'])
+    expect(analyzedFunction(report, 'readAfter').ensures)
+      .toEqual(['return is a finite integer number from 5 through 5'])
+    // ...but a binding the skipped statement writes keeps only its declared kind.
+    const poked = analyzedFunction(report, 'readPoked')
+    expect(poked.assumptions).toEqual(['poked is finite and not NaN'])
+    expect(poked.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('does not launder stale values through statements after a skip', () => {
+    // The skip demotes scale, but without a slot reset the initializer would keep
+    // computing with the stale 1, publishing doubled as exactly 2 while runtime says 6.
+    // The havoc at the skip point makes later statements compute from covering values.
+    const report = analyzeSource('module-launder.ts', `
+      let scale = 1
+      scale = Math.sqrt(9)
+      const doubled = scale * 2
+      export function getDoubled(): number { return doubled }
+    `)
+    expect(analyzedFunction(report, 'getDoubled').ensures)
+      .toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
+  })
+
+  test('reports exact boolean constants as true or false', () => {
+    const report = analyzeSource('boolean-exact.ts', `
+      const featureOn = false
+      export function isOn(): boolean { return featureOn }
+    `)
+    expect(analyzedFunction(report, 'isOn').ensures).toEqual(['return is false'])
   })
 
   test('carries a module read assumption to callers of the reading function', () => {

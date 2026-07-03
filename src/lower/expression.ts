@@ -26,6 +26,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     const value = lowerExpression(current.operand, context)
     return addInstruction(context, current, {kind: 'binary', operator: 'subtract', left: zero, right: value})
   }
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    requireBooleanCondition(current.operand, context.checker)
+    const value = lowerExpression(current.operand, context)
+    return addInstruction(context, current, {kind: 'not', value})
+  }
   if (ts.isConditionalExpression(current)) {
     return lowerConditionalExpression(current, context)
   }
@@ -111,6 +116,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     assignIdentifier(symbol, current.operand, value, current, context)
     return ts.isPrefixUnaryExpression(current) ? value : previous
   }
+  if (
+    ts.isBinaryExpression(current)
+    && (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      || current.operatorToken.kind === ts.SyntaxKind.BarBarToken)
+  ) {
+    return lowerLogicalExpression(current, context)
+  }
   if (ts.isBinaryExpression(current)) {
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
@@ -143,6 +155,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, current, {kind: 'floor', value})
+      }
+      if (standardMath && method === 'abs' && current.arguments.length === 1) {
+        requireNumberType(current.arguments[0]!, context.checker)
+        const value = lowerExpression(current.arguments[0]!, context)
+        return addInstruction(context, current, {kind: 'absolute', value})
       }
       if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
         for (const argument of current.arguments) requireNumberType(argument, context.checker)
@@ -199,6 +216,63 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
   context.currentBlock = context.blocks[whenFalse]!
   context.bindings = new Map(bindingsBeforeBranch)
   const falseValue = lowerExpression(expression.whenFalse, context)
+  const falseBlock = context.currentBlock
+  const falseBindings = context.bindings
+  const changed = changedBindings(bindingsBeforeBranch, trueBindings, falseBindings)
+  const continuation = createBlock(context, changed.length + 1)
+  terminate(trueBlock, {
+    kind: 'jump',
+    target: {
+      block: continuation,
+      arguments: [trueValue, ...changed.map(symbol => requiredBranchBinding(symbol, trueBindings))],
+    },
+    site: addSite(context, expression),
+  })
+  terminate(falseBlock, {
+    kind: 'jump',
+    target: {
+      block: continuation,
+      arguments: [falseValue, ...changed.map(symbol => requiredBranchBinding(symbol, falseBindings))],
+    },
+    site: addSite(context, expression),
+  })
+  context.currentBlock = context.blocks[continuation]!
+  context.bindings = new Map(bindingsBeforeBranch)
+  for (let index = 0; index < changed.length; index++) {
+    context.bindings.set(changed[index]!, context.currentBlock.parameters[index + 1]!)
+  }
+  return context.currentBlock.parameters[0]!
+}
+
+// `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it.
+// Same CFG shape as a ternary with one arm being a boolean constant.
+function lowerLogicalExpression(expression: ts.BinaryExpression, context: FunctionContext): ValueID {
+  requireBooleanCondition(expression.left, context.checker)
+  requireBooleanCondition(expression.right, context.checker)
+  const isAnd = expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+  const condition = lowerExpression(expression.left, context)
+  const bindingsBeforeBranch = new Map(context.bindings)
+  const whenTrue = createBlock(context)
+  const whenFalse = createBlock(context)
+  terminate(context.currentBlock, {
+    kind: 'branch',
+    condition,
+    whenTrue: {block: whenTrue, arguments: []},
+    whenFalse: {block: whenFalse, arguments: []},
+    site: addSite(context, expression),
+  })
+  context.currentBlock = context.blocks[whenTrue]!
+  context.bindings = new Map(bindingsBeforeBranch)
+  const trueValue = isAnd
+    ? lowerExpression(expression.right, context)
+    : addInstruction(context, expression, {kind: 'booleanConstant', value: true})
+  const trueBlock = context.currentBlock
+  const trueBindings = context.bindings
+  context.currentBlock = context.blocks[whenFalse]!
+  context.bindings = new Map(bindingsBeforeBranch)
+  const falseValue = isAnd
+    ? addInstruction(context, expression, {kind: 'booleanConstant', value: false})
+    : lowerExpression(expression.right, context)
   const falseBlock = context.currentBlock
   const falseBindings = context.bindings
   const changed = changedBindings(bindingsBeforeBranch, trueBindings, falseBindings)

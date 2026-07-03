@@ -19,6 +19,13 @@ export function assertAccepted(root: ts.Node, checker: ts.TypeChecker): void {
       return
     }
     if (ts.isBreakOrContinueStatement(node)) return
+    // The property name in `const {dest: destination} = config` is not a value expression
+    // either; only the bound name and a default value hold runtime values.
+    if (ts.isBindingElement(node)) {
+      visit(node.name)
+      if (node.initializer != null) visit(node.initializer)
+      return
+    }
     // TypeScript accepts an `any`-typed value in every position, so a fully type-checked
     // function can still put a boolean into a `number` variable, e.g. `count = value` with
     // `value: any`. Rejecting the `any`-typed expression itself covers every position the

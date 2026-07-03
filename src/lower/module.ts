@@ -1,11 +1,12 @@
 import * as ts from 'typescript'
-import type {ModuleBindingID} from '../ir/ids.ts'
+import type {ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {
   BlockIR,
   FunctionIR,
   ModuleBindingCategory,
   ModuleBindingIR,
   SourceSpan,
+  UnsupportedReason,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {addInstruction, addSite, LoweringStop, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
@@ -15,6 +16,9 @@ import {lowerStatement} from './statements.ts'
 export type ModuleScan = {
   bindings: ModuleBindingIR[]
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
+  // Bindings some function writes. A skipped top-level statement can call any function, so
+  // these are havocked alongside the statement's own writes at every skip.
+  writtenInsideFunctions: Set<ModuleBindingID>
 }
 
 // Classifies every top-level binding by one rule: a function may trust the binding's value
@@ -70,7 +74,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
   for (let binding = 0; binding < bindings.length; binding++) {
     if (writtenInsideFunctions.has(binding)) demote(bindings, binding)
   }
-  return {bindings, bindingsBySymbol}
+  return {bindings, bindingsBySymbol, writtenInsideFunctions}
 }
 
 // The writes the given node itself performs to module bindings (not its children's writes;
@@ -138,7 +142,7 @@ export function lowerModuleInitializer(
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
-): FunctionIR {
+): {initializer: FunctionIR; skips: InitializerSkip[]} {
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   const context: FunctionContext = {
     sourceFile,
@@ -152,37 +156,53 @@ export function lowerModuleInitializer(
     bindings: new Map(),
     parameters: [],
   }
+  const skips: InitializerSkip[] = []
   const statements = sourceFile.statements
-  let index = 0
-  // The file's second and last catch of LoweringStop: unlike a declared function, the
-  // initializer keeps everything lowered so far — the binding values before the stop are
-  // the product.
-  try {
-    for (; index < statements.length; index++) {
-      const statement = statements[index]!
-      if (skippedAtTopLevel(statement)) continue
+  // BLITZ: instead of stopping at the first unsupported statement, each statement gets its
+  // own catch: an unsupported one is skipped — its half-lowered instructions and blocks
+  // rolled back — and every binding it could write is demoted, so later reads cannot trust
+  // values the skipped code might have changed. Runtime exceptions and ordering effects of
+  // skipped statements are ignored; that is the blitz-grade unsoundness.
+  for (const statement of statements) {
+    if (skippedAtTopLevel(statement)) continue
+    const recovery = {
+      block: context.currentBlock,
+      instructionCount: context.currentBlock.instructions.length,
+      blockCount: context.blocks.length,
+      bindings: new Map(context.bindings),
+    }
+    try {
       assertAccepted(statement, checker)
       if (ts.isVariableStatement(statement)) {
         lowerTopLevelDeclarations(statement, context, scan)
         continue
       }
       lowerStatement(statement, context)
-    }
-    if (context.currentBlock.terminator == null) {
-      terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, sourceFile)})
-    }
-  } catch (error) {
-    if (!(error instanceof LoweringStop)) throw error
-    const site = addSite(context, error.node)
-    for (const block of context.blocks) {
-      if (block.terminator == null) terminate(block, {kind: 'stop', site, reason: error.reason})
-    }
-    for (; index < statements.length; index++) {
-      const statement = statements[index]!
+    } catch (error) {
+      if (!(error instanceof LoweringStop)) throw error
+      context.blocks.length = recovery.blockCount
+      recovery.block.instructions.length = recovery.instructionCount
+      recovery.block.terminator = null
+      context.currentBlock = recovery.block
+      context.bindings = recovery.bindings
+      skips.push({site: addSite(context, error.node), reason: error.reason})
+      // Demote what the statement writes directly, then reset the slots of everything the
+      // statement could have written — its own targets plus, since it may call any
+      // function, every binding functions write. Without the reset, a later analyzed
+      // statement would compute from the stale pre-skip value and publish the result
+      // through a fresh binding that nothing demotes.
+      const havocked = new Set(scan.writtenInsideFunctions)
       for (const written of allModuleWritesIn(statement, checker, scan.bindingsBySymbol)) {
         demote(scan.bindings, written)
+        havocked.add(written)
+      }
+      for (const binding of havocked) {
+        addInstruction(context, statement, {kind: 'moduleHavoc', binding})
       }
     }
+  }
+  if (context.currentBlock.terminator == null) {
+    terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, sourceFile)})
   }
   const blocks: BlockIR[] = []
   for (const block of context.blocks) {
@@ -194,8 +214,12 @@ export function lowerModuleInitializer(
       terminator: block.terminator,
     })
   }
-  return {kind: 'lowered', name: 'module initialization', parameters: [], entry: 0, blocks}
+  return {initializer: {kind: 'lowered', name: 'module initialization', parameters: [], entry: 0, blocks}, skips}
 }
+
+// A top-level statement the initializer's lowering skipped, with the construct that made it
+// unsupported. The report lists these on the module initialization entry.
+export type InitializerSkip = {site: SiteID; reason: UnsupportedReason}
 
 function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: FunctionContext, scan: ModuleScan): void {
   for (const declarator of statement.declarationList.declarations) {

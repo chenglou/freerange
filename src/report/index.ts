@@ -1,5 +1,5 @@
-import type {AbstractNumber} from '../domain/number.ts'
-import type {AbstractValue} from '../domain/value.ts'
+import {finiteInputNumber, type AbstractNumber} from '../domain/number.ts'
+import {sameValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {AbstractHeap} from '../heap/model.ts'
 import {referenceProperties} from '../heap/operations.ts'
@@ -14,7 +14,7 @@ export type FunctionReport =
   // Some path stopped; `observed` lines are evidence from the paths that completed, never a
   // contract. e.g. stopped: 'recursive call to countdown (call at /abs/file.ts:3:10)',
   // observed: 'return is a finite integer number from 0 through 0'.
-  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; observed: string[]}
+  | {kind: 'partial'; name: string; assumptions: string[]; stopped: string[]; skipped?: string[]; observed: string[]}
 
 export type AnalysisReport = {
   file: string
@@ -25,16 +25,23 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
   const functions: FunctionReport[] = []
   const assumedBindings = assumedKindBindings(program, analysis)
   // Top-level code runs before any function, so its entry comes first — but only when it
-  // stopped. A fully analyzed initializer is invisible: its results show up as the exact
-  // module values other entries report.
-  if (analysis.initializer.kind === 'partial') {
+  // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
+  // invisible: its results show up as the exact module values other entries report.
+  const skippedLines = program.initializerSkips.map(skip =>
+    `${formatUnsupportedReason(skip.reason)} at ${formatSite(program, skip.site)}`)
+  if (analysis.initializer.kind === 'partial' || skippedLines.length > 0) {
     const observed: string[] = []
-    for (const need of analysis.initializer.observedNeeds) observed.push(formatObservedNeed(need, [], program))
+    if (analysis.initializer.kind === 'partial') {
+      for (const need of analysis.initializer.observedNeeds) observed.push(formatObservedNeed(need, [], program))
+    }
     functions.push({
       kind: 'partial',
       name: 'module initialization',
       assumptions: [],
-      stopped: analysis.initializer.stops.map(stop => formatStop(stop, program, analysis)),
+      stopped: analysis.initializer.kind === 'partial'
+        ? analysis.initializer.stops.map(stop => formatStop(stop, program, analysis))
+        : [],
+      skipped: skippedLines,
       observed,
     })
   }
@@ -77,7 +84,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           name: lowering.name,
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-          ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
+          ensures: [
+            ...parameterWriteSummaries(lowering, fn.sharedState.heap),
+            ...returnSummaries('return', fn.returnValue, fn.sharedState.heap),
+          ],
         })
         break
       }
@@ -104,6 +114,7 @@ export function formatReport(report: AnalysisReport): string {
       case 'partial': {
         for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
         for (const stop of fn.stopped) lines.push(`  stopped: ${stop}`)
+        for (const skip of fn.skipped ?? []) lines.push(`  skipped: ${skip}`)
         for (const evidence of fn.observed) lines.push(`  on analyzed paths: ${evidence}`)
         break
       }
@@ -293,10 +304,29 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
   }
 }
 
+// A function's writes to its object parameters are effects the caller observes, so they get
+// ensures lines like the return value does. Properties still holding the entry assumption
+// (any finite number) are unchanged or unrestricted and stay silent.
+function parameterWriteSummaries(fn: FunctionIR, heap: AbstractHeap): string[] {
+  const summaries: string[] = []
+  for (let index = 0; index < fn.parameters.length; index++) {
+    const parameter = fn.parameters[index]!
+    if (parameter.type.kind !== 'object') continue
+    const object = heap.find(candidate =>
+      candidate.identity.kind === 'parameter' && candidate.identity.parameterIndex === index)
+    if (object == null) continue
+    for (const property of object.properties) {
+      if (property.value.kind === 'number' && sameValues(property.value, finiteInputNumber())) continue
+      summaries.push(...returnSummaries(`${parameter.name}.${property.name}`, property.value, heap))
+    }
+  }
+  return summaries
+}
+
 function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap): string[] {
   switch (value.kind) {
     case 'number': return [numberSummary(path, value)]
-    case 'boolean': return [`${path} is boolean`]
+    case 'boolean': return [`${path} is ${value.canBeFalse ? (value.canBeTrue ? 'boolean' : 'false') : 'true'}`]
     case 'reference': {
       const summaries: string[] = []
       for (const property of referenceProperties(heap, value)) {

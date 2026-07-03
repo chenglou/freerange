@@ -23,6 +23,10 @@ export type InstructionIR =
   // Assign a module binding's slot. A binding is one storage location, so the write
   // replaces the slot's value. The instruction's result is the assigned value, like store.
   | (InstructionBase & {kind: 'moduleWrite'; binding: ModuleBindingID; value: ValueID})
+  // Emitted where the initializer skipped a top-level statement: the binding's slot resets
+  // to what its category allows (declared-kind unknown, or uninitialized for untracked
+  // bindings), so later top-level statements cannot compute from a stale pre-skip value.
+  | (InstructionBase & {kind: 'moduleHavoc'; binding: ModuleBindingID})
   | (InstructionBase & {
       kind: 'binary'
       operator: ArithmeticOperator
@@ -31,6 +35,9 @@ export type InstructionIR =
     })
   | (InstructionBase & {kind: 'compare'; operator: ComparisonOperator; left: ValueID; right: ValueID})
   | (InstructionBase & {kind: 'floor'; value: ValueID})
+  | (InstructionBase & {kind: 'absolute'; value: ValueID})
+  // Boolean negation, from `!x` on a boolean operand.
+  | (InstructionBase & {kind: 'not'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})

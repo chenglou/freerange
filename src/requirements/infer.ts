@@ -47,7 +47,10 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     // Requirement expressions name only the function's own parameters; a module binding is
     // not caller-visible, so a requirement cannot name it.
     case 'moduleRead':
+    case 'moduleHavoc':
     case 'booleanConstant':
+    case 'not':
+    case 'absolute':
     case 'call':
     case 'compare':
     case 'floor':

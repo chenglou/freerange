@@ -35,6 +35,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
       entry: 0,
       blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
     },
+    initializerSkips: [],
   })
   const suppression = typeCheckSuppressionMention(sourceFile)
   if (suppression != null) return rejectFile(suppression, {kind: 'typeCheckSuppressed'})
@@ -67,7 +68,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
       functions.push({kind: 'unsupported', name: declaration.name!.text, site: sites.length - 1, reason: error.reason})
     }
   }
-  const initializer = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
+  const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
   return {
     file: sourceFile.fileName,
     lineStarts: [...sourceFile.getLineStarts()],
@@ -75,6 +76,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     functions,
     moduleBindings: scan.bindings,
     initializer,
+    initializerSkips: skips,
   }
 }
 

@@ -76,6 +76,42 @@ export function floorNumber(value: AbstractNumber): AbstractNumber {
   return boundedResult(Math.floor(value.lower), Math.floor(value.upper), true, value)
 }
 
+// Division once a nonzero requirement has been recorded for the divisor: the divisor's
+// range with zero cut out. An integer divisor then has magnitude at least 1, so the
+// quotient is bounded by the dividend's magnitude — genuinely finite. A non-integer
+// divisor can still be arbitrarily close to zero, so the quotient can overflow; the
+// result is possibly non-finite but never NaN (a finite dividend over a nonzero finite
+// divisor has no NaN case).
+export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
+  if (!safeOperands(left, right)) return unknownNumber()
+  if (!includesZero(right)) return divideNumbers(left, right)
+  if (!right.integer) {
+    return {kind: 'number', lower: -Infinity, upper: Infinity, integer: false, finite: false, mayBeNaN: false}
+  }
+  const negativePart: AbstractNumber = {...right, upper: Math.min(right.upper, -1)}
+  const positivePart: AbstractNumber = {...right, lower: Math.max(right.lower, 1)}
+  const parts = [negativePart, positivePart].filter(part => part.lower <= part.upper)
+  const quotients = parts.flatMap(part => [
+    left.lower / part.lower,
+    left.lower / part.upper,
+    left.upper / part.lower,
+    left.upper / part.upper,
+  ])
+  if (quotients.length === 0) return unknownNumber()
+  return boundedResult(Math.min(...quotients), Math.max(...quotients), false, left, right)
+}
+
+export function absoluteNumber(value: AbstractNumber): AbstractNumber {
+  // Even a possibly non-finite or NaN input keeps the one fact abs guarantees: no result
+  // below zero (abs(NaN) is NaN, which the mayBeNaN flag carries separately).
+  if (!value.finite || value.mayBeNaN) {
+    return {kind: 'number', lower: 0, upper: Infinity, integer: value.integer, finite: value.finite, mayBeNaN: value.mayBeNaN}
+  }
+  if (value.lower >= 0) return value
+  if (value.upper <= 0) return boundedResult(-value.upper, -value.lower, value.integer, value)
+  return boundedResult(0, Math.max(-value.lower, value.upper), value.integer, value)
+}
+
 export function minimumNumbers(values: AbstractNumber[]): AbstractNumber {
   if (values.length === 0 || values.some(value => !value.finite || value.mayBeNaN)) return unknownNumber()
   return boundedResult(

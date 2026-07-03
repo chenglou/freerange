@@ -173,6 +173,8 @@ export type ProgramIR = {
   // in the never-lowered statements demote the affected bindings' categories directly, so
   // no separate record of the remainder is needed.
   initializer: FunctionIR
+  // BLITZ: top-level statements the initializer's lowering skipped instead of stopping at.
+  initializerSkips: Array<{site: SiteID; reason: UnsupportedReason}>
 }
 
 // 1-based line and column of a site's start offset.

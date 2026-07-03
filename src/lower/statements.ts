@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {BlockID, ValueID} from '../ir/ids.ts'
 import {
+  addInstruction,
   addSite,
   bindingsVisibleAfterBranch,
   changedBindings,
@@ -169,6 +170,29 @@ function lowerBranch(
 
 function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, context: FunctionContext): void {
   for (const declaration of declarations.declarations) {
+    // `const {pos, dest} = config` lowers to one read of the source and one property read
+    // per name. Only plain shorthand or renamed identifier elements — no defaults, no rest.
+    if (ts.isObjectBindingPattern(declaration.name) && declaration.initializer != null) {
+      const source = lowerExpression(declaration.initializer, context)
+      for (const element of declaration.name.elements) {
+        if (!ts.isIdentifier(element.name) || element.dotDotDotToken != null || element.initializer != null) {
+          throw unsupported(element, {kind: 'variableDeclarationShape'})
+        }
+        const property = element.propertyName == null
+          ? element.name.text
+          : ts.isIdentifier(element.propertyName)
+            ? element.propertyName.text
+            : null
+        if (property == null) throw unsupported(element, {kind: 'variableDeclarationShape'})
+        const elementType = context.checker.getTypeAtLocation(element.name)
+        if (valueKind(elementType, context.checker) == null) {
+          throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
+        }
+        const value = addInstruction(context, element, {kind: 'property', object: source, property})
+        context.bindings.set(requiredSymbol(element.name, context.checker), value)
+      }
+      continue
+    }
     if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) {
       throw unsupported(declaration, {kind: 'variableDeclarationShape'})
     }
