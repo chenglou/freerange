@@ -128,10 +128,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isCallExpression(current)) {
     if (ts.isIdentifier(current.expression)) {
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
-      const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
-      if (functionID == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
+      const callee = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
+      if (callee == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
+      if (current.arguments.length < callee.declaration.parameters.length) {
+        throw unsupported(current, {kind: 'callWithFewerArguments', callee: current.expression.text})
+      }
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
-      return addInstruction(context, current, {kind: 'call', function: functionID, arguments: arguments_})
+      return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
       const method = current.expression.name.text

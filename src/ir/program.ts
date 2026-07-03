@@ -65,6 +65,12 @@ export type UnsupportedReason =
   // Callee is neither a top-level function in this file nor supported Math. `callee` is the
   // callee's source text, e.g. 'requestAnimationFrame' or a shadowed 'Math.max'.
   | {kind: 'call'; callee: string}
+  // A call passing fewer arguments than the callee declares. TypeScript accepts the shorter
+  // call when the omitted parameters have default values, e.g. scaled() calling
+  // `function scaled(width: number = 5)`, but lowering never reads parameter initializers,
+  // so the callee would receive fewer abstract values than it has parameters. The callee
+  // itself still lowers and analyzes; only the shorter call stops.
+  | {kind: 'callWithFewerArguments'; callee: string}
   // A position that must hold a number (operand, supported Math argument) typed otherwise,
   // e.g. the left side of `events.keydown == null` with type KeyboardEvent | null. The site
   // points at the exact operand, so no role tag is needed.

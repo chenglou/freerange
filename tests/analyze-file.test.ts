@@ -109,6 +109,46 @@ describe('analyzeFile', () => {
     ])
   })
 
+  test('records a call omitting defaulted arguments as unsupported instead of crashing', () => {
+    // TypeScript accepts scaled() because width has a default value, but lowering never
+    // reads parameter initializers, so scaled would receive zero abstract values for one
+    // parameter and crash the engine's arity check. The function itself and calls passing
+    // every argument analyze normally; only the shorter call stops.
+    const report = analyzeSource('default-parameter.ts', `
+      function scaled(width: number = 5): number {
+        return width * 2
+      }
+      export function callNoArg(): number {
+        return scaled()
+      }
+      export function callWithArg(): number {
+        return scaled(3)
+      }
+    `)
+    const file = resolve('default-parameter.ts')
+    expect(report.functions).toEqual([
+      {
+        kind: 'analyzed',
+        name: 'scaled',
+        assumptions: ['width is finite and not NaN'],
+        requires: [],
+        ensures: ['return is a possibly non-finite number from -Infinity through Infinity'],
+      },
+      {
+        kind: 'unsupported',
+        name: 'callNoArg',
+        unsupported: `call to scaled with fewer arguments than parameters at ${file}:6:16`,
+      },
+      {
+        kind: 'analyzed',
+        name: 'callWithArg',
+        assumptions: [],
+        requires: [],
+        ensures: ['return is a finite integer number from 6 through 6'],
+      },
+    ])
+  })
+
   test('names a merely stopped callee accurately in a transitive chain', () => {
     const report = analyzeSource('two-hop.ts', `
       export function outerWidth(width: number): number {

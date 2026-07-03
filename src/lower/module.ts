@@ -1,5 +1,5 @@
 import * as ts from 'typescript'
-import type {FunctionID, ModuleBindingID} from '../ir/ids.ts'
+import type {ModuleBindingID} from '../ir/ids.ts'
 import type {
   BlockIR,
   FunctionIR,
@@ -8,7 +8,7 @@ import type {
   SourceSpan,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
-import {addInstruction, addSite, LoweringStop, terminate, type FunctionContext, type MutableBlock} from './context.ts'
+import {addInstruction, addSite, LoweringStop, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
@@ -135,7 +135,7 @@ export function moduleWritesIn(
 export function lowerModuleInitializer(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
-  functionsBySymbol: Map<ts.Symbol, FunctionID>,
+  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
 ): FunctionIR {

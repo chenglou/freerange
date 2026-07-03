@@ -273,6 +273,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'computedPropertyName': return 'computed object property name'
     case 'binaryOperator': return `binary operator ${reason.operator}`
     case 'call': return `function call ${reason.callee}`
+    case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText}`
     case 'valueType': return `value of type ${reason.typeText}`

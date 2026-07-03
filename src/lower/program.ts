@@ -1,9 +1,8 @@
 import * as ts from 'typescript'
-import type {FunctionID} from '../ir/ids.ts'
 import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, UnsupportedReason, ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
-import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
+import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
@@ -43,7 +42,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
   if (evalNode != null) {
     return rejectFile({start: evalNode.getStart(sourceFile), end: evalNode.getEnd()}, {kind: 'evalInFile'})
   }
-  const functionsBySymbol = new Map<ts.Symbol, FunctionID>()
+  const functionsBySymbol = new Map<ts.Symbol, TopLevelFunction>()
   for (let index = 0; index < declarations.length; index++) {
     const declaration = declarations[index]!
     // This loop runs outside the per-function catch below, so a missing symbol here is an
@@ -51,7 +50,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     // has a symbol.
     const symbol = checker.getSymbolAtLocation(declaration.name!)
     if (symbol == null) throw new Error(`Function declaration ${declaration.name!.text} has no TypeScript symbol`)
-    functionsBySymbol.set(symbol, index)
+    functionsBySymbol.set(symbol, {id: index, declaration})
   }
   const scan = scanModuleBindings(sourceFile, checker)
   const sites: SourceSpan[] = []
@@ -83,7 +82,7 @@ function lowerFunction(
   declaration: ts.FunctionDeclaration,
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
-  functionsBySymbol: Map<ts.Symbol, FunctionID>,
+  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
 ): FunctionIR {

@@ -16,10 +16,18 @@ export type MutableBlock = {
   terminator: TerminatorIR | null
 }
 
+// A top-level function declaration and its index in ProgramIR.functions. The call arm
+// keeps the declaration so a call can be compared against the declared parameter list,
+// e.g. to stop at `scaled()` when scaled declares `(width: number = 5)`.
+export type TopLevelFunction = {
+  id: FunctionID
+  declaration: ts.FunctionDeclaration
+}
+
 export type FunctionContext = {
   sourceFile: ts.SourceFile
   checker: ts.TypeChecker
-  functionsBySymbol: Map<ts.Symbol, FunctionID>
+  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
   // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
   // next dense SiteID.
