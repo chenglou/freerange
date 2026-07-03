@@ -118,14 +118,11 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
 
 // What each function's module slots start from. A published value is trusted exactly;
 // otherwise a number or boolean binding contributes only its declared kind, and every other
-// binding stays uninitialized so reads stop. With a direct eval call in the file, the
-// declared-kind fallback is off entirely: the eval string can put a value of any type into
-// any non-const binding, so an unpublished binding is untracked, not "some number".
+// binding stays uninitialized so reads stop.
 function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
     if (published != null) return {kind: 'value', value: published}
-    if (program.directEval) return {kind: 'uninitialized'}
     const category = binding.category
     if (category.kind !== 'value' && category.kind !== 'kind') return {kind: 'uninitialized'}
     return {

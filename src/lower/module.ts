@@ -7,6 +7,7 @@ import type {
   ModuleBindingIR,
   SourceSpan,
 } from '../ir/program.ts'
+import {assertAccepted} from './accept.ts'
 import {addInstruction, addSite, LoweringStop, terminate, type FunctionContext, type MutableBlock} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
@@ -14,11 +15,6 @@ import {lowerStatement} from './statements.ts'
 export type ModuleScan = {
   bindings: ModuleBindingIR[]
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
-  // A direct eval call exists somewhere in the file. Besides poisoning bindings (below),
-  // calls through top-level function bindings stop lowering: eval can reassign a function
-  // binding at runtime, and TypeScript's static no-reassignment check cannot see into the
-  // eval string.
-  directEval: boolean
 }
 
 // Classifies every top-level binding by one rule: a function may trust the binding's value
@@ -28,43 +24,40 @@ export type ModuleScan = {
 export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeChecker): ModuleScan {
   const bindings: ModuleBindingIR[] = []
   const bindingsBySymbol = new Map<ts.Symbol, ModuleBindingID>()
-  const constness: boolean[] = []
-  const register = (name: ts.Identifier, category: ModuleBindingCategory, isConst: boolean): void => {
+  const register = (name: ts.Identifier, category: ModuleBindingCategory): void => {
     const symbol = checker.getSymbolAtLocation(name)
     if (symbol == null) return
     bindingsBySymbol.set(symbol, bindings.length)
     bindings.push({name: name.text, category})
-    constness.push(isConst)
   }
 
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement)) {
-      const isConst = (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+      // `var` is outside the accepted subset, so its names never become module bindings;
+      // the statement itself stops the initializer when reached.
+      if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue
       for (const declarator of statement.declarationList.declarations) {
         if (!ts.isIdentifier(declarator.name)) continue
-        register(declarator.name, declaredCategory(declarator.name, checker), isConst)
+        register(declarator.name, declaredCategory(declarator.name, checker))
       }
       continue
     }
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause
       if (clause == null || clause.isTypeOnly) continue
-      if (clause.name != null) register(clause.name, {kind: 'import'}, true)
+      if (clause.name != null) register(clause.name, {kind: 'import'})
       const named = clause.namedBindings
       if (named != null && ts.isNamedImports(named)) {
         for (const element of named.elements) {
-          if (!element.isTypeOnly) register(element.name, {kind: 'import'}, true)
+          if (!element.isTypeOnly) register(element.name, {kind: 'import'})
         }
       }
-      if (named != null && ts.isNamespaceImport(named)) register(named.name, {kind: 'import'}, true)
+      if (named != null && ts.isNamespaceImport(named)) register(named.name, {kind: 'import'})
     }
   }
 
-  // Demote bindings that functions write. A direct eval call can assign any non-const
-  // binding through a string no scanner reads, so its presence demotes every let binding;
-  // const stays safe because assigning a const throws even inside eval.
+  // Demote bindings that functions write.
   const writtenInsideFunctions = new Set<ModuleBindingID>()
-  const directEval = containsDirectEval(sourceFile)
   const visit = (node: ts.Node, insideFunction: boolean): void => {
     if (insideFunction) {
       for (const written of moduleWritesIn(node, checker, bindingsBySymbol)) writtenInsideFunctions.add(written)
@@ -75,17 +68,9 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
   visit(sourceFile, false)
 
   for (let binding = 0; binding < bindings.length; binding++) {
-    // An eval string can assign a value of ANY type — the declared type constrains only
-    // the writes the type checker can see — so eval-poisoned bindings become opaque, not
-    // declared-kind. Ordinary function writes below are type-checked, so those keep the
-    // declared kind.
-    if (directEval && !constness[binding]!) {
-      bindings[binding]!.category = {kind: 'opaque'}
-      continue
-    }
-    if (writtenInsideFunctions.has(binding)) demote(bindings, binding, directEval)
+    if (writtenInsideFunctions.has(binding)) demote(bindings, binding)
   }
-  return {bindings, bindingsBySymbol, directEval}
+  return {bindings, bindingsBySymbol}
 }
 
 // The writes the given node itself performs to module bindings (not its children's writes;
@@ -160,7 +145,6 @@ export function lowerModuleInitializer(
     checker,
     functionsBySymbol,
     moduleBindingsBySymbol: scan.bindingsBySymbol,
-    directEval: scan.directEval,
     sites,
     nextValue: 0,
     currentBlock: entry,
@@ -177,6 +161,7 @@ export function lowerModuleInitializer(
     for (; index < statements.length; index++) {
       const statement = statements[index]!
       if (skippedAtTopLevel(statement)) continue
+      assertAccepted(statement, checker)
       if (ts.isVariableStatement(statement)) {
         lowerTopLevelDeclarations(statement, context, scan)
         continue
@@ -195,7 +180,7 @@ export function lowerModuleInitializer(
     for (; index < statements.length; index++) {
       const statement = statements[index]!
       for (const written of allModuleWritesIn(statement, checker, scan.bindingsBySymbol)) {
-        demote(scan.bindings, written, scan.directEval)
+        demote(scan.bindings, written)
       }
     }
   }
@@ -234,35 +219,6 @@ function skippedAtTopLevel(statement: ts.Statement): boolean {
     || ts.isExportDeclaration(statement)
 }
 
-function containsDirectEval(root: ts.Node): boolean {
-  let found = false
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && isDirectEvalCallee(node.expression)) found = true
-    if (!found) ts.forEachChild(node, visit)
-  }
-  visit(root)
-  return found
-}
-
-// `(eval)(...)` is still direct eval — parentheses preserve the reference — and the
-// TypeScript-only wrappers `eval!(...)`, `(eval as any)(...)`, `(eval satisfies Function)(...)`
-// erase to direct eval in the emitted JavaScript. Truly indirect forms — `(0, eval)(...)`,
-// an alias like `const run = eval`, tagged `` eval`...` `` — run in global scope and cannot
-// reach module bindings, so missing them is correct, not a hole.
-function isDirectEvalCallee(callee: ts.Expression): boolean {
-  let current: ts.Expression = callee
-  while (
-    ts.isParenthesizedExpression(current)
-    || ts.isNonNullExpression(current)
-    || ts.isAsExpression(current)
-    || ts.isSatisfiesExpression(current)
-    || ts.isTypeAssertionExpression(current)
-  ) {
-    current = current.expression
-  }
-  return ts.isIdentifier(current) && current.text === 'eval'
-}
-
 function allModuleWritesIn(
   root: ts.Node,
   checker: ts.TypeChecker,
@@ -295,27 +251,19 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 
 // A binding with an unaccounted write cannot publish its value: numbers and booleans keep
 // only their declared kind, and an object binding that may be reassigned is not even a
-// stable identity. When a direct eval call exists, even the declared kind is untrustworthy —
-// e.g. `const flag = pick()` in the never-lowered remainder, where eval may have reassigned
-// `pick` to return anything before the const initialized — so the demotion goes all the way
-// to opaque.
-function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID, directEval: boolean): void {
+// stable identity.
+function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID): void {
   const category = bindings[binding]!.category
   switch (category.kind) {
     case 'value': {
-      bindings[binding]!.category = directEval
-        ? {kind: 'opaque'}
-        : {kind: 'kind', declaredKind: category.declaredKind}
+      bindings[binding]!.category = {kind: 'kind', declaredKind: category.declaredKind}
       break
     }
     case 'identity': {
       bindings[binding]!.category = {kind: 'opaque'}
       break
     }
-    case 'kind': {
-      if (directEval) bindings[binding]!.category = {kind: 'opaque'}
-      break
-    }
+    case 'kind':
     case 'import':
     case 'opaque':
       break

@@ -71,11 +71,17 @@ export type UnsupportedReason =
   | {kind: 'nonNumberOperand'; typeText: string}
   // A branch condition whose type is not boolean, e.g. `if (width)` truthiness on a number.
   | {kind: 'nonBooleanCondition'; typeText: string}
-  // A call resolved through a top-level function binding while a direct eval call exists
-  // somewhere in the file. The eval string can reassign the function binding at runtime —
-  // TypeScript's static no-reassignment check does not see into it — so the call target
-  // cannot be trusted.
-  | {kind: 'directEvalMayReassignFunctions'}
+  // The acceptance rules (see current-decisions.md): an expression typed `any`, a type
+  // assertion written with `as` or angle brackets, or a `var` declaration. Each is a spot
+  // where the checker's word — the foundation of every guarantee — is void or the binding
+  // model does not apply.
+  | {kind: 'anyTyped'}
+  | {kind: 'typeAssertion'; typeText: string}
+  | {kind: 'varDeclaration'}
+  // The identifier `eval` appears somewhere in the file. An eval string can rewrite any
+  // binding in the file at runtime, so every function in the file carries this reason —
+  // rejecting only the function containing the call would not protect the others' reports.
+  | {kind: 'evalInFile'}
   // A value position whose type mixes kinds or is outside numbers, booleans, and objects —
   // e.g. a ternary with one number arm and one boolean arm, a string return type, or a
   // variable declared `let u: unknown` and reassigned across kinds. Left ungated, mixed
@@ -150,10 +156,6 @@ export type ProgramIR = {
   functions: FunctionLowering[]
   // Indexed by ModuleBindingID.
   moduleBindings: ModuleBindingIR[]
-  // A direct eval call exists somewhere in the file. Consumers must not fall back to a
-  // binding's declared kind: the eval string can put a value of any type into any non-const
-  // binding, so an unpublished binding is fully untracked, not "some number of unknown value".
-  directEval: boolean
   // The synthetic function holding the module's top-level runtime code, evaluated once
   // before any declared function so its results can seed their module slots. Always
   // present; a file without top-level runtime code gets a trivial one. Not part of

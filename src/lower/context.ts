@@ -21,9 +21,6 @@ export type FunctionContext = {
   checker: ts.TypeChecker
   functionsBySymbol: Map<ts.Symbol, FunctionID>
   moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
-  // A direct eval call exists somewhere in the file; calls resolved through top-level
-  // function bindings stop lowering because eval can reassign those bindings at runtime.
-  directEval: boolean
   // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
   // next dense SiteID.
   sites: SourceSpan[]

@@ -130,7 +130,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (functionID == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
-      if (context.directEval) throw unsupported(current, {kind: 'directEvalMayReassignFunctions'})
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
       return addInstruction(context, current, {kind: 'call', function: functionID, arguments: arguments_})
     }
@@ -269,7 +268,14 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
       const kind = valueKind(member, checker)
       if (kind == null || (shared != null && kind !== shared)) return null
       if (kind === 'object') {
-        const shape = requiredPropertyShape(member, checker)
+        // TypeScript normalizes a union of disjoint shapes by adding each member's missing
+        // properties as optional-undefined, so only the required properties describe the
+        // member's real shape.
+        const shape = checker.getPropertiesOfType(member)
+          .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
+          .map(property => property.name)
+          .sort()
+          .join(',')
         if (objectShape != null && shape !== objectShape) return null
         objectShape = shape
       }
@@ -278,17 +284,6 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     return shared
   }
   return null
-}
-
-// A type's required property names, sorted. TypeScript normalizes a union of disjoint
-// shapes by adding each member's missing properties as optional-undefined, so only the
-// required properties describe a shape.
-function requiredPropertyShape(type: ts.Type, checker: ts.TypeChecker): string {
-  return checker.getPropertiesOfType(type)
-    .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
-    .map(property => property.name)
-    .sort()
-    .join(',')
 }
 
 // Truthiness conditions like `if (width)` on a number are legal TypeScript but outside the
@@ -362,20 +357,14 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
       current = current.expression
       continue
     }
-    if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current) || ts.isNonNullExpression(current)) {
-      // A type assertion can lie to the checker: `true as unknown as number` produces a
-      // boolean value in a number-typed position, and everything downstream — slot
-      // categories, join arms, requiredNumber — is keyed to the static type. Peel the
-      // assertion only when the value kind is unchanged underneath — including the object
-      // shape: `{} as {missing: number}` is assignable one way but promises a property the
-      // heap object does not have. Otherwise the value and the static type diverge, so stop.
+    // `as` and angle-bracket assertions never reach here: the acceptance check rejected
+    // them before lowering started. The non-null assertion `x!` peels only while the value
+    // kind is unchanged underneath — on a nullable type, e.g. `x!` with `x: number | null`,
+    // the static type stops describing the value the analysis models, so stop.
+    if (ts.isNonNullExpression(current)) {
       const assertedType = checker.getTypeAtLocation(current)
       const operandType = checker.getTypeAtLocation(current.expression)
-      const assertedKind = valueKind(assertedType, checker)
-      const operandKind = valueKind(operandType, checker)
-      const sameShape = assertedKind !== 'object' || operandKind !== 'object'
-        || requiredPropertyShape(assertedType, checker) === requiredPropertyShape(operandType, checker)
-      if (assertedKind !== operandKind || !sameShape) {
+      if (valueKind(assertedType, checker) !== valueKind(operandType, checker)) {
         throw unsupported(current, {
           kind: 'kindChangingAssertion',
           fromText: checker.typeToString(operandType),

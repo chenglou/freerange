@@ -140,15 +140,11 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: Se
 }
 
 // Per function: the module bindings whose declared-kind seeding the function's results rest
-// on. A read without a published exact value rests on the declared kind alone, and even that
-// is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in any write
-// position, so a type-checked write can still put a non-number in a number binding — the
-// printed line is the condition under which the entry's guarantees hold. The assumption
-// travels through calls: a callee evaluates on the caller's own seeded slots, so the
-// callee's read is the caller's assumption too. Closed over static call edges; a call path
-// that never executes can only add a harmless extra assumption line. With a direct eval
-// call in the file there is nothing to assume — unpublished bindings seed uninitialized and
-// their reads stop instead.
+// on. A read without a published exact value rests on the declared kind alone — the printed
+// line is the condition under which the entry's guarantees hold. The assumption travels
+// through calls: a callee evaluates on the caller's own seeded slots, so the callee's read
+// is the caller's assumption too. Closed over static call edges; a call path that never
+// executes can only add a harmless extra assumption line.
 function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Array<Set<ModuleBindingID>> {
   const assumed: Array<Set<ModuleBindingID>> = []
   const callees: Array<Set<number>> = []
@@ -160,7 +156,6 @@ function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Arr
         for (const instruction of block.instructions) {
           if (instruction.kind === 'call') calls.add(instruction.function)
           if (instruction.kind !== 'moduleRead' || analysis.moduleValues[instruction.binding] != null) continue
-          if (program.directEval) continue
           const binding = program.moduleBindings[instruction.binding]
           if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
           const category = binding.category
@@ -284,7 +279,10 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'kindChangingAssertion': return `type assertion from ${reason.fromText} to ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
-    case 'directEvalMayReassignFunctions': return 'a direct eval call in this file can reassign function bindings, so this call target cannot be trusted'
+    case 'anyTyped': return 'a value typed any'
+    case 'typeAssertion': return `a type assertion to ${reason.typeText}`
+    case 'varDeclaration': return 'var declarations (use let or const)'
+    case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'forLoopWithoutCondition': return 'for loop without a condition'
     case 'forLoopWithoutIncrementor': return 'for loop without an incrementor'
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'

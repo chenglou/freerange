@@ -651,66 +651,31 @@ describe('analyzeFile', () => {
     expect(scaleReader.ensures).toEqual(['return is a finite number'])
   })
 
-  test('a direct eval call poisons let bindings but not const', () => {
+  test('eval anywhere puts the whole file outside the subset', () => {
+    // An eval string can rewrite any binding in the file at runtime, so rejecting only the
+    // function containing the call would not protect the other functions' reports. The
+    // detection is a plain identifier scan: every spelling that could reach module scope,
+    // e.g. `(eval)(...)`, contains the identifier.
     const source = `
-      let mutableWidth = 3
       const fixedHeight = 4
-      export function readWidth(): number {
-        return mutableWidth
-      }
       export function readHeight(): number {
         return fixedHeight
       }
       function poke(): void {
-        eval("mutableWidth = 99")
+        eval("somethingElse = 99")
       }
     `
     const report = analyzeSource('module-eval.ts', source)
     const file = resolve('module-eval.ts')
-    // eval can assign a value of ANY type to any let binding through a string no scanner or
-    // type checker reads, so reads of poisoned bindings stop instead of trusting even the
-    // declared kind. const is immune: assigning a const throws even inside eval.
-    expect(report.functions.find(fn => fn.name === 'readWidth')).toEqual({
-      kind: 'partial',
-      name: 'readWidth',
-      assumptions: [],
-      stopped: [`reads mutableWidth, whose value the analysis does not track (read at ${file}:5:16)`],
-      observed: [],
-    })
-    const height = analyzedFunction(report, 'readHeight')
-    expect(height.assumptions).toEqual([])
-    expect(height.ensures).toEqual(['return is a finite integer number from 4 through 4'])
+    const prose = `eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed at ${file}:7:9`
+    expect(report.functions).toEqual([
+      {kind: 'partial', name: 'module initialization', assumptions: [], stopped: [prose], observed: []},
+      {kind: 'unsupported', name: 'readHeight', unsupported: prose},
+      {kind: 'unsupported', name: 'poke', unsupported: prose},
+    ])
 
-    // Parenthesized and TS-wrapped spellings are still direct eval — parentheses preserve
-    // the reference, and `!`/`as` erase to nothing in the emitted JavaScript.
-    for (const spelling of ['(eval)("mutableWidth = 99")', 'eval!("mutableWidth = 99")', '(eval as any)("mutableWidth = 99")']) {
-      const wrapped = analyzeSource('module-eval-wrapped.ts', source.replace('eval("mutableWidth = 99")', spelling))
-      expect(wrapped.functions.find(fn => fn.name === 'readWidth')?.kind).toBe('partial')
-    }
-  })
-
-  test('a direct eval call stops calls through function bindings', () => {
-    // eval can also reassign a top-level function binding at runtime; TypeScript's static
-    // no-reassignment check does not see into the eval string. The functions' own entries
-    // stay, but calls resolved through the bindings stop.
-    const report = analyzeSource('module-eval-call.ts', `
-      export function helper(width: number): number {
-        return width + 1
-      }
-      export function caller(width: number): number {
-        return helper(width)
-      }
-      function poke(): void {
-        eval("helper = (width) => width - 1")
-      }
-    `)
-    const file = resolve('module-eval-call.ts')
-    expect(analyzedFunction(report, 'helper').ensures).toEqual(['return is a finite number'])
-    expect(report.functions.find(fn => fn.name === 'caller')).toEqual({
-      kind: 'unsupported',
-      name: 'caller',
-      unsupported: `a direct eval call in this file can reassign function bindings, so this call target cannot be trusted at ${file}:6:16`,
-    })
+    const wrapped = analyzeSource('module-eval-wrapped.ts', source.replace('eval(', '(eval)('))
+    expect(wrapped.functions.every(fn => fn.kind !== 'analyzed')).toBe(true)
   })
 
   test('finds writes hidden in shorthand destructuring assignments', () => {
@@ -732,24 +697,39 @@ describe('analyzeFile', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
-  test('routes a hoisted var write in a nested top-level block to the module slot', () => {
-    // `var` hoists to module scope, so the nested redeclaration writes the same binding;
-    // lowering it as a block-local would publish the stale 1. isDouble returns exactly
-    // true, so the branch always runs and the published value is exactly 2.
-    const report = analyzeSource('module-nested-var.ts', `
+  test('rejects var declarations', () => {
+    // Hoisting gives one variable several declaration sites (`var x = 1; { var x = 2 }` is
+    // one variable), which the binding model does not represent; let and const express the
+    // same programs. In a function the whole function is rejected; at top level the
+    // initializer stops at the var statement, and functions reading the name never see a
+    // module binding.
+    const report = analyzeSource('module-var.ts', `
       var mode = 1
-      if (isDouble()) {
-        var mode = 2
-      }
       export function currentMode(): number {
         return mode
       }
-      function isDouble(): boolean {
-        return true
+      export function lastWrite(count: number): number {
+        var width = 1
+        for (let index = 0; index < count; index++) {
+          var width = 5
+        }
+        return width
       }
     `)
-    expect(analyzedFunction(report, 'currentMode').ensures)
-      .toEqual(['return is a finite integer number from 2 through 2'])
+    const file = resolve('module-var.ts')
+    expect(report.functions[0]).toEqual({
+      kind: 'partial',
+      name: 'module initialization',
+      assumptions: [],
+      stopped: [`var declarations (use let or const) at ${file}:2:7`],
+      observed: [],
+    })
+    expect(report.functions.find(fn => fn.name === 'currentMode')).toEqual({
+      kind: 'unsupported',
+      name: 'currentMode',
+      unsupported: `unknown identifier mode at ${file}:4:16`,
+    })
+    expect(report.functions.find(fn => fn.name === 'lastWrite')?.kind).toBe('unsupported')
   })
 
   test('records a top-level loop that never exits instead of crashing', () => {
@@ -791,27 +771,11 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 3 through 3'])
   })
 
-  test('does not trust a declared kind that direct eval can falsify', () => {
-    // eval runs before the const initializes and can reassign pick to return anything, so
-    // even "flag is some boolean" would overclaim; the binding is fully untracked.
-    const report = analyzeSource('module-eval-const.ts', `
-      function pick(): boolean { return true }
-      eval("pick = () => 42")
-      const flag = pick()
-      export function readFlag(): boolean { return flag }
-    `)
-    const readFlag = report.functions.find(fn => fn.name === 'readFlag')
-    expect(readFlag?.kind).toBe('partial')
-    if (readFlag?.kind === 'partial') {
-      expect(readFlag.stopped).toEqual([
-        `reads flag, whose value the analysis does not track (read at ${resolve('module-eval-const.ts')}:5:52)`,
-      ])
-    }
-  })
-
-  test('records kind-changing type assertions as unsupported', () => {
-    // `true as unknown as number` produces a boolean value in a number-typed position;
-    // unchecked, the boolean lands in a number module slot and crashes the join.
+  test('rejects type assertions', () => {
+    // An assertion changes the static type without changing the value; everything downstream
+    // is keyed to static types, so `true as unknown as number` would put a boolean where
+    // number invariants apply. Rejected wholesale — a same-shape assertion like
+    // `{value: width} as {value: number}` is rejected too, not special-cased.
     const report = analyzeSource('module-assertion.ts', `
       let count = 1
       export function poke(flag: number): number {
@@ -823,16 +787,52 @@ describe('analyzeFile', () => {
       export function currentCount(): number {
         return count
       }
+      export function sameShape(width: number): number {
+        const box = {value: width} as {value: number}
+        return box.value
+      }
     `)
     const file = resolve('module-assertion.ts')
     expect(report.functions.find(fn => fn.name === 'poke')).toEqual({
       kind: 'unsupported',
       name: 'poke',
-      unsupported: `type assertion from unknown to number at ${file}:5:19`,
+      unsupported: `a type assertion to number at ${file}:5:19`,
     })
+    expect(report.functions.find(fn => fn.name === 'sameShape')?.kind).toBe('unsupported')
     // The scan still counts the unanalyzed write, so count keeps only its declared kind.
     const reader = analyzedFunction(report, 'currentCount')
     expect(reader.assumptions).toEqual(['count is finite and not NaN'])
+  })
+
+  test('rejects values typed any wherever they flow', () => {
+    // TypeScript accepts an any-typed value in every position, so a type-checked function
+    // can still put a boolean into a number variable; the value's own expression is
+    // rejected, which covers declarations, arguments, and returns alike.
+    const report = analyzeSource('module-any.ts', `
+      export function launder(): number {
+        const hidden: any = true
+        const forced: number = hidden
+        return forced + 2
+      }
+      export function passThrough(width: number): number {
+        return width + 1
+      }
+    `)
+    const file = resolve('module-any.ts')
+    expect(report.functions).toEqual([
+      {
+        kind: 'unsupported',
+        name: 'launder',
+        unsupported: `a value typed any at ${file}:3:15`,
+      },
+      {
+        kind: 'analyzed',
+        name: 'passThrough',
+        assumptions: ['width is finite and not NaN'],
+        requires: [],
+        ensures: ['return is a finite number'],
+      },
+    ])
   })
 
   test('hedges boolean module reads whose writes TypeScript cannot vouch for', () => {
@@ -852,22 +852,6 @@ describe('analyzeFile', () => {
     expect(reader.ensures).toEqual(['return is boolean'])
   })
 
-  test('carries a var redeclaration in a loop body across the back edge', () => {
-    // The declarator writes the same function-scoped variable as the outer var; dropping it
-    // from the loop-carried bindings reported exactly 1 while runtime returns 5.
-    const report = analyzeSource('loop-var.ts', `
-      export function lastWrite(count: number): number {
-        var width = 1
-        for (let index = 0; index < count; index++) {
-          var width = 5
-        }
-        return width
-      }
-    `)
-    expect(analyzedFunction(report, 'lastWrite').ensures)
-      .toEqual(['return is a finite integer number from 1 through 5'])
-  })
-
   test('records a never-exiting loop whose condition is a ternary', () => {
     // The ternary puts the body/exit branch in a continuation block, not on the tagged loop
     // header, so the detection must recognize the cycle rather than the header's branch.
@@ -885,36 +869,6 @@ describe('analyzeFile', () => {
       stopped: [`the loop at ${file}:3:9 never exits on any analyzed path`],
       observed: [],
     }])
-  })
-
-  test('records shape-changing object assertions as unsupported', () => {
-    // `{} as {missing: number}` is assignable one way, but the heap object has no such
-    // property; reading or writing it crashed the engine before the shape check.
-    const report = analyzeSource('shape-assertion.ts', `
-      export function fake(): number {
-        const box = {} as {missing: number}
-        return box.missing + 1
-      }
-      export function pass(width: number): number {
-        const sameShape = {value: width} as {value: number}
-        return sameShape.value
-      }
-    `)
-    const file = resolve('shape-assertion.ts')
-    expect(report.functions).toEqual([
-      {
-        kind: 'unsupported',
-        name: 'fake',
-        unsupported: `type assertion from {} to { missing: number; } at ${file}:3:21`,
-      },
-      {
-        kind: 'analyzed',
-        name: 'pass',
-        assumptions: ['width is finite and not NaN'],
-        requires: [],
-        ensures: ['return is a finite number'],
-      },
-    ])
   })
 
   test('snaps integer bounds so contradictory refinements cannot strand the evaluation', () => {

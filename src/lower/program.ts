@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import type {FunctionID} from '../ir/ids.ts'
 import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
+import {assertAccepted, evalMention} from './accept.ts'
 import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
 import {valueKind} from './expression.ts'
 import {lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
@@ -12,6 +13,31 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
   const declarations: ts.FunctionDeclaration[] = []
   for (const statement of sourceFile.statements) {
     if (ts.isFunctionDeclaration(statement) && statement.name != null) declarations.push(statement)
+  }
+  // The one file-wide rejection: an eval string can rewrite bindings that every function's
+  // report depends on, so no function in the file is analyzed.
+  const evalNode = evalMention(sourceFile)
+  if (evalNode != null) {
+    const sites: SourceSpan[] = [{start: evalNode.getStart(sourceFile), end: evalNode.getEnd()}]
+    const initializerEntry: BlockIR = {
+      loopHeader: null,
+      parameters: [],
+      instructions: [],
+      terminator: {kind: 'stop', site: 0, reason: {kind: 'evalInFile'}},
+    }
+    return {
+      file: sourceFile.fileName,
+      lineStarts: [...sourceFile.getLineStarts()],
+      sites,
+      functions: declarations.map(declaration => ({
+        kind: 'unsupported',
+        name: declaration.name!.text,
+        site: 0,
+        reason: {kind: 'evalInFile'},
+      })),
+      moduleBindings: [],
+      initializer: {kind: 'lowered', name: 'module initialization', parameters: [], entry: 0, blocks: [initializerEntry]},
+    }
   }
   const functionsBySymbol = new Map<ts.Symbol, FunctionID>()
   for (let index = 0; index < declarations.length; index++) {
@@ -45,7 +71,6 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     sites,
     functions,
     moduleBindings: scan.bindings,
-    directEval: scan.directEval,
     initializer,
   }
 }
@@ -59,6 +84,7 @@ function lowerFunction(
   sites: SourceSpan[],
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, {kind: 'functionWithoutBody'})
+  assertAccepted(declaration, checker)
   const returnType = functionReturnType(declaration, checker)
   const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
   // Mixed return kinds (e.g. one branch returning a number and another a boolean) would
@@ -72,7 +98,6 @@ function lowerFunction(
     checker,
     functionsBySymbol,
     moduleBindingsBySymbol: scan.bindingsBySymbol,
-    directEval: scan.directEval,
     sites,
     nextValue: 0,
     currentBlock: entry,
