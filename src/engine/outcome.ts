@@ -1,6 +1,7 @@
 import type {AbstractValue} from '../domain/value.ts'
 import type {AbstractHeap} from '../heap/model.ts'
-import type {FunctionID, SiteID} from '../ir/ids.ts'
+import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
+import type {UnsupportedReason} from '../ir/program.ts'
 import type {InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState} from './state.ts'
 
@@ -16,6 +17,17 @@ export type StopReason =
   // property paths with mutation-awareness.
   | {kind: 'divisorUnknown'}
   | {kind: 'loopLimit'; updates: number}
+  // A loop whose exit edge is never taken on any analyzed path, e.g.
+  // `for (let index = 0; true; index += 1) {}`. The fixed point converged with every path
+  // still inside the loop, so the function has no reachable return.
+  | {kind: 'nonExitingLoop'}
+  // A stop terminator was reached: the module initializer's lowering met unsupported code
+  // here and kept everything before it.
+  | {kind: 'unsupportedCode'; reason: UnsupportedReason}
+  // A moduleRead found nothing usable in the slot. Report prose comes from the binding's
+  // category: imported, an untracked object, an unsupported type, or read before its
+  // initialization.
+  | {kind: 'moduleRead'; binding: ModuleBindingID}
 
 export type Stop = {
   site: SiteID
@@ -74,4 +86,10 @@ export type FunctionAnalysis =
 export type ProgramAnalysis = {
   // Dense, index-aligned with ProgramIR.functions.
   functions: FunctionAnalysis[]
+  // The synthetic module initializer's own analysis. Reports print it only when it stopped.
+  initializer: FunctionAnalysis
+  // Indexed by ModuleBindingID: the exact value functions may trust, or null when only the
+  // binding's declared kind is known. Reports use this to print assumes lines for reads of
+  // assumed-finite module numbers.
+  moduleValues: Array<AbstractValue | null>
 }

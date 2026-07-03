@@ -71,10 +71,19 @@ export type UnsupportedReason =
   | {kind: 'nonNumberOperand'; typeText: string}
   // A branch condition whose type is not boolean, e.g. `if (width)` truthiness on a number.
   | {kind: 'nonBooleanCondition'; typeText: string}
+  // A call resolved through a top-level function binding while a direct eval call exists
+  // somewhere in the file. The eval string can reassign the function binding at runtime —
+  // TypeScript's static no-reassignment check does not see into it — so the call target
+  // cannot be trusted.
+  | {kind: 'directEvalMayReassignFunctions'}
   // A value position whose type mixes kinds or is outside numbers, booleans, and objects —
   // e.g. a ternary with one number arm and one boolean arm, or a string return type. Left
   // ungated, mixed kinds would meet at a join deep in the engine instead of stopping here.
   | {kind: 'valueType'; typeText: string}
+  // A type assertion that changes the value kind, e.g. `true as unknown as number` or `x!`
+  // on a nullable type. The asserted type no longer describes the runtime value, and the
+  // analysis keys everything to static types.
+  | {kind: 'kindChangingAssertion'; fromText: string; toText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}
   | {kind: 'forLoopWithoutCondition'}
@@ -98,6 +107,35 @@ export type UnsupportedFunctionIR = {
 
 export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 
+// What a function may assume about a module-level binding, decided once by a whole-file
+// scan before any lowering. The rule: trust a value only when every possible write to it
+// is accounted for. A const collapses into the no-outside-write check, since TypeScript
+// already rejects assigning a const anywhere.
+export type ModuleBindingCategory =
+  // A number or boolean binding that nothing outside the initializer writes. Its
+  // initialized value flows into every function, e.g. `const boxesGapX = 24` reads as 24.
+  | {kind: 'value'; declaredKind: 'number' | 'boolean'}
+  // An object binding that nothing outside the initializer reassigns, e.g.
+  // `const events = {keydown: null}`. Its identity could flow into functions while
+  // property values reset to unknown at function entry; recorded now so the scan is
+  // complete, but reads stop until that flow is implemented.
+  | {kind: 'identity'}
+  // A number or boolean binding that some function writes, or that a direct eval call
+  // anywhere in the file could write. Functions see only the declared kind: some finite
+  // number, some boolean.
+  | {kind: 'kind'; declaredKind: 'number' | 'boolean'}
+  // An imported binding. Single-file analysis knows nothing about the other module.
+  | {kind: 'import'}
+  // Every other declared type (unions with null, arrays, strings, functions). Reads stop.
+  | {kind: 'opaque'}
+
+// One top-level binding visible to every function in the file: a top-level variable
+// declarator with an identifier name, or a named import.
+export type ModuleBindingIR = {
+  name: string
+  category: ModuleBindingCategory
+}
+
 export type ProgramIR = {
   file: string
   // Offset of each line's first character, copied from ts.SourceFile.getLineStarts(), so
@@ -109,6 +147,19 @@ export type ProgramIR = {
   // Still indexed by FunctionID, assigned from declaration order before any body lowers, so
   // call instructions may reference an index that later turns out unsupported.
   functions: FunctionLowering[]
+  // Indexed by ModuleBindingID.
+  moduleBindings: ModuleBindingIR[]
+  // A direct eval call exists somewhere in the file. Consumers must not fall back to a
+  // binding's declared kind: the eval string can put a value of any type into any non-const
+  // binding, so an unpublished binding is fully untracked, not "some number of unknown value".
+  directEval: boolean
+  // The synthetic function holding the module's top-level runtime code, evaluated once
+  // before any declared function so its results can seed their module slots. Always
+  // present; a file without top-level runtime code gets a trivial one. Not part of
+  // `functions`, so no call instruction can reference it. When its lowering stops, writes
+  // in the never-lowered statements demote the affected bindings' categories directly, so
+  // no separate record of the remainder is needed.
+  initializer: FunctionIR
 }
 
 // 1-based line and column of a site's start offset.

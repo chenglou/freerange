@@ -6,7 +6,6 @@ import {
   addSite,
   changedBindings,
   createBlock,
-  requiredBinding,
   requiredBranchBinding,
   requiredSymbol,
   terminate,
@@ -15,9 +14,12 @@ import {
 } from './context.ts'
 
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
-  const current = unwrap(expression)
+  const current = unwrap(expression, context.checker)
   if (ts.isNumericLiteral(current)) {
     return addInstruction(context, current, {kind: 'constant', value: Number(current.text)})
+  }
+  if (current.kind === ts.SyntaxKind.TrueKeyword || current.kind === ts.SyntaxKind.FalseKeyword) {
+    return addInstruction(context, current, {kind: 'booleanConstant', value: current.kind === ts.SyntaxKind.TrueKeyword})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
     const zero = addInstruction(context, current, {kind: 'constant', value: 0})
@@ -28,14 +30,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return lowerConditionalExpression(current, context)
   }
   if (ts.isIdentifier(current)) {
-    return requiredBinding(requiredSymbol(current, context.checker), current, context)
+    return identifierValue(requiredSymbol(current, context.checker), current, context)
   }
   if (ts.isObjectLiteralExpression(current)) {
     const properties = current.properties.map(property => {
       if (ts.isShorthandPropertyAssignment(property)) {
         const symbol = context.checker.getShorthandAssignmentValueSymbol(property)
         if (symbol == null) throw unsupported(property, {kind: 'missingSymbol'})
-        return {name: property.name.text, value: requiredBinding(symbol, property.name, context)}
+        return {name: property.name.text, value: identifierValue(symbol, property.name, context)}
       }
       if (ts.isPropertyAssignment(property)) {
         return {name: propertyName(property.name), value: lowerExpression(property.initializer, context)}
@@ -60,20 +62,26 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     && ts.isIdentifier(current.left)
   ) {
     const symbol = requiredSymbol(current.left, context.checker)
-    requiredBinding(symbol, current.left, context)
-    const value = lowerExpression(current.right, context)
-    context.bindings.set(symbol, value)
-    return value
+    if (context.bindings.has(symbol)) {
+      const value = lowerExpression(current.right, context)
+      context.bindings.set(symbol, value)
+      return value
+    }
+    const binding = context.moduleBindingsBySymbol.get(symbol)
+    if (binding != null) {
+      const value = lowerExpression(current.right, context)
+      return addInstruction(context, current, {kind: 'moduleWrite', binding, value})
+    }
+    throw unsupported(current.left, {kind: 'unknownIdentifier', name: current.left.text})
   }
   if (ts.isBinaryExpression(current) && ts.isIdentifier(current.left)) {
     const operator = compoundAssignmentOperator(current.operatorToken.kind)
     if (operator != null) {
       const symbol = requiredSymbol(current.left, context.checker)
-      const left = requiredBinding(symbol, current.left, context)
+      const left = identifierValue(symbol, current.left, context)
       const right = lowerExpression(current.right, context)
       const value = addInstruction(context, current, {kind: 'binary', operator, left, right})
-      context.bindings.set(symbol, value)
-      return value
+      return assignIdentifier(symbol, current.left, value, current, context)
     }
   }
   if (
@@ -82,7 +90,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     && ts.isIdentifier(current.operand)
   ) {
     const symbol = requiredSymbol(current.operand, context.checker)
-    const previous = requiredBinding(symbol, current.operand, context)
+    const previous = identifierValue(symbol, current.operand, context)
     const one = addInstruction(context, current, {kind: 'constant', value: 1})
     const value = addInstruction(context, current, {
       kind: 'binary',
@@ -90,7 +98,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       left: previous,
       right: one,
     })
-    context.bindings.set(symbol, value)
+    assignIdentifier(symbol, current.operand, value, current, context)
     return ts.isPrefixUnaryExpression(current) ? value : previous
   }
   if (ts.isBinaryExpression(current)) {
@@ -112,6 +120,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const functionID = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (functionID == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
+      if (context.directEval) throw unsupported(current, {kind: 'directEvalMayReassignFunctions'})
       const arguments_ = current.arguments.map(argument => lowerExpression(argument, context))
       return addInstruction(context, current, {kind: 'call', function: functionID, arguments: arguments_})
     }
@@ -250,14 +259,7 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
       const kind = valueKind(member, checker)
       if (kind == null || (shared != null && kind !== shared)) return null
       if (kind === 'object') {
-        // TypeScript normalizes a union of disjoint shapes by adding each member's missing
-        // properties as optional-undefined, so only the required properties describe the
-        // member's real shape.
-        const shape = checker.getPropertiesOfType(member)
-          .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
-          .map(property => property.name)
-          .sort()
-          .join(',')
+        const shape = requiredPropertyShape(member, checker)
         if (objectShape != null && shape !== objectShape) return null
         objectShape = shape
       }
@@ -266,6 +268,17 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     return shared
   }
   return null
+}
+
+// A type's required property names, sorted. TypeScript normalizes a union of disjoint
+// shapes by adding each member's missing properties as optional-undefined, so only the
+// required properties describe a shape.
+function requiredPropertyShape(type: ts.Type, checker: ts.TypeChecker): string {
+  return checker.getPropertiesOfType(type)
+    .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
+    .map(property => property.name)
+    .sort()
+    .join(',')
 }
 
 // Truthiness conditions like `if (width)` on a number are legal TypeScript but outside the
@@ -299,19 +312,69 @@ function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker
   return declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)
 }
 
+// Resolves an identifier read: a function-local binding first, then a module binding
+// (which reads the binding's slot), else the identifier is unknown.
+function identifierValue(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
+  const local = context.bindings.get(symbol)
+  if (local != null) return local
+  const binding = context.moduleBindingsBySymbol.get(symbol)
+  if (binding != null) return addInstruction(context, node, {kind: 'moduleRead', binding})
+  throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
+}
+
+// Assigns an identifier: rebinding for a local, a slot write for a module binding.
+function assignIdentifier(
+  symbol: ts.Symbol,
+  node: ts.Identifier,
+  value: ValueID,
+  wholeExpression: ts.Expression,
+  context: FunctionContext,
+): ValueID {
+  if (context.bindings.has(symbol)) {
+    context.bindings.set(symbol, value)
+    return value
+  }
+  const binding = context.moduleBindingsBySymbol.get(symbol)
+  if (binding != null) return addInstruction(context, wholeExpression, {kind: 'moduleWrite', binding, value})
+  throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
+}
+
 function propertyName(name: ts.PropertyName): string {
   if (ts.isIdentifier(name) || ts.isStringLiteral(name) || ts.isNumericLiteral(name)) return name.text
   throw unsupported(name, {kind: 'computedPropertyName'})
 }
 
-function unwrap(expression: ts.Expression): ts.Expression {
+function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expression {
   let current = expression
-  while (
-    ts.isParenthesizedExpression(current)
-    || ts.isAsExpression(current)
-    || ts.isSatisfiesExpression(current)
-    || ts.isTypeAssertionExpression(current)
-    || ts.isNonNullExpression(current)
-  ) current = current.expression
-  return current
+  while (true) {
+    if (ts.isParenthesizedExpression(current) || ts.isSatisfiesExpression(current)) {
+      // Neither changes the expression's type.
+      current = current.expression
+      continue
+    }
+    if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current) || ts.isNonNullExpression(current)) {
+      // A type assertion can lie to the checker: `true as unknown as number` produces a
+      // boolean value in a number-typed position, and everything downstream — slot
+      // categories, join arms, requiredNumber — is keyed to the static type. Peel the
+      // assertion only when the value kind is unchanged underneath — including the object
+      // shape: `{} as {missing: number}` is assignable one way but promises a property the
+      // heap object does not have. Otherwise the value and the static type diverge, so stop.
+      const assertedType = checker.getTypeAtLocation(current)
+      const operandType = checker.getTypeAtLocation(current.expression)
+      const assertedKind = valueKind(assertedType, checker)
+      const operandKind = valueKind(operandType, checker)
+      const sameShape = assertedKind !== 'object' || operandKind !== 'object'
+        || requiredPropertyShape(assertedType, checker) === requiredPropertyShape(operandType, checker)
+      if (assertedKind !== operandKind || !sameShape) {
+        throw unsupported(current, {
+          kind: 'kindChangingAssertion',
+          fromText: checker.typeToString(operandType),
+          toText: checker.typeToString(assertedType),
+        })
+      }
+      current = current.expression
+      continue
+    }
+    return current
+  }
 }

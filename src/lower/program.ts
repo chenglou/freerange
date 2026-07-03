@@ -4,6 +4,7 @@ import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, Value
 import type {CheckedSource} from '../typescript/check.ts'
 import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock} from './context.ts'
 import {valueKind} from './expression.ts'
+import {lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
@@ -22,20 +23,31 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     if (symbol == null) throw new Error(`Function declaration ${declaration.name!.text} has no TypeScript symbol`)
     functionsBySymbol.set(symbol, index)
   }
+  const scan = scanModuleBindings(sourceFile, checker)
   const sites: SourceSpan[] = []
   const functions: FunctionLowering[] = []
   for (const declaration of declarations) {
-    // The one place a LoweringStop is caught. The half-built FunctionContext is discarded
-    // wholesale; only the name, the offending node's site, and the tagged reason survive.
+    // One of the two places a LoweringStop is caught. The half-built FunctionContext is
+    // discarded wholesale; only the name, the offending node's site, and the tagged reason
+    // survive.
     try {
-      functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, sites))
+      functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, scan, sites))
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
       sites.push({start: error.node.getStart(sourceFile), end: error.node.getEnd()})
       functions.push({kind: 'unsupported', name: declaration.name!.text, site: sites.length - 1, reason: error.reason})
     }
   }
-  return {file: sourceFile.fileName, lineStarts: [...sourceFile.getLineStarts()], sites, functions}
+  const initializer = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
+  return {
+    file: sourceFile.fileName,
+    lineStarts: [...sourceFile.getLineStarts()],
+    sites,
+    functions,
+    moduleBindings: scan.bindings,
+    directEval: scan.directEval,
+    initializer,
+  }
 }
 
 function lowerFunction(
@@ -43,6 +55,7 @@ function lowerFunction(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   functionsBySymbol: Map<ts.Symbol, FunctionID>,
+  scan: ModuleScan,
   sites: SourceSpan[],
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, {kind: 'functionWithoutBody'})
@@ -58,6 +71,8 @@ function lowerFunction(
     sourceFile,
     checker,
     functionsBySymbol,
+    moduleBindingsBySymbol: scan.bindingsBySymbol,
+    directEval: scan.directEval,
     sites,
     nextValue: 0,
     currentBlock: entry,

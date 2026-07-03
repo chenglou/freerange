@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {BlockID, ValueID} from '../ir/ids.ts'
 import {
+  addInstruction,
   addSite,
   bindingsVisibleAfterBranch,
   changedBindings,
@@ -21,13 +22,13 @@ export function lowerStatements(statements: readonly ts.Statement[], context: Fu
   }
 }
 
-function lowerStatement(statement: ts.Statement, context: FunctionContext): void {
+export function lowerStatement(statement: ts.Statement, context: FunctionContext): void {
   if (ts.isVariableStatement(statement)) {
     lowerVariableDeclarationList(statement.declarationList, context)
     return
   }
-  if (ts.isReturnStatement(statement) && statement.expression != null) {
-    const value = lowerExpression(statement.expression, context)
+  if (ts.isReturnStatement(statement)) {
+    const value = statement.expression == null ? null : lowerExpression(statement.expression, context)
     terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, statement)})
     return
   }
@@ -172,8 +173,17 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
     if (!ts.isIdentifier(declaration.name) || declaration.initializer == null) {
       throw unsupported(declaration, {kind: 'variableDeclarationShape'})
     }
+    const symbol = requiredSymbol(declaration.name, context.checker)
     const value = lowerExpression(declaration.initializer, context)
-    context.bindings.set(requiredSymbol(declaration.name, context.checker), value)
+    // A `var` in a nested top-level block (e.g. `{ var width = 2 }` inside an if) hoists to
+    // module scope and shares the top-level declaration's symbol; its write must reach the
+    // module slot, not create a block-local binding that the slot never sees.
+    const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
+    if (moduleBinding != null) {
+      addInstruction(context, declaration, {kind: 'moduleWrite', binding: moduleBinding, value})
+      continue
+    }
+    context.bindings.set(symbol, value)
   }
 }
 
@@ -194,6 +204,13 @@ function assignedSymbols(nodes: ts.Node[], checker: ts.TypeChecker): Set<ts.Symb
       && ts.isIdentifier(node.operand)
     ) {
       symbols.add(requiredSymbol(node.operand, checker))
+    }
+    // A `var` declarator in the loop body rebinds a function-scoped variable declared
+    // before the loop (`var x = 1; for (...) { var x = 5 }` shares one symbol), so it is a
+    // write like any assignment. Fresh let/const symbols also land here, but the caller
+    // intersects with the bindings that exist before the loop, which filters them out.
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name)) {
+      symbols.add(requiredSymbol(node.name, checker))
     }
     ts.forEachChild(node, visit)
   }

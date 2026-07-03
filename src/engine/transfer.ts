@@ -73,6 +73,34 @@ export function evaluateInstruction(
 ): StepResult {
   switch (instruction.kind) {
     case 'constant': return value(constantNumber(instruction.value))
+    case 'booleanConstant': return value({
+      kind: 'boolean',
+      canBeTrue: instruction.value,
+      canBeFalse: !instruction.value,
+    })
+    case 'moduleRead': {
+      const slot = state.shared.modules[instruction.binding]
+      if (slot == null) throw new Error(`Unknown module binding ${instruction.binding}`)
+      if (slot.kind === 'uninitialized') {
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
+      }
+      return value(slot.value)
+    }
+    case 'moduleWrite': {
+      const assigned = requiredValue(state, instruction.value)
+      const binding = context.program.moduleBindings[instruction.binding]
+      if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
+      // An opaque binding's declared type spans value kinds (e.g. `unknown`), so two paths
+      // could put a number and a boolean in one slot and meet at a join, which only handles
+      // matching kinds. Reads of opaque bindings stop regardless, so the slot stays
+      // uninitialized instead of holding a value nothing may consume. Every other writable
+      // category is single-kind: value/kind writes are type-checked against the declared
+      // number or boolean, and identity slots only ever hold object references.
+      if (binding.category.kind !== 'opaque') {
+        state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
+      }
+      return value(assigned)
+    }
     case 'object': return value(allocateAtSite(
       state.frame.values,
       state.shared.heap,
@@ -266,7 +294,19 @@ function invertedComparison(operator: ComparisonOperator): ComparisonOperator {
 }
 
 function withBounds(value: AbstractNumber, lower: number, upper: number): AbstractNumber {
-  return {...value, lower: Math.max(value.lower, lower), upper: Math.min(value.upper, upper)}
+  let refinedLower = Math.max(value.lower, lower)
+  let refinedUpper = Math.min(value.upper, upper)
+  // An integer interval refined by a non-strict comparison against a non-integer bound
+  // (`if (count >= 3.2)`) would keep the fractional bound. Snap to the integer hull —
+  // exact, since only integers inhabit the interval. Left unsnapped, the bounds and the
+  // integer flag disagree: [3.2, 3.4] passes the lower > upper emptiness check while
+  // containing no value, and a later comparison can prune both branch edges, stranding
+  // the evaluation with no path end at all.
+  if (value.integer) {
+    refinedLower = Math.ceil(refinedLower)
+    refinedUpper = Math.floor(refinedUpper)
+  }
+  return {...value, lower: refinedLower, upper: refinedUpper}
 }
 
 function strictLower(value: number, integer: boolean): number {

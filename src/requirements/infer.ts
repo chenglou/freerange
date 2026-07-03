@@ -42,6 +42,12 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
         : {kind: 'binary', operator: instruction.operator, left, right}
     }
     case 'store': return numericExpression(instruction.value, context)
+    // A module write's result is the assigned value, so the written expression carries over.
+    case 'moduleWrite': return numericExpression(instruction.value, context)
+    // Requirement expressions name only the function's own parameters; a module binding is
+    // not caller-visible, so a requirement cannot name it.
+    case 'moduleRead':
+    case 'booleanConstant':
     case 'call':
     case 'compare':
     case 'floor':

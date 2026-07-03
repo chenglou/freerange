@@ -3,7 +3,7 @@ import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {AbstractHeap} from '../heap/model.ts'
 import {referenceProperties} from '../heap/operations.ts'
-import type {SiteID} from '../ir/ids.ts'
+import type {ModuleBindingID, SiteID} from '../ir/ids.ts'
 import {siteLocation, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
@@ -23,6 +23,21 @@ export type AnalysisReport = {
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
+  const assumedBindings = assumedKindBindings(program, analysis)
+  // Top-level code runs before any function, so its entry comes first — but only when it
+  // stopped. A fully analyzed initializer is invisible: its results show up as the exact
+  // module values other entries report.
+  if (analysis.initializer.kind === 'partial') {
+    const observed: string[] = []
+    for (const need of analysis.initializer.observedNeeds) observed.push(formatObservedNeed(need, [], program))
+    functions.push({
+      kind: 'partial',
+      name: 'module initialization',
+      assumptions: [],
+      stopped: analysis.initializer.stops.map(stop => formatStop(stop, program, analysis)),
+      observed,
+    })
+  }
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const lowering = program.functions[functionID]!
     const fn = analysis.functions[functionID]
@@ -48,7 +63,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(lowering),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
         })
@@ -60,7 +75,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: assumptionLines(lowering),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap),
         })
@@ -97,7 +112,7 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
-function assumptionLines(fn: FunctionIR): string[] {
+function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: Set<ModuleBindingID>): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
     switch (parameter.type.kind) {
@@ -110,7 +125,70 @@ function assumptionLines(fn: FunctionIR): string[] {
       }
     }
   }
+  for (const bindingID of [...assumedBindings].sort((left, right) => left - right)) {
+    const binding = program.moduleBindings[bindingID]
+    if (binding == null) throw new Error(`Unknown module binding ${bindingID}`)
+    const declaredKind = binding.category.kind === 'value' || binding.category.kind === 'kind'
+      ? binding.category.declaredKind
+      : null
+    if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
+    assumptions.push(declaredKind === 'number'
+      ? `${binding.name} is finite and not NaN`
+      : `${binding.name} is a boolean`)
+  }
   return assumptions
+}
+
+// Per function: the module bindings whose declared-kind seeding the function's results rest
+// on. A read without a published exact value rests on the declared kind alone, and even that
+// is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in any write
+// position, so a type-checked write can still put a non-number in a number binding — the
+// printed line is the condition under which the entry's guarantees hold. The assumption
+// travels through calls: a callee evaluates on the caller's own seeded slots, so the
+// callee's read is the caller's assumption too. Closed over static call edges; a call path
+// that never executes can only add a harmless extra assumption line. With a direct eval
+// call in the file there is nothing to assume — unpublished bindings seed uninitialized and
+// their reads stop instead.
+function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Array<Set<ModuleBindingID>> {
+  const assumed: Array<Set<ModuleBindingID>> = []
+  const callees: Array<Set<number>> = []
+  for (const lowering of program.functions) {
+    const reads = new Set<ModuleBindingID>()
+    const calls = new Set<number>()
+    if (lowering.kind === 'lowered') {
+      for (const block of lowering.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind === 'call') calls.add(instruction.function)
+          if (instruction.kind !== 'moduleRead' || analysis.moduleValues[instruction.binding] != null) continue
+          if (program.directEval) continue
+          const binding = program.moduleBindings[instruction.binding]
+          if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
+          const category = binding.category
+          if (category.kind === 'value' || category.kind === 'kind') {
+            reads.add(instruction.binding)
+          }
+        }
+      }
+    }
+    assumed.push(reads)
+    callees.push(calls)
+  }
+  // Call graphs can have cycles, so propagate until stable.
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let caller = 0; caller < assumed.length; caller++) {
+      for (const callee of callees[caller]!) {
+        for (const bindingID of assumed[callee] ?? []) {
+          if (!assumed[caller]!.has(bindingID)) {
+            assumed[caller]!.add(bindingID)
+            changed = true
+          }
+        }
+      }
+    }
+  }
+  return assumed
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.
@@ -132,6 +210,29 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
     }
+    case 'nonExitingLoop': {
+      return `the loop at ${formatSite(program, stop.site)} never exits on any analyzed path`
+    }
+    case 'unsupportedCode': {
+      return `${formatUnsupportedReason(reason.reason)} at ${formatSite(program, stop.site)}`
+    }
+    case 'moduleRead': {
+      const binding = program.moduleBindings[reason.binding]
+      if (binding == null) throw new Error(`Unknown module binding ${reason.binding}`)
+      switch (binding.category.kind) {
+        case 'import':
+          return `reads ${binding.name}, which is imported from another module (read at ${formatSite(program, stop.site)})`
+        case 'identity':
+          return `reads ${binding.name}, a module object; module object values are not yet tracked (read at ${formatSite(program, stop.site)})`
+        case 'opaque':
+          return `reads ${binding.name}, whose value the analysis does not track (read at ${formatSite(program, stop.site)})`
+        // A value or kind binding is always seeded inside functions, so an uninitialized
+        // read of one can only happen in the initializer's own top-level code.
+        case 'value':
+        case 'kind':
+          return `reads ${binding.name} before it is initialized (read at ${formatSite(program, stop.site)})`
+      }
+    }
   }
 }
 
@@ -140,9 +241,11 @@ function calleeStateText(callee: FunctionAnalysis | undefined): string {
   switch (callee.kind) {
     case 'notLowered': return 'which hit unsupported code'
     case 'partial': return 'whose analysis stopped'
-    // The callee analyzes completely for general inputs but stopped under this caller's
-    // arguments (e.g. an argument whose expression the requirement language cannot name).
-    case 'analyzed': return 'whose analysis stopped for these arguments'
+    // The callee analyzes completely in general but stopped when evaluated from this call —
+    // because of this caller's arguments (e.g. an argument whose expression the requirement
+    // language cannot name) or the module state at this point (e.g. a module binding not yet
+    // initialized when top-level code makes the call).
+    case 'analyzed': return 'whose analysis stopped for this specific call'
   }
 }
 
@@ -178,8 +281,10 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText}`
     case 'valueType': return `value of type ${reason.typeText}`
+    case 'kindChangingAssertion': return `type assertion from ${reason.fromText} to ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
+    case 'directEvalMayReassignFunctions': return 'a direct eval call in this file can reassign function bindings, so this call target cannot be trusted'
     case 'forLoopWithoutCondition': return 'for loop without a condition'
     case 'forLoopWithoutIncrementor': return 'for loop without an incrementor'
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'

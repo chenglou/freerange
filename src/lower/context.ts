@@ -2,6 +2,7 @@ import type * as ts from 'typescript'
 import type {
   BlockID,
   FunctionID,
+  ModuleBindingID,
   SiteID,
   ValueID,
 } from '../ir/ids.ts'
@@ -19,6 +20,10 @@ export type FunctionContext = {
   sourceFile: ts.SourceFile
   checker: ts.TypeChecker
   functionsBySymbol: Map<ts.Symbol, FunctionID>
+  moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
+  // A direct eval call exists somewhere in the file; calls resolved through top-level
+  // function bindings stop lowering because eval can reassign those bindings at runtime.
+  directEval: boolean
   // The ProgramIR.sites table, shared across all function lowerings; pushing assigns the
   // next dense SiteID.
   sites: SourceSpan[]
@@ -66,12 +71,6 @@ export function requiredSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbo
   return symbol
 }
 
-export function requiredBinding(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
-  const value = context.bindings.get(symbol)
-  if (value == null) throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
-  return value
-}
-
 export function changedBindings(
   before: Map<ts.Symbol, ValueID>,
   whenTrue: Map<ts.Symbol, ValueID>,
@@ -101,12 +100,14 @@ export function requiredBranchBinding(symbol: ts.Symbol, bindings: Map<ts.Symbol
   return value
 }
 
-// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly one
-// place — the per-function loop in lowerSource — which discards the whole in-progress
-// FunctionContext and records an UnsupportedFunctionIR. No other try/catch may exist under
-// src/lower (a mid-lowering catch would silently truncate bodies), and nothing outside
-// src/lower may see this class. Extends Error only so an accidentally escaping stop has a
-// stack trace; the message is never parsed or matched.
+// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly two
+// places: the per-function loop in lowerSource, which discards the whole in-progress
+// FunctionContext and records an UnsupportedFunctionIR, and the module initializer's
+// statement loop in module.ts, which keeps everything lowered so far and ends the open
+// paths with stop terminators. No other try/catch may exist under src/lower (a mid-lowering
+// catch would silently truncate bodies), and nothing outside src/lower may see this class.
+// Extends Error only so an accidentally escaping stop has a stack trace; the message is
+// never parsed or matched.
 export class LoweringStop extends Error {
   readonly node: ts.Node
   readonly reason: UnsupportedReason
