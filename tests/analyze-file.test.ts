@@ -465,6 +465,37 @@ describe('analyzeFile', () => {
     ])
   })
 
+  test('records mixed-kind local declarations as unsupported, keeping single-kind unions analyzable', () => {
+    // Before the declarator gate, unknownLocal crashed the engine at the block join
+    // ('Cannot join boolean and number'): the declaration lowered without checking that the
+    // declared type holds a single value kind, so the branch rebinding u to a boolean met
+    // the number initializer at the join.
+    const report = analyzeSource('mixed-local.ts', `
+      export function unknownLocal(flag: number): number {
+        let u: unknown = 5
+        if (flag > 2) { u = flag > 3 }
+        return 1
+      }
+      export function mixedUnionLocal(flag: number): number {
+        let wide: number | boolean = 5
+        if (flag > 0) { wide = flag > 1 }
+        return 2
+      }
+      export function steppedLocal(flag: number): number {
+        let stepped: 1 | 2 = 1
+        if (flag > 0) { stepped = 2 }
+        return stepped
+      }
+    `)
+    const file = resolve('mixed-local.ts')
+    expect(report.functions.filter(fn => fn.kind === 'unsupported')).toEqual([
+      {kind: 'unsupported', name: 'unknownLocal', unsupported: `value of type unknown at ${file}:3:16`},
+      {kind: 'unsupported', name: 'mixedUnionLocal', unsupported: `value of type number | boolean at ${file}:8:19`},
+    ])
+    expect(analyzedFunction(report, 'steppedLocal').ensures)
+      .toEqual(['return is a finite integer number from 1 through 2'])
+  })
+
   test('partial reports never contain contract lines', () => {
     const report = analyzeSource('no-contract.ts', `
       export function example(flag: number): number {

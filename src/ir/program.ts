@@ -77,8 +77,9 @@ export type UnsupportedReason =
   // cannot be trusted.
   | {kind: 'directEvalMayReassignFunctions'}
   // A value position whose type mixes kinds or is outside numbers, booleans, and objects —
-  // e.g. a ternary with one number arm and one boolean arm, or a string return type. Left
-  // ungated, mixed kinds would meet at a join deep in the engine instead of stopping here.
+  // e.g. a ternary with one number arm and one boolean arm, a string return type, or a
+  // variable declared `let u: unknown` and reassigned across kinds. Left ungated, mixed
+  // kinds would meet at a join deep in the engine instead of stopping here.
   | {kind: 'valueType'; typeText: string}
   // A type assertion that changes the value kind, e.g. `true as unknown as number` or `x!`
   // on a nullable type. The asserted type no longer describes the runtime value, and the

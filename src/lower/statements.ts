@@ -13,7 +13,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {compoundAssignmentOperator, lowerExpression, requireBooleanCondition} from './expression.ts'
+import {compoundAssignmentOperator, lowerExpression, requireBooleanCondition, valueKind} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -175,6 +175,18 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
     }
     const symbol = requiredSymbol(declaration.name, context.checker)
     const value = lowerExpression(declaration.initializer, context)
+    // A variable whose declared type mixes kinds, e.g. `let u: unknown = 5` later reassigned
+    // to a boolean, lets branches rebind it to different kinds that would meet at the
+    // engine's block join instead of stopping here. The check runs after the initializer
+    // lowers, so an unsupported construct inside the initializer keeps its own more precise
+    // site (a ternary mixing kinds reports the ternary, not the whole declaration).
+    const declaredType = context.checker.getTypeAtLocation(declaration.name)
+    if (valueKind(declaredType, context.checker) == null) {
+      throw unsupported(declaration.type ?? declaration.name, {
+        kind: 'valueType',
+        typeText: context.checker.typeToString(declaredType),
+      })
+    }
     // A `var` in a nested top-level block (e.g. `{ var width = 2 }` inside an if) hoists to
     // module scope and shares the top-level declaration's symbol; its write must reach the
     // module slot, not create a block-local binding that the slot never sees.

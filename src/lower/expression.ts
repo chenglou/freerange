@@ -62,17 +62,27 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     && ts.isIdentifier(current.left)
   ) {
     const symbol = requiredSymbol(current.left, context.checker)
-    if (context.bindings.has(symbol)) {
-      const value = lowerExpression(current.right, context)
-      context.bindings.set(symbol, value)
-      return value
+    const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
+    if (!context.bindings.has(symbol) && moduleBinding == null) {
+      throw unsupported(current.left, {kind: 'unknownIdentifier', name: current.left.text})
     }
-    const binding = context.moduleBindingsBySymbol.get(symbol)
-    if (binding != null) {
-      const value = lowerExpression(current.right, context)
-      return addInstruction(context, current, {kind: 'moduleWrite', binding, value})
+    // Rebinding is only sound when the target's declared type holds a single value kind —
+    // otherwise branches could bind different kinds that meet at a block join. Function
+    // locals with mixed-kind declared types already stop at their declaration; a module
+    // binding can still hold one (a top-level `let config: unknown` initializes through
+    // the initializer's own declarator path), so for those the write itself stops here.
+    // The checker returns the declared type at an assignment target, not a narrowed one:
+    // narrowing does not apply to write positions.
+    const targetType = context.checker.getTypeAtLocation(current.left)
+    if (valueKind(targetType, context.checker) == null) {
+      throw unsupported(current.left, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
     }
-    throw unsupported(current.left, {kind: 'unknownIdentifier', name: current.left.text})
+    const value = lowerExpression(current.right, context)
+    if (moduleBinding != null) {
+      return addInstruction(context, current, {kind: 'moduleWrite', binding: moduleBinding, value})
+    }
+    context.bindings.set(symbol, value)
+    return value
   }
   if (ts.isBinaryExpression(current) && ts.isIdentifier(current.left)) {
     const operator = compoundAssignmentOperator(current.operatorToken.kind)
