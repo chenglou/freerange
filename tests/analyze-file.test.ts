@@ -807,12 +807,24 @@ describe('analyzeFile', () => {
   test('rejects values typed any wherever they flow', () => {
     // TypeScript accepts an any-typed value in every position, so a type-checked function
     // can still put a boolean into a number variable; the value's own expression is
-    // rejected, which covers declarations, arguments, and returns alike.
+    // rejected, which covers declarations, call arguments, and returns alike. Each shape
+    // below crashed the engine before the acceptance check existed.
     const report = analyzeSource('module-any.ts', `
       export function launder(): number {
         const hidden: any = true
         const forced: number = hidden
         return forced + 2
+      }
+      function double(width: number): number {
+        return width * 2
+      }
+      export function laundersArgument(): number {
+        const hidden: any = true
+        return double(hidden)
+      }
+      export function laundersReturn(): number {
+        const hidden: any = true
+        return hidden
       }
       export function passThrough(width: number): number {
         return width + 1
@@ -824,6 +836,24 @@ describe('analyzeFile', () => {
         kind: 'unsupported',
         name: 'launder',
         unsupported: `a value typed any at ${file}:3:15`,
+      },
+      {
+        kind: 'analyzed',
+        name: 'double',
+        assumptions: ['width is finite and not NaN'],
+        requires: [],
+        // Doubling can overflow to Infinity at the finite extremes.
+        ensures: ['return is a possibly non-finite number from -Infinity through Infinity'],
+      },
+      {
+        kind: 'unsupported',
+        name: 'laundersArgument',
+        unsupported: `a value typed any at ${file}:11:15`,
+      },
+      {
+        kind: 'unsupported',
+        name: 'laundersReturn',
+        unsupported: `a value typed any at ${file}:15:15`,
       },
       {
         kind: 'analyzed',
