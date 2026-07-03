@@ -1,3 +1,4 @@
+import type {SiteID} from '../ir/ids.ts'
 export type AbstractNumber = {
   kind: 'number'
   lower: number
@@ -5,6 +6,13 @@ export type AbstractNumber = {
   integer: boolean
   finite: boolean
   mayBeNaN: boolean
+  // Annotation only, never semantics: the operation where finiteness or NaN-freedom was
+  // first lost, for the report's blame suffix. Deliberately excluded from sameNumbers and
+  // never branched on by the engine — if it participated in equality, two semantically
+  // identical values re-derived through different operations would look changed at loop
+  // headers and disturb fixed points. Joins keep the left side's site when both carry one;
+  // blame is best-effort prose, not a guarantee.
+  lossSite?: SiteID
 }
 
 export function finiteInputNumber(): AbstractNumber {
@@ -158,7 +166,7 @@ export function includesZero(value: AbstractNumber): boolean {
 }
 
 export function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  return {
+  const joined: AbstractNumber = {
     kind: 'number',
     lower: Math.min(left.lower, right.lower),
     upper: Math.max(left.upper, right.upper),
@@ -166,6 +174,9 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
     finite: left.finite && right.finite,
     mayBeNaN: left.mayBeNaN || right.mayBeNaN,
   }
+  const lossSite = left.lossSite ?? right.lossSite
+  if (lossSite != null) joined.lossSite = lossSite
+  return joined
 }
 
 export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolean {

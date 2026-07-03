@@ -64,7 +64,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         const parameterNames = lowering.parameters.map(parameter => parameter.name)
         const observed: string[] = []
         if (fn.observedReturn != null) {
-          observed.push(...returnSummaries('return', fn.observedReturn.value, fn.observedReturn.heap))
+          observed.push(...returnSummaries('return', fn.observedReturn.value, fn.observedReturn.heap, program))
         }
         for (const need of fn.observedNeeds) observed.push(formatObservedNeed(need, parameterNames, program))
         functions.push({
@@ -85,8 +85,8 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: [
-            ...parameterWriteSummaries(lowering, fn.sharedState.heap),
-            ...returnSummaries('return', fn.returnValue, fn.sharedState.heap),
+            ...parameterWriteSummaries(lowering, fn.sharedState.heap, program),
+            ...returnSummaries('return', fn.returnValue, fn.sharedState.heap, program),
           ],
         })
         break
@@ -307,7 +307,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
 // A function's writes to its object parameters are effects the caller observes, so they get
 // ensures lines like the return value does. Properties still holding the entry assumption
 // (any finite number) are unchanged or unrestricted and stay silent.
-function parameterWriteSummaries(fn: FunctionIR, heap: AbstractHeap): string[] {
+function parameterWriteSummaries(fn: FunctionIR, heap: AbstractHeap, program: ProgramIR): string[] {
   const summaries: string[] = []
   for (let index = 0; index < fn.parameters.length; index++) {
     const parameter = fn.parameters[index]!
@@ -317,20 +317,20 @@ function parameterWriteSummaries(fn: FunctionIR, heap: AbstractHeap): string[] {
     if (object == null) continue
     for (const property of object.properties) {
       if (property.value.kind === 'number' && sameValues(property.value, finiteInputNumber())) continue
-      summaries.push(...returnSummaries(`${parameter.name}.${property.name}`, property.value, heap))
+      summaries.push(...returnSummaries(`${parameter.name}.${property.name}`, property.value, heap, program))
     }
   }
   return summaries
 }
 
-function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap): string[] {
+function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap, program: ProgramIR): string[] {
   switch (value.kind) {
-    case 'number': return [numberSummary(path, value)]
+    case 'number': return [numberSummary(path, value, program)]
     case 'boolean': return [`${path} is ${value.canBeFalse ? (value.canBeTrue ? 'boolean' : 'false') : 'true'}`]
     case 'reference': {
       const summaries: string[] = []
       for (const property of referenceProperties(heap, value)) {
-        summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, heap))
+        summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, heap, program))
       }
       return summaries
     }
@@ -338,16 +338,24 @@ function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap)
   }
 }
 
-function numberSummary(path: string, value: AbstractNumber): string {
+function numberSummary(path: string, value: AbstractNumber, program: ProgramIR): string {
   const kind = value.integer ? 'integer ' : ''
   // Three-way: NaN is the scarier possibility and names itself; a value that can only
   // overflow says non-finite; everything else is finite.
   const domain = value.mayBeNaN ? 'possibly NaN ' : value.finite ? 'finite ' : 'possibly non-finite '
+  // The blame suffix names where the degradation was born, so the line points at the
+  // missing input fact instead of just shrugging. A recovered value (clamped back to a
+  // clean range) prints no suffix even when the annotation lingers.
+  const blame = value.lossSite == null || (value.finite && !value.mayBeNaN)
+    ? ''
+    : value.mayBeNaN
+      ? ` (NaN possible from the operation at ${formatSite(program, value.lossSite)})`
+      : ` (can overflow at ${formatSite(program, value.lossSite)})`
   const subject = `${path} is a ${domain}${kind}number`
-  if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return subject
-  if (value.upper === Number.MAX_VALUE) return `${subject} at least ${formatNumber(value.lower)}`
-  if (value.lower === -Number.MAX_VALUE) return `${subject} at most ${formatNumber(value.upper)}`
-  return `${subject} from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}`
+  if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return `${subject}${blame}`
+  if (value.upper === Number.MAX_VALUE) return `${subject} at least ${formatNumber(value.lower)}${blame}`
+  if (value.lower === -Number.MAX_VALUE) return `${subject} at most ${formatNumber(value.upper)}${blame}`
+  return `${subject} from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}${blame}`
 }
 
 function formatNumber(value: number): string {

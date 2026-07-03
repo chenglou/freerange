@@ -36,7 +36,8 @@ describe('analyzeFile', () => {
     // Math.max(1, ...) keeps its lower bound through the possibly overflowed quotient —
     // min/max are exact on infinities — and the quotient under the nonzero requirement is
     // never NaN, so only overflow remains possible.
-    expect(fn.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity')
+    // The blame suffix points at the division that introduced the overflow possibility.
+    expect(fn.ensures).toContain(`return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity (can overflow at ${resolve('unsafe-grid-metrics.ts')}:18:5)`)
   })
 
   test('rejects TypeScript type errors before lowering', () => {
@@ -136,7 +137,7 @@ describe('analyzeFile', () => {
         name: 'scaled',
         assumptions: ['width is finite and not NaN'],
         requires: [],
-        ensures: ['return is a possibly non-finite number from -Infinity through Infinity'],
+        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:3:16)`],
       },
       {
         kind: 'unsupported',
@@ -941,8 +942,8 @@ describe('analyzeFile', () => {
         name: 'double',
         assumptions: ['width is finite and not NaN'],
         requires: [],
-        // Doubling can overflow to Infinity at the finite extremes.
-        ensures: ['return is a possibly non-finite number from -Infinity through Infinity'],
+        // Doubling can overflow to Infinity at the finite extremes; the suffix names it.
+        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:8:16)`],
       },
       {
         kind: 'unsupported',
@@ -1052,9 +1053,10 @@ describe('analyzeFile', () => {
       }
     `)
     // The difference of two unbounded finite inputs can overflow, so the honest range is
-    // nonnegative but possibly non-finite.
+    // nonnegative but possibly non-finite — and the blame suffix names the subtraction,
+    // inherited through Math.abs.
     expect(analyzedFunction(report, 'distance').ensures)
-      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+      .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${resolve('absolute.ts')}:3:25)`])
   })
 
   test('lowers object destructuring declarations to property reads', () => {
@@ -1067,7 +1069,7 @@ describe('analyzeFile', () => {
     `)
     const fn = analyzedFunction(report, 'gap')
     expect(fn.assumptions).toEqual(['config.pos is finite and not NaN', 'config.dest is finite and not NaN'])
-    expect(fn.ensures).toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+    expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${resolve('destructure.ts')}:5:25)`])
   })
 
   test('prints writes to object parameters as ensures lines', () => {
@@ -1129,7 +1131,7 @@ describe('analyzeFile', () => {
       export function getDoubled(): number { return doubled }
     `)
     expect(analyzedFunction(report, 'getDoubled').ensures)
-      .toEqual(['return is a possibly non-finite number from -Infinity through Infinity'])
+      .toEqual([`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${resolve('module-launder.ts')}:4:23)`])
   })
 
   test('reports exact boolean constants as true or false', () => {
@@ -1201,7 +1203,7 @@ describe('analyzeFile', () => {
     expect(analyzedFunction(report, 'columnsForViewport').ensures)
       .toEqual(['return is a finite integer number from 1 through 7'])
     expect(analyzedFunction(report, 'frameBudgetUsed').ensures)
-      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+      .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${resolve('platform.ts')}:7:28)`])
   })
 
   test('a possibly NaN value keeps the comparison branch NaN takes at runtime', () => {

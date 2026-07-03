@@ -16,7 +16,7 @@ import {
 import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/value.ts'
 import type {AllocationContext} from '../heap/model.ts'
 import {adoptCalleeHeap, allocateAtSite, readProperty, writeProperty} from '../heap/operations.ts'
-import type {FunctionID, ValueID} from '../ir/ids.ts'
+import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, EdgeIR, InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR, ProgramIR} from '../ir/program.ts'
 import {
@@ -61,6 +61,20 @@ export type StepResult =
 
 function value(result: AbstractValue): StepResult {
   return {kind: 'value', value: result}
+}
+
+// The blame annotation (see AbstractNumber.lossSite — never semantics): a degraded result
+// inherits the earliest operand's loss site, or, when the operands were all clean, stamps
+// this operation as where finiteness or NaN-freedom died.
+function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site: SiteID): AbstractNumber {
+  if (result.finite && !result.mayBeNaN) return result
+  if (result.lossSite != null) return result
+  const carrier = operands.find(operand => operand.lossSite != null)
+  if (carrier?.lossSite != null) return {...result, lossSite: carrier.lossSite}
+  const lostFinite = !result.finite && operands.every(operand => operand.finite)
+  const gainedNaN = result.mayBeNaN && operands.every(operand => !operand.mayBeNaN)
+  if (lostFinite || gainedNaN) return {...result, lossSite: site}
+  return result
 }
 
 // See TransferContext.usedOutsideCompare. Terminator uses (return values, branch
@@ -195,7 +209,10 @@ export function evaluateInstruction(
       requiredNumber(state, instruction.right),
       instruction.operator,
     ))
-    case 'floor': return value(floorNumber(requiredNumber(state, instruction.value)))
+    case 'floor': {
+      const operand = requiredNumber(state, instruction.value)
+      return value(withLossBlame(floorNumber(operand), [operand], instruction.site))
+    }
     case 'platformValue': return value({
       kind: 'number',
       lower: instruction.lower,
@@ -204,13 +221,22 @@ export function evaluateInstruction(
       finite: true,
       mayBeNaN: false,
     })
-    case 'absolute': return value(absoluteNumber(requiredNumber(state, instruction.value)))
+    case 'absolute': {
+      const operand = requiredNumber(state, instruction.value)
+      return value(withLossBlame(absoluteNumber(operand), [operand], instruction.site))
+    }
     case 'not': {
       const operand = requiredBoolean(state, instruction.value)
       return value({kind: 'boolean', canBeTrue: operand.canBeFalse, canBeFalse: operand.canBeTrue})
     }
-    case 'minimum': return value(minimumNumbers(instruction.values.map(id => requiredNumber(state, id))))
-    case 'maximum': return value(maximumNumbers(instruction.values.map(id => requiredNumber(state, id))))
+    case 'minimum': {
+      const operands = instruction.values.map(id => requiredNumber(state, id))
+      return value(withLossBlame(minimumNumbers(operands), operands, instruction.site))
+    }
+    case 'maximum': {
+      const operands = instruction.values.map(id => requiredNumber(state, id))
+      return value(withLossBlame(maximumNumbers(operands), operands, instruction.site))
+    }
     case 'call': {
       const callee = context.program.functions[instruction.function]
       if (callee == null) throw new Error(`Unknown function ${instruction.function}`)
@@ -259,9 +285,9 @@ export function evaluateInstruction(
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
         // zero and stays possibly non-finite.
-        return value(divideNumbersNonzeroDivisor(left, right))
+        return value(withLossBlame(divideNumbersNonzeroDivisor(left, right), [left, right], instruction.site))
       }
-      return value(evaluateBinary(instruction.operator, left, right))
+      return value(withLossBlame(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site))
     }
   }
 }
