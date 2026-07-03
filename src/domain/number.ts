@@ -71,9 +71,20 @@ export function divideNumbers(left: AbstractNumber, right: AbstractNumber): Abst
   return boundedResult(Math.min(...quotients), Math.max(...quotients), false, left, right)
 }
 
+// floor, abs, min, and max are exact on infinities (no rounding, no overflow, no NaN
+// creation), so unlike the arithmetic operators they keep their bounds instead of
+// collapsing to unknown. This is what lets a clamp recover a finite range from a possibly
+// overflowed input: Math.max(0, Math.min(x, 100)) is 0..100 even when x may be Infinity.
+// NaN is never recovered — Math.min(NaN, 100) is NaN — so the flag just carries through.
 export function floorNumber(value: AbstractNumber): AbstractNumber {
-  if (!value.finite || value.mayBeNaN) return unknownNumber()
-  return boundedResult(Math.floor(value.lower), Math.floor(value.upper), true, value)
+  return {
+    kind: 'number',
+    lower: Math.floor(value.lower),
+    upper: Math.floor(value.upper),
+    integer: true,
+    finite: value.finite,
+    mayBeNaN: value.mayBeNaN,
+  }
 }
 
 // Division once a nonzero requirement has been recorded for the divisor: the divisor's
@@ -102,34 +113,44 @@ export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: Abstrac
 }
 
 export function absoluteNumber(value: AbstractNumber): AbstractNumber {
-  // Even a possibly non-finite or NaN input keeps the one fact abs guarantees: no result
-  // below zero (abs(NaN) is NaN, which the mayBeNaN flag carries separately).
-  if (!value.finite || value.mayBeNaN) {
-    return {kind: 'number', lower: 0, upper: Infinity, integer: value.integer, finite: value.finite, mayBeNaN: value.mayBeNaN}
+  const lower = value.lower >= 0 ? value.lower : value.upper <= 0 ? -value.upper : 0
+  const upper = Math.max(-value.lower, value.upper)
+  return {
+    kind: 'number',
+    lower,
+    upper,
+    integer: value.integer,
+    finite: Number.isFinite(lower) && Number.isFinite(upper),
+    mayBeNaN: value.mayBeNaN,
   }
-  if (value.lower >= 0) return value
-  if (value.upper <= 0) return boundedResult(-value.upper, -value.lower, value.integer, value)
-  return boundedResult(0, Math.max(-value.lower, value.upper), value.integer, value)
 }
 
 export function minimumNumbers(values: AbstractNumber[]): AbstractNumber {
-  if (values.length === 0 || values.some(value => !value.finite || value.mayBeNaN)) return unknownNumber()
-  return boundedResult(
-    Math.min(...values.map(value => value.lower)),
-    Math.min(...values.map(value => value.upper)),
-    values.every(value => value.integer),
-    ...values,
-  )
+  if (values.length === 0) return unknownNumber()
+  const lower = Math.min(...values.map(value => value.lower))
+  const upper = Math.min(...values.map(value => value.upper))
+  return {
+    kind: 'number',
+    lower,
+    upper,
+    integer: values.every(value => value.integer),
+    finite: Number.isFinite(lower) && Number.isFinite(upper),
+    mayBeNaN: values.some(value => value.mayBeNaN),
+  }
 }
 
 export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
-  if (values.length === 0 || values.some(value => !value.finite || value.mayBeNaN)) return unknownNumber()
-  return boundedResult(
-    Math.max(...values.map(value => value.lower)),
-    Math.max(...values.map(value => value.upper)),
-    values.every(value => value.integer),
-    ...values,
-  )
+  if (values.length === 0) return unknownNumber()
+  const lower = Math.max(...values.map(value => value.lower))
+  const upper = Math.max(...values.map(value => value.upper))
+  return {
+    kind: 'number',
+    lower,
+    upper,
+    integer: values.every(value => value.integer),
+    finite: Number.isFinite(lower) && Number.isFinite(upper),
+    mayBeNaN: values.some(value => value.mayBeNaN),
+  }
 }
 
 export function includesZero(value: AbstractNumber): boolean {
@@ -174,11 +195,19 @@ function boundedResult(
   integer: boolean,
   ...operands: AbstractNumber[]
 ): AbstractNumber {
-  const finite = operands.every(value => value.finite && !value.mayBeNaN)
-    && Number.isFinite(lower)
-    && Number.isFinite(upper)
-  if (!finite) return unknownNumber()
-  return {kind: 'number', lower, upper, integer, finite: true, mayBeNaN: false}
+  // With a possibly non-finite or NaN operand, the bound arithmetic itself is meaningless
+  // (Infinity - Infinity is NaN), so the result collapses to unknown. With clean operands
+  // the bounds are trustworthy even when they overflow to ±Infinity — overflow produces an
+  // infinity at runtime, never a NaN, so the result stays NaN-free.
+  if (!operands.every(value => value.finite && !value.mayBeNaN)) return unknownNumber()
+  return {
+    kind: 'number',
+    lower,
+    upper,
+    integer,
+    finite: Number.isFinite(lower) && Number.isFinite(upper),
+    mayBeNaN: false,
+  }
 }
 
 function safeOperands(left: AbstractNumber, right: AbstractNumber): boolean {

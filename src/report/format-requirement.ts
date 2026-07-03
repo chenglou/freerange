@@ -22,6 +22,7 @@ function formatExpression(expression: NumericExpression, parameterNames: string[
       return name
     }
     case 'constant': return String(expression.value)
+    case 'floor': return `Math.floor(${formatExpression(expression.operand, parameterNames)})`
     case 'binary': {
       return `(${formatExpression(expression.left, parameterNames)} ${operatorText(expression.operator)} ${formatExpression(expression.right, parameterNames)})`
     }

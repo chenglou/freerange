@@ -17,7 +17,7 @@ import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/
 import type {AllocationContext} from '../heap/model.ts'
 import {adoptCalleeHeap, allocateAtSite, readProperty, writeProperty} from '../heap/operations.ts'
 import type {FunctionID, ValueID} from '../ir/ids.ts'
-import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import type {ComparisonOperator, EdgeIR, InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR, ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
@@ -42,6 +42,12 @@ export type TransferContext = {
   callStack: FunctionID[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
+  // By ValueID: whether any consumer other than a compare instruction reads the value. A
+  // division consumed only by comparisons needs no nonzero requirement: a NaN or Infinity
+  // quotient just makes the comparison false-or-true, which the boolean domain already
+  // covers, and the non-finiteness cannot reach a return value or a write. This is the
+  // first piece of deriving requirements from the final guarantee instead of the operation.
+  usedOutsideCompare: boolean[]
   // The call site that entered the function being evaluated; allocations inside it are
   // distinguished by this context.
   allocationContext: AllocationContext
@@ -55,6 +61,46 @@ export type StepResult =
 
 function value(result: AbstractValue): StepResult {
   return {kind: 'value', value: result}
+}
+
+// See TransferContext.usedOutsideCompare. Terminator uses (return values, branch
+// conditions, block-parameter arguments) all count as outside.
+export function collectNonCompareUses(fn: FunctionIR): boolean[] {
+  const used: boolean[] = []
+  const markEdge = (edge: EdgeIR): void => {
+    for (const argument of edge.arguments) used[argument] = true
+  }
+  for (const block of fn.blocks) {
+    for (const instruction of block.instructions) {
+      switch (instruction.kind) {
+        case 'constant':
+        case 'booleanConstant':
+        case 'moduleRead':
+        case 'moduleHavoc':
+        case 'platformValue':
+        case 'compare':
+          break
+        case 'moduleWrite': used[instruction.value] = true; break
+        case 'binary': used[instruction.left] = true; used[instruction.right] = true; break
+        case 'floor':
+        case 'absolute':
+        case 'not': used[instruction.value] = true; break
+        case 'minimum':
+        case 'maximum': for (const id of instruction.values) used[id] = true; break
+        case 'call': for (const id of instruction.arguments) used[id] = true; break
+        case 'object': for (const property of instruction.properties) used[property.value] = true; break
+        case 'property': used[instruction.object] = true; break
+        case 'store': used[instruction.object] = true; used[instruction.value] = true; break
+      }
+    }
+    switch (block.terminator.kind) {
+      case 'return': if (block.terminator.value != null) used[block.terminator.value] = true; break
+      case 'branch': used[block.terminator.condition] = true; markEdge(block.terminator.whenTrue); markEdge(block.terminator.whenFalse); break
+      case 'jump': markEdge(block.terminator.target); break
+      case 'stop': break
+    }
+  }
+  return used
 }
 
 export function collectComparisons(
@@ -150,6 +196,14 @@ export function evaluateInstruction(
       instruction.operator,
     ))
     case 'floor': return value(floorNumber(requiredNumber(state, instruction.value)))
+    case 'platformValue': return value({
+      kind: 'number',
+      lower: instruction.lower,
+      upper: instruction.upper,
+      integer: instruction.integer,
+      finite: true,
+      mayBeNaN: false,
+    })
     case 'absolute': return value(absoluteNumber(requiredNumber(state, instruction.value)))
     case 'not': {
       const operand = requiredBoolean(state, instruction.value)
@@ -191,7 +245,11 @@ export function evaluateInstruction(
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
       const right = requiredNumber(state, instruction.right)
-      if (instruction.operator === 'divide' && includesZero(right)) {
+      if (
+        instruction.operator === 'divide'
+        && includesZero(right)
+        && context.usedOutsideCompare[instruction.result] === true
+      ) {
         const expression = numericExpression(instruction.right, context.expressionContext)
         if (expression == null) {
           return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
@@ -245,7 +303,20 @@ export function refineComparison(
       break
     }
   }
-  if (refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper) return null
+  const emptied = refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper
+  // NaN fails every comparison, so it never reaches the branch where the written condition
+  // held, and it always reaches the branch where it failed.
+  if (truth) {
+    if (emptied) return null
+    refinedLeft = {...refinedLeft, mayBeNaN: false}
+    refinedRight = {...refinedRight, mayBeNaN: false}
+  } else if (emptied) {
+    // The interval refinement only rules out the non-NaN inhabitants; a NaN operand still
+    // lands here (e.g. `x > -1 ? 1 : 0` with x possibly NaN takes the 0 arm at runtime).
+    // Keep the unrefined values — a superset — rather than pruning the branch.
+    if (left.mayBeNaN || right.mayBeNaN) return cloneState(state)
+    return null
+  }
   result.frame.values[comparison.left] = refinedLeft
   result.frame.values[comparison.right] = refinedRight
   return result
@@ -324,6 +395,11 @@ function invertedComparison(operator: ComparisonOperator): ComparisonOperator {
 function withBounds(value: AbstractNumber, lower: number, upper: number): AbstractNumber {
   let refinedLower = Math.max(value.lower, lower)
   let refinedUpper = Math.min(value.upper, upper)
+  // A possibly infinite value lives at its interval's infinite end (every producer keeps
+  // that invariant), so a refinement that clips the interval to finite bounds also proves
+  // finiteness — without this, `if (x > 0 && x < 100)` on an overflow-able x would print
+  // the self-contradictory "possibly non-finite number from 0 through 100".
+  const finite = value.finite || (Number.isFinite(refinedLower) && Number.isFinite(refinedUpper))
   // An integer interval refined by a non-strict comparison against a non-integer bound
   // (`if (count >= 3.2)`) would keep the fractional bound. Snap to the integer hull —
   // exact, since only integers inhabit the interval. Left unsnapped, the bounds and the
@@ -334,7 +410,7 @@ function withBounds(value: AbstractNumber, lower: number, upper: number): Abstra
     refinedLower = Math.ceil(refinedLower)
     refinedUpper = Math.floor(refinedUpper)
   }
-  return {...value, lower: refinedLower, upper: refinedUpper}
+  return {...value, lower: refinedLower, upper: refinedUpper, finite}
 }
 
 function strictLower(value: number, integer: boolean): number {

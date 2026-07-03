@@ -27,6 +27,7 @@ import {
 } from './state.ts'
 import {
   collectComparisons,
+  collectNonCompareUses,
   evaluateInstruction,
   refineComparison,
   requiredBoolean,
@@ -229,6 +230,7 @@ function runEvaluation(
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
   }
   const comparisons = collectComparisons(fn)
+  const usedOutsideCompare = collectNonCompareUses(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
   const run: EvaluationRun = {
@@ -259,6 +261,7 @@ function runEvaluation(
         callStack: functionID == null ? callStack : [...callStack, functionID],
         expressionContext,
         preconditions,
+        usedOutsideCompare,
         allocationContext: context,
         evaluateFunction: (callee, values, expressions, calleeState, stack, calleeContext) => {
           const calleeFn = program.functions[callee]

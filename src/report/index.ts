@@ -340,7 +340,9 @@ function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap)
 
 function numberSummary(path: string, value: AbstractNumber): string {
   const kind = value.integer ? 'integer ' : ''
-  const domain = value.finite && !value.mayBeNaN ? 'finite ' : 'possibly non-finite '
+  // Three-way: NaN is the scarier possibility and names itself; a value that can only
+  // overflow says non-finite; everything else is finite.
+  const domain = value.mayBeNaN ? 'possibly NaN ' : value.finite ? 'finite ' : 'possibly non-finite '
   const subject = `${path} is a ${domain}${kind}number`
   if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return subject
   if (value.upper === Number.MAX_VALUE) return `${subject} at least ${formatNumber(value.lower)}`

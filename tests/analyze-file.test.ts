@@ -33,7 +33,10 @@ describe('analyzeFile', () => {
     const report = analyzeSource('unsafe-grid-metrics.ts', source)
     const fn = analyzedFunction(report, 'calculateGridMetrics')
     expect(fn.requires).toEqual([`containerWidth is nonzero (division at ${resolve('unsafe-grid-metrics.ts')}:18:5)`])
-    expect(fn.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from -Infinity through Infinity')
+    // Math.max(1, ...) keeps its lower bound through the possibly overflowed quotient —
+    // min/max are exact on infinities — and the quotient under the nonzero requirement is
+    // never NaN, so only overflow remains possible.
+    expect(fn.ensures).toContain('return.maximumBoxWidth is a possibly non-finite number from 1 through Infinity')
   })
 
   test('rejects TypeScript type errors before lowering', () => {
@@ -1135,6 +1138,98 @@ describe('analyzeFile', () => {
       export function isOn(): boolean { return featureOn }
     `)
     expect(analyzedFunction(report, 'isOn').ensures).toEqual(['return is false'])
+  })
+
+  test('a clamp recovers a finite range from a possibly overflowed input', () => {
+    // min and max are exact on infinities, so the clamp bounds survive even though v * 2
+    // can overflow; NaN would not be recovered, but doubling a finite value cannot produce
+    // one.
+    const report = analyzeSource('clamp-recovery.ts', `
+      export function opacity(v: number): number {
+        return Math.max(0, Math.min(v * 2, 100))
+      }
+    `)
+    expect(analyzedFunction(report, 'opacity').ensures)
+      .toEqual(['return is a finite number from 0 through 100'])
+  })
+
+  test('divisions consumed only by comparisons need no requirement', () => {
+    // A NaN or Infinity quotient just makes the comparison true or false, which the
+    // boolean domain covers; the non-finiteness cannot reach a return value or a write.
+    const report = analyzeSource('compare-only.ts', `
+      export function threshold(a: number, b: number): number {
+        return a / b > 5 ? 1 : 0
+      }
+      export function propertyGuard(grid: {cols: number}, w: number): number {
+        if (w / grid.cols > 5) return 1
+        return 0
+      }
+    `)
+    const threshold = analyzedFunction(report, 'threshold')
+    expect(threshold.requires).toEqual([])
+    expect(threshold.ensures).toEqual(['return is a finite integer number from 0 through 1'])
+    const guard = analyzedFunction(report, 'propertyGuard')
+    expect(guard.requires).toEqual([])
+    expect(guard.ensures).toEqual(['return is a finite integer number from 0 through 1'])
+  })
+
+  test('a floored divisor mints a requirement and a finite quotient', () => {
+    // Math.floor is now nameable in requirements, and a floored divisor is an integer, so
+    // under the nonzero requirement its magnitude is at least 1 and the quotient is finite.
+    const report = analyzeSource('floor-divisor.ts', `
+      export function perColumn(width: number, cols: number): number {
+        return width / Math.floor(cols)
+      }
+    `)
+    const fn = analyzedFunction(report, 'perColumn')
+    expect(fn.requires).toEqual([`Math.floor(cols) is nonzero (division at ${resolve('floor-divisor.ts')}:3:16)`])
+    expect(fn.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('platform catalog entries give DOM reads real ranges', () => {
+    const report = analyzeSource('platform.ts', `
+      export function columnsForViewport(): number {
+        const width = document.documentElement.clientWidth
+        return Math.max(1, Math.min(7, Math.floor((width - 24) / 244)))
+      }
+      export function frameBudgetUsed(startMs: number): number {
+        return Math.max(0, performance.now() - startMs)
+      }
+    `)
+    // No parameters at all: the 1..7 range is proven entirely from clientWidth's catalog
+    // entry (a nonnegative integer).
+    expect(analyzedFunction(report, 'columnsForViewport').ensures)
+      .toEqual(['return is a finite integer number from 1 through 7'])
+    expect(analyzedFunction(report, 'frameBudgetUsed').ensures)
+      .toEqual(['return is a possibly non-finite number from 0 through Infinity'])
+  })
+
+  test('a possibly NaN value keeps the comparison branch NaN takes at runtime', () => {
+    // v * 2 - v * 3 can be Infinity - Infinity = NaN; the clamp carries NaN through, and
+    // NaN > -1 is false, so the 0 arm is reachable. Interval refinement alone would call
+    // the false branch empty ([0,100] refined by <= -1) and wrongly prove the return is 1.
+    const report = analyzeSource('nan-branch.ts', `
+      export function clampedBranch(v: number): number {
+        const x = Math.max(0, Math.min(v * 2 - v * 3, 100))
+        return x > -1 ? 1 : 0
+      }
+    `)
+    expect(analyzedFunction(report, 'clampedBranch').ensures)
+      .toEqual(['return is a finite integer number from 0 through 1'])
+  })
+
+  test('a refinement that clips to finite bounds also proves finiteness', () => {
+    // a * b can overflow, but Infinity fails x < 100, so inside both guards the value is
+    // genuinely finite — the wording must not say "possibly non-finite from 0 through 100".
+    const report = analyzeSource('finite-narrow.ts', `
+      export function narrowed(a: number, b: number): number {
+        const x = a * b
+        if (x > 0) { if (x < 100) return x }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'narrowed').ensures)
+      .toEqual(['return is a finite number from 0 through 100'])
   })
 
   test('carries a module read assumption to callers of the reading function', () => {

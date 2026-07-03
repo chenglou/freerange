@@ -42,18 +42,22 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
         : {kind: 'binary', operator: instruction.operator, left, right}
     }
     case 'store': return numericExpression(instruction.value, context)
+    case 'floor': {
+      const operand = numericExpression(instruction.value, context)
+      return operand == null ? null : {kind: 'floor', operand}
+    }
     // A module write's result is the assigned value, so the written expression carries over.
     case 'moduleWrite': return numericExpression(instruction.value, context)
     // Requirement expressions name only the function's own parameters; a module binding is
     // not caller-visible, so a requirement cannot name it.
     case 'moduleRead':
     case 'moduleHavoc':
+    case 'platformValue':
     case 'booleanConstant':
     case 'not':
     case 'absolute':
     case 'call':
     case 'compare':
-    case 'floor':
     case 'maximum':
     case 'minimum':
     case 'object':
@@ -83,5 +87,6 @@ function sameExpression(left: NumericExpression, right: NumericExpression): bool
         && sameExpression(left.left, other.left)
         && sameExpression(left.right, other.right)
     }
+    case 'floor': return sameExpression(left.operand, (right as Extract<NumericExpression, {kind: 'floor'}>).operand)
   }
 }

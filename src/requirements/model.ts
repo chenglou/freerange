@@ -5,6 +5,10 @@ export type NumericExpression =
   | {kind: 'parameter'; index: number}
   | {kind: 'constant'; value: number}
   | {kind: 'binary'; operator: ArithmeticOperator; left: NumericExpression; right: NumericExpression}
+  // Math.floor over a nameable expression. Lets a division by a floored value mint a
+  // requirement instead of stopping — and a floored divisor is an integer, so under the
+  // nonzero requirement its magnitude is at least 1 and the quotient stays finite.
+  | {kind: 'floor'; operand: NumericExpression}
 
 export type InferredPrecondition = {
   kind: 'nonzero'

@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
+import {platformFact} from './platform.ts'
 import {
   addInstruction,
   addSite,
@@ -149,6 +150,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       return addInstruction(context, current, {kind: 'call', function: callee.id, arguments: arguments_})
     }
     if (ts.isPropertyAccessExpression(current.expression)) {
+      const platformCall = current.arguments.length === 0 ? platformFact(current.expression, true, context.checker) : null
+      if (platformCall != null) {
+        return addInstruction(context, current, {kind: 'platformValue', ...platformCall})
+      }
       const method = current.expression.name.text
       const standardMath = isStandardMathObject(current.expression.expression, context.checker)
       if (standardMath && method === 'floor' && current.arguments.length === 1) {
@@ -170,6 +175,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     }
   }
   if (ts.isPropertyAccessExpression(current)) {
+    const platform = platformFact(current, false, context.checker)
+    if (platform != null) {
+      return addInstruction(context, current, {kind: 'platformValue', ...platform})
+    }
     const objectType = context.checker.getTypeAtLocation(current.expression)
     if ((objectType.flags & ts.TypeFlags.Object) === 0) {
       throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})

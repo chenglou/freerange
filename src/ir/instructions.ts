@@ -35,6 +35,10 @@ export type InstructionIR =
     })
   | (InstructionBase & {kind: 'compare'; operator: ComparisonOperator; left: ValueID; right: ValueID})
   | (InstructionBase & {kind: 'floor'; value: ValueID})
+  // A read of a platform catalog entry, e.g. document.documentElement.clientWidth. Each
+  // evaluation produces a fresh finite non-NaN value within the recorded range — platform
+  // state is mutable, so two reads are never assumed equal.
+  | (InstructionBase & {kind: 'platformValue'; lower: number; upper: number; integer: boolean})
   | (InstructionBase & {kind: 'absolute'; value: ValueID})
   // Boolean negation, from `!x` on a boolean operand.
   | (InstructionBase & {kind: 'not'; value: ValueID})
