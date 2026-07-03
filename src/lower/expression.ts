@@ -357,10 +357,16 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
       current = current.expression
       continue
     }
-    // `as` and angle-bracket assertions never reach here: the acceptance check rejected
-    // them before lowering started. The non-null assertion `x!` peels only while the value
-    // kind is unchanged underneath — on a nullable type, e.g. `x!` with `x: number | null`,
-    // the static type stops describing the value the analysis models, so stop.
+    // Only `as const` assertions reach here — the acceptance check rejected every other
+    // as/angle-bracket form before lowering started — and a const assertion narrows a
+    // literal to its own literal type, so peeling it changes nothing.
+    if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
+      current = current.expression
+      continue
+    }
+    // The non-null assertion `x!` peels only while the value kind is unchanged underneath —
+    // on a nullable type, e.g. `x!` with `x: number | null`, the static type stops
+    // describing the value the analysis models, so stop.
     if (ts.isNonNullExpression(current)) {
       const assertedType = checker.getTypeAtLocation(current)
       const operandType = checker.getTypeAtLocation(current.expression)

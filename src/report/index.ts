@@ -276,13 +276,14 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText}`
     case 'valueType': return `value of type ${reason.typeText}`
-    case 'kindChangingAssertion': return `type assertion from ${reason.fromText} to ${reason.toText}`
+    case 'kindChangingAssertion': return `a non-null assertion turning ${reason.fromText} into ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
     case 'anyTyped': return 'a value typed any'
     case 'typeAssertion': return `a type assertion to ${reason.typeText}`
     case 'varDeclaration': return 'var declarations (use let or const)'
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
+    case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'
     case 'forLoopWithoutCondition': return 'for loop without a condition'
     case 'forLoopWithoutIncrementor': return 'for loop without an incrementor'
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'

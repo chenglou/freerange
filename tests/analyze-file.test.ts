@@ -804,6 +804,58 @@ describe('analyzeFile', () => {
     expect(reader.assumptions).toEqual(['count is finite and not NaN'])
   })
 
+  test('accepts as const, the one assertion that cannot lie', () => {
+    // TypeScript only permits `as const` on literals, and it narrows the literal to its own
+    // literal type, so the value kind never changes; config constants written this way are
+    // ordinary code. The exact 4 flowing into the result proves the value passed through.
+    const report = analyzeSource('module-as-const.ts', `
+      const msPerStep = 4 as const
+      export function stepsFor(durationMs: number): number {
+        return Math.max(0, durationMs) / msPerStep
+      }
+    `)
+    const fn = analyzedFunction(report, 'stepsFor')
+    expect(fn.assumptions).toEqual(['durationMs is finite and not NaN'])
+    // Dividing by the exact 4 gives a concrete upper bound (largest finite double / 4),
+    // which is the proof the const-assertion value flowed through.
+    expect(fn.ensures).toEqual(['return is a finite number from 0 through 4.4942328371557893e+307'])
+  })
+
+  test('a type-check suppression comment puts the whole file outside the subset', () => {
+    // A suppression directive turns off the checker for a line, and every guarantee rests
+    // on the checker's word: here a boolean sits in a number binding with no `any` in
+    // sight. The directive is interpolated so this test file itself does not carry one.
+    const report = analyzeSource('module-suppressed.ts', `
+      export function broken(): number {
+        // ${'@ts-expect-error'} migration leftover
+        let width: number = true
+        return width + 1
+      }
+      export function unrelated(width: number): number {
+        return width + 1
+      }
+    `)
+    for (const fn of report.functions) {
+      expect(fn.kind).toBe(fn.name === 'module initialization' ? 'partial' : 'unsupported')
+    }
+    expect(formatReport(report)).toContain('a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking')
+  })
+
+  test('records a kind-changing non-null assertion as unsupported', () => {
+    const report = analyzeSource('non-null.ts', `
+      let maybe: number | null = 5
+      export function forced(): number {
+        return maybe!
+      }
+    `)
+    const file = resolve('non-null.ts')
+    expect(report.functions.find(fn => fn.name === 'forced')).toEqual({
+      kind: 'unsupported',
+      name: 'forced',
+      unsupported: `a non-null assertion turning number | null into number at ${file}:4:16`,
+    })
+  })
+
   test('rejects values typed any wherever they flow', () => {
     // TypeScript accepts an any-typed value in every position, so a type-checked function
     // can still put a boolean into a number variable; the value's own expression is
@@ -865,9 +917,10 @@ describe('analyzeFile', () => {
     ])
   })
 
-  test('hedges boolean module reads whose writes TypeScript cannot vouch for', () => {
-    // Assigning an any-typed value to a boolean binding type-checks, so "return is boolean"
-    // must be conditional on the binding actually holding a boolean.
+  test('hedges boolean module reads whose writes the analysis never sees', () => {
+    // poison is rejected (its parameter is typed any), but it still runs at runtime and
+    // writes flag, so the scan demotes flag to its declared kind and "return is boolean"
+    // stays conditional on the binding actually holding a boolean.
     const report = analyzeSource('module-any-boolean.ts', `
       let flag = false
       export function poison(value: any): void {

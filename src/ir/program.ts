@@ -82,14 +82,19 @@ export type UnsupportedReason =
   // binding in the file at runtime, so every function in the file carries this reason —
   // rejecting only the function containing the call would not protect the others' reports.
   | {kind: 'evalInFile'}
+  // A `@ts-ignore`, `@ts-expect-error`, or `@ts-nocheck` comment appears somewhere in the
+  // file. The directive turns off type checking, and every guarantee is built on the
+  // checker's word, so the whole file is rejected like the eval case above.
+  | {kind: 'typeCheckSuppressed'}
   // A value position whose type mixes kinds or is outside numbers, booleans, and objects —
   // e.g. a ternary with one number arm and one boolean arm, a string return type, or a
   // variable declared `let u: unknown` and reassigned across kinds. Left ungated, mixed
   // kinds would meet at a join deep in the engine instead of stopping here.
   | {kind: 'valueType'; typeText: string}
-  // A type assertion that changes the value kind, e.g. `true as unknown as number` or `x!`
-  // on a nullable type. The asserted type no longer describes the runtime value, and the
-  // analysis keys everything to static types.
+  // A non-null assertion that changes the value kind, e.g. `x!` with `x: number | null`.
+  // Past the assertion, the static type stops describing the value the analysis models.
+  // (`as` and angle-bracket assertions are rejected earlier by the acceptance check, so
+  // only `!` reaches this reason.)
   | {kind: 'kindChangingAssertion'; fromText: string; toText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}
@@ -127,9 +132,8 @@ export type ModuleBindingCategory =
   // property values reset to unknown at function entry; recorded now so the scan is
   // complete, but reads stop until that flow is implemented.
   | {kind: 'identity'}
-  // A number or boolean binding that some function writes, or that a direct eval call
-  // anywhere in the file could write. Functions see only the declared kind: some finite
-  // number, some boolean.
+  // A number or boolean binding that some function writes. Functions see only the declared
+  // kind — some finite number, some boolean — and the report prints that as an assumption.
   | {kind: 'kind'; declaredKind: 'number' | 'boolean'}
   // An imported binding. Single-file analysis knows nothing about the other module.
   | {kind: 'import'}
