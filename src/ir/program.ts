@@ -1,3 +1,4 @@
+import type * as ts from 'typescript'
 import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
@@ -146,6 +147,21 @@ export type ModuleBindingCategory =
   // Every other declared type (unions with null, arrays, strings, functions). Reads stop.
   | {kind: 'opaque'}
 
+// The declared kind a binding contributes when its exact value is unpublished — the single
+// definition of the seeding rule, consumed by the engine's slot seeding, the havoc arm,
+// and the report's assumption lines, so they cannot drift apart.
+export function declaredKindOf(category: ModuleBindingCategory): 'number' | 'boolean' | null {
+  switch (category.kind) {
+    case 'value':
+    case 'kind':
+      return category.declaredKind
+    case 'identity':
+    case 'import':
+    case 'opaque':
+      return null
+  }
+}
+
 // One top-level binding visible to every function in the file: a top-level variable
 // declarator with an identifier name, or a named import.
 export type ModuleBindingIR = {
@@ -173,8 +189,27 @@ export type ProgramIR = {
   // in the never-lowered statements demote the affected bindings' categories directly, so
   // no separate record of the remainder is needed.
   initializer: FunctionIR
-  // BLITZ: top-level statements the initializer's lowering skipped instead of stopping at.
-  initializerSkips: Array<{site: SiteID; reason: UnsupportedReason}>
+  // Top-level statements the initializer's lowering skipped instead of stopping at.
+  initializerSkips: InitializerSkip[]
+}
+
+// The synthetic initializer's display and IR name, shared by its two producers and read
+// back by the report, so the strings cannot drift apart.
+export const moduleInitializerName = 'module initialization'
+
+// A top-level statement the initializer's lowering skipped, with the construct that made it
+// unsupported. The report lists these on the module initialization entry.
+export type InitializerSkip = {site: SiteID; reason: UnsupportedReason}
+
+// The span an AST node covers, for pushing into ProgramIR.sites.
+export function nodeSpan(sourceFile: ts.SourceFile, node: ts.Node): SourceSpan {
+  return {start: node.getStart(sourceFile), end: node.getEnd()}
+}
+
+// A site rendered as file:line:column, the form every report line uses.
+export function formatSite(program: ProgramIR, site: SiteID): string {
+  const {line, column} = siteLocation(program, site)
+  return `${program.file}:${line}:${column}`
 }
 
 // 1-based line and column of a site's start offset.

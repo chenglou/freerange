@@ -1,15 +1,15 @@
 import * as ts from 'typescript'
-import type {ModuleBindingID, SiteID} from '../ir/ids.ts'
-import type {
-  BlockIR,
-  FunctionIR,
-  ModuleBindingCategory,
-  ModuleBindingIR,
-  SourceSpan,
-  UnsupportedReason,
+import type {ModuleBindingID} from '../ir/ids.ts'
+import {
+  moduleInitializerName,
+  type FunctionIR,
+  type InitializerSkip,
+  type ModuleBindingCategory,
+  type ModuleBindingIR,
+  type SourceSpan,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
-import {addInstruction, addSite, LoweringStop, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addInstruction, addSite, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
@@ -38,7 +38,8 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
   for (const statement of sourceFile.statements) {
     if (ts.isVariableStatement(statement)) {
       // `var` is outside the accepted subset, so its names never become module bindings;
-      // the statement itself stops the initializer when reached.
+      // the statement itself is skipped when the initializer reaches it, and functions
+      // reading the name are rejected as unknown identifiers.
       if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue
       for (const declarator of statement.declarationList.declarations) {
         if (!ts.isIdentifier(declarator.name)) continue
@@ -80,7 +81,7 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
 // The writes the given node itself performs to module bindings (not its children's writes;
 // the caller walks). Any write-position form we do not recognize must count as a write —
 // missing one publishes a stale value.
-export function moduleWritesIn(
+function moduleWritesIn(
   node: ts.Node,
   checker: ts.TypeChecker,
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
@@ -132,10 +133,10 @@ export function moduleWritesIn(
   return written
 }
 
-// Lowers the module's top-level runtime code into one synthetic function. When a statement
-// cannot lower, everything before it is kept and the open paths end with stop terminators;
-// writes in the never-lowered statements demote their bindings' categories, since an
-// unanalyzed write means the initialized value cannot be trusted.
+// Lowers the module's top-level runtime code into one synthetic function. A statement that
+// cannot lower is skipped — rolled back, recorded as an InitializerSkip, its possible
+// writes demoted and havocked — and lowering continues, so the initializer covers the
+// whole file and ends with a plain return.
 export function lowerModuleInitializer(
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
@@ -158,19 +159,15 @@ export function lowerModuleInitializer(
   }
   const skips: InitializerSkip[] = []
   const statements = sourceFile.statements
-  // BLITZ: instead of stopping at the first unsupported statement, each statement gets its
-  // own catch: an unsupported one is skipped — its half-lowered instructions and blocks
-  // rolled back — and every binding it could write is demoted, so later reads cannot trust
-  // values the skipped code might have changed. Runtime exceptions and ordering effects of
-  // skipped statements are ignored; that is the blitz-grade unsoundness.
+  // Each statement gets its own catch: an unsupported one is skipped — its half-lowered
+  // instructions and blocks rolled back — every binding it could write is demoted, and the
+  // slots are havocked so later statements compute from covering values (owner-locked
+  // whole-file publish). Soundness of continuing past a skip: if the skipped statement
+  // throws or never returns at runtime, the module never finishes loading, so no exported
+  // function can be called and every claim about them is vacuously true.
   for (const statement of statements) {
     if (skippedAtTopLevel(statement)) continue
-    const recovery = {
-      block: context.currentBlock,
-      instructionCount: context.currentBlock.instructions.length,
-      blockCount: context.blocks.length,
-      bindings: new Map(context.bindings),
-    }
+    const recovery = snapshotLowering(context)
     try {
       assertAccepted(statement, checker)
       if (ts.isVariableStatement(statement)) {
@@ -180,11 +177,7 @@ export function lowerModuleInitializer(
       lowerStatement(statement, context)
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
-      context.blocks.length = recovery.blockCount
-      recovery.block.instructions.length = recovery.instructionCount
-      recovery.block.terminator = null
-      context.currentBlock = recovery.block
-      context.bindings = recovery.bindings
+      restoreLowering(context, recovery)
       skips.push({site: addSite(context, error.node), reason: error.reason})
       // Demote what the statement writes directly, then reset the slots of everything the
       // statement could have written — its own targets plus, since it may call any
@@ -204,22 +197,17 @@ export function lowerModuleInitializer(
   if (context.currentBlock.terminator == null) {
     terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, sourceFile)})
   }
-  const blocks: BlockIR[] = []
-  for (const block of context.blocks) {
-    if (block.terminator == null) throw new Error('Module initializer block without a terminator')
-    blocks.push({
-      loopHeader: block.loopHeader,
-      parameters: block.parameters,
-      instructions: block.instructions,
-      terminator: block.terminator,
-    })
+  return {
+    initializer: {
+      kind: 'lowered',
+      name: moduleInitializerName,
+      parameters: [],
+      entry: 0,
+      blocks: sealBlocks(context.blocks, moduleInitializerName),
+    },
+    skips,
   }
-  return {initializer: {kind: 'lowered', name: 'module initialization', parameters: [], entry: 0, blocks}, skips}
 }
-
-// A top-level statement the initializer's lowering skipped, with the construct that made it
-// unsupported. The report lists these on the module initialization entry.
-export type InitializerSkip = {site: SiteID; reason: UnsupportedReason}
 
 function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: FunctionContext, scan: ModuleScan): void {
   for (const declarator of statement.declarationList.declarations) {

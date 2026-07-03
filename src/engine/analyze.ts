@@ -1,10 +1,10 @@
 import {finiteInputNumber} from '../domain/number.ts'
-import {joinValues, type AbstractValue} from '../domain/value.ts'
+import {declaredKindValue, joinValues, type AbstractValue} from '../domain/value.ts'
 import type {AllocationContext} from '../heap/model.ts'
 import {allocateParameter, joinHeaps} from '../heap/operations.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import type {FunctionIR, ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
@@ -18,6 +18,7 @@ import {
   cloneSharedState,
   cloneState,
   emptySharedState,
+  joinModuleSlots,
   joinStates,
   sameState,
   widenState,
@@ -26,7 +27,6 @@ import {
   type SharedState,
 } from './state.ts'
 import {
-  collectComparisons,
   collectNonCompareUses,
   evaluateInstruction,
   refineComparison,
@@ -57,7 +57,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   for (let functionID = 0; functionID < program.functions.length; functionID++) {
     const fn = program.functions[functionID]!
     if (fn.kind === 'unsupported') {
-      functions.push({kind: 'notLowered'})
+      functions.push({kind: 'notLowered', lowering: fn})
       continue
     }
     const arguments_: AbstractValue[] = []
@@ -100,6 +100,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
   if (completed != null) {
     return {
       kind: 'analyzed',
+      lowering: fn,
       preconditions: completed.preconditions,
       returnValue: completed.returnValue,
       sharedState: completed.sharedState,
@@ -109,6 +110,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
   if (firstStop == null) throw new Error(`Function ${fn.name} has no reachable return`)
   return {
     kind: 'partial',
+    lowering: fn,
     stops: [firstStop, ...laterStops],
     observedReturn: evaluation.normal == null
       ? null
@@ -124,14 +126,9 @@ function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue |
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
     if (published != null) return {kind: 'value', value: published}
-    const category = binding.category
-    if (category.kind !== 'value' && category.kind !== 'kind') return {kind: 'uninitialized'}
-    return {
-      kind: 'value',
-      value: category.declaredKind === 'number'
-        ? finiteInputNumber()
-        : {kind: 'boolean', canBeTrue: true, canBeFalse: true},
-    }
+    const declaredKind = declaredKindOf(binding.category)
+    if (declaredKind == null) return {kind: 'uninitialized'}
+    return {kind: 'value', value: declaredKindValue(declaredKind)}
   })
 }
 
@@ -229,7 +226,6 @@ function runEvaluation(
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
   }
-  const comparisons = collectComparisons(fn)
   const usedOutsideCompare = collectNonCompareUses(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
@@ -246,6 +242,31 @@ function runEvaluation(
     moduleEnds: [],
   }
   run.incoming[fn.entry] = {state: initial, updateCount: 0}
+  // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
+  // instead of allocating a context object and closure per instruction per fixed-point
+  // round. preconditions is shared by reference and accumulates.
+  const transferContext = {
+    program,
+    callStack: functionID == null ? callStack : [...callStack, functionID],
+    expressionContext,
+    preconditions,
+    usedOutsideCompare,
+    allocationContext: context,
+    evaluateFunction: (
+      callee: FunctionID,
+      values: AbstractValue[],
+      expressions: Array<NumericExpression | null>,
+      calleeState: SharedState,
+      stack: FunctionID[],
+      calleeContext: AllocationContext,
+    ) => {
+      const calleeFn = program.functions[callee]
+      if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
+      // Callers turn calls to unlowered functions into calleeStopped records first.
+      if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
+      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack, calleeContext).evaluation
+    },
+  }
   let queueIndex = 0
   while (queueIndex < run.queue.length) {
     const blockID = run.queue[queueIndex++]!
@@ -256,21 +277,7 @@ function runEvaluation(
     let stopped = false
     for (let index = 0; index < block.instructions.length; index++) {
       const instruction = block.instructions[index]!
-      const result = evaluateInstruction(instruction, state, {
-        program,
-        callStack: functionID == null ? callStack : [...callStack, functionID],
-        expressionContext,
-        preconditions,
-        usedOutsideCompare,
-        allocationContext: context,
-        evaluateFunction: (callee, values, expressions, calleeState, stack, calleeContext) => {
-          const calleeFn = program.functions[callee]
-          if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
-          // Callers turn calls to unlowered functions into calleeStopped records first.
-          if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-          return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack, calleeContext).evaluation
-        },
-      })
+      const result = evaluateInstruction(instruction, state, transferContext)
       if (result.kind === 'stop') {
         addStop(run, blockID, result.stop, state.shared.modules.slice(), index)
         // A return recorded by an earlier visit of this block described a smaller incoming
@@ -306,13 +313,20 @@ function runEvaluation(
       }
       case 'branch': {
         const condition = requiredBoolean(state, block.terminator.condition)
-        const comparison = comparisons[block.terminator.condition]
+        // expressionContext.instructionByValue is the one which-instruction-produced-this
+        // table; a condition refines only when that instruction is a comparison.
+        const producer = expressionContext.instructionByValue[block.terminator.condition]
+        const comparison = producer?.kind === 'compare' ? producer : undefined
         if (condition.canBeTrue) {
-          const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, true)
+          // refineComparison clones internally; the bare-condition arm clones only when the
+          // other arm still needs the working state.
+          const branch = comparison == null
+            ? condition.canBeFalse ? cloneState(state) : state
+            : refineComparison(state, comparison, true)
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
-          const branch = comparison == null ? cloneState(state) : refineComparison(state, comparison, false)
+          const branch = comparison == null ? state : refineComparison(state, comparison, false)
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break
@@ -326,23 +340,31 @@ function runEvaluation(
   // propagated returns downstream. Any header on a cycle through a stopping block is
   // therefore failed too. Slightly conservative: evidence from the path where the loop body
   // runs zero times is also suppressed when the stop existed from the first round.
-  for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
-    if (fn.blocks[headerID]!.loopHeader == null || run.failedHeaders[headerID] === true) continue
-    const reachedFromHeader = reachableFrom(successors, headerID)
-    for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
-      if (run.stopBlocks[stopBlock] !== true || reachedFromHeader[stopBlock] !== true) continue
-      if (reachableFrom(successors, stopBlock)[headerID] === true) {
-        run.failedHeaders[headerID] = true
-        break
-      }
-    }
-  }
+  // Reachability from each stopping block is computed once, and the whole pass is skipped
+  // when nothing stopped (stopBlocks is only ever set by addStop).
   const suppressed: boolean[] = []
-  for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
-    if (run.failedHeaders[headerID] !== true) continue
-    const reached = reachableFrom(successors, headerID)
-    for (let block = 0; block < fn.blocks.length; block++) {
-      if (reached[block] === true) suppressed[block] = true
+  if (run.stops.length > 0) {
+    const reachedFromStop: Array<boolean[] | undefined> = []
+    for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
+      if (run.stopBlocks[stopBlock] === true) reachedFromStop[stopBlock] = reachableFrom(successors, stopBlock)
+    }
+    for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
+      if (fn.blocks[headerID]!.loopHeader == null) continue
+      const reachedFromHeader = run.failedHeaders[headerID] === true ? undefined : reachableFrom(successors, headerID)
+      if (reachedFromHeader != null) {
+        for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
+          if (run.stopBlocks[stopBlock] !== true || reachedFromHeader[stopBlock] !== true) continue
+          if (reachedFromStop[stopBlock]![headerID] === true) {
+            run.failedHeaders[headerID] = true
+            break
+          }
+        }
+      }
+      if (run.failedHeaders[headerID] !== true) continue
+      const reached = reachedFromHeader ?? reachableFrom(successors, headerID)
+      for (let block = 0; block < fn.blocks.length; block++) {
+        if (reached[block] === true) suppressed[block] = true
+      }
     }
   }
 
@@ -358,7 +380,7 @@ function runEvaluation(
       returnValue: joinValues(normal.returnValue, pending.value),
       sharedState: {
         heap: joinHeaps(normal.sharedState.heap, pending.shared.heap),
-        modules: joinModuleEnds(normal.sharedState.modules, pending.shared.modules),
+        modules: joinModuleSlots(normal.sharedState.modules, pending.shared.modules),
       },
     }
   }
@@ -402,20 +424,6 @@ function runEvaluation(
   return {evaluation: {normal, preconditions, stops: run.stops}, run}
 }
 
-function joinModuleEnds(left: ModuleSlot[], right: ModuleSlot[]): ModuleSlot[] {
-  const joined: ModuleSlot[] = []
-  for (let index = 0; index < left.length; index++) {
-    const leftSlot = left[index]!
-    const rightSlot = right[index]!
-    joined.push(
-      leftSlot.kind === 'uninitialized' || rightSlot.kind === 'uninitialized'
-        ? {kind: 'uninitialized'}
-        : {kind: 'value', value: joinValues(leftSlot.value, rightSlot.value)},
-    )
-  }
-  return joined
-}
-
 function addStop(
   run: EvaluationRun,
   blockID: BlockID,
@@ -434,6 +442,8 @@ function addStop(
   run.stops.push(stop)
 }
 
+// Takes ownership of `state`: callers pass the working state (dead after its terminator)
+// or an already-fresh clone from a branch arm, so no defensive copy is needed here.
 function propagate(
   state: ExecutionState,
   sourceBlock: BlockID,
@@ -445,9 +455,13 @@ function propagate(
   if (edge.arguments.length !== target.parameters.length) {
     throw new Error(`Expected ${target.parameters.length} arguments for block ${edge.block} in ${run.fn.name}`)
   }
-  const candidate = cloneState(state)
+  // Read every edge argument before writing any parameter: on a loop back edge an argument
+  // can be one of the target's own parameter IDs (an unchanged carried binding), so the
+  // reads and writes share one value array.
+  const argumentValues = edge.arguments.map(argument => requiredValue(state, argument))
+  const candidate = state
   for (let index = 0; index < target.parameters.length; index++) {
-    candidate.frame.values[target.parameters[index]!] = requiredValue(state, edge.arguments[index]!)
+    candidate.frame.values[target.parameters[index]!] = argumentValues[index]!
   }
   const previous = run.incoming[edge.block]
   if (previous == null) {

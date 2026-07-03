@@ -1,6 +1,6 @@
 import type {AllocationIdentity} from '../heap/model.ts'
 import {compareIdentity, sameIdentity} from '../heap/model.ts'
-import {joinNumbers, sameNumbers, widenNumber, type AbstractNumber} from './number.ts'
+import {finiteInputNumber, joinNumbers, sameNumbers, widenNumber, type AbstractNumber} from './number.ts'
 
 export type AbstractBoolean = {
   kind: 'boolean'
@@ -22,6 +22,15 @@ type AbstractVoid = {
 }
 
 export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractReference | AbstractVoid
+
+export function unknownBoolean(): AbstractBoolean {
+  return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
+}
+
+// The abstract value a declared kind seeds: any finite number, or any boolean.
+export function declaredKindValue(kind: 'number' | 'boolean'): AbstractValue {
+  return kind === 'number' ? finiteInputNumber() : unknownBoolean()
+}
 
 export function singletonReference(identity: AllocationIdentity): AbstractReference {
   return {kind: 'reference', targets: [identity]}
@@ -91,10 +100,20 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
   }
 }
 
+// Widening exists to bound the lattice height at loop headers; every kind must decide its
+// own story here, so a future kind cannot silently fall into an unbounded default and spin
+// fixed points into the round limit.
 export function widenValue(previous: AbstractValue, next: AbstractValue): AbstractValue {
-  return previous.kind === 'number' && next.kind === 'number'
-    ? widenNumber(previous, next)
-    : next
+  switch (next.kind) {
+    // Numbers are the one unbounded lattice; bounds that grew jump to their extreme.
+    case 'number': return previous.kind === 'number' ? widenNumber(previous, next) : next
+    // Bounded lattices need no widening: booleans have height two, a reference's possible
+    // targets are fixed by the program text, void is a point.
+    case 'boolean':
+    case 'reference':
+    case 'void':
+      return next
+  }
 }
 
 function joinBooleans(left: AbstractBoolean, right: AbstractBoolean): AbstractBoolean {

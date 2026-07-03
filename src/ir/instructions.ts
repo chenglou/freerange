@@ -48,6 +48,33 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
   | (InstructionBase & {kind: 'store'; object: ValueID; property: string; value: ValueID})
 
+// Every ValueID operand an instruction reads, enumerated next to the type so a new kind or
+// a new operand field on an existing kind changes in the same file and the same diff view.
+// Completeness is soundness-bearing for collectNonCompareUses: an unlisted operand could
+// mark a division as consumed-only-by-comparisons and silently suppress its requirement.
+export function forEachOperand(instruction: InstructionIR, visit: (operand: ValueID) => void): void {
+  switch (instruction.kind) {
+    case 'constant':
+    case 'booleanConstant':
+    case 'moduleRead':
+    case 'moduleHavoc':
+    case 'platformValue':
+      return
+    case 'moduleWrite': visit(instruction.value); return
+    case 'binary': visit(instruction.left); visit(instruction.right); return
+    case 'compare': visit(instruction.left); visit(instruction.right); return
+    case 'floor':
+    case 'absolute':
+    case 'not': visit(instruction.value); return
+    case 'minimum':
+    case 'maximum': for (const id of instruction.values) visit(id); return
+    case 'call': for (const id of instruction.arguments) visit(id); return
+    case 'object': for (const property of instruction.properties) visit(property.value); return
+    case 'property': visit(instruction.object); return
+    case 'store': visit(instruction.object); visit(instruction.value); return
+  }
+}
+
 export type EdgeIR = {
   block: BlockID
   arguments: ValueID[]
@@ -57,9 +84,8 @@ export type TerminatorIR =
   | {kind: 'return'; value: ValueID | null; site: SiteID}
   | {kind: 'jump'; target: EdgeIR; site: SiteID}
   | {kind: 'branch'; condition: ValueID; whenTrue: EdgeIR; whenFalse: EdgeIR; site: SiteID}
-  // Lowering met unsupported code here. The instructions already emitted describe exactly
-  // the operations that run before the unsupported one (lowering emits in evaluation
-  // order), so the engine evaluates them and records a stop on reaching this terminator.
-  // Only the module initializer's lowering emits this today; ordinary functions still
-  // discard their whole body when lowering stops.
+  // The evaluation must record a stop here instead of returning. Only the file-wide
+  // rejections (eval, type-check suppression) emit one today, as the terminator of the
+  // replacement initializer; ordinary functions discard their whole body when lowering
+  // stops, and the real initializer skips statements instead.
   | {kind: 'stop'; site: SiteID; reason: UnsupportedReason}

@@ -1,10 +1,9 @@
-import {finiteInputNumber, type AbstractNumber} from '../domain/number.ts'
+import {finiteInputNumber, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {sameValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {AbstractHeap} from '../heap/model.ts'
 import {referenceProperties} from '../heap/operations.ts'
-import type {ModuleBindingID, SiteID} from '../ir/ids.ts'
-import {siteLocation, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -36,7 +35,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
     }
     functions.push({
       kind: 'partial',
-      name: 'module initialization',
+      name: program.initializer.name,
       assumptions: [],
       stopped: analysis.initializer.kind === 'partial'
         ? analysis.initializer.stops.map(stop => formatStop(stop, program, analysis))
@@ -45,13 +44,11 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       observed,
     })
   }
-  for (let functionID = 0; functionID < program.functions.length; functionID++) {
-    const lowering = program.functions[functionID]!
-    const fn = analysis.functions[functionID]
-    if (fn == null) throw new Error(`Missing analysis entry for ${lowering.name}`)
+  for (let functionID = 0; functionID < analysis.functions.length; functionID++) {
+    const fn = analysis.functions[functionID]!
     switch (fn.kind) {
       case 'notLowered': {
-        if (lowering.kind !== 'unsupported') throw new Error(`${lowering.name} was lowered but not analyzed`)
+        const lowering = fn.lowering
         functions.push({
           kind: 'unsupported',
           name: lowering.name,
@@ -60,7 +57,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         break
       }
       case 'partial': {
-        if (lowering.kind !== 'lowered') throw new Error(`${lowering.name} was analyzed without lowering`)
+        const lowering = fn.lowering
         const parameterNames = lowering.parameters.map(parameter => parameter.name)
         const observed: string[] = []
         if (fn.observedReturn != null) {
@@ -77,7 +74,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         break
       }
       case 'analyzed': {
-        if (lowering.kind !== 'lowered') throw new Error(`${lowering.name} was analyzed without lowering`)
+        const lowering = fn.lowering
         const parameterNames = lowering.parameters.map(parameter => parameter.name)
         functions.push({
           kind: 'analyzed',
@@ -123,7 +120,7 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
-function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: Set<ModuleBindingID>): string[] {
+function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: boolean[]): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
     switch (parameter.type.kind) {
@@ -136,12 +133,10 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: Se
       }
     }
   }
-  for (const bindingID of [...assumedBindings].sort((left, right) => left - right)) {
-    const binding = program.moduleBindings[bindingID]
-    if (binding == null) throw new Error(`Unknown module binding ${bindingID}`)
-    const declaredKind = binding.category.kind === 'value' || binding.category.kind === 'kind'
-      ? binding.category.declaredKind
-      : null
+  for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
+    if (assumedBindings[bindingID] !== true) continue
+    const binding = program.moduleBindings[bindingID]!
+    const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
     assumptions.push(declaredKind === 'number'
       ? `${binding.name} is finite and not NaN`
@@ -156,11 +151,11 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: Se
 // through calls: a callee evaluates on the caller's own seeded slots, so the callee's read
 // is the caller's assumption too. Closed over static call edges; a call path that never
 // executes can only add a harmless extra assumption line.
-function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Array<Set<ModuleBindingID>> {
-  const assumed: Array<Set<ModuleBindingID>> = []
+function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): boolean[][] {
+  const assumed: boolean[][] = []
   const callees: Array<Set<number>> = []
   for (const lowering of program.functions) {
-    const reads = new Set<ModuleBindingID>()
+    const reads: boolean[] = []
     const calls = new Set<number>()
     if (lowering.kind === 'lowered') {
       for (const block of lowering.blocks) {
@@ -169,9 +164,8 @@ function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Arr
           if (instruction.kind !== 'moduleRead' || analysis.moduleValues[instruction.binding] != null) continue
           const binding = program.moduleBindings[instruction.binding]
           if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
-          const category = binding.category
-          if (category.kind === 'value' || category.kind === 'kind') {
-            reads.add(instruction.binding)
+          if (declaredKindOf(binding.category) != null) {
+            reads[instruction.binding] = true
           }
         }
       }
@@ -185,9 +179,10 @@ function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): Arr
     changed = false
     for (let caller = 0; caller < assumed.length; caller++) {
       for (const callee of callees[caller]!) {
-        for (const bindingID of assumed[callee] ?? []) {
-          if (!assumed[caller]!.has(bindingID)) {
-            assumed[caller]!.add(bindingID)
+        const calleeAssumed = assumed[callee]!
+        for (let bindingID = 0; bindingID < calleeAssumed.length; bindingID++) {
+          if (calleeAssumed[bindingID] === true && assumed[caller]![bindingID] !== true) {
+            assumed[caller]![bindingID] = true
             changed = true
           }
         }
@@ -259,11 +254,6 @@ function functionName(program: ProgramIR, callee: number): string {
   const fn = program.functions[callee]
   if (fn == null) throw new Error(`Unknown function ${callee}`)
   return fn.name
-}
-
-function formatSite(program: ProgramIR, site: SiteID): string {
-  const {line, column} = siteLocation(program, site)
-  return `${program.file}:${line}:${column}`
 }
 
 // The only place reason prose exists; everything else branches on reason.kind. The
@@ -342,11 +332,11 @@ function numberSummary(path: string, value: AbstractNumber, program: ProgramIR):
   const kind = value.integer ? 'integer ' : ''
   // Three-way: NaN is the scarier possibility and names itself; a value that can only
   // overflow says non-finite; everything else is finite.
-  const domain = value.mayBeNaN ? 'possibly NaN ' : value.finite ? 'finite ' : 'possibly non-finite '
+  const domain = value.mayBeNaN ? 'possibly NaN ' : isFiniteNumber(value) ? 'finite ' : 'possibly non-finite '
   // The blame suffix names where the degradation was born, so the line points at the
   // missing input fact instead of just shrugging. A recovered value (clamped back to a
   // clean range) prints no suffix even when the annotation lingers.
-  const blame = value.lossSite == null || (value.finite && !value.mayBeNaN)
+  const blame = value.lossSite == null || (isFiniteNumber(value) && !value.mayBeNaN)
     ? ''
     : value.mayBeNaN
       ? ` (NaN possible from the operation at ${formatSite(program, value.lossSite)})`
@@ -358,8 +348,7 @@ function numberSummary(path: string, value: AbstractNumber, program: ProgramIR):
   return `${subject} from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}${blame}`
 }
 
+// Infinite bounds are expected here; String renders them as 'Infinity'/'-Infinity'.
 function formatNumber(value: number): string {
-  if (value === Number.NEGATIVE_INFINITY) return '-Infinity'
-  if (value === Number.POSITIVE_INFINITY) return 'Infinity'
   return String(value)
 }

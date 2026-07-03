@@ -62,60 +62,48 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     const value = lowerExpression(current.right, context)
     return addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
   }
-  if (
-    ts.isBinaryExpression(current)
-    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    && ts.isIdentifier(current.left)
-  ) {
-    const symbol = requiredSymbol(current.left, context.checker)
-    const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
-    if (!context.bindings.has(symbol) && moduleBinding == null) {
-      throw unsupported(current.left, {kind: 'unknownIdentifier', name: current.left.text})
+  const assignment = identifierAssignment(current)
+  if (assignment != null) {
+    const symbol = requiredSymbol(assignment.target, context.checker)
+    switch (assignment.form) {
+      case 'assign': {
+        const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
+        if (!context.bindings.has(symbol) && moduleBinding == null) {
+          throw unsupported(assignment.target, {kind: 'unknownIdentifier', name: assignment.target.text})
+        }
+        // Rebinding is only sound when the target's declared type holds a single value
+        // kind — otherwise branches could bind different kinds that meet at a block join.
+        // Function locals with mixed-kind declared types already stop at their declaration;
+        // a module binding can still hold one (a top-level `let config: unknown`
+        // initializes through the initializer's own declarator path), so for those the
+        // write itself stops here. The checker returns the declared type at an assignment
+        // target, not a narrowed one: narrowing does not apply to write positions.
+        const targetType = context.checker.getTypeAtLocation(assignment.target)
+        if (valueKind(targetType, context.checker) == null) {
+          throw unsupported(assignment.target, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
+        }
+        const value = lowerExpression(assignment.node.right, context)
+        return assignIdentifier(symbol, assignment.target, value, current, context)
+      }
+      case 'compound': {
+        const left = identifierValue(symbol, assignment.target, context)
+        const right = lowerExpression(assignment.node.right, context)
+        const value = addInstruction(context, current, {kind: 'binary', operator: assignment.operator, left, right})
+        return assignIdentifier(symbol, assignment.target, value, current, context)
+      }
+      case 'update': {
+        const previous = identifierValue(symbol, assignment.target, context)
+        const one = addInstruction(context, current, {kind: 'constant', value: 1})
+        const value = addInstruction(context, current, {
+          kind: 'binary',
+          operator: assignment.node.operator === ts.SyntaxKind.PlusPlusToken ? 'add' : 'subtract',
+          left: previous,
+          right: one,
+        })
+        assignIdentifier(symbol, assignment.target, value, current, context)
+        return ts.isPrefixUnaryExpression(assignment.node) ? value : previous
+      }
     }
-    // Rebinding is only sound when the target's declared type holds a single value kind —
-    // otherwise branches could bind different kinds that meet at a block join. Function
-    // locals with mixed-kind declared types already stop at their declaration; a module
-    // binding can still hold one (a top-level `let config: unknown` initializes through
-    // the initializer's own declarator path), so for those the write itself stops here.
-    // The checker returns the declared type at an assignment target, not a narrowed one:
-    // narrowing does not apply to write positions.
-    const targetType = context.checker.getTypeAtLocation(current.left)
-    if (valueKind(targetType, context.checker) == null) {
-      throw unsupported(current.left, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
-    }
-    const value = lowerExpression(current.right, context)
-    if (moduleBinding != null) {
-      return addInstruction(context, current, {kind: 'moduleWrite', binding: moduleBinding, value})
-    }
-    context.bindings.set(symbol, value)
-    return value
-  }
-  if (ts.isBinaryExpression(current) && ts.isIdentifier(current.left)) {
-    const operator = compoundAssignmentOperator(current.operatorToken.kind)
-    if (operator != null) {
-      const symbol = requiredSymbol(current.left, context.checker)
-      const left = identifierValue(symbol, current.left, context)
-      const right = lowerExpression(current.right, context)
-      const value = addInstruction(context, current, {kind: 'binary', operator, left, right})
-      return assignIdentifier(symbol, current.left, value, current, context)
-    }
-  }
-  if (
-    (ts.isPrefixUnaryExpression(current) || ts.isPostfixUnaryExpression(current))
-    && (current.operator === ts.SyntaxKind.PlusPlusToken || current.operator === ts.SyntaxKind.MinusMinusToken)
-    && ts.isIdentifier(current.operand)
-  ) {
-    const symbol = requiredSymbol(current.operand, context.checker)
-    const previous = identifierValue(symbol, current.operand, context)
-    const one = addInstruction(context, current, {kind: 'constant', value: 1})
-    const value = addInstruction(context, current, {
-      kind: 'binary',
-      operator: current.operator === ts.SyntaxKind.PlusPlusToken ? 'add' : 'subtract',
-      left: previous,
-      right: one,
-    })
-    assignIdentifier(symbol, current.operand, value, current, context)
-    return ts.isPrefixUnaryExpression(current) ? value : previous
   }
   if (
     ts.isBinaryExpression(current)
@@ -190,6 +178,32 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   throw unsupported(current, {kind: 'expressionForm', syntax: ts.SyntaxKind[current.kind]})
 }
 
+// The single recognizer for the three forms that assign through a plain identifier. The
+// lowering arms and the loop-carry detection in statements.ts both dispatch on this, so a
+// new assigning form cannot lower without also being carried across loop back edges (a
+// binding rebound in a loop body but not carried would silently analyze later iterations
+// with the stale pre-loop value).
+export type IdentifierAssignment =
+  | {form: 'assign'; target: ts.Identifier; node: ts.BinaryExpression}
+  | {form: 'compound'; target: ts.Identifier; node: ts.BinaryExpression; operator: Extract<InstructionIR, {kind: 'binary'}>['operator']}
+  | {form: 'update'; target: ts.Identifier; node: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression}
+
+export function identifierAssignment(node: ts.Node): IdentifierAssignment | null {
+  if (ts.isBinaryExpression(node) && ts.isIdentifier(node.left)) {
+    if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) return {form: 'assign', target: node.left, node}
+    const operator = compoundAssignmentOperator(node.operatorToken.kind)
+    if (operator != null) return {form: 'compound', target: node.left, node, operator}
+  }
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+    && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+    && ts.isIdentifier(node.operand)
+  ) {
+    return {form: 'update', target: node.operand, node}
+  }
+  return null
+}
+
 export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<InstructionIR, {kind: 'binary'}>['operator'] | null {
   switch (kind) {
     case ts.SyntaxKind.PlusEqualsToken: return 'add'
@@ -200,13 +214,19 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
   }
 }
 
-function lowerConditionalExpression(expression: ts.ConditionalExpression, context: FunctionContext): ValueID {
-  requireBooleanCondition(expression.condition, context.checker)
-  const resultType = context.checker.getTypeAtLocation(expression)
-  if (valueKind(resultType, context.checker) == null) {
-    throw unsupported(expression, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
-  }
-  const condition = lowerExpression(expression.condition, context)
+// The shared value-producing branch shape: branch on the condition, lower each arm in its
+// own block under fresh bindings, and join at a continuation whose parameter 0 carries the
+// result and whose remaining parameters carry the bindings the arms changed — the jump
+// argument order must match, an invariant that lives only here. Ternaries and the logical
+// operators are the two consumers; lowerIfStatement stays separate (no result value, and
+// its zero/one-continuing-branch early exits do not fit this shape).
+function lowerValueBranch(
+  node: ts.Expression,
+  condition: ValueID,
+  lowerTrueArm: () => ValueID,
+  lowerFalseArm: () => ValueID,
+  context: FunctionContext,
+): ValueID {
   const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
   const whenFalse = createBlock(context)
@@ -215,16 +235,16 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
     condition,
     whenTrue: {block: whenTrue, arguments: []},
     whenFalse: {block: whenFalse, arguments: []},
-    site: addSite(context, expression),
+    site: addSite(context, node),
   })
   context.currentBlock = context.blocks[whenTrue]!
   context.bindings = new Map(bindingsBeforeBranch)
-  const trueValue = lowerExpression(expression.whenTrue, context)
+  const trueValue = lowerTrueArm()
   const trueBlock = context.currentBlock
   const trueBindings = context.bindings
   context.currentBlock = context.blocks[whenFalse]!
   context.bindings = new Map(bindingsBeforeBranch)
-  const falseValue = lowerExpression(expression.whenFalse, context)
+  const falseValue = lowerFalseArm()
   const falseBlock = context.currentBlock
   const falseBindings = context.bindings
   const changed = changedBindings(bindingsBeforeBranch, trueBindings, falseBindings)
@@ -235,7 +255,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
       block: continuation,
       arguments: [trueValue, ...changed.map(symbol => requiredBranchBinding(symbol, trueBindings))],
     },
-    site: addSite(context, expression),
+    site: addSite(context, node),
   })
   terminate(falseBlock, {
     kind: 'jump',
@@ -243,7 +263,7 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
       block: continuation,
       arguments: [falseValue, ...changed.map(symbol => requiredBranchBinding(symbol, falseBindings))],
     },
-    site: addSite(context, expression),
+    site: addSite(context, node),
   })
   context.currentBlock = context.blocks[continuation]!
   context.bindings = new Map(bindingsBeforeBranch)
@@ -253,61 +273,40 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
   return context.currentBlock.parameters[0]!
 }
 
-// `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it.
-// Same CFG shape as a ternary with one arm being a boolean constant.
+function lowerConditionalExpression(expression: ts.ConditionalExpression, context: FunctionContext): ValueID {
+  requireBooleanCondition(expression.condition, context.checker)
+  const resultType = context.checker.getTypeAtLocation(expression)
+  if (valueKind(resultType, context.checker) == null) {
+    throw unsupported(expression, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
+  }
+  const condition = lowerExpression(expression.condition, context)
+  return lowerValueBranch(
+    expression,
+    condition,
+    () => lowerExpression(expression.whenTrue, context),
+    () => lowerExpression(expression.whenFalse, context),
+    context,
+  )
+}
+
+// `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it —
+// the shared value-branch shape with one arm being a boolean constant.
 function lowerLogicalExpression(expression: ts.BinaryExpression, context: FunctionContext): ValueID {
   requireBooleanCondition(expression.left, context.checker)
   requireBooleanCondition(expression.right, context.checker)
   const isAnd = expression.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
   const condition = lowerExpression(expression.left, context)
-  const bindingsBeforeBranch = new Map(context.bindings)
-  const whenTrue = createBlock(context)
-  const whenFalse = createBlock(context)
-  terminate(context.currentBlock, {
-    kind: 'branch',
+  return lowerValueBranch(
+    expression,
     condition,
-    whenTrue: {block: whenTrue, arguments: []},
-    whenFalse: {block: whenFalse, arguments: []},
-    site: addSite(context, expression),
-  })
-  context.currentBlock = context.blocks[whenTrue]!
-  context.bindings = new Map(bindingsBeforeBranch)
-  const trueValue = isAnd
-    ? lowerExpression(expression.right, context)
-    : addInstruction(context, expression, {kind: 'booleanConstant', value: true})
-  const trueBlock = context.currentBlock
-  const trueBindings = context.bindings
-  context.currentBlock = context.blocks[whenFalse]!
-  context.bindings = new Map(bindingsBeforeBranch)
-  const falseValue = isAnd
-    ? addInstruction(context, expression, {kind: 'booleanConstant', value: false})
-    : lowerExpression(expression.right, context)
-  const falseBlock = context.currentBlock
-  const falseBindings = context.bindings
-  const changed = changedBindings(bindingsBeforeBranch, trueBindings, falseBindings)
-  const continuation = createBlock(context, changed.length + 1)
-  terminate(trueBlock, {
-    kind: 'jump',
-    target: {
-      block: continuation,
-      arguments: [trueValue, ...changed.map(symbol => requiredBranchBinding(symbol, trueBindings))],
-    },
-    site: addSite(context, expression),
-  })
-  terminate(falseBlock, {
-    kind: 'jump',
-    target: {
-      block: continuation,
-      arguments: [falseValue, ...changed.map(symbol => requiredBranchBinding(symbol, falseBindings))],
-    },
-    site: addSite(context, expression),
-  })
-  context.currentBlock = context.blocks[continuation]!
-  context.bindings = new Map(bindingsBeforeBranch)
-  for (let index = 0; index < changed.length; index++) {
-    context.bindings.set(changed[index]!, context.currentBlock.parameters[index + 1]!)
-  }
-  return context.currentBlock.parameters[0]!
+    () => isAnd
+      ? lowerExpression(expression.right, context)
+      : addInstruction(context, expression, {kind: 'booleanConstant', value: true}),
+    () => isAnd
+      ? addInstruction(context, expression, {kind: 'booleanConstant', value: false})
+      : lowerExpression(expression.right, context),
+    context,
+  )
 }
 
 function arithmeticOperator(kind: ts.SyntaxKind): Extract<InstructionIR, {kind: 'binary'}>['operator'] | null {

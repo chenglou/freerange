@@ -1,7 +1,7 @@
 import type {AbstractValue} from '../domain/value.ts'
 import type {AbstractHeap} from '../heap/model.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
-import type {UnsupportedReason} from '../ir/program.ts'
+import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState} from './state.ts'
 
@@ -21,8 +21,8 @@ export type StopReason =
   // `for (let index = 0; true; index += 1) {}`. The fixed point converged with every path
   // still inside the loop, so the function has no reachable return.
   | {kind: 'nonExitingLoop'}
-  // A stop terminator was reached: the module initializer's lowering met unsupported code
-  // here and kept everything before it.
+  // A stop terminator was reached. Only the file-wide rejections (eval, type-check
+  // suppression) produce one today, as the whole-file initializer replacement.
   | {kind: 'unsupportedCode'; reason: UnsupportedReason}
   // A moduleRead found nothing usable in the slot. Report prose comes from the binding's
   // category: imported, an untracked object, an unsupported type, or read before its
@@ -65,6 +65,7 @@ export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEv
 export type FunctionAnalysis =
   | {
       kind: 'analyzed'
+      lowering: FunctionIR
       preconditions: InferredPrecondition[]
       returnValue: AbstractValue
       sharedState: SharedState
@@ -75,13 +76,15 @@ export type FunctionAnalysis =
   // the analysis did evaluate (a sibling path may contribute one after another path stopped).
   | {
       kind: 'partial'
+      lowering: FunctionIR
       stops: [Stop, ...Stop[]]
       observedReturn: {value: AbstractValue; heap: AbstractHeap} | null
       observedNeeds: InferredPrecondition[]
     }
-  // The function did not lower. Site and reason live on ProgramIR.functions at the same
-  // index (single source of truth; createReport receives both structures).
-  | {kind: 'notLowered'}
+  // The function did not lower. The variant carries a reference (not a copy) to its
+  // lowering record, so a mismatched pair is unrepresentable and the report needs no
+  // defensive re-checks.
+  | {kind: 'notLowered'; lowering: UnsupportedFunctionIR}
 
 export type ProgramAnalysis = {
   // Dense, index-aligned with ProgramIR.functions.

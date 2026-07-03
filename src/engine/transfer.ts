@@ -4,21 +4,21 @@ import {
   constantNumber,
   divideNumbers,
   divideNumbersNonzeroDivisor,
-  finiteInputNumber,
   floorNumber,
   includesZero,
+  isFiniteNumber,
   maximumNumbers,
   minimumNumbers,
   multiplyNumbers,
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
-import type {AbstractBoolean, AbstractReference, AbstractValue} from '../domain/value.ts'
+import {declaredKindValue, unknownBoolean, type AbstractBoolean, type AbstractReference, type AbstractValue} from '../domain/value.ts'
 import type {AllocationContext} from '../heap/model.ts'
 import {adoptCalleeHeap, allocateAtSite, readProperty, writeProperty} from '../heap/operations.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
-import type {ComparisonOperator, EdgeIR, InstructionIR} from '../ir/instructions.ts'
-import type {FunctionIR, ProgramIR} from '../ir/program.ts'
+import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
+import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   numericExpression,
@@ -59,26 +59,41 @@ export type StepResult =
   | {kind: 'value'; value: AbstractValue}
   | {kind: 'stop'; stop: Stop}
 
-function value(result: AbstractValue): StepResult {
+// The three ways an instruction arm produces its value, typed so a freshly computed number
+// cannot leave evaluateInstruction without the blame stamp: value() rejects numbers at the
+// type level, computedNumber() stamps, and passthroughValue() is the one named escape hatch
+// for values whose numbers were already stamped where they were produced (reads, call
+// results, constants — stamping constants would newly blame overflowing literals).
+function value(result: Exclude<AbstractValue, AbstractNumber>): StepResult {
+  return {kind: 'value', value: result}
+}
+
+function passthroughValue(result: AbstractValue): StepResult {
   return {kind: 'value', value: result}
 }
 
 // The blame annotation (see AbstractNumber.lossSite — never semantics): a degraded result
 // inherits the earliest operand's loss site, or, when the operands were all clean, stamps
 // this operation as where finiteness or NaN-freedom died.
+function computedNumber(raw: AbstractNumber, operands: AbstractNumber[], site: SiteID): StepResult {
+  return {kind: 'value', value: withLossBlame(raw, operands, site)}
+}
+
 function withLossBlame(result: AbstractNumber, operands: AbstractNumber[], site: SiteID): AbstractNumber {
-  if (result.finite && !result.mayBeNaN) return result
+  if (isFiniteNumber(result) && !result.mayBeNaN) return result
   if (result.lossSite != null) return result
   const carrier = operands.find(operand => operand.lossSite != null)
   if (carrier?.lossSite != null) return {...result, lossSite: carrier.lossSite}
-  const lostFinite = !result.finite && operands.every(operand => operand.finite)
+  const lostFinite = !isFiniteNumber(result) && operands.every(operand => isFiniteNumber(operand))
   const gainedNaN = result.mayBeNaN && operands.every(operand => !operand.mayBeNaN)
   if (lostFinite || gainedNaN) return {...result, lossSite: site}
   return result
 }
 
 // See TransferContext.usedOutsideCompare. Terminator uses (return values, branch
-// conditions, block-parameter arguments) all count as outside.
+// conditions, block-parameter arguments) all count as outside; the per-instruction operand
+// enumeration lives with the instruction type (forEachOperand), so only the compare
+// exemption is decided here.
 export function collectNonCompareUses(fn: FunctionIR): boolean[] {
   const used: boolean[] = []
   const markEdge = (edge: EdgeIR): void => {
@@ -86,26 +101,8 @@ export function collectNonCompareUses(fn: FunctionIR): boolean[] {
   }
   for (const block of fn.blocks) {
     for (const instruction of block.instructions) {
-      switch (instruction.kind) {
-        case 'constant':
-        case 'booleanConstant':
-        case 'moduleRead':
-        case 'moduleHavoc':
-        case 'platformValue':
-        case 'compare':
-          break
-        case 'moduleWrite': used[instruction.value] = true; break
-        case 'binary': used[instruction.left] = true; used[instruction.right] = true; break
-        case 'floor':
-        case 'absolute':
-        case 'not': used[instruction.value] = true; break
-        case 'minimum':
-        case 'maximum': for (const id of instruction.values) used[id] = true; break
-        case 'call': for (const id of instruction.arguments) used[id] = true; break
-        case 'object': for (const property of instruction.properties) used[property.value] = true; break
-        case 'property': used[instruction.object] = true; break
-        case 'store': used[instruction.object] = true; used[instruction.value] = true; break
-      }
+      if (instruction.kind === 'compare') continue
+      forEachOperand(instruction, operand => { used[operand] = true })
     }
     switch (block.terminator.kind) {
       case 'return': if (block.terminator.value != null) used[block.terminator.value] = true; break
@@ -117,25 +114,13 @@ export function collectNonCompareUses(fn: FunctionIR): boolean[] {
   return used
 }
 
-export function collectComparisons(
-  fn: FunctionIR,
-): Array<Extract<InstructionIR, {kind: 'compare'}> | undefined> {
-  const comparisons: Array<Extract<InstructionIR, {kind: 'compare'}> | undefined> = []
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) {
-      if (instruction.kind === 'compare') comparisons[instruction.result] = instruction
-    }
-  }
-  return comparisons
-}
-
 export function evaluateInstruction(
   instruction: InstructionIR,
   state: ExecutionState,
   context: TransferContext,
 ): StepResult {
   switch (instruction.kind) {
-    case 'constant': return value(constantNumber(instruction.value))
+    case 'constant': return passthroughValue(constantNumber(instruction.value))
     case 'booleanConstant': return value({
       kind: 'boolean',
       canBeTrue: instruction.value,
@@ -147,7 +132,7 @@ export function evaluateInstruction(
       if (slot.kind === 'uninitialized') {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
       }
-      return value(slot.value)
+      return passthroughValue(slot.value)
     }
     case 'moduleWrite': {
       const assigned = requiredValue(state, instruction.value)
@@ -162,21 +147,15 @@ export function evaluateInstruction(
       if (binding.category.kind !== 'opaque') {
         state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
       }
-      return value(assigned)
+      return passthroughValue(assigned)
     }
     case 'moduleHavoc': {
       const binding = context.program.moduleBindings[instruction.binding]
       if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
-      const category = binding.category
-      state.shared.modules[instruction.binding] =
-        category.kind === 'value' || category.kind === 'kind'
-          ? {
-              kind: 'value',
-              value: category.declaredKind === 'number'
-                ? finiteInputNumber()
-                : {kind: 'boolean', canBeTrue: true, canBeFalse: true},
-            }
-          : {kind: 'uninitialized'}
+      const declaredKind = declaredKindOf(binding.category)
+      state.shared.modules[instruction.binding] = declaredKind == null
+        ? {kind: 'uninitialized'}
+        : {kind: 'value', value: declaredKindValue(declaredKind)}
       return value({kind: 'void'})
     }
     case 'object': return value(allocateAtSite(
@@ -189,7 +168,7 @@ export function evaluateInstruction(
         value: requiredValue(state, property.value),
       })),
     ))
-    case 'property': return value(readProperty(
+    case 'property': return passthroughValue(readProperty(
       state.shared.heap,
       requiredReference(state, instruction.object),
       instruction.property,
@@ -202,7 +181,7 @@ export function evaluateInstruction(
         instruction.property,
         assigned,
       )
-      return value(assigned)
+      return passthroughValue(assigned)
     }
     case 'compare': return value(compareNumbers(
       requiredNumber(state, instruction.left),
@@ -211,19 +190,18 @@ export function evaluateInstruction(
     ))
     case 'floor': {
       const operand = requiredNumber(state, instruction.value)
-      return value(withLossBlame(floorNumber(operand), [operand], instruction.site))
+      return computedNumber(floorNumber(operand), [operand], instruction.site)
     }
-    case 'platformValue': return value({
+    case 'platformValue': return passthroughValue({
       kind: 'number',
       lower: instruction.lower,
       upper: instruction.upper,
       integer: instruction.integer,
-      finite: true,
       mayBeNaN: false,
     })
     case 'absolute': {
       const operand = requiredNumber(state, instruction.value)
-      return value(withLossBlame(absoluteNumber(operand), [operand], instruction.site))
+      return computedNumber(absoluteNumber(operand), [operand], instruction.site)
     }
     case 'not': {
       const operand = requiredBoolean(state, instruction.value)
@@ -231,11 +209,11 @@ export function evaluateInstruction(
     }
     case 'minimum': {
       const operands = instruction.values.map(id => requiredNumber(state, id))
-      return value(withLossBlame(minimumNumbers(operands), operands, instruction.site))
+      return computedNumber(minimumNumbers(operands), operands, instruction.site)
     }
     case 'maximum': {
       const operands = instruction.values.map(id => requiredNumber(state, id))
-      return value(withLossBlame(maximumNumbers(operands), operands, instruction.site))
+      return computedNumber(maximumNumbers(operands), operands, instruction.site)
     }
     case 'call': {
       const callee = context.program.functions[instruction.function]
@@ -266,7 +244,7 @@ export function evaluateInstruction(
       state.shared = completed.sharedState
       adoptCalleeHeap(state.frame.values, state.shared.heap)
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
-      return value(completed.returnValue)
+      return passthroughValue(completed.returnValue)
     }
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
@@ -285,9 +263,9 @@ export function evaluateInstruction(
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
         // zero and stays possibly non-finite.
-        return value(withLossBlame(divideNumbersNonzeroDivisor(left, right), [left, right], instruction.site))
+        return computedNumber(divideNumbersNonzeroDivisor(left, right), [left, right], instruction.site)
       }
-      return value(withLossBlame(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site))
+      return computedNumber(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site)
     }
   }
 }
@@ -348,7 +326,7 @@ export function refineComparison(
   return result
 }
 
-export function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
+function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
   const value = requiredValue(state, id)
   if (value.kind !== 'number') throw new Error(`IR value ${id} is not a number`)
   return value
@@ -360,7 +338,7 @@ export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoo
   return value
 }
 
-export function requiredReference(state: ExecutionState, id: ValueID): AbstractReference {
+function requiredReference(state: ExecutionState, id: ValueID): AbstractReference {
   const value = requiredValue(state, id)
   if (value.kind !== 'reference') throw new Error(`IR value ${id} is not an object reference`)
   return value
@@ -386,7 +364,7 @@ function evaluateBinary(
 }
 
 function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: ComparisonOperator): AbstractBoolean {
-  if (left.mayBeNaN || right.mayBeNaN) return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
+  if (left.mayBeNaN || right.mayBeNaN) return unknownBoolean()
   switch (operator) {
     case 'lessThan': return booleanRange((left.upper < right.lower), (left.lower >= right.upper))
     case 'lessThanOrEqual': return booleanRange((left.upper <= right.lower), (left.lower > right.upper))
@@ -421,11 +399,7 @@ function invertedComparison(operator: ComparisonOperator): ComparisonOperator {
 function withBounds(value: AbstractNumber, lower: number, upper: number): AbstractNumber {
   let refinedLower = Math.max(value.lower, lower)
   let refinedUpper = Math.min(value.upper, upper)
-  // A possibly infinite value lives at its interval's infinite end (every producer keeps
-  // that invariant), so a refinement that clips the interval to finite bounds also proves
-  // finiteness — without this, `if (x > 0 && x < 100)` on an overflow-able x would print
-  // the self-contradictory "possibly non-finite number from 0 through 100".
-  const finite = value.finite || (Number.isFinite(refinedLower) && Number.isFinite(refinedUpper))
+
   // An integer interval refined by a non-strict comparison against a non-integer bound
   // (`if (count >= 3.2)`) would keep the fractional bound. Snap to the integer hull —
   // exact, since only integers inhabit the interval. Left unsnapped, the bounds and the
@@ -436,7 +410,10 @@ function withBounds(value: AbstractNumber, lower: number, upper: number): Abstra
     refinedLower = Math.ceil(refinedLower)
     refinedUpper = Math.floor(refinedUpper)
   }
-  return {...value, lower: refinedLower, upper: refinedUpper, finite}
+  // A possibly infinite value lives at its interval's infinite end, so a refinement that
+  // clips the interval to finite bounds also proves finiteness — with finiteness derived
+  // from the bounds, that now holds by construction.
+  return {...value, lower: refinedLower, upper: refinedUpper}
 }
 
 function strictLower(value: number, integer: boolean): number {

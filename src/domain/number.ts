@@ -1,10 +1,12 @@
 import type {SiteID} from '../ir/ids.ts'
 export type AbstractNumber = {
   kind: 'number'
+  // The bounds carry finiteness by construction: a value that can be ±Infinity has that
+  // infinity as a bound (every producer keeps the invariant, so a "finite" flag would only
+  // be a hand-maintained copy of Number.isFinite over the bounds — use isFiniteNumber).
   lower: number
   upper: number
   integer: boolean
-  finite: boolean
   mayBeNaN: boolean
   // Annotation only, never semantics: the operation where finiteness or NaN-freedom was
   // first lost, for the report's blame suffix. Deliberately excluded from sameNumbers and
@@ -15,13 +17,16 @@ export type AbstractNumber = {
   lossSite?: SiteID
 }
 
+export function isFiniteNumber(value: AbstractNumber): boolean {
+  return Number.isFinite(value.lower) && Number.isFinite(value.upper)
+}
+
 export function finiteInputNumber(): AbstractNumber {
   return {
     kind: 'number',
     lower: -Number.MAX_VALUE,
     upper: Number.MAX_VALUE,
     integer: false,
-    finite: true,
     mayBeNaN: false,
   }
 }
@@ -32,7 +37,6 @@ export function constantNumber(value: number): AbstractNumber {
     lower: value,
     upper: value,
     integer: Number.isInteger(value),
-    finite: Number.isFinite(value),
     mayBeNaN: Number.isNaN(value),
   }
 }
@@ -90,7 +94,6 @@ export function floorNumber(value: AbstractNumber): AbstractNumber {
     lower: Math.floor(value.lower),
     upper: Math.floor(value.upper),
     integer: true,
-    finite: value.finite,
     mayBeNaN: value.mayBeNaN,
   }
 }
@@ -105,7 +108,7 @@ export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: Abstrac
   if (!safeOperands(left, right)) return unknownNumber()
   if (!includesZero(right)) return divideNumbers(left, right)
   if (!right.integer) {
-    return {kind: 'number', lower: -Infinity, upper: Infinity, integer: false, finite: false, mayBeNaN: false}
+    return {kind: 'number', lower: -Infinity, upper: Infinity, integer: false, mayBeNaN: false}
   }
   const negativePart: AbstractNumber = {...right, upper: Math.min(right.upper, -1)}
   const positivePart: AbstractNumber = {...right, lower: Math.max(right.lower, 1)}
@@ -122,41 +125,33 @@ export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: Abstrac
 
 export function absoluteNumber(value: AbstractNumber): AbstractNumber {
   const lower = value.lower >= 0 ? value.lower : value.upper <= 0 ? -value.upper : 0
-  const upper = Math.max(-value.lower, value.upper)
   return {
     kind: 'number',
     lower,
-    upper,
+    upper: Math.max(-value.lower, value.upper),
     integer: value.integer,
-    finite: Number.isFinite(lower) && Number.isFinite(upper),
     mayBeNaN: value.mayBeNaN,
   }
 }
 
 export function minimumNumbers(values: AbstractNumber[]): AbstractNumber {
   if (values.length === 0) return unknownNumber()
-  const lower = Math.min(...values.map(value => value.lower))
-  const upper = Math.min(...values.map(value => value.upper))
   return {
     kind: 'number',
-    lower,
-    upper,
+    lower: Math.min(...values.map(value => value.lower)),
+    upper: Math.min(...values.map(value => value.upper)),
     integer: values.every(value => value.integer),
-    finite: Number.isFinite(lower) && Number.isFinite(upper),
     mayBeNaN: values.some(value => value.mayBeNaN),
   }
 }
 
 export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
   if (values.length === 0) return unknownNumber()
-  const lower = Math.max(...values.map(value => value.lower))
-  const upper = Math.max(...values.map(value => value.upper))
   return {
     kind: 'number',
-    lower,
-    upper,
+    lower: Math.max(...values.map(value => value.lower)),
+    upper: Math.max(...values.map(value => value.upper)),
     integer: values.every(value => value.integer),
-    finite: Number.isFinite(lower) && Number.isFinite(upper),
     mayBeNaN: values.some(value => value.mayBeNaN),
   }
 }
@@ -171,7 +166,6 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
     lower: Math.min(left.lower, right.lower),
     upper: Math.max(left.upper, right.upper),
     integer: left.integer && right.integer,
-    finite: left.finite && right.finite,
     mayBeNaN: left.mayBeNaN || right.mayBeNaN,
   }
   const lossSite = left.lossSite ?? right.lossSite
@@ -183,12 +177,11 @@ export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolea
   return left.lower === right.lower
     && left.upper === right.upper
     && left.integer === right.integer
-    && left.finite === right.finite
     && left.mayBeNaN === right.mayBeNaN
 }
 
 export function widenNumber(previous: AbstractNumber, next: AbstractNumber): AbstractNumber {
-  const finite = previous.finite && next.finite
+  const finite = isFiniteNumber(previous) && isFiniteNumber(next)
   return {
     ...next,
     lower: next.lower < previous.lower
@@ -204,25 +197,19 @@ function boundedResult(
   lower: number,
   upper: number,
   integer: boolean,
-  ...operands: AbstractNumber[]
+  left: AbstractNumber,
+  right: AbstractNumber,
 ): AbstractNumber {
   // With a possibly non-finite or NaN operand, the bound arithmetic itself is meaningless
   // (Infinity - Infinity is NaN), so the result collapses to unknown. With clean operands
   // the bounds are trustworthy even when they overflow to ±Infinity — overflow produces an
   // infinity at runtime, never a NaN, so the result stays NaN-free.
-  if (!operands.every(value => value.finite && !value.mayBeNaN)) return unknownNumber()
-  return {
-    kind: 'number',
-    lower,
-    upper,
-    integer,
-    finite: Number.isFinite(lower) && Number.isFinite(upper),
-    mayBeNaN: false,
-  }
+  if (!safeOperands(left, right)) return unknownNumber()
+  return {kind: 'number', lower, upper, integer, mayBeNaN: false}
 }
 
 function safeOperands(left: AbstractNumber, right: AbstractNumber): boolean {
-  return left.finite && right.finite && !left.mayBeNaN && !right.mayBeNaN
+  return isFiniteNumber(left) && isFiniteNumber(right) && !left.mayBeNaN && !right.mayBeNaN
 }
 
 function unknownNumber(): AbstractNumber {
@@ -231,7 +218,6 @@ function unknownNumber(): AbstractNumber {
     lower: Number.NEGATIVE_INFINITY,
     upper: Number.POSITIVE_INFINITY,
     integer: false,
-    finite: false,
     mayBeNaN: true,
   }
 }

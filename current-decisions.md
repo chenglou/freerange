@@ -4,6 +4,8 @@
 
 **warn** the user before decisions that can cause path, state, or calculation explosions — branches, loops, numeric expressions, fixed points, widening — before major architecture or file-structure changes, and before important data-structure decisions become difficult to reverse.
 
+Prefer correctness by construction over correctness by review: when a rule must hold across many places (every numeric arm stamps blame, every write form demotes a binding, every producer keeps an interval invariant), reshape the code so one place enforces it and forgetting is impossible, rather than repeating the pattern and relying on adversarial reviews to catch the missed spot. Reviews stay as the safety net, not the mechanism.
+
 Soundness reviews aim at code people actually write. A hole reachable from ordinary code — a value that can become NaN, a stale constant published after a plain reassignment — deserves a real fix. A hole that needs contrived code, e.g. an `eval` string reassigning a module binding, or `true as unknown as number`, is still worth reporting, but the response is to move the construct out of the accepted subset (next section), not to handle the corner cleverly. Review prompts should say so, or the reviewers drift into hunting exotic spellings as if they were security exploits.
 
 ## What TypeScript code does the analyzer accept?

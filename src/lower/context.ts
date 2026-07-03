@@ -7,7 +7,7 @@ import type {
   ValueID,
 } from '../ir/ids.ts'
 import type {InstructionIR, TerminatorIR} from '../ir/instructions.ts'
-import type {FunctionIR, SourceSpan, UnsupportedReason} from '../ir/program.ts'
+import {nodeSpan, type BlockIR, type FunctionIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
 
 export type MutableBlock = {
   loopHeader: SiteID | null
@@ -39,8 +39,37 @@ export type FunctionContext = {
   parameters: FunctionIR['parameters']
 }
 
+// The mutable lowering state a skipped initializer statement must roll back, kept beside
+// the type so a future mutable field on FunctionContext is added to the snapshot in the
+// same file. Two fields are deliberately not rolled back: sites (rolled-back sites would
+// invalidate SiteIDs already recorded elsewhere) and nextValue (leaked ValueIDs are merely
+// sparse).
+export type LoweringSnapshot = {
+  block: MutableBlock
+  instructionCount: number
+  blockCount: number
+  bindings: Map<ts.Symbol, ValueID>
+}
+
+export function snapshotLowering(context: FunctionContext): LoweringSnapshot {
+  return {
+    block: context.currentBlock,
+    instructionCount: context.currentBlock.instructions.length,
+    blockCount: context.blocks.length,
+    bindings: new Map(context.bindings),
+  }
+}
+
+export function restoreLowering(context: FunctionContext, snapshot: LoweringSnapshot): void {
+  context.blocks.length = snapshot.blockCount
+  snapshot.block.instructions.length = snapshot.instructionCount
+  snapshot.block.terminator = null
+  context.currentBlock = snapshot.block
+  context.bindings = snapshot.bindings
+}
+
 export function addSite(context: FunctionContext, node: ts.Node): SiteID {
-  context.sites.push({start: node.getStart(context.sourceFile), end: node.getEnd()})
+  context.sites.push(nodeSpan(context.sourceFile, node))
   return context.sites.length - 1
 }
 
@@ -63,6 +92,22 @@ export function createBlock(context: FunctionContext, parameterCount = 0, loopHe
   const block: MutableBlock = {loopHeader, parameters, instructions: [], terminator: null}
   context.blocks.push(block)
   return context.blocks.length - 1
+}
+
+// Copies finished lowering blocks into their immutable BlockIR form. A missing terminator
+// here is a lowering bug — the statement protocol terminates every block it creates except
+// the current one, which callers must handle before sealing — so it crashes as an invariant
+// violation instead of masquerading as a user-facing missing-return reason.
+export function sealBlocks(blocks: MutableBlock[], name: string): BlockIR[] {
+  return blocks.map(block => {
+    if (block.terminator == null) throw new Error(`Lowering left an unterminated block in ${name}`)
+    return {
+      loopHeader: block.loopHeader,
+      parameters: block.parameters,
+      instructions: block.instructions,
+      terminator: block.terminator,
+    }
+  })
 }
 
 export function terminate(block: MutableBlock, terminator: TerminatorIR): void {
@@ -108,8 +153,8 @@ export function requiredBranchBinding(symbol: ts.Symbol, bindings: Map<ts.Symbol
 // Thrown when lowering meets a construct outside the accepted subset. Caught at exactly two
 // places: the per-function loop in lowerSource, which discards the whole in-progress
 // FunctionContext and records an UnsupportedFunctionIR, and the module initializer's
-// statement loop in module.ts, which keeps everything lowered so far and ends the open
-// paths with stop terminators. No other try/catch may exist under src/lower (a mid-lowering
+// statement loop in module.ts, which rolls the failed statement back and keeps lowering
+// (a skip). No other try/catch may exist under src/lower (a mid-lowering
 // catch would silently truncate bodies), and nothing outside src/lower may see this class.
 // Extends Error only so an accidentally escaping stop has a stack trace; the message is
 // never parsed or matched.

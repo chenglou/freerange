@@ -13,7 +13,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {compoundAssignmentOperator, lowerExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {identifierAssignment, lowerExpression, requireBooleanCondition, valueKind} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -217,20 +217,10 @@ function assignedSymbols(nodes: ts.Node[], checker: ts.TypeChecker): Set<ts.Symb
   const symbols = new Set<ts.Symbol>()
   const visit = (node: ts.Node): void => {
     if (ts.isFunctionLike(node)) return
-    if (
-      ts.isBinaryExpression(node)
-      && ts.isIdentifier(node.left)
-      && (node.operatorToken.kind === ts.SyntaxKind.EqualsToken || compoundAssignmentOperator(node.operatorToken.kind) != null)
-    ) {
-      symbols.add(requiredSymbol(node.left, checker))
-    }
-    if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
-      && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
-      && ts.isIdentifier(node.operand)
-    ) {
-      symbols.add(requiredSymbol(node.operand, checker))
-    }
+    // Shares the lowering's recognizer, so a form that lowers an assignment is carried
+    // across loop back edges by construction.
+    const assignment = identifierAssignment(node)
+    if (assignment != null) symbols.add(requiredSymbol(assignment.target, checker))
     ts.forEachChild(node, visit)
   }
   for (const node of nodes) visit(node)

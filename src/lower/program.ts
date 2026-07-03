@@ -1,8 +1,8 @@
 import * as ts from 'typescript'
-import type {BlockIR, FunctionIR, FunctionLowering, ProgramIR, SourceSpan, UnsupportedReason, ValueTypeIR} from '../ir/program.ts'
+import {moduleInitializerName, nodeSpan, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason, type ValueTypeIR} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
-import {addSite, LoweringStop, requiredSymbol, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addSite, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
@@ -30,7 +30,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
     moduleBindings: [],
     initializer: {
       kind: 'lowered',
-      name: 'module initialization',
+      name: moduleInitializerName,
       parameters: [],
       entry: 0,
       blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
@@ -41,7 +41,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
   if (suppression != null) return rejectFile(suppression, {kind: 'typeCheckSuppressed'})
   const evalNode = evalMention(sourceFile)
   if (evalNode != null) {
-    return rejectFile({start: evalNode.getStart(sourceFile), end: evalNode.getEnd()}, {kind: 'evalInFile'})
+    return rejectFile(nodeSpan(sourceFile, evalNode), {kind: 'evalInFile'})
   }
   const functionsBySymbol = new Map<ts.Symbol, TopLevelFunction>()
   for (let index = 0; index < declarations.length; index++) {
@@ -64,7 +64,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
       functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, scan, sites))
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
-      sites.push({start: error.node.getStart(sourceFile), end: error.node.getEnd()})
+      sites.push(nodeSpan(sourceFile, error.node))
       functions.push({kind: 'unsupported', name: declaration.name!.text, site: sites.length - 1, reason: error.reason})
     }
   }
@@ -126,22 +126,12 @@ function lowerFunction(
     if (!returnsVoid) throw unsupported(declaration, {kind: 'missingReturn'})
     terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
   }
-  const blocks: BlockIR[] = []
-  for (const block of context.blocks) {
-    if (block.terminator == null) throw unsupported(declaration, {kind: 'missingReturn'})
-    blocks.push({
-      loopHeader: block.loopHeader,
-      parameters: block.parameters,
-      instructions: block.instructions,
-      terminator: block.terminator,
-    })
-  }
   return {
     kind: 'lowered',
     name: declaration.name!.text,
     parameters: context.parameters,
     entry: 0,
-    blocks,
+    blocks: sealBlocks(context.blocks, declaration.name!.text),
   }
 }
 
