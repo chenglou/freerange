@@ -130,6 +130,7 @@ When any path inside a loop stops, the loop header cannot reach its fixed point,
 - Each CFG block keeps one merged abstract state. We do not retain every path.
 - Loops are not unrolled.
 - Block parameters carry values across branches and loops.
+- Branch refinement stays at pattern-matching depth (owner-stated wariness of anything deeper): a branch on a single comparison narrows that comparison's two direct operands, and nothing else — no refinement through compound `&&`/`||` conditions, no back-propagation through arithmetic (`x * 2 > 4` does not narrow `x`), no relational facts. Compound conditions that need narrowing get rewrite guidance instead: nested guards, e.g. `if (x > 0) { if (x < 100) ... }`, already narrow fully. Anything deeper than this needs explicit owner sign-off — the one soundness bug in the refinement machinery to date (the NaN branch prune) lived exactly on this surface.
 - Browser behavior comes from static models. No browser probes.
 - Reports distinguish input assumptions (`assumes:`), guarantees (`ensures:`), inferred requirements (`requires:`), unsupported code (`unsupported:`), and partial results (`stopped:` plus `on analyzed paths:`). The primary reader is an agent looking up number ranges — batched hover-to-show-type, not prose to be enjoyed; a grep-friendly output format is a likely future direction.
 - The accepted TypeScript subset stays explicit and deliberately narrow; the section near the top of this document states the list and the rejection principles.
