@@ -292,6 +292,9 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'computedPropertyName': return 'computed object property name'
     case 'spreadOptionalProperty': return `spread of a value whose property ${reason.property} is optional (declare every property of the spread source required)`
     case 'spreadAfterProperties': return 'a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)'
+    case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
+    case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
+    case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
     case 'call': return `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`

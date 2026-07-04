@@ -820,9 +820,9 @@ describe('analyzeFile', () => {
     // value while the runtime took the override.
     const report = analyzeSource('spread-optional.ts', `
       export function effectiveVolume(): number {
-        const overrides: {volume?: number} = {volume: 7}
-        const merged = {...overrides, volume: 1}
-        return merged.volume
+        const overrides: {gain: number; volume?: number} = {gain: 2, volume: 7}
+        const merged = {...overrides, gain: 1}
+        return merged.gain
       }
     `)
     const file = resolve('spread-optional.ts')
@@ -928,6 +928,55 @@ describe('analyzeFile', () => {
     const reader = analyzedFunction(report, 'currentZoom')
     expect(reader.assumptions).toEqual(['appZoom.level is finite and not NaN'])
     expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('rejects the constructs whose checker word the analysis cannot confirm', () => {
+    // Four gates from one review round: a type predicate is the checker taking the
+    // author's word (a lying one exposes properties the value never carries); an async
+    // body's runtime result is a Promise, not its return value; `{}` is inhabited by
+    // every non-null value, numbers included, so it is not a record shape; and __proto__
+    // in a literal sets the prototype rather than creating a property.
+    const report = analyzeSource('checker-word.ts', `
+      type Circle = {kind: number; radius: number}
+      export function isCircle(shape: {kind: number}): shape is Circle {
+        return shape.kind > 0
+      }
+      export async function fetchDelay(): Promise<number> {
+        return 16
+      }
+      export function chooseMarker(flag: number): number {
+        const marker: {} = 5
+        return flag
+      }
+      export function protoDepth(): number {
+        const carrier = {__proto__: {depth: 7}}
+        return 0
+      }
+    `)
+    const formatted = formatReport(report)
+    expect(formatted).toContain('a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)')
+    expect(formatted).toContain("an async or generator function (the runtime result is a Promise or iterator, not the body's return value)")
+    expect(formatted).toContain('value of type {}')
+    expect(formatted).toContain('a property named __proto__ (prototype-setting syntax at runtime, not a data property)')
+  })
+
+  test('the parameter gate classifies through valueKind', () => {
+    // One definition of every kind across gates: a 1 | 2 discriminant property is a
+    // number in a parameter exactly as at the declarator, and an index-signature
+    // parameter type rejects instead of seeding a record the type licenses more reads
+    // against than it carries (the destructured read of `latency` would crash the engine).
+    const report = analyzeSource('parameter-kinds.ts', `
+      export function modeOf(zoom: {mode: 1 | 2}): number {
+        return zoom.mode
+      }
+      export function readGauge(board: {base: number; [gauge: string]: number}): number {
+        const {base, latency} = board
+        return base + latency
+      }
+    `)
+    expect(analyzedFunction(report, 'modeOf').ensures).toEqual(['return is a finite number'])
+    const gauge = report.functions.find(candidate => candidate.name === 'readGauge')
+    expect(gauge?.kind).toBe('unsupported')
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {

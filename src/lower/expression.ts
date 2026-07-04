@@ -114,7 +114,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         continue
       }
       if (ts.isPropertyAssignment(property)) {
-        properties.push({name: propertyName(property.name), value: lowerExpression(property.initializer, context)})
+        const name = propertyName(property.name)
+        // `__proto__: value` in a literal is prototype-setting syntax at runtime — no own
+        // property is created — while the checker types it as a plain property.
+        if (name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
+        properties.push({name, value: lowerExpression(property.initializer, context)})
         continue
       }
       // `{...spring, pos: newPos}` — the update idiom of the immutable subset. Every object
@@ -144,6 +148,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           if ((member.flags & ts.SymbolFlags.Optional) !== 0) {
             throw unsupported(property, {kind: 'spreadOptionalProperty', property: member.name})
           }
+          if (member.name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
           // Each copied property's kind must be representable: a `value: number | boolean`
           // property passes no read gate, so the record join may have dropped it, and the
           // spread's own read would be the one ungated path to the dropped property.
@@ -404,12 +409,19 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     // record — built from a specific literal — cannot honor reads or spreads the signature
     // licenses. `stats.misses` type-checks against Record<string, number> while the value
     // is `{clicks: 1}`, and `{...defaults, ...overrides}` would copy nothing from an
-    // override map whose type names no properties. A callable type is not a record either:
-    // `point.toString` type-checks on every object literal, but the record value built
-    // from the literal carries no such property.
+    // override map whose type names no properties. A callable or constructable type is
+    // not a record either: `point.toString` type-checks on every object literal, but the
+    // record value built from the literal carries no such property, and a class's static
+    // side is a constructor, not plain data. Finally, the type must have at least one
+    // required non-callable property, or primitives inhabit it — every non-null value
+    // satisfies `{}`, and a number satisfies `{toString(): string}` — letting a number
+    // and a record meet at a join.
     if (checker.getIndexInfosOfType(type).length > 0) return null
-    if (type.getCallSignatures().length > 0) return null
-    return 'object'
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    const anchored = checker.getPropertiesOfType(type).some(property =>
+      (property.flags & ts.SymbolFlags.Optional) === 0
+      && checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+    return anchored ? 'object' : null
   }
   if (type.isUnion()) {
     let shared: 'number' | 'boolean' | 'object' | null = null
@@ -450,7 +462,8 @@ function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     if (seen.length >= 8 || seen.includes(type)) return 'other'
-    if (checker.getIndexInfosOfType(type).length > 0 || type.getCallSignatures().length > 0) return 'other'
+    if (checker.getIndexInfosOfType(type).length > 0) return 'other'
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return 'other'
     const properties = checker.getPropertiesOfType(type)
       .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
       .map(property => `${property.name}:${shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])}`)

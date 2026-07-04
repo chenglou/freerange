@@ -89,7 +89,20 @@ function lowerFunction(
   sites: SourceSpan[],
 ): FunctionIR {
   if (declaration.body == null) throw unsupported(declaration, {kind: 'functionWithoutBody'})
+  // An async body returns a Promise and a generator returns an iterator; lowering either
+  // as if it ran synchronously would publish the body's values as the caller-visible
+  // result. Rejected wholesale.
+  if (declaration.asteriskToken != null || declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true) {
+    throw unsupported(declaration, {kind: 'asyncOrGeneratorFunction'})
+  }
   assertAccepted(declaration, checker)
+  const signature = checker.getSignatureFromDeclaration(declaration)
+  // A type predicate (`shape is Circle`, `asserts x`) is the checker taking the author's
+  // word: callers' narrowing then exposes properties the analysis cannot confirm the
+  // value carries. Rejecting the declaring function stops every caller at the call.
+  if (signature != null && checker.getTypePredicateOfSignature(signature) != null) {
+    throw unsupported(declaration, {kind: 'typePredicate'})
+  }
   const returnType = functionReturnType(declaration, checker)
   const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
   // Mixed return kinds (e.g. one branch returning a number and another a boolean) would
@@ -133,14 +146,19 @@ function lowerFunction(
 
 function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): ValueTypeIR {
   const type = checker.getTypeAtLocation(parameter)
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return {kind: 'number'}
-  if ((type.flags & ts.TypeFlags.Object) === 0) {
-    throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
+  // Through valueKind, the one classification every other gate uses: a `1 | 2`
+  // discriminant is a number here as everywhere else, and index signatures, callables,
+  // and mixed shapes reject here instead of seeding a record the type licenses more
+  // reads against than it carries.
+  switch (valueKind(type, checker)) {
+    case 'number': return {kind: 'number'}
+    case 'object': break
+    default: throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
   }
   const properties: string[] = []
   for (const property of checker.getPropertiesOfType(type)) {
     const propertyType = checker.getTypeOfSymbolAtLocation(property, parameter)
-    if ((property.flags & ts.SymbolFlags.Optional) !== 0 || (propertyType.flags & ts.TypeFlags.NumberLike) === 0) {
+    if ((property.flags & ts.SymbolFlags.Optional) !== 0 || valueKind(propertyType, checker) !== 'number') {
       throw unsupported(parameter, {
         kind: 'objectParameterProperty',
         property: property.name,
