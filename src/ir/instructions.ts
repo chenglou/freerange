@@ -17,6 +17,10 @@ type ObjectPropertyIR = {
 export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
   | (InstructionBase & {kind: 'nullishConstant'; sentinel: 'null' | 'undefined'})
+  // A value the analysis carries without claims — a string literal, a template string.
+  | (InstructionBase & {kind: 'opaqueConstant'})
+  // A boolean the analysis knows nothing about — comparing two opaque values.
+  | (InstructionBase & {kind: 'unknownBoolean'})
   | (InstructionBase & {kind: 'arrayLiteral'; elements: ValueID[]; form: 'tuple' | 'array'})
   | (InstructionBase & {kind: 'arrayLength'; array: ValueID})
   // An element read. `asserted` distinguishes arr[i]! (types T; unproven bounds become an
@@ -66,6 +70,8 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
   switch (instruction.kind) {
     case 'constant':
     case 'nullishConstant':
+    case 'opaqueConstant':
+    case 'unknownBoolean':
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':

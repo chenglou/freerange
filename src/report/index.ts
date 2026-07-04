@@ -137,21 +137,7 @@ function assumptionLines(
 ): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
-    switch (parameter.type.kind) {
-      case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
-      case 'numberArray': assumptions.push(`every ${parameter.name} element is finite and not NaN`); break
-      case 'nullishNumber': {
-        const sentinelWords = parameter.type.sentinels === 'both' ? 'null or undefined' : parameter.type.sentinels
-        assumptions.push(`${parameter.name} is ${sentinelWords} or a finite non-NaN number`)
-        break
-      }
-      case 'object': {
-        for (const property of parameter.type.properties) {
-          assumptions.push(`${parameter.name}.${property} is finite and not NaN`)
-        }
-        break
-      }
-    }
+    pushDeclaredAssumptions(parameter.name, parameter.type, assumptions)
   }
   for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
     if (assumedBindings[bindingID] !== true) continue
@@ -180,6 +166,15 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       }
       break
     }
+    case 'array': {
+      // E.g. `every values element is finite and not NaN`.
+      const leaf: string[] = []
+      pushDeclaredAssumptions(`${path} element`, declared.element, leaf)
+      for (const line of leaf) assumptions.push(`every ${line}`)
+      break
+    }
+    // No claims are made about an opaque leaf, so there is nothing to assume.
+    case 'opaque': break
     case 'nullish': {
       // E.g. `animatedUntilTime is null or a finite non-NaN number`.
       const innerWords = declared.inner.kind === 'number'
@@ -323,8 +318,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'functionWithoutBody': return 'function declarations need bodies'
     case 'destructuredParameter': return 'destructured parameters (take a named parameter and destructure it in the body)'
     case 'parameterType': return `function parameter with type ${reason.typeText}`
-    case 'objectParameterProperty': return `object parameter property ${reason.property} with type ${reason.typeText}`
-    case 'objectParameterWithoutNumericProperties': return 'object parameter without numeric properties'
     case 'missingReturn': return 'function path without a return (add a return on every path)'
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
@@ -392,6 +385,8 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
       return summaries
     }
     case 'void': return []
+    // No numeric claims exist about an opaque value; saying nothing is the honest line.
+    case 'opaque': return []
     case 'nullish': return [`${path} is ${sentinelsText(value.sentinels)}`]
     case 'tuple': {
       const lines: string[] = [`${path}.length is exactly ${value.elements.length}`]

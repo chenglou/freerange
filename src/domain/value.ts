@@ -24,6 +24,15 @@ type AbstractVoid = {
   kind: 'void'
 }
 
+// A value the analysis carries but makes no claims about — strings today. It flows
+// through records, parameters, and returns; comparing two opaques gives an unknown
+// boolean; every operation ON one is rejected at lowering. Nothing numeric is ever said
+// about it, so nothing unsound can be: its whole job is to stop non-numeric content from
+// rejecting the function around it.
+export type AbstractOpaque = {
+  kind: 'opaque'
+}
+
 // A tuple: fixed length, one value per position — produced by literals whose static type
 // is a tuple ([4, 8, 24] as const). Follows the type system's own split: tuples are
 // positional, arrays are homogeneous. A tuple meeting a different-length tuple or an
@@ -76,6 +85,7 @@ export type AbstractValue =
   | AbstractMaybeNullish
   | AbstractTuple
   | AbstractArray
+  | AbstractOpaque
 
 export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
@@ -154,6 +164,7 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
+    case 'opaque': return left
     // Handled by the structural arms above; unreachable here.
     case 'tuple':
     case 'array':
@@ -218,6 +229,7 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
         })
     }
     case 'void': return true
+    case 'opaque': return true
     case 'nullish': return left.sentinels === (right as AbstractNullish).sentinels
     case 'maybeNullish': {
       const other = right as AbstractMaybeNullish
@@ -284,10 +296,11 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
       return {kind: 'array', element, length: widenNumber(previous.length, next.length)}
     }
     // Bounded lattices need no widening: booleans have height two, the missing sentinels
-    // form a three-point lattice, void is a point.
+    // form a three-point lattice, void and opaque are points.
     case 'boolean':
     case 'void':
     case 'nullish':
+    case 'opaque':
       return next
   }
 }

@@ -751,25 +751,29 @@ describe('analyzeFile', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
-  test('module records with unrepresentable properties stay opaque', () => {
-    const report = analyzeSource('module-record-opaque.ts', `
+  test('module arrays publish exactly in fully analyzed files, hedge otherwise', () => {
+    const report = analyzeSource('module-array.ts', `
       const items = [3, 5]
       export function itemCount(): number {
         return items.length
       }
     `)
-    const file = resolve('module-record-opaque.ts')
-    // The array literal lowers, but module array bindings stay opaque, so the read stops
-    // at the slot.
-    expect(report.functions).toEqual([
-      {
-        kind: 'partial',
-        name: 'itemCount',
-        assumptions: [],
-        stopped: [`reads items, whose value the analysis does not track (read at ${file}:4:16)`],
-        observed: [],
-      },
-    ])
+    expect(analyzedFunction(report, 'itemCount').ensures)
+      .toEqual(['return is a finite integer number from 2 through 2'])
+    // With unanalyzed code in the file, the array — alias-mutable at runtime like any
+    // record — falls back to its declared shape.
+    const hedged = analyzeSource('module-array-hedged.ts', `
+      const items = [3, 5]
+      export function mutateSomehow(): void {
+        items.push(7)
+      }
+      export function itemCount(): number {
+        return items.length
+      }
+    `)
+    const reader = hedged.functions.find(fn => fn.name === 'itemCount')
+    expect(reader?.kind).toBe('analyzed')
+    expect(reader?.kind === 'analyzed' ? reader.assumptions : []).toEqual(['every items element is finite and not NaN'])
   })
 
   test('exact record publishing requires a fully analyzed file', () => {
@@ -1462,6 +1466,44 @@ describe('analyzeFile', () => {
       'return may be null; when present:',
       'return.a is a finite number at least 0',
     ])
+  })
+
+  test('strings and booleans are carried, not rejected; parameters take any declared kind', () => {
+    // The old behavior was wild: one id: string property rejected the whole function.
+    // Opaque values carry non-numeric content without claims, and parameters share the
+    // module bindings' recursive declared-kind classification.
+    const report = analyzeSource('opaque-values.ts', `
+      type Box = {id: string; width: number; visible: boolean}
+      export function scaledWidth(box: Box, factor: number): number {
+        return Math.min(box.width * factor, 1000)
+      }
+      export function labelled(width: number): number {
+        const label = \`\${width}px\`
+        return width * 2
+      }
+      export function pick(mode: string, compact: number, wide: number): number {
+        if (mode === 'compact') { return compact }
+        return wide
+      }
+      export function flagged(enabled: boolean, value: number): number {
+        if (enabled) { return value }
+        return 0
+      }
+    `)
+    const scaled = analyzedFunction(report, 'scaledWidth')
+    // The string property makes no assumption line — there is nothing to claim about it.
+    expect(scaled.assumptions).toEqual([
+      'box.width is finite and not NaN',
+      'box.visible is a boolean',
+      'factor is finite and not NaN',
+    ])
+    // A template literal is carried; the numeric contract survives.
+    expect(analyzedFunction(report, 'labelled').assumptions).toEqual(['width is finite and not NaN'])
+    // String dispatch: the comparison is an unknown boolean, both branches analyzed.
+    expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
+    // Boolean parameters are new too (the flat-numbers gate rejected them).
+    expect(analyzedFunction(report, 'flagged').assumptions)
+      .toEqual(['enabled is a boolean', 'value is finite and not NaN'])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {

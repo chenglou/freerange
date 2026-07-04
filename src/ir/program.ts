@@ -7,17 +7,13 @@ import type {InstructionIR, TerminatorIR} from './instructions.ts'
 type ParameterIR = {
   value: ValueID
   name: string
-  type: ValueTypeIR
+  type: DeclaredKind
 }
 
-export type ValueTypeIR =
-  | {kind: 'number'}
-  | {kind: 'object'; properties: string[]}
-  // `number | null` and friends — seeded as missing-or-finite; checks narrow the missing
-  // half away. The sentinels drive the assumes prose.
-  | {kind: 'nullishNumber'; sentinels: 'null' | 'undefined' | 'both'}
-  // `number[]` — seeded as an any-length array of finite numbers.
-  | {kind: 'numberArray'}
+// Parameters share the module bindings' declared-kind language: one recursive
+// classification covers numbers, booleans, records, nullable wrappers, arrays, tuples,
+// and opaque (string) leaves — a label or id in a parameter record no longer rejects the
+// function around it.
 
 // UTF-16 offsets into the analyzed source, from ts.Node.getStart/getEnd. Line and column
 // are computed only at message-formatting time. Spans may repeat across sites (the constant 1
@@ -66,8 +62,6 @@ export type UnsupportedReason =
   | {kind: 'destructuredParameter'}
 
   | {kind: 'parameterType'; typeText: string}
-  | {kind: 'objectParameterProperty'; property: string; typeText: string}
-  | {kind: 'objectParameterWithoutNumericProperties'}
   // A non-void function has a path that falls off the end without returning.
   | {kind: 'missingReturn'}
   // Spread, method, or accessor in an object literal.
@@ -164,6 +158,11 @@ export type DeclaredKind =
   // A tuple type: fixed length, one declared kind per position — the module config table
   // `const gapSizes = [4, 8, 24] as const` publishes like a record.
   | {kind: 'tuple'; elements: DeclaredKind[]}
+  // A homogeneous array of the element's kind.
+  | {kind: 'array'; element: DeclaredKind}
+  // A kind the analysis carries without claims — strings. Present so a record with an id
+  // or label keeps its numeric contract instead of rejecting wholesale.
+  | {kind: 'opaque'}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
@@ -213,6 +212,12 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
     })))
     case 'nullish': return {kind: 'maybeNullish', inner: declaredKindValue(declared.inner), sentinels: declared.sentinels}
     case 'tuple': return {kind: 'tuple', elements: declared.elements.map(declaredKindValue)}
+    case 'array': return {
+      kind: 'array',
+      element: declaredKindValue(declared.element),
+      length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
+    }
+    case 'opaque': return {kind: 'opaque'}
   }
 }
 
@@ -231,6 +236,12 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
     })))
     case 'nullish': return {kind: 'maybeNullish', inner: coveringKindValue(declared.inner), sentinels: declared.sentinels}
     case 'tuple': return {kind: 'tuple', elements: declared.elements.map(coveringKindValue)}
+    case 'array': return {
+      kind: 'array',
+      element: coveringKindValue(declared.element),
+      length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
+    }
+    case 'opaque': return {kind: 'opaque'}
   }
 }
 

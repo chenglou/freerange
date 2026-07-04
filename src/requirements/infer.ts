@@ -61,6 +61,8 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     case 'minimum':
     case 'object':
     case 'nullishConstant':
+    case 'opaqueConstant':
+    case 'unknownBoolean':
     case 'nullishCheck':
     case 'arrayLiteral':
     case 'arrayIndex': return null

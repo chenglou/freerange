@@ -214,6 +214,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (current.kind === ts.SyntaxKind.NullKeyword) {
     return addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'null'})
   }
+  if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
+    return addInstruction(context, current, {kind: 'opaqueConstant'})
+  }
+  if (ts.isTemplateExpression(current)) {
+    // `${width}px` — the interpolated expressions lower (they must be representable), the
+    // result is carried without claims.
+    for (const span of current.templateSpans) lowerExpression(span.expression, context)
+    return addInstruction(context, current, {kind: 'opaqueConstant'})
+  }
   if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
     // `a ?? b` is `a` when not missing, else `b`. The whole expression's type must be a
     // representable kind — `(record | null) ?? 0` mixes record and number arms.
@@ -235,6 +244,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isBinaryExpression(current)) {
     const missingCheck = missingSentinelCheck(current, context)
     if (missingCheck != null) return missingCheck
+    const opaqueComparison = opaqueEqualityCheck(current, context)
+    if (opaqueComparison != null) return opaqueComparison
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
     if (arithmetic == null && comparison == null) {
@@ -509,12 +520,15 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | null {
+export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | null {
   // The depth guard bounds recursion into element types (a recursive `type T = T[]` would
   // otherwise loop); past it, nothing classifies.
   if (depth > 8) return null
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  // Strings are carried without claims: a label or id must not reject the numeric
+  // contract of the function around it.
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return 'opaque'
   // The type system's own split, mirrored: tuple types are positional and exact, array
   // types are homogeneous. Checked before the general object arm (both carry the Object
   // flag and index signatures). An array classifies only when its ELEMENT does — a
@@ -576,9 +590,9 @@ function classifyUnionMembers(
   members: readonly ts.Type[],
   checker: ts.TypeChecker,
   depth: number,
-): 'number' | 'boolean' | 'object' | 'array' | 'tuple' | null {
+): 'number' | 'boolean' | 'object' | 'array' | 'tuple' | 'opaque' | null {
   if (depth > 8) return null
-  let shared: 'number' | 'boolean' | 'object' | 'array' | 'tuple' | null = null
+  let shared: 'number' | 'boolean' | 'object' | 'array' | 'tuple' | 'opaque' | null = null
   let sharedShape: string | null = null
   for (const member of members) {
     const kind = valueKind(member, checker, depth)
@@ -608,6 +622,7 @@ function classifyUnionMembers(
 function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return 'opaque'
   // Arrays and tuples fingerprint by their element shapes: {items: number[]} and
   // {items: boolean[]} are different shapes, or the join would drop a property the read
   // gates still expose.
@@ -702,6 +717,25 @@ function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolea
   const array = lowerExpression(access.expression, context)
   const index = lowerExpression(access.argumentExpression, context)
   return addInstruction(context, access, {kind: 'arrayIndex', array, index, asserted, provenBounds: false})
+}
+
+// `mode === 'compact'`: comparing two carried-without-claims values yields a boolean the
+// analysis knows nothing about — both branches stay analyzed, which is sound and keeps
+// string-keyed control flow from rejecting the function. The operands still lower, so an
+// unsupported construct inside one rejects as usual.
+function opaqueEqualityCheck(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
+  const operator = expression.operatorToken.kind
+  const isEquality = operator === ts.SyntaxKind.EqualsEqualsEqualsToken
+    || operator === ts.SyntaxKind.ExclamationEqualsEqualsToken
+    || operator === ts.SyntaxKind.EqualsEqualsToken
+    || operator === ts.SyntaxKind.ExclamationEqualsToken
+  if (!isEquality) return null
+  const leftKind = valueKind(context.checker.getTypeAtLocation(expression.left), context.checker)
+  const rightKind = valueKind(context.checker.getTypeAtLocation(expression.right), context.checker)
+  if (leftKind !== 'opaque' || rightKind !== 'opaque') return null
+  lowerExpression(expression.left, context)
+  lowerExpression(expression.right, context)
+  return addInstruction(context, expression, {kind: 'unknownBoolean'})
 }
 
 // Recognizes `x === null`, `x !== undefined`, `x == null`, and friends. The loose forms

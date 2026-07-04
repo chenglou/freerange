@@ -1,5 +1,4 @@
-import {finiteInputNumber} from '../domain/number.ts'
-import {joinValues, recordValue, type AbstractValue} from '../domain/value.ts'
+import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -65,35 +64,12 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     }
     for (let index = 0; index < fn.parameters.length; index++) {
       const parameter = fn.parameters[index]!
-      switch (parameter.type.kind) {
-        case 'number': {
-          arguments_.push(finiteInputNumber())
-          argumentExpressions.push({kind: 'parameter', index})
-          break
-        }
-        case 'numberArray': {
-          arguments_.push({
-            kind: 'array',
-            element: finiteInputNumber(),
-            // Array lengths cap at 2^32 - 1.
-            length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
-          })
-          argumentExpressions.push(null)
-          break
-        }
-        case 'nullishNumber': {
-          arguments_.push({kind: 'maybeNullish', inner: finiteInputNumber(), sentinels: parameter.type.sentinels})
-          // Nameable: after a null check narrows the parameter, a division by it can mint
-          // `requires: interval is nonzero` like any number parameter.
-          argumentExpressions.push({kind: 'parameter', index})
-          break
-        }
-        case 'object': {
-          arguments_.push(recordValue(parameter.type.properties.map(name => ({name, value: finiteInputNumber()}))))
-          argumentExpressions.push({kind: 'parameter', index})
-          break
-        }
-      }
+      // Seeded from the declared kind — the same assumed-finite constructor module hedges
+      // use, with the assumes lines carrying the conditionality. Every parameter is
+      // nameable in requirement expressions; only numeric operations ever surface one, so
+      // a non-numeric parameter's expression is simply never printed.
+      arguments_.push(declaredKindValue(parameter.type))
+      argumentExpressions.push({kind: 'parameter', index})
     }
     const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [])
     functions.push(publishedAnalysis(fn, evaluation))
@@ -189,7 +165,7 @@ function publishedModuleValues(
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' || demoted.has(index)) return null
     const declaredKind = binding.category.declaredKind.kind
-    if ((declaredKind === 'record' || declaredKind === 'tuple') && !fullyAnalyzed) return null
+    if ((declaredKind === 'record' || declaredKind === 'tuple' || declaredKind === 'array') && !fullyAnalyzed) return null
     let joined: AbstractValue | null = null
     for (const end of ends) {
       const slot = end[index]!

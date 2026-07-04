@@ -315,7 +315,7 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 // arrays, functions, or Date (their method properties fail the same leaf check). An empty
 // property set is rejected too — it covers `{}` and index-signature-only types, neither of
 // which a record value can say anything about.
-function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
     case 'boolean': return {kind: 'boolean'}
@@ -332,10 +332,16 @@ function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker,
       const admitsUndefined = type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
       return {kind: 'nullish', inner, sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
     }
-    // Module array bindings stay opaque for now; tuples are fixed-shape values and publish
-    // like records — `const gapSizes = [4, 8, 24] as const` is the config-table idiom.
-    case 'array':
-      return null
+    // Strings and other claim-free kinds are carried, not rejected: a record with an id
+    // keeps its numeric contract.
+    case 'opaque':
+      return {kind: 'opaque'}
+    case 'array': {
+      const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
+      if (element == null) return null
+      const elementKind = declaredKind(element, location, checker, [...seen, type])
+      return elementKind == null ? null : {kind: 'array', element: elementKind}
+    }
     case 'tuple': {
       if (seen.length >= 8 || seen.includes(type)) return null
       const elements: DeclaredKind[] = []

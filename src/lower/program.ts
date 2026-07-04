@@ -1,10 +1,10 @@
 import * as ts from 'typescript'
-import {moduleInitializerName, nodeSpan, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason, type ValueTypeIR} from '../ir/program.ts'
+import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addSite, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
-import {lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
+import {declaredKind, lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
 
 export function lowerSource(checked: CheckedSource): ProgramIR {
@@ -171,48 +171,15 @@ function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker)
   return null
 }
 
-function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): ValueTypeIR {
-  const type = checker.getTypeAtLocation(parameter)
-  // Through valueKind, the one classification every other gate uses: a `1 | 2`
-  // discriminant is a number here as everywhere else, and index signatures, callables,
-  // and mixed shapes reject here instead of seeding a record the type licenses more
-  // reads against than it carries.
-  switch (valueKind(type, checker)) {
-    case 'number': return {kind: 'number'}
-    case 'nullable': {
-      // Only number | null / number | undefined; missing-able records as parameters wait.
-      const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
-      const rest = type.isUnion() ? type.types.filter(member => (member.flags & missingFlags) === 0) : []
-      if (rest.length === 1 && valueKind(rest[0]!, checker) === 'number') {
-        const admitsNull = type.isUnion() && type.types.some(member => (member.flags & ts.TypeFlags.Null) !== 0)
-        const admitsUndefined = type.isUnion() && type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
-        return {kind: 'nullishNumber', sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
-      }
-      throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
-    }
-    case 'array': {
-      // number[] parameters only; element shapes and tuple parameters wait for a need.
-      const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
-      if (element != null && valueKind(element, checker) === 'number') return {kind: 'numberArray'}
-      throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
-    }
-    case 'object': break
-    default: throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
+function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): DeclaredKind {
+  // The same recursive classification module bindings use: numbers, booleans, records
+  // (opaque leaves included — an id: string property is carried, not rejected), nullable
+  // wrappers, arrays, tuples, and bare opaque (a plain string parameter).
+  const declared = declaredKind(checker.getTypeAtLocation(parameter), parameter, checker, [])
+  if (declared == null) {
+    throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(checker.getTypeAtLocation(parameter))})
   }
-  const properties: string[] = []
-  for (const property of checker.getPropertiesOfType(type)) {
-    const propertyType = checker.getTypeOfSymbolAtLocation(property, parameter)
-    if ((property.flags & ts.SymbolFlags.Optional) !== 0 || valueKind(propertyType, checker) !== 'number') {
-      throw unsupported(parameter, {
-        kind: 'objectParameterProperty',
-        property: property.name,
-        typeText: checker.typeToString(propertyType),
-      })
-    }
-    properties.push(property.name)
-  }
-  if (properties.length === 0) throw unsupported(parameter, {kind: 'objectParameterWithoutNumericProperties'})
-  return {kind: 'object', properties}
+  return declared
 }
 
 function functionReturnType(declaration: ts.FunctionDeclaration, checker: ts.TypeChecker): ts.Type {

@@ -142,6 +142,8 @@ function evaluateInstructionKinded(
   switch (instruction.kind) {
     case 'constant': return passthroughValue(constantNumber(instruction.value))
     case 'nullishConstant': return value({kind: 'nullish', sentinels: instruction.sentinel})
+    case 'opaqueConstant': return value({kind: 'opaque'})
+    case 'unknownBoolean': return value(unknownBoolean())
     case 'arrayLiteral': {
       const elements = instruction.elements.map(id => requiredValue(state, id))
       if (instruction.form === 'tuple') return value({kind: 'tuple', elements})
