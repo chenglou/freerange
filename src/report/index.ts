@@ -281,6 +281,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'kindChangingAssertion': return `a non-null assertion turning ${reason.fromText} into ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
+    case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
     case 'anyTyped': return 'a value typed any'
     case 'typeAssertion': return `a type assertion to ${reason.typeText}`
     case 'varDeclaration': return 'var declarations (use let or const)'

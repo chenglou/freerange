@@ -5,14 +5,80 @@ import {platformFact} from './platform.ts'
 import {
   addInstruction,
   addSite,
-  changedBindings,
   createBlock,
-  requiredBranchBinding,
   requiredSymbol,
   terminate,
   unsupported,
   type FunctionContext,
 } from './context.ts'
+
+// The only entry point through which assignments lower. Statement positions (expression
+// statements, for-loop incrementors) call this; everything else goes through
+// lowerExpression, which rejects assignment forms — so an assignment used as a value
+// inside a larger expression cannot lower by construction, and ternary/logical arms are
+// provably assignment-free (their join carries exactly one parameter, the result).
+export function lowerStatementExpression(expression: ts.Expression, context: FunctionContext): void {
+  const current = unwrap(expression, context.checker)
+  if (
+    ts.isBinaryExpression(current)
+    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    && ts.isPropertyAccessExpression(current.left)
+  ) {
+    requireAccessedPropertyKind(current.left, context.checker)
+    const object = lowerExpression(current.left.expression, context)
+    const value = lowerExpression(current.right, context)
+    addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
+    return
+  }
+  const assignment = identifierAssignment(current)
+  if (assignment != null) {
+    const symbol = requiredSymbol(assignment.target, context.checker)
+    switch (assignment.form) {
+      case 'assign': {
+        const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
+        if (!context.bindings.has(symbol) && moduleBinding == null) {
+          throw unsupported(assignment.target, {kind: 'unknownIdentifier', name: assignment.target.text})
+        }
+        // Rebinding is only sound when the target's declared type holds a single value
+        // kind — otherwise branches could bind different kinds that meet at a block join.
+        // Function locals with mixed-kind declared types already stop at their declaration;
+        // a module binding can still hold one (a top-level `let config: unknown`
+        // initializes through the initializer's own declarator path), so for those the
+        // write itself stops here. The checker returns the declared type at an assignment
+        // target, not a narrowed one: narrowing does not apply to write positions.
+        const targetType = context.checker.getTypeAtLocation(assignment.target)
+        if (valueKind(targetType, context.checker) == null) {
+          throw unsupported(assignment.target, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
+        }
+        const value = lowerExpression(assignment.node.right, context)
+        assignIdentifier(symbol, assignment.target, value, current, context)
+        return
+      }
+      case 'compound': {
+        const left = identifierValue(symbol, assignment.target, context)
+        const right = lowerExpression(assignment.node.right, context)
+        const value = addInstruction(context, current, {kind: 'binary', operator: assignment.operator, left, right})
+        assignIdentifier(symbol, assignment.target, value, current, context)
+        return
+      }
+      case 'update': {
+        // In statement position the expression's own value is discarded, so the prefix
+        // versus postfix result distinction does not exist here.
+        const previous = identifierValue(symbol, assignment.target, context)
+        const one = addInstruction(context, current, {kind: 'constant', value: 1})
+        const value = addInstruction(context, current, {
+          kind: 'binary',
+          operator: assignment.node.operator === ts.SyntaxKind.PlusPlusToken ? 'add' : 'subtract',
+          left: previous,
+          right: one,
+        })
+        assignIdentifier(symbol, assignment.target, value, current, context)
+        return
+      }
+    }
+  }
+  lowerExpression(expression, context)
+}
 
 export function lowerExpression(expression: ts.Expression, context: FunctionContext): ValueID {
   const current = unwrap(expression, context.checker)
@@ -52,58 +118,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     })
     return addInstruction(context, current, {kind: 'object', properties})
   }
-  if (
-    ts.isBinaryExpression(current)
-    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    && ts.isPropertyAccessExpression(current.left)
-  ) {
-    requireAccessedPropertyKind(current.left, context.checker)
-    const object = lowerExpression(current.left.expression, context)
-    const value = lowerExpression(current.right, context)
-    return addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
+  if (ts.isBinaryExpression(current) && ts.isPropertyAccessExpression(current.left)
+    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+    throw unsupported(current, {kind: 'assignmentInValuePosition'})
   }
-  const assignment = identifierAssignment(current)
-  if (assignment != null) {
-    const symbol = requiredSymbol(assignment.target, context.checker)
-    switch (assignment.form) {
-      case 'assign': {
-        const moduleBinding = context.moduleBindingsBySymbol.get(symbol)
-        if (!context.bindings.has(symbol) && moduleBinding == null) {
-          throw unsupported(assignment.target, {kind: 'unknownIdentifier', name: assignment.target.text})
-        }
-        // Rebinding is only sound when the target's declared type holds a single value
-        // kind — otherwise branches could bind different kinds that meet at a block join.
-        // Function locals with mixed-kind declared types already stop at their declaration;
-        // a module binding can still hold one (a top-level `let config: unknown`
-        // initializes through the initializer's own declarator path), so for those the
-        // write itself stops here. The checker returns the declared type at an assignment
-        // target, not a narrowed one: narrowing does not apply to write positions.
-        const targetType = context.checker.getTypeAtLocation(assignment.target)
-        if (valueKind(targetType, context.checker) == null) {
-          throw unsupported(assignment.target, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
-        }
-        const value = lowerExpression(assignment.node.right, context)
-        return assignIdentifier(symbol, assignment.target, value, current, context)
-      }
-      case 'compound': {
-        const left = identifierValue(symbol, assignment.target, context)
-        const right = lowerExpression(assignment.node.right, context)
-        const value = addInstruction(context, current, {kind: 'binary', operator: assignment.operator, left, right})
-        return assignIdentifier(symbol, assignment.target, value, current, context)
-      }
-      case 'update': {
-        const previous = identifierValue(symbol, assignment.target, context)
-        const one = addInstruction(context, current, {kind: 'constant', value: 1})
-        const value = addInstruction(context, current, {
-          kind: 'binary',
-          operator: assignment.node.operator === ts.SyntaxKind.PlusPlusToken ? 'add' : 'subtract',
-          left: previous,
-          right: one,
-        })
-        assignIdentifier(symbol, assignment.target, value, current, context)
-        return ts.isPrefixUnaryExpression(assignment.node) ? value : previous
-      }
-    }
+  if (identifierAssignment(current) != null) {
+    throw unsupported(current, {kind: 'assignmentInValuePosition'})
   }
   if (
     ts.isBinaryExpression(current)
@@ -215,11 +235,11 @@ export function compoundAssignmentOperator(kind: ts.SyntaxKind): Extract<Instruc
 }
 
 // The shared value-producing branch shape: branch on the condition, lower each arm in its
-// own block under fresh bindings, and join at a continuation whose parameter 0 carries the
-// result and whose remaining parameters carry the bindings the arms changed — the jump
-// argument order must match, an invariant that lives only here. Ternaries and the logical
-// operators are the two consumers; lowerIfStatement stays separate (no result value, and
-// its zero/one-continuing-branch early exits do not fit this shape).
+// own block, and join at a continuation whose single parameter carries the result. Arms are
+// provably assignment-free — assignments lower only through lowerStatementExpression — so
+// no bindings can change across the arms and the join needs no binding merge. Ternaries and
+// the logical operators are the two consumers; lowerIfStatement stays separate (no result
+// value, arms may terminate, and assignments are allowed there).
 function lowerValueBranch(
   node: ts.Expression,
   condition: ValueID,
@@ -227,7 +247,6 @@ function lowerValueBranch(
   lowerFalseArm: () => ValueID,
   context: FunctionContext,
 ): ValueID {
-  const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
   const whenFalse = createBlock(context)
   terminate(context.currentBlock, {
@@ -238,38 +257,23 @@ function lowerValueBranch(
     site: addSite(context, node),
   })
   context.currentBlock = context.blocks[whenTrue]!
-  context.bindings = new Map(bindingsBeforeBranch)
   const trueValue = lowerTrueArm()
   const trueBlock = context.currentBlock
-  const trueBindings = context.bindings
   context.currentBlock = context.blocks[whenFalse]!
-  context.bindings = new Map(bindingsBeforeBranch)
   const falseValue = lowerFalseArm()
   const falseBlock = context.currentBlock
-  const falseBindings = context.bindings
-  const changed = changedBindings(bindingsBeforeBranch, trueBindings, falseBindings)
-  const continuation = createBlock(context, changed.length + 1)
+  const continuation = createBlock(context, 1)
   terminate(trueBlock, {
     kind: 'jump',
-    target: {
-      block: continuation,
-      arguments: [trueValue, ...changed.map(symbol => requiredBranchBinding(symbol, trueBindings))],
-    },
+    target: {block: continuation, arguments: [trueValue]},
     site: addSite(context, node),
   })
   terminate(falseBlock, {
     kind: 'jump',
-    target: {
-      block: continuation,
-      arguments: [falseValue, ...changed.map(symbol => requiredBranchBinding(symbol, falseBindings))],
-    },
+    target: {block: continuation, arguments: [falseValue]},
     site: addSite(context, node),
   })
   context.currentBlock = context.blocks[continuation]!
-  context.bindings = new Map(bindingsBeforeBranch)
-  for (let index = 0; index < changed.length; index++) {
-    context.bindings.set(changed[index]!, context.currentBlock.parameters[index + 1]!)
-  }
   return context.currentBlock.parameters[0]!
 }
 

@@ -105,6 +105,10 @@ export type UnsupportedReason =
   | {kind: 'kindChangingAssertion'; fromText: string; toText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}
+  // An assignment used as a value inside a larger expression, e.g. `cond ? (x = 1) : 2` or
+  // `a = b = 5`. Assignments lower only in statement position; write it as its own
+  // statement.
+  | {kind: 'assignmentInValuePosition'}
   | {kind: 'forLoopWithoutCondition'}
   | {kind: 'forLoopWithoutIncrementor'}
   // Destructuring pattern or a declaration without an initializer.

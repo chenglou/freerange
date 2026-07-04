@@ -13,7 +13,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {identifierAssignment, lowerExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {identifierAssignment, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -33,7 +33,7 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     return
   }
   if (ts.isExpressionStatement(statement)) {
-    lowerExpression(statement.expression, context)
+    lowerStatementExpression(statement.expression, context)
     return
   }
   if (ts.isIfStatement(statement)) {
@@ -106,7 +106,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
     if (ts.isVariableDeclarationList(statement.initializer)) {
       lowerVariableDeclarationList(statement.initializer, context)
     } else {
-      lowerExpression(statement.initializer, context)
+      lowerStatementExpression(statement.initializer, context)
     }
   }
   if (statement.condition == null) throw unsupported(statement, {kind: 'forLoopWithoutCondition'})
@@ -144,7 +144,7 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   context.bindings = new Map(conditionBindings)
   lowerStatement(statement.statement, context)
   if (context.currentBlock.terminator == null) {
-    lowerExpression(statement.incrementor, context)
+    lowerStatementExpression(statement.incrementor, context)
     terminate(context.currentBlock, {
       kind: 'jump',
       target: {block: header, arguments: carried.map(symbol => requiredBranchBinding(symbol, context.bindings))},

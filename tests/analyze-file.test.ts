@@ -1234,6 +1234,31 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite number from 0 through 100'])
   })
 
+  test('rejects assignments used as values inside larger expressions', () => {
+    // Assignments lower only in statement position, so ternary and logical arms are
+    // provably assignment-free and their join carries exactly the result. Statement-level
+    // if/else assignment stays fully supported.
+    const report = analyzeSource('value-assign.ts', `
+      export function golf(width: number): number {
+        let x = 0
+        return width > 5 ? (x = 1) : 2
+      }
+      export function statement(width: number): number {
+        let result = 10
+        if (width > 10) result = width
+        return result
+      }
+    `)
+    const file = resolve('value-assign.ts')
+    expect(report.functions.find(fn => fn.name === 'golf')).toEqual({
+      kind: 'unsupported',
+      name: 'golf',
+      unsupported: `an assignment used as a value (write it as its own statement) at ${file}:4:29`,
+    })
+    expect(analyzedFunction(report, 'statement').ensures)
+      .toEqual(['return is a finite number at least 10'])
+  })
+
   test('carries a module read assumption to callers of the reading function', () => {
     const report = analyzeSource('module-assumption-chain.ts', `
       let scaleFactor = 2
