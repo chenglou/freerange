@@ -107,14 +107,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isArrayLiteralExpression(current)) {
     const literalType = context.checker.getTypeAtLocation(current)
     const literalKind = valueKind(literalType, context.checker)
-    // A plain literal's elements must share one representable kind — `[1, true]` types as
-    // (number | boolean)[], whose element hull no read gate could ever describe. Tuples
-    // carry per-position kinds and skip this check.
-    if (literalKind === 'array' && current.elements.length > 0) {
-      const elementType = context.checker.getIndexTypeOfType(literalType, ts.IndexKind.Number)
-      if (elementType == null || valueKind(elementType, context.checker) == null) {
-        throw unsupported(current, {kind: 'valueType', typeText: context.checker.typeToString(literalType)})
-      }
+    // A literal whose own type does not classify — `[1, true]` types as
+    // (number | boolean)[], whose element hull no read gate could ever describe — rejects
+    // here, covering every position a literal can appear in (declarators have their own
+    // gate, but object property values and call arguments do not).
+    // The empty literal is exempt: its never[] element type classifies as nothing, but
+    // there are no elements to mix.
+    if (literalKind !== 'array' && literalKind !== 'tuple' && current.elements.length > 0) {
+      throw unsupported(current, {kind: 'valueType', typeText: context.checker.typeToString(literalType)})
     }
     const elements: ValueID[] = []
     for (const element of current.elements) {
@@ -552,33 +552,45 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
     const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     if (type.types.some(member => (member.flags & missingFlags) !== 0)) {
       const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
-      if (rest.length !== 1) return null
-      const restKind = valueKind(rest[0]!, checker)
-      return restKind == null || restKind === 'nullable' ? null : 'nullable'
+      // The non-missing rest classifies as a group, so `4 | 8 | 24 | undefined` — an
+      // as-const table's bare dynamic read — is nullable like `number | undefined`.
+      const restKind = classifyUnionMembers(rest, checker, depth + 1)
+      return restKind == null ? null : 'nullable'
     }
-    let shared: 'number' | 'boolean' | 'object' | 'nullable' | null = null
-    let objectShape: string | null = null
-    for (const member of type.types) {
-      const kind = valueKind(member, checker)
-      if (kind == null || kind === 'nullable' || kind === 'array' || kind === 'tuple' || (shared != null && kind !== shared)) return null
-      if (kind === 'object') {
-        // TypeScript normalizes a union of disjoint shapes by adding each member's missing
-        // properties as optional-undefined, so only the required properties describe the
-        // member's real shape. The property KINDS are part of the shape, recursively: a
-        // discriminated union like {ok: true; value: number} | {ok: false; value: boolean}
-        // has one name set but two meanings for `value`, and payloads can diverge at any
-        // nesting depth — admitting either would let a narrowed read reach a property the
-        // record join had to drop. Members admitted here therefore join losslessly:
-        // matching fingerprints mean matching names and kinds at every depth.
-        const shape = shapeFingerprint(member, checker, [])
-        if (shape == null || (objectShape != null && shape !== objectShape)) return null
-        objectShape = shape
-      }
-      shared = kind
-    }
-    return shared
+    return classifyUnionMembers(type.types, checker, depth + 1)
   }
   return null
+}
+
+// One shared kind for a group of union members, or null. Object, array, and tuple members
+// must additionally agree on their recursive shape fingerprints: TypeScript normalizes a
+// union of disjoint record shapes by adding each member's missing properties as
+// optional-undefined, so only the required properties describe the member's real shape,
+// and the property KINDS are part of it recursively — a discriminated union like
+// {ok: true; value: number} | {ok: false; value: boolean} has one name set but two
+// meanings for `value`. Members admitted here join losslessly (matching fingerprints mean
+// matching names and kinds at every depth), so every read the union's type exposes stays
+// answerable — including reads of array-typed properties on identically-shaped aliases,
+// which TypeScript keeps as a union at the read position.
+function classifyUnionMembers(
+  members: readonly ts.Type[],
+  checker: ts.TypeChecker,
+  depth: number,
+): 'number' | 'boolean' | 'object' | 'array' | 'tuple' | null {
+  if (depth > 8) return null
+  let shared: 'number' | 'boolean' | 'object' | 'array' | 'tuple' | null = null
+  let sharedShape: string | null = null
+  for (const member of members) {
+    const kind = valueKind(member, checker, depth)
+    if (kind == null || kind === 'nullable' || (shared != null && kind !== shared)) return null
+    if (kind === 'object' || kind === 'array' || kind === 'tuple') {
+      const shape = shapeFingerprint(member, checker, [])
+      if (shape == null || (sharedShape != null && shape !== sharedShape)) return null
+      sharedShape = shape
+    }
+    shared = kind
+  }
+  return shared
 }
 
 // The recursive shape of an object type: property names with their kinds, nested records
@@ -721,6 +733,25 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   if (ts.isTypeOfExpression(expression.right) && isUndefinedString(expression.left)) {
     const value = lowerExpression(expression.right.expression, context)
     return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'undefined', negated})
+  }
+  // `typeof x === 'number'` on a value whose only non-missing kind IS number equals
+  // "x is not missing" — the common narrowing spelling for number | undefined.
+  const isNumberString = (side: ts.Expression): boolean => {
+    const unwrapped = unwrap(side, context.checker)
+    return ts.isStringLiteral(unwrapped) && unwrapped.text === 'number'
+  }
+  const typeofNumberSide = ts.isTypeOfExpression(expression.left) && isNumberString(expression.right)
+    ? expression.left
+    : ts.isTypeOfExpression(expression.right) && isNumberString(expression.left)
+      ? expression.right
+      : null
+  if (typeofNumberSide != null) {
+    const operandType = context.checker.getTypeAtLocation(typeofNumberSide.expression)
+    const operandKind = valueKind(operandType, context.checker)
+    if (operandKind === 'nullable' || operandKind === 'number') {
+      const value = lowerExpression(typeofNumberSide.expression, context)
+      return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'nullish', negated: !negated})
+    }
   }
   const leftSentinel = sentinelOf(expression.left)
   const rightSentinel = sentinelOf(expression.right)

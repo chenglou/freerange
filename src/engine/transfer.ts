@@ -442,14 +442,17 @@ function writeThroughProducers(
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
     const parent = state.frame.values[producer.array]
     if (parent?.kind !== 'array') return
-    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length: met}, producers)
+    const length = meetValues(parent.length, met)
+    if (length.kind !== 'number') return
+    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length}, producers)
   }
 }
 
 // The intersection of two covers of the same runtime value — both are supersets of the
 // truth, so keeping the tighter fact per dimension is sound. Numbers intersect bounds;
-// everything else keeps the refined side (records met pointwise would recurse; the
-// refinement chain only ever writes number-bearing shapes today).
+// records, arrays, and tuples meet their structure pointwise (a rebuilt array must not
+// clobber a fresher length narrowing already on the destination); anything else keeps the
+// refined side.
 function meetValues(current: AbstractValue, refined: AbstractValue): AbstractValue {
   if (current.kind === 'number' && refined.kind === 'number') {
     const met: AbstractNumber = {
@@ -461,6 +464,25 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
     }
     const lossSite = refined.lossSite ?? current.lossSite
     return lossSite == null ? met : {...met, lossSite}
+  }
+  if (current.kind === 'record' && refined.kind === 'record') {
+    return {
+      kind: 'record',
+      properties: refined.properties.map(property => {
+        const existing = recordProperty(current, property.name)
+        return existing == null ? property : {name: property.name, value: meetValues(existing, property.value)}
+      }),
+    }
+  }
+  if (current.kind === 'array' && refined.kind === 'array') {
+    const length = meetValues(current.length, refined.length)
+    const element = current.element == null ? refined.element
+      : refined.element == null ? current.element
+      : meetValues(current.element, refined.element)
+    return {kind: 'array', element, length: length.kind === 'number' ? length : refined.length}
+  }
+  if (current.kind === 'tuple' && refined.kind === 'tuple' && current.elements.length === refined.elements.length) {
+    return {kind: 'tuple', elements: refined.elements.map((element, index) => meetValues(current.elements[index]!, element))}
   }
   return refined
 }

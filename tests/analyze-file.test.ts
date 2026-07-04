@@ -1367,6 +1367,60 @@ describe('analyzeFile', () => {
     expect(analyzedFunction(report, 'readSize').ensures).toEqual(['return is a finite number'])
   })
 
+  test('round-3 fixes: recursive unions reject, literals gate everywhere, meets recurse, aliases read', () => {
+    const report = analyzeSource('round3-fixes.ts', `
+      type Group = (Group | null)[]
+      export function groupCount(group: Group): number {
+        return group.length
+      }
+      export function makeBox(): number {
+        const box = {count: 5, data: [1, true]}
+        return box.count
+      }
+      export function freshThenStale(values: number[]): number {
+        const count = values.length
+        if (values.length >= 1) {
+          if (count <= 100) {
+            return values[0]!
+          }
+        }
+        return -1
+      }
+      type Loaded = {samples: {value: number}[]}
+      type Cached = {samples: {value: number}[]}
+      export function sameShape(mode: number): number {
+        const state: Loaded | Cached = mode > 0 ? {samples: [{value: 20}]} : {samples: [{value: 10}]}
+        const first = state.samples[0]
+        return first === undefined ? 0 : first.value
+      }
+      export function sizeAtConst(index: number): number {
+        const sizes = [4, 8, 24] as const
+        const size = sizes[index]
+        if (size !== undefined) return size
+        return 0
+      }
+      export function typeofNumber(x: number | undefined): number {
+        if (typeof x === 'number') return x
+        return 0
+      }
+    `)
+    // A recursive type reaching itself through a union rejects (the depth guard survives
+    // union arms); a mixed-element literal rejects in EVERY position, property values
+    // included; a stale saved length meets instead of clobbering the fresher narrowing;
+    // identically-shaped record aliases (which TypeScript keeps as a union at the read
+    // position) read their array properties; an as-const table's bare dynamic read is
+    // nullable like number | undefined; typeof x === 'number' is the not-missing check.
+    expect(report.functions.find(fn => fn.name === 'groupCount')?.kind).toBe('unsupported')
+    expect(report.functions.find(fn => fn.name === 'makeBox')?.kind).toBe('unsupported')
+    expect(analyzedFunction(report, 'freshThenStale').assumptions)
+      .toEqual(['every values element is finite and not NaN'])
+    expect(analyzedFunction(report, 'sameShape').ensures)
+      .toEqual(['return is a finite integer number from 10 through 20'])
+    expect(analyzedFunction(report, 'sizeAtConst').ensures)
+      .toEqual(['return is a finite integer number from 0 through 24'])
+    expect(analyzedFunction(report, 'typeofNumber').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
