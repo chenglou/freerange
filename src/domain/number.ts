@@ -41,24 +41,36 @@ export function constantNumber(value: number): AbstractNumber {
   }
 }
 
+// Addition does not collapse on possibly-infinite operands the way multiplication and
+// division must: the only NaN case is opposite-signed infinities meeting, so with NaN-free
+// operands the bounds stay real. Infinity + finite is Infinity — `(a + b) + c` with finite
+// inputs can overflow, never turn NaN. An endpoint sum that IS NaN (the interval corners
+// mix -Infinity and +Infinity) saturates to that direction's extreme, which over-covers
+// the corner soundly.
 export function addNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  return boundedResult(
-    left.lower + right.lower,
-    left.upper + right.upper,
-    left.integer && right.integer,
-    left,
-    right,
-  )
+  const lower = left.lower + right.lower
+  const upper = left.upper + right.upper
+  const oppositeInfinities =
+    (left.upper === Number.POSITIVE_INFINITY && right.lower === Number.NEGATIVE_INFINITY)
+    || (left.lower === Number.NEGATIVE_INFINITY && right.upper === Number.POSITIVE_INFINITY)
+  return {
+    kind: 'number',
+    lower: Number.isNaN(lower) ? Number.NEGATIVE_INFINITY : lower,
+    upper: Number.isNaN(upper) ? Number.POSITIVE_INFINITY : upper,
+    integer: left.integer && right.integer,
+    mayBeNaN: left.mayBeNaN || right.mayBeNaN || oppositeInfinities,
+  }
 }
 
+// a - b is a + (-b); negation is exact on every value including infinities.
 export function subtractNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  return boundedResult(
-    left.lower - right.upper,
-    left.upper - right.lower,
-    left.integer && right.integer,
-    left,
-    right,
-  )
+  return addNumbers(left, {
+    kind: 'number',
+    lower: -right.upper,
+    upper: -right.lower,
+    integer: right.integer,
+    mayBeNaN: right.mayBeNaN,
+  })
 }
 
 export function multiplyNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
