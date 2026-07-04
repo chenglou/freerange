@@ -16,6 +16,8 @@ export type ValueTypeIR =
   // `number | null` and friends — seeded as missing-or-finite; checks narrow the missing
   // half away. The sentinels drive the assumes prose.
   | {kind: 'nullishNumber'; sentinels: 'null' | 'undefined' | 'both'}
+  // `number[]` — seeded as an any-length array of finite numbers.
+  | {kind: 'numberArray'}
 
 // UTF-16 offsets into the analyzed source, from ts.Node.getStart/getEnd. Line and column
 // are computed only at message-formatting time. Spans may repeat across sites (the constant 1

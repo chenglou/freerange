@@ -14,6 +14,14 @@ export type NumericExpression =
   // entry and the operation that needs the requirement.
   | {kind: 'property'; base: NumericExpression; name: string}
 
+// An element read the engine could not prove in bounds: arr[i]! asserts presence, and
+// when the index interval does not sit inside the length interval, the entry's guarantees
+// rest on the read actually being in bounds. The peer of InferredPrecondition, minus the
+// expression language (an assumption line needs only its site).
+export type BoundsAssumption = {
+  site: SiteID
+}
+
 export type InferredPrecondition = {
   kind: 'nonzero'
   expression: NumericExpression

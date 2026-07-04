@@ -24,6 +24,23 @@ type AbstractVoid = {
   kind: 'void'
 }
 
+// A tuple: fixed length, one value per position — produced by literals whose static type
+// is a tuple ([4, 8, 24] as const). Follows the type system's own split: tuples are
+// positional, arrays are homogeneous. A tuple meeting a different-length tuple or an
+// array at a join collapses one-way into the array form.
+export type AbstractTuple = {
+  kind: 'tuple'
+  elements: AbstractValue[]
+}
+
+// A homogeneous array: one element hull covering every element (null when no element was
+// ever seen — the empty literal), plus a length interval.
+export type AbstractArray = {
+  kind: 'array'
+  element: AbstractValue | null
+  length: AbstractNumber
+}
+
 // Which of JavaScript's two missing-value sentinels a nullish value can be. Carried on
 // the value so report lines can say "null" when only null is possible (a `number | null`
 // binding) instead of hedging with both.
@@ -57,6 +74,8 @@ export type AbstractValue =
   | AbstractVoid
   | AbstractNullish
   | AbstractMaybeNullish
+  | AbstractTuple
+  | AbstractArray
 
 export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
@@ -95,13 +114,42 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
     const sentinels = leftSentinels == null ? rightSentinels! : rightSentinels == null ? leftSentinels : joinSentinels(leftSentinels, rightSentinels)
     return {kind: 'maybeNullish', inner: joinValues(leftInner, rightInner), sentinels}
   }
+  // Tuples and arrays meet across forms: the tuple collapses to its homogeneous hull.
+  if ((left.kind === 'tuple' || left.kind === 'array') && (right.kind === 'tuple' || right.kind === 'array')) {
+    if (left.kind === 'tuple' && right.kind === 'tuple') {
+      if (left.elements.length === right.elements.length) {
+        return {kind: 'tuple', elements: left.elements.map((element, index) => joinValues(element, right.elements[index]!))}
+      }
+      return joinValues(arrayFromTuple(left), arrayFromTuple(right))
+    }
+    const leftArray = left.kind === 'tuple' ? arrayFromTuple(left) : left
+    const rightArray = right.kind === 'tuple' ? arrayFromTuple(right) : right
+    const element = leftArray.element == null ? rightArray.element
+      : rightArray.element == null ? leftArray.element
+      : joinValues(leftArray.element, rightArray.element)
+    return {kind: 'array', element, length: joinNumbers(leftArray.length, rightArray.length)}
+  }
   if (left.kind !== right.kind) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
+    case 'tuple':
+    case 'array':
+      throw new Error('handled above')
   }
+}
+
+export function arrayFromTuple(tuple: AbstractTuple): AbstractArray {
+  const element = tuple.elements.length === 0
+    ? null
+    : tuple.elements.reduce((joined, next) => joinValues(joined, next))
+  return {kind: 'array', element, length: constantLength(tuple.elements.length)}
+}
+
+function constantLength(length: number): AbstractNumber {
+  return {kind: 'number', lower: length, upper: length, integer: true, mayBeNaN: false}
 }
 
 // Whether two property values can meet in joinValues without a kind-mismatch crash: same
@@ -155,6 +203,18 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
       const other = right as AbstractMaybeNullish
       return left.sentinels === other.sentinels && sameValues(left.inner, other.inner)
     }
+    case 'tuple': {
+      const other = right as AbstractTuple
+      return left.elements.length === other.elements.length
+        && left.elements.every((element, index) => sameValues(element, other.elements[index]!))
+    }
+    case 'array': {
+      const other = right as AbstractArray
+      const sameElement = left.element == null || other.element == null
+        ? left.element === other.element
+        : sameValues(left.element, other.element)
+      return sameElement && sameNumbers(left.length, other.length)
+    }
   }
 }
 
@@ -187,6 +247,21 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
       // The unbounded part is inside; the missing half is a small finite lattice.
       const previousInner = previous.kind === 'maybeNullish' ? previous.inner : previous
       return {kind: 'maybeNullish', inner: widenValue(previousInner, next.inner), sentinels: next.sentinels}
+    }
+    case 'tuple': {
+      if (previous.kind !== 'tuple' || previous.elements.length !== next.elements.length) return next
+      const previousTuple = previous
+      return {
+        kind: 'tuple',
+        elements: next.elements.map((element, index) => widenValue(previousTuple.elements[index]!, element)),
+      }
+    }
+    case 'array': {
+      if (previous.kind !== 'array') return next
+      const element = next.element == null ? null
+        : previous.element == null ? next.element
+        : widenValue(previous.element, next.element)
+      return {kind: 'array', element, length: widenNumber(previous.length, next.length)}
     }
     // Bounded lattices need no widening: booleans have height two, the missing sentinels
     // form a three-point lattice, void is a point.

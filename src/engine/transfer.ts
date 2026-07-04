@@ -13,7 +13,7 @@ import {
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
-import {recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
+import {joinValues, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
 import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -22,7 +22,7 @@ import {
   numericExpression,
   type ExpressionContext,
 } from '../requirements/infer.ts'
-import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
+import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
 import {cloneState, type ExecutionState, type SharedState} from './state.ts'
 
@@ -39,6 +39,9 @@ export type TransferContext = {
   callStack: FunctionID[]
   expressionContext: ExpressionContext
   preconditions: InferredPrecondition[]
+  // Element reads the engine could not prove in bounds — the peer of preconditions,
+  // accumulated per evaluation and adopted from completed callees the same way.
+  boundsAssumptions: BoundsAssumption[]
   // By ValueID: whether any consumer other than a compare instruction reads the value. A
   // division consumed only by comparisons needs no nonzero requirement: a NaN or Infinity
   // quotient just makes the comparison false-or-true, which the boolean domain already
@@ -139,6 +142,42 @@ function evaluateInstructionKinded(
   switch (instruction.kind) {
     case 'constant': return passthroughValue(constantNumber(instruction.value))
     case 'nullishConstant': return value({kind: 'nullish', sentinels: instruction.sentinel})
+    case 'arrayLiteral': {
+      const elements = instruction.elements.map(id => requiredValue(state, id))
+      if (instruction.form === 'tuple') return value({kind: 'tuple', elements})
+      const element = elements.length === 0 ? null : elements.reduce((joined, next) => joinValues(joined, next))
+      return value({kind: 'array', element, length: constantNumber(instruction.elements.length)})
+    }
+    case 'arrayLength': {
+      const sequence = requiredSequence(state, instruction.array)
+      return passthroughValue(sequence.kind === 'tuple'
+        ? constantNumber(sequence.elements.length)
+        : sequence.length)
+    }
+    case 'arrayIndex': {
+      const sequence = requiredSequence(state, instruction.array)
+      const index = requiredNumber(state, instruction.index)
+      const element = sequence.kind === 'tuple'
+        ? tupleElement(sequence, index)
+        : sequence.element
+      // A read from a provably empty array: the asserted form lied, the bare form is
+      // exactly undefined.
+      if (element == null) {
+        if (instruction.asserted) {
+          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'emptyArrayRead'}}}
+        }
+        return value({kind: 'nullish', sentinels: 'undefined'})
+      }
+      if (!instruction.asserted) {
+        // Bare arr[i] types T | undefined; the result honestly carries the possible miss.
+        return passthroughValue(joinValues({kind: 'nullish', sentinels: 'undefined'}, element))
+      }
+      const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
+      const inBounds = instruction.provenBounds
+        || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
+      if (!inBounds) addBoundsAssumption(context.boundsAssumptions, {site: instruction.site})
+      return passthroughValue(element)
+    }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
       const canBeSentinel = operand.kind === 'nullish' || operand.kind === 'maybeNullish'
@@ -264,6 +303,7 @@ function evaluateInstructionKinded(
       }
       state.shared = completed.sharedState
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
+      for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)
     }
     case 'binary': {
@@ -288,6 +328,10 @@ function evaluateInstructionKinded(
       return computedNumber(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site)
     }
   }
+}
+
+export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: BoundsAssumption): void {
+  if (!assumptions.some(assumption => assumption.site === candidate.site)) assumptions.push(candidate)
 }
 
 function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {
@@ -444,6 +488,23 @@ function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {
   const value = requiredValue(state, id)
   if (value.kind !== 'boolean') throw new KindMismatch(`IR value ${id} is not a boolean`)
+  return value
+}
+
+// A constant in-bounds index picks the exact tuple element; anything else takes the hull.
+// Returns null only for the empty tuple.
+function tupleElement(tuple: Extract<AbstractValue, {kind: 'tuple'}>, index: AbstractNumber): AbstractValue | null {
+  if (tuple.elements.length === 0) return null
+  if (index.integer && !index.mayBeNaN && index.lower === index.upper) {
+    const exact = tuple.elements[index.lower]
+    if (exact != null) return exact
+  }
+  return tuple.elements.reduce((joined, next) => joinValues(joined, next))
+}
+
+function requiredSequence(state: ExecutionState, id: ValueID): Extract<AbstractValue, {kind: 'tuple' | 'array'}> {
+  const value = requiredValue(state, id)
+  if (value.kind !== 'tuple' && value.kind !== 'array') throw new KindMismatch(`IR value ${id} is not an array`)
   return value
 }
 

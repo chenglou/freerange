@@ -4,7 +4,7 @@ import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
-import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
+import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
   completedEvaluation,
   type FunctionAnalysis,
@@ -71,6 +71,16 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
           argumentExpressions.push({kind: 'parameter', index})
           break
         }
+        case 'numberArray': {
+          arguments_.push({
+            kind: 'array',
+            element: finiteInputNumber(),
+            // Array lengths cap at 2^32 - 1.
+            length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
+          })
+          argumentExpressions.push(null)
+          break
+        }
         case 'nullishNumber': {
           arguments_.push({kind: 'maybeNullish', inner: finiteInputNumber(), sentinels: parameter.type.sentinels})
           argumentExpressions.push(null)
@@ -100,6 +110,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
       kind: 'analyzed',
       lowering: fn,
       preconditions: completed.preconditions,
+      boundsAssumptions: completed.boundsAssumptions,
       returnValue: completed.returnValue,
       sharedState: completed.sharedState,
     }
@@ -112,6 +123,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
     stops: [firstStop, ...laterStops],
     observedReturn: evaluation.normal == null ? null : {value: evaluation.normal.returnValue},
     observedNeeds: evaluation.preconditions,
+    observedBoundsAssumptions: evaluation.boundsAssumptions,
   }
 }
 
@@ -238,6 +250,7 @@ function runEvaluation(
   const usedOutsideCompare = collectNonCompareUses(fn)
   const expressionContext = createExpressionContext(fn, argumentExpressions)
   const preconditions: InferredPrecondition[] = []
+  const boundsAssumptions: BoundsAssumption[] = []
   const run: EvaluationRun = {
     fn,
     incoming: [],
@@ -259,6 +272,7 @@ function runEvaluation(
     callStack: functionID == null ? callStack : [...callStack, functionID],
     expressionContext,
     preconditions,
+    boundsAssumptions,
     usedOutsideCompare,
     evaluateFunction: (
       callee: FunctionID,
@@ -434,7 +448,7 @@ function runEvaluation(
     }
   }
 
-  return {evaluation: {normal, preconditions, stops: run.stops}, run}
+  return {evaluation: {normal, preconditions, boundsAssumptions, stops: run.stops}, run}
 }
 
 function addStop(

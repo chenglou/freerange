@@ -722,23 +722,15 @@ describe('analyzeFile', () => {
       }
     `)
     const file = resolve('module-record-opaque.ts')
-    // The array literal itself does not lower, so the initializer skips the declaration.
-    // The read is rejected at lowering: an array's number index signature admits
-    // properties the abstract record cannot carry, the same gate that keeps
-    // Record<string, number> out.
+    // The array literal lowers, but module array bindings stay opaque, so the read stops
+    // at the slot.
     expect(report.functions).toEqual([
       {
         kind: 'partial',
-        name: 'module initialization',
-        assumptions: [],
-        stopped: [],
-        skipped: [`expression (ArrayLiteralExpression) at ${file}:2:21`],
-        observed: [],
-      },
-      {
-        kind: 'unsupported',
         name: 'itemCount',
-        unsupported: `property read from number[] at ${file}:4:16`,
+        assumptions: [],
+        stopped: [`reads items, whose value the analysis does not track (read at ${file}:4:16)`],
+        observed: [],
       },
     ])
   })
@@ -963,8 +955,7 @@ describe('analyzeFile', () => {
         return zoom.mode
       }
       export function readGauge(board: {base: number; [gauge: string]: number}): number {
-        const {base, latency} = board
-        return base + latency
+        return board.base
       }
     `)
     expect(analyzedFunction(report, 'modeOf').ensures).toEqual(['return is a finite number'])
@@ -1118,6 +1109,83 @@ describe('analyzeFile', () => {
     const reader = analyzedFunction(report, 'readIt')
     expect(reader.assumptions).toEqual(['animatedUntilTime is null or a finite non-NaN number'])
     expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('tuples stay exact per position; arrays are homogeneous', () => {
+    // The type system's own split, mirrored: `as const` makes a tuple (sizes[1]! is
+    // exactly 8, and the constant read is PROVEN in bounds — no assumption line), a plain
+    // literal is an array (any element read covers 4..24).
+    const report = analyzeSource('tuple-array.ts', `
+      export function gaps(): number {
+        const sizes = [4, 8, 24] as const
+        return sizes[1]! * sizes.length
+      }
+      export function hulled(): number {
+        const sizes = [4, 8, 24]
+        return sizes[1]! * sizes.length
+      }
+    `)
+    const gapsFn = analyzedFunction(report, 'gaps')
+    expect(gapsFn.assumptions).toEqual([])
+    expect(gapsFn.ensures).toEqual(['return is a finite integer number from 24 through 24'])
+    expect(analyzedFunction(report, 'hulled').ensures)
+      .toEqual(['return is a finite integer number from 12 through 72'])
+  })
+
+  test('for-of desugars to a counter loop: in bounds by construction, empty arrays prune', () => {
+    const report = analyzeSource('for-of.ts', `
+      export function total(values: number[]): number {
+        let sum = 0
+        for (const value of values) {
+          sum = sum + Math.min(Math.max(value, 0), 10)
+        }
+        return sum
+      }
+      export function sumEmpty(): number {
+        const values: number[] = []
+        let sum = 0
+        for (const value of values) {
+          sum = sum + value
+        }
+        return sum
+      }
+    `)
+    // No in-bounds assumption line: the counter read is proven by construction. The sum
+    // stays finite because widening saturates at MAX_VALUE and adding a clamped step
+    // cannot leave it.
+    const fn = analyzedFunction(report, 'total')
+    expect(fn.assumptions).toEqual(['every values element is finite and not NaN'])
+    expect(fn.ensures).toEqual(['return is a finite number at least 0'])
+    // The empty array's length is exactly 0, so the header comparison prunes the body.
+    expect(analyzedFunction(report, 'sumEmpty').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+  })
+
+  test('element reads: bare arr[i] carries undefined honestly, arr[i]! assumes in bounds', () => {
+    const report = analyzeSource('element-reads.ts', `
+      export function bareRead(values: number[], index: number): number {
+        const value = values[index]
+        return value ?? 0
+      }
+      export function assertedRead(values: number[], index: number): number {
+        return values[index]!
+      }
+    `)
+    const file = resolve('element-reads.ts')
+    // The bare read's ?? handles the miss, so no assumption is needed.
+    const bare = analyzedFunction(report, 'bareRead')
+    expect(bare.assumptions).toEqual([
+      'every values element is finite and not NaN',
+      'index is finite and not NaN',
+    ])
+    expect(bare.ensures).toEqual(['return is a finite number'])
+    // The asserted read's entry rests on the read being in bounds.
+    const asserted = analyzedFunction(report, 'assertedRead')
+    expect(asserted.assumptions).toEqual([
+      'every values element is finite and not NaN',
+      'index is finite and not NaN',
+      `the element read at ${file}:7:16 is in bounds`,
+    ])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {

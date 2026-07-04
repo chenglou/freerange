@@ -12,6 +12,9 @@ const compilerOptions: ts.CompilerOptions = {
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   moduleDetection: ts.ModuleDetectionKind.Force,
   strict: true,
+  // Bare arr[i] must type T | undefined so the analyzer can tell an honest possibly-missing
+  // read from an asserted arr[i]! — the decisions doc's stated regime for element reads.
+  noUncheckedIndexedAccess: true,
   noEmit: true,
   skipLibCheck: true,
   types: [],

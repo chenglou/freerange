@@ -163,6 +163,12 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
       }
       throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
     }
+    case 'array': {
+      // number[] parameters only; element shapes and tuple parameters wait for a need.
+      const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
+      if (element != null && valueKind(element, checker) === 'number') return {kind: 'numberArray'}
+      throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
+    }
     case 'object': break
     default: throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
   }

@@ -17,6 +17,13 @@ type ObjectPropertyIR = {
 export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
   | (InstructionBase & {kind: 'nullishConstant'; sentinel: 'null' | 'undefined'})
+  | (InstructionBase & {kind: 'arrayLiteral'; elements: ValueID[]; form: 'tuple' | 'array'})
+  | (InstructionBase & {kind: 'arrayLength'; array: ValueID})
+  // An element read. `asserted` distinguishes arr[i]! (types T; unproven bounds become an
+  // assumption line) from bare arr[i] (types T | undefined; the result honestly carries
+  // the undefined). provenBounds marks reads a desugaring guarantees in bounds by
+  // construction (the for-of counter).
+  | (InstructionBase & {kind: 'arrayIndex'; array: ValueID; index: ValueID; asserted: boolean; provenBounds: boolean})
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
   | (InstructionBase & {kind: 'nullishCheck'; value: ValueID; sentinel: 'null' | 'undefined' | 'nullish'; negated: boolean})
@@ -71,6 +78,9 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'absolute':
     case 'not': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return
+    case 'arrayLiteral': for (const element of instruction.elements) visit(element); return
+    case 'arrayLength': visit(instruction.array); return
+    case 'arrayIndex': visit(instruction.array); visit(instruction.index); return
     case 'minimum':
     case 'maximum': for (const id of instruction.values) visit(id); return
     case 'call': for (const id of instruction.arguments) visit(id); return

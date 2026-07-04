@@ -296,6 +296,11 @@ function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker,
       const admitsUndefined = type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
       return {kind: 'nullish', inner, sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
     }
+    // Module array and tuple bindings stay opaque for now; publishing them follows the
+    // records pattern once the need shows.
+    case 'array':
+    case 'tuple':
+      return null
     case 'object': {
       // A recursive declared type (e.g. a linked list) would nest forever; the binding
       // stays opaque. The seen check catches direct recursion; the depth cap catches

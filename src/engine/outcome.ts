@@ -1,7 +1,7 @@
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
-import type {InferredPrecondition} from '../requirements/model.ts'
+import type {BoundsAssumption, InferredPrecondition} from '../requirements/model.ts'
 import type {SharedState} from './state.ts'
 
 // Why one function's evaluation stopped on some path. Code branches only on `kind`; prose
@@ -30,6 +30,9 @@ export type StopReason =
   // though the checker's did — e.g. a guard shape the analysis does not model. The path
   // stops; the rest of the function and file report normally.
   | {kind: 'unmodeledNarrowing'}
+  // An asserted element read (arr[i]!) on a provably empty array — there is no element the
+  // assertion could produce.
+  | {kind: 'emptyArrayRead'}
 
 export type Stop = {
   site: SiteID
@@ -42,6 +45,7 @@ export type Stop = {
 export type FunctionEvaluation = {
   normal: {returnValue: AbstractValue; sharedState: SharedState} | null
   preconditions: InferredPrecondition[]
+  boundsAssumptions: BoundsAssumption[]
   stops: Stop[]
 }
 
@@ -53,6 +57,7 @@ export type CompletedEvaluation = {
   returnValue: AbstractValue
   sharedState: SharedState
   preconditions: InferredPrecondition[]
+  boundsAssumptions: BoundsAssumption[]
 }
 
 export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEvaluation | null {
@@ -61,6 +66,7 @@ export function completedEvaluation(evaluation: FunctionEvaluation): CompletedEv
     returnValue: evaluation.normal.returnValue,
     sharedState: evaluation.normal.sharedState,
     preconditions: evaluation.preconditions,
+    boundsAssumptions: evaluation.boundsAssumptions,
   }
 }
 
@@ -69,6 +75,7 @@ export type FunctionAnalysis =
       kind: 'analyzed'
       lowering: FunctionIR
       preconditions: InferredPrecondition[]
+      boundsAssumptions: BoundsAssumption[]
       returnValue: AbstractValue
       sharedState: SharedState
     }
@@ -82,6 +89,7 @@ export type FunctionAnalysis =
       stops: [Stop, ...Stop[]]
       observedReturn: {value: AbstractValue} | null
       observedNeeds: InferredPrecondition[]
+      observedBoundsAssumptions: BoundsAssumption[]
     }
   // The function did not lower. The variant carries a reference (not a copy) to its
   // lowering record, so a mismatched pair is unrepresentable and the report needs no

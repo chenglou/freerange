@@ -1,6 +1,7 @@
 import {isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
+import type {BoundsAssumption} from '../requirements/model.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
@@ -65,7 +66,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
           stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
         })
@@ -77,7 +78,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
+          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', fn.returnValue, program),
         })
@@ -128,11 +129,17 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
-function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: boolean[]): string[] {
+function assumptionLines(
+  fn: FunctionIR,
+  program: ProgramIR,
+  assumedBindings: boolean[],
+  boundsAssumptions: BoundsAssumption[],
+): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
     switch (parameter.type.kind) {
       case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
+      case 'numberArray': assumptions.push(`every ${parameter.name} element is finite and not NaN`); break
       case 'nullishNumber': {
         const sentinelWords = parameter.type.sentinels === 'both' ? 'null or undefined' : parameter.type.sentinels
         assumptions.push(`${parameter.name} is ${sentinelWords} or a finite non-NaN number`)
@@ -152,6 +159,11 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: bo
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
     pushDeclaredAssumptions(binding.name, declaredKind, assumptions)
+  }
+  for (const assumption of boundsAssumptions) {
+    // The engine could not prove the asserted element read in bounds; the entry's
+    // guarantees rest on it. E.g. `the element read at demo.ts:4:10 is in bounds`.
+    assumptions.push(`the element read at ${formatSite(program, assumption.site)} is in bounds`)
   }
   return assumptions
 }
@@ -239,6 +251,9 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       // agent hunting through a body whose constructs all lower.
       const calleeState = calleeStateText(analysis.functions[reason.callee])
       return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
+    }
+    case 'emptyArrayRead': {
+      return `reads an element of a provably empty array (at ${formatSite(program, stop.site)})`
     }
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
@@ -352,6 +367,23 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
     }
     case 'void': return []
     case 'nullish': return [`${path} is ${sentinelsText(value.sentinels)}`]
+    case 'tuple': {
+      const lines: string[] = [`${path}.length is exactly ${value.elements.length}`]
+      for (let index = 0; index < value.elements.length; index++) {
+        lines.push(...returnSummaries(`${path}[${index}]`, value.elements[index]!, program))
+      }
+      return lines
+    }
+    case 'array': {
+      const lines = [numberSummary(`${path}.length`, value.length, program)]
+      if (value.element != null) {
+        lines.push(...returnSummaries(`${path}[each]`, value.element, program).map(line =>
+          line.startsWith(`${path}[each] is `)
+            ? `every ${path} element is ${line.slice(`${path}[each] is `.length)}`
+            : line))
+      }
+      return lines
+    }
     case 'maybeNullish': {
       // The inner summary describes the present case; one line states the missing case.
       // E.g. `return is null or a finite number from 0 through 100`.

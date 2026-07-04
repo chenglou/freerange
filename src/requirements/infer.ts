@@ -61,7 +61,12 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     case 'minimum':
     case 'object':
     case 'nullishConstant':
-    case 'nullishCheck': return null
+    case 'nullishCheck':
+    case 'arrayLiteral':
+    case 'arrayIndex': return null
+    // An array's length is fixed at construction (no push in the subset), so a length
+    // read over a nameable array could join the expression language later; not yet.
+    case 'arrayLength': return null
     case 'property': {
       const base = numericExpression(instruction.object, context)
       return base == null ? null : {kind: 'property', base, name: instruction.property}

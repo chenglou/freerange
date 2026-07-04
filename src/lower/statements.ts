@@ -40,6 +40,10 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     lowerIfStatement(statement, context)
     return
   }
+  if (ts.isForOfStatement(statement)) {
+    lowerForOfStatement(statement, context)
+    return
+  }
   if (ts.isForStatement(statement)) {
     lowerForStatement(statement, context)
     return
@@ -91,6 +95,86 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
   for (let index = 0; index < changed.length; index++) {
     context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
   }
+}
+
+// `for (const x of arr)` desugars to a counter loop: a synthetic counter rides the loop
+// header as an extra block parameter (block parameters are plain ValueIDs, no symbol
+// needed), the header compares it against the array's length, and the body's element read
+// is in bounds by construction — the guard, the 0 start, and the +1 step are all
+// synthetic values nothing can reassign. An empty array prunes the body entirely.
+function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionContext): void {
+  if (!ts.isVariableDeclarationList(statement.initializer)
+    || statement.initializer.declarations.length !== 1
+    || !ts.isIdentifier(statement.initializer.declarations[0]!.name)) {
+    throw unsupported(statement.initializer, {kind: 'variableDeclarationShape'})
+  }
+  const elementName = statement.initializer.declarations[0]!.name
+  const elementType = context.checker.getTypeAtLocation(elementName)
+  if (valueKind(elementType, context.checker) == null) {
+    throw unsupported(elementName, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
+  }
+  const arrayType = context.checker.getTypeAtLocation(statement.expression)
+  const arrayKind = valueKind(arrayType, context.checker)
+  if (arrayKind !== 'array' && arrayKind !== 'tuple') {
+    throw unsupported(statement.expression, {kind: 'valueType', typeText: context.checker.typeToString(arrayType)})
+  }
+  const array = lowerExpression(statement.expression, context)
+  const zero = addInstruction(context, statement, {kind: 'constant', value: 0})
+
+  const bindingsBeforeLoop = new Map(context.bindings)
+  const assigned = assignedSymbols([statement.statement], context.checker)
+  const carried = [...bindingsBeforeLoop.keys()].filter(symbol => assigned.has(symbol))
+  const header = createBlock(context, carried.length + 1, addSite(context, statement))
+  terminate(context.currentBlock, {
+    kind: 'jump',
+    target: {
+      block: header,
+      arguments: [...carried.map(symbol => requiredBranchBinding(symbol, bindingsBeforeLoop)), zero],
+    },
+    site: addSite(context, statement),
+  })
+
+  context.currentBlock = context.blocks[header]!
+  context.bindings = new Map(bindingsBeforeLoop)
+  for (let index = 0; index < carried.length; index++) {
+    context.bindings.set(carried[index]!, context.currentBlock.parameters[index]!)
+  }
+  const counter = context.currentBlock.parameters[carried.length]!
+  const length = addInstruction(context, statement, {kind: 'arrayLength', array})
+  const condition = addInstruction(context, statement, {kind: 'compare', operator: 'lessThan', left: counter, right: length})
+  const conditionBindings = new Map(context.bindings)
+  const body = createBlock(context)
+  const exit = createBlock(context)
+  terminate(context.currentBlock, {
+    kind: 'branch',
+    condition,
+    whenTrue: {block: body, arguments: []},
+    whenFalse: {block: exit, arguments: []},
+    site: addSite(context, statement),
+  })
+
+  context.currentBlock = context.blocks[body]!
+  context.bindings = new Map(conditionBindings)
+  context.bindings.set(
+    requiredSymbol(elementName, context.checker),
+    addInstruction(context, statement, {kind: 'arrayIndex', array, index: counter, asserted: true, provenBounds: true}),
+  )
+  lowerStatement(statement.statement, context)
+  if (context.currentBlock.terminator == null) {
+    const one = addInstruction(context, statement, {kind: 'constant', value: 1})
+    const next = addInstruction(context, statement, {kind: 'binary', operator: 'add', left: counter, right: one})
+    terminate(context.currentBlock, {
+      kind: 'jump',
+      target: {
+        block: header,
+        arguments: [...carried.map(symbol => requiredBranchBinding(symbol, context.bindings)), next],
+      },
+      site: addSite(context, statement),
+    })
+  }
+
+  context.currentBlock = context.blocks[exit]!
+  context.bindings = new Map(conditionBindings)
 }
 
 function lowerForStatement(statement: ts.ForStatement, context: FunctionContext): void {

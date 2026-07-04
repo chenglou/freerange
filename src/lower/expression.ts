@@ -104,6 +104,27 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isIdentifier(current)) {
     return identifierValue(requiredSymbol(current, context.checker), current, context)
   }
+  if (ts.isArrayLiteralExpression(current)) {
+    const literalKind = valueKind(context.checker.getTypeAtLocation(current), context.checker)
+    const elements: ValueID[] = []
+    for (const element of current.elements) {
+      if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) {
+        throw unsupported(element, {kind: 'expressionForm', syntax: ts.SyntaxKind[element.kind]})
+      }
+      elements.push(lowerExpression(element, context))
+    }
+    // The literal's static type decides the form: `[4, 8, 24] as const` is a tuple and
+    // stays exact per position; a plain literal is an array and joins its elements.
+    return addInstruction(context, current, {kind: 'arrayLiteral', elements, form: literalKind === 'tuple' ? 'tuple' : 'array'})
+  }
+  if (ts.isNonNullExpression(current) && ts.isElementAccessExpression(current.expression)) {
+    // `arr[i]!` — asserts presence; an unproven read becomes an in-bounds assumption line.
+    return lowerElementAccess(current.expression, true, context)
+  }
+  if (ts.isElementAccessExpression(current)) {
+    // Bare arr[i] types T | undefined; the result honestly carries the possible miss.
+    return lowerElementAccess(current, false, context)
+  }
   if (ts.isObjectLiteralExpression(current)) {
     const properties: Array<{name: string; value: ValueID}> = []
     for (const property of current.properties) {
@@ -259,6 +280,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
     const objectType = context.checker.getTypeAtLocation(current.expression)
+    const receiverKind = valueKind(objectType, context.checker)
+    if ((receiverKind === 'array' || receiverKind === 'tuple') && current.name.text === 'length') {
+      const array = lowerExpression(current.expression, context)
+      return addInstruction(context, current, {kind: 'arrayLength', array})
+    }
     // An enum member read gets its own name and rewrite; the generic receiver prose
     // ("property read from typeof Direction") names the checker's type, not the construct.
     const receiverSymbol = ts.isIdentifier(current.expression)
@@ -473,9 +499,14 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | 'nullable' | null {
+export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  // The type system's own split, mirrored: tuple types are positional and exact, array
+  // types are homogeneous. Checked before the general object arm (both carry the Object
+  // flag and index signatures).
+  if (checker.isTupleType(type)) return 'tuple'
+  if (checker.isArrayType(type)) return 'array'
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     // An index signature, e.g. Record<string, number>, admits properties the type never
     // names: a value typed with one can carry any key set at runtime, so the abstract
@@ -512,7 +543,7 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     let objectShape: string | null = null
     for (const member of type.types) {
       const kind = valueKind(member, checker)
-      if (kind == null || kind === 'nullable' || (shared != null && kind !== shared)) return null
+      if (kind == null || kind === 'nullable' || kind === 'array' || kind === 'tuple' || (shared != null && kind !== shared)) return null
       if (kind === 'object') {
         // TypeScript normalizes a union of disjoint shapes by adding each member's missing
         // properties as optional-undefined, so only the required properties describe the
@@ -606,6 +637,22 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
 function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
   if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
   return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
+}
+
+function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolean, context: FunctionContext): ValueID {
+  const receiverType = context.checker.getTypeAtLocation(access.expression)
+  const receiverKind = valueKind(receiverType, context.checker)
+  if (receiverKind !== 'array' && receiverKind !== 'tuple') {
+    throw unsupported(access.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(receiverType)})
+  }
+  const resultType = context.checker.getTypeAtLocation(access)
+  if (valueKind(resultType, context.checker) == null) {
+    throw unsupported(access, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
+  }
+  requireNumberType(access.argumentExpression, context.checker)
+  const array = lowerExpression(access.expression, context)
+  const index = lowerExpression(access.argumentExpression, context)
+  return addInstruction(context, access, {kind: 'arrayIndex', array, index, asserted, provenBounds: false})
 }
 
 // Recognizes `x === null`, `x !== undefined`, `x == null`, and friends. The loose forms
@@ -702,10 +749,20 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
     }
     // The non-null assertion `x!` peels only while the value kind is unchanged underneath —
     // on a nullable type, e.g. `x!` with `x: number | null`, the static type stops
-    // describing the value the analysis models, so stop.
+    // describing the value the analysis models, so stop. The one blessed kind-changing
+    // form is `arr[i]!`: element reads type T | undefined under noUncheckedIndexedAccess,
+    // and the element-access lowering gives the asserted read its explicit treatment — an
+    // in-bounds assumption line, or a bounds proof when the loop supplies one.
     if (ts.isNonNullExpression(current)) {
       const assertedType = checker.getTypeAtLocation(current)
       const operandType = checker.getTypeAtLocation(current.expression)
+      // The one blessed kind-changing assertion is `arr[i]!`: element reads type
+      // T | undefined under noUncheckedIndexedAccess, and the asserted read gets its
+      // explicit treatment in lowering — an in-bounds assumption line, or a bounds proof
+      // when a loop supplies one. It stays wrapped so lowering can see the assertion.
+      if (ts.isElementAccessExpression(current.expression) && valueKind(assertedType, checker) != null) {
+        return current
+      }
       if (valueKind(assertedType, checker) !== valueKind(operandType, checker)) {
         throw unsupported(current, {
           kind: 'kindChangingAssertion',
