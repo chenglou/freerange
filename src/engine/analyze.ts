@@ -83,7 +83,9 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
         }
         case 'nullishNumber': {
           arguments_.push({kind: 'maybeNullish', inner: finiteInputNumber(), sentinels: parameter.type.sentinels})
-          argumentExpressions.push(null)
+          // Nameable: after a null check narrows the parameter, a division by it can mint
+          // `requires: interval is nonzero` like any number parameter.
+          argumentExpressions.push({kind: 'parameter', index})
           break
         }
         case 'object': {
@@ -343,7 +345,7 @@ function runEvaluation(
           // refineComparison clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
           const branch = comparison != null
-            ? refineComparison(state, comparison, true)
+            ? refineComparison(state, comparison, true, expressionContext.instructionByValue)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, true, expressionContext.instructionByValue)
               : condition.canBeFalse ? cloneState(state) : state
@@ -351,7 +353,7 @@ function runEvaluation(
         }
         if (condition.canBeFalse) {
           const branch = comparison != null
-            ? refineComparison(state, comparison, false)
+            ? refineComparison(state, comparison, false, expressionContext.instructionByValue)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, false, expressionContext.instructionByValue)
               : state

@@ -252,8 +252,8 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       const calleeState = calleeStateText(analysis.functions[reason.callee])
       return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
     }
-    case 'emptyArrayRead': {
-      return `reads an element of a provably empty array (at ${formatSite(program, stop.site)})`
+    case 'outOfBoundsRead': {
+      return `reads an element provably outside the array (at ${formatSite(program, stop.site)})`
     }
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`

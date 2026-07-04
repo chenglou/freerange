@@ -94,9 +94,22 @@ export function recordProperty(record: AbstractRecord, name: string): AbstractVa
 }
 
 export function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
+  const joined = tryJoinValues(left, right)
+  // A top-level kind mismatch stays a crash: union-typed bindings are outside the accepted
+  // subset and belong to a lowering gate. INSIDE structures the mismatch is survivable —
+  // tryJoinValues callers drop the offending property instead — because every read of a
+  // mixed-kind property is rejected by the gates.
+  if (joined == null) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
+  return joined
+}
+
+// The total join: null when the kinds cannot meet, instead of throwing. Record properties,
+// array elements, tuple positions, and maybeNullish inners all join through this, so a
+// mismatch deep inside a structure degrades (the property is dropped, unreadable anyway)
+// rather than killing the run.
+export function tryJoinValues(left: AbstractValue, right: AbstractValue): AbstractValue | null {
   // Missing values meet other kinds legitimately: a `number | null` binding joins a number
-  // branch with a null branch. Everything else keeps the kind-mismatch crash, which
-  // belongs to a lowering gate.
+  // branch with a null branch.
   if (left.kind === 'nullish' && right.kind === 'nullish') {
     return {kind: 'nullish', sentinels: joinSentinels(left.sentinels, right.sentinels)}
   }
@@ -105,46 +118,58 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
       ? {kind: 'maybeNullish', inner: right.inner, sentinels: joinSentinels(left.sentinels, right.sentinels)}
       : {kind: 'maybeNullish', inner: right, sentinels: left.sentinels}
   }
-  if (right.kind === 'nullish') return joinValues(right, left)
+  if (right.kind === 'nullish') return tryJoinValues(right, left)
   if (left.kind === 'maybeNullish' || right.kind === 'maybeNullish') {
     const leftInner = left.kind === 'maybeNullish' ? left.inner : left
     const rightInner = right.kind === 'maybeNullish' ? right.inner : right
     const leftSentinels = left.kind === 'maybeNullish' ? left.sentinels : null
     const rightSentinels = right.kind === 'maybeNullish' ? right.sentinels : null
     const sentinels = leftSentinels == null ? rightSentinels! : rightSentinels == null ? leftSentinels : joinSentinels(leftSentinels, rightSentinels)
-    return {kind: 'maybeNullish', inner: joinValues(leftInner, rightInner), sentinels}
+    const inner = tryJoinValues(leftInner, rightInner)
+    return inner == null ? null : {kind: 'maybeNullish', inner, sentinels}
   }
   // Tuples and arrays meet across forms: the tuple collapses to its homogeneous hull.
   if ((left.kind === 'tuple' || left.kind === 'array') && (right.kind === 'tuple' || right.kind === 'array')) {
-    if (left.kind === 'tuple' && right.kind === 'tuple') {
-      if (left.elements.length === right.elements.length) {
-        return {kind: 'tuple', elements: left.elements.map((element, index) => joinValues(element, right.elements[index]!))}
+    if (left.kind === 'tuple' && right.kind === 'tuple' && left.elements.length === right.elements.length) {
+      const elements: AbstractValue[] = []
+      for (let index = 0; index < left.elements.length; index++) {
+        const element = tryJoinValues(left.elements[index]!, right.elements[index]!)
+        if (element == null) return null
+        elements.push(element)
       }
-      return joinValues(arrayFromTuple(left), arrayFromTuple(right))
+      return {kind: 'tuple', elements}
     }
-    const leftArray = left.kind === 'tuple' ? arrayFromTuple(left) : left
-    const rightArray = right.kind === 'tuple' ? arrayFromTuple(right) : right
+    const leftArray = left.kind === 'tuple' ? arrayFromTupleTotal(left) : left
+    const rightArray = right.kind === 'tuple' ? arrayFromTupleTotal(right) : right
+    if (leftArray == null || rightArray == null) return null
     const element = leftArray.element == null ? rightArray.element
       : rightArray.element == null ? leftArray.element
-      : joinValues(leftArray.element, rightArray.element)
+      : tryJoinValues(leftArray.element, rightArray.element)
+    if (element == null && leftArray.element != null && rightArray.element != null) return null
     return {kind: 'array', element, length: joinNumbers(leftArray.length, rightArray.length)}
   }
-  if (left.kind !== right.kind) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
+  if (left.kind !== right.kind) return null
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
+    // Handled by the structural arms above; unreachable here.
     case 'tuple':
     case 'array':
-      throw new Error('handled above')
+      return null
   }
 }
 
-export function arrayFromTuple(tuple: AbstractTuple): AbstractArray {
-  const element = tuple.elements.length === 0
-    ? null
-    : tuple.elements.reduce((joined, next) => joinValues(joined, next))
+// The tuple's homogeneous hull, or null when its positions mix kinds (a mixed tuple never
+// reaches a cross-form join through the gates; inside structures the caller drops it).
+function arrayFromTupleTotal(tuple: AbstractTuple): AbstractArray | null {
+  if (tuple.elements.length === 0) return {kind: 'array', element: null, length: constantLength(0)}
+  let element: AbstractValue | null = tuple.elements[0]!
+  for (let index = 1; index < tuple.elements.length; index++) {
+    element = tryJoinValues(element, tuple.elements[index]!)
+    if (element == null) return null
+  }
   return {kind: 'array', element, length: constantLength(tuple.elements.length)}
 }
 
@@ -152,16 +177,9 @@ function constantLength(length: number): AbstractNumber {
   return {kind: 'number', lower: length, upper: length, integer: true, mayBeNaN: false}
 }
 
-// Whether two property values can meet in joinValues without a kind-mismatch crash: same
-// kind, or a legitimate missing-value meet ({x: 1} on one branch, {x: null} on another).
-function joinableKinds(left: AbstractValue, right: AbstractValue): boolean {
-  if (left.kind === right.kind) return true
-  return left.kind === 'nullish' || right.kind === 'nullish'
-    || left.kind === 'maybeNullish' || right.kind === 'maybeNullish'
-}
 
 // Records join pointwise by property name, keeping only the names present on BOTH sides
-// with MATCHING kinds. Different shapes genuinely meet: TypeScript accepts
+// whose values can actually meet. Different shapes genuinely meet: TypeScript accepts
 // `flag ? {x: 1} : {x: 2, y: 3}` wherever `{x: number}` is expected, so on the flag-true
 // path `y` does not exist — keeping the union of names would publish an ensures line about
 // a property that is sometimes absent. A same-named property whose kinds differ (from a
@@ -173,8 +191,10 @@ function joinRecords(left: AbstractRecord, right: AbstractRecord): AbstractRecor
   const properties: Array<{name: string; value: AbstractValue}> = []
   for (const property of left.properties) {
     const other = recordProperty(right, property.name)
-    if (other == null || !joinableKinds(property.value, other)) continue
-    properties.push({name: property.name, value: joinValues(property.value, other)})
+    if (other == null) continue
+    const joined = tryJoinValues(property.value, other)
+    if (joined == null) continue
+    properties.push({name: property.name, value: joined})
   }
   return {kind: 'record', properties}
 }

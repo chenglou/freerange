@@ -1215,6 +1215,67 @@ describe('analyzeFile', () => {
       .toEqual(['return.w is a finite integer number from 3 through 3'])
   })
 
+  test('review fixes: void checks reject, undefined narrows, mixed elements reject, guards prove bounds', () => {
+    const report = analyzeSource('review-fixes.ts', `
+      function announce(): void { return }
+      export function checkVoidLoose(): number {
+        if (announce() == null) { return 1 }
+        return 0
+      }
+      export function narrowUndefined(x: number | undefined): number {
+        if (x !== undefined) { return x }
+        return -1
+      }
+      export function mixedLiteral(): number {
+        const pair = [1, true]
+        return pair.length
+      }
+      export function firstOrZero(values: number[]): number {
+        if (values.length > 0) { return values[0]! }
+        return 0
+      }
+      export function outOfBounds(): number {
+        const sizes = [4, 8, 24]
+        return sizes[5]! * 3
+      }
+    `)
+    const file = resolve('review-fixes.ts')
+    // A void call's runtime value is undefined, which the void abstract kind cannot carry;
+    // admitting the check would prune the wrong branch.
+    const voidCheck = report.functions.find(fn => fn.name === 'checkVoidLoose')
+    expect(voidCheck?.kind).toBe('unsupported')
+    expect(analyzedFunction(report, 'narrowUndefined').ensures).toEqual(['return is a finite number'])
+    // (number | boolean)[] has an element hull no read gate could describe.
+    const mixed = report.functions.find(fn => fn.name === 'mixedLiteral')
+    expect(mixed?.kind).toBe('unsupported')
+    // The length guard narrows through the arrayLength producer into the array value, so
+    // the asserted read is proven — no assumption line.
+    expect(analyzedFunction(report, 'firstOrZero').assumptions)
+      .toEqual(['every values element is finite and not NaN'])
+    const oob = report.functions.find(fn => fn.name === 'outOfBounds')
+    expect(oob?.kind).toBe('partial')
+    expect(formatReport(report)).toContain(`reads an element provably outside the array (at ${file}:21:16)`)
+  })
+
+  test('review fixes: nullish params and spread copies stay nameable in requirements', () => {
+    const report = analyzeSource('nameable.ts', `
+      export function rate(total: number, interval: number | null): number {
+        if (interval !== null && interval > 0) { return total / interval }
+        return 0
+      }
+      export function throughSpread(grid: {columns: number}, width: number): number {
+        const copy = {...grid}
+        return width / copy.columns
+      }
+    `)
+    const file = resolve('nameable.ts')
+    expect(analyzedFunction(report, 'rate').requires)
+      .toEqual([`interval is nonzero (division at ${file}:3:57)`])
+    // The record is immutable, so {...grid}.columns IS grid.columns.
+    expect(analyzedFunction(report, 'throughSpread').requires)
+      .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

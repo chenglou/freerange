@@ -160,21 +160,27 @@ function evaluateInstructionKinded(
       const element = sequence.kind === 'tuple'
         ? tupleElement(sequence, index)
         : sequence.element
-      // A read from a provably empty array: the asserted form lied, the bare form is
-      // exactly undefined.
-      if (element == null) {
+      const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
+      const inBounds = instruction.provenBounds
+        || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
+      // A provably out-of-bounds read: for the asserted form the assertion lied; for the
+      // bare form the value is exactly undefined. An empty sequence is the special case
+      // where every read is out of bounds.
+      const provablyOut = element == null
+        || (index.integer && !index.mayBeNaN && (index.lower >= length.upper || index.upper < 0))
+      if (provablyOut) {
         if (instruction.asserted) {
-          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'emptyArrayRead'}}}
+          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'outOfBoundsRead'}}}
         }
         return value({kind: 'nullish', sentinels: 'undefined'})
       }
       if (!instruction.asserted) {
-        // Bare arr[i] types T | undefined; the result honestly carries the possible miss.
-        return passthroughValue(joinValues({kind: 'nullish', sentinels: 'undefined'}, element))
+        // Bare arr[i] types T | undefined; a proven read cannot miss, an unproven one
+        // honestly carries the possibility.
+        return inBounds
+          ? passthroughValue(element)
+          : passthroughValue(joinValues({kind: 'nullish', sentinels: 'undefined'}, element))
       }
-      const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
-      const inBounds = instruction.provenBounds
-        || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
       if (!inBounds) addBoundsAssumption(context.boundsAssumptions, {site: instruction.site})
       return passthroughValue(element)
     }
@@ -396,8 +402,9 @@ function refineForSentinel(
   return operand
 }
 
-// frame[id] := refined, then rebuild the enclosing record value when id was produced by a
-// property read, recursively — later reads of the same property see the narrowed value.
+// frame[id] := refined, then rebuild the enclosing value when id was produced by a
+// structural read, recursively — later reads see the narrowed value. Property reads
+// rebuild the record; length reads rebuild the array's length interval.
 function writeThroughProducers(
   state: ExecutionState,
   id: ValueID,
@@ -406,21 +413,29 @@ function writeThroughProducers(
 ): void {
   state.frame.values[id] = refined
   const producer = producers[id]
-  if (producer?.kind !== 'property') return
-  const parent = state.frame.values[producer.object]
-  if (parent?.kind !== 'record') return
-  const rebuilt: AbstractValue = {
-    kind: 'record',
-    properties: parent.properties.map(property =>
-      property.name === producer.property ? {name: property.name, value: refined} : property),
+  if (producer?.kind === 'property') {
+    const parent = state.frame.values[producer.object]
+    if (parent?.kind !== 'record') return
+    const rebuilt: AbstractValue = {
+      kind: 'record',
+      properties: parent.properties.map(property =>
+        property.name === producer.property ? {name: property.name, value: refined} : property),
+    }
+    writeThroughProducers(state, producer.object, rebuilt, producers)
+    return
   }
-  writeThroughProducers(state, producer.object, rebuilt, producers)
+  if (producer?.kind === 'arrayLength' && refined.kind === 'number') {
+    const parent = state.frame.values[producer.array]
+    if (parent?.kind !== 'array') return
+    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length: refined}, producers)
+  }
 }
 
 export function refineComparison(
   state: ExecutionState,
   comparison: Extract<InstructionIR, {kind: 'compare'}>,
   truth: boolean,
+  producers: Array<InstructionIR | undefined>,
 ): ExecutionState | null {
   if (!truth && comparison.operator === 'equal') return cloneState(state)
   const result = cloneState(state)
@@ -474,8 +489,12 @@ export function refineComparison(
     if (left.mayBeNaN || right.mayBeNaN) return cloneState(state)
     return null
   }
-  result.frame.values[comparison.left] = refinedLeft
-  result.frame.values[comparison.right] = refinedRight
+  // Through the producer chain, like the null-check refinement: narrowing an
+  // arrayLength's result rebuilds the array value with the narrowed length (so
+  // `if (values.length > 0) values[0]!` proves the read), and narrowing a property read
+  // rebuilds the record.
+  writeThroughProducers(result, comparison.left, refinedLeft, producers)
+  writeThroughProducers(result, comparison.right, refinedRight, producers)
   return result
 }
 

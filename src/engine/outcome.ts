@@ -30,9 +30,10 @@ export type StopReason =
   // though the checker's did — e.g. a guard shape the analysis does not model. The path
   // stops; the rest of the function and file report normally.
   | {kind: 'unmodeledNarrowing'}
-  // An asserted element read (arr[i]!) on a provably empty array — there is no element the
-  // assertion could produce.
-  | {kind: 'emptyArrayRead'}
+  // An asserted element read (arr[i]!) whose index is provably outside the array — there
+  // is no element the assertion could produce. An empty array is the special case where
+  // every read qualifies.
+  | {kind: 'outOfBoundsRead'}
 
 export type Stop = {
   site: SiteID

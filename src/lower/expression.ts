@@ -105,7 +105,17 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return identifierValue(requiredSymbol(current, context.checker), current, context)
   }
   if (ts.isArrayLiteralExpression(current)) {
-    const literalKind = valueKind(context.checker.getTypeAtLocation(current), context.checker)
+    const literalType = context.checker.getTypeAtLocation(current)
+    const literalKind = valueKind(literalType, context.checker)
+    // A plain literal's elements must share one representable kind — `[1, true]` types as
+    // (number | boolean)[], whose element hull no read gate could ever describe. Tuples
+    // carry per-position kinds and skip this check.
+    if (literalKind === 'array' && current.elements.length > 0) {
+      const elementType = context.checker.getIndexTypeOfType(literalType, ts.IndexKind.Number)
+      if (elementType == null || valueKind(elementType, context.checker) == null) {
+        throw unsupported(current, {kind: 'valueType', typeText: context.checker.typeToString(literalType)})
+      }
+    }
     const elements: ValueID[] = []
     for (const element of current.elements) {
       if (ts.isSpreadElement(element) || ts.isOmittedExpression(element)) {
@@ -668,8 +678,7 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   const sentinelOf = (side: ts.Expression): 'null' | 'undefined' | null => {
     const unwrapped = unwrap(side, context.checker)
     if (unwrapped.kind === ts.SyntaxKind.NullKeyword) return 'null'
-    if (ts.isIdentifier(unwrapped) && unwrapped.text === 'undefined'
-      && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(unwrapped))) return 'undefined'
+    if (isUndefinedGlobal(unwrapped, context.checker)) return 'undefined'
     return null
   }
   const leftSentinel = sentinelOf(expression.left)
@@ -677,6 +686,13 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   const sentinel = leftSentinel ?? rightSentinel
   if (sentinel == null || (leftSentinel != null && rightSentinel != null)) return null
   const checked = leftSentinel == null ? expression.left : expression.right
+  // The checked side must be a kind the analysis represents: `voidCall() == null` is TRUE
+  // at runtime (a void function returns undefined), but the void abstract value carries no
+  // sentinel, so admitting it would prune the wrong branch.
+  const checkedType = context.checker.getTypeAtLocation(checked)
+  if (valueKind(checkedType, context.checker) == null) {
+    throw unsupported(checked, {kind: 'valueType', typeText: context.checker.typeToString(checkedType)})
+  }
   const value = lowerExpression(checked, context)
   return addInstruction(context, expression, {
     kind: 'nullishCheck',
@@ -684,6 +700,15 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     sentinel: loose ? 'nullish' : sentinel,
     negated,
   })
+}
+
+// The intrinsic `undefined` symbol has ZERO declarations (no `declare var undefined` in
+// lib), so the declaration-file shadowing defense cannot recognize it. The type is the
+// defense instead: only the real global's type carries the Undefined flag — a shadowing
+// binding's type is whatever it was assigned.
+function isUndefinedGlobal(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== 'undefined') return false
+  return (checker.getTypeAtLocation(expression).flags & ts.TypeFlags.Undefined) !== 0
 }
 
 function isGlobalInfinity(expression: ts.Expression, checker: ts.TypeChecker): boolean {
@@ -704,7 +729,7 @@ function identifierValue(symbol: ts.Symbol, node: ts.Identifier, context: Functi
   if (isGlobalInfinity(node, context.checker)) {
     return addInstruction(context, node, {kind: 'constant', value: Number.POSITIVE_INFINITY})
   }
-  if (node.text === 'undefined' && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(node))) {
+  if (isUndefinedGlobal(node, context.checker)) {
     return addInstruction(context, node, {kind: 'nullishConstant', sentinel: 'undefined'})
   }
   throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
