@@ -32,6 +32,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
       kind: 'lowered',
       name: moduleInitializerName,
       parameters: [],
+      returnPropertyNames: null,
       entry: 0,
       blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
     },
@@ -139,6 +140,9 @@ function lowerFunction(
     kind: 'lowered',
     name: declaration.name!.text,
     parameters: context.parameters,
+    returnPropertyNames: valueKind(returnType, checker) === 'object'
+      ? checker.getPropertiesOfType(returnType).map(property => property.name)
+      : null,
     entry: 0,
     blocks: sealBlocks(context.blocks, declaration.name!.text),
   }

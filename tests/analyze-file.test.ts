@@ -1188,6 +1188,33 @@ describe('analyzeFile', () => {
     ])
   })
 
+  test('top-level destructuring publishes each name as its own binding', () => {
+    const report = analyzeSource('toplevel-destructure.ts', `
+      const gridSize = {cols: 8, rows: 6}
+      const {cols} = gridSize
+      export function scaled(x: number): number {
+        return Math.min(x, cols)
+      }
+    `)
+    expect(analyzedFunction(report, 'scaled').ensures)
+      .toEqual(['return is a finite number at most 8'])
+  })
+
+  test('ensures lines cover only what the declared return type exposes', () => {
+    // The wider literal's h is a true fact, but no type-checked caller can read it.
+    const report = analyzeSource('wide-return.ts', `
+      type Size = {w: number}
+      function wideBox(): {w: number; h: number} {
+        return {w: 3, h: 4}
+      }
+      export function measure(): Size {
+        return wideBox()
+      }
+    `)
+    expect(analyzedFunction(report, 'measure').ensures)
+      .toEqual(['return.w is a finite integer number from 3 through 3'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

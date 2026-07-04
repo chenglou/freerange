@@ -40,6 +40,11 @@ export type FunctionIR = {
   kind: 'lowered'
   name: string
   parameters: ParameterIR[]
+  // Property names of the declared return type when it is a record, else null. The report
+  // prints ensures lines only for these: a function declared to return {w: number} may
+  // return a wider literal, and the extra properties — true facts, but outside the type —
+  // are not part of the contract the caller can see.
+  returnPropertyNames: string[] | null
   entry: BlockID
   blocks: BlockIR[]
 }

@@ -44,8 +44,17 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
       // reading the name are rejected as unknown identifiers.
       if ((statement.declarationList.flags & (ts.NodeFlags.Let | ts.NodeFlags.Const)) === 0) continue
       for (const declarator of statement.declarationList.declarations) {
-        if (!ts.isIdentifier(declarator.name)) continue
-        register(declarator.name, declaredCategory(declarator.name, checker))
+        if (ts.isIdentifier(declarator.name)) {
+          register(declarator.name, declaredCategory(declarator.name, checker))
+          continue
+        }
+        // `const {cols} = gridSize` at the top level: each destructured name is its own
+        // module binding, categorized by its element type like any declarator.
+        if (ts.isObjectBindingPattern(declarator.name)) {
+          for (const element of declarator.name.elements) {
+            if (ts.isIdentifier(element.name)) register(element.name, declaredCategory(element.name, checker))
+          }
+        }
       }
       continue
     }
@@ -212,6 +221,7 @@ export function lowerModuleInitializer(
     initializer: {
       kind: 'lowered',
       name: moduleInitializerName,
+      returnPropertyNames: null,
       parameters: [],
       entry: 0,
       blocks: sealBlocks(context.blocks, moduleInitializerName),
@@ -222,7 +232,33 @@ export function lowerModuleInitializer(
 
 function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: FunctionContext, scan: ModuleScan): void {
   for (const declarator of statement.declarationList.declarations) {
-    if (!ts.isIdentifier(declarator.name) || declarator.initializer == null) {
+    if (declarator.initializer == null) throw new LoweringStop(declarator, {kind: 'variableDeclarationShape'})
+    // `const {cols} = gridSize`: one read of the source, one property read and module
+    // write per name — the same lowering destructuring gets inside functions, aimed at
+    // module slots.
+    if (ts.isObjectBindingPattern(declarator.name)) {
+      const source = lowerExpression(declarator.initializer, context)
+      for (const element of declarator.name.elements) {
+        if (!ts.isIdentifier(element.name) || element.dotDotDotToken != null || element.initializer != null) {
+          throw new LoweringStop(element, {kind: 'variableDeclarationShape'})
+        }
+        const property = element.propertyName == null
+          ? element.name.text
+          : ts.isIdentifier(element.propertyName) ? element.propertyName.text : null
+        if (property == null) throw new LoweringStop(element, {kind: 'variableDeclarationShape'})
+        const elementType = context.checker.getTypeAtLocation(element.name)
+        if (valueKind(elementType, context.checker) == null) {
+          throw new LoweringStop(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
+        }
+        const symbol = context.checker.getSymbolAtLocation(element.name)
+        const binding = symbol == null ? undefined : scan.bindingsBySymbol.get(symbol)
+        if (binding == null) throw new LoweringStop(element, {kind: 'variableDeclarationShape'})
+        const value = addInstruction(context, element, {kind: 'property', object: source, property})
+        addInstruction(context, element, {kind: 'moduleWrite', binding, value})
+      }
+      continue
+    }
+    if (!ts.isIdentifier(declarator.name)) {
       throw new LoweringStop(declarator, {kind: 'variableDeclarationShape'})
     }
     const symbol = context.checker.getSymbolAtLocation(declarator.name)

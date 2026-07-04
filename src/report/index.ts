@@ -60,7 +60,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         const parameterNames = lowering.parameters.map(parameter => parameter.name)
         const observed: string[] = []
         if (fn.observedReturn != null) {
-          observed.push(...returnSummaries('return', fn.observedReturn.value, program))
+          observed.push(...returnSummaries('return', declaredReturn(fn.observedReturn.value, lowering), program))
         }
         for (const need of fn.observedNeeds) observed.push(formatObservedNeed(need, parameterNames, program))
         functions.push({
@@ -80,7 +80,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           name: lowering.name,
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-          ensures: returnSummaries('return', fn.returnValue, program),
+          ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
         })
         break
       }
@@ -352,6 +352,14 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'expressionForm': return `expression (${reason.syntax})`
     case 'statementForm': return `statement (${reason.syntax})`
   }
+}
+
+// The contract covers only what the declared return type exposes: a wider returned
+// record's extra properties are true facts, but not ones any type-checked caller can read.
+function declaredReturn(value: AbstractValue, lowering: FunctionIR): AbstractValue {
+  if (value.kind !== 'record' || lowering.returnPropertyNames == null) return value
+  const declared = new Set(lowering.returnPropertyNames)
+  return {kind: 'record', properties: value.properties.filter(property => declared.has(property.name))}
 }
 
 function returnSummaries(path: string, value: AbstractValue, program: ProgramIR): string[] {
