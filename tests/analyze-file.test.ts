@@ -363,23 +363,20 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('stops a division whose requirement cannot name a property read', () => {
+  test('a division by a record property mints a property-path requirement', () => {
+    // Sound to name because values are immutable: grid.columnCount cannot change between
+    // function entry and the division. This used to stop with divisorUnknown.
     const report = analyzeSource('property-divisor.ts', `
       export function widthPerColumn(grid: {columnCount: number}, width: number): number {
         return width / grid.columnCount
       }
     `)
     const file = resolve('property-divisor.ts')
-    expect(report.functions).toEqual([{
-      kind: 'partial',
-      name: 'widthPerColumn',
-      assumptions: ['grid.columnCount is finite and not NaN', 'width is finite and not NaN'],
-      stopped: [`cannot infer a nonzero requirement for the division at ${file}:3:16`],
-      observed: [],
-    }])
+    const fn = analyzedFunction(report, 'widthPerColumn')
+    expect(fn.requires).toEqual([`grid.columnCount is nonzero (division at ${file}:3:16)`])
   })
 
-  test('reports a callee that stops only under this caller’s arguments', () => {
+  test('propagates an unproven property-path requirement to the caller', () => {
     const report = analyzeSource('caller-specific.ts', `
       export function divideWidth(width: number, columnCount: number): number {
         return width / columnCount
@@ -391,14 +388,10 @@ describe('analyzeFile', () => {
     const file = resolve('caller-specific.ts')
     expect(analyzedFunction(report, 'divideWidth').requires)
       .toEqual([`columnCount is nonzero (division at ${file}:3:16)`])
-    const caller = report.functions.find(fn => fn.name === 'divideByGridColumns')
-    expect(caller).toEqual({
-      kind: 'partial',
-      name: 'divideByGridColumns',
-      assumptions: ['grid.columnCount is finite and not NaN', 'width is finite and not NaN'],
-      stopped: [`calls divideWidth, whose analysis stopped for this specific call (call at ${file}:6:16)`],
-      observed: [],
-    })
+    // The unproven part propagates with the caller's argument substituted in: the caller's
+    // requirement names its own grid.columnCount while pointing at the callee's division.
+    const caller = analyzedFunction(report, 'divideByGridColumns')
+    expect(caller.requires).toEqual([`grid.columnCount is nonzero (division at ${file}:3:16)`])
   })
 
   test('converges when a called helper allocates inside a loop', () => {

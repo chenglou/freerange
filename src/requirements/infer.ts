@@ -59,8 +59,11 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     case 'compare':
     case 'maximum':
     case 'minimum':
-    case 'object':
-    case 'property': return null
+    case 'object': return null
+    case 'property': {
+      const base = numericExpression(instruction.object, context)
+      return base == null ? null : {kind: 'property', base, name: instruction.property}
+    }
   }
 }
 
@@ -87,5 +90,9 @@ function sameExpression(left: NumericExpression, right: NumericExpression): bool
         && sameExpression(left.right, other.right)
     }
     case 'floor': return sameExpression(left.operand, (right as Extract<NumericExpression, {kind: 'floor'}>).operand)
+    case 'property': {
+      const other = right as Extract<NumericExpression, {kind: 'property'}>
+      return left.name === other.name && sameExpression(left.base, other.base)
+    }
   }
 }

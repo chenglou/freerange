@@ -9,6 +9,10 @@ export type NumericExpression =
   // requirement instead of stopping — and a floored divisor is an integer, so under the
   // nonzero requirement its magnitude is at least 1 and the quotient stays finite.
   | {kind: 'floor'; operand: NumericExpression}
+  // A property read off a nameable record, e.g. grid.columnCount. Sound to name because
+  // values are immutable after construction: the property cannot change between function
+  // entry and the operation that needs the requirement.
+  | {kind: 'property'; base: NumericExpression; name: string}
 
 export type InferredPrecondition = {
   kind: 'nonzero'

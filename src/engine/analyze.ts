@@ -72,7 +72,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
         }
         case 'object': {
           arguments_.push(recordValue(parameter.type.properties.map(name => ({name, value: finiteInputNumber()}))))
-          argumentExpressions.push(null)
+          argumentExpressions.push({kind: 'parameter', index})
           break
         }
       }
