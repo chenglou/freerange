@@ -403,10 +403,10 @@ export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker):
   throw unsupported(node, {kind: 'nonBooleanCondition', typeText: checker.typeToString(type)})
 }
 
-// An optional property reads or writes as `number | undefined` — nullability the subset
-// does not model. Across branch-merged objects declared with one optional-property type,
-// the property may genuinely be missing from some of the objects a reference addresses, so
-// letting the access through would observe objects the abstract heap cannot describe.
+// An optional property reads as `number | undefined` — nullability the subset does not
+// model. Across branch-merged records declared with one optional-property type, the
+// property may genuinely be missing on some paths, so letting the access through would
+// read a property the record value may not carry.
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
   const type = checker.getTypeAtLocation(access)
   if (valueKind(type, checker) != null) return

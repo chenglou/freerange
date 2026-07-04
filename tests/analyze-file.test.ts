@@ -207,10 +207,10 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('converges when a loop rebinds fresh objects each iteration', () => {
-    // Two chained allocation sites per iteration: each round displaces the previous
-    // objects into their summaries while the fresh ones stay exact, so the loop converges
-    // without losing the cross-read between them.
+  test('converges when a loop rebinds fresh records each iteration', () => {
+    // Two chained record constructions per iteration: the loop-carried binding widens at
+    // the header while records built fresh inside the round stay exact, so the loop
+    // converges without losing the cross-read between them.
     const report = analyzeSource('loop-allocation.ts', `
       export function totalHeight(rowCount: number): number {
         let metrics = {height: 0}
@@ -254,7 +254,7 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('reads through a branch-merged reference join the possible objects', () => {
+  test('reads through a branch-merged record join the possible values', () => {
     const report = analyzeSource('merged-read.ts', `
       export function pick(flag: number): number {
         const box = flag > 0 ? {value: 1} : {value: 2}
@@ -280,10 +280,10 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('repairs a caller reference when a callee displaces its object', () => {
-    // The loop re-executes makeBox from one call site; each round displaces the previous
-    // object into the site's summary, and the caller's `first` reference — created at a
-    // different call site — must stay exactly 1 throughout.
+  test('keeps a held record exact while a loop rebuilds new ones from the same callee', () => {
+    // The loop re-runs makeBox; `first` holds the record from an earlier call of the same
+    // function and must stay exactly 1 throughout — a plain value cannot be disturbed by
+    // later constructions, however many times the same literal executes.
     const report = analyzeSource('adoption.ts', `
       function makeBox(): {value: number} {
         return {value: 1}
@@ -303,7 +303,7 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 1 through 3'])
   })
 
-  test('merges branch results whose branches allocate different objects', () => {
+  test('merges branch results whose branches build different records', () => {
     const report = analyzeSource('skew.ts', `
       export function skewed(flag: number): number {
         if (flag > 0) {

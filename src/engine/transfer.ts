@@ -13,9 +13,7 @@ import {
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
-import {declaredKindValue, unknownBoolean, type AbstractBoolean, type AbstractReference, type AbstractValue} from '../domain/value.ts'
-import type {AllocationContext} from '../heap/model.ts'
-import {adoptCalleeHeap, allocateAtSite, readProperty} from '../heap/operations.ts'
+import {declaredKindValue, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
 import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -34,7 +32,6 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
-  context: AllocationContext,
 ) => FunctionEvaluation
 
 export type TransferContext = {
@@ -48,9 +45,6 @@ export type TransferContext = {
   // covers, and the non-finiteness cannot reach a return value or a write. This is the
   // first piece of deriving requirements from the final guarantee instead of the operation.
   usedOutsideCompare: boolean[]
-  // The call site that entered the function being evaluated; allocations inside it are
-  // distinguished by this context.
-  allocationContext: AllocationContext
   evaluateFunction: EvaluateFunction
 }
 
@@ -143,7 +137,7 @@ export function evaluateInstruction(
       // matching kinds. Reads of opaque bindings stop regardless, so the slot stays
       // uninitialized instead of holding a value nothing may consume. Every other writable
       // category is single-kind: value/kind writes are type-checked against the declared
-      // number or boolean, and identity slots only ever hold object references.
+      // number or boolean, and identity slots only ever hold record values.
       if (binding.category.kind !== 'opaque') {
         state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
       }
@@ -158,21 +152,19 @@ export function evaluateInstruction(
         : {kind: 'value', value: declaredKindValue(declaredKind)}
       return value({kind: 'void'})
     }
-    case 'object': return value(allocateAtSite(
-      state.frame.values,
-      state.shared.heap,
-      instruction.site,
-      context.allocationContext,
-      instruction.properties.map(property => ({
-        name: property.name,
-        value: requiredValue(state, property.value),
-      })),
-    ))
-    case 'property': return passthroughValue(readProperty(
-      state.shared.heap,
-      requiredReference(state, instruction.object),
-      instruction.property,
-    ))
+    case 'object': return value(recordValue(instruction.properties.map(property => ({
+      name: property.name,
+      value: requiredValue(state, property.value),
+    }))))
+    case 'property': {
+      const record = requiredRecord(state, instruction.object)
+      const propertyValue = recordProperty(record, instruction.property)
+      // The static type only exposes properties present on every value the expression can
+      // hold, and record joins keep exactly those, so a type-checked read always finds its
+      // property.
+      if (propertyValue == null) throw new Error(`Record has no property ${instruction.property}`)
+      return passthroughValue(propertyValue)
+    }
     case 'compare': return value(compareNumbers(
       requiredNumber(state, instruction.left),
       requiredNumber(state, instruction.right),
@@ -222,17 +214,15 @@ export function evaluateInstruction(
         argumentExpressions,
         state.shared,
         context.callStack,
-        instruction.site,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
-      // prefix mutations cannot become this caller's state.
+      // module writes cannot become this caller's state.
       const completed = completedEvaluation(evaluation)
       if (completed == null) {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
-      adoptCalleeHeap(state.frame.values, state.shared.heap)
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       return passthroughValue(completed.returnValue)
     }
@@ -328,9 +318,9 @@ export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoo
   return value
 }
 
-function requiredReference(state: ExecutionState, id: ValueID): AbstractReference {
+function requiredRecord(state: ExecutionState, id: ValueID): AbstractRecord {
   const value = requiredValue(state, id)
-  if (value.kind !== 'reference') throw new Error(`IR value ${id} is not an object reference`)
+  if (value.kind !== 'record') throw new Error(`IR value ${id} is not a record`)
   return value
 }
 

@@ -1,7 +1,5 @@
 import {finiteInputNumber} from '../domain/number.ts'
-import {declaredKindValue, joinValues, type AbstractValue} from '../domain/value.ts'
-import type {AllocationContext} from '../heap/model.ts'
-import {allocateParameter, joinHeaps} from '../heap/operations.ts'
+import {declaredKindValue, joinValues, recordValue, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
 import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -50,7 +48,6 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     emptySharedState(program.moduleBindings.length),
     program,
     [],
-    null,
   )
   const moduleValues = publishedModuleValues(program, initializer.run, initializer.evaluation)
   const functions: FunctionAnalysis[] = []
@@ -63,7 +60,6 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     const arguments_: AbstractValue[] = []
     const argumentExpressions: Array<NumericExpression | null> = []
     const sharedState: SharedState = {
-      heap: [],
       modules: seedModuleSlots(program, moduleValues),
     }
     for (let index = 0; index < fn.parameters.length; index++) {
@@ -75,17 +71,13 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
           break
         }
         case 'object': {
-          arguments_.push(allocateParameter(
-            sharedState.heap,
-            index,
-            parameter.type.properties.map(name => ({name, value: finiteInputNumber()})),
-          ))
+          arguments_.push(recordValue(parameter.type.properties.map(name => ({name, value: finiteInputNumber()}))))
           argumentExpressions.push(null)
           break
         }
       }
     }
-    const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [], null)
+    const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [])
     functions.push(publishedAnalysis(fn, evaluation))
   }
   return {
@@ -112,9 +104,7 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
     kind: 'partial',
     lowering: fn,
     stops: [firstStop, ...laterStops],
-    observedReturn: evaluation.normal == null
-      ? null
-      : {value: evaluation.normal.returnValue, heap: evaluation.normal.sharedState.heap},
+    observedReturn: evaluation.normal == null ? null : {value: evaluation.normal.returnValue},
     observedNeeds: evaluation.preconditions,
   }
 }
@@ -215,7 +205,6 @@ function runEvaluation(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
-  context: AllocationContext,
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
@@ -251,20 +240,18 @@ function runEvaluation(
     expressionContext,
     preconditions,
     usedOutsideCompare,
-    allocationContext: context,
     evaluateFunction: (
       callee: FunctionID,
       values: AbstractValue[],
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
       stack: FunctionID[],
-      calleeContext: AllocationContext,
     ) => {
       const calleeFn = program.functions[callee]
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
       // Callers turn calls to unlowered functions into calleeStopped records first.
       if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack, calleeContext).evaluation
+      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack).evaluation
     },
   }
   let queueIndex = 0
@@ -379,7 +366,6 @@ function runEvaluation(
     normal = {
       returnValue: joinValues(normal.returnValue, pending.value),
       sharedState: {
-        heap: joinHeaps(normal.sharedState.heap, pending.shared.heap),
         modules: joinModuleSlots(normal.sharedState.modules, pending.shared.modules),
       },
     }

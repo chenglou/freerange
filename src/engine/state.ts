@@ -1,7 +1,5 @@
 import type {AbstractValue} from '../domain/value.ts'
 import {joinValues, sameValues, widenValue} from '../domain/value.ts'
-import type {AbstractHeap} from '../heap/model.ts'
-import {cloneHeap, joinHeaps, sameHeaps, widenHeap} from '../heap/operations.ts'
 
 export type FunctionFrame = {
   values: Array<AbstractValue | undefined>
@@ -15,9 +13,8 @@ export type ModuleSlot =
   | {kind: 'value'; value: AbstractValue}
 
 export type SharedState = {
-  heap: AbstractHeap
-  // Indexed by ModuleBindingID, fixed length per program. Flows through calls exactly like
-  // the heap, so a callee's module writes are visible to the caller after a completed call.
+  // Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
+  // callee's module writes are visible to the caller after a completed call.
   modules: ModuleSlot[]
 }
 
@@ -29,12 +26,12 @@ export type ExecutionState = {
 export function emptySharedState(moduleCount: number): SharedState {
   const modules: ModuleSlot[] = []
   for (let index = 0; index < moduleCount; index++) modules.push({kind: 'uninitialized'})
-  return {heap: [], modules}
+  return {modules}
 }
 
 export function cloneSharedState(state: SharedState): SharedState {
   // Slots are replaced whole on write, never mutated, so a shallow copy suffices.
-  return {heap: cloneHeap(state.heap), modules: state.modules.slice()}
+  return {modules: state.modules.slice()}
 }
 
 export function cloneState(state: ExecutionState): ExecutionState {
@@ -57,7 +54,6 @@ export function joinStates(left: ExecutionState, right: ExecutionState): Executi
   return {
     frame: {values},
     shared: {
-      heap: joinHeaps(left.shared.heap, right.shared.heap),
       modules: joinModuleSlots(left.shared.modules, right.shared.modules),
     },
   }
@@ -88,7 +84,6 @@ export function sameState(left: ExecutionState, right: ExecutionState): boolean 
       if (leftValue !== rightValue) return false
     } else if (!sameValues(leftValue, rightValue)) return false
   }
-  if (!sameHeaps(left.shared.heap, right.shared.heap)) return false
   for (let index = 0; index < left.shared.modules.length; index++) {
     const leftSlot = left.shared.modules[index]!
     const rightSlot = right.shared.modules[index]!
@@ -109,7 +104,6 @@ export function widenState(previous: ExecutionState, next: ExecutionState): Exec
       widened.frame.values[index] = widenValue(previousValue, nextValue)
     }
   }
-  widened.shared.heap = widenHeap(previous.shared.heap, next.shared.heap)
   for (let index = 0; index < widened.shared.modules.length; index++) {
     const previousSlot = previous.shared.modules[index]!
     const slot = widened.shared.modules[index]!

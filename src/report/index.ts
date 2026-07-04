@@ -1,8 +1,6 @@
 import {isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import type {AbstractHeap} from '../heap/model.ts'
-import {referenceProperties} from '../heap/operations.ts'
 import {declaredKindOf, formatSite, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
@@ -61,7 +59,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         const parameterNames = lowering.parameters.map(parameter => parameter.name)
         const observed: string[] = []
         if (fn.observedReturn != null) {
-          observed.push(...returnSummaries('return', fn.observedReturn.value, fn.observedReturn.heap, program))
+          observed.push(...returnSummaries('return', fn.observedReturn.value, program))
         }
         for (const need of fn.observedNeeds) observed.push(formatObservedNeed(need, parameterNames, program))
         functions.push({
@@ -81,7 +79,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           name: lowering.name,
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-          ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap, program),
+          ensures: returnSummaries('return', fn.returnValue, program),
         })
         break
       }
@@ -305,14 +303,14 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
   }
 }
 
-function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap, program: ProgramIR): string[] {
+function returnSummaries(path: string, value: AbstractValue, program: ProgramIR): string[] {
   switch (value.kind) {
     case 'number': return [numberSummary(path, value, program)]
     case 'boolean': return [`${path} is ${value.canBeFalse ? (value.canBeTrue ? 'boolean' : 'false') : 'true'}`]
-    case 'reference': {
+    case 'record': {
       const summaries: string[] = []
-      for (const property of referenceProperties(heap, value)) {
-        summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, heap, program))
+      for (const property of value.properties) {
+        summaries.push(...returnSummaries(`${path}.${property.name}`, property.value, program))
       }
       return summaries
     }

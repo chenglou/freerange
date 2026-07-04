@@ -1,5 +1,4 @@
 import type {AbstractValue} from '../domain/value.ts'
-import type {AbstractHeap} from '../heap/model.ts'
 import type {FunctionID, ModuleBindingID, SiteID} from '../ir/ids.ts'
 import type {FunctionIR, UnsupportedFunctionIR, UnsupportedReason} from '../ir/program.ts'
 import type {InferredPrecondition} from '../requirements/model.ts'
@@ -78,7 +77,7 @@ export type FunctionAnalysis =
       kind: 'partial'
       lowering: FunctionIR
       stops: [Stop, ...Stop[]]
-      observedReturn: {value: AbstractValue; heap: AbstractHeap} | null
+      observedReturn: {value: AbstractValue} | null
       observedNeeds: InferredPrecondition[]
     }
   // The function did not lower. The variant carries a reference (not a copy) to its

@@ -1,5 +1,3 @@
-import type {AllocationIdentity} from '../heap/model.ts'
-import {compareIdentity, sameIdentity} from '../heap/model.ts'
 import {finiteInputNumber, joinNumbers, sameNumbers, widenNumber, type AbstractNumber} from './number.ts'
 
 export type AbstractBoolean = {
@@ -8,20 +6,25 @@ export type AbstractBoolean = {
   canBeFalse: boolean
 }
 
-// The addressed object's representative is one of these targets. Nonempty, sorted by
-// compareIdentity, deduplicated — construct only through singletonReference/unionTargets so
-// equality stays elementwise. Disjoint target sets prove two references differ; overlap
-// proves nothing.
-export type AbstractReference = {
-  kind: 'reference'
-  targets: AllocationIdentity[]
+// An object is a plain structural value: its property values, nothing else. Values are
+// immutable after construction (the acceptance pass rejects property writes), so a record
+// held across any amount of control flow keeps exactly the property values it was built
+// with — no identity, no heap, no aliasing questions. The cost: two separately constructed
+// records with equal property values are indistinguishable, so "definitely different
+// objects" is inexpressible. Nothing observes that today (`===` never lowers for objects);
+// if object comparison ever enters the subset, this is the representation to revisit.
+// Properties keep their construction order (the literal's textual order), which is what
+// report lines print in; joins and comparisons match properties by name, never by index.
+export type AbstractRecord = {
+  kind: 'record'
+  properties: Array<{name: string; value: AbstractValue}>
 }
 
 type AbstractVoid = {
   kind: 'void'
 }
 
-export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractReference | AbstractVoid
+export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractRecord | AbstractVoid
 
 export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
@@ -32,41 +35,15 @@ export function declaredKindValue(kind: 'number' | 'boolean'): AbstractValue {
   return kind === 'number' ? finiteInputNumber() : unknownBoolean()
 }
 
-export function singletonReference(identity: AllocationIdentity): AbstractReference {
-  return {kind: 'reference', targets: [identity]}
+export function recordValue(properties: Array<{name: string; value: AbstractValue}>): AbstractRecord {
+  return {kind: 'record', properties}
 }
 
-export function unionTargets(left: AllocationIdentity[], right: AllocationIdentity[]): AllocationIdentity[] {
-  const merged: AllocationIdentity[] = []
-  let leftIndex = 0
-  let rightIndex = 0
-  while (leftIndex < left.length || rightIndex < right.length) {
-    const leftIdentity = left[leftIndex]
-    const rightIdentity = right[rightIndex]
-    if (leftIdentity == null) {
-      merged.push(rightIdentity!)
-      rightIndex++
-      continue
-    }
-    if (rightIdentity == null) {
-      merged.push(leftIdentity)
-      leftIndex++
-      continue
-    }
-    const order = compareIdentity(leftIdentity, rightIdentity)
-    if (order < 0) {
-      merged.push(leftIdentity)
-      leftIndex++
-    } else if (order > 0) {
-      merged.push(rightIdentity)
-      rightIndex++
-    } else {
-      merged.push(leftIdentity)
-      leftIndex++
-      rightIndex++
-    }
-  }
-  return merged
+// The named property's value, or null when the record does not carry the property (a join
+// dropped it — see joinValues). Callers turn null into their own stop or rejection.
+export function recordProperty(record: AbstractRecord, name: string): AbstractValue | null {
+  const property = record.properties.find(candidate => candidate.name === name)
+  return property == null ? null : property.value
 }
 
 export function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
@@ -76,11 +53,24 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
-    case 'reference': {
-      return {kind: 'reference', targets: unionTargets(left.targets, (right as AbstractReference).targets)}
-    }
+    case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
   }
+}
+
+// Records join pointwise by property name, keeping only the names present on BOTH sides.
+// Different shapes genuinely meet: TypeScript's width subtyping types
+// `flag ? {x: 1} : {x: 2, y: 3}` as `{x: number}`, so on the flag-true path `y` does not
+// exist — keeping the union of names would publish an ensures line about a property that
+// is sometimes absent. Reads outside the intersection are already unreachable: the static
+// type only exposes the shared names, and property accesses are gated on the static type.
+function joinRecords(left: AbstractRecord, right: AbstractRecord): AbstractRecord {
+  const properties: Array<{name: string; value: AbstractValue}> = []
+  for (const property of left.properties) {
+    const other = recordProperty(right, property.name)
+    if (other != null) properties.push({name: property.name, value: joinValues(property.value, other)})
+  }
+  return {kind: 'record', properties}
 }
 
 export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
@@ -91,10 +81,15 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
       const other = right as AbstractBoolean
       return left.canBeTrue === other.canBeTrue && left.canBeFalse === other.canBeFalse
     }
-    case 'reference': {
-      const other = right as AbstractReference
-      return left.targets.length === other.targets.length
-        && left.targets.every((target, index) => sameIdentity(target, other.targets[index]!))
+    case 'record': {
+      // By name, not by index: two equal records can carry their properties in different
+      // orders (e.g. a join's result takes the left side's order).
+      const other = right as AbstractRecord
+      return left.properties.length === other.properties.length
+        && left.properties.every(property => {
+          const otherValue = recordProperty(other, property.name)
+          return otherValue != null && sameValues(property.value, otherValue)
+        })
     }
     case 'void': return true
   }
@@ -107,10 +102,26 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
   switch (next.kind) {
     // Numbers are the one unbounded lattice; bounds that grew jump to their extreme.
     case 'number': return previous.kind === 'number' ? widenNumber(previous, next) : next
-    // Bounded lattices need no widening: booleans have height two, a reference's possible
-    // targets are fixed by the program text, void is a point.
+    // A record's number leaves are unbounded, so widening recurses pointwise — a
+    // loop-carried `metrics = {height: metrics.height + 1}` must widen height, not grow it
+    // one round at a time into the round limit. A property the previous round lacked has
+    // nothing to widen against and passes through. (A structure whose nesting genuinely
+    // grows each round — possible only through a recursive declared type — never
+    // stabilizes; the loop round limit records that path as a stop, which is the honest
+    // answer.)
+    case 'record': {
+      if (previous.kind !== 'record') return next
+      const previousRecord = previous
+      return {
+        kind: 'record',
+        properties: next.properties.map(property => {
+          const before = recordProperty(previousRecord, property.name)
+          return before == null ? property : {name: property.name, value: widenValue(before, property.value)}
+        }),
+      }
+    }
+    // Bounded lattices need no widening: booleans have height two, void is a point.
     case 'boolean':
-    case 'reference':
     case 'void':
       return next
   }
