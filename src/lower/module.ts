@@ -270,8 +270,11 @@ function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker,
     case 'boolean': return {kind: 'boolean'}
     case 'object': {
       // A recursive declared type (e.g. a linked list) would nest forever; the binding
-      // stays opaque.
-      if (seen.includes(type)) return null
+      // stays opaque. The seen check catches direct recursion; the depth cap catches
+      // recursive generics, whose every level is a fresh instantiation the seen check
+      // cannot recognize (and whose instantiation chain would otherwise run away inside
+      // the checker itself). No real state tree nests eight records deep.
+      if (seen.length >= 8 || seen.includes(type)) return null
       const properties: Array<{name: string; declared: DeclaredKind}> = []
       for (const property of checker.getPropertiesOfType(type)) {
         if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null

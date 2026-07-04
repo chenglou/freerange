@@ -127,7 +127,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         }
         const source = lowerExpression(property.expression, context)
         for (const member of context.checker.getPropertiesOfType(sourceType)) {
-          if ((member.flags & ts.SymbolFlags.Optional) !== 0) continue
+          // An optional property is present or absent per value, and a spread copies it
+          // only when present — `{...defaults, ...overrides}` with `overrides.volume`
+          // optional either overrides or keeps the default, and the analysis cannot know
+          // which. Skipping the property would silently keep the default's value while the
+          // runtime took the override, so the spread is rejected instead.
+          if ((member.flags & ts.SymbolFlags.Optional) !== 0) {
+            throw unsupported(property, {kind: 'spreadOptionalProperty', property: member.name})
+          }
           properties.push({
             name: member.name,
             value: addInstruction(context, property, {kind: 'property', object: source, property: member.name}),

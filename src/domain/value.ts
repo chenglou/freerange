@@ -54,17 +54,21 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
   }
 }
 
-// Records join pointwise by property name, keeping only the names present on BOTH sides.
-// Different shapes genuinely meet: TypeScript's width subtyping types
-// `flag ? {x: 1} : {x: 2, y: 3}` as `{x: number}`, so on the flag-true path `y` does not
-// exist — keeping the union of names would publish an ensures line about a property that
-// is sometimes absent. Reads outside the intersection are already unreachable: the static
-// type only exposes the shared names, and property accesses are gated on the static type.
+// Records join pointwise by property name, keeping only the names present on BOTH sides
+// with MATCHING kinds. Different shapes genuinely meet: TypeScript accepts
+// `flag ? {x: 1} : {x: 2, y: 3}` wherever `{x: number}` is expected, so on the flag-true
+// path `y` does not exist — keeping the union of names would publish an ensures line about
+// a property that is sometimes absent. A same-named property whose kinds differ (from a
+// union like `{value: number} | {value: boolean}`) is dropped the same way instead of
+// crashing the join: reading such a property is impossible anyway, because the property
+// access gate rejects results whose static type mixes kinds. Either way, every readable
+// property survives the join.
 function joinRecords(left: AbstractRecord, right: AbstractRecord): AbstractRecord {
   const properties: Array<{name: string; value: AbstractValue}> = []
   for (const property of left.properties) {
     const other = recordProperty(right, property.name)
-    if (other != null) properties.push({name: property.name, value: joinValues(property.value, other)})
+    if (other == null || other.kind !== property.value.kind) continue
+    properties.push({name: property.name, value: joinValues(property.value, other)})
   }
   return {kind: 'record', properties}
 }

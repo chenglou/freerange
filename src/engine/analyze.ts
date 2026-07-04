@@ -153,8 +153,22 @@ function publishedModuleValues(
     }
   }
 
+  // Exact record publishing additionally requires the whole file to be fully analyzed.
+  // Analyzed code cannot write into an object, but rejected function bodies and skipped
+  // statements run at runtime too, and they can mutate a record through any alias — e.g.
+  // `Object.assign(config, ...)` inside a function that never lowered, invisible to the
+  // whole-file write scan because the binding sits in argument position, not write
+  // position. Scalars are unaffected: a number is copied on read, so only a write-position
+  // form on the binding itself can change it, and the scan sees those even in rejected
+  // bodies. When the file is not fully analyzed, record bindings fall back to their
+  // declared-shape hedge with per-property assumes lines.
+  const fullyAnalyzed = evaluation.stops.length === 0
+    && program.initializerSkips.length === 0
+    && program.functions.every(lowered => lowered.kind === 'lowered')
+
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' || demoted.has(index)) return null
+    if (binding.category.declaredKind.kind === 'record' && !fullyAnalyzed) return null
     let joined: AbstractValue | null = null
     for (const end of ends) {
       const slot = end[index]!

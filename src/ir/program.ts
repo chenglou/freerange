@@ -1,5 +1,5 @@
 import type * as ts from 'typescript'
-import {finiteInputNumber} from '../domain/number.ts'
+import {finiteInputNumber, unknownNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
@@ -63,6 +63,7 @@ export type UnsupportedReason =
   // Spread, method, or accessor in an object literal.
   | {kind: 'objectPropertyForm'}
   | {kind: 'computedPropertyName'}
+  | {kind: 'spreadOptionalProperty'; property: string}
   // e.g. '%', '&&', '**', '??'
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is the
@@ -178,8 +179,11 @@ export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | 
   }
 }
 
-// The abstract value a declared kind seeds: any finite number, any boolean, or a record of
-// the declared shape with each leaf seeded the same way.
+// The abstract value a declared kind seeds at function entry: any finite number, any
+// boolean, or a record of the declared shape with each leaf seeded the same way. The
+// finite-non-NaN part is an ASSUMPTION — every function whose result rests on such a read
+// prints an assumes line, and that machinery is what makes this value honest. Code without
+// the assumes plumbing must use coveringKindValue below instead.
 export function declaredKindValue(declared: DeclaredKind): AbstractValue {
   switch (declared.kind) {
     case 'number': return finiteInputNumber()
@@ -187,6 +191,22 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
     case 'record': return recordValue(declared.properties.map(property => ({
       name: property.name,
       value: declaredKindValue(property.declared),
+    })))
+  }
+}
+
+// The truly covering value of a declared kind: any number INCLUDING NaN and infinities.
+// This is what a havocked slot resets to — a skipped statement can put NaN in a number
+// binding (e.g. `scale = Number.parseFloat(text)`), and later top-level statements compute
+// published values from the slot with no assumes line to carry a finiteness condition, so
+// the reset value must cover everything the skipped code could have produced.
+export function coveringKindValue(declared: DeclaredKind): AbstractValue {
+  switch (declared.kind) {
+    case 'number': return unknownNumber()
+    case 'boolean': return unknownBoolean()
+    case 'record': return recordValue(declared.properties.map(property => ({
+      name: property.name,
+      value: coveringKindValue(property.declared),
     })))
   }
 }

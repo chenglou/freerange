@@ -750,6 +750,84 @@ describe('analyzeFile', () => {
     ])
   })
 
+  test('exact record publishing requires a fully analyzed file', () => {
+    // Analyzed code cannot write into an object, but rejected function bodies run at
+    // runtime too and can mutate a record through an alias the write scan cannot see,
+    // e.g. Object.assign(gridSize, ...) — the binding sits in argument position, not
+    // write position. With any unanalyzed code in the file, records fall back to the
+    // declared-shape hedge. Scalars are copied on read, so gap keeps its exact value.
+    const report = analyzeSource('module-record-gate.ts', `
+      const gridSize = {cols: 8, rows: 6}
+      const gap = 24
+      export function mutateSomehow(): void {
+        Object.assign(gridSize, {cols: 1})
+      }
+      export function cellCount(): number {
+        return gridSize.cols * gridSize.rows
+      }
+      export function readGap(): number {
+        return gap
+      }
+    `)
+    const reader = analyzedFunction(report, 'cellCount')
+    expect(reader.assumptions).toEqual([
+      'gridSize.cols is finite and not NaN',
+      'gridSize.rows is finite and not NaN',
+    ])
+    expect(reader.ensures).toEqual([`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${resolve('module-record-gate.ts')}:8:16)`])
+    expect(analyzedFunction(report, 'readGap').ensures)
+      .toEqual(['return is a finite integer number from 24 through 24'])
+  })
+
+  test('joins drop a same-named property whose kinds differ instead of crashing', () => {
+    // {value: number} | {value: boolean} passes the union shape gate (same property
+    // names), so the two records meet at the join. The mixed-kind property is unreadable
+    // — the property-access gate rejects results typed number | boolean — so the join
+    // drops it and the rest of the function analyzes.
+    const report = analyzeSource('mixed-kind-property.ts', `
+      export function mix(steps: number): number {
+        const toggle = steps > 0 ? {value: 1} : {value: true}
+        return steps
+      }
+    `)
+    const mixed = analyzedFunction(report, 'mix')
+    expect(mixed.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('rejects a spread whose source has an optional property', () => {
+    // {...defaults, ...overrides} with overrides.volume optional either overrides or
+    // keeps the default per runtime value; skipping the property would keep the default's
+    // value while the runtime took the override.
+    const report = analyzeSource('spread-optional.ts', `
+      export function effectiveVolume(): number {
+        const overrides: {volume?: number} = {volume: 7}
+        const merged = {...{volume: 1}, ...overrides}
+        return merged.volume
+      }
+    `)
+    const file = resolve('spread-optional.ts')
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'effectiveVolume',
+      unsupported: `spread of a value whose property volume is optional (declare every property of the spread source required) at ${file}:4:41`,
+    }])
+  })
+
+  test('a recursive generic module type stays opaque instead of crashing the shape walk', () => {
+    // Every level of Nested<T> is a fresh instantiation, so a seen-set alone cannot
+    // recognize the recursion; the depth cap stops the walk (and the checker's
+    // instantiation chain) and the binding stays opaque.
+    const report = analyzeSource('recursive-generic.ts', `
+      type Nested<T> = {value: number; inner: Nested<{deeper: T}>}
+      let chain: Nested<number> | null = null
+      export function probe(): number {
+        return 1
+      }
+    `)
+    expect(analyzedFunction(report, 'probe').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
@@ -1237,7 +1315,10 @@ describe('analyzeFile', () => {
   test('does not launder stale values through statements after a skip', () => {
     // The skip demotes scale, but without a slot reset the initializer would keep
     // computing with the stale 1, publishing doubled as exactly 2 while runtime says 6.
-    // The havoc at the skip point makes later statements compute from covering values.
+    // The havoc at the skip point resets the slot to a truly covering value — NaN
+    // included, since the skipped code could have computed anything (e.g.
+    // Number.parseFloat) and `doubled` publishes with no assumes line to carry a
+    // finiteness condition.
     const report = analyzeSource('module-launder.ts', `
       let scale = 1
       scale = Math.sqrt(9)
@@ -1245,7 +1326,7 @@ describe('analyzeFile', () => {
       export function getDoubled(): number { return doubled }
     `)
     expect(analyzedFunction(report, 'getDoubled').ensures)
-      .toEqual([`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${resolve('module-launder.ts')}:4:23)`])
+      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
   })
 
   test('reports exact boolean constants as true or false', () => {

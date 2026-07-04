@@ -16,7 +16,7 @@ import {
 import {recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   numericExpression,
@@ -147,9 +147,11 @@ export function evaluateInstruction(
       const binding = context.program.moduleBindings[instruction.binding]
       if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
       const declaredKind = declaredKindOf(binding.category)
+      // Covering, not assumed-finite: values computed from this slot can publish without
+      // any assumes line, so the reset must include NaN and infinities.
       state.shared.modules[instruction.binding] = declaredKind == null
         ? {kind: 'uninitialized'}
-        : {kind: 'value', value: declaredKindValue(declaredKind)}
+        : {kind: 'value', value: coveringKindValue(declaredKind)}
       return value({kind: 'void'})
     }
     case 'object': return value(recordValue(instruction.properties.map(property => ({

@@ -290,6 +290,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'missingReturn': return 'function path without a return (add a return on every path)'
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
+    case 'spreadOptionalProperty': return `spread of a value whose property ${reason.property} is optional (declare every property of the spread source required)`
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
     case 'call': return `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`

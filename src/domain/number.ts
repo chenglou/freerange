@@ -212,7 +212,7 @@ function safeOperands(left: AbstractNumber, right: AbstractNumber): boolean {
   return isFiniteNumber(left) && isFiniteNumber(right) && !left.mayBeNaN && !right.mayBeNaN
 }
 
-function unknownNumber(): AbstractNumber {
+export function unknownNumber(): AbstractNumber {
   return {
     kind: 'number',
     lower: Number.NEGATIVE_INFINITY,
