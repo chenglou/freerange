@@ -28,7 +28,19 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     return
   }
   if (ts.isReturnStatement(statement)) {
-    const value = statement.expression == null ? null : lowerExpression(statement.expression, context)
+    let value = statement.expression == null ? null : lowerExpression(statement.expression, context)
+    // A bare `return` in a function that returns a value IS `return undefined` — the
+    // common early exit in a `T | undefined` function. In void functions (and the module
+    // initializer) the return stays valueless.
+    if (value == null) {
+      const enclosing = ts.findAncestor(statement, ts.isFunctionDeclaration)
+      const signature = enclosing == null ? undefined : context.checker.getSignatureFromDeclaration(enclosing)
+      const returnType = signature == null ? null : context.checker.getReturnTypeOfSignature(signature)
+      const returnsVoid = returnType == null || (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+      if (!returnsVoid) {
+        value = addInstruction(context, statement, {kind: 'nullishConstant', sentinel: 'undefined'})
+      }
+    }
     terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, statement)})
     return
   }

@@ -365,9 +365,19 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
 // The contract covers only what the declared return type exposes: a wider returned
 // record's extra properties are true facts, but not ones any type-checked caller can read.
 function declaredReturn(value: AbstractValue, lowering: FunctionIR): AbstractValue {
-  if (value.kind !== 'record' || lowering.returnPropertyNames == null) return value
+  if (lowering.returnPropertyNames == null) return value
   const declared = new Set(lowering.returnPropertyNames)
-  return {kind: 'record', properties: value.properties.filter(property => declared.has(property.name))}
+  if (value.kind === 'record') {
+    return {kind: 'record', properties: value.properties.filter(property => declared.has(property.name))}
+  }
+  // A {w: number} | null return carries the record inside the wrapper.
+  if (value.kind === 'maybeNullish' && value.inner.kind === 'record') {
+    return {
+      ...value,
+      inner: {kind: 'record', properties: value.inner.properties.filter(property => declared.has(property.name))},
+    }
+  }
+  return value
 }
 
 function returnSummaries(path: string, value: AbstractValue, program: ProgramIR): string[] {
@@ -404,6 +414,7 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
       // The inner summary describes the present case; one line states the missing case.
       // E.g. `return is null or a finite number from 0 through 100`.
       const inner = returnSummaries(path, value.inner, program)
+      if (inner.length === 0) return [`${path} may be ${sentinelsText(value.sentinels)}`]
       if (inner.length === 1 && inner[0]!.startsWith(`${path} is `)) {
         return [`${path} is ${sentinelsText(value.sentinels)} or ${inner[0]!.slice(`${path} is `.length)}`]
       }

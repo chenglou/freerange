@@ -1421,6 +1421,49 @@ describe('analyzeFile', () => {
     expect(analyzedFunction(report, 'typeofNumber').ensures).toEqual(['return is a finite number'])
   })
 
+  test('round-4 fixes: rest params reject, bare return is return undefined, typeof stays honest', () => {
+    const report = analyzeSource('round4-fixes.ts', `
+      function total(...values: number[]): number {
+        return values.length
+      }
+      export const combined = total(1, 2)
+      export function pick(count: number): number | undefined {
+        if (count > 0) {
+          return 1
+        }
+        return
+      }
+      export function readBox(count: number): number {
+        const box = count > 0 ? {value: 5} : null
+        if (typeof box === 'number') { return 0 }
+        if (box === null) { return 1 }
+        return box.value
+      }
+      type Size = {a: number}
+      function wide(count: number): {a: number; b: number} { return {a: count, b: count * 2} }
+      export function findPoint(count: number): Size | null {
+        if (count > 0) { return wide(count) }
+        return null
+      }
+    `)
+    // A rest parameter is one declaration for any number of arguments — rejected, so the
+    // two-argument call cannot crash the arity check.
+    expect(report.functions.find(fn => fn.name === 'total')?.kind).toBe('unsupported')
+    // Bare return IS return undefined in a value-returning function.
+    expect(analyzedFunction(report, 'pick').ensures)
+      .toEqual(['return is undefined or a finite integer number from 1 through 1'])
+    // typeof box === 'number' on {value: number} | null is NOT the not-missing check
+    // (typeof a present record is 'object'); it falls to the honest rejection.
+    expect(report.functions.find(fn => fn.name === 'readBox')?.kind).toBe('unsupported')
+    // The declared Size | null return filters the wide record's extra property through
+    // the nullable wrapper.
+    const found = analyzedFunction(report, 'findPoint')
+    expect(found.ensures).toEqual([
+      'return may be null; when present:',
+      'return.a is a finite number at least 0',
+    ])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

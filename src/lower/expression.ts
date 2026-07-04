@@ -748,7 +748,15 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   if (typeofNumberSide != null) {
     const operandType = context.checker.getTypeAtLocation(typeofNumberSide.expression)
     const operandKind = valueKind(operandType, context.checker)
-    if (operandKind === 'nullable' || operandKind === 'number') {
+    // Only when every non-missing member IS a number: on {x: number} | null or
+    // boolean | undefined, typeof never yields 'number' for the present value, so the
+    // not-missing translation would prune the genuinely-taken present path.
+    const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+    const restIsNumber = operandKind === 'number'
+      || (operandKind === 'nullable' && operandType.isUnion()
+        && operandType.types.every(member =>
+          (member.flags & missing) !== 0 || valueKind(member, context.checker) === 'number'))
+    if (restIsNumber) {
       const value = lowerExpression(typeofNumberSide.expression, context)
       return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'nullish', negated: !negated})
     }

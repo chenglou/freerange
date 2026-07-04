@@ -126,6 +126,11 @@ function lowerFunction(
   }
   for (const parameter of declaration.parameters) {
     if (!ts.isIdentifier(parameter.name)) throw unsupported(parameter.name, {kind: 'destructuredParameter'})
+    // A rest parameter is one declaration for any number of arguments; the engine's
+    // one-value-per-parameter seeding cannot represent that.
+    if (parameter.dotDotDotToken != null) {
+      throw unsupported(parameter, {kind: 'parameterType', typeText: `...${checker.typeToString(checker.getTypeAtLocation(parameter))}`})
+    }
     const type = lowerParameterType(parameter, checker)
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
@@ -140,12 +145,30 @@ function lowerFunction(
     kind: 'lowered',
     name: declaration.name!.text,
     parameters: context.parameters,
-    returnPropertyNames: valueKind(returnType, checker) === 'object'
-      ? checker.getPropertiesOfType(returnType).map(property => property.name)
-      : null,
+    returnPropertyNames: declaredRecordReturnNames(returnType, checker),
     entry: 0,
     blocks: sealBlocks(context.blocks, declaration.name!.text),
   }
+}
+
+// The property names the declared return type exposes, for record returns — through a
+// `| null` / `| undefined` wrapper too, since the record inside the wrapper is what
+// callers read after their null check.
+function declaredRecordReturnNames(returnType: ts.Type, checker: ts.TypeChecker): string[] | null {
+  const kind = valueKind(returnType, checker)
+  if (kind === 'object') return checker.getPropertiesOfType(returnType).map(property => property.name)
+  if (kind === 'nullable' && returnType.isUnion()) {
+    const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+    const rest = returnType.types.filter(member => (member.flags & missing) === 0)
+    if (rest.length >= 1 && rest.every(member => valueKind(member, checker) === 'object')) {
+      const names = new Set<string>()
+      for (const member of rest) {
+        for (const property of checker.getPropertiesOfType(member)) names.add(property.name)
+      }
+      return [...names]
+    }
+  }
+  return null
 }
 
 function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.TypeChecker): ValueTypeIR {
