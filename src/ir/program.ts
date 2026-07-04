@@ -13,6 +13,9 @@ type ParameterIR = {
 export type ValueTypeIR =
   | {kind: 'number'}
   | {kind: 'object'; properties: string[]}
+  // `number | null` and friends — seeded as missing-or-finite; checks narrow the missing
+  // half away. The sentinels drive the assumes prose.
+  | {kind: 'nullishNumber'; sentinels: 'null' | 'undefined' | 'both'}
 
 // UTF-16 offsets into the analyzed source, from ts.Node.getStart/getEnd. Line and column
 // are computed only at message-formatting time. Spans may repeat across sites (the constant 1
@@ -150,6 +153,7 @@ export type DeclaredKind =
   | {kind: 'number'}
   | {kind: 'boolean'}
   | {kind: 'record'; properties: Array<{name: string; declared: DeclaredKind}>}
+  | {kind: 'nullish'; inner: DeclaredKind; sentinels: 'null' | 'undefined' | 'both'}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
@@ -197,6 +201,7 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
       name: property.name,
       value: declaredKindValue(property.declared),
     })))
+    case 'nullish': return {kind: 'maybeNullish', inner: declaredKindValue(declared.inner), sentinels: declared.sentinels}
   }
 }
 
@@ -213,6 +218,7 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
       name: property.name,
       value: coveringKindValue(property.declared),
     })))
+    case 'nullish': return {kind: 'maybeNullish', inner: coveringKindValue(declared.inner), sentinels: declared.sentinels}
   }
 }
 

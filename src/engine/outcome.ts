@@ -11,9 +11,8 @@ export type StopReason =
   // The called function never lowered, or its own evaluation has stops. The callee's report
   // entry carries the next hop or the root cause.
   | {kind: 'calleeStopped'; callee: FunctionID}
-  // A divisor may be zero and no requirement over the caller-visible parameters can name it
-  // (e.g. dividing by a property read). Revisit when requirement expressions support
-  // property paths with mutation-awareness.
+  // A divisor may be zero and no requirement over the caller-visible parameters can name
+  // it (e.g. dividing by a platform read).
   | {kind: 'divisorUnknown'}
   | {kind: 'loopLimit'; updates: number}
   // A loop whose exit edge is never taken on any analyzed path, e.g.
@@ -27,6 +26,10 @@ export type StopReason =
   // category: imported, an untracked object, an unsupported type, or read before its
   // initialization.
   | {kind: 'moduleRead'; binding: ModuleBindingID}
+  // A value reached an operation whose kind the analyzer's narrowing did not establish,
+  // though the checker's did — e.g. a guard shape the analysis does not model. The path
+  // stops; the rest of the function and file report normally.
+  | {kind: 'unmodeledNarrowing'}
 
 export type Stop = {
   site: SiteID

@@ -48,6 +48,14 @@ export type TransferContext = {
   evaluateFunction: EvaluateFunction
 }
 
+// TypeScript's narrowing is an open-ended set of rules; the analyzer models the common
+// shapes (null checks, ?? , nested guards) and consults the checker's types at every
+// gate, but a value can still reach an operation whose kind the local narrowing did not
+// establish. That is a mismatch between two narrowing systems, not an accepted-subset
+// violation, so it degrades to a per-path stop (owner decision) instead of crashing the
+// run — thrown here, converted to a stop at the single catch in evaluateInstruction.
+class KindMismatch extends Error {}
+
 // One instruction either produces a value or stops the current path.
 export type StepResult =
   | {kind: 'value'; value: AbstractValue}
@@ -113,8 +121,38 @@ export function evaluateInstruction(
   state: ExecutionState,
   context: TransferContext,
 ): StepResult {
+  try {
+    return evaluateInstructionKinded(instruction, state, context)
+  } catch (error) {
+    if (error instanceof KindMismatch) {
+      return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unmodeledNarrowing'}}}
+    }
+    throw error
+  }
+}
+
+function evaluateInstructionKinded(
+  instruction: InstructionIR,
+  state: ExecutionState,
+  context: TransferContext,
+): StepResult {
   switch (instruction.kind) {
     case 'constant': return passthroughValue(constantNumber(instruction.value))
+    case 'nullishConstant': return value({kind: 'nullish', sentinels: instruction.sentinel})
+    case 'nullishCheck': {
+      const operand = requiredValue(state, instruction.value)
+      const canBeSentinel = operand.kind === 'nullish' || operand.kind === 'maybeNullish'
+        ? instruction.sentinel === 'nullish' || sentinelsAdmit(operand.sentinels, instruction.sentinel)
+        : false
+      const canMiss = operand.kind === 'nullish'
+        // A pure missing value fails a strict check only when it can be the OTHER sentinel.
+        ? instruction.sentinel !== 'nullish' && operand.sentinels !== instruction.sentinel
+        : true
+      const equals: AbstractBoolean = {kind: 'boolean', canBeTrue: canBeSentinel, canBeFalse: canMiss}
+      return value(instruction.negated
+        ? {kind: 'boolean', canBeTrue: equals.canBeFalse, canBeFalse: equals.canBeTrue}
+        : equals)
+    }
     case 'booleanConstant': return value({
       kind: 'boolean',
       canBeTrue: instruction.value,
@@ -252,6 +290,89 @@ export function evaluateInstruction(
   }
 }
 
+function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {
+  return sentinels === 'both' || sentinels === sentinel
+}
+
+function withoutSentinel(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): 'null' | 'undefined' | null {
+  if (sentinels === 'both') return sentinel === 'null' ? 'undefined' : 'null'
+  return sentinels === sentinel ? null : sentinels
+}
+
+// Narrows the checked value along one branch of `x === null` and friends, and writes the
+// narrowed value back through the producer chain: when the checked value is a property
+// read, the parent record's property is replaced too (sound because values are immutable
+// — the property cannot differ between this read and the next), so `if (point.x !== null)
+// return point.x + 1` narrows both reads. Returns null when the branch is impossible
+// (e.g. the value cannot be the checked sentinel).
+export function refineNullishCheck(
+  state: ExecutionState,
+  check: Extract<InstructionIR, {kind: 'nullishCheck'}>,
+  truth: boolean,
+  producers: Array<InstructionIR | undefined>,
+): ExecutionState | null {
+  const result = cloneState(state)
+  const operand = requiredValue(result, check.value)
+  const isSentinel = truth !== check.negated
+  const refined = refineForSentinel(operand, check.sentinel, isSentinel)
+  if (refined == null) return null
+  writeThroughProducers(result, check.value, refined, producers)
+  return result
+}
+
+function refineForSentinel(
+  operand: AbstractValue,
+  sentinel: 'null' | 'undefined' | 'nullish',
+  isSentinel: boolean,
+): AbstractValue | null {
+  if (isSentinel) {
+    // This branch requires the value to BE the sentinel.
+    if (operand.kind === 'nullish') {
+      if (sentinel === 'nullish') return operand
+      return sentinelsAdmit(operand.sentinels, sentinel) ? {kind: 'nullish', sentinels: sentinel} : null
+    }
+    if (operand.kind === 'maybeNullish') {
+      if (sentinel === 'nullish') return {kind: 'nullish', sentinels: operand.sentinels}
+      return sentinelsAdmit(operand.sentinels, sentinel) ? {kind: 'nullish', sentinels: sentinel} : null
+    }
+    // A value that is never missing cannot take this branch.
+    return null
+  }
+  // This branch requires the value NOT to be the sentinel.
+  if (operand.kind === 'nullish') {
+    if (sentinel === 'nullish') return null
+    const remaining = withoutSentinel(operand.sentinels, sentinel)
+    return remaining == null ? null : {kind: 'nullish', sentinels: remaining}
+  }
+  if (operand.kind === 'maybeNullish') {
+    if (sentinel === 'nullish') return operand.inner
+    const remaining = withoutSentinel(operand.sentinels, sentinel)
+    return remaining == null ? operand.inner : {kind: 'maybeNullish', inner: operand.inner, sentinels: remaining}
+  }
+  return operand
+}
+
+// frame[id] := refined, then rebuild the enclosing record value when id was produced by a
+// property read, recursively — later reads of the same property see the narrowed value.
+function writeThroughProducers(
+  state: ExecutionState,
+  id: ValueID,
+  refined: AbstractValue,
+  producers: Array<InstructionIR | undefined>,
+): void {
+  state.frame.values[id] = refined
+  const producer = producers[id]
+  if (producer?.kind !== 'property') return
+  const parent = state.frame.values[producer.object]
+  if (parent?.kind !== 'record') return
+  const rebuilt: AbstractValue = {
+    kind: 'record',
+    properties: parent.properties.map(property =>
+      property.name === producer.property ? {name: property.name, value: refined} : property),
+  }
+  writeThroughProducers(state, producer.object, rebuilt, producers)
+}
+
 export function refineComparison(
   state: ExecutionState,
   comparison: Extract<InstructionIR, {kind: 'compare'}>,
@@ -316,19 +437,19 @@ export function refineComparison(
 
 function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
   const value = requiredValue(state, id)
-  if (value.kind !== 'number') throw new Error(`IR value ${id} is not a number`)
+  if (value.kind !== 'number') throw new KindMismatch(`IR value ${id} is not a number`)
   return value
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {
   const value = requiredValue(state, id)
-  if (value.kind !== 'boolean') throw new Error(`IR value ${id} is not a boolean`)
+  if (value.kind !== 'boolean') throw new KindMismatch(`IR value ${id} is not a boolean`)
   return value
 }
 
 function requiredRecord(state: ExecutionState, id: ValueID): AbstractRecord {
   const value = requiredValue(state, id)
-  if (value.kind !== 'record') throw new Error(`IR value ${id} is not a record`)
+  if (value.kind !== 'record') throw new KindMismatch(`IR value ${id} is not a record`)
   return value
 }
 

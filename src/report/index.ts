@@ -133,6 +133,11 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: bo
   for (const parameter of fn.parameters) {
     switch (parameter.type.kind) {
       case 'number': assumptions.push(`${parameter.name} is finite and not NaN`); break
+      case 'nullishNumber': {
+        const sentinelWords = parameter.type.sentinels === 'both' ? 'null or undefined' : parameter.type.sentinels
+        assumptions.push(`${parameter.name} is ${sentinelWords} or a finite non-NaN number`)
+        break
+      }
       case 'object': {
         for (const property of parameter.type.properties) {
           assumptions.push(`${parameter.name}.${property} is finite and not NaN`)
@@ -157,6 +162,15 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
   switch (declared.kind) {
     case 'number': assumptions.push(`${path} is finite and not NaN`); break
     case 'boolean': assumptions.push(`${path} is a boolean`); break
+    case 'nullish': {
+      // E.g. `animatedUntilTime is null or a finite non-NaN number`.
+      const innerWords = declared.inner.kind === 'number'
+        ? 'a finite non-NaN number'
+        : declared.inner.kind === 'boolean' ? 'a boolean' : 'a record of its declared shape'
+      const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
+      assumptions.push(`${path} is ${sentinelWords} or ${innerWords}`)
+      break
+    }
     case 'record': {
       for (const property of declared.properties) {
         pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions)
@@ -225,6 +239,9 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       // agent hunting through a body whose constructs all lower.
       const calleeState = calleeStateText(analysis.functions[reason.callee])
       return `calls ${functionName(program, reason.callee)}, ${calleeState} (call at ${formatSite(program, stop.site)})`
+    }
+    case 'unmodeledNarrowing': {
+      return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
     }
     case 'divisorUnknown': {
       return `cannot infer a nonzero requirement for the division at ${formatSite(program, stop.site)}`
@@ -334,7 +351,21 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
       return summaries
     }
     case 'void': return []
+    case 'nullish': return [`${path} is ${sentinelsText(value.sentinels)}`]
+    case 'maybeNullish': {
+      // The inner summary describes the present case; one line states the missing case.
+      // E.g. `return is null or a finite number from 0 through 100`.
+      const inner = returnSummaries(path, value.inner, program)
+      if (inner.length === 1 && inner[0]!.startsWith(`${path} is `)) {
+        return [`${path} is ${sentinelsText(value.sentinels)} or ${inner[0]!.slice(`${path} is `.length)}`]
+      }
+      return [`${path} may be ${sentinelsText(value.sentinels)}; when present:`, ...inner]
+    }
   }
+}
+
+function sentinelsText(sentinels: 'null' | 'undefined' | 'both'): string {
+  return sentinels === 'both' ? 'null or undefined' : sentinels
 }
 
 function numberSummary(path: string, value: AbstractNumber, program: ProgramIR): string {

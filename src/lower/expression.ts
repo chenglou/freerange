@@ -180,7 +180,30 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   ) {
     return lowerLogicalExpression(current, context)
   }
+  if (current.kind === ts.SyntaxKind.NullKeyword) {
+    return addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'null'})
+  }
+  if (ts.isBinaryExpression(current) && current.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken) {
+    // `a ?? b` is `a` when not missing, else `b`. The whole expression's type must be a
+    // representable kind — `(record | null) ?? 0` mixes record and number arms.
+    const resultType = context.checker.getTypeAtLocation(current)
+    if (valueKind(resultType, context.checker) == null) {
+      throw unsupported(current, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
+    }
+    const left = lowerExpression(current.left, context)
+    const notMissing = addInstruction(context, current, {kind: 'nullishCheck', value: left, sentinel: 'nullish', negated: true})
+    // The true arm re-reads a's slot, which the branch refinement has unwrapped.
+    return lowerValueBranch(
+      current,
+      notMissing,
+      () => left,
+      () => lowerExpression(current.right, context),
+      context,
+    )
+  }
   if (ts.isBinaryExpression(current)) {
+    const missingCheck = missingSentinelCheck(current, context)
+    if (missingCheck != null) return missingCheck
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
     if (arithmetic == null && comparison == null) {
@@ -354,6 +377,48 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
 
 // `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it —
 // the shared value-branch shape with one arm being a boolean constant.
+// Lowers a statement-position condition into branch terminators with short-circuit CFG:
+// `if (a && b)` becomes two chained branches sharing the false target, so each simple
+// condition is its own branch producer and narrows on its own — nested guards and inline
+// && guards refine identically, by construction. Conditions are assignment-free (see
+// lowerStatementExpression), so the intermediate blocks carry no parameters and bindings
+// never change inside.
+export function lowerBranchingCondition(
+  expression: ts.Expression,
+  whenTrue: number,
+  whenFalse: number,
+  context: FunctionContext,
+): void {
+  const current = unwrap(expression, context.checker)
+  if (ts.isBinaryExpression(current)
+    && (current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+      || current.operatorToken.kind === ts.SyntaxKind.BarBarToken)) {
+    const isAnd = current.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken
+    const middle = createBlock(context)
+    if (isAnd) {
+      lowerBranchingCondition(current.left, middle, whenFalse, context)
+    } else {
+      lowerBranchingCondition(current.left, whenTrue, middle, context)
+    }
+    context.currentBlock = context.blocks[middle]!
+    lowerBranchingCondition(current.right, whenTrue, whenFalse, context)
+    return
+  }
+  if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.ExclamationToken) {
+    lowerBranchingCondition(current.operand, whenFalse, whenTrue, context)
+    return
+  }
+  requireBooleanCondition(current, context.checker)
+  const condition = lowerExpression(current, context)
+  terminate(context.currentBlock, {
+    kind: 'branch',
+    condition,
+    whenTrue: {block: whenTrue, arguments: []},
+    whenFalse: {block: whenFalse, arguments: []},
+    site: addSite(context, current),
+  })
+}
+
 function lowerLogicalExpression(expression: ts.BinaryExpression, context: FunctionContext): ValueID {
   requireBooleanCondition(expression.left, context.checker)
   requireBooleanCondition(expression.right, context.checker)
@@ -408,7 +473,7 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | null {
+export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | 'nullable' | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
@@ -432,11 +497,22 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     return anchored ? 'object' : null
   }
   if (type.isUnion()) {
-    let shared: 'number' | 'boolean' | 'object' | null = null
+    // `T | null`, `T | undefined`, and `T | null | undefined` classify as nullable when T
+    // itself classifies to one kind. Gates that cannot carry a missing value keep
+    // rejecting ('nullable' matches neither 'number' nor 'object'); kind-agnostic gates
+    // (declarators, ternary results, destructure elements, returns) accept.
+    const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+    if (type.types.some(member => (member.flags & missingFlags) !== 0)) {
+      const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
+      if (rest.length !== 1) return null
+      const restKind = valueKind(rest[0]!, checker)
+      return restKind == null || restKind === 'nullable' ? null : 'nullable'
+    }
+    let shared: 'number' | 'boolean' | 'object' | 'nullable' | null = null
     let objectShape: string | null = null
     for (const member of type.types) {
       const kind = valueKind(member, checker)
-      if (kind == null || (shared != null && kind !== shared)) return null
+      if (kind == null || kind === 'nullable' || (shared != null && kind !== shared)) return null
       if (kind === 'object') {
         // TypeScript normalizes a union of disjoint shapes by adding each member's missing
         // properties as optional-undefined, so only the required properties describe the
@@ -508,7 +584,16 @@ export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker):
 // property may genuinely be missing on some paths, so letting the access through would
 // read a property the record value may not carry.
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
+  // An optional property stays out even though its `T | undefined` type now classifies:
+  // the record value genuinely may not carry the property (a join dropped it, or the
+  // literal omitted it), so there is nothing to read. Required properties of missing-able
+  // kinds read fine.
+  const receiverType = checker.getTypeAtLocation(access.expression)
+  const property = checker.getPropertyOfType(receiverType, access.name.text)
   const type = checker.getTypeAtLocation(access)
+  if (property != null && (property.flags & ts.SymbolFlags.Optional) !== 0) {
+    throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
+  }
   if (valueKind(type, checker) != null) return
   throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
 }
@@ -521,6 +606,37 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
 function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
   if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
   return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
+}
+
+// Recognizes `x === null`, `x !== undefined`, `x == null`, and friends. The loose forms
+// test both sentinels at once; the strict forms test one, and the refinement consults the
+// VALUE's own possible sentinels, so `x !== null` on a possibly-undefined value narrows
+// null away while undefined honestly survives.
+function missingSentinelCheck(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
+  const operator = expression.operatorToken.kind
+  const strict = operator === ts.SyntaxKind.EqualsEqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsEqualsToken
+  const loose = operator === ts.SyntaxKind.EqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsToken
+  if (!strict && !loose) return null
+  const negated = operator === ts.SyntaxKind.ExclamationEqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsToken
+  const sentinelOf = (side: ts.Expression): 'null' | 'undefined' | null => {
+    const unwrapped = unwrap(side, context.checker)
+    if (unwrapped.kind === ts.SyntaxKind.NullKeyword) return 'null'
+    if (ts.isIdentifier(unwrapped) && unwrapped.text === 'undefined'
+      && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(unwrapped))) return 'undefined'
+    return null
+  }
+  const leftSentinel = sentinelOf(expression.left)
+  const rightSentinel = sentinelOf(expression.right)
+  const sentinel = leftSentinel ?? rightSentinel
+  if (sentinel == null || (leftSentinel != null && rightSentinel != null)) return null
+  const checked = leftSentinel == null ? expression.left : expression.right
+  const value = lowerExpression(checked, context)
+  return addInstruction(context, expression, {
+    kind: 'nullishCheck',
+    value,
+    sentinel: loose ? 'nullish' : sentinel,
+    negated,
+  })
 }
 
 function isGlobalInfinity(expression: ts.Expression, checker: ts.TypeChecker): boolean {
@@ -540,6 +656,9 @@ function identifierValue(symbol: ts.Symbol, node: ts.Identifier, context: Functi
   if (binding != null) return addInstruction(context, node, {kind: 'moduleRead', binding})
   if (isGlobalInfinity(node, context.checker)) {
     return addInstruction(context, node, {kind: 'constant', value: Number.POSITIVE_INFINITY})
+  }
+  if (node.text === 'undefined' && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(node))) {
+    return addInstruction(context, node, {kind: 'nullishConstant', sentinel: 'undefined'})
   }
   throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
 }

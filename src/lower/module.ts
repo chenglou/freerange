@@ -283,6 +283,19 @@ function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker,
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
     case 'boolean': return {kind: 'boolean'}
+    // `number | null` and friends: the declared kind wraps the non-missing part, keeping
+    // which sentinels the type admits for seeding and report prose.
+    case 'nullable': {
+      if (!type.isUnion()) return null
+      const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+      const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
+      if (rest.length !== 1) return null
+      const inner = declaredKind(rest[0]!, location, checker, seen)
+      if (inner == null) return null
+      const admitsNull = type.types.some(member => (member.flags & ts.TypeFlags.Null) !== 0)
+      const admitsUndefined = type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
+      return {kind: 'nullish', inner, sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
+    }
     case 'object': {
       // A recursive declared type (e.g. a linked list) would nest forever; the binding
       // stays opaque. The seen check catches direct recursion; the depth cap catches

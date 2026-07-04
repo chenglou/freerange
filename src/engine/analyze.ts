@@ -28,6 +28,7 @@ import {
   collectNonCompareUses,
   evaluateInstruction,
   refineComparison,
+  refineNullishCheck,
   requiredBoolean,
   requiredValue,
 } from './transfer.ts'
@@ -68,6 +69,11 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
         case 'number': {
           arguments_.push(finiteInputNumber())
           argumentExpressions.push({kind: 'parameter', index})
+          break
+        }
+        case 'nullishNumber': {
+          arguments_.push({kind: 'maybeNullish', inner: finiteInputNumber(), sentinels: parameter.type.sentinels})
+          argumentExpressions.push(null)
           break
         }
         case 'object': {
@@ -318,16 +324,23 @@ function runEvaluation(
         // table; a condition refines only when that instruction is a comparison.
         const producer = expressionContext.instructionByValue[block.terminator.condition]
         const comparison = producer?.kind === 'compare' ? producer : undefined
+        const nullishCheck = producer?.kind === 'nullishCheck' ? producer : undefined
         if (condition.canBeTrue) {
           // refineComparison clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
-          const branch = comparison == null
-            ? condition.canBeFalse ? cloneState(state) : state
-            : refineComparison(state, comparison, true)
+          const branch = comparison != null
+            ? refineComparison(state, comparison, true)
+            : nullishCheck != null
+              ? refineNullishCheck(state, nullishCheck, true, expressionContext.instructionByValue)
+              : condition.canBeFalse ? cloneState(state) : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
-          const branch = comparison == null ? state : refineComparison(state, comparison, false)
+          const branch = comparison != null
+            ? refineComparison(state, comparison, false)
+            : nullishCheck != null
+              ? refineNullishCheck(state, nullishCheck, false, expressionContext.instructionByValue)
+              : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break

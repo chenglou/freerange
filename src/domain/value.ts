@@ -24,7 +24,39 @@ type AbstractVoid = {
   kind: 'void'
 }
 
-export type AbstractValue = AbstractNumber | AbstractBoolean | AbstractRecord | AbstractVoid
+// Which of JavaScript's two missing-value sentinels a nullish value can be. Carried on
+// the value so report lines can say "null" when only null is possible (a `number | null`
+// binding) instead of hedging with both.
+export type NullishSentinels = 'null' | 'undefined' | 'both'
+
+// The value IS missing: null, undefined, or (after a join) either. Null and undefined
+// share one abstract concept — `??` and loose `== null` treat them alike, and the
+// narrowing rules consult the operand's static type wherever the two differ (a strict
+// `!== null` cannot clear a possibly-undefined value).
+export type AbstractNullish = {
+  kind: 'nullish'
+  sentinels: NullishSentinels
+}
+
+// A value that is either `inner` or missing. Never nested (joins flatten), and inner is
+// never itself nullish — a value that is only missing is AbstractNullish, not a wrapper.
+export type AbstractMaybeNullish = {
+  kind: 'maybeNullish'
+  inner: AbstractValue
+  sentinels: NullishSentinels
+}
+
+export function joinSentinels(left: NullishSentinels, right: NullishSentinels): NullishSentinels {
+  return left === right ? left : 'both'
+}
+
+export type AbstractValue =
+  | AbstractNumber
+  | AbstractBoolean
+  | AbstractRecord
+  | AbstractVoid
+  | AbstractNullish
+  | AbstractMaybeNullish
 
 export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
@@ -43,8 +75,26 @@ export function recordProperty(record: AbstractRecord, name: string): AbstractVa
 }
 
 export function joinValues(left: AbstractValue, right: AbstractValue): AbstractValue {
-  // Kind mismatches stay a crash: union-typed bindings are outside the accepted subset and
-  // belong to a lowering gate, not to the join.
+  // Missing values meet other kinds legitimately: a `number | null` binding joins a number
+  // branch with a null branch. Everything else keeps the kind-mismatch crash, which
+  // belongs to a lowering gate.
+  if (left.kind === 'nullish' && right.kind === 'nullish') {
+    return {kind: 'nullish', sentinels: joinSentinels(left.sentinels, right.sentinels)}
+  }
+  if (left.kind === 'nullish') {
+    return right.kind === 'maybeNullish'
+      ? {kind: 'maybeNullish', inner: right.inner, sentinels: joinSentinels(left.sentinels, right.sentinels)}
+      : {kind: 'maybeNullish', inner: right, sentinels: left.sentinels}
+  }
+  if (right.kind === 'nullish') return joinValues(right, left)
+  if (left.kind === 'maybeNullish' || right.kind === 'maybeNullish') {
+    const leftInner = left.kind === 'maybeNullish' ? left.inner : left
+    const rightInner = right.kind === 'maybeNullish' ? right.inner : right
+    const leftSentinels = left.kind === 'maybeNullish' ? left.sentinels : null
+    const rightSentinels = right.kind === 'maybeNullish' ? right.sentinels : null
+    const sentinels = leftSentinels == null ? rightSentinels! : rightSentinels == null ? leftSentinels : joinSentinels(leftSentinels, rightSentinels)
+    return {kind: 'maybeNullish', inner: joinValues(leftInner, rightInner), sentinels}
+  }
   if (left.kind !== right.kind) throw new Error(`Cannot join ${left.kind} and ${right.kind}`)
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
@@ -52,6 +102,14 @@ export function joinValues(left: AbstractValue, right: AbstractValue): AbstractV
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
   }
+}
+
+// Whether two property values can meet in joinValues without a kind-mismatch crash: same
+// kind, or a legitimate missing-value meet ({x: 1} on one branch, {x: null} on another).
+function joinableKinds(left: AbstractValue, right: AbstractValue): boolean {
+  if (left.kind === right.kind) return true
+  return left.kind === 'nullish' || right.kind === 'nullish'
+    || left.kind === 'maybeNullish' || right.kind === 'maybeNullish'
 }
 
 // Records join pointwise by property name, keeping only the names present on BOTH sides
@@ -67,7 +125,7 @@ function joinRecords(left: AbstractRecord, right: AbstractRecord): AbstractRecor
   const properties: Array<{name: string; value: AbstractValue}> = []
   for (const property of left.properties) {
     const other = recordProperty(right, property.name)
-    if (other == null || other.kind !== property.value.kind) continue
+    if (other == null || !joinableKinds(property.value, other)) continue
     properties.push({name: property.name, value: joinValues(property.value, other)})
   }
   return {kind: 'record', properties}
@@ -92,6 +150,11 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
         })
     }
     case 'void': return true
+    case 'nullish': return left.sentinels === (right as AbstractNullish).sentinels
+    case 'maybeNullish': {
+      const other = right as AbstractMaybeNullish
+      return left.sentinels === other.sentinels && sameValues(left.inner, other.inner)
+    }
   }
 }
 
@@ -120,9 +183,16 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
         }),
       }
     }
-    // Bounded lattices need no widening: booleans have height two, void is a point.
+    case 'maybeNullish': {
+      // The unbounded part is inside; the missing half is a small finite lattice.
+      const previousInner = previous.kind === 'maybeNullish' ? previous.inner : previous
+      return {kind: 'maybeNullish', inner: widenValue(previousInner, next.inner), sentinels: next.sentinels}
+    }
+    // Bounded lattices need no widening: booleans have height two, the missing sentinels
+    // form a three-point lattice, void is a point.
     case 'boolean':
     case 'void':
+    case 'nullish':
       return next
   }
 }

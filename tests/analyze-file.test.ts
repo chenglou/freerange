@@ -1006,6 +1006,120 @@ describe('analyzeFile', () => {
     expect(report.functions[0]?.kind).toBe('unsupported')
   })
 
+  test('null checks narrow, and compound guards narrow through the short-circuit', () => {
+    // `maybe !== null && maybe > 3` lowers as two chained branches sharing the false
+    // target, so each check refines on its own — the inline guard narrows exactly like
+    // the nested-if spelling.
+    const report = analyzeSource('nullish-guard.ts', `
+      export function doubled(maybe: number | null): number {
+        if (maybe !== null && maybe > 3) {
+          return maybe * 2
+        }
+        return 0
+      }
+    `)
+    const fn = analyzedFunction(report, 'doubled')
+    expect(fn.assumptions).toEqual(['maybe is null or a finite non-NaN number'])
+    expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${resolve('nullish-guard.ts')}:4:18)`])
+  })
+
+  test('narrowing a property read sticks across re-reads of the same property', () => {
+    // The refinement writes the narrowed value back through the producer chain into the
+    // record — sound because values are immutable, so the property cannot differ between
+    // the checked read and the next one.
+    const report = analyzeSource('nullish-property.ts', `
+      export function pick(seed: number): number {
+        const point = {x: seed > 0 ? null : 5}
+        if (point.x !== null) {
+          return point.x + 1
+        }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'pick').ensures)
+      .toEqual(['return is a finite integer number from 0 through 6'])
+  })
+
+  test('strict null checks consult the possible sentinels', () => {
+    // `values !== null` on number | undefined can never be false at runtime (undefined
+    // !== null is true), so the else branch is pruned and the result is exactly 0.
+    const report = analyzeSource('nullish-matrix.ts', `
+      export function fromIndex(values: number | undefined): number {
+        if (values !== null) {
+          return 0
+        }
+        return 1
+      }
+      export function looseClears(value: number | undefined): number {
+        return value == null ? 16 : value * 1
+      }
+    `)
+    expect(analyzedFunction(report, 'fromIndex').assumptions)
+      .toEqual(['values is undefined or a finite non-NaN number'])
+    expect(analyzedFunction(report, 'fromIndex').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    // Loose == null tests both sentinels, so the false arm is a plain number.
+    expect(analyzedFunction(report, 'looseClears').ensures)
+      .toEqual(['return is a finite number'])
+  })
+
+  test('?? takes the value or the fallback, exactly', () => {
+    const report = analyzeSource('nullish-coalesce.ts', `
+      export function clampedStart(animatedUntilTime: number | null): number {
+        const start = animatedUntilTime ?? 16
+        return Math.max(0, Math.min(start, 100))
+      }
+      export function mixedArms(seed: number): number {
+        const grid = seed > 0 ? null : {cols: 3}
+        const chosen = grid ?? 0
+        return 1
+      }
+    `)
+    expect(analyzedFunction(report, 'clampedStart').ensures)
+      .toEqual(['return is a finite number from 0 through 100'])
+    // ?? whose arms mix kinds (record vs number) rejects at the type gate.
+    const mixed = report.functions.find(fn => fn.name === 'mixedArms')
+    expect(mixed?.kind).toBe('unsupported')
+  })
+
+  test('a narrowing shape the analysis does not model stops the path honestly', () => {
+    // Value-position compound conditions do not short-circuit (only statement conditions
+    // do), so the ternary's guard reaches the multiplication unnarrowed — the backstop
+    // records a stop instead of crashing the run, and the sibling function still reports.
+    const report = analyzeSource('nullish-backstop.ts', `
+      export function ternaryGuard(maybe: number | null): number {
+        return maybe !== null && maybe > 3 ? maybe * 2 : 0
+      }
+      export function healthy(x: number): number {
+        return x + 1
+      }
+    `)
+    const file = resolve('nullish-backstop.ts')
+    expect(report.functions[0]).toEqual({
+      kind: 'partial',
+      name: 'ternaryGuard',
+      assumptions: ['maybe is null or a finite non-NaN number'],
+      stopped: [`narrows a value in a way the analysis does not model (at ${file}:3:46)`],
+      observed: ['return is a finite integer number from 0 through 0'],
+    })
+    expect(analyzedFunction(report, 'healthy').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('nullish module bindings seed their declared kind with sentinel prose', () => {
+    const report = analyzeSource('nullish-module.ts', `
+      let animatedUntilTime: number | null = null
+      export function frame(now: number): void {
+        animatedUntilTime = now
+      }
+      export function readIt(): number {
+        return animatedUntilTime ?? 16
+      }
+    `)
+    const reader = analyzedFunction(report, 'readIt')
+    expect(reader.assumptions).toEqual(['animatedUntilTime is null or a finite non-NaN number'])
+    expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

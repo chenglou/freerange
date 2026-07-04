@@ -59,7 +59,9 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     case 'compare':
     case 'maximum':
     case 'minimum':
-    case 'object': return null
+    case 'object':
+    case 'nullishConstant':
+    case 'nullishCheck': return null
     case 'property': {
       const base = numericExpression(instruction.object, context)
       return base == null ? null : {kind: 'property', base, name: instruction.property}

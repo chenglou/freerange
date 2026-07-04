@@ -152,6 +152,17 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
   // reads against than it carries.
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
+    case 'nullable': {
+      // Only number | null / number | undefined; missing-able records as parameters wait.
+      const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+      const rest = type.isUnion() ? type.types.filter(member => (member.flags & missingFlags) === 0) : []
+      if (rest.length === 1 && valueKind(rest[0]!, checker) === 'number') {
+        const admitsNull = type.isUnion() && type.types.some(member => (member.flags & ts.TypeFlags.Null) !== 0)
+        const admitsUndefined = type.isUnion() && type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
+        return {kind: 'nullishNumber', sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
+      }
+      throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
+    }
     case 'object': break
     default: throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(type)})
   }

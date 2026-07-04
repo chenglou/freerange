@@ -13,7 +13,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {identifierAssignment, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -52,18 +52,10 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
 }
 
 function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): void {
-  requireBooleanCondition(statement.expression, context.checker)
-  const condition = lowerExpression(statement.expression, context)
   const bindingsBeforeBranch = new Map(context.bindings)
   const whenTrue = createBlock(context)
   const whenFalse = createBlock(context)
-  terminate(context.currentBlock, {
-    kind: 'branch',
-    condition,
-    whenTrue: {block: whenTrue, arguments: []},
-    whenFalse: {block: whenFalse, arguments: []},
-    site: addSite(context, statement),
-  })
+  lowerBranchingCondition(statement.expression, whenTrue, whenFalse, context)
 
   const trueBranch = lowerBranch(statement.thenStatement, whenTrue, bindingsBeforeBranch, context)
   const falseBranch = statement.elseStatement == null
@@ -128,17 +120,10 @@ function lowerForStatement(statement: ts.ForStatement, context: FunctionContext)
   for (let index = 0; index < carried.length; index++) {
     context.bindings.set(carried[index]!, context.currentBlock.parameters[index]!)
   }
-  const condition = lowerExpression(statement.condition, context)
   const conditionBindings = new Map(context.bindings)
   const body = createBlock(context)
   const exit = createBlock(context)
-  terminate(context.currentBlock, {
-    kind: 'branch',
-    condition,
-    whenTrue: {block: body, arguments: []},
-    whenFalse: {block: exit, arguments: []},
-    site: addSite(context, statement.condition),
-  })
+  lowerBranchingCondition(statement.condition, body, exit, context)
 
   context.currentBlock = context.blocks[body]!
   context.bindings = new Map(conditionBindings)
@@ -185,6 +170,13 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
             : null
         if (property == null) throw unsupported(element, {kind: 'variableDeclarationShape'})
         const elementType = context.checker.getTypeAtLocation(element.name)
+        const sourceType = context.checker.getTypeAtLocation(declaration.initializer)
+        const propertySymbol = context.checker.getPropertyOfType(sourceType, property)
+        // Optional properties stay out: the record value may not carry them (see
+        // requireAccessedPropertyKind).
+        if (propertySymbol != null && (propertySymbol.flags & ts.SymbolFlags.Optional) !== 0) {
+          throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
+        }
         if (valueKind(elementType, context.checker) == null) {
           throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
         }

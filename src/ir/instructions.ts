@@ -16,6 +16,10 @@ type ObjectPropertyIR = {
 
 export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
+  | (InstructionBase & {kind: 'nullishConstant'; sentinel: 'null' | 'undefined'})
+  // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
+  // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
+  | (InstructionBase & {kind: 'nullishCheck'; value: ValueID; sentinel: 'null' | 'undefined' | 'nullish'; negated: boolean})
   | (InstructionBase & {kind: 'booleanConstant'; value: boolean})
   // Read a module binding's slot. Evaluates to the slot's current value; stops the path
   // when the slot holds nothing usable (uninitialized, imported, or an untracked kind).
@@ -54,6 +58,7 @@ export type InstructionIR =
 export function forEachOperand(instruction: InstructionIR, visit: (operand: ValueID) => void): void {
   switch (instruction.kind) {
     case 'constant':
+    case 'nullishConstant':
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':
@@ -65,6 +70,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'floor':
     case 'absolute':
     case 'not': visit(instruction.value); return
+    case 'nullishCheck': visit(instruction.value); return
     case 'minimum':
     case 'maximum': for (const id of instruction.values) visit(id); return
     case 'call': for (const id of instruction.arguments) visit(id); return
