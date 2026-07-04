@@ -1,5 +1,5 @@
-import {finiteInputNumber, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
-import {sameValues, type AbstractValue} from '../domain/value.ts'
+import {isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
+import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {AbstractHeap} from '../heap/model.ts'
 import {referenceProperties} from '../heap/operations.ts'
@@ -81,10 +81,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
           name: lowering.name,
           assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!),
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-          ensures: [
-            ...parameterWriteSummaries(lowering, fn.sharedState.heap, program),
-            ...returnSummaries('return', fn.returnValue, fn.sharedState.heap, program),
-          ],
+          ensures: returnSummaries('return', fn.returnValue, fn.sharedState.heap, program),
         })
         break
       }
@@ -265,7 +262,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'functionWithoutSignature': return 'function without a TypeScript signature'
     case 'functionWithoutBody': return 'function declarations need bodies'
     case 'destructuredParameter': return 'destructured parameters'
-    case 'multipleObjectParameters': return 'more than one object parameter'
     case 'parameterType': return `function parameter with type ${reason.typeText}`
     case 'objectParameterProperty': return `object parameter property ${reason.property} with type ${reason.typeText}`
     case 'objectParameterWithoutNumericProperties': return 'object parameter without numeric properties'
@@ -282,6 +278,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
     case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
+    case 'propertyWrite': return 'a write into an object (values are immutable; rebind a variable to a fresh object instead)'
     case 'anyTyped': return 'a value typed any'
     case 'typeAssertion': return `a type assertion to ${reason.typeText}`
     case 'varDeclaration': return 'var declarations (use let or const)'
@@ -293,25 +290,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'expressionForm': return `expression (${reason.syntax})`
     case 'statementForm': return `statement (${reason.syntax})`
   }
-}
-
-// A function's writes to its object parameters are effects the caller observes, so they get
-// ensures lines like the return value does. Properties still holding the entry assumption
-// (any finite number) are unchanged or unrestricted and stay silent.
-function parameterWriteSummaries(fn: FunctionIR, heap: AbstractHeap, program: ProgramIR): string[] {
-  const summaries: string[] = []
-  for (let index = 0; index < fn.parameters.length; index++) {
-    const parameter = fn.parameters[index]!
-    if (parameter.type.kind !== 'object') continue
-    const object = heap.find(candidate =>
-      candidate.identity.kind === 'parameter' && candidate.identity.parameterIndex === index)
-    if (object == null) continue
-    for (const property of object.properties) {
-      if (property.value.kind === 'number' && sameValues(property.value, finiteInputNumber())) continue
-      summaries.push(...returnSummaries(`${parameter.name}.${property.name}`, property.value, heap, program))
-    }
-  }
-  return summaries
 }
 
 function returnSummaries(path: string, value: AbstractValue, heap: AbstractHeap, program: ProgramIR): string[] {

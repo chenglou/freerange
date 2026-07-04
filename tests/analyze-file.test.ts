@@ -250,16 +250,30 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('joins a write into every target of a branch-merged reference', () => {
-    const report = analyzeSource('weak-write.ts', `
+  test('reads through a branch-merged reference join the possible objects', () => {
+    const report = analyzeSource('merged-read.ts', `
       export function pick(flag: number): number {
         const box = flag > 0 ? {value: 1} : {value: 2}
-        box.value = 5
         return box.value
       }
     `)
     expect(analyzedFunction(report, 'pick').ensures)
-      .toEqual(['return is a finite integer number from 1 through 5'])
+      .toEqual(['return is a finite integer number from 1 through 2'])
+  })
+
+  test('rejects writes into objects with rebinding as the rewrite', () => {
+    // Values are immutable after construction; state updates rebind a variable instead.
+    const report = analyzeSource('property-write.ts', `
+      export function step(config: {pos: number}): void {
+        config.pos = 1
+      }
+    `)
+    const file = resolve('property-write.ts')
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'step',
+      unsupported: `a write into an object (values are immutable; rebind a variable to a fresh object instead) at ${file}:3:9`,
+    }])
   })
 
   test('keeps objects from different call sites distinct', () => {
@@ -270,24 +284,24 @@ describe('analyzeFile', () => {
       export function distinct(): number {
         const first = makeBox()
         const second = makeBox()
-        second.value = 7
-        return first.value
+        return first.value * 10 + second.value
       }
     `)
     expect(analyzedFunction(report, 'distinct').ensures)
-      .toEqual(['return is a finite integer number from 1 through 1'])
+      .toEqual(['return is a finite integer number from 11 through 11'])
   })
 
   test('keeps per-iteration precision on the freshest object', () => {
-    // Recency: within one iteration the fresh object takes strong updates, so the loop body
+    // Recency: each iteration re-executes both allocation sites, displacing the previous
+    // objects into their summaries; the fresh objects stay exact, so the loop body
     // reproduces an exact state each round and the header converges without widening `last`.
     const report = analyzeSource('recency.ts', `
       export function lastHeight(count: number): number {
         let last = 0
         for (let index = 0; index < count; index += 1) {
           const point = {x: 1}
-          point.x = point.x + 1
-          last = point.x
+          const grown = {x: point.x + 1}
+          last = grown.x
         }
         return last
       }
@@ -309,8 +323,8 @@ describe('analyzeFile', () => {
         let last = 0
         for (let index = 0; index < count; index += 1) {
           const box = makeBox()
-          box.value = box.value + 1
-          last = box.value
+          const grown = {value: box.value + 1}
+          last = grown.value
         }
         return first.value + last
       }
@@ -460,29 +474,32 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('does not analyze caller statements past a stopped call or leak callee mutations', () => {
+  test('does not analyze caller statements past a stopped call or leak callee state changes', () => {
+    // poison rebinds the module slot to exactly 0 and then hits unsupported code; the
+    // caller must stop at the call and discard the partial callee's slot change.
     const report = analyzeSource('no-leak.ts', `
-      function poison(box: {value: number}): void {
-        box.value = 0
-        oops(box.value)
+      let width = 10
+      function poison(): void {
+        width = 0
+        oops(width)
       }
       function oops(value: number): number {
         return value % 2
       }
-      export function readAfterCall(box: {value: number}): number {
-        poison(box)
-        return box.value
+      export function readAfterCall(): number {
+        poison()
+        return width
       }
     `)
     const file = resolve('no-leak.ts')
     const caller = report.functions.find(fn => fn.name === 'readAfterCall')
-    // If evaluation continued past the stopped call, observed would show the mutated
-    // return value 0 through 0. It must show nothing: the path stopped at the call.
+    // If evaluation continued past the stopped call, observed would show the poisoned
+    // 0 through 0. It must show nothing: the path stopped at the call.
     expect(caller).toEqual({
       kind: 'partial',
       name: 'readAfterCall',
-      assumptions: ['box.value is finite and not NaN'],
-      stopped: [`calls poison, whose analysis stopped (call at ${file}:10:9)`],
+      assumptions: ['width is finite and not NaN'],
+      stopped: [`calls poison, whose analysis stopped (call at ${file}:11:9)`],
       observed: [],
     })
   })
@@ -566,14 +583,15 @@ describe('analyzeFile', () => {
     expect(formatted).not.toContain('requires:')
   })
 
-  test('carries a property write through an alias and local function call', () => {
+  test('carries a record through rebinding and a local function call', () => {
     const report = analyzeFile(mutationFixture)
     const fn = analyzedFunction(report, 'destinationAfterUpdate')
     expect(fn.assumptions).toEqual(['containerWidth is finite and not NaN'])
     expect(fn.ensures).toEqual(['return is a finite number at least 1'])
 
     const unrelated = analyzedFunction(report, 'unrelatedDestinationStaysUnchanged')
-    expect(unrelated.ensures).toEqual(['return is a finite integer number from 0 through 0'])
+    // Math.min mixes an integer with a non-integer operand, so no integer flag survives.
+    expect(unrelated.ensures).toEqual(['return is a finite number from 0 through 0'])
   })
 
   test('infers, propagates, and discharges nonzero preconditions', () => {
@@ -1072,18 +1090,21 @@ describe('analyzeFile', () => {
     expect(fn.ensures).toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${resolve('destructure.ts')}:5:25)`])
   })
 
-  test('prints writes to object parameters as ensures lines', () => {
-    // A void function's whole contract is its writes; properties still holding the entry
-    // assumption stay silent, so only the reset shows.
-    const report = analyzeSource('param-writes.ts', `
+  test('a returned fresh record prints its full contract', () => {
+    // The immutable twin of a mutating state update: every property of the returned record
+    // prints, including the exact reset, where the mutating version could only describe
+    // what it wrote.
+    const report = analyzeSource('fresh-record.ts', `
       type Spring = {pos: number; dest: number; v: number}
-      export function goToEnd(config: Spring): void {
-        config.pos = config.dest
-        config.v = 0
+      export function goToEnd(config: Spring): Spring {
+        return {pos: config.dest, dest: config.dest, v: 0}
       }
     `)
-    expect(analyzedFunction(report, 'goToEnd').ensures)
-      .toEqual(['config.v is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'goToEnd').ensures).toEqual([
+      'return.pos is a finite number',
+      'return.dest is a finite number',
+      'return.v is a finite integer number from 0 through 0',
+    ])
   })
 
   test('publishes module values past skipped top-level statements and demotes what they write', () => {
@@ -1105,7 +1126,7 @@ describe('analyzeFile', () => {
       stopped: [],
       skipped: [
         `function call window.addEventListener at ${file}:3:7`,
-        `value of type string at ${file}:6:7`,
+        `a write into an object (values are immutable; rebind a variable to a fresh object instead) at ${file}:6:7`,
       ],
       observed: [],
     })
@@ -1259,6 +1280,29 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite number at least 10'])
   })
 
+  test('object spread reads the source shape with later entries overriding', () => {
+    // The update idiom of the immutable subset: rebuild with spread, override what changed.
+    const report = analyzeSource('spread.ts', `
+      type Spring = {pos: number; dest: number; v: number}
+      export function settle(s: Spring): Spring {
+        return {...s, pos: s.dest, v: 0}
+      }
+      export function merged(a: {x: number}, b: {x: number; y: number}): number {
+        const both = {...a, ...b}
+        return Math.min(both.x, both.y)
+      }
+    `)
+    expect(analyzedFunction(report, 'settle').ensures).toEqual([
+      'return.pos is a finite number',
+      'return.dest is a finite number',
+      'return.v is a finite integer number from 0 through 0',
+    ])
+    // Two object parameters — previously rejected — are harmless without writes, and the
+    // later spread wins for the shared x.
+    expect(analyzedFunction(report, 'merged').ensures)
+      .toEqual(['return is a finite number'])
+  })
+
   test('carries a module read assumption to callers of the reading function', () => {
     const report = analyzeSource('module-assumption-chain.ts', `
       let scaleFactor = 2
@@ -1293,8 +1337,8 @@ describe('analyzeFile', () => {
 
   test('converges on a numeric for loop without unrolling it', () => {
     const report = analyzeSource('numeric-loop.ts', `
-      function increment(state: {value: number}): void {
-        state.value = state.value + 1
+      function increment(state: {value: number}): {value: number} {
+        return {value: state.value + 1}
       }
 
       export function iterationsBeforeLimit(limit: number): number {
@@ -1304,8 +1348,8 @@ describe('analyzeFile', () => {
       }
 
       export function updatesBeforeLimit(limit: number): number {
-        const state = {value: 0}
-        for (let iteration = 0; iteration < limit; iteration++) increment(state)
+        let state = {value: 0}
+        for (let iteration = 0; iteration < limit; iteration++) state = increment(state)
         return state.value
       }
     `)

@@ -19,17 +19,6 @@ import {
 // provably assignment-free (their join carries exactly one parameter, the result).
 export function lowerStatementExpression(expression: ts.Expression, context: FunctionContext): void {
   const current = unwrap(expression, context.checker)
-  if (
-    ts.isBinaryExpression(current)
-    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    && ts.isPropertyAccessExpression(current.left)
-  ) {
-    requireAccessedPropertyKind(current.left, context.checker)
-    const object = lowerExpression(current.left.expression, context)
-    const value = lowerExpression(current.right, context)
-    addInstruction(context, current, {kind: 'store', object, property: current.left.name.text, value})
-    return
-  }
   const assignment = identifierAssignment(current)
   if (assignment != null) {
     const symbol = requiredSymbol(assignment.target, context.checker)
@@ -105,22 +94,42 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return identifierValue(requiredSymbol(current, context.checker), current, context)
   }
   if (ts.isObjectLiteralExpression(current)) {
-    const properties = current.properties.map(property => {
+    const properties: Array<{name: string; value: ValueID}> = []
+    for (const property of current.properties) {
       if (ts.isShorthandPropertyAssignment(property)) {
         const symbol = context.checker.getShorthandAssignmentValueSymbol(property)
         if (symbol == null) throw unsupported(property, {kind: 'missingSymbol'})
-        return {name: property.name.text, value: identifierValue(symbol, property.name, context)}
+        properties.push({name: property.name.text, value: identifierValue(symbol, property.name, context)})
+        continue
       }
       if (ts.isPropertyAssignment(property)) {
-        return {name: propertyName(property.name), value: lowerExpression(property.initializer, context)}
+        properties.push({name: propertyName(property.name), value: lowerExpression(property.initializer, context)})
+        continue
+      }
+      // `{...spring, pos: newPos}` — the update idiom of the immutable subset. Every object
+      // has a statically known fixed shape, so a spread is one read per source property;
+      // later entries override earlier ones below.
+      if (ts.isSpreadAssignment(property)) {
+        const sourceType = context.checker.getTypeAtLocation(property.expression)
+        if (valueKind(sourceType, context.checker) !== 'object') {
+          throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(sourceType)})
+        }
+        const source = lowerExpression(property.expression, context)
+        for (const member of context.checker.getPropertiesOfType(sourceType)) {
+          if ((member.flags & ts.SymbolFlags.Optional) !== 0) continue
+          properties.push({
+            name: member.name,
+            value: addInstruction(context, property, {kind: 'property', object: source, property: member.name}),
+          })
+        }
+        continue
       }
       throw unsupported(property, {kind: 'objectPropertyForm'})
-    })
-    return addInstruction(context, current, {kind: 'object', properties})
-  }
-  if (ts.isBinaryExpression(current) && ts.isPropertyAccessExpression(current.left)
-    && current.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
-    throw unsupported(current, {kind: 'assignmentInValuePosition'})
+    }
+    // Last write wins, matching runtime spread semantics; earlier reads still evaluate.
+    const lastByName = new Map<string, {name: string; value: ValueID}>()
+    for (const property of properties) lastByName.set(property.name, property)
+    return addInstruction(context, current, {kind: 'object', properties: [...lastByName.values()]})
   }
   if (identifierAssignment(current) != null) {
     throw unsupported(current, {kind: 'assignmentInValuePosition'})

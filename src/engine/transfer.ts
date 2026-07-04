@@ -15,7 +15,7 @@ import {
 } from '../domain/number.ts'
 import {declaredKindValue, unknownBoolean, type AbstractBoolean, type AbstractReference, type AbstractValue} from '../domain/value.ts'
 import type {AllocationContext} from '../heap/model.ts'
-import {adoptCalleeHeap, allocateAtSite, readProperty, writeProperty} from '../heap/operations.ts'
+import {adoptCalleeHeap, allocateAtSite, readProperty} from '../heap/operations.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
 import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -173,16 +173,6 @@ export function evaluateInstruction(
       requiredReference(state, instruction.object),
       instruction.property,
     ))
-    case 'store': {
-      const assigned = requiredValue(state, instruction.value)
-      writeProperty(
-        state.shared.heap,
-        requiredReference(state, instruction.object),
-        instruction.property,
-        assigned,
-      )
-      return passthroughValue(assigned)
-    }
     case 'compare': return value(compareNumbers(
       requiredNumber(state, instruction.left),
       requiredNumber(state, instruction.right),

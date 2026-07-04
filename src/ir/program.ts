@@ -52,7 +52,7 @@ export type UnsupportedReason =
   // Overload signatures and ambient declarations have no body to lower.
   | {kind: 'functionWithoutBody'}
   | {kind: 'destructuredParameter'}
-  | {kind: 'multipleObjectParameters'}
+
   | {kind: 'parameterType'; typeText: string}
   | {kind: 'objectParameterProperty'; property: string; typeText: string}
   | {kind: 'objectParameterWithoutNumericProperties'}
@@ -109,6 +109,10 @@ export type UnsupportedReason =
   // `a = b = 5`. Assignments lower only in statement position; write it as its own
   // statement.
   | {kind: 'assignmentInValuePosition'}
+  // A write into an object, e.g. `config.pos = 1` or `count.total += n`. Values are
+  // immutable after construction (owner-locked): update state by rebinding a variable to a
+  // fresh object, e.g. `config = {...config, pos: 1}`.
+  | {kind: 'propertyWrite'}
   | {kind: 'forLoopWithoutCondition'}
   | {kind: 'forLoopWithoutIncrementor'}
   // Destructuring pattern or a declaration without an initializer.

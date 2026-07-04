@@ -110,13 +110,9 @@ function lowerFunction(
     bindings: new Map(),
     parameters: [],
   }
-  let objectParameterCount = 0
   for (const parameter of declaration.parameters) {
     if (!ts.isIdentifier(parameter.name)) throw unsupported(parameter.name, {kind: 'destructuredParameter'})
     const type = lowerParameterType(parameter, checker)
-    if (type.kind === 'object' && ++objectParameterCount > 1) {
-      throw unsupported(parameter, {kind: 'multipleObjectParameters'})
-    }
     const value = context.nextValue++
     context.bindings.set(requiredSymbol(parameter.name, checker), value)
     context.parameters.push({value, name: parameter.name.text, type})

@@ -41,7 +41,6 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
         ? null
         : {kind: 'binary', operator: instruction.operator, left, right}
     }
-    case 'store': return numericExpression(instruction.value, context)
     case 'floor': {
       const operand = numericExpression(instruction.value, context)
       return operand == null ? null : {kind: 'floor', operand}

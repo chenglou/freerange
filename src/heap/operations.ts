@@ -162,29 +162,6 @@ export function readProperty(heap: AbstractHeap, reference: AbstractReference, n
   return joined
 }
 
-// Strong only when the reference addresses exactly one known runtime object; otherwise the
-// write joins old and new values into every target — skipping any target would be a silent
-// mutation no-op. A single parameter target counts as one known object only because the
-// lowering rejects a second object parameter (multipleObjectParameters); with two object
-// parameters, one runtime object could enter under two identities and a strong write
-// through one would silently miss the other.
-export function writeProperty(
-  heap: AbstractHeap,
-  reference: AbstractReference,
-  name: string,
-  value: AbstractValue,
-): void {
-  const single = reference.targets.length === 1 ? reference.targets[0]! : null
-  const strong = single != null && (single.kind === 'parameter' || single.slot === 'known')
-  for (const target of reference.targets) {
-    const object = findObject(heap, target)
-    if (object == null) throw new Error('Reference target is missing from the heap')
-    const property = object.properties.find(candidate => candidate.name === name)
-    if (property == null) throw new Error(`Abstract object has no property ${name}`)
-    property.value = strong ? value : joinValues(property.value, value)
-  }
-}
-
 // The property list a reference presents: the names present in EVERY target, values joined
 // across all targets. Targets can disagree on shape even in type-correct code — TypeScript
 // reduces an inferred union like {x} | {x, y} to plain {x} by width subtyping — and the

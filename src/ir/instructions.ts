@@ -46,7 +46,6 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
   | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
-  | (InstructionBase & {kind: 'store'; object: ValueID; property: string; value: ValueID})
 
 // Every ValueID operand an instruction reads, enumerated next to the type so a new kind or
 // a new operand field on an existing kind changes in the same file and the same diff view.
@@ -71,7 +70,6 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'call': for (const id of instruction.arguments) visit(id); return
     case 'object': for (const property of instruction.properties) visit(property.value); return
     case 'property': visit(instruction.object); return
-    case 'store': visit(instruction.object); visit(instruction.value); return
   }
 }
 

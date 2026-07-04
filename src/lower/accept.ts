@@ -45,6 +45,23 @@ export function assertAccepted(root: ts.Node, checker: ts.TypeChecker): void {
         typeText: checker.typeToString(checker.getTypeAtLocation(node)),
       })
     }
+    // Values are immutable after construction: any write through a property access —
+    // plain, compound, or ++/-- — is rejected with rebinding as the suggested rewrite.
+    if (
+      ts.isBinaryExpression(node)
+      && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
+      && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+      && ts.isPropertyAccessExpression(node.left)
+    ) {
+      throw unsupported(node, {kind: 'propertyWrite'})
+    }
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
+      && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)
+      && ts.isPropertyAccessExpression(node.operand)
+    ) {
+      throw unsupported(node, {kind: 'propertyWrite'})
+    }
     // `var` hoists: one variable can have several declaration sites, and a nested
     // redeclaration writes a binding declared elsewhere. `let` and `const` express the
     // same programs without that.
