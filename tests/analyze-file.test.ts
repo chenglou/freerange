@@ -1078,6 +1078,30 @@ describe('analyzeFile', () => {
     ])
   })
 
+  test('the global Infinity is an exact constant, not an unknown identifier', () => {
+    // `-Infinity` must fold to one constant at lowering: lowered as `0 - Infinity` it would
+    // collapse to unknown-including-NaN (interval arithmetic gives up on non-finite
+    // operands), and no clamp recovers a possibly-NaN value. With the fold, the clamp
+    // recovers an exact range. A local named Infinity shadows the global, same defense as
+    // the Math dispatch.
+    const report = analyzeSource('infinity.ts', `
+      export function clampFromBelow(): number {
+        const floor = -Infinity
+        return Math.max(0, Math.min(floor, 100))
+      }
+      export function unbounded(): number {
+        return Infinity
+      }
+      export function shadowed(): number {
+        const Infinity = 5
+        return Infinity
+      }
+    `)
+    expect(analyzedFunction(report, 'clampFromBelow').ensures).toEqual(['return is a finite number from 0 through 0'])
+    expect(analyzedFunction(report, 'unbounded').ensures).toEqual(['return is a possibly non-finite number from Infinity through Infinity'])
+    expect(analyzedFunction(report, 'shadowed').ensures).toEqual(['return is a finite integer number from 5 through 5'])
+  })
+
   test('publishes module values past skipped top-level statements and demotes what they write', () => {
     const report = analyzeSource('module-skip.ts', `
       const gap = 24

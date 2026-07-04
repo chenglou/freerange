@@ -1,7 +1,7 @@
 import * as ts from 'typescript'
 import type {ValueID} from '../ir/ids.ts'
 import type {ComparisonOperator, InstructionIR} from '../ir/instructions.ts'
-import {platformFact} from './platform.ts'
+import {declaredOnlyInDeclarationFiles, platformFact} from './platform.ts'
 import {
   addInstruction,
   addSite,
@@ -78,6 +78,17 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return addInstruction(context, current, {kind: 'booleanConstant', value: current.kind === ts.SyntaxKind.TrueKeyword})
   }
   if (ts.isPrefixUnaryExpression(current) && current.operator === ts.SyntaxKind.MinusToken) {
+    // A negated literal folds into one constant instead of lowering as `0 - operand`.
+    // For finite literals both are exact; for `-Infinity` the fold is the difference
+    // between an exact constant and a collapse to unknown, because interval arithmetic
+    // deliberately gives up on non-finite operands (Infinity - Infinity is NaN).
+    const negated = unwrap(current.operand, context.checker)
+    if (ts.isNumericLiteral(negated)) {
+      return addInstruction(context, current, {kind: 'constant', value: -Number(negated.text)})
+    }
+    if (isGlobalInfinity(negated, context.checker)) {
+      return addInstruction(context, current, {kind: 'constant', value: Number.NEGATIVE_INFINITY})
+    }
     const zero = addInstruction(context, current, {kind: 'constant', value: 0})
     const value = lowerExpression(current.operand, context)
     return addInstruction(context, current, {kind: 'binary', operator: 'subtract', left: zero, right: value})
@@ -409,19 +420,27 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
 
 function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
   if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
-  const symbol = checker.getSymbolAtLocation(expression)
-  const declarations = symbol?.declarations
-  if (declarations == null || declarations.length === 0) return false
-  return declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)
+  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
+}
+
+function isGlobalInfinity(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== 'Infinity') return false
+  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
 }
 
 // Resolves an identifier read: a function-local binding first, then a module binding
-// (which reads the binding's slot), else the identifier is unknown.
+// (which reads the binding's slot), then the global `Infinity` as an exact constant,
+// else the identifier is unknown. A local or module binding named Infinity has a
+// different symbol and wins above; the global check is the same declaration-file
+// defense the Math and platform dispatches use.
 function identifierValue(symbol: ts.Symbol, node: ts.Identifier, context: FunctionContext): ValueID {
   const local = context.bindings.get(symbol)
   if (local != null) return local
   const binding = context.moduleBindingsBySymbol.get(symbol)
   if (binding != null) return addInstruction(context, node, {kind: 'moduleRead', binding})
+  if (isGlobalInfinity(node, context.checker)) {
+    return addInstruction(context, node, {kind: 'constant', value: Number.POSITIVE_INFINITY})
+  }
   throw unsupported(node, {kind: 'unknownIdentifier', name: node.text})
 }
 

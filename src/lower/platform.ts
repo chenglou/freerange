@@ -65,9 +65,16 @@ export function platformFact(expression: ts.Expression, call: boolean, checker: 
     && candidate.path.length === parts.length
     && candidate.path.every((segment, index) => segment === parts[index]))
   if (entry == null) return null
-  const symbol = checker.getSymbolAtLocation(current)
-  const declarations = symbol?.declarations
-  if (declarations == null || declarations.length === 0) return null
-  if (!declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)) return null
+  if (!declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(current))) return null
   return entry.fact
+}
+
+// The shadowing defense shared by every trusted-global dispatch (this catalog, `Math`,
+// `Infinity`): the identifier counts as the real global only when every declaration of its
+// symbol lives in a declaration file, so a local or module binding of the same name never
+// matches.
+export function declaredOnlyInDeclarationFiles(symbol: ts.Symbol | undefined): boolean {
+  const declarations = symbol?.declarations
+  if (declarations == null || declarations.length === 0) return false
+  return declarations.every(declaration => declaration.getSourceFile().isDeclarationFile)
 }
