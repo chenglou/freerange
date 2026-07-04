@@ -1,6 +1,7 @@
 import * as ts from 'typescript'
 import type {ModuleBindingID} from '../ir/ids.ts'
 import {
+  declaredKindOf,
   moduleInitializerName,
   type DeclaredKind,
   type FunctionIR,
@@ -184,11 +185,20 @@ export function lowerModuleInitializer(
       // statement could have written — its own targets plus, since it may call any
       // function, every binding functions write. Without the reset, a later analyzed
       // statement would compute from the stale pre-skip value and publish the result
-      // through a fresh binding that nothing demotes.
+      // through a fresh binding that nothing demotes. Record bindings are additionally ALL
+      // havocked: a skipped statement can mutate a record without any write-position
+      // mention of its binding — `Object.assign(config, overrides)` holds the binding in
+      // argument position, and an alias variant mentions it nowhere — so no mention scan
+      // is sound for records. Scalars are copied on read; only a write-position form can
+      // change one, and those are collected above.
       const havocked = new Set(scan.writtenInsideFunctions)
       for (const written of allModuleWritesIn(statement, checker, scan.bindingsBySymbol)) {
         demote(scan.bindings, written)
         havocked.add(written)
+      }
+      for (let binding = 0; binding < scan.bindings.length; binding++) {
+        const declared = declaredKindOf(scan.bindings[binding]!.category)
+        if (declared?.kind === 'record') havocked.add(binding)
       }
       for (const binding of havocked) {
         addInstruction(context, statement, {kind: 'moduleHavoc', binding})

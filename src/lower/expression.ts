@@ -215,7 +215,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
     const objectType = context.checker.getTypeAtLocation(current.expression)
-    if ((objectType.flags & ts.TypeFlags.Object) === 0) {
+    if ((objectType.flags & ts.TypeFlags.Object) === 0 || context.checker.getIndexInfosOfType(objectType).length > 0) {
       throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})
     }
     requireAccessedPropertyKind(current, context.checker)
@@ -376,7 +376,15 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
-  if ((type.flags & ts.TypeFlags.Object) !== 0) return 'object'
+  if ((type.flags & ts.TypeFlags.Object) !== 0) {
+    // An index signature, e.g. Record<string, number>, admits properties the type never
+    // names: a value typed with one can carry any key set at runtime, so the abstract
+    // record — built from a specific literal — cannot honor reads or spreads the signature
+    // licenses. `stats.misses` type-checks against Record<string, number> while the value
+    // is `{clicks: 1}`, and `{...defaults, ...overrides}` would copy nothing from an
+    // override map whose type names no properties.
+    return checker.getIndexInfosOfType(type).length === 0 ? 'object' : null
+  }
   if (type.isUnion()) {
     let shared: 'number' | 'boolean' | 'object' | null = null
     let objectShape: string | null = null
@@ -386,10 +394,13 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
       if (kind === 'object') {
         // TypeScript normalizes a union of disjoint shapes by adding each member's missing
         // properties as optional-undefined, so only the required properties describe the
-        // member's real shape.
+        // member's real shape. The property KINDS are part of the shape: a discriminated
+        // union like {ok: true; value: number} | {ok: false; value: boolean} has one name
+        // set but two meanings for `value`, and admitting it would let a spread or a
+        // narrowed read reach a property the record join had to drop.
         const shape = checker.getPropertiesOfType(member)
           .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
-          .map(property => property.name)
+          .map(property => `${property.name}:${shallowPropertyKind(checker.getTypeOfSymbol(property))}`)
           .sort()
           .join(',')
         if (objectShape != null && shape !== objectShape) return null
@@ -400,6 +411,22 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     return shared
   }
   return null
+}
+
+// Classifies a property's type one level deep, without recursing into nested unions or
+// object shapes — so a recursive declared type cannot loop the classifier. Two union
+// members agree on a property only when these labels match; 'other' matches 'other', which
+// is harmless because a value of an unclassifiable kind cannot be constructed in the
+// subset anyway.
+function shallowPropertyKind(type: ts.Type): string {
+  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
+  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  if ((type.flags & ts.TypeFlags.Object) !== 0) return 'object'
+  if (type.isUnion()) {
+    if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
+    if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
+  }
+  return 'other'
 }
 
 // Truthiness conditions like `if (width)` on a number are legal TypeScript but outside the

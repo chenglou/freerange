@@ -729,8 +729,10 @@ describe('analyzeFile', () => {
       }
     `)
     const file = resolve('module-record-opaque.ts')
-    // The array literal itself does not lower, so the initializer skips the declaration —
-    // and the binding is opaque regardless (arrays are not records), so the read stops.
+    // The array literal itself does not lower, so the initializer skips the declaration.
+    // The read is rejected at lowering: an array's number index signature admits
+    // properties the abstract record cannot carry, the same gate that keeps
+    // Record<string, number> out.
     expect(report.functions).toEqual([
       {
         kind: 'partial',
@@ -741,11 +743,9 @@ describe('analyzeFile', () => {
         observed: [],
       },
       {
-        kind: 'partial',
+        kind: 'unsupported',
         name: 'itemCount',
-        assumptions: [],
-        stopped: [`reads items, whose value the analysis does not track (read at ${file}:4:16)`],
-        observed: [],
+        unsupported: `property read from number[] at ${file}:4:16`,
       },
     ])
   })
@@ -779,19 +779,39 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 24 through 24'])
   })
 
-  test('joins drop a same-named property whose kinds differ instead of crashing', () => {
-    // {value: number} | {value: boolean} passes the union shape gate (same property
-    // names), so the two records meet at the join. The mixed-kind property is unreadable
-    // — the property-access gate rejects results typed number | boolean — so the join
-    // drops it and the rest of the function analyzes.
+  test('rejects unions whose same-named property mixes kinds', () => {
+    // The union shape gate compares property kinds, not just names: admitting
+    // {value: number} | {value: boolean} would let a spread or a narrowed read reach the
+    // property the record join has to drop.
     const report = analyzeSource('mixed-kind-property.ts', `
       export function mix(steps: number): number {
         const toggle = steps > 0 ? {value: 1} : {value: true}
         return steps
       }
     `)
-    const mixed = analyzedFunction(report, 'mix')
-    expect(mixed.ensures).toEqual(['return is a finite number'])
+    const file = resolve('mixed-kind-property.ts')
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'mix',
+      unsupported: `value of type { value: number; } | { value: boolean; } at ${file}:3:24`,
+    }])
+  })
+
+  test('joins of wide return values drop a kind-mismatched extra property instead of crashing', () => {
+    // Width subtyping lets both wide literals return where {x: number} is declared; the
+    // two records meet at the return join with y carrying different kinds. The declared
+    // return type never exposes y, so the join drops it and every readable property
+    // survives.
+    const report = analyzeSource('wide-return-join.ts', `
+      export function pick(flag: number): {x: number} {
+        const wideA = {x: 1, y: 2}
+        const wideB = {x: 3, y: true}
+        if (flag > 0) return wideA
+        return wideB
+      }
+    `)
+    const picked = analyzedFunction(report, 'pick')
+    expect(picked.ensures).toEqual(['return.x is a finite integer number from 1 through 3'])
   })
 
   test('rejects a spread whose source has an optional property', () => {
@@ -826,6 +846,24 @@ describe('analyzeFile', () => {
     `)
     expect(analyzedFunction(report, 'probe').ensures)
       .toEqual(['return is a finite integer number from 1 through 1'])
+  })
+
+  test('a skip havocs every record binding, closing argument-position mutation', () => {
+    // Object.assign(config, ...) holds the binding in argument position — no write-position
+    // mention anywhere, and an alias variant mentions the binding nowhere at all — so no
+    // mention scan is sound for records. Every record binding resets to covering values at
+    // the skip; the derived scalar honestly reports the NaN the skipped call could produce.
+    const report = analyzeSource('module-record-argument-write.ts', `
+      type Config = {zoom: number}
+      let config: Config = {zoom: 1}
+      Object.assign(config, {zoom: Number.NaN})
+      const doubled = config.zoom * 2
+      export function readDoubled(): number {
+        return doubled
+      }
+    `)
+    expect(analyzedFunction(report, 'readDoubled').ensures)
+      .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
