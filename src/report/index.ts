@@ -295,8 +295,11 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
+    case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
-    case 'call': return `function call ${reason.callee}`
+    case 'call': return reason.callee === 'Object.assign'
+      ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
+      : `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0)`

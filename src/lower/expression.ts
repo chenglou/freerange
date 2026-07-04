@@ -236,6 +236,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
     const objectType = context.checker.getTypeAtLocation(current.expression)
+    // An enum member read gets its own name and rewrite; the generic receiver prose
+    // ("property read from typeof Direction") names the checker's type, not the construct.
+    const receiverSymbol = ts.isIdentifier(current.expression)
+      ? context.checker.getSymbolAtLocation(current.expression)
+      : undefined
+    if (receiverSymbol != null && (receiverSymbol.flags & (ts.SymbolFlags.RegularEnum | ts.SymbolFlags.ConstEnum)) !== 0) {
+      throw unsupported(current, {kind: 'enumMemberRead'})
+    }
     // Through valueKind: single record types and unions of one recursive shape both read
     // fine (an admitted union joins losslessly, so every member's property is present),
     // while index signatures, callables, and mixed shapes reject.
@@ -439,7 +447,7 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
         // record join had to drop. Members admitted here therefore join losslessly:
         // matching fingerprints mean matching names and kinds at every depth.
         const shape = shapeFingerprint(member, checker, [])
-        if (objectShape != null && shape !== objectShape) return null
+        if (shape == null || (objectShape != null && shape !== objectShape)) return null
         objectShape = shape
       }
       shared = kind
@@ -451,31 +459,38 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
 
 // The recursive shape of an object type: property names with their kinds, nested records
 // spelled out in full. Two union members agree only when their fingerprints are equal.
-// The seen set and depth cap bound recursion over recursive declared types; past either,
-// the fingerprint degrades to 'other'. 'other' matches 'other', which is safe not because
-// such values cannot exist — a property typed {width: number} | {code: number} is 'other'
-// and its values are ordinary literals — but because every read of an 'other' property is
-// rejected: direct access and destructuring gate the result type through valueKind, and
-// spreads gate each copied property the same way.
-function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string {
+// 'other' labels a kind the analysis cannot represent; 'other' matches 'other', which is
+// safe not because such values cannot exist — a property typed
+// {width: number} | {code: number} is 'other' and its values are ordinary literals — but
+// because every read of an 'other' property is rejected: direct access and destructuring
+// gate the result type through valueKind, and spreads gate each copied property the same
+// way. A fingerprint the seen set or depth cap CUT SHORT is different: below the cutoff
+// there can be readable properties the comparison never saw (discriminant narrowing types
+// deep reads against a single member), so a truncated fingerprint is null and never
+// compares equal — the union is rejected, mirroring how the module shape walk goes opaque
+// at its cap.
+function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
-    if (seen.length >= 8 || seen.includes(type)) return 'other'
+    if (seen.length >= 8 || seen.includes(type)) return null
     if (checker.getIndexInfosOfType(type).length > 0) return 'other'
     if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return 'other'
-    const properties = checker.getPropertiesOfType(type)
-      .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
-      .map(property => `${property.name}:${shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])}`)
-      .sort()
-      .join(',')
-    return `record{${properties}}`
+    const properties: string[] = []
+    for (const property of checker.getPropertiesOfType(type)) {
+      if ((property.flags & ts.SymbolFlags.Optional) !== 0) continue
+      const propertyFingerprint = shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])
+      if (propertyFingerprint == null) return null
+      properties.push(`${property.name}:${propertyFingerprint}`)
+    }
+    return `record{${properties.sort().join(',')}}`
   }
   if (type.isUnion()) {
     if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
     if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
-    const memberFingerprints = new Set(type.types.map(member => shapeFingerprint(member, checker, seen)))
-    if (memberFingerprints.size === 1) return [...memberFingerprints][0]!
+    const memberFingerprints = type.types.map(member => shapeFingerprint(member, checker, seen))
+    if (memberFingerprints.some(fingerprint => fingerprint == null)) return null
+    if (new Set(memberFingerprints).size === 1) return memberFingerprints[0]!
   }
   return 'other'
 }

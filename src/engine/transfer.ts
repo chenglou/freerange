@@ -261,6 +261,12 @@ export function refineComparison(
   const result = cloneState(state)
   const left = requiredNumber(result, comparison.left)
   const right = requiredNumber(result, comparison.right)
+  // The false branch means "the written condition did not hold" — which is also where a
+  // NaN operand lands, with the OTHER operand unconstrained. Inverting the comparison and
+  // refining bounds is only sound when neither operand can be NaN; e.g. with a possibly-NaN
+  // clamp result as the right operand, `if (x < clamped) ... else return x` reaches the
+  // else with any x at all whenever clamped is NaN.
+  if (!truth && (left.mayBeNaN || right.mayBeNaN)) return result
   const operator = truth ? comparison.operator : invertedComparison(comparison.operator)
   let refinedLeft = left
   let refinedRight = right

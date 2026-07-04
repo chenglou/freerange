@@ -979,6 +979,40 @@ describe('analyzeFile', () => {
     expect(gauge?.kind).toBe('unsupported')
   })
 
+  test('the false branch of a comparison with a possibly-NaN operand refines nothing', () => {
+    // NaN fails every comparison, so the false branch is also where a NaN operand lands —
+    // with the OTHER operand unconstrained. clampedTarget keeps mayBeNaN through the clamp
+    // (scale * scale * dt can be Infinity * 0), so narrowing pointerX to "at least 10" in
+    // the else branch would be contradicted by follow(-5, 1e308, 0) === -5 at runtime.
+    const report = analyzeSource('nan-false-branch.ts', `
+      export function follow(pointerX: number, scale: number, dt: number): number {
+        const clampedTarget = Math.max(10, Math.min(scale * scale * dt, 20))
+        if (pointerX < clampedTarget) return 10
+        return pointerX
+      }
+    `)
+    expect(analyzedFunction(report, 'follow').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('a shape fingerprint cut short by the depth cap never compares equal', () => {
+    // Two members diverging below the cap would otherwise be admitted as one shape, and
+    // discriminant narrowing could read the deep property the join dropped.
+    const report = analyzeSource('deep-union.ts', `
+      type DeepA = {tag: 1; l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: number}}}}}}}}}
+      type DeepB = {tag: 2; l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: boolean}}}}}}}}}
+      export function read(flag: number): number {
+        const a: DeepA = {tag: 1, l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: 42}}}}}}}}}
+        const b: DeepB = {tag: 2, l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: true}}}}}}}}}
+        const chosen: DeepA | DeepB = flag > 0 ? a : b
+        if (chosen.tag === 1) {
+          return chosen.l1.l2.l3.l4.l5.l6.l7.l8.value
+        }
+        return 0
+      }
+    `)
+    expect(report.functions[0]?.kind).toBe('unsupported')
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

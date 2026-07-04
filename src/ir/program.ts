@@ -68,6 +68,7 @@ export type UnsupportedReason =
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
+  | {kind: 'enumMemberRead'}
   // e.g. '%', '&&', '**', '??'
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is the
