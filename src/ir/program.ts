@@ -161,6 +161,9 @@ export type DeclaredKind =
   | {kind: 'boolean'}
   | {kind: 'record'; properties: Array<{name: string; declared: DeclaredKind}>}
   | {kind: 'nullish'; inner: DeclaredKind; sentinels: 'null' | 'undefined' | 'both'}
+  // A tuple type: fixed length, one declared kind per position — the module config table
+  // `const gapSizes = [4, 8, 24] as const` publishes like a record.
+  | {kind: 'tuple'; elements: DeclaredKind[]}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
@@ -209,6 +212,7 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
       value: declaredKindValue(property.declared),
     })))
     case 'nullish': return {kind: 'maybeNullish', inner: declaredKindValue(declared.inner), sentinels: declared.sentinels}
+    case 'tuple': return {kind: 'tuple', elements: declared.elements.map(declaredKindValue)}
   }
 }
 
@@ -226,6 +230,7 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
       value: coveringKindValue(property.declared),
     })))
     case 'nullish': return {kind: 'maybeNullish', inner: coveringKindValue(declared.inner), sentinels: declared.sentinels}
+    case 'tuple': return {kind: 'tuple', elements: declared.elements.map(coveringKindValue)}
   }
 }
 

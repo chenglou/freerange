@@ -174,6 +174,12 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
   switch (declared.kind) {
     case 'number': assumptions.push(`${path} is finite and not NaN`); break
     case 'boolean': assumptions.push(`${path} is a boolean`); break
+    case 'tuple': {
+      for (let index = 0; index < declared.elements.length; index++) {
+        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions)
+      }
+      break
+    }
     case 'nullish': {
       // E.g. `animatedUntilTime is null or a finite non-NaN number`.
       const innerWords = declared.inner.kind === 'number'

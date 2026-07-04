@@ -332,11 +332,21 @@ function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker,
       const admitsUndefined = type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)
       return {kind: 'nullish', inner, sentinels: admitsNull && admitsUndefined ? 'both' : admitsNull ? 'null' : 'undefined'}
     }
-    // Module array and tuple bindings stay opaque for now; publishing them follows the
-    // records pattern once the need shows.
+    // Module array bindings stay opaque for now; tuples are fixed-shape values and publish
+    // like records — `const gapSizes = [4, 8, 24] as const` is the config-table idiom.
     case 'array':
-    case 'tuple':
       return null
+    case 'tuple': {
+      if (seen.length >= 8 || seen.includes(type)) return null
+      const elements: DeclaredKind[] = []
+      for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
+        const element = declaredKind(elementType, location, checker, [...seen, type])
+        if (element == null) return null
+        elements.push(element)
+      }
+      if (elements.length === 0) return null
+      return {kind: 'tuple', elements}
+    }
     case 'object': {
       // A recursive declared type (e.g. a linked list) would nest forever; the binding
       // stays opaque. The seen check catches direct recursion; the depth cap catches

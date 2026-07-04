@@ -188,7 +188,8 @@ function publishedModuleValues(
 
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' || demoted.has(index)) return null
-    if (binding.category.declaredKind.kind === 'record' && !fullyAnalyzed) return null
+    const declaredKind = binding.category.declaredKind.kind
+    if ((declaredKind === 'record' || declaredKind === 'tuple') && !fullyAnalyzed) return null
     let joined: AbstractValue | null = null
     for (const end of ends) {
       const slot = end[index]!

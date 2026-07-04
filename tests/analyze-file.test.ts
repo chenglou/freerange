@@ -4,6 +4,7 @@ import {resolve} from 'node:path'
 import {analyzeFile, analyzeSource, formatReport, type AnalysisReport} from '../src/index.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
+const showcaseFixture = new URL('./fixtures/showcase.ts', import.meta.url).pathname
 const mutationFixture = new URL('./fixtures/object-mutation.ts', import.meta.url).pathname
 const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.url).pathname
 
@@ -14,6 +15,42 @@ function analyzedFunction(report: AnalysisReport, name: string) {
 }
 
 describe('analyzeFile', () => {
+  test('the showcase module analyzes completely, every function contracted', () => {
+    // A subset-conformant miniature of the demo's world (fixtures/showcase.ts): module
+    // state trees, spring physics, nullable frame timing, tuple config tables, array
+    // processing. Every function gets a full contract — no stops, no rejections — and
+    // this pin is the living record of what the analyzer proves on the code shape agents
+    // are asked to write.
+    const report = analyzeFile(showcaseFixture)
+    expect(report.functions.map(fn => `${fn.name}:${fn.kind}`)).toEqual([
+      'springStep:analyzed',
+      'springDone:analyzed',
+      'frameSteps:analyzed',
+      'advanceClock:analyzed',
+      'moveCursor:analyzed',
+      'cursorDistance:analyzed',
+      'middleGap:analyzed',
+      'totalClamped:analyzed',
+      'firstPositive:analyzed',
+      'headOr:analyzed',
+      'widthPerColumn:analyzed',
+    ])
+    // The flagship contracts: frame timing proves its exact clamp through the nullish
+    // default and a division whose dividend can overflow (division by a finite nonzero
+    // constant never makes NaN); the tuple config table reads exactly; array totals stay
+    // finite; the record-property division carries its full conditional contract.
+    expect(analyzedFunction(report, 'frameSteps').ensures)
+      .toEqual(['return is a finite integer number from 0 through 100'])
+    expect(analyzedFunction(report, 'middleGap').ensures)
+      .toEqual(['return is a finite integer number from 24 through 24'])
+    expect(analyzedFunction(report, 'totalClamped').ensures)
+      .toEqual(['return is a finite number at least 0'])
+    expect(analyzedFunction(report, 'headOr').assumptions)
+      .toEqual(['every values element is finite and not NaN', 'fallback is finite and not NaN'])
+    expect(analyzedFunction(report, 'widthPerColumn').requires)
+      .toEqual([`grid.columnCount is nonzero (division at ${showcaseFixture}:78:10)`])
+  })
+
   test('reports inferred properties of a returned object', () => {
     const report = analyzeFile(fixture)
     const fn = analyzedFunction(report, 'calculateGridMetrics')

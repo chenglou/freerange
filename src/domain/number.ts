@@ -85,6 +85,28 @@ export function multiplyNumbers(left: AbstractNumber, right: AbstractNumber): Ab
 }
 
 export function divideNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
+  // A possibly-infinite dividend over a finite nonzero NaN-free divisor stays exact:
+  // the division's NaN corners are 0/0 and Infinity/Infinity, and this divisor rules both
+  // out, so e.g. a frame delta that can overflow divided by a step constant is possibly
+  // non-finite, never NaN. Quotient corners are monotone (Infinity / 4 is Infinity).
+  if (
+    !left.mayBeNaN && !right.mayBeNaN
+    && isFiniteNumber(right) && !includesZero(right)
+  ) {
+    const quotients = [
+      left.lower / right.lower,
+      left.lower / right.upper,
+      left.upper / right.lower,
+      left.upper / right.upper,
+    ]
+    return {
+      kind: 'number',
+      lower: Math.min(...quotients),
+      upper: Math.max(...quotients),
+      integer: false,
+      mayBeNaN: false,
+    }
+  }
   if (!safeOperands(left, right) || includesZero(right)) return unknownNumber()
   const quotients = [
     left.lower / right.lower,
