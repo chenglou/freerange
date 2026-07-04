@@ -334,7 +334,9 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
     case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
-    case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
+    case 'binaryOperator': return reason.operator === '!==' || reason.operator === '!='
+      ? `binary operator ${reason.operator} (not-equal narrowing is not modeled; invert to === with an early return, e.g. if (columnCount === 0) return 0)`
+      : `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
       ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
       : `function call ${reason.callee}`

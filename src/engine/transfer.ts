@@ -404,31 +404,65 @@ function refineForSentinel(
 
 // frame[id] := refined, then rebuild the enclosing value when id was produced by a
 // structural read, recursively — later reads see the narrowed value. Property reads
-// rebuild the record; length reads rebuild the array's length interval.
+// rebuild the record (and chase through a freshly built record into the value that went
+// in: narrowing {...grid}.columns narrows grid.columns, since the copy's property IS the
+// original's); length reads rebuild the array's length interval. Every write MEETS the
+// destination's current value — a refinement of a stale read must not widen a fresher
+// narrowing already sitting in the record.
 function writeThroughProducers(
   state: ExecutionState,
   id: ValueID,
   refined: AbstractValue,
   producers: Array<InstructionIR | undefined>,
 ): void {
-  state.frame.values[id] = refined
+  const current = state.frame.values[id]
+  const met = current == null ? refined : meetValues(current, refined)
+  state.frame.values[id] = met
   const producer = producers[id]
   if (producer?.kind === 'property') {
     const parent = state.frame.values[producer.object]
-    if (parent?.kind !== 'record') return
-    const rebuilt: AbstractValue = {
-      kind: 'record',
-      properties: parent.properties.map(property =>
-        property.name === producer.property ? {name: property.name, value: refined} : property),
+    if (parent?.kind === 'record') {
+      const rebuilt: AbstractValue = {
+        kind: 'record',
+        properties: parent.properties.map(property =>
+          property.name === producer.property
+            ? {name: property.name, value: meetValues(property.value, met)}
+            : property),
+      }
+      writeThroughProducers(state, producer.object, rebuilt, producers)
     }
-    writeThroughProducers(state, producer.object, rebuilt, producers)
+    // A read through a freshly built record narrows the value that went in.
+    const parentProducer = producers[producer.object]
+    if (parentProducer?.kind === 'object') {
+      const source = parentProducer.properties.find(property => property.name === producer.property)
+      if (source != null) writeThroughProducers(state, source.value, met, producers)
+    }
     return
   }
-  if (producer?.kind === 'arrayLength' && refined.kind === 'number') {
+  if (producer?.kind === 'arrayLength' && met.kind === 'number') {
     const parent = state.frame.values[producer.array]
     if (parent?.kind !== 'array') return
-    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length: refined}, producers)
+    writeThroughProducers(state, producer.array, {kind: 'array', element: parent.element, length: met}, producers)
   }
+}
+
+// The intersection of two covers of the same runtime value — both are supersets of the
+// truth, so keeping the tighter fact per dimension is sound. Numbers intersect bounds;
+// everything else keeps the refined side (records met pointwise would recurse; the
+// refinement chain only ever writes number-bearing shapes today).
+function meetValues(current: AbstractValue, refined: AbstractValue): AbstractValue {
+  if (current.kind === 'number' && refined.kind === 'number') {
+    const met: AbstractNumber = {
+      kind: 'number',
+      lower: Math.max(current.lower, refined.lower),
+      upper: Math.min(current.upper, refined.upper),
+      integer: current.integer || refined.integer,
+      mayBeNaN: current.mayBeNaN && refined.mayBeNaN,
+    }
+    const lossSite = refined.lossSite ?? current.lossSite
+    return lossSite == null ? met : {...met, lossSite}
+  }
+  return refined
 }
 
 export function refineComparison(

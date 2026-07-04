@@ -509,14 +509,21 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | null {
+export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | null {
+  // The depth guard bounds recursion into element types (a recursive `type T = T[]` would
+  // otherwise loop); past it, nothing classifies.
+  if (depth > 8) return null
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   // The type system's own split, mirrored: tuple types are positional and exact, array
   // types are homogeneous. Checked before the general object arm (both carry the Object
-  // flag and index signatures).
+  // flag and index signatures). An array classifies only when its ELEMENT does — a
+  // (number | boolean)[] value's element hull is nothing any read gate could describe.
   if (checker.isTupleType(type)) return 'tuple'
-  if (checker.isArrayType(type)) return 'array'
+  if (checker.isArrayType(type)) {
+    const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
+    return element != null && valueKind(element, checker, depth + 1) != null ? 'array' : null
+  }
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     // An index signature, e.g. Record<string, number>, admits properties the type never
     // names: a value typed with one can carry any key set at runtime, so the abstract
@@ -589,6 +596,26 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
 function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
+  // Arrays and tuples fingerprint by their element shapes: {items: number[]} and
+  // {items: boolean[]} are different shapes, or the join would drop a property the read
+  // gates still expose.
+  if (checker.isTupleType(type)) {
+    if (seen.length >= 8 || seen.includes(type)) return null
+    const positions: string[] = []
+    for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
+      const position = shapeFingerprint(elementType, checker, [...seen, type])
+      if (position == null) return null
+      positions.push(position)
+    }
+    return `tuple{${positions.join(',')}}`
+  }
+  if (checker.isArrayType(type)) {
+    if (seen.length >= 8 || seen.includes(type)) return null
+    const elementType = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
+    if (elementType == null) return 'other'
+    const element = shapeFingerprint(elementType, checker, [...seen, type])
+    return element == null ? null : `array{${element}}`
+  }
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     if (seen.length >= 8 || seen.includes(type)) return null
     if (checker.getIndexInfosOfType(type).length > 0) return 'other'
@@ -681,6 +708,20 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     if (isUndefinedGlobal(unwrapped, context.checker)) return 'undefined'
     return null
   }
+  // `typeof x === 'undefined'` is the classic guard spelling; it is the undefined
+  // sentinel check with the checked side inside the typeof.
+  const isUndefinedString = (side: ts.Expression): boolean => {
+    const unwrapped = unwrap(side, context.checker)
+    return ts.isStringLiteral(unwrapped) && unwrapped.text === 'undefined'
+  }
+  if (ts.isTypeOfExpression(expression.left) && isUndefinedString(expression.right)) {
+    const value = lowerExpression(expression.left.expression, context)
+    return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'undefined', negated})
+  }
+  if (ts.isTypeOfExpression(expression.right) && isUndefinedString(expression.left)) {
+    const value = lowerExpression(expression.right.expression, context)
+    return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'undefined', negated})
+  }
   const leftSentinel = sentinelOf(expression.left)
   const rightSentinel = sentinelOf(expression.right)
   const sentinel = leftSentinel ?? rightSentinel
@@ -688,9 +729,14 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   const checked = leftSentinel == null ? expression.left : expression.right
   // The checked side must be a kind the analysis represents: `voidCall() == null` is TRUE
   // at runtime (a void function returns undefined), but the void abstract value carries no
-  // sentinel, so admitting it would prune the wrong branch.
+  // sentinel, so admitting it would prune the wrong branch. A pure-sentinel type
+  // (`null | undefined`, after an outer `== null` narrowed everything else away) is fine:
+  // the abstract value carries exactly those sentinels.
   const checkedType = context.checker.getTypeAtLocation(checked)
-  if (valueKind(checkedType, context.checker) == null) {
+  const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+  const pureSentinel = (checkedType.flags & missingFlags) !== 0
+    || (checkedType.isUnion() && checkedType.types.every(member => (member.flags & missingFlags) !== 0))
+  if (!pureSentinel && valueKind(checkedType, context.checker) == null) {
     throw unsupported(checked, {kind: 'valueType', typeText: context.checker.typeToString(checkedType)})
   }
   const value = lowerExpression(checked, context)

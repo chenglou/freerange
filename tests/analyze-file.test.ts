@@ -1313,6 +1313,60 @@ describe('analyzeFile', () => {
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
+  test('round-2 fixes: element-aware shapes, meet-on-write, copies narrow originals, sentinel chains', () => {
+    const report = analyzeSource('round2-fixes.ts', `
+      export function itemCount(mode: number): number {
+        const box: {items: (number | boolean)[]} = mode > 0 ? {items: [1, 2, 3]} : {items: [true]}
+        return box.items.length
+      }
+      export function lostNarrowing(grid: {columns: number}): number {
+        const width = grid.columns
+        if (grid.columns >= 1) {
+          if (width <= 10) {
+            return 100 / grid.columns
+          }
+        }
+        return 0
+      }
+      export function throughCopy(grid: {columns: number}): number {
+        const copy = {...grid}
+        if (copy.columns >= 1) {
+          return 100 / grid.columns
+        }
+        return 0
+      }
+      export function distinguish(setting: number | null | undefined): number {
+        if (setting == null) {
+          if (setting === undefined) return 1
+          return 2
+        }
+        return 3
+      }
+      export function readSize(size: number | undefined): number {
+        if (typeof size !== 'undefined') { return size }
+        return 0
+      }
+    `)
+    // Array-property shapes fingerprint by element: {items: number[]} | {items: boolean[]}
+    // rejects instead of joining into an unreadable drop.
+    expect(report.functions.find(fn => fn.name === 'itemCount')?.kind).toBe('unsupported')
+    // A refinement of a stale saved read meets the record's current property value instead
+    // of clobbering the fresher guard.
+    const lost = analyzedFunction(report, 'lostNarrowing')
+    expect(lost.requires).toEqual([])
+    expect(lost.ensures).toEqual(['return is a finite number from 0 through 100'])
+    // Narrowing {...grid}.columns narrows grid.columns — the copy's property IS the
+    // original's.
+    const copied = analyzedFunction(report, 'throughCopy')
+    expect(copied.requires).toEqual([])
+    expect(copied.ensures).toEqual(['return is a finite number from 0 through 100'])
+    // A pure-sentinel operand (null | undefined after the outer narrow) still checks, and
+    // typeof x !== 'undefined' is the classic spelling of the undefined sentinel check.
+    expect(analyzedFunction(report, 'distinguish').ensures)
+      .toEqual(['return is a finite integer number from 1 through 3'])
+    expect(analyzedFunction(report, 'readSize').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
