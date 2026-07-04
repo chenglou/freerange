@@ -121,6 +121,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       // has a statically known fixed shape, so a spread is one read per source property;
       // later entries override earlier ones below.
       if (ts.isSpreadAssignment(property)) {
+        // The spread must be the literal's first entry. Width subtyping lets the spread
+        // value carry properties its static type never names, and the runtime spread
+        // copies those too — so a spread after other entries could silently override them
+        // (`{...defaults, ...overrides}` where the overrides value carries a `volume` its
+        // type omits). With the spread first, whatever extras it copies are either
+        // overridden by the later explicit entries or unreadable through the result type.
+        if (properties.length > 0) {
+          throw unsupported(property, {kind: 'spreadAfterProperties'})
+        }
         const sourceType = context.checker.getTypeAtLocation(property.expression)
         if (valueKind(sourceType, context.checker) !== 'object') {
           throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(sourceType)})
@@ -134,6 +143,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           // runtime took the override, so the spread is rejected instead.
           if ((member.flags & ts.SymbolFlags.Optional) !== 0) {
             throw unsupported(property, {kind: 'spreadOptionalProperty', property: member.name})
+          }
+          // Each copied property's kind must be representable: a `value: number | boolean`
+          // property passes no read gate, so the record join may have dropped it, and the
+          // spread's own read would be the one ungated path to the dropped property.
+          const memberType = context.checker.getTypeOfSymbol(member)
+          if (valueKind(memberType, context.checker) == null) {
+            throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(memberType)})
           }
           properties.push({
             name: member.name,
@@ -215,7 +231,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
     const objectType = context.checker.getTypeAtLocation(current.expression)
-    if ((objectType.flags & ts.TypeFlags.Object) === 0 || context.checker.getIndexInfosOfType(objectType).length > 0) {
+    // Through valueKind: single record types and unions of one recursive shape both read
+    // fine (an admitted union joins losslessly, so every member's property is present),
+    // while index signatures, callables, and mixed shapes reject.
+    if (valueKind(objectType, context.checker) !== 'object') {
       throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})
     }
     requireAccessedPropertyKind(current, context.checker)
@@ -364,7 +383,10 @@ function comparisonOperator(kind: ts.SyntaxKind): ComparisonOperator | null {
 
 function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
   const type = checker.getTypeAtLocation(node)
-  if ((type.flags & ts.TypeFlags.NumberLike) === 0) {
+  // Through valueKind, not a raw flag test, so there is one definition of "number":
+  // a literal union like `1 | 2` — the numeric discriminant of a tagged record — is a
+  // number here exactly as it is at the declarator and destructuring gates.
+  if (valueKind(type, checker) !== 'number') {
     throw unsupported(node, {kind: 'nonNumberOperand', typeText: checker.typeToString(type)})
   }
 }
@@ -382,8 +404,12 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
     // record — built from a specific literal — cannot honor reads or spreads the signature
     // licenses. `stats.misses` type-checks against Record<string, number> while the value
     // is `{clicks: 1}`, and `{...defaults, ...overrides}` would copy nothing from an
-    // override map whose type names no properties.
-    return checker.getIndexInfosOfType(type).length === 0 ? 'object' : null
+    // override map whose type names no properties. A callable type is not a record either:
+    // `point.toString` type-checks on every object literal, but the record value built
+    // from the literal carries no such property.
+    if (checker.getIndexInfosOfType(type).length > 0) return null
+    if (type.getCallSignatures().length > 0) return null
+    return 'object'
   }
   if (type.isUnion()) {
     let shared: 'number' | 'boolean' | 'object' | null = null
@@ -394,15 +420,13 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
       if (kind === 'object') {
         // TypeScript normalizes a union of disjoint shapes by adding each member's missing
         // properties as optional-undefined, so only the required properties describe the
-        // member's real shape. The property KINDS are part of the shape: a discriminated
-        // union like {ok: true; value: number} | {ok: false; value: boolean} has one name
-        // set but two meanings for `value`, and admitting it would let a spread or a
-        // narrowed read reach a property the record join had to drop.
-        const shape = checker.getPropertiesOfType(member)
-          .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
-          .map(property => `${property.name}:${shallowPropertyKind(checker.getTypeOfSymbol(property))}`)
-          .sort()
-          .join(',')
+        // member's real shape. The property KINDS are part of the shape, recursively: a
+        // discriminated union like {ok: true; value: number} | {ok: false; value: boolean}
+        // has one name set but two meanings for `value`, and payloads can diverge at any
+        // nesting depth — admitting either would let a narrowed read reach a property the
+        // record join had to drop. Members admitted here therefore join losslessly:
+        // matching fingerprints mean matching names and kinds at every depth.
+        const shape = shapeFingerprint(member, checker, [])
         if (objectShape != null && shape !== objectShape) return null
         objectShape = shape
       }
@@ -413,18 +437,32 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker): 'number' | 'b
   return null
 }
 
-// Classifies a property's type one level deep, without recursing into nested unions or
-// object shapes — so a recursive declared type cannot loop the classifier. Two union
-// members agree on a property only when these labels match; 'other' matches 'other', which
-// is harmless because a value of an unclassifiable kind cannot be constructed in the
-// subset anyway.
-function shallowPropertyKind(type: ts.Type): string {
+// The recursive shape of an object type: property names with their kinds, nested records
+// spelled out in full. Two union members agree only when their fingerprints are equal.
+// The seen set and depth cap bound recursion over recursive declared types; past either,
+// the fingerprint degrades to 'other'. 'other' matches 'other', which is safe not because
+// such values cannot exist — a property typed {width: number} | {code: number} is 'other'
+// and its values are ordinary literals — but because every read of an 'other' property is
+// rejected: direct access and destructuring gate the result type through valueKind, and
+// spreads gate each copied property the same way.
+function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
-  if ((type.flags & ts.TypeFlags.Object) !== 0) return 'object'
+  if ((type.flags & ts.TypeFlags.Object) !== 0) {
+    if (seen.length >= 8 || seen.includes(type)) return 'other'
+    if (checker.getIndexInfosOfType(type).length > 0 || type.getCallSignatures().length > 0) return 'other'
+    const properties = checker.getPropertiesOfType(type)
+      .filter(property => (property.flags & ts.SymbolFlags.Optional) === 0)
+      .map(property => `${property.name}:${shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])}`)
+      .sort()
+      .join(',')
+    return `record{${properties}}`
+  }
   if (type.isUnion()) {
     if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
     if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
+    const memberFingerprints = new Set(type.types.map(member => shapeFingerprint(member, checker, seen)))
+    if (memberFingerprints.size === 1) return [...memberFingerprints][0]!
   }
   return 'other'
 }

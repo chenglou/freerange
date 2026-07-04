@@ -64,6 +64,7 @@ export type UnsupportedReason =
   | {kind: 'objectPropertyForm'}
   | {kind: 'computedPropertyName'}
   | {kind: 'spreadOptionalProperty'; property: string}
+  | {kind: 'spreadAfterProperties'}
   // e.g. '%', '&&', '**', '??'
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is the

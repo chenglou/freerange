@@ -821,7 +821,7 @@ describe('analyzeFile', () => {
     const report = analyzeSource('spread-optional.ts', `
       export function effectiveVolume(): number {
         const overrides: {volume?: number} = {volume: 7}
-        const merged = {...{volume: 1}, ...overrides}
+        const merged = {...overrides, volume: 1}
         return merged.volume
       }
     `)
@@ -829,7 +829,7 @@ describe('analyzeFile', () => {
     expect(report.functions).toEqual([{
       kind: 'unsupported',
       name: 'effectiveVolume',
-      unsupported: `spread of a value whose property volume is optional (declare every property of the spread source required) at ${file}:4:41`,
+      unsupported: `spread of a value whose property volume is optional (declare every property of the spread source required) at ${file}:4:25`,
     }])
   })
 
@@ -864,6 +864,70 @@ describe('analyzeFile', () => {
     `)
     expect(analyzedFunction(report, 'readDoubled').ensures)
       .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
+  })
+
+  test('union record shapes compare recursively, and admitted unions read directly', () => {
+    // Shapes are fingerprinted to every depth: payloads diverging two levels down reject at
+    // the declarator (a narrowed read could otherwise reach a property the join dropped),
+    // while a union of one recursive shape joins losslessly — its discriminant reads
+    // directly and computes like any number, literal union included.
+    const report = analyzeSource('union-shapes.ts', `
+      type Loaded = {ok: true; data: {metrics: {width: number}}}
+      type Failed = {ok: false; data: {metrics: {code: number}}}
+      export function measure(loadedCount: number): number {
+        const state: Loaded | Failed = loadedCount > 0
+          ? {ok: true, data: {metrics: {width: 640}}}
+          : {ok: false, data: {metrics: {code: 404}}}
+        const {ok} = state
+        return ok ? 1 : 0
+      }
+      type Speed = {mode: 1} | {mode: 2}
+      export function speedMode(fast: number): number {
+        const speed: Speed = fast > 0 ? {mode: 1} : {mode: 2}
+        return speed.mode + 1
+      }
+    `)
+    const measureFn = report.functions.find(candidate => candidate.name === 'measure')
+    expect(measureFn?.kind).toBe('unsupported')
+    expect(analyzedFunction(report, 'speedMode').ensures)
+      .toEqual(['return is a finite integer number from 2 through 3'])
+  })
+
+  test('rejects reads of inherited prototype members', () => {
+    // toString type-checks on every object literal, but the record value carries only its
+    // own properties; the callable type fails the value-kind gate.
+    const report = analyzeSource('prototype-member.ts', `
+      export function labelledX(x: number): number {
+        const point = {x}
+        const stringify = point.toString
+        return point.x
+      }
+    `)
+    const file = resolve('prototype-member.ts')
+    expect(report.functions).toEqual([{
+      kind: 'unsupported',
+      name: 'labelledX',
+      unsupported: `value of type () => string at ${file}:4:27`,
+    }])
+  })
+
+  test('an anonymous default export function is a recorded skip, not invisible code', () => {
+    // Named function declarations become report entries; an anonymous export default has
+    // no name to collect under, so it must fall through to a recorded initializer skip —
+    // otherwise its body would be runtime code no publish gate accounts for, and appZoom
+    // would publish its exact initial value while the body mutates it.
+    const report = analyzeSource('anonymous-default.ts', `
+      const appZoom = {level: 5}
+      export function currentZoom(): number {
+        return appZoom.level
+      }
+      export default function () {
+        Object.assign(appZoom, {level: 999})
+      }
+    `)
+    const reader = analyzedFunction(report, 'currentZoom')
+    expect(reader.assumptions).toEqual(['appZoom.level is finite and not NaN'])
+    expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
@@ -1509,10 +1573,11 @@ describe('analyzeFile', () => {
       'return.dest is a finite number',
       'return.v is a finite integer number from 0 through 0',
     ])
-    // Two object parameters — previously rejected — are harmless without writes, and the
-    // later spread wins for the shared x.
-    expect(analyzedFunction(report, 'merged').ensures)
-      .toEqual(['return is a finite number'])
+    // The second spread rejects: at runtime it also copies properties b's type never
+    // names, which could override entries from a.
+    const mergedFn = report.functions.find(candidate => candidate.name === 'merged')
+    expect(mergedFn?.kind).toBe('unsupported')
+    expect(formatReport(report)).toContain('a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)')
   })
 
   test('carries a module read assumption to callers of the reading function', () => {

@@ -291,6 +291,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
     case 'spreadOptionalProperty': return `spread of a value whose property ${reason.property} is optional (declare every property of the spread source required)`
+    case 'spreadAfterProperties': return 'a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)'
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
     case 'call': return `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`

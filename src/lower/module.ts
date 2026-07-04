@@ -235,7 +235,12 @@ function lowerTopLevelDeclarations(statement: ts.VariableStatement, context: Fun
 
 function skippedAtTopLevel(statement: ts.Statement): boolean {
   // `export {alreadyDeclaredName}` and import declarations create bindings but run nothing.
-  return ts.isFunctionDeclaration(statement)
+  // Only NAMED function declarations pass: those become program.functions entries, so
+  // unsupported code inside them keeps the fully-analyzed publish gate honest. An
+  // anonymous `export default function` has no name to collect under, so it falls through
+  // to ordinary statement lowering, which records it as an initializer skip — otherwise
+  // its body would be runtime code invisible to every gate.
+  return (ts.isFunctionDeclaration(statement) && statement.name != null)
     || ts.isImportDeclaration(statement)
     || ts.isTypeAliasDeclaration(statement)
     || ts.isInterfaceDeclaration(statement)
