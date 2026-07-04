@@ -8,9 +8,11 @@ import type {SiteID} from '../ir/ids.ts'
 export type AllocationContext = SiteID | null
 
 // Identity of one abstract allocation. 'known' is the single object created by the most
-// recent execution of the site under this context — strong updates are sound. 'summary'
-// stands for every object that site+context displaced — writes join old and new values,
-// and a summary never becomes known again.
+// recent execution of the site under this context; 'summary' stands for every object that
+// site+context displaced, and never becomes known again. With values immutable, identity
+// is observable only through reads: a reference held across a re-execution of its
+// allocation site must keep reading the object it saw, not the fresh one — that is what
+// displacement and repointing preserve.
 export type AllocationIdentity =
   | {kind: 'site'; site: SiteID; context: AllocationContext; slot: 'known' | 'summary'}
   // A root object parameter: one runtime object per analysis, never re-executed.

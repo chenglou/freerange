@@ -90,8 +90,21 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
   return {file: program.file, functions}
 }
 
+// The legend targets a reader — usually another model — that has never seen a freerange
+// report: each line kind in one sentence, so the report is self-describing.
+const legend = [
+  '# freerange: static analysis of the numeric behavior of each top-level function.',
+  '# assumes:  input facts taken on faith; the lines below hold only when these do.',
+  '# requires: conditions the caller must make true; given them, the ensures lines hold.',
+  '# ensures:  guarantees about the returned value whenever the function returns.',
+  '# unsupported: the function uses code outside the analyzed subset; the message names the construct and, when one exists, the rewrite that brings it inside.',
+  '# stopped:  analysis halted partway on some path; the entry describes only what ran before the stop.',
+  '# skipped:  a top-level statement the module analysis stepped over; anything it could write is distrusted.',
+  '# on analyzed paths: evidence from the paths that completed - not a guarantee for the whole function.',
+]
+
 export function formatReport(report: AnalysisReport): string {
-  const lines: string[] = [report.file]
+  const lines: string[] = [...legend, report.file]
   for (const fn of report.functions) {
     lines.push('', fn.name)
     switch (fn.kind) {
@@ -261,26 +274,26 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'missingSymbol': return 'node without a TypeScript symbol'
     case 'functionWithoutSignature': return 'function without a TypeScript signature'
     case 'functionWithoutBody': return 'function declarations need bodies'
-    case 'destructuredParameter': return 'destructured parameters'
+    case 'destructuredParameter': return 'destructured parameters (take a named parameter and destructure it in the body)'
     case 'parameterType': return `function parameter with type ${reason.typeText}`
     case 'objectParameterProperty': return `object parameter property ${reason.property} with type ${reason.typeText}`
     case 'objectParameterWithoutNumericProperties': return 'object parameter without numeric properties'
-    case 'missingReturn': return 'function path without a return'
-    case 'objectPropertyForm': return 'object property'
+    case 'missingReturn': return 'function path without a return (add a return on every path)'
+    case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
-    case 'binaryOperator': return `binary operator ${reason.operator}`
+    case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
     case 'call': return `function call ${reason.callee}`
-    case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters`
+    case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
-    case 'nonBooleanCondition': return `condition of type ${reason.typeText}`
+    case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0)`
     case 'valueType': return `value of type ${reason.typeText}`
     case 'kindChangingAssertion': return `a non-null assertion turning ${reason.fromText} into ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
     case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
     case 'propertyWrite': return 'a write into an object (values are immutable; rebind a variable to a fresh object instead)'
-    case 'anyTyped': return 'a value typed any'
-    case 'typeAssertion': return `a type assertion to ${reason.typeText}`
+    case 'anyTyped': return 'a value typed any (give it a concrete number, boolean, or object type)'
+    case 'typeAssertion': return `a type assertion to ${reason.typeText} (remove the assertion and declare the intended type instead)`
     case 'varDeclaration': return 'var declarations (use let or const)'
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'

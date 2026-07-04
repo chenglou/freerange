@@ -21,7 +21,7 @@ export type InstructionIR =
   // when the slot holds nothing usable (uninitialized, imported, or an untracked kind).
   | (InstructionBase & {kind: 'moduleRead'; binding: ModuleBindingID})
   // Assign a module binding's slot. A binding is one storage location, so the write
-  // replaces the slot's value. The instruction's result is the assigned value, like store.
+  // replaces the slot's value. The instruction's result is the assigned value.
   | (InstructionBase & {kind: 'moduleWrite'; binding: ModuleBindingID; value: ValueID})
   // Emitted where the initializer skipped a top-level statement: the binding's slot resets
   // to what its category allows (declared-kind unknown, or uninitialized for untracked

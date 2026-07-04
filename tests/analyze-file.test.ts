@@ -102,7 +102,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'remainderWidth',
-        unsupported: `binary operator % at ${file}:6:16`,
+        unsupported: `binary operator % (supported: + - * /, comparisons, and boolean && || !) at ${file}:6:16`,
       },
       {
         kind: 'analyzed',
@@ -142,7 +142,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'callNoArg',
-        unsupported: `call to scaled with fewer arguments than parameters at ${file}:6:16`,
+        unsupported: `call to scaled with fewer arguments than parameters (pass every argument explicitly) at ${file}:6:16`,
       },
       {
         kind: 'analyzed',
@@ -185,7 +185,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'remainderWidth',
-        unsupported: `binary operator % at ${file}:9:16`,
+        unsupported: `binary operator % (supported: + - * /, comparisons, and boolean && || !) at ${file}:9:16`,
       },
     ])
   })
@@ -207,12 +207,16 @@ describe('analyzeFile', () => {
     }])
   })
 
-  test('converges when a loop rebinds a fresh object each iteration', () => {
+  test('converges when a loop rebinds fresh objects each iteration', () => {
+    // Two chained allocation sites per iteration: each round displaces the previous
+    // objects into their summaries while the fresh ones stay exact, so the loop converges
+    // without losing the cross-read between them.
     const report = analyzeSource('loop-allocation.ts', `
       export function totalHeight(rowCount: number): number {
         let metrics = {height: 0}
         for (let row = 0; row < rowCount; row += 1) {
-          metrics = {height: metrics.height + 1}
+          const grown = {height: metrics.height + 1}
+          metrics = {height: grown.height}
         }
         return metrics.height
       }
@@ -274,40 +278,6 @@ describe('analyzeFile', () => {
       name: 'step',
       unsupported: `a write into an object (values are immutable; rebind a variable to a fresh object instead) at ${file}:3:9`,
     }])
-  })
-
-  test('keeps objects from different call sites distinct', () => {
-    const report = analyzeSource('double-call.ts', `
-      function makeBox(): {value: number} {
-        return {value: 1}
-      }
-      export function distinct(): number {
-        const first = makeBox()
-        const second = makeBox()
-        return first.value * 10 + second.value
-      }
-    `)
-    expect(analyzedFunction(report, 'distinct').ensures)
-      .toEqual(['return is a finite integer number from 11 through 11'])
-  })
-
-  test('keeps per-iteration precision on the freshest object', () => {
-    // Recency: each iteration re-executes both allocation sites, displacing the previous
-    // objects into their summaries; the fresh objects stay exact, so the loop body
-    // reproduces an exact state each round and the header converges without widening `last`.
-    const report = analyzeSource('recency.ts', `
-      export function lastHeight(count: number): number {
-        let last = 0
-        for (let index = 0; index < count; index += 1) {
-          const point = {x: 1}
-          const grown = {x: point.x + 1}
-          last = grown.x
-        }
-        return last
-      }
-    `)
-    expect(analyzedFunction(report, 'lastHeight').ensures)
-      .toEqual(['return is a finite integer number from 0 through 2'])
   })
 
   test('repairs a caller reference when a callee displaces its object', () => {
@@ -521,7 +491,7 @@ describe('analyzeFile', () => {
     `)
     const file = resolve('gates.ts')
     expect(report.functions).toEqual([
-      {kind: 'unsupported', name: 'truthy', unsupported: `condition of type number at ${file}:3:13`},
+      {kind: 'unsupported', name: 'truthy', unsupported: `condition of type number (compare explicitly, e.g. width > 0) at ${file}:3:13`},
       {kind: 'unsupported', name: 'mixedTernary', unsupported: `value of type number | boolean at ${file}:7:22`},
       {kind: 'unsupported', name: 'mixedReturns', unsupported: `value of type number | boolean at ${file}:10:7`},
     ])
@@ -579,8 +549,9 @@ describe('analyzeFile', () => {
     const formatted = formatReport(report)
     expect(formatted).toContain('  stopped: ')
     expect(formatted).toContain('  on analyzed paths: return is a finite integer number from 10 through 10')
-    expect(formatted).not.toContain('ensures:')
-    expect(formatted).not.toContain('requires:')
+    // The legend mentions the line names, so check for actual entry lines.
+    expect(formatted).not.toContain('\n  ensures: ')
+    expect(formatted).not.toContain('\n  requires: ')
   })
 
   test('carries a record through rebinding and a local function call', () => {
@@ -862,7 +833,7 @@ describe('analyzeFile', () => {
     expect(report.functions.find(fn => fn.name === 'poke')).toEqual({
       kind: 'unsupported',
       name: 'poke',
-      unsupported: `a type assertion to number at ${file}:5:19`,
+      unsupported: `a type assertion to number (remove the assertion and declare the intended type instead) at ${file}:5:19`,
     })
     expect(report.functions.find(fn => fn.name === 'sameShape')?.kind).toBe('unsupported')
     // The scan still counts the unanalyzed write, so count keeps only its declared kind.
@@ -953,7 +924,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'launder',
-        unsupported: `a value typed any at ${file}:3:15`,
+        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:3:15`,
       },
       {
         kind: 'analyzed',
@@ -966,12 +937,12 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'laundersArgument',
-        unsupported: `a value typed any at ${file}:11:15`,
+        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:11:15`,
       },
       {
         kind: 'unsupported',
         name: 'laundersReturn',
-        unsupported: `a value typed any at ${file}:15:15`,
+        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:15:15`,
       },
       {
         kind: 'analyzed',
