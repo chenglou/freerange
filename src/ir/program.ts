@@ -1,4 +1,6 @@
 import type * as ts from 'typescript'
+import {finiteInputNumber} from '../domain/number.ts'
+import {recordValue, unknownBoolean, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
@@ -134,39 +136,58 @@ export type UnsupportedFunctionIR = {
 
 export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 
+// What a binding's declared type promises in each value position: a number, a boolean, or
+// a record with a fixed property shape (shapes nest — module state is a tree of records).
+// The promise is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in
+// any write position, so the report prints a condition for every read that rests on one.
+export type DeclaredKind =
+  | {kind: 'number'}
+  | {kind: 'boolean'}
+  | {kind: 'record'; properties: Array<{name: string; declared: DeclaredKind}>}
+
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
 // is accounted for. A const collapses into the no-outside-write check, since TypeScript
 // already rejects assigning a const anywhere.
 export type ModuleBindingCategory =
-  // A number or boolean binding that nothing outside the initializer writes. Its
-  // initialized value flows into every function, e.g. `const boxesGapX = 24` reads as 24.
-  | {kind: 'value'; declaredKind: 'number' | 'boolean'}
-  // An object binding that nothing outside the initializer reassigns, e.g.
-  // `const events = {keydown: null}`. Its identity could flow into functions while
-  // property values reset to unknown at function entry; recorded now so the scan is
-  // complete, but reads stop until that flow is implemented.
-  | {kind: 'identity'}
-  // A number or boolean binding that some function writes. Functions see only the declared
-  // kind — some finite number, some boolean — and the report prints that as an assumption.
-  | {kind: 'kind'; declaredKind: 'number' | 'boolean'}
+  // A binding of a representable declared kind that nothing outside the initializer
+  // writes. Its initialized value flows into every function, e.g. `const boxesGapX = 24`
+  // reads as 24 and `const gaps = {small: 4, large: 24}` reads as that exact record.
+  | {kind: 'value'; declaredKind: DeclaredKind}
+  // A binding of a representable declared kind that some function writes. Functions see
+  // only the declared kind — some finite number, some boolean, some record of the declared
+  // shape — and the report prints that as an assumption.
+  | {kind: 'kind'; declaredKind: DeclaredKind}
   // An imported binding. Single-file analysis knows nothing about the other module.
   | {kind: 'import'}
-  // Every other declared type (unions with null, arrays, strings, functions). Reads stop.
+  // Every other declared type (unions with null, arrays, strings, functions, records with
+  // optional or unrepresentable properties). Reads stop.
   | {kind: 'opaque'}
 
 // The declared kind a binding contributes when its exact value is unpublished — the single
 // definition of the seeding rule, consumed by the engine's slot seeding, the havoc arm,
 // and the report's assumption lines, so they cannot drift apart.
-export function declaredKindOf(category: ModuleBindingCategory): 'number' | 'boolean' | null {
+export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | null {
   switch (category.kind) {
     case 'value':
     case 'kind':
       return category.declaredKind
-    case 'identity':
     case 'import':
     case 'opaque':
       return null
+  }
+}
+
+// The abstract value a declared kind seeds: any finite number, any boolean, or a record of
+// the declared shape with each leaf seeded the same way.
+export function declaredKindValue(declared: DeclaredKind): AbstractValue {
+  switch (declared.kind) {
+    case 'number': return finiteInputNumber()
+    case 'boolean': return unknownBoolean()
+    case 'record': return recordValue(declared.properties.map(property => ({
+      name: property.name,
+      value: declaredKindValue(property.declared),
+    })))
   }
 }
 

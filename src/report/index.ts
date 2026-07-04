@@ -1,7 +1,7 @@
 import {isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
-import {declaredKindOf, formatSite, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -146,11 +146,24 @@ function assumptionLines(fn: FunctionIR, program: ProgramIR, assumedBindings: bo
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
-    assumptions.push(declaredKind === 'number'
-      ? `${binding.name} is finite and not NaN`
-      : `${binding.name} is a boolean`)
+    pushDeclaredAssumptions(binding.name, declaredKind, assumptions)
   }
   return assumptions
+}
+
+// One assumption line per leaf of the declared kind: a record binding's condition is a
+// condition on each of its properties, e.g. `pointer.x is finite and not NaN`.
+function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
+  switch (declared.kind) {
+    case 'number': assumptions.push(`${path} is finite and not NaN`); break
+    case 'boolean': assumptions.push(`${path} is a boolean`); break
+    case 'record': {
+      for (const property of declared.properties) {
+        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions)
+      }
+      break
+    }
+  }
 }
 
 // Per function: the module bindings whose declared-kind seeding the function's results rest
@@ -231,8 +244,6 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       switch (binding.category.kind) {
         case 'import':
           return `reads ${binding.name}, which is imported from another module (read at ${formatSite(program, stop.site)})`
-        case 'identity':
-          return `reads ${binding.name}, a module object; module object values are not yet tracked (read at ${formatSite(program, stop.site)})`
         case 'opaque':
           return `reads ${binding.name}, whose value the analysis does not track (read at ${formatSite(program, stop.site)})`
         // A value or kind binding is always seeded inside functions, so an uninitialized

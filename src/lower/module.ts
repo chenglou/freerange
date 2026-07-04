@@ -2,6 +2,7 @@ import * as ts from 'typescript'
 import type {ModuleBindingID} from '../ir/ids.ts'
 import {
   moduleInitializerName,
+  type DeclaredKind,
   type FunctionIR,
   type InitializerSkip,
   type ModuleBindingCategory,
@@ -252,27 +253,51 @@ function allModuleWritesIn(
 }
 
 function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
-  const kind = valueKind(checker.getTypeAtLocation(name), checker)
-  switch (kind) {
-    case 'number': return {kind: 'value', declaredKind: 'number'}
-    case 'boolean': return {kind: 'value', declaredKind: 'boolean'}
-    case 'object': return {kind: 'identity'}
-    case null: return {kind: 'opaque'}
+  const declared = declaredKind(checker.getTypeAtLocation(name), name, checker, [])
+  return declared == null ? {kind: 'opaque'} : {kind: 'value', declaredKind: declared}
+}
+
+// The declared kind of one type, or null when the type is not representable — which makes
+// the binding opaque. Record shapes must be fully representable: every property required
+// and itself of a representable kind, so `let cursor = {x: 0, y: 0}` qualifies while
+// `let events = {keydown: KeyboardEvent | null}` does not (the leaf fails), and neither do
+// arrays, functions, or Date (their method properties fail the same leaf check). An empty
+// property set is rejected too — it covers `{}` and index-signature-only types, neither of
+// which a record value can say anything about.
+function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+  switch (valueKind(type, checker)) {
+    case 'number': return {kind: 'number'}
+    case 'boolean': return {kind: 'boolean'}
+    case 'object': {
+      // A recursive declared type (e.g. a linked list) would nest forever; the binding
+      // stays opaque.
+      if (seen.includes(type)) return null
+      const properties: Array<{name: string; declared: DeclaredKind}> = []
+      for (const property of checker.getPropertiesOfType(type)) {
+        if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null
+        const propertyDeclared = declaredKind(
+          checker.getTypeOfSymbolAtLocation(property, location),
+          location,
+          checker,
+          [...seen, type],
+        )
+        if (propertyDeclared == null) return null
+        properties.push({name: property.name, declared: propertyDeclared})
+      }
+      if (properties.length === 0) return null
+      return {kind: 'record', properties}
+    }
+    case null: return null
   }
 }
 
-// A binding with an unaccounted write cannot publish its value: numbers and booleans keep
-// only their declared kind, and an object binding that may be reassigned is not even a
-// stable identity.
+// A binding with an unaccounted write cannot publish its value: it keeps only its declared
+// kind — some finite number, some boolean, some record of the declared shape.
 function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID): void {
   const category = bindings[binding]!.category
   switch (category.kind) {
     case 'value': {
       bindings[binding]!.category = {kind: 'kind', declaredKind: category.declaredKind}
-      break
-    }
-    case 'identity': {
-      bindings[binding]!.category = {kind: 'opaque'}
       break
     }
     case 'kind':

@@ -13,10 +13,10 @@ import {
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
-import {declaredKindValue, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
+import {recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
-import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
   numericExpression,
@@ -137,7 +137,7 @@ export function evaluateInstruction(
       // matching kinds. Reads of opaque bindings stop regardless, so the slot stays
       // uninitialized instead of holding a value nothing may consume. Every other writable
       // category is single-kind: value/kind writes are type-checked against the declared
-      // number or boolean, and identity slots only ever hold record values.
+      // number, boolean, or record shape.
       if (binding.category.kind !== 'opaque') {
         state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
       }

@@ -1,4 +1,4 @@
-import {finiteInputNumber, joinNumbers, sameNumbers, widenNumber, type AbstractNumber} from './number.ts'
+import {joinNumbers, sameNumbers, widenNumber, type AbstractNumber} from './number.ts'
 
 export type AbstractBoolean = {
   kind: 'boolean'
@@ -30,10 +30,6 @@ export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
 }
 
-// The abstract value a declared kind seeds: any finite number, or any boolean.
-export function declaredKindValue(kind: 'number' | 'boolean'): AbstractValue {
-  return kind === 'number' ? finiteInputNumber() : unknownBoolean()
-}
 
 export function recordValue(properties: Array<{name: string; value: AbstractValue}>): AbstractRecord {
   return {kind: 'record', properties}

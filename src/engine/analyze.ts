@@ -1,8 +1,8 @@
 import {finiteInputNumber} from '../domain/number.ts'
-import {declaredKindValue, joinValues, recordValue, type AbstractValue} from '../domain/value.ts'
+import {joinValues, recordValue, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
@@ -110,8 +110,8 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
 }
 
 // What each function's module slots start from. A published value is trusted exactly;
-// otherwise a number or boolean binding contributes only its declared kind, and every other
-// binding stays uninitialized so reads stop.
+// otherwise a binding of representable declared kind (number, boolean, record shape)
+// contributes that kind, and every other binding stays uninitialized so reads stop.
 function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]

@@ -652,6 +652,104 @@ describe('analyzeFile', () => {
     expect(reader.ensures).toEqual(['return is a finite number'])
   })
 
+  test('publishes an exact module record into functions', () => {
+    const report = analyzeSource('module-record.ts', `
+      const gridSize = {cols: 8, rows: 6}
+      export function cellCount(): number {
+        return gridSize.cols * gridSize.rows
+      }
+    `)
+    // The exact 48 proves the record's property values flowed in, not just its shape; and
+    // a trusted exact value needs no assumption line.
+    expect(report.functions).toEqual([{
+      kind: 'analyzed',
+      name: 'cellCount',
+      assumptions: [],
+      requires: [],
+      ensures: ['return is a finite integer number from 48 through 48'],
+    }])
+  })
+
+  test('publishes nested module records exactly', () => {
+    // Module state is a tree of records hanging off roots; publishing must reach the leaves.
+    const report = analyzeSource('module-record-nested.ts', `
+      const config = {margins: {left: 4, right: 12}, snap: true}
+      export function leftEdge(): number {
+        return config.margins.left
+      }
+    `)
+    expect(analyzedFunction(report, 'leftEdge').ensures)
+      .toEqual(['return is a finite integer number from 4 through 4'])
+  })
+
+  test('keeps only the declared shape of a module record that a function rebinds', () => {
+    const report = analyzeSource('module-record-written.ts', `
+      let pointer = {x: 0, y: 0}
+      export function movePointer(newX: number): void {
+        pointer = {x: newX, y: pointer.y}
+      }
+      export function pointerX(): number {
+        return pointer.x
+      }
+    `)
+    // The record analog of the scalar declared-kind hedge: per-property assumption lines,
+    // and the read gives some finite number instead of the initializer's exact 0.
+    const reader = analyzedFunction(report, 'pointerX')
+    expect(reader.assumptions).toEqual([
+      'pointer.x is finite and not NaN',
+      'pointer.y is finite and not NaN',
+    ])
+    expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('a module record rebound by a skipped statement keeps only its declared shape', () => {
+    // The rebind's right-hand side does not lower, so the statement is skipped — and the
+    // binding must stop publishing its initializer's exact value, or the skip would launder
+    // a stale 2 into every reader.
+    const report = analyzeSource('module-record-skip.ts', `
+      let scale = {factor: 2}
+      scale = {factor: window.devicePixelRatio}
+      export function scaledBy(width: number): number {
+        return Math.min(width, scale.factor)
+      }
+    `)
+    const reader = analyzedFunction(report, 'scaledBy')
+    expect(reader.assumptions).toEqual([
+      'width is finite and not NaN',
+      'scale.factor is finite and not NaN',
+    ])
+    expect(reader.ensures).toEqual(['return is a finite number'])
+  })
+
+  test('module records with unrepresentable properties stay opaque', () => {
+    const report = analyzeSource('module-record-opaque.ts', `
+      const items = [3, 5]
+      export function itemCount(): number {
+        return items.length
+      }
+    `)
+    const file = resolve('module-record-opaque.ts')
+    // The array literal itself does not lower, so the initializer skips the declaration —
+    // and the binding is opaque regardless (arrays are not records), so the read stops.
+    expect(report.functions).toEqual([
+      {
+        kind: 'partial',
+        name: 'module initialization',
+        assumptions: [],
+        stopped: [],
+        skipped: [`expression (ArrayLiteralExpression) at ${file}:2:21`],
+        observed: [],
+      },
+      {
+        kind: 'partial',
+        name: 'itemCount',
+        assumptions: [],
+        stopped: [`reads items, whose value the analysis does not track (read at ${file}:4:16)`],
+        observed: [],
+      },
+    ])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
