@@ -340,6 +340,25 @@ function declaredRecordProperties(
   return properties
 }
 
+// One union member as a variant: its value for the union's tag property plus its record
+// walk. The tag rides along inside the variant's record as an ordinary opaque leaf; the
+// union structure carries which value it is.
+function declaredTaggedVariant(
+  member: ts.Type,
+  tagProperty: string,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+  seen: ts.Type[],
+): {tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>} | null {
+  const tag = checker.getPropertyOfType(member, tagProperty)
+  if (tag == null) return null
+  const tagType = checker.getTypeOfSymbol(tag)
+  if (!tagType.isStringLiteral()) return null
+  const properties = declaredRecordProperties(member, location, checker, seen)
+  if (properties == null) return null
+  return {tagValue: tagType.value, properties}
+}
+
 export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
@@ -367,6 +386,23 @@ export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeC
           && members.every(member => member != null && member.kind === first.kind)
           ? first
           : null
+        // `owner: null | LightboxOwnerRoute` where the inner is itself a union of tagged
+        // shapes: the non-missing members classify as one tagged union, and maybeNullish
+        // carries it like any other inner.
+        const restTagProperty = inner == null ? taggedUnionProperty(rest, checker) : null
+        if (restTagProperty != null) {
+          const unionVariants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}> = []
+          let allClassified = true
+          for (const member of rest) {
+            const variant = declaredTaggedVariant(member, restTagProperty, location, checker, seen)
+            if (variant == null) {
+              allClassified = false
+              break
+            }
+            unionVariants.push(variant)
+          }
+          if (allClassified) inner = {kind: 'taggedUnion', tagProperty: restTagProperty, variants: unionVariants}
+        }
       }
       if (inner == null) return null
       const admitsNull = type.types.some(member => (member.flags & ts.TypeFlags.Null) !== 0)
@@ -409,15 +445,9 @@ export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeC
       if (tagProperty == null) return null
       const variants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}> = []
       for (const member of type.types) {
-        const tag = checker.getPropertyOfType(member, tagProperty)
-        if (tag == null) return null
-        const tagType = checker.getTypeOfSymbol(tag)
-        if (!tagType.isStringLiteral()) return null
-        // The tag rides along inside the variant's record as an ordinary opaque leaf;
-        // the union structure carries which value it is.
-        const properties = declaredRecordProperties(member, location, checker, seen)
-        if (properties == null) return null
-        variants.push({tagValue: tagType.value, properties})
+        const variant = declaredTaggedVariant(member, tagProperty, location, checker, seen)
+        if (variant == null) return null
+        variants.push(variant)
       }
       return {kind: 'taggedUnion', tagProperty, variants}
     }

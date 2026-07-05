@@ -91,6 +91,7 @@ function walkExpression(value: ValueID, context: ExpressionContext): NumericExpr
     case 'mathUnary':
     case 'numberCheck':
     case 'tagCheck':
+    case 'inCheck':
     case 'nullishCheck':
     case 'arrayLiteral':
     case 'arrayIndex': return null

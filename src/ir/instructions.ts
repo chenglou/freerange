@@ -34,6 +34,11 @@ export type InstructionIR =
   // never becomes a property instruction), and branch refinement keeps only the matching
   // variants on the true side, the rest on the false side.
   | (InstructionBase & {kind: 'tagCheck'; union: ValueID; tagValue: string; negated: boolean})
+  // 'tab' in route: presence of a property splits the variants that declare it from those
+  // that do not — the check TypeScript itself uses to tell apart two variants sharing a
+  // tag value. Sound relative to the documented no-excess-properties assumption, the same
+  // one TypeScript's own in-narrowing makes.
+  | (InstructionBase & {kind: 'inCheck'; union: ValueID; property: string})
   | (InstructionBase & {kind: 'nullishCheck'; value: ValueID; sentinel: 'null' | 'undefined' | 'nullish'; negated: boolean})
   | (InstructionBase & {kind: 'booleanConstant'; value: boolean})
   // Read a module binding's slot. Evaluates to the slot's current value; stops the path
@@ -104,6 +109,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'not': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return
     case 'tagCheck': visit(instruction.union); return
+    case 'inCheck': visit(instruction.union); return
     case 'arrayLiteral': for (const element of instruction.elements) visit(element); return
     case 'arrayLength': visit(instruction.array); return
     case 'arrayIndex': visit(instruction.array); visit(instruction.index); return

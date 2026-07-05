@@ -28,6 +28,7 @@ import {
   evaluateInstruction,
   refineComparison,
   refineNumberCheck,
+  refineInCheck,
   refineTagCheck,
   refineNullishCheck,
   requiredBoolean,
@@ -329,6 +330,7 @@ function runEvaluation(
         const nullishCheck = producer?.kind === 'nullishCheck' ? producer : undefined
         const numberCheck = producer?.kind === 'numberCheck' ? producer : undefined
         const tagCheck = producer?.kind === 'tagCheck' ? producer : undefined
+        const inCheck = producer?.kind === 'inCheck' ? producer : undefined
         if (condition.canBeTrue) {
           // refineComparison clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
@@ -340,7 +342,9 @@ function runEvaluation(
                 ? refineNumberCheck(state, numberCheck, true, expressionContext.instructionByValue)
                 : tagCheck != null
                   ? refineTagCheck(state, tagCheck, true, expressionContext.instructionByValue)
-                  : condition.canBeFalse ? cloneState(state) : state
+                  : inCheck != null
+                    ? refineInCheck(state, inCheck, true, expressionContext.instructionByValue)
+                    : condition.canBeFalse ? cloneState(state) : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
@@ -352,7 +356,9 @@ function runEvaluation(
                 ? refineNumberCheck(state, numberCheck, false, expressionContext.instructionByValue)
                 : tagCheck != null
                   ? refineTagCheck(state, tagCheck, false, expressionContext.instructionByValue)
-                  : state
+                  : inCheck != null
+                    ? refineInCheck(state, inCheck, false, expressionContext.instructionByValue)
+                    : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break

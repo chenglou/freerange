@@ -276,6 +276,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (missingCheck != null) return missingCheck
     const tagComparison = tagCheckComparison(current, context)
     if (tagComparison != null) return tagComparison
+    const presence = inCheckExpression(current, context)
+    if (presence != null) return presence
     const opaqueComparison = opaqueEqualityCheck(current, context)
     if (opaqueComparison != null) return opaqueComparison
     // `width + 'px'`: string building with + is everywhere in UI code, and the template
@@ -635,9 +637,11 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
     if (type.types.some(member => (member.flags & missingFlags) !== 0)) {
       const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
       // The non-missing rest classifies as a group, so `4 | 8 | 24 | undefined` — an
-      // as-const table's bare dynamic read — is nullable like `number | undefined`.
+      // as-const table's bare dynamic read — is nullable like `number | undefined`. A
+      // rest that is itself a tagged union (`null | LightboxOwnerRoute`) is nullable too.
       const restKind = classifyUnionMembers(rest, checker, depth + 1)
-      return restKind == null ? null : 'nullable'
+      if (restKind != null) return 'nullable'
+      return taggedUnionProperty(rest, checker, depth) == null ? null : 'nullable'
     }
     const shared = classifyUnionMembers(type.types, checker, depth + 1)
     if (shared != null) return shared
@@ -650,9 +654,12 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
 }
 
 // The property that tells a union of record shapes apart: present and required in every
-// member, typed as a single string literal in each, all literals distinct. The first
-// property (in the first member's declaration order) that qualifies wins — by convention
-// the tag comes first (`type: 'lightbox'`). Null when no property qualifies.
+// member, typed as a single string literal in each. The first property (in the first
+// member's declaration order) that qualifies wins — by convention the tag comes first
+// (`type: 'lightbox'`). Two members MAY share a tag value (`{type: 'updates'; tab} |
+// {type: 'updates'; article}`): a tag check then keeps both, and telling them apart takes
+// an `in` check, exactly as it does in TypeScript's own narrowing. Null when no property
+// qualifies.
 export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.TypeChecker, depth = 0): string | null {
   if (members.length < 2) return null
   for (const member of members) {
@@ -661,14 +668,10 @@ export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.Typ
   const first = members[0]!
   candidates: for (const candidate of checker.getPropertiesOfType(first)) {
     if ((candidate.flags & ts.SymbolFlags.Optional) !== 0) continue
-    const literals = new Set<string>()
     for (const member of members) {
       const property = checker.getPropertyOfType(member, candidate.name)
       if (property == null || (property.flags & ts.SymbolFlags.Optional) !== 0) continue candidates
-      const propertyType = checker.getTypeOfSymbol(property)
-      if (!propertyType.isStringLiteral()) continue candidates
-      if (literals.has(propertyType.value)) continue candidates
-      literals.add(propertyType.value)
+      if (!checker.getTypeOfSymbol(property).isStringLiteral()) continue candidates
     }
     return candidate.name
   }
@@ -861,6 +864,20 @@ function tagCheckComparison(expression: ts.BinaryExpression, context: FunctionCo
     }
   }
   return null
+}
+
+// `'tab' in route` on a tagged union: the branches split the variants that declare the
+// property from those that do not. Any other use of `in` stays rejected (the binary
+// operator catch-all): on a plain record the answer is always yes for declared
+// properties, and dynamic keys are outside the subset.
+function inCheckExpression(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
+  if (expression.operatorToken.kind !== ts.SyntaxKind.InKeyword) return null
+  const key = unwrap(expression.left, context.checker)
+  if (!ts.isStringLiteral(key) && !ts.isNoSubstitutionTemplateLiteral(key)) return null
+  const objectType = context.checker.getTypeAtLocation(expression.right)
+  if (valueKind(objectType, context.checker) !== 'taggedUnion') return null
+  const union = lowerExpression(expression.right, context)
+  return addInstruction(context, expression, {kind: 'inCheck', union, property: key.text})
 }
 
 // `mode === 'compact'`: comparing two carried-without-claims values yields a boolean the

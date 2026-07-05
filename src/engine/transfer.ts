@@ -233,6 +233,12 @@ function evaluateInstructionKinded(
         ? {kind: 'boolean', canBeTrue: equals.canBeFalse, canBeFalse: equals.canBeTrue}
         : equals)
     }
+    case 'inCheck': {
+      const union = requiredTaggedUnion(state, instruction.union)
+      const hasIt = union.variants.some(variant => recordProperty(variant.record, instruction.property) != null)
+      const lacksIt = union.variants.some(variant => recordProperty(variant.record, instruction.property) == null)
+      return value({kind: 'boolean', canBeTrue: hasIt, canBeFalse: lacksIt})
+    }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
       const canBeSentinel = operand.kind === 'nullish' || operand.kind === 'maybeNullish'
@@ -489,6 +495,23 @@ export function refineTagCheck(
   const union = requiredTaggedUnion(result, check.union)
   const wantMatch = truth !== check.negated
   const variants = union.variants.filter(variant => (variant.tagValue === check.tagValue) === wantMatch)
+  if (variants.length === 0) return null
+  writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants}, producers)
+  return result
+}
+
+// The branch where 'tab' in route held keeps the variants declaring the property; the
+// other branch keeps the rest. Same shape as the tag refinement.
+export function refineInCheck(
+  state: ExecutionState,
+  check: Extract<InstructionIR, {kind: 'inCheck'}>,
+  truth: boolean,
+  producers: Array<InstructionIR | undefined>,
+): ExecutionState | null {
+  const result = cloneState(state)
+  const union = requiredTaggedUnion(result, check.union)
+  const variants = union.variants.filter(variant =>
+    (recordProperty(variant.record, check.property) != null) === truth)
   if (variants.length === 0) return null
   writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants}, producers)
   return result

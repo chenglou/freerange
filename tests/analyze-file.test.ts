@@ -2114,6 +2114,108 @@ ${chain}
       .toEqual(['return is a finite number from 0 through 1.3407807929942596e+154'])
   })
 
+  test('tagged unions: checks narrow, else-if chains prune, switch dispatches, literals build variants', () => {
+    // A union of record shapes told apart by route.type carries one record per variant.
+    // Tag checks keep matching variants per branch; a single-variant union stays a union,
+    // so later checks against other tags are definitely false and dead branches prune —
+    // by the third arm of the chain, route is provably the lightbox shape and its index
+    // reads. Literals remember which variant they build, so branches building different
+    // variants join per tag and callers narrow them back apart.
+    const report = analyzeSource('tagged-unions.ts', `
+      type Route =
+        | {type: 'explore'; filter: string}
+        | {type: 'lightbox'; id: string; index: number}
+        | {type: 'archive'; page: number}
+      export function elseIfChain(route: Route): number {
+        if (route.type === 'explore') { return 1 }
+        if (route.type === 'archive') { return route.page }
+        return route.index
+      }
+      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
+      function pick(wide: boolean): Frame {
+        if (wide) { return {type: 'sidebar', width: 240} }
+        return {type: 'mobile', scale: 0.5}
+      }
+      export function useIt(wide: boolean): number {
+        const frame = pick(wide)
+        if (frame.type === 'sidebar') { return frame.width }
+        return frame.scale * 100
+      }
+      export function switchOnTag(frame: Frame): number {
+        switch (frame.type) {
+          case 'sidebar': return frame.width
+          default: return frame.scale
+        }
+      }
+    `)
+    expect(analyzedFunction(report, 'elseIfChain').assumptions).toEqual([
+      "route.index is finite and not NaN (when route.type is 'lightbox')",
+      "route.page is finite and not NaN (when route.type is 'archive')",
+    ])
+    expect(analyzedFunction(report, 'elseIfChain').ensures).toEqual(['return is a finite number'])
+    // The two variants' exact constants survive the join and re-split at the caller.
+    expect(analyzedFunction(report, 'useIt').ensures).toEqual(['return is a finite number from 50 through 240'])
+    expect(analyzedFunction(report, 'switchOnTag').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('tagged unions: duplicate tag values keep both variants, and in-checks tell them apart', () => {
+    // UpdatesRoute-style: two variants share the tag 'updates' and differ by which
+    // property exists — exactly what TypeScript's own narrowing needs an in-check for.
+    const report = analyzeSource('duplicate-tags.ts', `
+      type Route = {type: 'updates'; tab: number} | {type: 'updates'; article: string} | {type: 'home'; scroll: number}
+      export function tabOf(route: Route): number {
+        if (route.type === 'updates' && 'tab' in route) { return route.tab }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'tabOf').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('tagged unions: nullable wrappers carry them, and nesting mirrors the type tree', () => {
+    const report = analyzeSource('nullable-tagged.ts', `
+      type Owner = {type: 'explore'; page: number} | {type: 'imagine'; count: number}
+      type Lightbox = {type: 'lightbox'; index: number; owner: null | Owner}
+      export function ownerPage(box: Lightbox): number {
+        const owner = box.owner
+        if (owner === null) { return 0 }
+        if (owner.type === 'explore') { return owner.page }
+        return owner.count
+      }
+    `)
+    expect(analyzedFunction(report, 'ownerPage').assumptions).toEqual([
+      'box.index is finite and not NaN',
+      "box.owner is null or box.owner.page is finite and not NaN (when box.owner.type is 'explore')",
+      "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
+    ])
+    expect(analyzedFunction(report, 'ownerPage').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('tagged unions: per-variant return facts, and loops over unions converge', () => {
+    const report = analyzeSource('tagged-returns.ts', `
+      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
+      export function pick(wide: boolean): Frame {
+        if (wide) { return {type: 'sidebar', width: 240} }
+        return {type: 'mobile', scale: 0.5}
+      }
+      export function total(frames: Frame[]): number {
+        let sum = 0
+        for (const frame of frames) {
+          if (frame.type === 'sidebar') { sum = sum + frame.width }
+        }
+        return sum
+      }
+    `)
+    expect(analyzedFunction(report, 'pick').ensures).toEqual([
+      "return.type is 'sidebar' or 'mobile'",
+      "return.width is a finite integer number from 240 through 240 (when return.type is 'sidebar')",
+      "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'mobile')",
+    ])
+    expect(analyzedFunction(report, 'total').assumptions).toEqual([
+      "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
+      "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
+    ])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
