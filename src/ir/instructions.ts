@@ -30,6 +30,10 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'arrayIndex'; array: ValueID; index: ValueID; asserted: boolean; provenBounds: boolean})
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
+  // route.type === 'lightbox': consumes the tagged-union value directly (the tag read
+  // never becomes a property instruction), and branch refinement keeps only the matching
+  // variants on the true side, the rest on the false side.
+  | (InstructionBase & {kind: 'tagCheck'; union: ValueID; tagValue: string; negated: boolean})
   | (InstructionBase & {kind: 'nullishCheck'; value: ValueID; sentinel: 'null' | 'undefined' | 'nullish'; negated: boolean})
   | (InstructionBase & {kind: 'booleanConstant'; value: boolean})
   // Read a module binding's slot. Evaluates to the slot's current value; stops the path
@@ -96,6 +100,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'numberCheck':
     case 'not': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return
+    case 'tagCheck': visit(instruction.union); return
     case 'arrayLiteral': for (const element of instruction.elements) visit(element); return
     case 'arrayLength': visit(instruction.array); return
     case 'arrayIndex': visit(instruction.array); visit(instruction.index); return

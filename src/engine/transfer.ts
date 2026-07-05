@@ -17,7 +17,9 @@ import {
   subtractNumbers,
   type AbstractNumber,
 } from '../domain/number.ts'
-import {joinValues, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
+import {
+  tryJoinValues,
+  type AbstractTaggedUnion,joinValues, recordProperty, recordValue, unknownBoolean, type AbstractBoolean, type AbstractRecord, type AbstractValue} from '../domain/value.ts'
 import type {FunctionID, SiteID, ValueID} from '../ir/ids.ts'
 import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR} from '../ir/instructions.ts'
 import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
@@ -222,6 +224,15 @@ function evaluateInstructionKinded(
       const operand = requiredNumber(state, instruction.value)
       return value(evaluateNumberCheck(instruction.predicate, operand))
     }
+    case 'tagCheck': {
+      const union = requiredTaggedUnion(state, instruction.union)
+      const matches = union.variants.some(variant => variant.tagValue === instruction.tagValue)
+      const misses = union.variants.some(variant => variant.tagValue !== instruction.tagValue)
+      const equals: AbstractBoolean = {kind: 'boolean', canBeTrue: matches, canBeFalse: misses}
+      return value(instruction.negated
+        ? {kind: 'boolean', canBeTrue: equals.canBeFalse, canBeFalse: equals.canBeTrue}
+        : equals)
+    }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
       const canBeSentinel = operand.kind === 'nullish' || operand.kind === 'maybeNullish'
@@ -284,6 +295,25 @@ function evaluateInstructionKinded(
       value: requiredValue(state, property.value),
     }))))
     case 'property': {
+      const object = requiredValue(state, instruction.object)
+      // A read through a tagged union: a single remaining variant (after a tag check)
+      // reads like the plain record it is; with several variants left, a property every
+      // variant carries reads as the join of the per-variant values — a fact true no
+      // matter which shape the value is. A property only SOME variants carry needs a tag
+      // check first, and reaching here without one is an unmodeled-narrowing stop, not a
+      // crash (requiredRecord throws KindMismatch below for non-record kinds already).
+      if (object.kind === 'taggedUnion') {
+        let joined: AbstractValue | null = null
+        for (const variant of object.variants) {
+          const inVariant = recordProperty(variant.record, instruction.property)
+          if (inVariant == null) throw new KindMismatch(`Variant ${variant.tagValue} has no property ${instruction.property}`)
+          const next: AbstractValue | null = joined == null ? inVariant : tryJoinValues(joined, inVariant)
+          if (next == null) throw new KindMismatch(`Property ${instruction.property} mixes kinds across variants`)
+          joined = next
+        }
+        if (joined == null) throw new Error(`Tagged union with no variants at property ${instruction.property}`)
+        return passthroughValue(joined)
+      }
       const record = requiredRecord(state, instruction.object)
       const propertyValue = recordProperty(record, instruction.property)
       // The static type only exposes properties present on every value the expression can
@@ -431,6 +461,31 @@ function withoutSentinel(sentinels: 'null' | 'undefined' | 'both', sentinel: 'nu
 // — the property cannot differ between this read and the next), so `if (point.x !== null)
 // return point.x + 1` narrows both reads. Returns null when the branch is impossible
 // (e.g. the value cannot be the checked sentinel).
+function requiredTaggedUnion(state: ExecutionState, id: ValueID): AbstractTaggedUnion {
+  const operand = requiredValue(state, id)
+  if (operand.kind !== 'taggedUnion') throw new KindMismatch(`IR value ${id} is not a tagged union`)
+  return operand
+}
+
+// The branch where route.type === 'lightbox' held keeps only the matching variants; the
+// other branch keeps the rest. A side with no variants left is impossible and prunes.
+// Written through the producer chain like every refinement, so the union binding itself
+// narrows, not just the read.
+export function refineTagCheck(
+  state: ExecutionState,
+  check: Extract<InstructionIR, {kind: 'tagCheck'}>,
+  truth: boolean,
+  producers: Array<InstructionIR | undefined>,
+): ExecutionState | null {
+  const result = cloneState(state)
+  const union = requiredTaggedUnion(result, check.union)
+  const wantMatch = truth !== check.negated
+  const variants = union.variants.filter(variant => (variant.tagValue === check.tagValue) === wantMatch)
+  if (variants.length === 0) return null
+  writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants}, producers)
+  return result
+}
+
 export function refineNullishCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'nullishCheck'}>,

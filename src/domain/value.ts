@@ -76,6 +76,19 @@ export function joinSentinels(left: NullishSentinels, right: NullishSentinels): 
   return left === right ? left : 'both'
 }
 
+// A value that is one of several record shapes, told apart by a shared property holding
+// a distinct string per shape (route.type is 'explore' or 'lightbox' or 'archive'). The
+// variant list comes from the declared type and analysis never grows it — checks only
+// ever remove variants — so the representation is bounded by what the author wrote. A
+// single-variant value stays in this form (rather than collapsing to a plain record) so a
+// later check against another tag is definitely false and dead branches prune.
+export type AbstractTaggedUnion = {
+  kind: 'taggedUnion'
+  tagProperty: string
+  // Non-empty; tag values unique; declared order.
+  variants: Array<{tagValue: string; record: AbstractRecord}>
+}
+
 export type AbstractValue =
   | AbstractNumber
   | AbstractBoolean
@@ -86,6 +99,7 @@ export type AbstractValue =
   | AbstractTuple
   | AbstractArray
   | AbstractOpaque
+  | AbstractTaggedUnion
 
 export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
@@ -165,11 +179,34 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
     case 'opaque': return left
+    case 'taggedUnion': return joinTaggedUnions(left, right as AbstractTaggedUnion)
     // Handled by the structural arms above; unreachable here.
     case 'tuple':
     case 'array':
       return null
   }
+}
+
+// Variants merge per tag value: a branch that built the lightbox shape joining a branch
+// that built the archive shape carries both, each shape's facts intact. The list can only
+// hold tags that some side already had — analysis never invents a variant — so it stays
+// bounded by the declared type. Mismatched tag properties cannot meet through the gates;
+// null degrades the surrounding structure like any other kind mismatch.
+function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion): AbstractTaggedUnion | null {
+  if (left.tagProperty !== right.tagProperty) return null
+  const variants: AbstractTaggedUnion['variants'] = []
+  for (const variant of left.variants) {
+    const other = right.variants.find(candidate => candidate.tagValue === variant.tagValue)
+    if (other == null) {
+      variants.push(variant)
+      continue
+    }
+    variants.push({tagValue: variant.tagValue, record: joinRecords(variant.record, other.record)})
+  }
+  for (const variant of right.variants) {
+    if (!left.variants.some(candidate => candidate.tagValue === variant.tagValue)) variants.push(variant)
+  }
+  return {kind: 'taggedUnion', tagProperty: left.tagProperty, variants}
 }
 
 // The tuple's homogeneous hull, or null when its positions mix kinds (a mixed tuple never
@@ -247,6 +284,13 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
         : sameValues(left.element, other.element)
       return sameElement && sameNumbers(left.length, other.length)
     }
+    case 'taggedUnion': {
+      const other = right as AbstractTaggedUnion
+      return left.tagProperty === other.tagProperty
+        && left.variants.length === other.variants.length
+        && left.variants.every((variant, index) => variant.tagValue === other.variants[index]!.tagValue
+          && sameValues(variant.record, other.variants[index]!.record))
+    }
   }
 }
 
@@ -294,6 +338,21 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
         : previous.element == null ? next.element
         : widenValue(previous.element, next.element)
       return {kind: 'array', element, length: widenNumber(previous.length, next.length)}
+    }
+    case 'taggedUnion': {
+      if (previous.kind !== 'taggedUnion' || previous.tagProperty !== next.tagProperty) return next
+      // The variant list is bounded by the declared type, so only the records inside need
+      // widening — per tag value, like record properties.
+      return {
+        kind: 'taggedUnion',
+        tagProperty: next.tagProperty,
+        variants: next.variants.map(variant => {
+          const before = previous.variants.find(candidate => candidate.tagValue === variant.tagValue)
+          if (before == null) return variant
+          const widened = widenValue(before.record, variant.record)
+          return widened.kind === 'record' ? {tagValue: variant.tagValue, record: widened} : variant
+        }),
+      }
     }
     // Bounded lattices need no widening: booleans have height two, the missing sentinels
     // form a three-point lattice, void and opaque are points.

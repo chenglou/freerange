@@ -173,6 +173,11 @@ export type DeclaredKind =
   // A kind the analysis carries without claims — strings. Present so a record with an id
   // or label keeps its numeric contract instead of rejecting wholesale.
   | {kind: 'opaque'}
+  // One of several record shapes told apart by a shared string-literal property
+  // (route.type is 'explore' or 'lightbox'). The variant list is written in the type;
+  // analysis only ever removes variants. The tag rides inside each variant's properties
+  // as an ordinary opaque leaf; tagProperty and tagValue carry which one it is.
+  | {kind: 'taggedUnion'; tagProperty: string; variants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}>}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
@@ -227,6 +232,17 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
       element: declaredKindValue(declared.element),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
+    case 'taggedUnion': return {
+      kind: 'taggedUnion',
+      tagProperty: declared.tagProperty,
+      variants: declared.variants.map(variant => ({
+        tagValue: variant.tagValue,
+        record: recordValue(variant.properties.map(property => ({
+          name: property.name,
+          value: declaredKindValue(property.declared),
+        }))),
+      })),
+    }
     case 'opaque': return {kind: 'opaque'}
   }
 }
@@ -243,6 +259,7 @@ export function holdsMutableStructure(declared: DeclaredKind): boolean {
     case 'record':
     case 'tuple':
     case 'array':
+    case 'taggedUnion':
       return true
     case 'nullish':
       return holdsMutableStructure(declared.inner)
@@ -272,6 +289,17 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
       kind: 'array',
       element: coveringKindValue(declared.element),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
+    }
+    case 'taggedUnion': return {
+      kind: 'taggedUnion',
+      tagProperty: declared.tagProperty,
+      variants: declared.variants.map(variant => ({
+        tagValue: variant.tagValue,
+        record: recordValue(variant.properties.map(property => ({
+          name: property.name,
+          value: coveringKindValue(property.declared),
+        }))),
+      })),
     }
     case 'opaque': return {kind: 'opaque'}
   }

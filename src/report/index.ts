@@ -232,6 +232,21 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       }
       break
     }
+    case 'taggedUnion': {
+      // Per-variant leaf lines, each qualified by the tag — e.g. `route.index is finite
+      // and not NaN (when route.type is 'lightbox')`. The tag property itself is an
+      // opaque leaf and contributes no line.
+      for (const variant of declared.variants) {
+        const leaf: string[] = []
+        for (const property of variant.properties) {
+          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, leaf)
+        }
+        for (const line of leaf) {
+          assumptions.push(`${line} (when ${path}.${declared.tagProperty} is '${variant.tagValue}')`)
+        }
+      }
+      break
+    }
   }
 }
 
@@ -487,6 +502,21 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
           line.startsWith(`${path}[each] is `)
             ? `every ${path} element is ${line.slice(`${path}[each] is `.length)}`
             : line))
+      }
+      return lines
+    }
+    case 'taggedUnion': {
+      // One line naming the possible tags, then each variant's facts qualified by its
+      // tag — e.g. `return.width is a finite number (when return.type is 'sidebar')`.
+      const tags = value.variants.map(variant => `'${variant.tagValue}'`).join(' or ')
+      const lines = [`${path}.${value.tagProperty} is ${tags}`]
+      for (const variant of value.variants) {
+        if (value.variants.length === 1) {
+          lines.push(...returnSummaries(path, variant.record, program))
+        } else {
+          lines.push(...returnSummaries(path, variant.record, program)
+            .map(line => `${line} (when ${path}.${value.tagProperty} is '${variant.tagValue}')`))
+        }
       }
       return lines
     }

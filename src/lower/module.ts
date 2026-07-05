@@ -13,7 +13,7 @@ import {
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {addInstruction, addSite, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
-import {lowerExpression, valueKind} from './expression.ts'
+import {lowerExpression, taggedUnionProperty, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
 export type ModuleScan = {
@@ -317,6 +317,29 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 // arrays, functions, or Date (their method properties fail the same leaf check). An empty
 // property set is rejected too — it covers `{}` and index-signature-only types, neither of
 // which a record value can say anything about.
+function declaredRecordProperties(
+  type: ts.Type,
+  location: ts.Node,
+  checker: ts.TypeChecker,
+  seen: ts.Type[],
+): Array<{name: string; declared: DeclaredKind}> | null {
+  if (seen.length >= 8 || seen.includes(type)) return null
+  const properties: Array<{name: string; declared: DeclaredKind}> = []
+  for (const property of checker.getPropertiesOfType(type)) {
+    if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null
+    const propertyDeclared = declaredKind(
+      checker.getTypeOfSymbolAtLocation(property, location),
+      location,
+      checker,
+      [...seen, type],
+    )
+    if (propertyDeclared == null) return null
+    properties.push({name: property.name, declared: propertyDeclared})
+  }
+  if (properties.length === 0) return null
+  return properties
+}
+
 export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
@@ -377,21 +400,26 @@ export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeC
       // recursive generics, whose every level is a fresh instantiation the seen check
       // cannot recognize (and whose instantiation chain would otherwise run away inside
       // the checker itself). No real state tree nests eight records deep.
-      if (seen.length >= 8 || seen.includes(type)) return null
-      const properties: Array<{name: string; declared: DeclaredKind}> = []
-      for (const property of checker.getPropertiesOfType(type)) {
-        if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null
-        const propertyDeclared = declaredKind(
-          checker.getTypeOfSymbolAtLocation(property, location),
-          location,
-          checker,
-          [...seen, type],
-        )
-        if (propertyDeclared == null) return null
-        properties.push({name: property.name, declared: propertyDeclared})
+      const properties = declaredRecordProperties(type, location, checker, seen)
+      return properties == null ? null : {kind: 'record', properties}
+    }
+    case 'taggedUnion': {
+      if (!type.isUnion()) return null
+      const tagProperty = taggedUnionProperty(type.types, checker)
+      if (tagProperty == null) return null
+      const variants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}> = []
+      for (const member of type.types) {
+        const tag = checker.getPropertyOfType(member, tagProperty)
+        if (tag == null) return null
+        const tagType = checker.getTypeOfSymbol(tag)
+        if (!tagType.isStringLiteral()) return null
+        // The tag rides along inside the variant's record as an ordinary opaque leaf;
+        // the union structure carries which value it is.
+        const properties = declaredRecordProperties(member, location, checker, seen)
+        if (properties == null) return null
+        variants.push({tagValue: tagType.value, properties})
       }
-      if (properties.length === 0) return null
-      return {kind: 'record', properties}
+      return {kind: 'taggedUnion', tagProperty, variants}
     }
     case null: return null
   }

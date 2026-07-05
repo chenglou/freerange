@@ -258,6 +258,8 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isBinaryExpression(current)) {
     const missingCheck = missingSentinelCheck(current, context)
     if (missingCheck != null) return missingCheck
+    const tagComparison = tagCheckComparison(current, context)
+    if (tagComparison != null) return tagComparison
     const opaqueComparison = opaqueEqualityCheck(current, context)
     if (opaqueComparison != null) return opaqueComparison
     // `width + 'px'`: string building with + is everywhere in UI code, and the template
@@ -568,7 +570,7 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | null {
+export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | 'taggedUnion' | null {
   // The depth guard bounds recursion into element types (a recursive `type T = T[]` would
   // otherwise loop); past it, nothing classifies.
   if (depth > 8) return null
@@ -619,7 +621,38 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
       const restKind = classifyUnionMembers(rest, checker, depth + 1)
       return restKind == null ? null : 'nullable'
     }
-    return classifyUnionMembers(type.types, checker, depth + 1)
+    const shared = classifyUnionMembers(type.types, checker, depth + 1)
+    if (shared != null) return shared
+    // Distinct record shapes told apart by a shared string-literal property — the
+    // discriminated union the fingerprint comment below calls latent. Recognized here so
+    // the gates admit it; the engine carries one record per tag value.
+    return taggedUnionProperty(type.types, checker, depth) == null ? null : 'taggedUnion'
+  }
+  return null
+}
+
+// The property that tells a union of record shapes apart: present and required in every
+// member, typed as a single string literal in each, all literals distinct. The first
+// property (in the first member's declaration order) that qualifies wins — by convention
+// the tag comes first (`type: 'lightbox'`). Null when no property qualifies.
+export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.TypeChecker, depth = 0): string | null {
+  if (members.length < 2) return null
+  for (const member of members) {
+    if (valueKind(member, checker, depth + 1) !== 'object') return null
+  }
+  const first = members[0]!
+  candidates: for (const candidate of checker.getPropertiesOfType(first)) {
+    if ((candidate.flags & ts.SymbolFlags.Optional) !== 0) continue
+    const literals = new Set<string>()
+    for (const member of members) {
+      const property = checker.getPropertyOfType(member, candidate.name)
+      if (property == null || (property.flags & ts.SymbolFlags.Optional) !== 0) continue candidates
+      const propertyType = checker.getTypeOfSymbol(property)
+      if (!propertyType.isStringLiteral()) continue candidates
+      if (literals.has(propertyType.value)) continue candidates
+      literals.add(propertyType.value)
+    }
+    return candidate.name
   }
   return null
 }
@@ -644,7 +677,9 @@ function classifyUnionMembers(
   let sharedShape: string | null = null
   for (const member of members) {
     const kind = valueKind(member, checker, depth)
-    if (kind == null || kind === 'nullable' || (shared != null && kind !== shared)) return null
+    // A nullable or tagged-union member cannot arise here (TypeScript flattens nested
+    // unions), but the type system cannot see that; both fail the shared-kind rule.
+    if (kind == null || kind === 'nullable' || kind === 'taggedUnion' || (shared != null && kind !== shared)) return null
     if (kind === 'object' || kind === 'array' || kind === 'tuple') {
       const shape = shapeFingerprint(member, checker, [])
       if (shape == null || (sharedShape != null && shape !== sharedShape)) return null
@@ -770,6 +805,44 @@ function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolea
   const array = lowerExpression(access.expression, context)
   const index = lowerExpression(access.argumentExpression, context)
   return addInstruction(context, access, {kind: 'arrayIndex', array, index, asserted, provenBounds: false})
+}
+
+// A read of the union's tag property (`route.type` where route is one of several
+// shapes): the recognizer both the === form and the switch subject share. Returns the
+// union expression, or null when the expression is not a tag read.
+export function taggedUnionTagRead(expression: ts.Expression, context: FunctionContext): ts.Expression | null {
+  const unwrapped = unwrap(expression, context.checker)
+  if (!ts.isPropertyAccessExpression(unwrapped)) return null
+  const objectType = context.checker.getTypeAtLocation(unwrapped.expression)
+  if (valueKind(objectType, context.checker) !== 'taggedUnion' || !objectType.isUnion()) return null
+  const tagProperty = taggedUnionProperty(objectType.types, context.checker)
+  return tagProperty === unwrapped.name.text ? unwrapped.expression : null
+}
+
+// route.type === 'lightbox' (and !==, and the loose spellings): the check consumes the
+// union value directly and the branches narrow its variant list — the same move the null
+// checks make, pointed at a string tag. The string side must be a literal; comparing two
+// tag reads to each other stays an unknown boolean through the opaque path.
+function tagCheckComparison(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
+  const operator = expression.operatorToken.kind
+  const equals = operator === ts.SyntaxKind.EqualsEqualsEqualsToken || operator === ts.SyntaxKind.EqualsEqualsToken
+  const notEquals = operator === ts.SyntaxKind.ExclamationEqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsToken
+  if (!equals && !notEquals) return null
+  const literalOf = (side: ts.Expression): string | null => {
+    const unwrapped = unwrap(side, context.checker)
+    return ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped) ? unwrapped.text : null
+  }
+  const sides = [
+    {union: taggedUnionTagRead(expression.left, context), literal: literalOf(expression.right)},
+    {union: taggedUnionTagRead(expression.right, context), literal: literalOf(expression.left)},
+  ]
+  for (const side of sides) {
+    if (side.union != null && side.literal != null) {
+      const union = lowerExpression(side.union, context)
+      return addInstruction(context, expression, {kind: 'tagCheck', union, tagValue: side.literal, negated: notEquals})
+    }
+  }
+  return null
 }
 
 // `mode === 'compact'`: comparing two carried-without-claims values yields a boolean the

@@ -225,6 +225,7 @@ function defaultSatisfiesDeclaredAssumptions(initializer: ts.Expression, declare
     case 'record':
     case 'tuple':
     case 'array':
+    case 'taggedUnion':
       return false
   }
 }
