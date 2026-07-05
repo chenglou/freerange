@@ -320,12 +320,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       // missing halves of the bounds-check idiom (`i >= 0 && i < arr.length` proves the
       // range; Number.isInteger(i) proves the read hits an element rather than arr[1.5]).
       const standardNumber = isStandardNumberObject(current.expression.expression, context.checker)
-      if (standardNumber && (method === 'isInteger' || method === 'isFinite') && current.arguments.length === 1) {
+      if (standardNumber && (method === 'isInteger' || method === 'isFinite' || method === 'isNaN') && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, current, {
           kind: 'numberCheck',
-          predicate: method === 'isInteger' ? 'integer' : 'finite',
+          predicate: method === 'isInteger' ? 'integer' : method === 'isFinite' ? 'finite' : 'nan',
           value,
         })
       }

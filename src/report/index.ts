@@ -461,8 +461,12 @@ function numberSummary(path: string, value: AbstractNumber, program: ProgramIR):
       ? ` (NaN possible from the operation at ${formatSite(program, value.lossSite)})`
       : ` (can overflow at ${formatSite(program, value.lossSite)})`
   const subject = `${path} is a ${domain}${kind}number`
-  const strictLower = strictBoundWords(value.lower, 'lower')
-  const strictUpper = strictBoundWords(value.upper, 'upper')
+  // A point interval is an exact value (`return 0.1 + 0.2` is exactly
+  // 0.30000000000000004); rewriting either bound into strict phrasing would print an
+  // absurd range around a constant, so the rewrite only applies to genuine ranges.
+  const pointInterval = value.lower === value.upper
+  const strictLower = pointInterval ? null : strictBoundWords(value.lower, 'lower')
+  const strictUpper = pointInterval ? null : strictBoundWords(value.upper, 'upper')
   if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return `${subject}${blame}`
   if (value.upper === Number.MAX_VALUE) {
     return `${subject} ${strictLower ?? `at least ${formatNumber(value.lower)}`}${blame}`

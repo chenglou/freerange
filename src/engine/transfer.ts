@@ -22,13 +22,13 @@ import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from
 import {
   addPrecondition,
   peelNonzero,
+  canonicalValueKey,
   numericExpression,
   type ExpressionContext,
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
-import {
-  validIndexKey,cloneState, type ExecutionState, type SharedState} from './state.ts'
+import {cloneState, validIndexKey, type ExecutionState, type SharedState} from './state.ts'
 
 type EvaluateFunction = (
   functionID: FunctionID,
@@ -36,6 +36,7 @@ type EvaluateFunction = (
   argumentExpressions: Array<NumericExpression | null>,
   sharedState: SharedState,
   callStack: FunctionID[],
+  seededIndexPairs: Set<string>,
 ) => FunctionEvaluation
 
 export type TransferContext = {
@@ -175,7 +176,10 @@ function evaluateInstructionKinded(
       const inBounds = instruction.provenBounds
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
         || (index.integer && !index.mayBeNaN && index.lower >= 0
-          && state.validIndexPairs.has(validIndexKey(instruction.index, instruction.array)))
+          && state.validIndexPairs.has(validIndexKey(
+            canonicalValueKey(instruction.index, context.expressionContext),
+            canonicalValueKey(instruction.array, context.expressionContext),
+          )))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
       // where every read is out of bounds.
@@ -325,12 +329,27 @@ function evaluateInstructionKinded(
       }
       const arguments_ = instruction.arguments.map(id => requiredValue(state, id))
       const argumentExpressions = instruction.arguments.map(id => numericExpression(id, context.expressionContext))
+      // A caller's bounds check travels into the callee the way interval facts already do
+      // through argument values: every argument pair whose valid-index relation holds
+      // here seeds the same relation on the callee's parameters, so a guarded call site
+      // discharges the callee's element read instead of inheriting its requirement.
+      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
+      const seededIndexPairs = new Set<string>()
+      for (let indexPosition = 0; indexPosition < argumentKeys.length; indexPosition++) {
+        for (let arrayPosition = 0; arrayPosition < argumentKeys.length; arrayPosition++) {
+          if (indexPosition === arrayPosition) continue
+          if (state.validIndexPairs.has(validIndexKey(argumentKeys[indexPosition]!, argumentKeys[arrayPosition]!))) {
+            seededIndexPairs.add(validIndexKey(`p${indexPosition}`, `p${arrayPosition}`))
+          }
+        }
+      }
       const evaluation = context.evaluateFunction(
         instruction.function,
         arguments_,
         argumentExpressions,
         state.shared,
         context.callStack,
+        seededIndexPairs,
       )
       // A partial callee's result is discarded wholesale: the callee ran on a clone, and
       // state.shared is assigned only on the complete path below, so a partial callee's
@@ -494,8 +513,10 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
       integer: current.integer || refined.integer,
       mayBeNaN: current.mayBeNaN && refined.mayBeNaN,
     }
-    // An intersection keeps every fact either cover proved, the zero exclusion included.
-    if (current.excludesZero === true || refined.excludesZero === true) met.excludesZero = true
+    // An intersection keeps every fact either cover proved; only one point fits the
+    // field, and the refined side's is the fresher fact.
+    const excludedPoint = refined.excludesPoint ?? current.excludesPoint
+    if (excludedPoint != null) met.excludesPoint = excludedPoint
     const lossSite = refined.lossSite ?? current.lossSite
     return lossSite == null ? met : {...met, lossSite}
   }
@@ -521,9 +542,13 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
   return refined
 }
 
-function evaluateNumberCheck(predicate: 'integer' | 'finite', operand: AbstractNumber): AbstractBoolean {
+function evaluateNumberCheck(predicate: 'integer' | 'finite' | 'nan', operand: AbstractNumber): AbstractBoolean {
   const finiteLower = Math.max(operand.lower, -Number.MAX_VALUE)
   const finiteUpper = Math.min(operand.upper, Number.MAX_VALUE)
+  if (predicate === 'nan') {
+    // The domain cannot express "always NaN", so the false side stays possible.
+    return {kind: 'boolean', canBeTrue: operand.mayBeNaN, canBeFalse: true}
+  }
   if (predicate === 'finite') {
     return {
       kind: 'boolean',
@@ -549,6 +574,15 @@ export function refineNumberCheck(
 ): ExecutionState | null {
   const result = cloneState(state)
   const operand = requiredNumber(result, check.value)
+  if (check.predicate === 'nan') {
+    // The passing branch holds exactly NaN — not representable as a refinement, so the
+    // unrefined operand stays as its sound cover, and the branch prunes outright when the
+    // value provably cannot be NaN. The failing branch launders: mayBeNaN clears.
+    if (truth) return operand.mayBeNaN ? result : null
+    const laundered: AbstractNumber = {...operand, mayBeNaN: false}
+    writeThroughProducers(result, check.value, laundered, producers)
+    return result
+  }
   if (truth) {
     // The passing branch proves finiteness for both predicates (isInteger rejects the
     // infinities too), and integrality snaps the bounds inward.
@@ -576,8 +610,9 @@ export function refineComparison(
   state: ExecutionState,
   comparison: Extract<InstructionIR, {kind: 'compare'}>,
   truth: boolean,
-  producers: Array<InstructionIR | undefined>,
+  expressionContext: ExpressionContext,
 ): ExecutionState | null {
+  const producers = expressionContext.instructionByValue
   const result = cloneState(state)
   const left = requiredNumber(result, comparison.left)
   const right = requiredNumber(result, comparison.right)
@@ -614,10 +649,11 @@ export function refineComparison(
       const upper = Math.min(left.upper, right.upper)
       refinedLeft = withBounds(left, lower, upper)
       refinedRight = withBounds(right, lower, upper)
-      // Equal values share the zero exclusion: if either side cannot be zero, neither can.
-      if (refinedLeft.excludesZero === true || refinedRight.excludesZero === true) {
-        refinedLeft = {...refinedLeft, excludesZero: true}
-        refinedRight = {...refinedRight, excludesZero: true}
+      // Equal values share the excluded point: if either side cannot hold it, neither can.
+      const sharedPoint = refinedLeft.excludesPoint ?? refinedRight.excludesPoint
+      if (sharedPoint != null) {
+        refinedLeft = {...refinedLeft, excludesPoint: sharedPoint}
+        refinedRight = {...refinedRight, excludesPoint: sharedPoint}
       }
       break
     }
@@ -635,13 +671,19 @@ export function refineComparison(
   if (operator === 'lessThan') {
     const rightProducer = producers[comparison.right]
     if (rightProducer?.kind === 'arrayLength') {
-      result.validIndexPairs.add(validIndexKey(comparison.left, rightProducer.array))
+      result.validIndexPairs.add(validIndexKey(
+        canonicalValueKey(comparison.left, expressionContext),
+        canonicalValueKey(rightProducer.array, expressionContext),
+      ))
     }
   }
   if (operator === 'greaterThan') {
     const leftProducer = producers[comparison.left]
     if (leftProducer?.kind === 'arrayLength') {
-      result.validIndexPairs.add(validIndexKey(comparison.right, leftProducer.array))
+      result.validIndexPairs.add(validIndexKey(
+        canonicalValueKey(comparison.right, expressionContext),
+        canonicalValueKey(leftProducer.array, expressionContext),
+      ))
     }
   }
   const emptied = refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper
@@ -764,18 +806,18 @@ function invertedComparison(operator: ComparisonOperator): ComparisonOperator {
   }
 }
 
-// x !== other: when the other side is a single known point, cut it from x where the
-// domain can express the cut — at an interval endpoint (integers step by one, floats step
-// to the adjacent representable double), or via the excludesZero flag when the point is
-// zero strictly inside the bounds. A nonzero point strictly inside stays unrefined: an
-// interval cannot carry a hole, and zero is the only point division cares about.
+// x !== other: when the other side is a single known point, cut it from x — at an
+// interval endpoint (integers step by one, floats step to the adjacent representable
+// double), or via the excluded-point cut when the point sits strictly inside the bounds.
+// One point is the cap: a second !== guard replaces the first cut rather than growing a
+// set, which is sound (dropping a fact only widens) and keeps the domain flat.
 function excludePointFrom(value: AbstractNumber, other: AbstractNumber): AbstractNumber {
   if (other.lower !== other.upper || other.mayBeNaN) return value
   const point = other.lower
   let refined = value
   if (refined.lower === point) refined = {...refined, lower: strictLower(point, refined.integer)}
   if (refined.upper === point) refined = {...refined, upper: strictUpper(point, refined.integer)}
-  if (point === 0 && refined.lower < 0 && refined.upper > 0) refined = {...refined, excludesZero: true}
+  if (refined.lower < point && point < refined.upper) refined = {...refined, excludesPoint: point}
   return refined
 }
 

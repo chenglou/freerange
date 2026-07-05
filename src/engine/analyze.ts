@@ -219,13 +219,16 @@ function runEvaluation(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
+  seededIndexPairs?: Set<string>,
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
     frame: {values: []},
     shared: cloneSharedState(sharedState),
-    validIndexPairs: new Set(),
+    // Call sites seed the caller's proven argument relations (keyed p0, p1, ... which is
+    // exactly what canonicalValueKey produces for the parameters here).
+    validIndexPairs: seededIndexPairs ?? new Set(),
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
@@ -263,12 +266,13 @@ function runEvaluation(
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
       stack: FunctionID[],
+      seededIndexPairs: Set<string>,
     ) => {
       const calleeFn = program.functions[callee]
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
       // Callers turn calls to unlowered functions into calleeStopped records first.
       if (calleeFn.kind !== 'lowered') throw new Error(`Analysis reached unlowered function ${calleeFn.name}`)
-      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack).evaluation
+      return runEvaluation(calleeFn, callee, values, expressions, calleeState, program, stack, seededIndexPairs).evaluation
     },
   }
   let queueIndex = 0
@@ -327,7 +331,7 @@ function runEvaluation(
           // refineComparison clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
           const branch = comparison != null
-            ? refineComparison(state, comparison, true, expressionContext.instructionByValue)
+            ? refineComparison(state, comparison, true, expressionContext)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, true, expressionContext.instructionByValue)
               : numberCheck != null
@@ -337,7 +341,7 @@ function runEvaluation(
         }
         if (condition.canBeFalse) {
           const branch = comparison != null
-            ? refineComparison(state, comparison, false, expressionContext.instructionByValue)
+            ? refineComparison(state, comparison, false, expressionContext)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, false, expressionContext.instructionByValue)
               : numberCheck != null

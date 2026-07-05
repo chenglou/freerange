@@ -55,11 +55,12 @@ export type InstructionIR =
   // state is mutable, so two reads are never assumed equal.
   | (InstructionBase & {kind: 'platformValue'; lower: number; upper: number; integer: boolean})
   | (InstructionBase & {kind: 'absolute'; value: ValueID})
-  // Number.isInteger(x) / Number.isFinite(x): a boolean over one number operand, with
-  // branch refinement like nullishCheck — the true branch of isInteger knows the value is
-  // an integer (and finite, and not NaN), the false branch of isFinite prunes when the
-  // value was already provably finite.
-  | (InstructionBase & {kind: 'numberCheck'; predicate: 'integer' | 'finite'; value: ValueID})
+  // Number.isInteger(x) / Number.isFinite(x) / Number.isNaN(x): a boolean over one number
+  // operand, with branch refinement like nullishCheck — the true branch of isInteger knows
+  // the value is an integer (and finite, and not NaN), the false branch of isFinite prunes
+  // when the value was already provably finite, and the false branch of isNaN launders a
+  // possibly-NaN value clean.
+  | (InstructionBase & {kind: 'numberCheck'; predicate: 'integer' | 'finite' | 'nan'; value: ValueID})
   // Boolean negation, from `!x` on a boolean operand.
   | (InstructionBase & {kind: 'not'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})

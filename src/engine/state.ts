@@ -21,10 +21,11 @@ export type SharedState = {
 export type ExecutionState = {
   frame: FunctionFrame
   shared: SharedState
-  // The one relational fact the analysis carries: "this IR value is a valid index into
-  // that array value" — established by the bounds-check guard `i >= 0 && i < arr.length`
+  // The one relational fact the analysis carries: "this value is a valid index into
+  // that array" — established by the bounds-check guard `i >= 0 && i < arr.length`
   // (the lower bound and integrality live on the value's own interval; the set records
-  // only the below-length half, keyed 'indexValue<arrayValue'). Sound to keep for the
+  // only the below-length half, keyed by canonical value names so repeated property
+  // reads of the same record match, and seeded across calls for argument pairs). Sound to keep for the
   // whole evaluation: IR values never change and arrays are immutable after construction,
   // so the fact cannot be invalidated — joins still intersect, since a fact must hold on
   // every incoming path. Deliberately not a general relational domain: one relation kind,
@@ -32,8 +33,8 @@ export type ExecutionState = {
   validIndexPairs: Set<string>
 }
 
-export function validIndexKey(index: number, array: number): string {
-  return `${index}<${array}`
+export function validIndexKey(indexKey: string, arrayKey: string): string {
+  return `${indexKey}<${arrayKey}`
 }
 
 export function emptySharedState(moduleCount: number): SharedState {

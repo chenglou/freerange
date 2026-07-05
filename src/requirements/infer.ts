@@ -110,6 +110,22 @@ function walkExpression(value: ValueID, context: ExpressionContext): NumericExpr
   }
 }
 
+// A stable name for the runtime value an IR value holds, used to key valid-index pairs:
+// two reads of config.sizes lower to distinct IR values, but both canonicalize to the
+// same key, so the bounds-check guard matches the element read. Sound because the walked
+// forms cannot change between occurrences — parameters and module reads resolve by
+// binding identity, and a property read off the same base names the same immutable
+// record's property. A rebound local resolves to a different underlying value, giving a
+// different key by construction.
+export function canonicalValueKey(value: ValueID, context: ExpressionContext): string {
+  const parameterIndex = context.parameterIndexByValue[value]
+  if (parameterIndex != null) return `p${parameterIndex}`
+  const producer = context.instructionByValue[value]
+  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context)}.${producer.property}`
+  if (producer?.kind === 'moduleRead') return `m${producer.binding}`
+  return `v${value}`
+}
+
 export function addPrecondition(preconditions: InferredPrecondition[], candidate: InferredPrecondition): void {
   if (!preconditions.some(precondition => samePrecondition(precondition, candidate))) preconditions.push(candidate)
 }

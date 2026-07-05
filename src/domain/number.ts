@@ -8,14 +8,17 @@ export type AbstractNumber = {
   upper: number
   integer: boolean
   mayBeNaN: boolean
-  // Zero is cut out of an interval that otherwise straddles it — set by a `count !== 0`
-  // guard (or an `if (count === 0) return` early exit) when zero sits strictly inside the
-  // bounds, where no interval endpoint can express the cut. Division is the only consumer:
-  // a guarded divisor mints no nonzero requirement. Absent means "may be zero", so every
-  // arithmetic producer is conservative by construction (x - x can be zero from nonzero
-  // operands); only branch refinement sets the flag, and joins keep it only when both
-  // sides exclude zero. Unlike lossSite below, this is semantics: sameNumbers compares it.
-  excludesZero?: boolean
+  // One point cut out of an interval that otherwise contains it strictly inside — set by
+  // a `count !== 0` or `width !== 4` guard (or the matching === early exit), where no
+  // interval endpoint can express the cut. Division consumes the point-zero exclusion
+  // directly, and the arithmetic rules below FORWARD an exclusion into a zero exclusion
+  // through the same float-exact inversions requirement peeling trusts: width ≠ 4 makes
+  // width - 4 ≠ 0, so the guard a peeled requires line names actually discharges it.
+  // Absent means "no point excluded"; producers stay conservative by construction (x - x
+  // can be zero from nonzero operands) except for those exact rules, and joins keep a
+  // point only when both sides exclude it. Unlike lossSite below, this is semantics:
+  // sameNumbers compares it. One point, not a set — the deliberate cap.
+  excludesPoint?: number
   // Annotation only, never semantics: the operation where finiteness or NaN-freedom was
   // first lost, for the report's blame suffix. Deliberately excluded from sameNumbers and
   // never branched on by the engine — if it participated in equality, two semantically
@@ -78,24 +81,39 @@ export function addNumbers(left: AbstractNumber, right: AbstractNumber): Abstrac
   const oppositeInfinities =
     (left.upper === Number.POSITIVE_INFINITY && right.lower === Number.NEGATIVE_INFINITY)
     || (left.lower === Number.NEGATIVE_INFINITY && right.upper === Number.POSITIVE_INFINITY)
-  return {
+  const result: AbstractNumber = {
     kind: 'number',
     lower: Number.isNaN(lower) ? Number.NEGATIVE_INFINITY : lower,
     upper: Number.isNaN(upper) ? Number.POSITIVE_INFINITY : upper,
     integer: left.integer && right.integer,
     mayBeNaN: left.mayBeNaN || right.mayBeNaN || oppositeInfinities,
   }
+  // The forward direction of requirement peeling: an IEEE sum is zero only when the
+  // operands are exact negations, so x ≠ -c makes x + c ≠ 0 — the `width !== 4` guard a
+  // peeled requires line names flows through `width - 4` and discharges the division
+  // (subtraction arrives here with the right side negated).
+  const pointSide = right.lower === right.upper && !right.mayBeNaN ? right
+    : left.lower === left.upper && !left.mayBeNaN ? left : null
+  const otherSide = pointSide === right ? left : right
+  if (pointSide != null && pointExcluded(otherSide, -pointSide.lower)
+    && result.lower < 0 && result.upper > 0) {
+    result.excludesPoint = 0
+  }
+  return result
 }
 
 // a - b is a + (-b); negation is exact on every value including infinities.
 export function subtractNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
-  return addNumbers(left, {
+  const negated: AbstractNumber = {
     kind: 'number',
     lower: -right.upper,
     upper: -right.lower,
     integer: right.integer,
     mayBeNaN: right.mayBeNaN,
-  })
+  }
+  // Negation is exact, so an excluded point flips sign with the value.
+  if (right.excludesPoint != null) negated.excludesPoint = -right.excludesPoint
+  return addNumbers(left, negated)
 }
 
 export function multiplyNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -106,7 +124,20 @@ export function multiplyNumbers(left: AbstractNumber, right: AbstractNumber): Ab
     left.upper * right.lower,
     left.upper * right.upper,
   ]
-  return boundedResult(Math.min(...products), Math.max(...products), left.integer && right.integer, left, right)
+  const result = boundedResult(Math.min(...products), Math.max(...products), left.integer && right.integer, left, right)
+  // A factor of magnitude at least 1 cannot underflow a nonzero product to zero (|c·x| >=
+  // |x|, and no double below the smallest subnormal exists to round to), so a zero
+  // exclusion survives: `scale !== 0` discharges a division by scale * 2. The same
+  // condition requirement peeling trusts, run forward.
+  const pointSide = right.lower === right.upper && !right.mayBeNaN ? right
+    : left.lower === left.upper && !left.mayBeNaN ? left : null
+  const otherSide = pointSide === right ? left : right
+  if (pointSide != null && Number.isFinite(pointSide.lower) && Math.abs(pointSide.lower) >= 1
+    && pointExcluded(otherSide, 0) && !result.mayBeNaN
+    && result.lower < 0 && result.upper > 0) {
+    result.excludesPoint = 0
+  }
+  return result
 }
 
 export function divideNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -133,7 +164,7 @@ export function divideNumbers(left: AbstractNumber, right: AbstractNumber): Abst
         mayBeNaN: false,
       }
     }
-    if (right.excludesZero === true) return divideAcrossZero(left, right)
+    if (right.excludesPoint === 0) return divideAcrossZero(left, right)
   }
   if (!safeOperands(left, right) || (right.lower <= 0 && right.upper >= 0)) return unknownNumber()
   const quotients = [
@@ -146,7 +177,7 @@ export function divideNumbers(left: AbstractNumber, right: AbstractNumber): Abst
 }
 
 // A divisor interval straddling zero with zero itself excluded — by a `!== 0` guard (the
-// excludesZero flag) or a recorded nonzero requirement. An integer divisor then has
+// excluded-point cut) or a recorded nonzero requirement. An integer divisor then has
 // magnitude at least 1, so the quotient is bounded by the dividend; a float divisor can
 // sit arbitrarily close to zero, so the quotient can overflow — possibly non-finite, but
 // never NaN (zero is cut, so 0/0 cannot happen).
@@ -228,7 +259,15 @@ export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
 }
 
 export function includesZero(value: AbstractNumber): boolean {
-  return value.lower <= 0 && value.upper >= 0 && value.excludesZero !== true
+  return value.lower <= 0 && value.upper >= 0 && value.excludesPoint !== 0
+}
+
+// Whether the abstract value provably never holds the point — by its bounds, by the
+// integer flag against a fractional point, or by the excluded-point cut.
+export function pointExcluded(value: AbstractNumber, point: number): boolean {
+  if (point < value.lower || point > value.upper) return true
+  if (value.integer && !Number.isInteger(point)) return true
+  return value.excludesPoint === point
 }
 
 export function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -239,11 +278,17 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
     integer: left.integer && right.integer,
     mayBeNaN: left.mayBeNaN || right.mayBeNaN,
   }
-  // Zero stays excluded when neither side can be zero — whether by flag or by one-signed
-  // bounds, which is why the check goes through includesZero. This also captures a
-  // sign-split join: [-5, -2] joined with [2, 5] straddles zero yet never holds it.
-  if (!includesZero(left) && !includesZero(right) && joined.lower < 0 && joined.upper > 0) {
-    joined.excludesZero = true
+  // A point stays excluded when neither side can hold it — whether by cut or by bounds,
+  // which is what pointExcluded checks. This also captures a sign-split join: [-5, -2]
+  // joined with [2, 5] straddles zero yet never holds it (zero is tried even when neither
+  // side carries a cut, since it is the point division cares about).
+  for (const point of [left.excludesPoint, right.excludesPoint, 0]) {
+    if (point == null) continue
+    if (pointExcluded(left, point) && pointExcluded(right, point)
+      && joined.lower < point && point < joined.upper) {
+      joined.excludesPoint = point
+      break
+    }
   }
   const lossSite = left.lossSite ?? right.lossSite
   if (lossSite != null) joined.lossSite = lossSite
@@ -255,25 +300,34 @@ export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolea
     && left.upper === right.upper
     && left.integer === right.integer
     && left.mayBeNaN === right.mayBeNaN
-    && (left.excludesZero === true) === (right.excludesZero === true)
+    && left.excludesPoint === right.excludesPoint
 }
 
 export function widenNumber(previous: AbstractNumber, next: AbstractNumber): AbstractNumber {
   const finite = isFiniteNumber(previous) && isFiniteNumber(next)
   const widened: AbstractNumber = {
-    ...next,
+    kind: 'number',
     lower: next.lower < previous.lower
       ? finite ? -Number.MAX_VALUE : Number.NEGATIVE_INFINITY
       : next.lower,
     upper: next.upper > previous.upper
       ? finite ? Number.MAX_VALUE : Number.POSITIVE_INFINITY
       : next.upper,
+    integer: next.integer,
+    mayBeNaN: next.mayBeNaN,
   }
-  // The spread copies next's flag, but the widened interval is a fresh, wider cover — the
-  // flag holds only when both rounds excluded zero, same rule as joins. It can flip
-  // true-to-false across rounds and never back, so the fixed point still converges.
-  widened.excludesZero = !includesZero(previous) && !includesZero(next)
-    && widened.lower < 0 && widened.upper > 0
+  if (next.lossSite != null) widened.lossSite = next.lossSite
+  // The widened interval is a fresh, wider cover — a point stays excluded only when both
+  // rounds excluded it, same rule as joins. The cut can disappear across rounds and never
+  // reappear, so the fixed point still converges.
+  for (const point of [previous.excludesPoint, next.excludesPoint, 0]) {
+    if (point == null) continue
+    if (pointExcluded(previous, point) && pointExcluded(next, point)
+      && widened.lower < point && point < widened.upper) {
+      widened.excludesPoint = point
+      break
+    }
+  }
   return widened
 }
 

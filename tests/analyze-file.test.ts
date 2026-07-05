@@ -1839,6 +1839,82 @@ ${chain}
     expect(analyzedFunction(report, 'recovered').ensures).toEqual(['return is a finite number'])
   })
 
+  test('review round: the guard a peeled requires line names actually discharges it', () => {
+    // The report says 'requires: width is not 4'; an agent writes exactly that guard and
+    // the requirement must go away — the excluded-point cut flows through width - 4 into
+    // a zero exclusion on the divisor (an IEEE sum is zero only on exact negation), and
+    // through scale * 2 (a factor of magnitude at least 1 cannot underflow a nonzero
+    // product to zero). Both spellings of the guard work.
+    const report = analyzeSource('peel-discharge.ts', `
+      export function widthGuard(width: number, total: number): number {
+        if (width !== 4) { return total / (width - 4) }
+        return 0
+      }
+      export function widthEarlyExit(width: number, total: number): number {
+        if (width === 4) { return 0 }
+        return total / (width - 4)
+      }
+      export function scaleGuarded(scale: number): number {
+        if (scale !== 0) { return 100 / (scale * 2) }
+        return 0
+      }
+    `)
+    for (const name of ['widthGuard', 'widthEarlyExit', 'scaleGuarded']) {
+      expect(analyzedFunction(report, name).requires).toEqual([])
+    }
+  })
+
+  test('review round: the bounds-check guard works on record properties and across calls', () => {
+    // Valid-index pairs key on canonical value names, so two property reads of the same
+    // immutable record match — and a guarded call site seeds the relation onto the
+    // callee's parameters, so the caller discharges what the callee alone must require.
+    const report = analyzeSource('bounds-composition.ts', `
+      type Config = {sizes: number[]; cursor: number}
+      export function propertyGuard(config: Config): number {
+        if (Number.isInteger(config.cursor) && config.cursor >= 0 && config.cursor < config.sizes.length) {
+          return config.sizes[config.cursor]!
+        }
+        return 0
+      }
+      function sizeAt(sizes: number[], slot: number): number {
+        return sizes[slot]!
+      }
+      export function guardedCall(sizes: number[], slot: number): number {
+        if (Number.isInteger(slot) && slot >= 0 && slot < sizes.length) {
+          return sizeAt(sizes, slot)
+        }
+        return 0
+      }
+    `)
+    const file = resolve('bounds-composition.ts')
+    expect(analyzedFunction(report, 'propertyGuard').requires).toEqual([])
+    expect(analyzedFunction(report, 'guardedCall').requires).toEqual([])
+    // The helper itself still carries the honest requirement for unguarded callers.
+    expect(analyzedFunction(report, 'sizeAt').requires)
+      .toEqual([`slot is a valid sizes index (element read at ${file}:10:16)`])
+  })
+
+  test('review round: Number.isNaN launders, and exact constants keep exact prose', () => {
+    const report = analyzeSource('isnan-and-constants.ts', `
+      export function laundered(a: number, b: number): number {
+        const product = a * b
+        if (Number.isNaN(product)) { return 0 }
+        return Math.min(Math.max(product, 0), 100)
+      }
+      export function exactConstant(): number {
+        return 0.1 + 0.2
+      }
+    `)
+    // a * b can be NaN (0 * Infinity); the early return launders it, and the clamp does
+    // the rest.
+    expect(analyzedFunction(report, 'laundered').ensures)
+      .toEqual(['return is a finite number from 0 through 100'])
+    // A point interval is an exact value; the strict-bound rewrite must not turn it into
+    // an absurd range like 'more than 0.3 and at most 0.30000000000000004'.
+    expect(analyzedFunction(report, 'exactConstant').ensures)
+      .toEqual(['return is a finite number from 0.30000000000000004 through 0.30000000000000004'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
