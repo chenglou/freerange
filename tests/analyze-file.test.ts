@@ -1202,7 +1202,7 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 0 through 0'])
   })
 
-  test('element reads: bare arr[i] carries undefined honestly, arr[i]! assumes in bounds', () => {
+  test('element reads: bare arr[i] carries undefined honestly, arr[i]! requires in bounds', () => {
     const report = analyzeSource('element-reads.ts', `
       export function bareRead(values: number[], index: number): number {
         const value = values[index]
@@ -1220,13 +1220,15 @@ describe('analyzeFile', () => {
       'index is finite and not NaN',
     ])
     expect(bare.ensures).toEqual(['return is a finite number'])
-    // The asserted read's entry rests on the read being in bounds.
+    // The asserted read's index and array are both nameable over the parameters, so the
+    // obligation surfaces as a requires line the caller can satisfy, not an assumes line
+    // the entry merely rests on.
     const asserted = analyzedFunction(report, 'assertedRead')
     expect(asserted.assumptions).toEqual([
       'every values element is finite and not NaN',
       'index is finite and not NaN',
-      `the element read at ${file}:7:16 is in bounds`,
     ])
+    expect(asserted.requires).toEqual([`index is a valid values index (element read at ${file}:7:16)`])
   })
 
   test('top-level destructuring publishes each name as its own binding', () => {

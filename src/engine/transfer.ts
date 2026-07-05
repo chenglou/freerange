@@ -186,7 +186,22 @@ function evaluateInstructionKinded(
           ? passthroughValue(element)
           : passthroughValue(joinValues({kind: 'nullish', sentinels: 'undefined'}, element))
       }
-      if (!inBounds) addBoundsAssumption(context.boundsAssumptions, {site: instruction.site})
+      if (!inBounds) {
+        // The caller-actionable form wins when both sides are nameable: a requires line
+        // the caller can satisfy, instead of an assumes line the entry merely rests on.
+        const indexExpression = numericExpression(instruction.index, context.expressionContext)
+        const sequenceExpression = numericExpression(instruction.array, context.expressionContext)
+        if (indexExpression != null && sequenceExpression != null) {
+          addPrecondition(context.preconditions, {
+            kind: 'inBounds',
+            index: indexExpression,
+            sequence: sequenceExpression,
+            site: instruction.site,
+          })
+        } else {
+          addBoundsAssumption(context.boundsAssumptions, {site: instruction.site})
+        }
+      }
       return passthroughValue(element)
     }
     case 'nullishCheck': {

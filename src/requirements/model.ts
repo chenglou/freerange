@@ -31,6 +31,16 @@ export type InferredPrecondition =
       // even when the requirement surfaces two calls up.
       site: SiteID
     }
+  // An asserted element read (data[i]!) whose bounds the engine could not prove, with
+  // both the index and the sequence nameable over the caller's arguments. The caller-
+  // actionable upgrade of BoundsAssumption below: the condition is
+  // Number.isInteger(index) && 0 <= index < sequence.length.
+  | {
+      kind: 'inBounds'
+      index: NumericExpression
+      sequence: NumericExpression
+      site: SiteID
+    }
   // The peeled form of a nonzero obligation: dividing by `width - 4` requires width to
   // not be 4. Produced only by float-exact peeling (see peelNonzero), so the biconditional
   // holds: the printed condition is neither weaker nor stronger than the divisor being

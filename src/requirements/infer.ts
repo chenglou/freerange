@@ -124,6 +124,10 @@ export function peelNonzero(expression: NumericExpression, site: SiteID): Inferr
 // group requirements per operation.
 function samePrecondition(left: InferredPrecondition, right: InferredPrecondition): boolean {
   if (left.kind !== right.kind) return false
+  if (left.kind === 'inBounds' && right.kind === 'inBounds') {
+    return sameExpression(left.index, right.index) && sameExpression(left.sequence, right.sequence)
+  }
+  if (left.kind === 'inBounds' || right.kind === 'inBounds') return false
   if (left.kind === 'notEqualConstant' && right.kind === 'notEqualConstant' && left.value !== right.value) return false
   return sameExpression(left.expression, right.expression)
 }
