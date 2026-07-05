@@ -341,7 +341,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'functionWithoutBody': return 'function declarations need bodies'
     case 'destructuredParameter': return 'destructured parameters (take a named parameter and destructure it in the body)'
     case 'parameterType': return `function parameter with type ${reason.typeText}`
-    case 'parameterDefaultValue': return `default value for parameter ${reason.name} that may violate its assumed kind; only a plain literal default (e.g. = 5) is supported`
+    case 'parameterDefaultValue': return `default value for parameter ${reason.name}; supported defaults are literals provably inside the assumed kind (= 5 for a number, = null for a nullable) — otherwise drop the default and pass the argument explicitly`
     case 'missingReturn': return 'function path without a return (add a return on every path)'
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
