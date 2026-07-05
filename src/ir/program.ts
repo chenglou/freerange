@@ -71,7 +71,6 @@ export type UnsupportedReason =
   // Spread, method, or accessor in an object literal.
   | {kind: 'objectPropertyForm'}
   | {kind: 'computedPropertyName'}
-  | {kind: 'spreadOptionalProperty'; property: string}
   | {kind: 'spreadAfterProperties'}
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}

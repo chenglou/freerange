@@ -185,14 +185,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         }
         const source = lowerExpression(property.expression, context)
         for (const member of context.checker.getPropertiesOfType(sourceType)) {
-          // An optional property is present or absent per value, and a spread copies it
-          // only when present — `{...defaults, ...overrides}` with `overrides.volume`
-          // optional either overrides or keeps the default, and the analysis cannot know
-          // which. Skipping the property would silently keep the default's value while the
-          // runtime took the override, so the spread is rejected instead.
-          if ((member.flags & ts.SymbolFlags.Optional) !== 0) {
-            throw unsupported(property, {kind: 'spreadOptionalProperty', property: member.name})
-          }
           if (member.name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
           // Each copied property's kind must be representable: a `value: number | boolean`
           // property passes no read gate, so the record join may have dropped it, and the
@@ -220,6 +212,18 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // {...frame, width: frame.width + 40} — where the tag arrives via the spread — is
     // recognized too.
     const contextual = context.checker.getContextualType(current)
+    // Omitted optionals become explicit undefined values, keeping the invariant that a
+    // record value carries every property its static type declares — a join between a
+    // branch that set the property and one that omitted it must not drop it, and reads
+    // must find the honest maybe-missing value rather than crash. (A literal with no
+    // contextual record type has no optionals to fill.)
+    if (contextual != null && !contextual.isUnion() && valueKind(contextual, context.checker) === 'object') {
+      for (const member of context.checker.getPropertiesOfType(contextual)) {
+        if ((member.flags & ts.SymbolFlags.Optional) === 0 || lastByName.has(member.name)) continue
+        const absent = addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'undefined'})
+        lastByName.set(member.name, {name: member.name, value: absent})
+      }
+    }
     let tag: {property: string; value: string} | null = null
     if (contextual != null && contextual.isUnion() && valueKind(contextual, context.checker) === 'taggedUnion') {
       const tagProperty = taggedUnionProperty(contextual.types, context.checker)
@@ -785,16 +789,11 @@ export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker):
 // property may genuinely be missing on some paths, so letting the access through would
 // read a property the record value may not carry.
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
-  // An optional property stays out even though its `T | undefined` type now classifies:
-  // the record value genuinely may not carry the property (a join dropped it, or the
-  // literal omitted it), so there is nothing to read. Required properties of missing-able
-  // kinds read fine.
-  const receiverType = checker.getTypeAtLocation(access.expression)
-  const property = checker.getPropertyOfType(receiverType, access.name.text)
+  // An optional property reads as its maybe-undefined value: declared kinds wrap it in
+  // the undefined sentinel and object literals fill omitted ones explicitly, so a record
+  // value always carries every property its static type declares — there is always
+  // something honest to read.
   const type = checker.getTypeAtLocation(access)
-  if (property != null && (property.flags & ts.SymbolFlags.Optional) !== 0) {
-    throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
-  }
   if (valueKind(type, checker) != null) return
   throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
 }

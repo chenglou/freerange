@@ -418,7 +418,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'missingReturn': return 'function path without a return (add a return on every path)'
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'
-    case 'spreadOptionalProperty': return `spread of a value whose property ${reason.property} is optional (declare every property of the spread source required)`
     case 'spreadAfterProperties': return 'a spread after other entries (the spread value can carry extra properties that override earlier entries at runtime; write the spread first, then override with explicit properties)'
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'

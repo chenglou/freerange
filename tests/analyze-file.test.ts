@@ -356,33 +356,20 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 1 through 2'])
   })
 
-  test('records optional-property access as unsupported but keeps shared-property reads', () => {
-    const gated = analyzeSource('optional-read.ts', `
+  test('optional properties survive branch joins between setting and omitting literals', () => {
+    // One branch's literal omits y, the other sets it: the omitted side fills an explicit
+    // undefined, so the join keeps the property as its maybe-undefined value instead of
+    // dropping it, and the read stays honest.
+    const report = analyzeSource('optional-read.ts', `
       type Box = {x: number; y?: number}
       export function pick(flag: number): number {
         let box: Box = {x: 1}
         if (flag > 0) { box = {x: 2, y: 3} }
-        const maybe = box.y
-        return box.x
+        return (box.y ?? 0) + box.x
       }
     `)
-    const file = resolve('optional-read.ts')
-    expect(gated.functions).toEqual([{
-      kind: 'unsupported',
-      name: 'pick',
-      unsupported: `value of type number | undefined at ${file}:6:23`,
-    }])
-
-    const benign = analyzeSource('optional-benign.ts', `
-      type Box = {x: number; y?: number}
-      export function shared(flag: number): number {
-        let box: Box = {x: 1}
-        if (flag > 0) { box = {x: 2, y: 3} }
-        return box.x
-      }
-    `)
-    expect(analyzedFunction(benign, 'shared').ensures)
-      .toEqual(['return is a finite integer number from 1 through 2'])
+    expect(analyzedFunction(report, 'pick').ensures)
+      .toEqual(['return is a finite integer number from 1 through 5'])
   })
 
   test('records mixed object shapes as unsupported', () => {
@@ -840,23 +827,50 @@ describe('analyzeFile', () => {
     expect(picked.ensures).toEqual(['return.x is a finite integer number from 1 through 3'])
   })
 
-  test('rejects a spread whose source has an optional property', () => {
-    // {...defaults, ...overrides} with overrides.volume optional either overrides or
-    // keeps the default per runtime value; skipping the property would keep the default's
-    // value while the runtime took the override.
-    const report = analyzeSource('spread-optional.ts', `
+  test('optional properties read, fill, and spread as maybe-undefined values', () => {
+    // session?: boolean reads as boolean | undefined — exactly what the missing-value
+    // machinery models. Object literals fill omitted optionals with an explicit undefined
+    // (so `omitted` proves exactly 5 through the ?? fallback), spreads copy them as their
+    // maybe-undefined values, and the assumes prose carries the honest condition. Sound
+    // under exactOptionalPropertyTypes, which the analyzer forces: a well-typed optional
+    // is either absent or a T, never an explicit undefined, so absence and the undefined
+    // sentinel provably coincide.
+    const report = analyzeSource('optional-properties.ts', `
+      type Config = {gain: number; volume?: number}
       export function effectiveVolume(): number {
-        const overrides: {gain: number; volume?: number} = {gain: 2, volume: 7}
+        const overrides: Config = {gain: 2, volume: 7}
         const merged = {...overrides, gain: 1}
         return merged.gain
       }
+      export function readOptional(config: Config): number {
+        return config.volume ?? 10
+      }
+      export function omitted(): number {
+        const config: Config = {gain: 2}
+        return config.volume ?? 5
+      }
     `)
-    const file = resolve('spread-optional.ts')
-    expect(report.functions).toEqual([{
-      kind: 'unsupported',
-      name: 'effectiveVolume',
-      unsupported: `spread of a value whose property volume is optional (declare every property of the spread source required) at ${file}:4:25`,
-    }])
+    expect(analyzedFunction(report, 'effectiveVolume').ensures)
+      .toEqual(['return is a finite integer number from 1 through 1'])
+    expect(analyzedFunction(report, 'readOptional').assumptions).toEqual([
+      'config.gain is finite and not NaN',
+      'config.volume is undefined or a finite non-NaN number',
+    ])
+    expect(analyzedFunction(report, 'readOptional').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'omitted').ensures).toEqual(['return is a finite integer number from 5 through 5'])
+  })
+
+  test('optional properties inside tagged-union variants classify too', () => {
+    const report = analyzeSource('optional-variant.ts', `
+      type Route = {type: 'style-creator'; sref?: string} | {type: 'home'; scroll: number}
+      export function scrollOf(route: Route): number {
+        if (route.type === 'home') { return route.scroll }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'scrollOf').assumptions)
+      .toEqual(["route.scroll is finite and not NaN (when route.type is 'home')"])
+    expect(analyzedFunction(report, 'scrollOf').ensures).toEqual(['return is a finite number'])
   })
 
   test('a recursive generic module type stays opaque instead of crashing the shape walk', () => {

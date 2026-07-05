@@ -235,8 +235,13 @@ function evaluateInstructionKinded(
     }
     case 'inCheck': {
       const union = requiredTaggedUnion(state, instruction.union)
-      const hasIt = union.variants.some(variant => recordProperty(variant.record, instruction.property) != null)
-      const lacksIt = union.variants.some(variant => recordProperty(variant.record, instruction.property) == null)
+      let hasIt = false
+      let lacksIt = false
+      for (const variant of union.variants) {
+        const presence = variantPropertyPresence(variant.record, instruction.property)
+        if (presence !== 'absent') hasIt = true
+        if (presence !== 'present') lacksIt = true
+      }
       return value({kind: 'boolean', canBeTrue: hasIt, canBeFalse: lacksIt})
     }
     case 'nullishCheck': {
@@ -500,8 +505,22 @@ export function refineTagCheck(
   return result
 }
 
+// Whether 'x' in value holds for a variant: a property the variant never declares is
+// absent, a required one is present, and an OPTIONAL one (its value carries the undefined
+// sentinel) is unknown — at runtime the property may genuinely not exist, so the check
+// must not claim either way, and the variant survives both branches unrefined. (A
+// required `x: number | undefined` also reads as maybe-undefined and lands in the unknown
+// bucket — conservative, since for it `in` is actually always true.)
+function variantPropertyPresence(record: AbstractRecord, name: string): 'present' | 'absent' | 'unknown' {
+  const property = recordProperty(record, name)
+  if (property == null) return 'absent'
+  const maybeUndefined = (property.kind === 'nullish' || property.kind === 'maybeNullish')
+    && (property.sentinels === 'undefined' || property.sentinels === 'both')
+  return maybeUndefined ? 'unknown' : 'present'
+}
+
 // The branch where 'tab' in route held keeps the variants declaring the property; the
-// other branch keeps the rest. Same shape as the tag refinement.
+// other branch keeps the rest, and variants whose property is optional survive both.
 export function refineInCheck(
   state: ExecutionState,
   check: Extract<InstructionIR, {kind: 'inCheck'}>,
@@ -510,8 +529,11 @@ export function refineInCheck(
 ): ExecutionState | null {
   const result = cloneState(state)
   const union = requiredTaggedUnion(result, check.union)
-  const variants = union.variants.filter(variant =>
-    (recordProperty(variant.record, check.property) != null) === truth)
+  const variants = union.variants.filter(variant => {
+    const presence = variantPropertyPresence(variant.record, check.property)
+    if (presence === 'unknown') return true
+    return (presence === 'present') === truth
+  })
   if (variants.length === 0) return null
   writeThroughProducers(result, check.union, {kind: 'taggedUnion', tagProperty: union.tagProperty, variants}, producers)
   return result

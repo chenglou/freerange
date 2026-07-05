@@ -326,7 +326,7 @@ function declaredRecordProperties(
   if (seen.length >= 8 || seen.includes(type)) return null
   const properties: Array<{name: string; declared: DeclaredKind}> = []
   for (const property of checker.getPropertiesOfType(type)) {
-    if ((property.flags & ts.SymbolFlags.Optional) !== 0) return null
+    const optional = (property.flags & ts.SymbolFlags.Optional) !== 0
     const propertyDeclared = declaredKind(
       checker.getTypeOfSymbolAtLocation(property, location),
       location,
@@ -334,10 +334,33 @@ function declaredRecordProperties(
       [...seen, type],
     )
     if (propertyDeclared == null) return null
-    properties.push({name: property.name, declared: propertyDeclared})
+    // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
+    // value machinery models; under exactOptionalPropertyTypes (which the analyzer forces)
+    // a well-typed value's optional property is either absent or a T, never an explicit
+    // undefined, so absent and the undefined sentinel provably coincide — the collapse is
+    // sound even against future `in` checks (see current-decisions.md). Object literals
+    // fill omitted optionals with an explicit undefined value, so joins keep the property.
+    properties.push({
+      name: property.name,
+      declared: optional ? wrapOptional(propertyDeclared) : propertyDeclared,
+    })
   }
   if (properties.length === 0) return null
   return properties
+}
+
+// The declared kind of an optional property: its type with the undefined sentinel added.
+// An already-nullable type gains the sentinel (folded into 'both' when null was there);
+// everything else wraps.
+function wrapOptional(declared: DeclaredKind): DeclaredKind {
+  if (declared.kind === 'nullish') {
+    return {
+      kind: 'nullish',
+      inner: declared.inner,
+      sentinels: declared.sentinels === 'null' || declared.sentinels === 'both' ? 'both' : 'undefined',
+    }
+  }
+  return {kind: 'nullish', inner: declared, sentinels: 'undefined'}
 }
 
 // One union member as a variant: its value for the union's tag property plus its record
