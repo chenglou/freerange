@@ -64,7 +64,10 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     lowerStatements(statement.statements, context)
     return
   }
-  if (ts.isSwitchStatement(statement)) throw unsupported(statement, {kind: 'switchStatement'})
+  if (ts.isSwitchStatement(statement)) {
+    lowerSwitchStatement(statement, context)
+    return
+  }
   throw unsupported(statement, {kind: 'statementForm', syntax: ts.SyntaxKind[statement.kind]})
 }
 
@@ -105,6 +108,132 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
   })
   context.currentBlock = context.blocks[continuation]!
   context.bindings = new Map(bindingsBeforeBranch)
+  for (let index = 0; index < changed.length; index++) {
+    context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
+  }
+}
+
+// Switch without fallthrough (owner decision): every non-empty case body must end in a
+// top-level break or a return, stacked empty labels share the next body, default comes
+// last. Under that rule a switch is exactly an if/else chain on ===, so the lowering is
+// pure reuse — number subjects get the comparison narrowing (case 4 knows the subject is
+// 4), string subjects get the unknown-boolean dispatch with both branches analyzed, and
+// bodies that break merge at the exit with the same block-parameter machinery as if/else.
+function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionContext): void {
+  const subjectType = context.checker.getTypeAtLocation(statement.expression)
+  const subjectKind = valueKind(subjectType, context.checker)
+  if (subjectKind !== 'number' && subjectKind !== 'opaque') {
+    throw unsupported(statement.expression, {kind: 'switchSubject', typeText: context.checker.typeToString(subjectType)})
+  }
+  const subject = lowerExpression(statement.expression, context)
+
+  // Group stacked empty labels with the body they share; reject a default that is not the
+  // last clause (JS would test later cases before running it — supporting that order buys
+  // nothing over writing default last).
+  type CaseGroup = {labels: ts.Expression[]; statements: ts.Statement[]; clause: ts.CaseOrDefaultClause}
+  const groups: CaseGroup[] = []
+  let pendingLabels: ts.Expression[] = []
+  let defaultGroup: CaseGroup | null = null
+  const clauses = statement.caseBlock.clauses
+  for (let index = 0; index < clauses.length; index++) {
+    const clause = clauses[index]!
+    if (ts.isDefaultClause(clause)) {
+      if (index !== clauses.length - 1 || pendingLabels.length > 0) {
+        throw unsupported(clause, {kind: 'switchDefaultNotLast'})
+      }
+      defaultGroup = {labels: [], statements: [...clause.statements], clause}
+      continue
+    }
+    pendingLabels.push(clause.expression)
+    if (clause.statements.length > 0) {
+      groups.push({labels: pendingLabels, statements: [...clause.statements], clause})
+      pendingLabels = []
+    }
+  }
+  // Trailing empty labels with no body to share fall out of the switch at runtime; the
+  // no-fallthrough rule wants that written as an explicit body, so they reject too.
+  if (pendingLabels.length > 0) {
+    throw unsupported(statement, {kind: 'switchFallthrough'})
+  }
+
+  const bindingsBefore = new Map(context.bindings)
+  // Bodies that ended in a break continue after the switch, as does the no-match path
+  // when there is no default; all of them merge at the continuation.
+  const exits: Array<{block: MutableBlock; bindings: Map<ts.Symbol, ValueID>}> = []
+
+  const lowerBody = (group: CaseGroup): void => {
+    const body = group.statements
+    const last = body[body.length - 1]
+    const endsWithBreak = last != null && ts.isBreakStatement(last)
+    lowerStatements(endsWithBreak ? body.slice(0, -1) : body, context)
+    if (context.currentBlock.terminator == null) {
+      if (!endsWithBreak) throw unsupported(group.clause, {kind: 'switchFallthrough'})
+      exits.push({block: context.currentBlock, bindings: context.bindings})
+    }
+  }
+
+  for (const group of groups) {
+    const bodyBlock = createBlock(context)
+    // Chain of label tests: each label's false edge goes to the next label, the last
+    // label's false edge to the next group (or the default / the no-match exit).
+    for (const label of group.labels) {
+      const labelKind = valueKind(context.checker.getTypeAtLocation(label), context.checker)
+      if (labelKind !== subjectKind) {
+        throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
+      }
+      const labelValue = lowerExpression(label, context)
+      const condition = subjectKind === 'number'
+        ? addInstruction(context, label, {kind: 'compare', operator: 'equal', left: subject, right: labelValue})
+        : addInstruction(context, label, {kind: 'unknownBoolean'})
+      const nextTest = createBlock(context)
+      terminate(context.currentBlock, {
+        kind: 'branch',
+        condition,
+        whenTrue: {block: bodyBlock, arguments: []},
+        whenFalse: {block: nextTest, arguments: []},
+        site: addSite(context, label),
+      })
+      context.currentBlock = context.blocks[nextTest]!
+    }
+    const afterTests = context.currentBlock
+    const bindingsAtTests = new Map(context.bindings)
+    context.currentBlock = context.blocks[bodyBlock]!
+    context.bindings = new Map(bindingsBefore)
+    lowerBody(group)
+    context.currentBlock = afterTests
+    context.bindings = bindingsAtTests
+  }
+
+  if (defaultGroup == null) {
+    exits.push({block: context.currentBlock, bindings: context.bindings})
+  } else {
+    lowerBody(defaultGroup)
+  }
+
+  if (exits.length === 0) {
+    // Every path returned; subsequent statements land in a terminated block, where the
+    // statement-after-return rejection already speaks.
+    return
+  }
+  if (exits.length === 1) {
+    context.currentBlock = exits[0]!.block
+    context.bindings = bindingsVisibleAfterBranch(bindingsBefore, exits[0]!.bindings)
+    return
+  }
+  const changed: ts.Symbol[] = []
+  for (const [symbol, value] of bindingsBefore) {
+    if (exits.some(exit => requiredBranchBinding(symbol, exit.bindings) !== value)) changed.push(symbol)
+  }
+  const continuation = createBlock(context, changed.length)
+  for (const exit of exits) {
+    terminate(exit.block, {
+      kind: 'jump',
+      target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, exit.bindings))},
+      site: addSite(context, statement),
+    })
+  }
+  context.currentBlock = context.blocks[continuation]!
+  context.bindings = new Map(bindingsBefore)
   for (let index = 0; index < changed.length; index++) {
     context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
   }

@@ -434,7 +434,9 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'
     case 'expressionForm': return `expression (${reason.syntax})`
     case 'statementForm': return `statement (${reason.syntax})`
-    case 'switchStatement': return 'switch statement; write an if/else chain instead'
+    case 'switchFallthrough': return 'switch case that falls through to the next case (end every case body with break or return)'
+    case 'switchDefaultNotLast': return 'switch with a default clause before other cases (write default as the last clause)'
+    case 'switchSubject': return `switch on a value of type ${reason.typeText} (only numbers and strings dispatch)`
   }
 }
 

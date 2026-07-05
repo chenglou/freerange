@@ -1639,18 +1639,77 @@ describe('analyzeFile', () => {
       .toEqual(['slots[each] is null or slots[each].x is finite and not NaN'])
   })
 
-  test('review round 2: switch rejects with a rewrite hint, not a SyntaxKind dump', () => {
+  test('switch dispatches without fallthrough: strings, numbers with narrowing, break merges', () => {
+    // Owner decision: every non-empty case body ends in break or return, stacked empty
+    // labels share the next body, default comes last. Under that rule a switch is exactly
+    // an if/else chain on ===: string subjects analyze both branches, number subjects get
+    // the comparison narrowing, and break paths merge after the switch.
     const report = analyzeSource('switch-dispatch.ts', `
       export function dispatch(mode: string, a: number, b: number): number {
         switch (mode) {
-          case 'a': return a
-          default: return b
+          case 'a':
+          case 'b':
+            return a
+          default:
+            return b
+        }
+      }
+      export function gapFor(size: number): number {
+        let gap = 0
+        switch (size) {
+          case 4: gap = 1; break
+          case 8: gap = 2; break
+          default: gap = 3; break
+        }
+        return gap
+      }
+      export function narrows(step: number): number {
+        switch (step) {
+          case 4: return 100 / step
+          default: return 0
         }
       }
     `)
-    const dispatch = report.functions.find(fn => fn.name === 'dispatch')!
-    if (dispatch.kind !== 'unsupported') throw new Error(`expected dispatch to be unsupported, got ${dispatch.kind}`)
-    expect(dispatch.unsupported).toContain('switch statement; write an if/else chain instead')
+    expect(analyzedFunction(report, 'dispatch').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'gapFor').ensures).toEqual(['return is a finite integer number from 1 through 3'])
+    // Inside case 4 the subject is exactly 4, so the division discharges with no
+    // requirement — the same narrowing an if (step === 4) gets.
+    expect(analyzedFunction(report, 'narrows').requires).toEqual([])
+    expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite number from 0 through 25'])
+  })
+
+  test('switch rejections: fallthrough, default not last, unsupported subjects', () => {
+    const report = analyzeSource('switch-rejects.ts', `
+      export function falls(mode: string, a: number): number {
+        switch (mode) {
+          case 'a': a = a + 1
+          case 'b': return a
+        }
+        return 0
+      }
+      export function defaultFirst(mode: string, a: number, b: number): number {
+        switch (mode) {
+          default: return b
+          case 'a': return a
+        }
+      }
+      export function boolSubject(flag: boolean, a: number): number {
+        switch (flag) {
+          case true: return a
+          default: return 0
+        }
+      }
+    `)
+    const entries = new Map(report.functions.map(fn => [fn.name, fn]))
+    const falls = entries.get('falls')!
+    if (falls.kind !== 'unsupported') throw new Error(`expected falls to be unsupported, got ${falls.kind}`)
+    expect(falls.unsupported).toContain('falls through to the next case')
+    const defaultFirst = entries.get('defaultFirst')!
+    if (defaultFirst.kind !== 'unsupported') throw new Error(`expected defaultFirst unsupported, got ${defaultFirst.kind}`)
+    expect(defaultFirst.unsupported).toContain('default clause before other cases')
+    const boolSubject = entries.get('boolSubject')!
+    if (boolSubject.kind !== 'unsupported') throw new Error(`expected boolSubject unsupported, got ${boolSubject.kind}`)
+    expect(boolSubject.unsupported).toContain('only numbers and strings dispatch')
   })
 
   test('guards discharge nonzero obligations in all three everyday spellings', () => {

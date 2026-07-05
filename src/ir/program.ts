@@ -136,9 +136,12 @@ export type UnsupportedReason =
   // Catch-alls carry the ts.SyntaxKind name, e.g. 'FalseKeyword', 'WhileStatement'.
   | {kind: 'expressionForm'; syntax: string}
   | {kind: 'statementForm'; syntax: string}
-  // Rejected by name for the rewrite hint: string dispatch is squarely in the subset via
-  // if/else chains on ===, so the prose points there instead of dumping a SyntaxKind.
-  | {kind: 'switchStatement'}
+  // Switch is supported without fallthrough (owner decision): every non-empty case body
+  // must end in break or return, stacked empty labels share the next body, default comes
+  // last. These three name the rejections that remain.
+  | {kind: 'switchFallthrough'}
+  | {kind: 'switchDefaultNotLast'}
+  | {kind: 'switchSubject'; typeText: string}
 
 // A function whose lowering stopped. The half-built CFG is discarded wholesale so nothing
 // downstream can mistake this record for analyzable IR. Sites already pushed while lowering
