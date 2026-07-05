@@ -1,4 +1,4 @@
-import {isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
+import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import type {AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
@@ -461,10 +461,37 @@ function numberSummary(path: string, value: AbstractNumber, program: ProgramIR):
       ? ` (NaN possible from the operation at ${formatSite(program, value.lossSite)})`
       : ` (can overflow at ${formatSite(program, value.lossSite)})`
   const subject = `${path} is a ${domain}${kind}number`
+  const strictLower = strictBoundWords(value.lower, 'lower')
+  const strictUpper = strictBoundWords(value.upper, 'upper')
   if (value.lower === -Number.MAX_VALUE && value.upper === Number.MAX_VALUE) return `${subject}${blame}`
-  if (value.upper === Number.MAX_VALUE) return `${subject} at least ${formatNumber(value.lower)}${blame}`
-  if (value.lower === -Number.MAX_VALUE) return `${subject} at most ${formatNumber(value.upper)}${blame}`
+  if (value.upper === Number.MAX_VALUE) {
+    return `${subject} ${strictLower ?? `at least ${formatNumber(value.lower)}`}${blame}`
+  }
+  if (value.lower === -Number.MAX_VALUE) {
+    return `${subject} ${strictUpper ?? `at most ${formatNumber(value.upper)}`}${blame}`
+  }
+  if (strictLower != null || strictUpper != null) {
+    const low = strictLower ?? `at least ${formatNumber(value.lower)}`
+    const high = strictUpper ?? `at most ${formatNumber(value.upper)}`
+    return `${subject} ${low} and ${high}${blame}`
+  }
   return `${subject} from ${formatNumber(value.lower)} through ${formatNumber(value.upper)}${blame}`
+}
+
+// A strict comparison refines a float bound to the adjacent representable double, which
+// prints hideously (`if (x > 0)` gives lower bound 5e-324, `if (x < 100)` gives upper
+// bound 99.99999999999999). When stepping the bound back lands on a visibly simpler
+// number, the strict phrasing says the same thing readably: 'more than 0', 'less than
+// 100'. Bounds that already print plainly return null and keep the ordinary phrasing.
+function strictBoundWords(bound: number, side: 'lower' | 'upper'): string | null {
+  const stepped = side === 'lower' ? nextDown(bound) : nextUp(bound)
+  // The margin is deliberately wide: only rewrite when the stepped form is drastically
+  // shorter (5e-324 -> 0, 99.99999999999999 -> 100), never for a computed bound whose
+  // neighbor happens to print a digit or two shorter.
+  if (formatNumber(stepped).length + 4 <= formatNumber(bound).length) {
+    return `${side === 'lower' ? 'more than' : 'less than'} ${formatNumber(stepped)}`
+  }
+  return null
 }
 
 // Infinite bounds are expected here; String renders them as 'Infinity'/'-Infinity'.

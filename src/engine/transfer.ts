@@ -1,4 +1,6 @@
 import {
+  nextDown,
+  nextUp,
   absoluteNumber,
   addNumbers,
   constantNumber,
@@ -464,6 +466,8 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
       integer: current.integer || refined.integer,
       mayBeNaN: current.mayBeNaN && refined.mayBeNaN,
     }
+    // An intersection keeps every fact either cover proved, the zero exclusion included.
+    if (current.excludesZero === true || refined.excludesZero === true) met.excludesZero = true
     const lossSite = refined.lossSite ?? current.lossSite
     return lossSite == null ? met : {...met, lossSite}
   }
@@ -495,17 +499,18 @@ export function refineComparison(
   truth: boolean,
   producers: Array<InstructionIR | undefined>,
 ): ExecutionState | null {
-  if (!truth && comparison.operator === 'equal') return cloneState(state)
   const result = cloneState(state)
   const left = requiredNumber(result, comparison.left)
   const right = requiredNumber(result, comparison.right)
-  // The false branch means "the written condition did not hold" — which is also where a
-  // NaN operand lands, with the OTHER operand unconstrained. Inverting the comparison and
-  // refining bounds is only sound when neither operand can be NaN; e.g. with a possibly-NaN
-  // clamp result as the right operand, `if (x < clamped) ... else return x` reaches the
-  // else with any x at all whenever clamped is NaN.
-  if (!truth && (left.mayBeNaN || right.mayBeNaN)) return result
   const operator = truth ? comparison.operator : invertedComparison(comparison.operator)
+  // The branch where the written condition did not hold is also where a NaN operand lands,
+  // with the OTHER operand unconstrained. Inverting an ordered comparison and refining
+  // bounds is only sound when neither operand can be NaN; e.g. with a possibly-NaN clamp
+  // result as the right operand, `if (x < clamped) ... else return x` reaches the else
+  // with any x at all whenever clamped is NaN. The not-equal refinement is exempt: it only
+  // cuts interval points, which never rules out a NaN inhabitant, and NaN lands on the
+  // not-equal side anyway (NaN !== c is true).
+  if (!truth && operator !== 'equal' && (left.mayBeNaN || right.mayBeNaN)) return result
   let refinedLeft = left
   let refinedRight = right
   switch (operator) {
@@ -530,22 +535,37 @@ export function refineComparison(
       const upper = Math.min(left.upper, right.upper)
       refinedLeft = withBounds(left, lower, upper)
       refinedRight = withBounds(right, lower, upper)
+      // Equal values share the zero exclusion: if either side cannot be zero, neither can.
+      if (refinedLeft.excludesZero === true || refinedRight.excludesZero === true) {
+        refinedLeft = {...refinedLeft, excludesZero: true}
+        refinedRight = {...refinedRight, excludesZero: true}
+      }
+      break
+    }
+    case 'notEqual': {
+      refinedLeft = excludePointFrom(left, right)
+      refinedRight = excludePointFrom(right, left)
       break
     }
   }
   const emptied = refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper
-  // NaN fails every comparison, so it never reaches the branch where the written condition
-  // held, and it always reaches the branch where it failed.
-  if (truth) {
-    if (emptied) return null
+  // NaN fails every ordered comparison and ===, so it never reaches the branch where that
+  // condition held, and it always reaches the branch where it failed. Not-equal is the
+  // mirror image: NaN !== c is true, so NaN lands on the not-equal side and mayBeNaN must
+  // survive there.
+  const holdsForNaN = operator === 'notEqual'
+  if (emptied) {
+    // The interval refinement only rules out the non-NaN inhabitants; a NaN operand still
+    // lands on the side its comparison semantics allow (e.g. `x > -1 ? 1 : 0` with x
+    // possibly NaN takes the 0 arm at runtime, and `x !== x` style emptiness keeps the
+    // NaN inhabitant on the not-equal side). Keep the unrefined values — a superset —
+    // rather than pruning the branch.
+    if ((!truth || holdsForNaN) && (left.mayBeNaN || right.mayBeNaN)) return cloneState(state)
+    return null
+  }
+  if (truth && !holdsForNaN) {
     refinedLeft = {...refinedLeft, mayBeNaN: false}
     refinedRight = {...refinedRight, mayBeNaN: false}
-  } else if (emptied) {
-    // The interval refinement only rules out the non-NaN inhabitants; a NaN operand still
-    // lands here (e.g. `x > -1 ? 1 : 0` with x possibly NaN takes the 0 arm at runtime).
-    // Keep the unrefined values — a superset — rather than pruning the branch.
-    if (left.mayBeNaN || right.mayBeNaN) return cloneState(state)
-    return null
   }
   // Through the producer chain, like the null-check refinement: narrowing an
   // arrayLength's result rebuilds the array value with the narrowed length (so
@@ -622,6 +642,10 @@ function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: C
       const definitelyDifferent = left.upper < right.lower || right.upper < left.lower
       return booleanRange(definitelyEqual, definitelyDifferent)
     }
+    case 'notEqual': {
+      const equal = compareNumbers(left, right, 'equal')
+      return {kind: 'boolean', canBeTrue: equal.canBeFalse, canBeFalse: equal.canBeTrue}
+    }
   }
 }
 
@@ -639,8 +663,24 @@ function invertedComparison(operator: ComparisonOperator): ComparisonOperator {
     case 'lessThanOrEqual': return 'greaterThan'
     case 'greaterThan': return 'lessThanOrEqual'
     case 'greaterThanOrEqual': return 'lessThan'
-    case 'equal': return 'equal'
+    case 'equal': return 'notEqual'
+    case 'notEqual': return 'equal'
   }
+}
+
+// x !== other: when the other side is a single known point, cut it from x where the
+// domain can express the cut — at an interval endpoint (integers step by one, floats step
+// to the adjacent representable double), or via the excludesZero flag when the point is
+// zero strictly inside the bounds. A nonzero point strictly inside stays unrefined: an
+// interval cannot carry a hole, and zero is the only point division cares about.
+function excludePointFrom(value: AbstractNumber, other: AbstractNumber): AbstractNumber {
+  if (other.lower !== other.upper || other.mayBeNaN) return value
+  const point = other.lower
+  let refined = value
+  if (refined.lower === point) refined = {...refined, lower: strictLower(point, refined.integer)}
+  if (refined.upper === point) refined = {...refined, upper: strictUpper(point, refined.integer)}
+  if (point === 0 && refined.lower < 0 && refined.upper > 0) refined = {...refined, excludesZero: true}
+  return refined
 }
 
 function withBounds(value: AbstractNumber, lower: number, upper: number): AbstractNumber {
@@ -663,10 +703,13 @@ function withBounds(value: AbstractNumber, lower: number, upper: number): Abstra
   return {...value, lower: refinedLower, upper: refinedUpper}
 }
 
+// The exact refinement for a strict comparison: for integers the next integer, for floats
+// the adjacent representable double — runtime x > b implies x >= nextUp(b), so `if
+// (height > 0)` proves the divisor nonzero instead of keeping zero as a closed bound.
 function strictLower(value: number, integer: boolean): number {
-  return integer ? Math.floor(value) + 1 : value
+  return integer ? Math.floor(value) + 1 : nextUp(value)
 }
 
 function strictUpper(value: number, integer: boolean): number {
-  return integer ? Math.ceil(value) - 1 : value
+  return integer ? Math.ceil(value) - 1 : nextDown(value)
 }

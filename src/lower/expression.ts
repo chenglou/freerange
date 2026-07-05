@@ -526,6 +526,11 @@ function comparisonOperator(kind: ts.SyntaxKind): ComparisonOperator | null {
     case ts.SyntaxKind.GreaterThanEqualsToken: return 'greaterThanOrEqual'
     case ts.SyntaxKind.EqualsEqualsToken:
     case ts.SyntaxKind.EqualsEqualsEqualsToken: return 'equal'
+    // Loose != on two numbers is exactly strict !== (no coercion between numbers); the
+    // nullish and opaque spellings of both tokens are claimed by their own handlers
+    // before the operator classification runs.
+    case ts.SyntaxKind.ExclamationEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken: return 'notEqual'
     default: return null
   }
 }

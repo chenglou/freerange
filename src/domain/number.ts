@@ -8,6 +8,14 @@ export type AbstractNumber = {
   upper: number
   integer: boolean
   mayBeNaN: boolean
+  // Zero is cut out of an interval that otherwise straddles it — set by a `count !== 0`
+  // guard (or an `if (count === 0) return` early exit) when zero sits strictly inside the
+  // bounds, where no interval endpoint can express the cut. Division is the only consumer:
+  // a guarded divisor mints no nonzero requirement. Absent means "may be zero", so every
+  // arithmetic producer is conservative by construction (x - x can be zero from nonzero
+  // operands); only branch refinement sets the flag, and joins keep it only when both
+  // sides exclude zero. Unlike lossSite below, this is semantics: sameNumbers compares it.
+  excludesZero?: boolean
   // Annotation only, never semantics: the operation where finiteness or NaN-freedom was
   // first lost, for the report's blame suffix. Deliberately excluded from sameNumbers and
   // never branched on by the engine — if it participated in equality, two semantically
@@ -15,6 +23,23 @@ export type AbstractNumber = {
   // headers and disturb fixed points. Joins keep the left side's site when both carry one;
   // blame is best-effort prose, not a guarantee.
   lossSite?: SiteID
+}
+
+const float64Scratch = new Float64Array(1)
+const bitsScratch = new BigInt64Array(float64Scratch.buffer)
+
+// The adjacent representable double above the value — the exact refinement for a strict
+// float comparison: runtime x > b implies x >= nextUp(b), and no double sits between them.
+export function nextUp(value: number): number {
+  if (Number.isNaN(value) || value === Infinity) return value
+  if (value === 0) return Number.MIN_VALUE
+  float64Scratch[0] = value
+  bitsScratch[0] = bitsScratch[0]! + (value > 0 ? 1n : -1n)
+  return float64Scratch[0]
+}
+
+export function nextDown(value: number): number {
+  return -nextUp(-value)
 }
 
 export function isFiniteNumber(value: AbstractNumber): boolean {
@@ -88,32 +113,57 @@ export function divideNumbers(left: AbstractNumber, right: AbstractNumber): Abst
   // A possibly-infinite dividend over a finite nonzero NaN-free divisor stays exact:
   // the division's NaN corners are 0/0 and Infinity/Infinity, and this divisor rules both
   // out, so e.g. a frame delta that can overflow divided by a step constant is possibly
-  // non-finite, never NaN. Quotient corners are monotone (Infinity / 4 is Infinity).
-  if (
-    !left.mayBeNaN && !right.mayBeNaN
-    && isFiniteNumber(right) && !includesZero(right)
-  ) {
-    const quotients = [
-      left.lower / right.lower,
-      left.lower / right.upper,
-      left.upper / right.lower,
-      left.upper / right.upper,
-    ]
-    return {
-      kind: 'number',
-      lower: Math.min(...quotients),
-      upper: Math.max(...quotients),
-      integer: false,
-      mayBeNaN: false,
+  // non-finite, never NaN. The quotient corners are monotone (Infinity / 4 is Infinity) —
+  // but ONLY over a one-signed divisor interval; a divisor straddling zero with zero
+  // excluded by a guard takes the zero-cut path instead, since its corner quotients would
+  // exclude the blow-up near zero.
+  if (!left.mayBeNaN && !right.mayBeNaN && isFiniteNumber(right)) {
+    if (right.lower > 0 || right.upper < 0) {
+      const quotients = [
+        left.lower / right.lower,
+        left.lower / right.upper,
+        left.upper / right.lower,
+        left.upper / right.upper,
+      ]
+      return {
+        kind: 'number',
+        lower: Math.min(...quotients),
+        upper: Math.max(...quotients),
+        integer: false,
+        mayBeNaN: false,
+      }
     }
+    if (right.excludesZero === true) return divideAcrossZero(left, right)
   }
-  if (!safeOperands(left, right) || includesZero(right)) return unknownNumber()
+  if (!safeOperands(left, right) || (right.lower <= 0 && right.upper >= 0)) return unknownNumber()
   const quotients = [
     left.lower / right.lower,
     left.lower / right.upper,
     left.upper / right.lower,
     left.upper / right.upper,
   ]
+  return boundedResult(Math.min(...quotients), Math.max(...quotients), false, left, right)
+}
+
+// A divisor interval straddling zero with zero itself excluded — by a `!== 0` guard (the
+// excludesZero flag) or a recorded nonzero requirement. An integer divisor then has
+// magnitude at least 1, so the quotient is bounded by the dividend; a float divisor can
+// sit arbitrarily close to zero, so the quotient can overflow — possibly non-finite, but
+// never NaN (zero is cut, so 0/0 cannot happen).
+function divideAcrossZero(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
+  if (!right.integer) {
+    return {kind: 'number', lower: -Infinity, upper: Infinity, integer: false, mayBeNaN: false}
+  }
+  const negativePart: AbstractNumber = {...right, upper: Math.min(right.upper, -1)}
+  const positivePart: AbstractNumber = {...right, lower: Math.max(right.lower, 1)}
+  const parts = [negativePart, positivePart].filter(part => part.lower <= part.upper)
+  const quotients = parts.flatMap(part => [
+    left.lower / part.lower,
+    left.lower / part.upper,
+    left.upper / part.lower,
+    left.upper / part.upper,
+  ])
+  if (quotients.length === 0) return unknownNumber()
   return boundedResult(Math.min(...quotients), Math.max(...quotients), false, left, right)
 }
 
@@ -141,20 +191,7 @@ export function floorNumber(value: AbstractNumber): AbstractNumber {
 export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
   if (!safeOperands(left, right)) return unknownNumber()
   if (!includesZero(right)) return divideNumbers(left, right)
-  if (!right.integer) {
-    return {kind: 'number', lower: -Infinity, upper: Infinity, integer: false, mayBeNaN: false}
-  }
-  const negativePart: AbstractNumber = {...right, upper: Math.min(right.upper, -1)}
-  const positivePart: AbstractNumber = {...right, lower: Math.max(right.lower, 1)}
-  const parts = [negativePart, positivePart].filter(part => part.lower <= part.upper)
-  const quotients = parts.flatMap(part => [
-    left.lower / part.lower,
-    left.lower / part.upper,
-    left.upper / part.lower,
-    left.upper / part.upper,
-  ])
-  if (quotients.length === 0) return unknownNumber()
-  return boundedResult(Math.min(...quotients), Math.max(...quotients), false, left, right)
+  return divideAcrossZero(left, right)
 }
 
 export function absoluteNumber(value: AbstractNumber): AbstractNumber {
@@ -191,7 +228,7 @@ export function maximumNumbers(values: AbstractNumber[]): AbstractNumber {
 }
 
 export function includesZero(value: AbstractNumber): boolean {
-  return value.lower <= 0 && value.upper >= 0
+  return value.lower <= 0 && value.upper >= 0 && value.excludesZero !== true
 }
 
 export function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
@@ -201,6 +238,12 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
     upper: Math.max(left.upper, right.upper),
     integer: left.integer && right.integer,
     mayBeNaN: left.mayBeNaN || right.mayBeNaN,
+  }
+  // Zero stays excluded when neither side can be zero — whether by flag or by one-signed
+  // bounds, which is why the check goes through includesZero. This also captures a
+  // sign-split join: [-5, -2] joined with [2, 5] straddles zero yet never holds it.
+  if (!includesZero(left) && !includesZero(right) && joined.lower < 0 && joined.upper > 0) {
+    joined.excludesZero = true
   }
   const lossSite = left.lossSite ?? right.lossSite
   if (lossSite != null) joined.lossSite = lossSite
@@ -212,11 +255,12 @@ export function sameNumbers(left: AbstractNumber, right: AbstractNumber): boolea
     && left.upper === right.upper
     && left.integer === right.integer
     && left.mayBeNaN === right.mayBeNaN
+    && (left.excludesZero === true) === (right.excludesZero === true)
 }
 
 export function widenNumber(previous: AbstractNumber, next: AbstractNumber): AbstractNumber {
   const finite = isFiniteNumber(previous) && isFiniteNumber(next)
-  return {
+  const widened: AbstractNumber = {
     ...next,
     lower: next.lower < previous.lower
       ? finite ? -Number.MAX_VALUE : Number.NEGATIVE_INFINITY
@@ -225,6 +269,12 @@ export function widenNumber(previous: AbstractNumber, next: AbstractNumber): Abs
       ? finite ? Number.MAX_VALUE : Number.POSITIVE_INFINITY
       : next.upper,
   }
+  // The spread copies next's flag, but the widened interval is a fresh, wider cover — the
+  // flag holds only when both rounds excluded zero, same rule as joins. It can flip
+  // true-to-false across rounds and never back, so the fixed point still converges.
+  widened.excludesZero = !includesZero(previous) && !includesZero(next)
+    && widened.lower < 0 && widened.upper > 0
+  return widened
 }
 
 function boundedResult(

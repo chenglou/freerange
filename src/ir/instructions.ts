@@ -6,7 +6,7 @@ type InstructionBase = {
   site: SiteID
 }
 
-export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal'
+export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal' | 'notEqual'
 export type ArithmeticOperator = 'add' | 'subtract' | 'multiply' | 'divide'
 
 type ObjectPropertyIR = {

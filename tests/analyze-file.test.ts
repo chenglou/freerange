@@ -1301,7 +1301,7 @@ describe('analyzeFile', () => {
   test('review fixes: nullish params and spread copies stay nameable in requirements', () => {
     const report = analyzeSource('nameable.ts', `
       export function rate(total: number, interval: number | null): number {
-        if (interval !== null && interval > 0) { return total / interval }
+        if (interval !== null) { return total / interval }
         return 0
       }
       export function throughSpread(grid: {columns: number}, width: number): number {
@@ -1311,7 +1311,7 @@ describe('analyzeFile', () => {
     `)
     const file = resolve('nameable.ts')
     expect(analyzedFunction(report, 'rate').requires)
-      .toEqual([`interval is nonzero (division at ${file}:3:57)`])
+      .toEqual([`interval is nonzero (division at ${file}:3:41)`])
     // The record is immutable, so {...grid}.columns IS grid.columns.
     expect(analyzedFunction(report, 'throughSpread').requires)
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
@@ -1464,7 +1464,7 @@ describe('analyzeFile', () => {
     const found = analyzedFunction(report, 'findPoint')
     expect(found.ensures).toEqual([
       'return may be null; when present:',
-      'return.a is a finite number at least 0',
+      'return.a is a finite number more than 0',
     ])
   })
 
@@ -2248,8 +2248,10 @@ describe('analyzeFile', () => {
         return 0
       }
     `)
+    // `x < 100` proves less-than: the exact upper bound is the double just below 100,
+    // and the prose says so instead of over-covering with 'through 100'.
     expect(analyzedFunction(report, 'narrowed').ensures)
-      .toEqual(['return is a finite number from 0 through 100'])
+      .toEqual(['return is a finite number at least 0 and less than 100'])
   })
 
   test('rejects assignments used as values inside larger expressions', () => {
