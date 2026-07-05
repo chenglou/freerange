@@ -85,7 +85,9 @@ export function joinSentinels(left: NullishSentinels, right: NullishSentinels): 
 export type AbstractTaggedUnion = {
   kind: 'taggedUnion'
   tagProperty: string
-  // Non-empty; tag values unique; declared order.
+  // Non-empty; declared order. Two variants MAY share a tag value (they then differ by
+  // which properties they carry, told apart by an in-check), so joins pair variants by
+  // tag AND property-name shape, never by tag alone.
   variants: Array<{tagValue: string; record: AbstractRecord}>
 }
 
@@ -172,6 +174,20 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
     if (element == null && leftArray.element != null && rightArray.element != null) return null
     return {kind: 'array', element, length: joinNumbers(leftArray.length, rightArray.length)}
   }
+  // A plain record meeting a tagged union: the record's variant is unknown (its tag
+  // value is an opaque string the analysis never learned), so the union side hulls to the
+  // record shape shared by all its variants and the two records join. Tag checks on the
+  // result hit the kind-mismatch backstop as an honest stop — degraded, never a crash:
+  // the totality rule holds even for the rebuild idiom applied to a union-typed value
+  // whose construction the promotion missed.
+  if (left.kind === 'record' && right.kind === 'taggedUnion') {
+    const hull = taggedUnionHull(right)
+    return hull == null ? null : joinRecords(left, hull)
+  }
+  if (left.kind === 'taggedUnion' && right.kind === 'record') {
+    const hull = taggedUnionHull(left)
+    return hull == null ? null : joinRecords(hull, right)
+  }
   if (left.kind !== right.kind) return null
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
@@ -187,16 +203,21 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
   }
 }
 
-// Variants merge per tag value: a branch that built the lightbox shape joining a branch
-// that built the archive shape carries both, each shape's facts intact. The list can only
-// hold tags that some side already had — analysis never invents a variant — so it stays
-// bounded by the declared type. Mismatched tag properties cannot meet through the gates;
-// null degrades the surrounding structure like any other kind mismatch.
+// Variants merge per tag value AND property-name shape: a branch that built the lightbox
+// shape joining a branch that built the archive shape carries both, each shape's facts
+// intact — and two variants sharing a tag ({type: 'updates'; tab} | {type: 'updates';
+// article}) stay separate, because pairing them by tag alone would intersect away the
+// very properties an in-check tells them apart by (a self-join would then prune a
+// reachable branch). The list can only hold shapes some side already had — analysis never
+// invents a variant — so it stays bounded by the declared type. Mismatched tag properties
+// cannot meet through the gates; null degrades the surrounding structure like any other
+// kind mismatch.
 function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion): AbstractTaggedUnion | null {
   if (left.tagProperty !== right.tagProperty) return null
   const variants: AbstractTaggedUnion['variants'] = []
   for (const variant of left.variants) {
-    const other = right.variants.find(candidate => candidate.tagValue === variant.tagValue)
+    const other = right.variants.find(candidate =>
+      candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
     if (other == null) {
       variants.push(variant)
       continue
@@ -204,9 +225,30 @@ function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion)
     variants.push({tagValue: variant.tagValue, record: joinRecords(variant.record, other.record)})
   }
   for (const variant of right.variants) {
-    if (!left.variants.some(candidate => candidate.tagValue === variant.tagValue)) variants.push(variant)
+    const paired = left.variants.some(candidate =>
+      candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
+    if (!paired) variants.push(variant)
   }
   return {kind: 'taggedUnion', tagProperty: left.tagProperty, variants}
+}
+
+// The record covering every variant at once: properties all variants share, each joined
+// across them. What a tagged union degrades to when it meets a plain record.
+function taggedUnionHull(union: AbstractTaggedUnion): AbstractRecord | null {
+  let hull: AbstractValue | null = union.variants[0]?.record ?? null
+  for (let index = 1; index < union.variants.length; index++) {
+    if (hull == null) return null
+    hull = tryJoinValues(hull, union.variants[index]!.record)
+  }
+  return hull != null && hull.kind === 'record' ? hull : null
+}
+
+// Same property-name set: the shape identity that keeps duplicate-tag variants apart.
+// Order-insensitive, names only — the property VALUES join; it is the presence set that
+// distinguishes {tab} from {article}.
+function sameVariantShape(left: AbstractRecord, right: AbstractRecord): boolean {
+  if (left.properties.length !== right.properties.length) return false
+  return left.properties.every(property => recordProperty(right, property.name) != null)
 }
 
 // The tuple's homogeneous hull, or null when its positions mix kinds (a mixed tuple never
@@ -347,7 +389,8 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
         kind: 'taggedUnion',
         tagProperty: next.tagProperty,
         variants: next.variants.map(variant => {
-          const before = previous.variants.find(candidate => candidate.tagValue === variant.tagValue)
+          const before = previous.variants.find(candidate =>
+            candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
           if (before == null) return variant
           const widened = widenValue(before.record, variant.record)
           return widened.kind === 'record' ? {tagValue: variant.tagValue, record: widened} : variant

@@ -215,17 +215,19 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     for (const property of properties) lastByName.set(property.name, property)
     // A literal written where a tagged union is expected ({type: 'sidebar', width: 240}
     // returned as Frame) records which variant it builds, so branches building different
-    // variants join per tag instead of dropping every mismatched property.
+    // variants join per tag instead of dropping every mismatched property. The tag VALUE
+    // comes from the literal's own checked type, not its syntax, so the rebuild idiom
+    // {...frame, width: frame.width + 40} — where the tag arrives via the spread — is
+    // recognized too.
     const contextual = context.checker.getContextualType(current)
     let tag: {property: string; value: string} | null = null
     if (contextual != null && contextual.isUnion() && valueKind(contextual, context.checker) === 'taggedUnion') {
       const tagProperty = taggedUnionProperty(contextual.types, context.checker)
       if (tagProperty != null) {
-        for (const property of current.properties) {
-          if (ts.isPropertyAssignment(property) && propertyName(property.name) === tagProperty
-            && (ts.isStringLiteral(property.initializer) || ts.isNoSubstitutionTemplateLiteral(property.initializer))) {
-            tag = {property: tagProperty, value: property.initializer.text}
-          }
+        const ownTag = context.checker.getPropertyOfType(context.checker.getTypeAtLocation(current), tagProperty)
+        const ownTagType = ownTag == null ? null : context.checker.getTypeOfSymbol(ownTag)
+        if (ownTagType != null && ownTagType.isStringLiteral()) {
+          tag = {property: tagProperty, value: ownTagType.value}
         }
       }
     }

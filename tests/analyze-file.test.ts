@@ -2216,6 +2216,64 @@ ${chain}
     ])
   })
 
+  test('review round: duplicate-tag variants survive self-joins, rebuilds and presets never crash', () => {
+    // Round-1 findings: (1) joining a state with itself paired same-tag variants by tag
+    // alone and intersected away the property an in-check needs — variants now pair by
+    // tag AND property-name shape, so the article branch stays reachable; (2) the rebuild
+    // idiom {...frame, width: ...} and a preset annotated as one member shape used to
+    // throw at the join — the literal's own checked type now names the variant, and a
+    // record meeting a union degrades to the shared hull instead of crashing.
+    const report = analyzeSource('union-round1.ts', `
+      type Updates = {type: 'updates'; tab: number} | {type: 'updates'; article: number}
+      export function badgeJoined(route: Updates, verbose: boolean): number {
+        let base = 0
+        if (verbose) { base = 1 }
+        if ('article' in route) { return route.article + base }
+        return base
+      }
+      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
+      export function widen(frame: Frame): Frame {
+        if (frame.type === 'sidebar') { return {...frame, width: frame.width + 40} }
+        return frame
+      }
+      const sidebarPreset: {type: 'sidebar'; width: number} = {type: 'sidebar', width: 200}
+      export function pick(compact: boolean): Frame {
+        return compact ? {type: 'mobile', scale: 0.5} : sidebarPreset
+      }
+    `)
+    // The article branch is reachable: the ensures must cover route.article + base.
+    expect(analyzedFunction(report, 'badgeJoined').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'widen').ensures).toContain("return.type is 'sidebar' or 'mobile'")
+    // The preset's variant is unknown to the analysis, so the join degrades to the shared
+    // hull — an honest near-empty contract, never a crash.
+    expect(analyzedFunction(report, 'pick').ensures).toEqual([])
+  })
+
+  test('review round: exhaustive switch without default analyzes; narrowing writes back through unions', () => {
+    // The fall-off-the-end of a non-void function is a per-path stop now, not a
+    // whole-function rejection — and an exhaustive switch over the variants makes that
+    // path provably unreachable, so the function analyzes clean, matching TypeScript's
+    // own exhaustiveness acceptance. Property refinements also write back through union
+    // parents, so a range check inside a variant sticks.
+    const report = analyzeSource('union-round1b.ts', `
+      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
+      export function widthOf(frame: Frame): number {
+        switch (frame.type) {
+          case 'sidebar': return frame.width
+          case 'mobile': return frame.scale * 320
+        }
+      }
+      type Overlay = {mode: 'zoom'; level: number} | {mode: 'pan'; dx: number}
+      export function levelOf(panel: {overlay: Overlay}): number {
+        if (panel.overlay.mode === 'zoom') { return panel.overlay.level }
+        return panel.overlay.dx
+      }
+    `)
+    const widthOf = analyzedFunction(report, 'widthOf')
+    expect(widthOf.ensures[0]).toContain('number')
+    expect(analyzedFunction(report, 'levelOf').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

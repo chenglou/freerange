@@ -147,8 +147,17 @@ function lowerFunction(
   }
   lowerStatements(declaration.body.statements, context)
   if (context.currentBlock.terminator == null) {
-    if (!returnsVoid) throw unsupported(declaration, {kind: 'missingReturn'})
-    terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
+    if (!returnsVoid) {
+      // A non-void path reaching the end without a return is a per-path STOP, not a
+      // whole-function rejection: an exhaustive switch (or if-chain) over a tagged
+      // union's variants makes the fall-out edge provably unreachable — the engine's tag
+      // narrowing prunes it and the function analyzes clean, matching how TypeScript's
+      // exhaustiveness accepts the same shape under noImplicitReturns. A genuinely
+      // reachable fall-out reports as a stop with the returning paths' evidence kept.
+      terminate(context.currentBlock, {kind: 'stop', site: addSite(context, declaration), reason: {kind: 'missingReturn'}})
+    } else {
+      terminate(context.currentBlock, {kind: 'return', value: null, site: addSite(context, declaration)})
+    }
   }
   return {
     kind: 'lowered',

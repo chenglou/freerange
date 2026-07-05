@@ -593,6 +593,30 @@ function writeThroughProducers(
       }
       writeThroughProducers(state, producer.object, rebuilt, producers)
     }
+    // A property read through a tagged union (box.owner after a tag check on box, or a
+    // shared property before one): the refinement meets into every variant that carries
+    // the property, so the narrowing sticks on the union binding, not just this read.
+    if (parent?.kind === 'taggedUnion') {
+      const rebuilt: AbstractValue = {
+        kind: 'taggedUnion',
+        tagProperty: parent.tagProperty,
+        variants: parent.variants.map(variant => {
+          const existing = recordProperty(variant.record, producer.property)
+          if (existing == null) return variant
+          return {
+            tagValue: variant.tagValue,
+            record: {
+              kind: 'record',
+              properties: variant.record.properties.map(property =>
+                property.name === producer.property
+                  ? {name: property.name, value: meetValues(property.value, met)}
+                  : property),
+            },
+          }
+        }),
+      }
+      writeThroughProducers(state, producer.object, rebuilt, producers)
+    }
     // A read through a freshly built record narrows the value that went in.
     const parentProducer = producers[producer.object]
     if (parentProducer?.kind === 'object') {
