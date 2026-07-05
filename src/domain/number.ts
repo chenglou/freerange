@@ -225,6 +225,38 @@ export function divideNumbersNonzeroDivisor(left: AbstractNumber, right: Abstrac
   return divideAcrossZero(left, right)
 }
 
+// ceil, round, and trunc are monotone and exact on infinities, like floor; all three
+// produce integers and carry NaN through. (Math.round's half-up tie rule sits between
+// floor and ceil, so the monotone endpoint images cover it.)
+export function roundedNumber(operator: 'ceil' | 'round' | 'trunc', value: AbstractNumber): AbstractNumber {
+  const apply = operator === 'ceil' ? Math.ceil : operator === 'round' ? Math.round : Math.trunc
+  return {
+    kind: 'number',
+    lower: apply(value.lower),
+    upper: apply(value.upper),
+    integer: true,
+    mayBeNaN: value.mayBeNaN,
+  }
+}
+
+// Monotone over non-negative inputs; a negative operand yields NaN, so an interval
+// reaching below zero clips to the non-negative part and turns the NaN flag on. sqrt
+// never overflows and sqrt(Infinity) is Infinity, so the endpoint images are exact.
+export function squareRootNumber(value: AbstractNumber): AbstractNumber {
+  const mayBeNegative = value.lower < 0
+  const clippedLower = Math.max(value.lower, 0)
+  if (value.upper < 0) {
+    return {kind: 'number', lower: Number.NaN, upper: Number.NaN, integer: false, mayBeNaN: true}
+  }
+  return {
+    kind: 'number',
+    lower: Math.sqrt(clippedLower),
+    upper: Math.sqrt(value.upper),
+    integer: false,
+    mayBeNaN: value.mayBeNaN || mayBeNegative,
+  }
+}
+
 export function absoluteNumber(value: AbstractNumber): AbstractNumber {
   const lower = value.lower >= 0 ? value.lower : value.upper <= 0 ? -value.upper : 0
   return {

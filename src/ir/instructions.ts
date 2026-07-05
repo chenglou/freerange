@@ -55,6 +55,10 @@ export type InstructionIR =
   // state is mutable, so two reads are never assumed equal.
   | (InstructionBase & {kind: 'platformValue'; lower: number; upper: number; integer: boolean})
   | (InstructionBase & {kind: 'absolute'; value: ValueID})
+  // Math.ceil / Math.round / Math.trunc / Math.sqrt. Kept apart from 'floor', which
+  // additionally lives in the requirement expression language; these can join it when a
+  // rounded divisor shows the need.
+  | (InstructionBase & {kind: 'mathUnary'; operator: 'ceil' | 'round' | 'trunc' | 'sqrt'; value: ValueID})
   // Number.isInteger(x) / Number.isFinite(x) / Number.isNaN(x): a boolean over one number
   // operand, with branch refinement like nullishCheck — the true branch of isInteger knows
   // the value is an integer (and finite, and not NaN), the false branch of isFinite prunes
@@ -88,6 +92,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'compare': visit(instruction.left); visit(instruction.right); return
     case 'floor':
     case 'absolute':
+    case 'mathUnary':
     case 'numberCheck':
     case 'not': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return

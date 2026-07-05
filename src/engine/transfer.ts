@@ -1,4 +1,6 @@
 import {
+  roundedNumber,
+  squareRootNumber,
   nextDown,
   nextUp,
   absoluteNumber,
@@ -295,6 +297,14 @@ function evaluateInstructionKinded(
       requiredNumber(state, instruction.right),
       instruction.operator,
     ))
+    case 'mathUnary': {
+      const operand = requiredNumber(state, instruction.value)
+      return computedNumber(
+        instruction.operator === 'sqrt' ? squareRootNumber(operand) : roundedNumber(instruction.operator, operand),
+        [operand],
+        instruction.site,
+      )
+    }
     case 'floor': {
       const operand = requiredNumber(state, instruction.value)
       return computedNumber(floorNumber(operand), [operand], instruction.site)
@@ -373,6 +383,14 @@ function evaluateInstructionKinded(
     case 'binary': {
       const left = requiredNumber(state, instruction.left)
       const right = requiredNumber(state, instruction.right)
+      // x * x is a square: the same IR value on both sides is the same runtime value, so
+      // the product cannot be negative (dx * dx in distance math). The domain cannot see
+      // value identity, so the clamp lives here.
+      if (instruction.operator === 'multiply' && instruction.left === instruction.right) {
+        const squared = multiplyNumbers(left, right)
+        const clamped = squared.lower < 0 ? {...squared, lower: 0} : squared
+        return computedNumber(clamped, [left, right], instruction.site)
+      }
       if (
         instruction.operator === 'divide'
         && includesZero(right)

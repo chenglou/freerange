@@ -2022,6 +2022,39 @@ ${chain}
     expect(1e-300 / 1e300).toBe(0)
   })
 
+  test('Math.round, ceil, trunc, sqrt, and the square identity', () => {
+    // The rounding family is monotone and exact on infinities like floor; sqrt clips a
+    // possibly-negative operand to the non-negative part and turns the NaN flag on; and
+    // x * x with the SAME value on both sides cannot be negative, which together with a
+    // Number.isFinite guard proves the classic vector length finite.
+    const report = analyzeSource('math-family.ts', `
+      export function snap(target: number, step: number): number {
+        if (step > 0) { return Math.round(target / step) * step }
+        return target
+      }
+      export function cells(width: number): number {
+        return Math.max(1, Math.ceil(width / 240))
+      }
+      export function bareLength(dx: number, dy: number): number {
+        return Math.sqrt(dx * dx + dy * dy)
+      }
+      export function safeLength(dx: number, dy: number): number {
+        const sum = dx * dx + dy * dy
+        if (Number.isFinite(sum)) { return Math.sqrt(sum) }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'cells').ensures)
+      .toEqual(['return is a finite integer number from 1 through 7.490388061926316e+305'])
+    // Squares cannot be negative, so the sum has no opposite-infinity corner and never
+    // turns NaN — the unguarded length can only overflow, and sqrt carries the honest
+    // possibly-non-finite through.
+    expect(analyzedFunction(report, 'bareLength').ensures[0])
+      .toContain('possibly non-finite number from 0 through Infinity')
+    expect(analyzedFunction(report, 'safeLength').ensures)
+      .toEqual(['return is a finite number from 0 through 1.3407807929942596e+154'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
@@ -2515,7 +2548,7 @@ ${chain}
     // finiteness condition.
     const report = analyzeSource('module-launder.ts', `
       let scale = 1
-      scale = Math.sqrt(9)
+      scale = Number.parseFloat('3')
       const doubled = scale * 2
       export function getDoubled(): number { return doubled }
     `)

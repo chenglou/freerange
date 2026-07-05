@@ -311,6 +311,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         const value = lowerExpression(current.arguments[0]!, context)
         return addInstruction(context, current, {kind: 'absolute', value})
       }
+      if (standardMath && (method === 'ceil' || method === 'round' || method === 'trunc' || method === 'sqrt')
+        && current.arguments.length === 1) {
+        requireNumberType(current.arguments[0]!, context.checker)
+        const value = lowerExpression(current.arguments[0]!, context)
+        return addInstruction(context, current, {kind: 'mathUnary', operator: method, value})
+      }
       if (standardMath && (method === 'min' || method === 'max') && current.arguments.length > 0) {
         for (const argument of current.arguments) requireNumberType(argument, context.checker)
         const values = current.arguments.map(argument => lowerExpression(argument, context))
