@@ -44,6 +44,20 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         return
       }
       case 'compound': {
+        // `message += suffix` is string concatenation when the checker types the result
+        // as a string — the target rebinds to an opaque value, like `width + 'px'` in
+        // value position. Any other non-number operand rejects here exactly as the
+        // value-position binary arm does, instead of slipping an untyped add through to
+        // the engine's kind-mismatch backstop.
+        if (assignment.operator === 'add'
+          && valueKind(context.checker.getTypeAtLocation(current), context.checker) === 'opaque') {
+          lowerExpression(assignment.node.right, context)
+          const concatenated = addInstruction(context, current, {kind: 'opaqueConstant'})
+          assignIdentifier(symbol, assignment.target, concatenated, current, context)
+          return
+        }
+        requireNumberType(assignment.target, context.checker)
+        requireNumberType(assignment.node.right, context.checker)
         const left = identifierValue(symbol, assignment.target, context)
         const right = lowerExpression(assignment.node.right, context)
         const value = addInstruction(context, current, {kind: 'binary', operator: assignment.operator, left, right})
@@ -246,6 +260,16 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (missingCheck != null) return missingCheck
     const opaqueComparison = opaqueEqualityCheck(current, context)
     if (opaqueComparison != null) return opaqueComparison
+    // `width + 'px'`: string building with + is everywhere in UI code, and the template
+    // spelling `${width}px` is already carried — when the checker types the result as a
+    // string, the result is an opaque value. Both operands still lower, so an unsupported
+    // construct inside one rejects as usual.
+    if (current.operatorToken.kind === ts.SyntaxKind.PlusToken
+      && valueKind(context.checker.getTypeAtLocation(current), context.checker) === 'opaque') {
+      lowerExpression(current.left, context)
+      lowerExpression(current.right, context)
+      return addInstruction(context, current, {kind: 'opaqueConstant'})
+    }
     const arithmetic = arithmeticOperator(current.operatorToken.kind)
     const comparison = comparisonOperator(current.operatorToken.kind)
     if (arithmetic == null && comparison == null) {
@@ -721,8 +745,12 @@ function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolea
 
 // `mode === 'compact'`: comparing two carried-without-claims values yields a boolean the
 // analysis knows nothing about — both branches stay analyzed, which is sound and keeps
-// string-keyed control flow from rejecting the function. The operands still lower, so an
-// unsupported construct inside one rejects as usual.
+// string-keyed control flow from rejecting the function. A possibly-missing string
+// qualifies too (`mode === 'wide'` where mode is string | undefined): a missing value
+// simply compares unequal, so the unknown-boolean result stays sound without a null guard
+// first. The operands still lower, so an unsupported construct inside one rejects as
+// usual. This check runs AFTER missingSentinelCheck, so `mode === null` is already claimed
+// by the sentinel narrowing before either side is classified here.
 function opaqueEqualityCheck(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
   const operator = expression.operatorToken.kind
   const isEquality = operator === ts.SyntaxKind.EqualsEqualsEqualsToken
@@ -730,9 +758,18 @@ function opaqueEqualityCheck(expression: ts.BinaryExpression, context: FunctionC
     || operator === ts.SyntaxKind.EqualsEqualsToken
     || operator === ts.SyntaxKind.ExclamationEqualsToken
   if (!isEquality) return null
-  const leftKind = valueKind(context.checker.getTypeAtLocation(expression.left), context.checker)
-  const rightKind = valueKind(context.checker.getTypeAtLocation(expression.right), context.checker)
-  if (leftKind !== 'opaque' || rightKind !== 'opaque') return null
+  const opaqueOrMissingOpaque = (side: ts.Expression): boolean => {
+    const type = context.checker.getTypeAtLocation(side)
+    const kind = valueKind(type, context.checker)
+    if (kind === 'opaque') return true
+    if (kind === 'nullable' && type.isUnion()) {
+      const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+      const rest = type.types.filter(member => (member.flags & missing) === 0)
+      return rest.length >= 1 && rest.every(member => valueKind(member, context.checker) === 'opaque')
+    }
+    return false
+  }
+  if (!opaqueOrMissingOpaque(expression.left) || !opaqueOrMissingOpaque(expression.right)) return null
   lowerExpression(expression.left, context)
   lowerExpression(expression.right, context)
   return addInstruction(context, expression, {kind: 'unknownBoolean'})

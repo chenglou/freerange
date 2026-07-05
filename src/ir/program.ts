@@ -62,6 +62,10 @@ export type UnsupportedReason =
   | {kind: 'destructuredParameter'}
 
   | {kind: 'parameterType'; typeText: string}
+  // A default value (`zoom: number = 5`) applies whenever a caller omits the argument, and
+  // the analysis never evaluates the initializer expression — accepting one would let
+  // `zoom: number = Infinity` falsify the assumed-finite parameter seeding.
+  | {kind: 'parameterDefaultValue'; name: string}
   // A non-void function has a path that falls off the end without returning.
   | {kind: 'missingReturn'}
   // Spread, method, or accessor in an object literal.
@@ -218,6 +222,28 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
     case 'opaque': return {kind: 'opaque'}
+  }
+}
+
+// Whether values of this declared kind can be mutated through an alias: a record, tuple,
+// or array anywhere inside, including behind a nullish wrapper (`number[] | null`).
+// Rejected function bodies and skipped statements run at runtime too, and they can mutate
+// such a value with no write-position mention of its binding — `queue?.push(x)` and
+// `Object.assign(config, overrides)` both hold the binding in receiver or argument
+// position, invisible to the whole-file write scan. Scalars are copied on read, so only a
+// write-position form can change one, and the scan sees those even in rejected bodies.
+export function holdsMutableStructure(declared: DeclaredKind): boolean {
+  switch (declared.kind) {
+    case 'record':
+    case 'tuple':
+    case 'array':
+      return true
+    case 'nullish':
+      return holdsMutableStructure(declared.inner)
+    case 'number':
+    case 'boolean':
+    case 'opaque':
+      return false
   }
 }
 

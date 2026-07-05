@@ -167,21 +167,38 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       break
     }
     case 'array': {
-      // E.g. `every values element is finite and not NaN`.
+      // E.g. `every values element is finite and not NaN`. The recursion path uses
+      // `[each]` so nesting stays readable: a number[][] parameter prints
+      // `every grid[each] element is finite and not NaN`, and a record element prints
+      // its property path, e.g. `points[each].x is finite and not NaN`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(`${path} element`, declared.element, leaf)
-      for (const line of leaf) assumptions.push(`every ${line}`)
+      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf)
+      for (const line of leaf) {
+        assumptions.push(line.startsWith(`${path}[each] is `)
+          ? `every ${path} element is ${line.slice(`${path}[each] is `.length)}`
+          : line)
+      }
       break
     }
     // No claims are made about an opaque leaf, so there is nothing to assume.
     case 'opaque': break
     case 'nullish': {
-      // E.g. `animatedUntilTime is null or a finite non-NaN number`.
-      const innerWords = declared.inner.kind === 'number'
-        ? 'a finite non-NaN number'
-        : declared.inner.kind === 'boolean' ? 'a boolean' : 'a record of its declared shape'
       const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
-      assumptions.push(`${path} is ${sentinelWords} or ${innerWords}`)
+      if (declared.inner.kind === 'number') {
+        // E.g. `animatedUntilTime is null or a finite non-NaN number`.
+        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
+      } else if (declared.inner.kind === 'boolean') {
+        assumptions.push(`${path} is ${sentinelWords} or a boolean`)
+      } else {
+        // One line per inner leaf, each carrying the missing-value caveat — e.g. a
+        // `Config | null` parameter prints `config is null or config.width is finite and
+        // not NaN`. The seeded finiteness of every leaf must reach the report: the
+        // ensures lines rest on it. An opaque inner (`string | null`) contributes no
+        // line, because nothing is claimed about the string either way.
+        const leaf: string[] = []
+        pushDeclaredAssumptions(path, declared.inner, leaf)
+        for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
+      }
       break
     }
     case 'record': {
@@ -318,6 +335,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'functionWithoutBody': return 'function declarations need bodies'
     case 'destructuredParameter': return 'destructured parameters (take a named parameter and destructure it in the body)'
     case 'parameterType': return `function parameter with type ${reason.typeText}`
+    case 'parameterDefaultValue': return `default value for parameter ${reason.name} that may violate its assumed kind; only a plain literal default (e.g. = 5) is supported`
     case 'missingReturn': return 'function path without a return (add a return on every path)'
     case 'objectPropertyForm': return 'object property form (use plain data properties: name: value, shorthand, or spread)'
     case 'computedPropertyName': return 'computed object property name'

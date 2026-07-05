@@ -1,7 +1,7 @@
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
-import {declaredKindOf, declaredKindValue, type FunctionIR, type ProgramIR} from '../ir/program.ts'
+import {declaredKindOf, declaredKindValue, holdsMutableStructure, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {createExpressionContext} from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {
@@ -149,23 +149,25 @@ function publishedModuleValues(
     }
   }
 
-  // Exact record publishing additionally requires the whole file to be fully analyzed.
-  // Analyzed code cannot write into an object, but rejected function bodies and skipped
-  // statements run at runtime too, and they can mutate a record through any alias — e.g.
-  // `Object.assign(config, ...)` inside a function that never lowered, invisible to the
-  // whole-file write scan because the binding sits in argument position, not write
+  // Exact structural publishing (records, tuples, arrays — nullish-wrapped included)
+  // additionally requires the whole file to be fully analyzed. Analyzed code cannot write
+  // into an object, but rejected function bodies and skipped statements run at runtime
+  // too, and they can mutate a structure through any alias — `Object.assign(config, ...)`
+  // or `queue?.push(x)` inside a function that never lowered, invisible to the whole-file
+  // write scan because the binding sits in argument or receiver position, not write
   // position. Scalars are unaffected: a number is copied on read, so only a write-position
   // form on the binding itself can change it, and the scan sees those even in rejected
-  // bodies. When the file is not fully analyzed, record bindings fall back to their
-  // declared-shape hedge with per-property assumes lines.
+  // bodies. When the file is not fully analyzed, structural bindings fall back to their
+  // declared-shape hedge with per-leaf assumes lines.
   const fullyAnalyzed = evaluation.stops.length === 0
     && program.initializerSkips.length === 0
     && program.functions.every(lowered => lowered.kind === 'lowered')
 
   return program.moduleBindings.map((binding, index) => {
     if (binding.category.kind !== 'value' || demoted.has(index)) return null
-    const declaredKind = binding.category.declaredKind.kind
-    if ((declaredKind === 'record' || declaredKind === 'tuple' || declaredKind === 'array') && !fullyAnalyzed) return null
+    // holdsMutableStructure, not a top-level tag check: a `number[] | null` binding is
+    // nullish at the top level yet the array inside is exactly as alias-mutable.
+    if (holdsMutableStructure(binding.category.declaredKind) && !fullyAnalyzed) return null
     let joined: AbstractValue | null = null
     for (const end of ends) {
       const slot = end[index]!

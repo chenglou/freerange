@@ -1506,6 +1506,89 @@ describe('analyzeFile', () => {
       .toEqual(['enabled is a boolean', 'value is finite and not NaN'])
   })
 
+  test('review round: nullish-wrapped module arrays hedge like bare ones when the file is not fully analyzed', () => {
+    // The fully-analyzed demotion recurses through nullish wrappers: `number[] | null` is
+    // nullish at the top level yet the array inside is exactly as alias-mutable, e.g. by
+    // `queue?.push(x)` in a rejected function (receiver position, invisible to the write
+    // scan). Publishing the exact initializer value would be falsified at runtime.
+    const report = analyzeSource('nullable-module-array.ts', `
+      let queue: number[] | null = [3, 5]
+      export function enqueue(x: number): void {
+        queue?.push(x)
+      }
+      export function hasQueue(): boolean {
+        return queue !== null
+      }
+    `)
+    const reader = analyzedFunction(report, 'hasQueue')
+    // No exact claims about the initializer value survive; the read rests on the
+    // declared-kind hedge, printed with its inner leaf condition.
+    expect(reader.assumptions).toEqual(['queue is null or every queue element is finite and not NaN'])
+  })
+
+  test('review round: string dispatch on a possibly-missing string analyzes', () => {
+    // `mode?: string` is the everyday optional-config spelling; the missing value simply
+    // compares unequal, so the unknown-boolean comparison needs no null guard first.
+    const report = analyzeSource('optional-string-dispatch.ts', `
+      export function pickWidth(mode: string | undefined, compact: number, wide: number): number {
+        if (mode === 'compact') { return compact }
+        return wide
+      }
+    `)
+    expect(analyzedFunction(report, 'pickWidth').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('review round: string concatenation with + and += is carried, not rejected', () => {
+    const report = analyzeSource('string-concat.ts', `
+      export function label(width: number): number {
+        let message = 'w: '
+        message += width + 'px'
+        return width
+      }
+    `)
+    expect(analyzedFunction(report, 'label').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('review round: nullable structural parameters print their inner leaf assumptions', () => {
+    // The seeded finiteness of every inner leaf must reach the report — the ensures lines
+    // rest on it. Before the fix, `values: number[] | null` printed only 'null or a record
+    // of its declared shape', so firstOr([Infinity], 0) satisfied every printed line while
+    // the ensures was false. Nested arrays also stuttered ('every every grid element
+    // element'); the [each] path keeps them readable.
+    const report = analyzeSource('nullable-structural-parameters.ts', `
+      export function firstOr(values: number[] | null, fallback: number): number {
+        if (values === null) return fallback
+        return values[0] ?? fallback
+      }
+      export function gridSum(grid: number[][], config: {width: number; label: string} | null): number {
+        if (config === null) return 0
+        return config.width
+      }
+    `)
+    expect(analyzedFunction(report, 'firstOr').assumptions).toEqual([
+      'values is null or every values element is finite and not NaN',
+      'fallback is finite and not NaN',
+    ])
+    expect(analyzedFunction(report, 'gridSum').assumptions).toEqual([
+      'every grid[each] element is finite and not NaN',
+      'config is null or config.width is finite and not NaN',
+    ])
+  })
+
+  test('review round: a non-literal parameter default rejects; a literal one is covered by the assumes line', () => {
+    // The analysis never evaluates a default initializer. `= 5` provably satisfies the
+    // assumed-finite seeding, so ignoring the expression is sound; `= Number.POSITIVE_INFINITY`
+    // would falsify the ensures on a zero-argument call, so the function rejects.
+    const report = analyzeSource('bad-default.ts', `
+      export function scaled(zoom: number = Number.POSITIVE_INFINITY): number {
+        return zoom
+      }
+    `)
+    const scaled = report.functions.find(fn => fn.name === 'scaled')!
+    if (scaled.kind !== 'unsupported') throw new Error(`expected scaled to be unsupported, got ${scaled.kind}`)
+    expect(scaled.unsupported).toContain('default value for parameter zoom')
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
