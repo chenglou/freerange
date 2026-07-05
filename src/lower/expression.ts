@@ -213,7 +213,23 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // Last write wins, matching runtime spread semantics; earlier reads still evaluate.
     const lastByName = new Map<string, {name: string; value: ValueID}>()
     for (const property of properties) lastByName.set(property.name, property)
-    return addInstruction(context, current, {kind: 'object', properties: [...lastByName.values()]})
+    // A literal written where a tagged union is expected ({type: 'sidebar', width: 240}
+    // returned as Frame) records which variant it builds, so branches building different
+    // variants join per tag instead of dropping every mismatched property.
+    const contextual = context.checker.getContextualType(current)
+    let tag: {property: string; value: string} | null = null
+    if (contextual != null && contextual.isUnion() && valueKind(contextual, context.checker) === 'taggedUnion') {
+      const tagProperty = taggedUnionProperty(contextual.types, context.checker)
+      if (tagProperty != null) {
+        for (const property of current.properties) {
+          if (ts.isPropertyAssignment(property) && propertyName(property.name) === tagProperty
+            && (ts.isStringLiteral(property.initializer) || ts.isNoSubstitutionTemplateLiteral(property.initializer))) {
+            tag = {property: tagProperty, value: property.initializer.text}
+          }
+        }
+      }
+    }
+    return addInstruction(context, current, {kind: 'object', properties: [...lastByName.values()], ...(tag == null ? {} : {tag})})
   }
   if (identifierAssignment(current) != null) {
     throw unsupported(current, {kind: 'assignmentInValuePosition'})
@@ -361,8 +377,10 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     }
     // Through valueKind: single record types and unions of one recursive shape both read
     // fine (an admitted union joins losslessly, so every member's property is present),
-    // while index signatures, callables, and mixed shapes reject.
-    if (valueKind(objectType, context.checker) !== 'object') {
+    // while index signatures, callables, and mixed shapes reject. A tagged-union receiver
+    // reads too: the engine answers reads of the tag and of properties every variant
+    // carries, and stops honestly on a partial property no check narrowed first.
+    if (receiverKind !== 'object' && receiverKind !== 'taggedUnion') {
       throw unsupported(current.expression, {kind: 'propertyReadOnNonObject', typeText: context.checker.typeToString(objectType)})
     }
     requireAccessedPropertyKind(current, context.checker)

@@ -290,10 +290,18 @@ function evaluateInstructionKinded(
       dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
       return value({kind: 'void'})
     }
-    case 'object': return value(recordValue(instruction.properties.map(property => ({
-      name: property.name,
-      value: requiredValue(state, property.value),
-    }))))
+    case 'object': {
+      const record = recordValue(instruction.properties.map(property => ({
+        name: property.name,
+        value: requiredValue(state, property.value),
+      })))
+      if (instruction.tag == null) return value(record)
+      return value({
+        kind: 'taggedUnion',
+        tagProperty: instruction.tag.property,
+        variants: [{tagValue: instruction.tag.value, record}],
+      })
+    }
     case 'property': {
       const object = requiredValue(state, instruction.object)
       // A read through a tagged union: a single remaining variant (after a tag check)

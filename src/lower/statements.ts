@@ -13,7 +13,7 @@ import {
   type FunctionContext,
   type MutableBlock,
 } from './context.ts'
-import {identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {taggedUnionTagRead, identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -122,10 +122,14 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
 function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionContext): void {
   const subjectType = context.checker.getTypeAtLocation(statement.expression)
   const subjectKind = valueKind(subjectType, context.checker)
-  if (subjectKind !== 'number' && subjectKind !== 'opaque') {
+  // switch (route.type) is tagged-union dispatch: the subject becomes the union value
+  // itself and every case emits a tag check, so each body knows its exact shape — the
+  // same narrowing the === spelling gets.
+  const tagUnionExpression = taggedUnionTagRead(statement.expression, context)
+  if (tagUnionExpression == null && subjectKind !== 'number' && subjectKind !== 'opaque') {
     throw unsupported(statement.expression, {kind: 'switchSubject', typeText: context.checker.typeToString(subjectType)})
   }
-  const subject = lowerExpression(statement.expression, context)
+  const subject = lowerExpression(tagUnionExpression ?? statement.expression, context)
 
   // Group stacked empty labels with the body they share; reject a default that is not the
   // last clause (JS would test later cases before running it — supporting that order buys
@@ -178,13 +182,22 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
     // label's false edge to the next group (or the default / the no-match exit).
     for (const label of group.labels) {
       const labelKind = valueKind(context.checker.getTypeAtLocation(label), context.checker)
-      if (labelKind !== subjectKind) {
+      if (tagUnionExpression == null && labelKind !== subjectKind) {
         throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
       }
-      const labelValue = lowerExpression(label, context)
-      const condition = subjectKind === 'number'
-        ? addInstruction(context, label, {kind: 'compare', operator: 'equal', left: subject, right: labelValue})
-        : addInstruction(context, label, {kind: 'unknownBoolean'})
+      let condition: ValueID
+      if (tagUnionExpression != null) {
+        const unwrappedLabel = label
+        if (!ts.isStringLiteral(unwrappedLabel) && !ts.isNoSubstitutionTemplateLiteral(unwrappedLabel)) {
+          throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
+        }
+        condition = addInstruction(context, label, {kind: 'tagCheck', union: subject, tagValue: unwrappedLabel.text, negated: false})
+      } else {
+        const labelValue = lowerExpression(label, context)
+        condition = subjectKind === 'number'
+          ? addInstruction(context, label, {kind: 'compare', operator: 'equal', left: subject, right: labelValue})
+          : addInstruction(context, label, {kind: 'unknownBoolean'})
+      }
       const nextTest = createBlock(context)
       terminate(context.currentBlock, {
         kind: 'branch',

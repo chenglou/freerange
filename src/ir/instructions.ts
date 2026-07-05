@@ -73,7 +73,10 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'not'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
   | (InstructionBase & {kind: 'call'; function: FunctionID; arguments: ValueID[]})
-  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]})
+  // tag is set when the literal's contextual type is a tagged union and the literal names
+  // its tag with a string literal — the engine then builds a single-variant union, so
+  // branches building different variants join per tag instead of dropping properties.
+  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]; tag?: {property: string; value: string}})
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
 
 // Every ValueID operand an instruction reads, enumerated next to the type so a new kind or
