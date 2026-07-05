@@ -1978,6 +1978,50 @@ ${chain}
     expect(analyzedFunction(report, 'unrelated').assumptions).toEqual(['x is finite and not NaN'])
   })
 
+  test('the float biconditionals behind requirement simplification hold mechanically', () => {
+    // Requirement simplification and its forward mirror in the domain arithmetic rest on
+    // two IEEE-754 facts: gradual underflow makes a subtraction exact when its result is
+    // tiny, so x - c is zero exactly when x equals c; and a factor of magnitude at least
+    // 1 cannot shrink a nonzero value below the round-to-zero threshold. Checked here
+    // over subnormals, boundary values, and deterministic random bit patterns rather
+    // than trusted from memory of the standard.
+    const battery = [
+      0, -0, Number.MIN_VALUE, -Number.MIN_VALUE, 2 ** -1073, 2 ** -1022,
+      (2 ** -1022) * (1 - 2 ** -52), Number.MAX_VALUE, -Number.MAX_VALUE,
+      1, -1, 1 + 2 ** -52, 0.1, 0.3, 1e-200, 1e-300, 1e300, 4, 2 ** 53, 2 ** 53 + 2,
+    ]
+    let seed = 0x9e3779b97f4a7c15n
+    const scratch = new Float64Array(1)
+    const scratchBits = new BigUint64Array(scratch.buffer)
+    const values = [...battery]
+    while (values.length < 700) {
+      seed = (seed ^ (seed << 13n)) & 0xffffffffffffffffn
+      seed ^= seed >> 7n
+      seed = (seed ^ (seed << 17n)) & 0xffffffffffffffffn
+      scratchBits[0] = seed
+      const candidate = scratch[0]!
+      if (Number.isFinite(candidate)) values.push(candidate)
+    }
+    const failures: string[] = []
+    for (const x of values) {
+      for (const c of values) {
+        if ((x - c === 0) !== (x === c)) failures.push(`subtract: x=${x} c=${c}`)
+        if ((x + c === 0) !== (x === -c)) failures.push(`add: x=${x} c=${c}`)
+        if (Math.abs(c) >= 1 && Number.isFinite(c) && (c * x === 0) !== (x === 0)) {
+          failures.push(`multiply: x=${x} c=${c}`)
+        }
+      }
+    }
+    expect(failures).toEqual([])
+    // The counterexamples that keep small factors and division out of the rule — the
+    // lint is right that these are constant zero; constant zero from nonzero operands is
+    // the whole point being pinned.
+    // oxlint-disable-next-line erasing-op
+    expect(1e-200 * 1e-200).toBe(0)
+    // oxlint-disable-next-line erasing-op
+    expect(1e-300 / 1e300).toBe(0)
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
