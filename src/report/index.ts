@@ -22,9 +22,22 @@ export type AnalysisReport = {
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
   const assumedBindings = assumedKindBindings(program, analysis)
+  // An unproven asserted element read at the top level (`breakpoints[idx]!` with a
+  // platform-derived idx) conditions everything the initializer published, and the
+  // initializer usually prints no entry — so the assumption lines travel to every
+  // function that reads any module binding, the same way declared-kind assumptions do.
+  // Without this, a reader's ensures would publish unconditionally while the runtime
+  // read can miss.
+  const initializerBounds = analysis.initializer.kind === 'analyzed'
+    ? analysis.initializer.boundsAssumptions
+    : analysis.initializer.kind === 'partial' ? analysis.initializer.observedBoundsAssumptions : []
+  const initializerBoundsLines = initializerBounds.map(assumption =>
+    `the element read at ${formatSite(program, assumption.site)} is in bounds`)
+  const readsModules = moduleReadingFunctions(program)
   // Top-level code runs before any function, so its entry comes first — but only when it
   // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
-  // invisible: its results show up as the exact module values other entries report.
+  // invisible: its results show up as the exact module values other entries report, with
+  // its bounds assumptions carried by the readers above.
   const skippedLines = program.initializerSkips.map(skip =>
     `${formatUnsupportedReason(skip.reason)} at ${formatSite(program, skip.site)}`)
   if (analysis.initializer.kind === 'partial' || skippedLines.length > 0) {
@@ -35,7 +48,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
     functions.push({
       kind: 'partial',
       name: program.initializer.name,
-      assumptions: [],
+      assumptions: initializerBoundsLines,
       stopped: analysis.initializer.kind === 'partial'
         ? analysis.initializer.stops.map(stop => formatStop(stop, program, analysis))
         : [],
@@ -66,7 +79,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'partial',
           name: lowering.name,
-          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
+          assumptions: [
+            ...assumptionLines(lowering, program, assumedBindings[functionID]!, fn.observedBoundsAssumptions),
+            ...(readsModules[functionID] === true ? initializerBoundsLines : []),
+          ],
           stopped: fn.stops.map(stop => formatStop(stop, program, analysis)),
           observed,
         })
@@ -78,7 +94,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
         functions.push({
           kind: 'analyzed',
           name: lowering.name,
-          assumptions: assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
+          assumptions: [
+            ...assumptionLines(lowering, program, assumedBindings[functionID]!, fn.boundsAssumptions),
+            ...(readsModules[functionID] === true ? initializerBoundsLines : []),
+          ],
           requires: fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
           ensures: returnSummaries('return', declaredReturn(fn.returnValue, lowering), program),
         })
@@ -261,6 +280,45 @@ function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): boo
     }
   }
   return assumed
+}
+
+// Whether each function (transitively, through calls to the file's own functions) reads
+// any module binding at all — the consumers that rest on what the initializer published.
+// Coarser than per-binding tracking on purpose: which binding rests on which top-level
+// assumption is not tracked, and an extra assumption line on an unrelated reader is
+// harmless, the same trade assumedKindBindings makes for call paths that never execute.
+function moduleReadingFunctions(program: ProgramIR): boolean[] {
+  const reads: boolean[] = []
+  const callees: Array<Set<number>> = []
+  for (const lowering of program.functions) {
+    let readsAny = false
+    const calls = new Set<number>()
+    if (lowering.kind === 'lowered') {
+      for (const block of lowering.blocks) {
+        for (const instruction of block.instructions) {
+          if (instruction.kind === 'call') calls.add(instruction.function)
+          if (instruction.kind === 'moduleRead') readsAny = true
+        }
+      }
+    }
+    reads.push(readsAny)
+    callees.push(calls)
+  }
+  let changed = true
+  while (changed) {
+    changed = false
+    for (let caller = 0; caller < reads.length; caller++) {
+      if (reads[caller] === true) continue
+      for (const callee of callees[caller]!) {
+        if (reads[callee] === true) {
+          reads[caller] = true
+          changed = true
+          break
+        }
+      }
+    }
+  }
+  return reads
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.

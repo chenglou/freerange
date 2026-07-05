@@ -1955,6 +1955,29 @@ ${chain}
       .toContain(`the element read at ${file}:22:18 is in bounds`)
   })
 
+  test('review round 3: initializer bounds assumptions travel to module readers', () => {
+    // A top-level breakpoints[idx]! with a platform-derived index conditions everything
+    // the initializer published; the assumption line lands on every function that reads a
+    // module binding (currentBreakpoint would return undefined at a wide viewport, so its
+    // ensures must not publish unconditionally), and functions touching no module state
+    // stay clean.
+    const report = analyzeSource('init-bounds.ts', `
+      const breakpoints = [480, 768, 1024]
+      const idx = Math.min(Math.floor(window.innerWidth / 400), 5)
+      const activeBreakpoint = breakpoints[idx]!
+      export function currentBreakpoint(): number {
+        return activeBreakpoint
+      }
+      export function unrelated(x: number): number {
+        return x * 2
+      }
+    `)
+    const file = resolve('init-bounds.ts')
+    expect(analyzedFunction(report, 'currentBreakpoint').assumptions)
+      .toEqual([`the element read at ${file}:4:32 is in bounds`])
+    expect(analyzedFunction(report, 'unrelated').assumptions).toEqual(['x is finite and not NaN'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
