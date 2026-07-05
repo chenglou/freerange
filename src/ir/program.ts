@@ -136,6 +136,9 @@ export type UnsupportedReason =
   // Catch-alls carry the ts.SyntaxKind name, e.g. 'FalseKeyword', 'WhileStatement'.
   | {kind: 'expressionForm'; syntax: string}
   | {kind: 'statementForm'; syntax: string}
+  // Rejected by name for the rewrite hint: string dispatch is squarely in the subset via
+  // if/else chains on ===, so the prose points there instead of dumping a SyntaxKind.
+  | {kind: 'switchStatement'}
 
 // A function whose lowering stopped. The half-built CFG is discarded wholesale so nothing
 // downstream can mistake this record for analyzable IR. Sites already pushed while lowering

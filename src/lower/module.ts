@@ -327,8 +327,24 @@ export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeC
       if (!type.isUnion()) return null
       const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
       const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
-      if (rest.length !== 1) return null
-      const inner = declaredKind(rest[0]!, location, checker, seen)
+      if (rest.length === 0) return null
+      let inner: DeclaredKind | null
+      if (rest.length === 1) {
+        inner = declaredKind(rest[0]!, location, checker, seen)
+      } else {
+        // `'compact' | 'wide' | undefined`, `4 | 8 | undefined`, `boolean | null` (the
+        // checker splits boolean into true | false): several non-missing members are
+        // fine when they collapse to one scalar kind, the same rule valueKind applies
+        // to the bare union. Structural members keep the exactly-one rule — two record
+        // shapes under a nullish wrapper are a tagged union, not a nullable record.
+        const members = rest.map(member => declaredKind(member, location, checker, seen))
+        const first = members[0]
+        inner = first != null
+          && (first.kind === 'number' || first.kind === 'boolean' || first.kind === 'opaque')
+          && members.every(member => member != null && member.kind === first.kind)
+          ? first
+          : null
+      }
       if (inner == null) return null
       const admitsNull = type.types.some(member => (member.flags & ts.TypeFlags.Null) !== 0)
       const admitsUndefined = type.types.some(member => (member.flags & ts.TypeFlags.Undefined) !== 0)

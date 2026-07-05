@@ -64,6 +64,7 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     lowerStatements(statement.statements, context)
     return
   }
+  if (ts.isSwitchStatement(statement)) throw unsupported(statement, {kind: 'switchStatement'})
   throw unsupported(statement, {kind: 'statementForm', syntax: ts.SyntaxKind[statement.kind]})
 }
 

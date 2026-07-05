@@ -174,8 +174,14 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       const leaf: string[] = []
       pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf)
       for (const line of leaf) {
-        assumptions.push(line.startsWith(`${path}[each] is `)
-          ? `every ${path} element is ${line.slice(`${path}[each] is `.length)}`
+        const prefix = `${path}[each] is `
+        // The `every X element is` sugar only reads right when the element path appears
+        // once. A nullish element's disjunction mentions it again (`slots[each] is null
+        // or slots[each].x is finite and not NaN`), and rewriting only the first mention
+        // would mix the two quantifier styles in one line.
+        const mentionsOnce = line.split(`${path}[each]`).length === 2
+        assumptions.push(line.startsWith(prefix) && mentionsOnce
+          ? `every ${path} element is ${line.slice(prefix.length)}`
           : line)
       }
       break
@@ -353,7 +359,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
       : `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
-    case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0)`
+    case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0 or mode !== undefined)`
     case 'valueType': return `value of type ${reason.typeText}`
     case 'kindChangingAssertion': return `a non-null assertion turning ${reason.fromText} into ${reason.toText}`
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
@@ -370,6 +376,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'variableDeclarationShape': return 'variables without identifier names and initializers'
     case 'expressionForm': return `expression (${reason.syntax})`
     case 'statementForm': return `statement (${reason.syntax})`
+    case 'switchStatement': return 'switch statement; write an if/else chain instead'
   }
 }
 

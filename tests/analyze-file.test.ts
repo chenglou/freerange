@@ -521,7 +521,7 @@ describe('analyzeFile', () => {
     `)
     const file = resolve('gates.ts')
     expect(report.functions).toEqual([
-      {kind: 'unsupported', name: 'truthy', unsupported: `condition of type number (compare explicitly, e.g. width > 0) at ${file}:3:13`},
+      {kind: 'unsupported', name: 'truthy', unsupported: `condition of type number (compare explicitly, e.g. width > 0 or mode !== undefined) at ${file}:3:13`},
       {kind: 'unsupported', name: 'mixedTernary', unsupported: `value of type number | boolean at ${file}:7:22`},
       {kind: 'unsupported', name: 'mixedReturns', unsupported: `value of type number | boolean at ${file}:10:7`},
     ])
@@ -1587,6 +1587,68 @@ describe('analyzeFile', () => {
     const scaled = report.functions.find(fn => fn.name === 'scaled')!
     if (scaled.kind !== 'unsupported') throw new Error(`expected scaled to be unsupported, got ${scaled.kind}`)
     expect(scaled.unsupported).toContain('default value for parameter zoom')
+  })
+
+  test('review round 2: sentinel and inner-kind literal defaults on nullable parameters analyze', () => {
+    // `deadline: number | null = null` is the standard optional-parameter spelling: the
+    // null literal is one of the declared sentinels, as provably inside the kind as = 5
+    // is for number. Both defaults satisfy the printed disjunction, so ignoring the
+    // initializer stays sound.
+    const report = analyzeSource('nullable-defaults.ts', `
+      export function remaining(deadline: number | null = null): number {
+        return deadline === null ? 0 : deadline
+      }
+      export function zoomOr(zoom: number | null = 5): number {
+        return zoom === null ? 1 : zoom
+      }
+    `)
+    expect(analyzedFunction(report, 'remaining').assumptions).toEqual(['deadline is null or a finite non-NaN number'])
+    expect(analyzedFunction(report, 'zoomOr').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('review round 2: optional literal-union parameters collapse to one scalar kind', () => {
+    // `mode: 'compact' | 'wide' | undefined` has several non-missing union members; they
+    // classify as one scalar kind (opaque here, number for 4 | 8 | undefined), the same
+    // rule the bare union already gets. Two record shapes under a wrapper stay rejected.
+    const report = analyzeSource('optional-literal-unions.ts', `
+      export function pick(mode: 'compact' | 'wide' | undefined, a: number, b: number): number {
+        if (mode === 'compact') return a
+        return b
+      }
+      export function gapFor(size: 4 | 8 | undefined): number {
+        return size === undefined ? 4 : size
+      }
+    `)
+    expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'gapFor').assumptions).toEqual(['size is undefined or a finite non-NaN number'])
+  })
+
+  test('review round 2: arrays of nullish records keep the [each] prose instead of a half-rewritten every-line', () => {
+    // The `every X element is` sugar only reads right when the element path appears once;
+    // a nullish element's disjunction mentions it twice, so the line stays in [each] form.
+    const report = analyzeSource('array-of-nullable.ts', `
+      export function slotSum(slots: ({x: number} | null)[]): number {
+        const first = slots[0]
+        if (first == null) return 0
+        return first.x
+      }
+    `)
+    expect(analyzedFunction(report, 'slotSum').assumptions)
+      .toEqual(['slots[each] is null or slots[each].x is finite and not NaN'])
+  })
+
+  test('review round 2: switch rejects with a rewrite hint, not a SyntaxKind dump', () => {
+    const report = analyzeSource('switch-dispatch.ts', `
+      export function dispatch(mode: string, a: number, b: number): number {
+        switch (mode) {
+          case 'a': return a
+          default: return b
+        }
+      }
+    `)
+    const dispatch = report.functions.find(fn => fn.name === 'dispatch')!
+    if (dispatch.kind !== 'unsupported') throw new Error(`expected dispatch to be unsupported, got ${dispatch.kind}`)
+    expect(dispatch.unsupported).toContain('switch statement; write an if/else chain instead')
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
