@@ -1915,6 +1915,46 @@ ${chain}
       .toEqual(['return is a finite number from 0.30000000000000004 through 0.30000000000000004'])
   })
 
+  test('review round 2: module-rooted bounds checks do not survive rebinding', () => {
+    // Rebinding the module root is the subset's one blessed update idiom, so a bounds
+    // check proven against the old array must not survive `data = [7]` — the guarded read
+    // after the rebind honestly falls back to the in-bounds assumption, while the same
+    // guard with no intervening write still discharges. The callee-write case is covered
+    // by dropping module-rooted pairs at completed calls.
+    const report = analyzeSource('module-rebind-bounds.ts', `
+      let data = [10, 20, 30, 40]
+      export function pick(i: number): number {
+        if (Number.isInteger(i) && i >= 0 && i < data.length) {
+          data = [7]
+          return data[i]!
+        }
+        return 0
+      }
+      export function pickClean(i: number): number {
+        if (Number.isInteger(i) && i >= 0 && i < data.length) {
+          return data[i]!
+        }
+        return 0
+      }
+      function shrink(): void {
+        data = [7]
+      }
+      export function pickThroughCall(i: number): number {
+        if (Number.isInteger(i) && i >= 0 && i < data.length) {
+          shrink()
+          return data[i]!
+        }
+        return 0
+      }
+    `)
+    const file = resolve('module-rebind-bounds.ts')
+    expect(analyzedFunction(report, 'pick').assumptions)
+      .toContain(`the element read at ${file}:6:18 is in bounds`)
+    expect(analyzedFunction(report, 'pickClean').assumptions.join(' ')).not.toContain('is in bounds')
+    expect(analyzedFunction(report, 'pickThroughCall').assumptions)
+      .toContain(`the element read at ${file}:22:18 is in bounds`)
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

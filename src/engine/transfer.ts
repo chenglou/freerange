@@ -28,7 +28,7 @@ import {
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
-import {cloneState, validIndexKey, type ExecutionState, type SharedState} from './state.ts'
+import {cloneState, dropModuleRootedPairs, validIndexKey, type ExecutionState, type SharedState} from './state.ts'
 
 type EvaluateFunction = (
   functionID: FunctionID,
@@ -260,6 +260,9 @@ function evaluateInstructionKinded(
       if (binding.category.kind !== 'opaque') {
         state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
       }
+      // A bounds check proven against the binding's previous value must not survive the
+      // rebind: `data = [7]` can shrink the array under a recorded pair.
+      dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
       return passthroughValue(assigned)
     }
     case 'moduleHavoc': {
@@ -271,6 +274,7 @@ function evaluateInstructionKinded(
       state.shared.modules[instruction.binding] = declaredKind == null
         ? {kind: 'uninitialized'}
         : {kind: 'value', value: coveringKindValue(declaredKind)}
+      dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
       return value({kind: 'void'})
     }
     case 'object': return value(recordValue(instruction.properties.map(property => ({
@@ -359,6 +363,9 @@ function evaluateInstructionKinded(
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
+      // The callee may have rebound any module binding; only module-rooted pairs are at
+      // risk (parameter- and value-rooted pairs name immutable values).
+      dropModuleRootedPairs(state.validIndexPairs, null)
       for (const precondition of completed.preconditions) addPrecondition(context.preconditions, precondition)
       for (const assumption of completed.boundsAssumptions) addBoundsAssumption(context.boundsAssumptions, assumption)
       return passthroughValue(completed.returnValue)

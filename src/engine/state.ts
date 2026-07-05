@@ -25,7 +25,9 @@ export type ExecutionState = {
   // that array" — established by the bounds-check guard `i >= 0 && i < arr.length`
   // (the lower bound and integrality live on the value's own interval; the set records
   // only the below-length half, keyed by canonical value names so repeated property
-  // reads of the same record match, and seeded across calls for argument pairs). Sound to keep for the
+  // reads of the same record match, and seeded across calls for argument pairs).
+  // Parameter- and value-rooted pairs never invalidate (immutable values); module-rooted
+  // pairs drop at module writes, havocs, and calls — see dropModuleRootedPairs. Sound to keep for the
   // whole evaluation: IR values never change and arrays are immutable after construction,
   // so the fact cannot be invalidated — joins still intersect, since a fact must hold on
   // every incoming path. Deliberately not a general relational domain: one relation kind,
@@ -35,6 +37,25 @@ export type ExecutionState = {
 
 export function validIndexKey(indexKey: string, arrayKey: string): string {
   return `${indexKey}<${arrayKey}`
+}
+
+// Canonical keys rooted at a module binding (m3, m3.sizes) name the binding, not the
+// value it currently holds — and rebinding the module root is the subset's one blessed
+// update idiom, so a pair proven against the old value must not survive a write. Called
+// at moduleWrite and moduleHavoc with the written binding, and after a completed call
+// with null (the callee may have written any binding; parameter- and value-rooted pairs
+// survive, since those name immutable values the callee cannot swap out).
+export function dropModuleRootedPairs(pairs: Set<string>, binding: number | null): void {
+  const root = binding == null ? null : `m${binding}`
+  const affected = (key: string): boolean => root == null
+    ? /^m\d/.test(key)
+    : key === root || key.startsWith(`${root}.`) || key.startsWith(`${root}<`)
+  for (const pair of [...pairs]) {
+    const separator = pair.indexOf('<')
+    const indexKey = pair.slice(0, separator)
+    const arrayKey = pair.slice(separator + 1)
+    if (affected(indexKey) || affected(arrayKey)) pairs.delete(pair)
+  }
 }
 
 export function emptySharedState(moduleCount: number): SharedState {
