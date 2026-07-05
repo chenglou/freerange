@@ -22,11 +22,22 @@ export type BoundsAssumption = {
   site: SiteID
 }
 
-export type InferredPrecondition = {
-  kind: 'nonzero'
-  expression: NumericExpression
-  // The operation that needs the requirement (today always a division). Propagated records
-  // keep the callee's site, so a caller's report points at the actual division even when
-  // the requirement surfaces two calls up.
-  site: SiteID
-}
+export type InferredPrecondition =
+  | {
+      kind: 'nonzero'
+      expression: NumericExpression
+      // The operation that needs the requirement (today always a division). Propagated
+      // records keep the callee's site, so a caller's report points at the actual division
+      // even when the requirement surfaces two calls up.
+      site: SiteID
+    }
+  // The peeled form of a nonzero obligation: dividing by `width - 4` requires width to
+  // not be 4. Produced only by float-exact peeling (see peelNonzero), so the biconditional
+  // holds: the printed condition is neither weaker nor stronger than the divisor being
+  // nonzero.
+  | {
+      kind: 'notEqualConstant'
+      expression: NumericExpression
+      value: number
+      site: SiteID
+    }

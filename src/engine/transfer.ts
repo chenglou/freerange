@@ -21,6 +21,7 @@ import {forEachOperand, type ComparisonOperator, type EdgeIR, type InstructionIR
 import {coveringKindValue, declaredKindOf, type FunctionIR, type ProgramIR} from '../ir/program.ts'
 import {
   addPrecondition,
+  peelNonzero,
   numericExpression,
   type ExpressionContext,
 } from '../requirements/infer.ts'
@@ -328,7 +329,7 @@ function evaluateInstructionKinded(
         if (expression == null) {
           return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
         }
-        addPrecondition(context.preconditions, {kind: 'nonzero', expression, site: instruction.site})
+        addPrecondition(context.preconditions, peelNonzero(expression, instruction.site))
         // Ensures assume the requires: with the nonzero requirement recorded, the quotient
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to

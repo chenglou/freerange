@@ -1,4 +1,4 @@
-import type {ValueID} from '../ir/ids.ts'
+import type {SiteID, ValueID} from '../ir/ids.ts'
 import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from './model.ts'
@@ -88,10 +88,43 @@ export function addPrecondition(preconditions: InferredPrecondition[], candidate
   if (!preconditions.some(precondition => samePrecondition(precondition, candidate))) preconditions.push(candidate)
 }
 
+// Rewrites a nonzero obligation into the simplest condition the caller can read, peeling
+// only float-EXACT layers so the biconditional survives:
+// - X - c is nonzero  <=>  X is not c   (IEEE subtraction is zero only on exact equality)
+// - X + c is nonzero  <=>  X is not -c  (same argument)
+// - c * X is nonzero  <=>  X is nonzero, when |c| >= 1 and finite (|c * x| >= |x| can
+//   never underflow to zero; small constants CAN — 1e-200 * 1e-200 is 0 — so those stay)
+// - X / c never peels: a tiny dividend over a huge divisor underflows to zero.
+// The multiply case recurses (still a nonzero form); a peel against a constant ends the
+// chain (width is not 4 is an endpoint — further peeling through rounding would lie).
+// Termination is structural: every step shrinks the expression.
+export function peelNonzero(expression: NumericExpression, site: SiteID): InferredPrecondition {
+  if (expression.kind === 'binary') {
+    const {operator, left, right} = expression
+    const constantSide = right.kind === 'constant' ? right : left.kind === 'constant' ? left : null
+    const otherSide = right.kind === 'constant' ? left : right
+    if (constantSide != null && Number.isFinite(constantSide.value)) {
+      if (operator === 'subtract') {
+        // c - X and X - c both peel to X is not c.
+        return {kind: 'notEqualConstant', expression: otherSide, value: constantSide.value, site}
+      }
+      if (operator === 'add') {
+        return {kind: 'notEqualConstant', expression: otherSide, value: -constantSide.value, site}
+      }
+      if (operator === 'multiply' && Math.abs(constantSide.value) >= 1) {
+        return peelNonzero(otherSide, site)
+      }
+    }
+  }
+  return {kind: 'nonzero', expression, site}
+}
+
 // Deduplication is by expression only: when two operations need the same requirement, the
 // first causing site wins. Switching to one record per operation is deferred until reports
 // group requirements per operation.
 function samePrecondition(left: InferredPrecondition, right: InferredPrecondition): boolean {
+  if (left.kind !== right.kind) return false
+  if (left.kind === 'notEqualConstant' && right.kind === 'notEqualConstant' && left.value !== right.value) return false
   return sameExpression(left.expression, right.expression)
 }
 
