@@ -316,6 +316,19 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         const values = current.arguments.map(argument => lowerExpression(argument, context))
         return addInstruction(context, current, {kind: method === 'min' ? 'minimum' : 'maximum', values})
       }
+      // Number.isInteger / Number.isFinite: predicate checks whose branches narrow — the
+      // missing halves of the bounds-check idiom (`i >= 0 && i < arr.length` proves the
+      // range; Number.isInteger(i) proves the read hits an element rather than arr[1.5]).
+      const standardNumber = isStandardNumberObject(current.expression.expression, context.checker)
+      if (standardNumber && (method === 'isInteger' || method === 'isFinite') && current.arguments.length === 1) {
+        requireNumberType(current.arguments[0]!, context.checker)
+        const value = lowerExpression(current.arguments[0]!, context)
+        return addInstruction(context, current, {
+          kind: 'numberCheck',
+          predicate: method === 'isInteger' ? 'integer' : 'finite',
+          value,
+        })
+      }
       throw unsupported(current, {kind: 'call', callee: current.expression.getText(context.sourceFile)})
     }
   }
@@ -729,6 +742,11 @@ function resolvedSymbol(symbol: ts.Symbol | undefined, checker: ts.TypeChecker):
 
 function isStandardMathObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
   if (!ts.isIdentifier(expression) || expression.text !== 'Math') return false
+  return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
+}
+
+function isStandardNumberObject(expression: ts.Expression, checker: ts.TypeChecker): boolean {
+  if (!ts.isIdentifier(expression) || expression.text !== 'Number') return false
   return declaredOnlyInDeclarationFiles(checker.getSymbolAtLocation(expression))
 }
 

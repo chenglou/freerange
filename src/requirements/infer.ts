@@ -7,6 +7,9 @@ export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
   parameterIndexByValue: Array<number | undefined>
   instructionByValue: Array<InstructionIR | undefined>
+  // The walk budget below, reset per top-level numericExpression call.
+  instructionCount: number
+  remainingVisits: number
 }
 
 export function createExpressionContext(
@@ -17,36 +20,58 @@ export function createExpressionContext(
     parameterExpressions,
     parameterIndexByValue: [],
     instructionByValue: [],
+    instructionCount: 0,
+    remainingVisits: 0,
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     context.parameterIndexByValue[fn.parameters[index]!.value] = index
   }
   for (const block of fn.blocks) {
-    for (const instruction of block.instructions) context.instructionByValue[instruction.result] = instruction
+    for (const instruction of block.instructions) {
+      context.instructionByValue[instruction.result] = instruction
+      context.instructionCount += 1
+    }
   }
   return context
 }
 
+// The producer walk expands a value's defining DAG into an expression tree, and a value
+// used twice appears twice — chained squaring (`const b = a * a; const c = b * b`) doubles
+// per level, so tree size is exponential in the worst case while the DAG stays linear.
+// The budget is by construction, not a magic number: each visit charges against the
+// function's own instruction count, so a requirement can never be more complex than the
+// function that produced it. Exhaustion returns null, which surfaces as the honest
+// divisorUnknown stop (or the assumes fallback for element reads).
 export function numericExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
+  context.remainingVisits = context.instructionCount
+  return walkExpression(value, context)
+}
+
+function walkExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
   const parameterIndex = context.parameterIndexByValue[value]
   if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
   const instruction = context.instructionByValue[value]
   if (instruction == null) return null
+  // Only an instruction expansion is charged — re-expanding the same instruction is
+  // exactly what the duplication blowup repeats, while parameter and constant leaves are
+  // bounded by the expansions' own fan-in.
+  if (context.remainingVisits <= 0) return null
+  context.remainingVisits -= 1
   switch (instruction.kind) {
     case 'constant': return {kind: 'constant', value: instruction.value}
     case 'binary': {
-      const left = numericExpression(instruction.left, context)
-      const right = numericExpression(instruction.right, context)
+      const left = walkExpression(instruction.left, context)
+      const right = walkExpression(instruction.right, context)
       return left == null || right == null
         ? null
         : {kind: 'binary', operator: instruction.operator, left, right}
     }
     case 'floor': {
-      const operand = numericExpression(instruction.value, context)
+      const operand = walkExpression(instruction.value, context)
       return operand == null ? null : {kind: 'floor', operand}
     }
     // A module write's result is the assigned value, so the written expression carries over.
-    case 'moduleWrite': return numericExpression(instruction.value, context)
+    case 'moduleWrite': return walkExpression(instruction.value, context)
     // Requirement expressions name only the function's own parameters; a module binding is
     // not caller-visible, so a requirement cannot name it.
     case 'moduleRead':
@@ -63,6 +88,7 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
     case 'nullishConstant':
     case 'opaqueConstant':
     case 'unknownBoolean':
+    case 'numberCheck':
     case 'nullishCheck':
     case 'arrayLiteral':
     case 'arrayIndex': return null
@@ -76,9 +102,9 @@ export function numericExpression(value: ValueID, context: ExpressionContext): N
       const producer = context.instructionByValue[instruction.object]
       if (producer?.kind === 'object') {
         const source = producer.properties.find(property => property.name === instruction.property)
-        if (source != null) return numericExpression(source.value, context)
+        if (source != null) return walkExpression(source.value, context)
       }
-      const base = numericExpression(instruction.object, context)
+      const base = walkExpression(instruction.object, context)
       return base == null ? null : {kind: 'property', base, name: instruction.property}
     }
   }

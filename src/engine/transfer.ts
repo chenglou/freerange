@@ -27,7 +27,8 @@ import {
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
-import {cloneState, type ExecutionState, type SharedState} from './state.ts'
+import {
+  validIndexKey,cloneState, type ExecutionState, type SharedState} from './state.ts'
 
 type EvaluateFunction = (
   functionID: FunctionID,
@@ -166,8 +167,15 @@ function evaluateInstructionKinded(
         ? tupleElement(sequence, index)
         : sequence.element
       const length = sequence.kind === 'tuple' ? constantNumber(sequence.elements.length) : sequence.length
+      // Three proofs of in-bounds: the for-of desugaring's by-construction counter, the
+      // interval argument (index tops out below every possible length), and the recorded
+      // bounds-check relation (`i >= 0 && i < arr.length` — the lower bound and
+      // integrality still come from the index's own interval; a float index fails here
+      // honestly, since arr[1.5] misses).
       const inBounds = instruction.provenBounds
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
+        || (index.integer && !index.mayBeNaN && index.lower >= 0
+          && state.validIndexPairs.has(validIndexKey(instruction.index, instruction.array)))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
       // where every read is out of bounds.
@@ -203,6 +211,10 @@ function evaluateInstructionKinded(
         }
       }
       return passthroughValue(element)
+    }
+    case 'numberCheck': {
+      const operand = requiredNumber(state, instruction.value)
+      return value(evaluateNumberCheck(instruction.predicate, operand))
     }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
@@ -509,6 +521,57 @@ function meetValues(current: AbstractValue, refined: AbstractValue): AbstractVal
   return refined
 }
 
+function evaluateNumberCheck(predicate: 'integer' | 'finite', operand: AbstractNumber): AbstractBoolean {
+  const finiteLower = Math.max(operand.lower, -Number.MAX_VALUE)
+  const finiteUpper = Math.min(operand.upper, Number.MAX_VALUE)
+  if (predicate === 'finite') {
+    return {
+      kind: 'boolean',
+      // True is possible when a finite inhabitant exists; false when NaN or an infinity can.
+      canBeTrue: finiteLower <= finiteUpper,
+      canBeFalse: operand.mayBeNaN || !isFiniteNumber(operand),
+    }
+  }
+  return {
+    kind: 'boolean',
+    // Number.isInteger is false for NaN and the infinities, so the true side needs a
+    // finite integer inhabitant and the false side anything else.
+    canBeTrue: Math.ceil(finiteLower) <= Math.floor(finiteUpper),
+    canBeFalse: !operand.integer || operand.mayBeNaN || !isFiniteNumber(operand),
+  }
+}
+
+export function refineNumberCheck(
+  state: ExecutionState,
+  check: Extract<InstructionIR, {kind: 'numberCheck'}>,
+  truth: boolean,
+  producers: Array<InstructionIR | undefined>,
+): ExecutionState | null {
+  const result = cloneState(state)
+  const operand = requiredNumber(result, check.value)
+  if (truth) {
+    // The passing branch proves finiteness for both predicates (isInteger rejects the
+    // infinities too), and integrality snaps the bounds inward.
+    let refined: AbstractNumber = {
+      ...operand,
+      mayBeNaN: false,
+      lower: Math.max(operand.lower, -Number.MAX_VALUE),
+      upper: Math.min(operand.upper, Number.MAX_VALUE),
+    }
+    if (check.predicate === 'integer') {
+      refined = {...refined, integer: true, lower: Math.ceil(refined.lower), upper: Math.floor(refined.upper)}
+    }
+    if (refined.lower > refined.upper) return null
+    writeThroughProducers(result, check.value, refined, producers)
+    return result
+  }
+  // The failing branch holds NaN, the infinities, and (for isInteger) every non-integer —
+  // none of which an interval can carve out, except the one provable contradiction: a
+  // value already finite and NaN-free cannot fail isFinite at all.
+  if (check.predicate === 'finite' && !operand.mayBeNaN && isFiniteNumber(operand)) return null
+  return result
+}
+
 export function refineComparison(
   state: ExecutionState,
   comparison: Extract<InstructionIR, {kind: 'compare'}>,
@@ -562,6 +625,23 @@ export function refineComparison(
       refinedLeft = excludePointFrom(left, right)
       refinedRight = excludePointFrom(right, left)
       break
+    }
+  }
+  // The bounds-check idiom: in the branch where `i < arr.length` held, record the pair —
+  // the below-length half of in-bounds that no interval can carry (a relation between two
+  // unknowns). The `i > arr.length`-failed spelling arrives here as the inverted
+  // lessThanOrEqual and is deliberately NOT recorded: <= length is one past the last
+  // element. Only the strict form proves a valid index.
+  if (operator === 'lessThan') {
+    const rightProducer = producers[comparison.right]
+    if (rightProducer?.kind === 'arrayLength') {
+      result.validIndexPairs.add(validIndexKey(comparison.left, rightProducer.array))
+    }
+  }
+  if (operator === 'greaterThan') {
+    const leftProducer = producers[comparison.left]
+    if (leftProducer?.kind === 'arrayLength') {
+      result.validIndexPairs.add(validIndexKey(comparison.right, leftProducer.array))
     }
   }
   const emptied = refinedLeft.lower > refinedLeft.upper || refinedRight.lower > refinedRight.upper

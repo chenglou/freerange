@@ -55,6 +55,11 @@ export type InstructionIR =
   // state is mutable, so two reads are never assumed equal.
   | (InstructionBase & {kind: 'platformValue'; lower: number; upper: number; integer: boolean})
   | (InstructionBase & {kind: 'absolute'; value: ValueID})
+  // Number.isInteger(x) / Number.isFinite(x): a boolean over one number operand, with
+  // branch refinement like nullishCheck — the true branch of isInteger knows the value is
+  // an integer (and finite, and not NaN), the false branch of isFinite prunes when the
+  // value was already provably finite.
+  | (InstructionBase & {kind: 'numberCheck'; predicate: 'integer' | 'finite'; value: ValueID})
   // Boolean negation, from `!x` on a boolean operand.
   | (InstructionBase & {kind: 'not'; value: ValueID})
   | (InstructionBase & {kind: 'minimum' | 'maximum'; values: ValueID[]})
@@ -82,6 +87,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'compare': visit(instruction.left); visit(instruction.right); return
     case 'floor':
     case 'absolute':
+    case 'numberCheck':
     case 'not': visit(instruction.value); return
     case 'nullishCheck': visit(instruction.value); return
     case 'arrayLiteral': for (const element of instruction.elements) visit(element); return

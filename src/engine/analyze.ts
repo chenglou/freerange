@@ -27,6 +27,7 @@ import {
   collectNonCompareUses,
   evaluateInstruction,
   refineComparison,
+  refineNumberCheck,
   refineNullishCheck,
   requiredBoolean,
   requiredValue,
@@ -224,6 +225,7 @@ function runEvaluation(
   const initial: ExecutionState = {
     frame: {values: []},
     shared: cloneSharedState(sharedState),
+    validIndexPairs: new Set(),
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
@@ -320,6 +322,7 @@ function runEvaluation(
         const producer = expressionContext.instructionByValue[block.terminator.condition]
         const comparison = producer?.kind === 'compare' ? producer : undefined
         const nullishCheck = producer?.kind === 'nullishCheck' ? producer : undefined
+        const numberCheck = producer?.kind === 'numberCheck' ? producer : undefined
         if (condition.canBeTrue) {
           // refineComparison clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
@@ -327,7 +330,9 @@ function runEvaluation(
             ? refineComparison(state, comparison, true, expressionContext.instructionByValue)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, true, expressionContext.instructionByValue)
-              : condition.canBeFalse ? cloneState(state) : state
+              : numberCheck != null
+                ? refineNumberCheck(state, numberCheck, true, expressionContext.instructionByValue)
+                : condition.canBeFalse ? cloneState(state) : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
@@ -335,7 +340,9 @@ function runEvaluation(
             ? refineComparison(state, comparison, false, expressionContext.instructionByValue)
             : nullishCheck != null
               ? refineNullishCheck(state, nullishCheck, false, expressionContext.instructionByValue)
-              : state
+              : numberCheck != null
+                ? refineNumberCheck(state, numberCheck, false, expressionContext.instructionByValue)
+                : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break

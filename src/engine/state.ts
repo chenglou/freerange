@@ -21,6 +21,19 @@ export type SharedState = {
 export type ExecutionState = {
   frame: FunctionFrame
   shared: SharedState
+  // The one relational fact the analysis carries: "this IR value is a valid index into
+  // that array value" — established by the bounds-check guard `i >= 0 && i < arr.length`
+  // (the lower bound and integrality live on the value's own interval; the set records
+  // only the below-length half, keyed 'indexValue<arrayValue'). Sound to keep for the
+  // whole evaluation: IR values never change and arrays are immutable after construction,
+  // so the fact cannot be invalidated — joins still intersect, since a fact must hold on
+  // every incoming path. Deliberately not a general relational domain: one relation kind,
+  // no transitivity, no arithmetic over it.
+  validIndexPairs: Set<string>
+}
+
+export function validIndexKey(index: number, array: number): string {
+  return `${index}<${array}`
 }
 
 export function emptySharedState(moduleCount: number): SharedState {
@@ -38,6 +51,7 @@ export function cloneState(state: ExecutionState): ExecutionState {
   return {
     frame: {values: state.frame.values.slice()},
     shared: cloneSharedState(state.shared),
+    validIndexPairs: new Set(state.validIndexPairs),
   }
 }
 
@@ -51,11 +65,16 @@ export function joinStates(left: ExecutionState, right: ExecutionState): Executi
     else if (rightValue == null) values[index] = leftValue
     else values[index] = joinValues(leftValue, rightValue)
   }
+  const validIndexPairs = new Set<string>()
+  for (const pair of left.validIndexPairs) {
+    if (right.validIndexPairs.has(pair)) validIndexPairs.add(pair)
+  }
   return {
     frame: {values},
     shared: {
       modules: joinModuleSlots(left.shared.modules, right.shared.modules),
     },
+    validIndexPairs,
   }
 }
 
@@ -91,6 +110,10 @@ export function sameState(left: ExecutionState, right: ExecutionState): boolean 
     if (leftSlot.kind === 'value' && rightSlot.kind === 'value' && !sameValues(leftSlot.value, rightSlot.value)) {
       return false
     }
+  }
+  if (left.validIndexPairs.size !== right.validIndexPairs.size) return false
+  for (const pair of left.validIndexPairs) {
+    if (!right.validIndexPairs.has(pair)) return false
   }
   return true
 }

@@ -1653,6 +1653,192 @@ describe('analyzeFile', () => {
     expect(dispatch.unsupported).toContain('switch statement; write an if/else chain instead')
   })
 
+  test('guards discharge nonzero obligations in all three everyday spellings', () => {
+    const report = analyzeSource('guard-discharge.ts', `
+      export function notEqualGuard(total: number, count: number): number {
+        if (count !== 0) { return total / count }
+        return 0
+      }
+      export function earlyReturn(total: number, count: number): number {
+        if (count === 0) { return 0 }
+        return total / count
+      }
+      export function positiveGuard(total: number, count: number): number {
+        if (count > 0) { return total / count }
+        return 0
+      }
+    `)
+    for (const name of ['notEqualGuard', 'earlyReturn', 'positiveGuard']) {
+      const fn = analyzedFunction(report, name)
+      expect(fn.requires).toEqual([])
+      // A float divisor can sit arbitrarily close to zero, so the quotient can overflow;
+      // the honest ensures is possibly non-finite, never NaN (zero is cut, so no 0/0).
+      expect(fn.ensures[0]).toContain('possibly non-finite')
+      expect(fn.ensures[0]).not.toContain('NaN')
+    }
+  })
+
+  test('the not-equal branch keeps NaN: a NaN operand passes !== and lands on the not-equal side', () => {
+    // multiply can produce NaN (0 * Infinity); NaN !== 0 is true at runtime, so the
+    // guarded branch must NOT claim NaN-freedom — the ensures stays possibly NaN.
+    const report = analyzeSource('notequal-nan.ts', `
+      export function scaled(a: number, b: number): number {
+        const product = a * b
+        if (product !== 0) { return 100 / product }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'scaled').ensures[0]).toContain('possibly NaN')
+  })
+
+  test('the zero exclusion survives loop widening', () => {
+    const report = analyzeSource('loop-flag.ts', `
+      export function accumulate(count: number, step: number): number {
+        let total = 0
+        for (let index = 0; index < count; index += 1) {
+          if (step !== 0) { total = total + 100 / step }
+        }
+        return total
+      }
+    `)
+    expect(analyzedFunction(report, 'accumulate').requires).toEqual([])
+  })
+
+  test('nonzero obligations peel to caller-readable conditions through float-exact layers only', () => {
+    const report = analyzeSource('peeling.ts', `
+      export function pad(total: number, width: number): number {
+        return total / (width - 4)
+      }
+      export function doubled(total: number, scale: number): number {
+        return total / ((scale + 10) * 2)
+      }
+      export function tinyFactor(total: number, x: number): number {
+        return total / (x * 1e-300)
+      }
+      export function property(total: number, grid: {cols: number}): number {
+        return total / (grid.cols - 1)
+      }
+    `)
+    const file = resolve('peeling.ts')
+    expect(analyzedFunction(report, 'pad').requires)
+      .toEqual([`width is not 4 (division at ${file}:3:16)`])
+    // The multiply peels (|2| >= 1 cannot underflow the product to zero), then the add.
+    expect(analyzedFunction(report, 'doubled').requires)
+      .toEqual([`scale is not -10 (division at ${file}:6:16)`])
+    // A small constant CAN underflow the product to zero (1e-200 * 1e-200 === 0), so the
+    // obligation stays as written.
+    expect(analyzedFunction(report, 'tinyFactor').requires)
+      .toEqual([`(x * 1e-300) is nonzero (division at ${file}:9:16)`])
+    expect(analyzedFunction(report, 'property').requires)
+      .toEqual([`grid.cols is not 1 (division at ${file}:12:16)`])
+  })
+
+  test('peeled requirements propagate through calls with the caller arguments substituted', () => {
+    const report = analyzeSource('peel-propagation.ts', `
+      function stepFor(width: number, gap: number): number {
+        return width / (gap - 2)
+      }
+      export function layout(totalWidth: number, gutter: number): number {
+        return stepFor(totalWidth, gutter + 1)
+      }
+      export function fixed(totalWidth: number): number {
+        return stepFor(totalWidth, 10)
+      }
+    `)
+    const file = resolve('peel-propagation.ts')
+    // The peel stops at the substituted argument: (gutter + 1) is not 2 is float-exact,
+    // while peeling further to 'gutter is not 1' would trust rounding.
+    expect(analyzedFunction(report, 'layout').requires)
+      .toEqual([`(gutter + 1) is not 2 (division at ${file}:3:16)`])
+    // A constant argument discharges by plain evaluation: 10 - 2 is provably nonzero.
+    expect(analyzedFunction(report, 'fixed').requires).toEqual([])
+  })
+
+  test('the bounds-check idiom discharges asserted reads: relation, integrality, manual loops', () => {
+    const report = analyzeSource('bounds-idiom.ts', `
+      export function at(sizes: number[], slot: number): number {
+        if (Number.isInteger(slot) && slot >= 0 && slot < sizes.length) {
+          return sizes[slot]!
+        }
+        return 0
+      }
+      export function manualLoop(values: number[]): number {
+        let total = 0
+        for (let index = 0; index < values.length; index += 1) {
+          total = total + (values[index] ?? 0)
+        }
+        return total
+      }
+      export function floatIndex(sizes: number[], slot: number): number {
+        if (slot >= 0 && slot < sizes.length) { return sizes[slot]! }
+        return 0
+      }
+      export function wrongArray(a: number[], b: number[], i: number): number {
+        if (Number.isInteger(i) && i >= 0 && i < a.length) { return b[i]! }
+        return 0
+      }
+    `)
+    const file = resolve('bounds-idiom.ts')
+    // The full defensive guard proves the read: no requires line at all.
+    expect(analyzedFunction(report, 'at').requires).toEqual([])
+    expect(analyzedFunction(report, 'manualLoop').requires).toEqual([])
+    // Without integrality the guard is not enough — sizes[1.5] misses — so the obligation
+    // honestly survives as the caller-actionable requirement.
+    expect(analyzedFunction(report, 'floatIndex').requires)
+      .toEqual([`slot is a valid sizes index (element read at ${file}:16:56)`])
+    // The relation is paired per array: guarding a's length says nothing about b.
+    expect(analyzedFunction(report, 'wrongArray').requires)
+      .toEqual([`i is a valid b index (element read at ${file}:20:69)`])
+  })
+
+  test('unproven asserted reads mint a requires when nameable, an assumes otherwise', () => {
+    const report = analyzeSource('bounds-mint.ts', `
+      const gapSizes = [4, 8, 24]
+      export function fromModule(slot: number): number {
+        return gapSizes[slot]!
+      }
+      export function fromParameter(sizes: number[], slot: number): number {
+        return sizes[slot + 1]!
+      }
+    `)
+    const file = resolve('bounds-mint.ts')
+    // A module array is not caller-visible, so the obligation stays an assumes line.
+    expect(analyzedFunction(report, 'fromModule').assumptions)
+      .toContain(`the element read at ${file}:4:16 is in bounds`)
+    expect(analyzedFunction(report, 'fromParameter').requires)
+      .toEqual([`(slot + 1) is a valid sizes index (element read at ${file}:7:16)`])
+  })
+
+  test('the expression walk budget stops re-expansion blowup with the honest divisorUnknown', () => {
+    // Each squaring doubles the expression tree (the defining DAG is linear, the tree is
+    // exponential); the walk charges instruction expansions against the function's own
+    // instruction count, so the requirement can never be more complex than the function.
+    const chain = Array.from({length: 20}, () => '  a = a * a').join('\n')
+    const report = analyzeSource('walk-budget.ts', `
+      export function monster(total: number, x: number): number {
+        let a = x + 1
+${chain}
+        return total / a
+      }
+    `)
+    const monster = report.functions.find(fn => fn.name === 'monster')!
+    if (monster.kind !== 'partial') throw new Error(`expected monster to be partial, got ${monster.kind}`)
+    expect(monster.stopped[0]).toContain('cannot infer a nonzero requirement')
+  })
+
+  test('Number.isFinite narrows: the passing branch is finite, the failing branch prunes when provably finite', () => {
+    const report = analyzeSource('isfinite-narrow.ts', `
+      export function recovered(a: number, b: number): number {
+        const product = a * b
+        if (Number.isFinite(product)) { return product }
+        return 0
+      }
+    `)
+    // a * b can overflow and turn NaN, but the passing branch proves finiteness — and the
+    // 0 fallback keeps the whole return finite.
+    expect(analyzedFunction(report, 'recovered').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
