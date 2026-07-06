@@ -327,13 +327,19 @@ function declaredRecordProperties(
   const properties: Array<{name: string; declared: DeclaredKind}> = []
   for (const property of checker.getPropertiesOfType(type)) {
     const optional = (property.flags & ts.SymbolFlags.Optional) !== 0
-    const propertyDeclared = declaredKind(
+    const walked = declaredKind(
       checker.getTypeOfSymbolAtLocation(property, location),
       location,
       checker,
       [...seen, type],
     )
-    if (propertyDeclared == null) return null
+    // A property the walk cannot classify — a recursive route, a mixed-literal union, a
+    // DOM element — becomes an opaque leaf instead of vetoing the whole record: the value
+    // is carried without claims, and a read that needs more than carrying is gated at the
+    // read position (numeric use rejects at lowering; a modeled-kind read of the
+    // unclassified value stops at the kind-mismatch backstop). The record's NUMERIC
+    // contract survives its weird neighbors.
+    const propertyDeclared = walked ?? {kind: 'opaque'}
     // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
     // value machinery models; under exactOptionalPropertyTypes (which the analyzer forces)
     // a well-typed value's optional property is either absent or a T, never an explicit
@@ -382,7 +388,28 @@ function declaredTaggedVariant(
   return {tagValue: tagType.value, properties}
 }
 
+// The classification walk is pure over the type, and the checker interns types, so one
+// walk per type identity suffices — without this, every function taking a ValidRoute-
+// sized union re-walks its 17 variants through the checker's slow property queries. The
+// location parameter does not affect the result for accepted types (instantiated
+// generics are distinct type identities), so the cache keys on the type alone. Cached
+// nulls matter as much as hits: rejection walks repeat too.
+const declaredKindCache = new WeakMap<ts.Type, DeclaredKind | null>()
+
 export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+  // Recursive walks (seen non-empty) must not poison the cache: a type reached inside a
+  // cycle classifies null there, while the same type from the top may classify fine.
+  if (seen.length === 0) {
+    const cached = declaredKindCache.get(type)
+    if (cached !== undefined) return cached
+    const walked = declaredKindUncached(type, location, checker, seen)
+    declaredKindCache.set(type, walked)
+    return walked
+  }
+  return declaredKindUncached(type, location, checker, seen)
+}
+
+function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
     case 'boolean': return {kind: 'boolean'}

@@ -217,12 +217,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // branch that set the property and one that omitted it must not drop it, and reads
     // must find the honest maybe-missing value rather than crash. (A literal with no
     // contextual record type has no optionals to fill.)
-    if (contextual != null && !contextual.isUnion() && valueKind(contextual, context.checker) === 'object') {
-      for (const member of context.checker.getPropertiesOfType(contextual)) {
+    const fillOptionalsFrom = (recordType: ts.Type): void => {
+      for (const member of context.checker.getPropertiesOfType(recordType)) {
         if ((member.flags & ts.SymbolFlags.Optional) === 0 || lastByName.has(member.name)) continue
         const absent = addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'undefined'})
         lastByName.set(member.name, {name: member.name, value: absent})
       }
+    }
+    if (contextual != null && !contextual.isUnion() && valueKind(contextual, context.checker) === 'object') {
+      fillOptionalsFrom(contextual)
     }
     let tag: {property: string; value: string} | null = null
     if (contextual != null && contextual.isUnion() && valueKind(contextual, context.checker) === 'taggedUnion') {
@@ -232,6 +235,17 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         const ownTagType = ownTag == null ? null : context.checker.getTypeOfSymbol(ownTag)
         if (ownTagType != null && ownTagType.isStringLiteral()) {
           tag = {property: tagProperty, value: ownTagType.value}
+          // The variant's own optionals fill too — from every contextual member carrying
+          // this tag value, so a duplicate-tag literal covers both shapes' optionals.
+          // Filling never breaks the in-check split: an optional property reads as
+          // unknown presence either way.
+          for (const member of contextual.types) {
+            const memberTag = context.checker.getPropertyOfType(member, tagProperty)
+            const memberTagType = memberTag == null ? null : context.checker.getTypeOfSymbol(memberTag)
+            if (memberTagType != null && memberTagType.isStringLiteral() && memberTagType.value === ownTagType.value) {
+              fillOptionalsFrom(member)
+            }
+          }
         }
       }
     }
@@ -613,6 +627,18 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
   if (checker.isArrayType(type)) {
     const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
     return element != null && valueKind(element, checker, depth + 1) != null ? 'array' : null
+  }
+  // An intersection of object types (`Base & {subPage: 'select'}` — the extends idiom for
+  // route variants) merges into one record shape; the checker's property and signature
+  // queries below already answer for the merged view, so the intersection runs the same
+  // object checks. A member outside the object kind keeps the whole intersection out.
+  if (type.isIntersection() && type.types.every(member => valueKind(member, checker, depth + 1) === 'object')) {
+    if (checker.getIndexInfosOfType(type).length > 0) return null
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    const anchored = checker.getPropertiesOfType(type).some(property =>
+      (property.flags & ts.SymbolFlags.Optional) === 0
+      && checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+    return anchored ? 'object' : null
   }
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     // An index signature, e.g. Record<string, number>, admits properties the type never

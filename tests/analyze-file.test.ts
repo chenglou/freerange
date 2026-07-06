@@ -2288,6 +2288,48 @@ ${chain}
     expect(analyzedFunction(report, 'levelOf').ensures).toEqual(['return is a finite number'])
   })
 
+  test('unclassifiable properties become opaque leaves; intersections classify; hull reads stop honestly', () => {
+    // A recursive or mixed-literal property no longer vetoes its record: it is carried
+    // without claims, numeric use of it rejects at the read position, and the record's
+    // numeric contract survives its weird neighbors. Route variants written as
+    // intersections (Base & {...}) classify like the merged record they are. And a read
+    // past a degraded hull (a union that met a plain record) stops honestly instead of
+    // crashing the run.
+    const report = analyzeSource('opaque-leaves.ts', `
+      type Filter = {kind: 'all'} | {kind: 'top'}
+      type Base = {type: 'explore'; scroll: number}
+      type ExploreRoute = Base & {filter: Filter | null; recursive: ExploreRoute | null}
+      type Route = ExploreRoute | {type: 'home'; depth: number}
+      export function scrollOf(route: Route): number {
+        if (route.type === 'explore') { return route.scroll }
+        return route.depth
+      }
+    `)
+    expect(analyzedFunction(report, 'scrollOf').assumptions).toEqual([
+      "route.scroll is finite and not NaN (when route.type is 'explore')",
+      "route.depth is finite and not NaN (when route.type is 'home')",
+    ])
+    expect(analyzedFunction(report, 'scrollOf').ensures).toEqual(['return is a finite number'])
+  })
+
+  test('variant literals fill their optionals, so reads after joins never miss', () => {
+    const report = analyzeSource('variant-fill.ts', `
+      type Route = {type: 'archive'; folder?: string; page: number} | {type: 'home'; scroll: number}
+      export function build(deep: boolean): Route {
+        if (deep) { return {type: 'archive', folder: 'x', page: 2} }
+        return {type: 'archive', page: 1}
+      }
+      export function pageOf(deep: boolean): number {
+        const route = build(deep)
+        if (route.type === 'archive') { return route.page }
+        return 0
+      }
+    `)
+    // 1 through 2, not 0 through 2: build only ever returns archive variants, so the
+    // home arm is provably dead and prunes.
+    expect(analyzedFunction(report, 'pageOf').ensures).toEqual(['return is a finite integer number from 1 through 2'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

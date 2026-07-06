@@ -335,10 +335,11 @@ function evaluateInstructionKinded(
       }
       const record = requiredRecord(state, instruction.object)
       const propertyValue = recordProperty(record, instruction.property)
-      // The static type only exposes properties present on every value the expression can
-      // hold, and record joins keep exactly those, so a type-checked read always finds its
-      // property.
-      if (propertyValue == null) throw new Error(`Record has no property ${instruction.property}`)
+      // A missing property is an honest per-path stop, not a crash: a tagged union that
+      // met a plain record degraded to their shared hull, and a read past the hull is
+      // exactly a narrowing the analysis did not model. (Before hulls existed this was a
+      // gate-bug tripwire; the backstop bucket is what review rounds audit now.)
+      if (propertyValue == null) throw new KindMismatch(`Record has no property ${instruction.property}`)
       return passthroughValue(propertyValue)
     }
     case 'compare': return value(compareNumbers(
