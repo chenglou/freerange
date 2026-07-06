@@ -3396,14 +3396,23 @@ ${chain}
     expect(caller.ensures).toEqual(['return is a finite number at least 1'])
   })
 
-  test('stops reads of imported bindings', () => {
+  test('reads imported const numeric literals exactly; other imports still stop', () => {
     const importsFixture = new URL('./fixtures/module-imports.ts', import.meta.url).pathname
     const report = analyzeFile(importsFixture)
     expect(report.functions).toEqual([{
-      kind: 'partial',
+      // importedPad resolves to `export const importedPad = 7` in the helper file, so the
+      // read carries exactly 7 instead of stopping — no assumes line about importedPad.
+      kind: 'analyzed',
       name: 'paddedBy',
       assumptions: ['width is finite and not NaN'],
-      stopped: [`reads importedPad, which is imported from another module (read at ${importsFixture}:4:31)`],
+      requires: [],
+      ensures: ['return is a finite number at least 7'],
+    }, {
+      // importedOffset is a `let` export the other module can reassign; still a stop.
+      kind: 'partial',
+      name: 'shiftedBy',
+      assumptions: ['width is finite and not NaN'],
+      stopped: [`reads importedOffset, which is imported from another module (read at ${importsFixture}:10:18)`],
       observed: [],
     }])
   })

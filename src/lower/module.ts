@@ -64,13 +64,15 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
     if (ts.isImportDeclaration(statement)) {
       const clause = statement.importClause
       if (clause == null || clause.isTypeOnly) continue
-      if (clause.name != null) register(clause.name, {kind: 'import'})
+      if (clause.name != null) register(clause.name, importedCategory(clause.name, checker))
       const named = clause.namedBindings
       if (named != null && ts.isNamedImports(named)) {
         for (const element of named.elements) {
-          if (!element.isTypeOnly) register(element.name, {kind: 'import'})
+          if (!element.isTypeOnly) register(element.name, importedCategory(element.name, checker))
         }
       }
+      // A namespace import reads as property accesses on the namespace object; no single
+      // constant value describes the binding, so it stays a plain import.
       if (named != null && ts.isNamespaceImport(named)) register(named.name, {kind: 'import'})
     }
   }
@@ -90,6 +92,63 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
     if (writtenInsideFunctions.has(binding)) demote(bindings, binding)
   }
   return {bindings, bindingsBySymbol, writtenInsideFunctions}
+}
+
+// The category of one imported name. A named or default import whose target resolves to a
+// const declarator with a plain numeric-literal initializer in a project .ts file, e.g.
+// `export const INPUT_ROW_HEIGHT = 54` in a neighboring file, carries that exact value
+// into this file. Everything else — `let` exports, computed initializers, .d.ts
+// declarations, unresolved modules — stays a plain import whose reads stop.
+//
+// Soundness of trusting the literal WITHOUT analyzing the exporting module:
+//   - No rebinding. Assigning to a const throws a TypeError at runtime (module code is
+//     always strict), and a module binding is not a property of any reachable object, so
+//     no other code can alias-write it either. The binding holds the literal for the
+//     module's entire lifetime once initialized. (TypeScript separately flags writes to
+//     imports in the analyzed file, and the whole-file type gate already rejects those.)
+//   - No torn reads during module initialization. const bindings sit in the temporal dead
+//     zone until their declaration runs, so in an import cycle a read that beats the
+//     exporting declaration throws a ReferenceError rather than yielding undefined or a
+//     stale value. A throw ends the path: the module never finishes loading, so every
+//     claim about code past the read is vacuously true — the same argument the
+//     initializer-skip note in lowerModuleInitializer makes.
+//   - The exporting file's own analysis result (skipped statements, rejected functions,
+//     demoted bindings) cannot matter: the initializer IS the literal, so nothing that
+//     file computes feeds the value. An initializer beyond a literal (`export const
+//     ROW_HEIGHT_TOTAL = INPUT_ROW_HEIGHT + 8`) would depend on that file's module
+//     evaluation, which is exactly why the acceptance stops at literals.
+// The remaining assumption, shared with the rest of the analyzer: the code runs under ES
+// module semantics (or a transpilation that preserves const and live-binding behavior).
+function importedCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
+  const symbol = checker.getSymbolAtLocation(name)
+  if (symbol == null || (symbol.flags & ts.SymbolFlags.Alias) === 0) return {kind: 'import'}
+  const target = checker.getAliasedSymbol(symbol)
+  const declaration = target.valueDeclaration
+  if (declaration == null || !ts.isVariableDeclaration(declaration)) return {kind: 'import'}
+  if ((ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) === 0) return {kind: 'import'}
+  if (declaration.getSourceFile().isDeclarationFile) return {kind: 'import'}
+  if (declaration.initializer == null) return {kind: 'import'}
+  const value = numericLiteralValue(declaration.initializer)
+  return value == null ? {kind: 'import'} : {kind: 'importedConstant', value}
+}
+
+// The exact value of a numeric-literal initializer, unwrapping parentheses and `as`
+// assertions — both value-preserving, so `export const PILL_BUTTON = 40 as const`
+// initializes to exactly 40. A leading minus on the literal is folded, e.g. `-1`.
+// Anything else — arithmetic, identifier references, `Infinity` and `NaN` (identifiers,
+// not literals) — returns null.
+function numericLiteralValue(expression: ts.Expression): number | null {
+  let unwrapped = expression
+  while (ts.isParenthesizedExpression(unwrapped) || ts.isAsExpression(unwrapped)) unwrapped = unwrapped.expression
+  if (ts.isNumericLiteral(unwrapped)) return Number(unwrapped.text)
+  if (
+    ts.isPrefixUnaryExpression(unwrapped)
+    && unwrapped.operator === ts.SyntaxKind.MinusToken
+    && ts.isNumericLiteral(unwrapped.operand)
+  ) {
+    return -Number(unwrapped.operand.text)
+  }
+  return null
 }
 
 // The writes the given node itself performs to module bindings (not its children's writes;
@@ -535,6 +594,13 @@ function demote(bindings: ModuleBindingIR[], binding: ModuleBindingID): void {
   switch (category.kind) {
     case 'value': {
       bindings[binding]!.category = {kind: 'kind', declaredKind: category.declaredKind}
+      break
+    }
+    // A write to an import is a type error the whole-file gate rejects, so this arm should
+    // be unreachable — but a demoted constant must never keep publishing its value, so it
+    // falls back to a plain import whose reads stop.
+    case 'importedConstant': {
+      bindings[binding]!.category = {kind: 'import'}
       break
     }
     case 'kind':

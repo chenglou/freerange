@@ -1,3 +1,4 @@
+import {constantNumber} from '../domain/number.ts'
 import {joinValues, type AbstractValue} from '../domain/value.ts'
 import type {BlockID, FunctionID, ModuleBindingID} from '../ir/ids.ts'
 import type {EdgeIR} from '../ir/instructions.ts'
@@ -40,6 +41,18 @@ import {
 const maximumLoopHeaderUpdates = 16
 
 export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
+  // The initializer's slots start uninitialized — a top-level read before the writing
+  // declaration must stop — except imported constants: the exporting module ran before
+  // this module's first statement, so the slot already holds the literal. (A cycle read
+  // that beats the exporting declaration throws instead of yielding a stale value; see
+  // importedCategory in src/lower/module.ts.)
+  const initializerState = emptySharedState(program.moduleBindings.length)
+  for (let binding = 0; binding < program.moduleBindings.length; binding++) {
+    const category = program.moduleBindings[binding]!.category
+    if (category.kind === 'importedConstant') {
+      initializerState.modules[binding] = {kind: 'value', value: constantNumber(category.value), version: freshSlotVersion()}
+    }
+  }
   // The initializer runs first, so top-level calls into declared functions see the module
   // state built so far, and its results decide what later function analysis may trust.
   const initializer = runEvaluation(
@@ -47,7 +60,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     null,
     [],
     [],
-    emptySharedState(program.moduleBindings.length),
+    initializerState,
     program,
     [],
   )
@@ -119,13 +132,17 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, modul
   }
 }
 
-// What each function's module slots start from. A published value is trusted exactly;
-// otherwise a binding of representable declared kind (number, boolean, record shape)
-// contributes that kind, and every other binding stays uninitialized so reads stop.
+// What each function's module slots start from. A published value is trusted exactly, and
+// so is an imported constant's literal; otherwise a binding of representable declared kind
+// (number, boolean, record shape) contributes that kind, and every other binding stays
+// uninitialized so reads stop.
 function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
     if (published != null) return {kind: 'value', value: published, version: freshSlotVersion()}
+    if (binding.category.kind === 'importedConstant') {
+      return {kind: 'value', value: constantNumber(binding.category.value), version: freshSlotVersion()}
+    }
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) return {kind: 'uninitialized'}
     return {kind: 'value', value: declaredKindValue(declaredKind), version: freshSlotVersion()}

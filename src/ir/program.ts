@@ -194,6 +194,11 @@ export type ModuleBindingCategory =
   | {kind: 'kind'; declaredKind: DeclaredKind}
   // An imported binding. Single-file analysis knows nothing about the other module.
   | {kind: 'import'}
+  // An imported binding whose target declaration is a const with a plain numeric-literal
+  // initializer in a project .ts file, e.g. `export const INPUT_ROW_HEIGHT = 54`. The
+  // literal is trusted exactly, without analyzing the exporting module; the soundness
+  // argument sits on importedCategory in src/lower/module.ts.
+  | {kind: 'importedConstant'; value: number}
   // Every other declared type (unions with null, arrays, strings, functions, records with
   // optional or unrepresentable properties). Reads stop.
   | {kind: 'opaque'}
@@ -206,6 +211,9 @@ export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | 
     case 'value':
     case 'kind':
       return category.declaredKind
+    // An imported constant needs no declared-kind hedge: its slot is always seeded with
+    // the exact literal, so no assumes line and no havoc reset value apply.
+    case 'importedConstant':
     case 'import':
     case 'opaque':
       return null

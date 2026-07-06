@@ -391,6 +391,10 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
       if (binding == null) throw new Error(`Unknown module binding ${reason.binding}`)
       switch (binding.category.kind) {
         case 'import':
+        // An imported constant's slot is always seeded with its literal, so its reads never
+        // stop; the case exists for exhaustiveness (demotion rewrites the category to plain
+        // import before any stop could carry it here).
+        case 'importedConstant':
           return `reads ${binding.name}, which is imported from another module (read at ${formatSite(program, stop.site)})`
         case 'opaque':
           return `reads ${binding.name}, whose value the analysis does not track (read at ${formatSite(program, stop.site)})`
