@@ -300,6 +300,12 @@ function runEvaluation(
     for (let index = 0; index < block.instructions.length; index++) {
       const instruction = block.instructions[index]!
       const result = evaluateInstruction(instruction, state, transferContext)
+      if (result.kind === 'ends') {
+        // The path terminates like an inline throw: nothing recorded, nothing returned.
+        run.pendingReturns[blockID] = undefined
+        stopped = true
+        break
+      }
       if (result.kind === 'stop') {
         addStop(run, blockID, result.stop, state.shared.modules.slice(), index)
         // A return recorded by an earlier visit of this block described a smaller incoming

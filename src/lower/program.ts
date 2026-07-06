@@ -105,7 +105,10 @@ function lowerFunction(
     throw unsupported(declaration, {kind: 'typePredicate'})
   }
   const returnType = functionReturnType(declaration, checker)
-  const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined)) !== 0
+  // `never` counts as returning nothing: the idiomatic annotation for an always-throwing
+  // helper (`function fail(code: number): never`), whose paths all end in throw — the
+  // always-throws analysis and the calleeAlwaysThrows caller stop handle the rest.
+  const returnsVoid = (returnType.flags & (ts.TypeFlags.Void | ts.TypeFlags.Undefined | ts.TypeFlags.Never)) !== 0
   // Mixed return kinds (e.g. one branch returning a number and another a boolean) would
   // otherwise meet at the engine's return join instead of stopping here.
   if (!returnsVoid && valueKind(returnType, checker) == null) {

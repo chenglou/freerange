@@ -265,13 +265,17 @@ export function remainderNumbers(left: AbstractNumber, right: AbstractNumber, di
   if (left.mayBeNaN || right.mayBeNaN) return unknownNumber()
   const divisorMayBeZero = !divisorNonzero && includesZero(right)
   const dividendMayBeInfinite = !isFiniteNumber(left)
-  const magnitude = Math.min(
-    Math.max(Math.abs(left.lower), Math.abs(left.upper)),
-    Math.max(Math.abs(right.lower), Math.abs(right.upper)),
-  )
-  // Integer operands with a bounded divisor tighten by one: |r| <= |b| - 1.
+  // |r| < |b| tightens to |b| - 1 for integer operands — but ONLY on the divisor side:
+  // against the dividend the exact bound is |r| <= |a| with no subtraction, because when
+  // |a| < |b| the remainder IS the dividend (2 % 3 is 2; a review round caught the -1
+  // applied to the wrong side publishing 'at most 1').
+  const dividendMagnitude = Math.max(Math.abs(left.lower), Math.abs(left.upper))
+  const divisorMagnitude = Math.max(Math.abs(right.lower), Math.abs(right.upper))
   const integer = left.integer && right.integer
-  const bound = integer && Number.isFinite(magnitude) ? Math.max(magnitude - 1, 0) : magnitude
+  const divisorBound = integer && Number.isFinite(divisorMagnitude)
+    ? Math.max(divisorMagnitude - 1, 0)
+    : divisorMagnitude
+  const bound = Math.min(dividendMagnitude, divisorBound)
   return {
     kind: 'number',
     lower: left.lower < 0 ? (Number.isFinite(bound) ? -bound : Number.NEGATIVE_INFINITY) : 0,

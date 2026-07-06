@@ -198,13 +198,13 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
       const labelKind = valueKind(context.checker.getTypeAtLocation(label), context.checker)
       const effectiveSubjectKind = nullableOpaqueSubject ? 'opaque' : subjectKind
       if (tagUnionExpression == null && labelKind !== effectiveSubjectKind) {
-        throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
+        throw unsupported(label, {kind: 'switchLabel', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
       }
       let condition: ValueID
       if (tagUnionExpression != null) {
         const unwrappedLabel = label
         if (!ts.isStringLiteral(unwrappedLabel) && !ts.isNoSubstitutionTemplateLiteral(unwrappedLabel)) {
-          throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
+          throw unsupported(label, {kind: 'switchLabel', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
         }
         condition = addInstruction(context, label, {kind: 'tagCheck', union: subject, tagValue: unwrappedLabel.text, negated: false})
       } else {

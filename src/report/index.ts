@@ -352,9 +352,6 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'outOfBoundsRead': {
       return `reads an element provably outside the array (at ${formatSite(program, stop.site)})`
     }
-    case 'calleeAlwaysThrows': {
-      return `calls ${functionName(program, reason.callee)}, which throws on every path and never returns (call at ${formatSite(program, stop.site)})`
-    }
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
     }
@@ -455,6 +452,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'switchFallthrough': return 'switch case that falls through to the next case (end every case body with break or return)'
     case 'switchDefaultNotLast': return 'switch with a default clause before other cases (write default as the last clause)'
     case 'switchSubject': return `switch on a value of type ${reason.typeText} (only numbers and strings dispatch)`
+    case 'switchLabel': return `switch case label of type ${reason.typeText} (labels must be literals matching the subject's kind)`
   }
 }
 

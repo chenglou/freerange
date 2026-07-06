@@ -143,6 +143,7 @@ export type UnsupportedReason =
   | {kind: 'switchFallthrough'}
   | {kind: 'switchDefaultNotLast'}
   | {kind: 'switchSubject'; typeText: string}
+  | {kind: 'switchLabel'; typeText: string}
 
 // A function whose lowering stopped. The half-built CFG is discarded wholesale so nothing
 // downstream can mistake this record for analyzable IR. Sites already pushed while lowering

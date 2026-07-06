@@ -1163,21 +1163,29 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
       : null
   if (typeofSide != null) {
     const operandType = context.checker.getTypeAtLocation(typeofSide.operand.expression)
-    const operandKind = valueKind(operandType, context.checker)
-    const wanted = typeofKinds[typeofSide.literal]!
-    // Only when every non-missing member IS the named kind: on {x: number} | null or
-    // boolean | undefined checked for 'number', typeof never yields the literal for the
-    // present value, so the not-missing translation would prune the genuinely-taken
-    // present path.
+    // The TYPE FLAGS decide, not the analyzer kind: unknown classifies opaque like
+    // strings do, but typeof unknown === 'string' is genuinely unknown — treating the
+    // kinds as equivalent would answer it definitely-true. Only when every non-missing
+    // member's flags name the checked primitive does the check translate to
+    // "not missing"; everything else (unknown operands, mixed unions) answers an
+    // unknown boolean — typeof is an effect-free operator, so both branches analyzing
+    // is always sound.
+    const wantedFlags: Record<string, ts.TypeFlags> = {
+      number: ts.TypeFlags.NumberLike,
+      string: ts.TypeFlags.StringLike,
+      boolean: ts.TypeFlags.BooleanLike,
+    }
+    const wanted = wantedFlags[typeofSide.literal]!
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
-    const restMatches = operandKind === wanted
-      || (operandKind === 'nullable' && operandType.isUnion()
-        && operandType.types.every(member =>
-          (member.flags & missing) !== 0 || valueKind(member, context.checker) === wanted))
+    const members = operandType.isUnion() ? operandType.types : [operandType]
+    const restMatches = members.every(member =>
+      (member.flags & missing) !== 0 || (member.flags & wanted) !== 0)
+    && members.some(member => (member.flags & missing) === 0)
+    const value = lowerExpression(typeofSide.operand.expression, context)
     if (restMatches) {
-      const value = lowerExpression(typeofSide.operand.expression, context)
       return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'nullish', negated: !negated})
     }
+    return addInstruction(context, expression, {kind: 'unknownBoolean'})
   }
   const leftSentinel = sentinelOf(expression.left)
   const rightSentinel = sentinelOf(expression.right)

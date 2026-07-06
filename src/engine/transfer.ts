@@ -73,6 +73,9 @@ class KindMismatch extends Error {}
 export type StepResult =
   | {kind: 'value'; value: AbstractValue}
   | {kind: 'stop'; stop: Stop}
+  // The path ends contributing nothing — a call to a function that throws on every path,
+  // behaving exactly like an inline throw: no return value, no stop record.
+  | {kind: 'ends'}
 
 // The three ways an instruction arm produces its value, typed so a freshly computed number
 // cannot leave evaluateInstruction without the blame stamp: value() rejects numbers at the
@@ -466,12 +469,11 @@ function evaluateInstructionKinded(
       const completed = completedEvaluation(evaluation)
       if (completed == null) {
         // A callee that throws on every path is fully analyzed; the call just never
-        // returns, so this path ends with its own honest reason rather than the
-        // callee-stopped prose.
-        const alwaysThrows = evaluation.stops.length === 0 && evaluation.normal == null
-        return {kind: 'stop', stop: {site: instruction.site, reason: alwaysThrows
-          ? {kind: 'calleeAlwaysThrows', callee: instruction.function}
-          : {kind: 'calleeStopped', callee: instruction.function}}}
+        // returns, so this path ends exactly like an inline throw — silently. A guarded
+        // `if (bad) return fail(x)` then reports the same full contract the throw
+        // spelling gets.
+        if (evaluation.stops.length === 0 && evaluation.normal == null) return {kind: 'ends'}
+        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
       // The callee may have rebound any module binding; only module-rooted pairs are at
@@ -716,6 +718,14 @@ function writeThroughProducers(
       if (source != null) writeThroughProducers(state, source.value, met, producers)
     }
     return
+  }
+  // A module read's refinement narrows the SLOT: within one evaluation the slot holds
+  // the very value the read produced, so the fact carries to later re-reads — the
+  // parse-then-throw top-level guard publishes its laundered value, and the
+  // read-check-read spelling on module bindings narrows without a local copy. Sound
+  // because the state is branch-cloned and later writes or calls replace slots wholesale.
+  if (producer?.kind === 'moduleRead') {
+    state.shared.modules[producer.binding] = {kind: 'value', value: met}
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
     const parent = state.frame.values[producer.array]

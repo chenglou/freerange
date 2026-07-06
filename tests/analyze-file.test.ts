@@ -1474,8 +1474,10 @@ describe('analyzeFile', () => {
     expect(analyzedFunction(report, 'pick').ensures)
       .toEqual(['return is undefined or a finite integer number from 1 through 1'])
     // typeof box === 'number' on {value: number} | null is NOT the not-missing check
-    // (typeof a present record is 'object'); it falls to the honest rejection.
-    expect(report.functions.find(fn => fn.name === 'readBox')?.kind).toBe('unsupported')
+    // (typeof a present record is 'object'); it answers an unknown boolean, so both
+    // branches analyze — the dead branch's 0 rides along soundly in the range.
+    expect(analyzedFunction(report, 'readBox').ensures)
+      .toEqual(['return is a finite integer number from 0 through 5'])
     // The declared Size | null return filters the wide record's extra property through
     // the nullable wrapper.
     const found = analyzedFunction(report, 'findPoint')
@@ -2385,14 +2387,15 @@ ${chain}
         throw new Error('nope ' + code)
       }
       export function caller(x: number): number {
-        return fail(x) + 1
+        if (x < 0) { return fail(x) }
+        return x
       }
     `)
     expect(analyzedFunction(report, 'divideWidth').requires).toEqual([])
     expect(analyzedFunction(report, 'fail').ensures).toEqual([])
-    const caller = report.functions.find(fn => fn.name === 'caller')!
-    if (caller.kind !== 'partial') throw new Error(`expected caller partial, got ${caller.kind}`)
-    expect(caller.stopped[0]).toContain('throws on every path and never returns')
+    // A guarded call to an always-throwing helper behaves exactly like an inline throw:
+    // the path ends silently and the returning path carries the full contract.
+    expect(analyzedFunction(report, 'caller').ensures).toEqual(['return is a finite number at least 0'])
   })
 
   test('pattern sweep: boolean equality, string length, typeof strings, nullable switch subjects', () => {
@@ -2495,6 +2498,27 @@ ${chain}
     // Requirements name destructured properties through the synthetic record parameter.
     expect(analyzedFunction(report, 'ratioReq').requires)
       .toEqual([`{width, height}.height is nonzero (division at ${file}:22:16)`])
+  })
+
+  test('module reads narrow their slot: re-reads keep refinements, parse-then-throw launders', () => {
+    // A refinement on a module read writes into the slot, so the read-check-read spelling
+    // works without the old copy-to-a-local workaround, and a top-level parse guarded by
+    // an isNaN throw publishes its value NaN-free (Infinity stays possible — parseFloat
+    // of '1e999' is honest overflow).
+    const report = analyzeSource('module-narrow.ts', `
+      const raw = Number.parseFloat('42.5')
+      if (Number.isNaN(raw)) { throw new Error('bad build constant') }
+      export function scaled(): number {
+        return raw
+      }
+      const config: {scale: number | null} = {scale: 3}
+      export function reader(): number {
+        if (config.scale !== null) { return config.scale + 1 }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'scaled').ensures[0]).not.toContain('NaN')
+    expect(analyzedFunction(report, 'reader').ensures).toEqual(['return is a finite integer number from 4 through 4'])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
