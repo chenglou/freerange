@@ -515,10 +515,11 @@ describe('analyzeFile', () => {
   })
 
   test('records mixed-kind local declarations as unsupported, keeping single-kind unions analyzable', () => {
-    // Before the declarator gate, unknownLocal crashed the engine at the block join
-    // ('Cannot join boolean and number'): the declaration lowered without checking that the
-    // declared type holds a single value kind, so the branch rebinding u to a boolean met
-    // the number initializer at the join.
+    // An unknown-declared binding carries opaquely: its stored value erases at every
+    // write, so a number on one branch and a boolean on another meet as opaque ⊔ opaque
+    // (the join crash the old wholesale rejection guarded against). A genuinely
+    // mixed-kind union stays out — its values are readable, so erasure would lose claims
+    // the type invites.
     const report = analyzeSource('mixed-local.ts', `
       export function unknownLocal(flag: number): number {
         let u: unknown = 5
@@ -537,8 +538,8 @@ describe('analyzeFile', () => {
       }
     `)
     const file = resolve('mixed-local.ts')
+    expect(analyzedFunction(report, 'unknownLocal').ensures).toEqual(['return is a finite integer number from 1 through 1'])
     expect(report.functions.filter(fn => fn.kind === 'unsupported')).toEqual([
-      {kind: 'unsupported', name: 'unknownLocal', unsupported: `value of type unknown at ${file}:3:16`},
       {kind: 'unsupported', name: 'mixedUnionLocal', unsupported: `value of type number | boolean at ${file}:8:19`},
     ])
     expect(analyzedFunction(report, 'steppedLocal').ensures)
@@ -947,7 +948,7 @@ describe('analyzeFile', () => {
     expect(report.functions).toEqual([{
       kind: 'unsupported',
       name: 'labelledX',
-      unsupported: `value of type () => string at ${file}:4:27`,
+      unsupported: `read of the inherited prototype member toString (records carry only their own data properties) at ${file}:4:27`,
     }])
   })
 
@@ -2421,6 +2422,37 @@ ${chain}
     expect(analyzedFunction(report, 'switchNullable').ensures).toEqual(['return is a finite number'])
   })
 
+  test('pattern sweep: parse functions, callback and unknown parameters, instanceof', () => {
+    // parseFloat is an honest NaN source and the isFinite narrowing launders it — the
+    // parse-then-clamp idiom proves its bound. Callback and unknown parameters carry
+    // opaquely (calls to a carried callback still reject at the call gate; unknown is the
+    // safe any — the checker forces narrowing before use). instanceof on a carried value
+    // answers unknown: both branches analyze, no claims.
+    const report = analyzeSource('sweep-group3.ts', `
+      export function parsed(text: string): number {
+        const value = Number.parseFloat(text)
+        if (Number.isFinite(value)) { return Math.min(value, 100) }
+        return 0
+      }
+      export function withCallback(onDone: () => void, x: number): number {
+        const kept = onDone
+        return x + 1
+      }
+      export function carries(data: unknown, x: number): number {
+        const kept = data
+        return x * 2
+      }
+      export function domCheck(el: unknown, x: number): number {
+        if (el instanceof HTMLDivElement) { return x }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'parsed').ensures).toEqual(['return is a finite number at most 100'])
+    expect(analyzedFunction(report, 'withCallback').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'carries').ensures[0]).toContain('number')
+    expect(analyzedFunction(report, 'domCheck').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
@@ -2914,7 +2946,7 @@ ${chain}
     // finiteness condition.
     const report = analyzeSource('module-launder.ts', `
       let scale = 1
-      scale = Number.parseFloat('3')
+      scale = Math.hypot(3, 4)
       const doubled = scale * 2
       export function getDoubled(): number { return doubled }
     `)

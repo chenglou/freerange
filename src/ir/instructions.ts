@@ -71,6 +71,10 @@ export type InstructionIR =
   // A string's .length: a fresh nonnegative integer, no operand carried (the string is
   // opaque and the length is unrelated across reads).
   | (InstructionBase & {kind: 'stringLength'})
+  // parseFloat / parseInt / Number(x): an honest NaN source — any number including NaN
+  // and the infinities; parseInt's result is an integer when it is a number at all.
+  // Arguments are lowered by the caller and not carried.
+  | (InstructionBase & {kind: 'parsedNumber'; integer: boolean})
   // Number.isInteger(x) / Number.isFinite(x) / Number.isNaN(x): a boolean over one number
   // operand, with branch refinement like nullishCheck — the true branch of isInteger knows
   // the value is an integer (and finite, and not NaN), the false branch of isFinite prunes
@@ -98,6 +102,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'opaqueConstant':
     case 'unknownBoolean':
     case 'stringLength':
+    case 'parsedNumber':
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':

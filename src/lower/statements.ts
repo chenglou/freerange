@@ -14,6 +14,7 @@ import {
   type MutableBlock,
 } from './context.ts'
 import {taggedUnionTagRead, identifierAssignment, lowerBranchingCondition, lowerExpression, lowerStatementExpression, requireBooleanCondition, valueKind} from './expression.ts'
+import {declaredOnlyInDeclarationFiles} from './platform.ts'
 
 export function lowerStatements(statements: readonly ts.Statement[], context: FunctionContext): void {
   for (const statement of statements) {
@@ -425,10 +426,12 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
         const elementType = context.checker.getTypeAtLocation(element.name)
         const sourceType = context.checker.getTypeAtLocation(declaration.initializer)
         const propertySymbol = context.checker.getPropertyOfType(sourceType, property)
-        // Optional properties stay out: the record value may not carry them (see
-        // requireAccessedPropertyKind).
-        if (propertySymbol != null && (propertySymbol.flags & ts.SymbolFlags.Optional) !== 0) {
-          throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
+        // Optional properties destructure like any other read now that the filling
+        // invariant guarantees the record value carries them as maybe-undefined (the old
+        // gate here predated the optionals milestone). Prototype members stay out via
+        // the same ownership rule property reads use.
+        if (propertySymbol != null && declaredOnlyInDeclarationFiles(propertySymbol)) {
+          throw unsupported(element, {kind: 'prototypeMemberRead', property})
         }
         if (valueKind(elementType, context.checker) == null) {
           throw unsupported(element, {kind: 'valueType', typeText: context.checker.typeToString(elementType)})
@@ -448,13 +451,20 @@ function lowerVariableDeclarationList(declarations: ts.VariableDeclarationList, 
     // lowers, so an unsupported construct inside the initializer keeps its own more precise
     // site (a ternary mixing kinds reports the ternary, not the whole declaration).
     const declaredType = context.checker.getTypeAtLocation(declaration.name)
-    if (valueKind(declaredType, context.checker) == null) {
+    const declaredValueKind = valueKind(declaredType, context.checker)
+    if (declaredValueKind == null) {
       throw unsupported(declaration.type ?? declaration.name, {
         kind: 'valueType',
         typeText: context.checker.typeToString(declaredType),
       })
     }
-    context.bindings.set(requiredSymbol(declaration.name, context.checker), value)
+    // An opaque-declared binding (`let u: unknown = 5`) erases its stored value: later
+    // branches may write other kinds, and opaque ⊔ opaque joins where number ⊔ boolean
+    // would crash. The initializer still lowered above, so its constructs stay vetted.
+    const stored = declaredValueKind === 'opaque'
+      ? addInstruction(context, declaration, {kind: 'opaqueConstant'})
+      : value
+    context.bindings.set(requiredSymbol(declaration.name, context.checker), stored)
   }
 }
 

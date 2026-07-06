@@ -76,6 +76,8 @@ export type UnsupportedReason =
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
   | {kind: 'enumMemberRead'}
+  // point.toString and friends: a prototype member the record value cannot answer.
+  | {kind: 'prototypeMemberRead'; property: string}
   // e.g. '%', '&&', '**', '??'
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is the

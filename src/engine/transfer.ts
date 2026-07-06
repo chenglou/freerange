@@ -377,6 +377,13 @@ function evaluateInstructionKinded(
         instruction.operator,
       ))
     }
+    case 'parsedNumber': return computedNumber({
+      kind: 'number',
+      lower: Number.NEGATIVE_INFINITY,
+      upper: Number.POSITIVE_INFINITY,
+      integer: instruction.integer,
+      mayBeNaN: true,
+    }, [], instruction.site)
     case 'stringLength': return computedNumber({
       kind: 'number',
       lower: 0,

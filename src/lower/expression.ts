@@ -36,11 +36,19 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         // write itself stops here. The checker returns the declared type at an assignment
         // target, not a narrowed one: narrowing does not apply to write positions.
         const targetType = context.checker.getTypeAtLocation(assignment.target)
-        if (valueKind(targetType, context.checker) == null) {
+        const targetKind = valueKind(targetType, context.checker)
+        if (targetKind == null) {
           throw unsupported(assignment.target, {kind: 'valueType', typeText: context.checker.typeToString(targetType)})
         }
         const value = lowerExpression(assignment.node.right, context)
-        assignIdentifier(symbol, assignment.target, value, current, context)
+        // A binding declared opaque (unknown, a function type) admits writes of any kind;
+        // the stored value erases to opaque so a number written on one branch and a
+        // boolean on another meet as opaque ⊔ opaque instead of crashing the join. The
+        // right side still lowered above, so its constructs stay vetted.
+        const stored = targetKind === 'opaque'
+          ? addInstruction(context, current, {kind: 'opaqueConstant'})
+          : value
+        assignIdentifier(symbol, assignment.target, stored, current, context)
         return
       }
       case 'compound': {
@@ -303,6 +311,16 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isBinaryExpression(current)) {
     const missingCheck = missingSentinelCheck(current, context)
     if (missingCheck != null) return missingCheck
+    // `el instanceof HTMLDivElement` on a carried value: no narrowing (the analyzer does
+    // not model classes), but the check itself is an effect-free operator, so it answers
+    // unknown and both branches analyze — the function's other paths survive. The
+    // declaration-file check is the same shadowing defense Math uses.
+    if (current.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword
+      && ts.isIdentifier(current.right)
+      && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(current.right))) {
+      lowerExpression(current.left, context)
+      return addInstruction(context, current, {kind: 'unknownBoolean'})
+    }
     const tagComparison = tagCheckComparison(current, context)
     if (tagComparison != null) return tagComparison
     const presence = inCheckExpression(current, context)
@@ -343,6 +361,14 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   }
   if (ts.isCallExpression(current)) {
     if (ts.isIdentifier(current.expression)) {
+      // Global parseFloat / parseInt / Number(x): honest NaN-carrying results, like their
+      // Number.* spellings below (the declaration-file check defends against shadowing).
+      const globalName = current.expression.text
+      if ((globalName === 'parseFloat' || globalName === 'parseInt' || globalName === 'Number')
+        && declaredOnlyInDeclarationFiles(context.checker.getSymbolAtLocation(current.expression))) {
+        for (const argument of current.arguments) lowerExpression(argument, context)
+        return addInstruction(context, current, {kind: 'parsedNumber', integer: globalName === 'parseInt'})
+      }
       const symbol = resolvedSymbol(context.checker.getSymbolAtLocation(current.expression), context.checker)
       const callee = symbol == null ? undefined : context.functionsBySymbol.get(symbol)
       if (callee == null) throw unsupported(current, {kind: 'call', callee: current.expression.text})
@@ -384,6 +410,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       // missing halves of the bounds-check idiom (`i >= 0 && i < arr.length` proves the
       // range; Number.isInteger(i) proves the read hits an element rather than arr[1.5]).
       const standardNumber = isStandardNumberObject(current.expression.expression, context.checker)
+      // Number.parseFloat / Number.parseInt: honest NaN sources — the result is any
+      // number including NaN, and the isFinite/isNaN/isInteger narrowing downstream is
+      // exactly what launders it. Arguments still lower (opaque strings carry).
+      if (standardNumber && (method === 'parseFloat' || method === 'parseInt') && current.arguments.length >= 1) {
+        for (const argument of current.arguments) lowerExpression(argument, context)
+        return addInstruction(context, current, {kind: 'parsedNumber', integer: method === 'parseInt'})
+      }
       if (standardNumber && (method === 'isInteger' || method === 'isFinite' || method === 'isNaN') && current.arguments.length === 1) {
         requireNumberType(current.arguments[0]!, context.checker)
         const value = lowerExpression(current.arguments[0]!, context)
@@ -661,7 +694,16 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
   // object checks. A member outside the object kind keeps the whole intersection out.
   if (type.isIntersection() && type.types.every(member => valueKind(member, checker, depth + 1) === 'object')) {
     if (checker.getIndexInfosOfType(type).length > 0) return null
-    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) {
+      // A pure function type — call signatures and nothing else — is carried opaquely,
+      // like a callback stored in a record already is: calls to it reject at the call
+      // gate (the callee must be a top-level function), so carrying makes callback
+      // PARAMETERS as cheap as callback properties. Hybrid callable-objects keep out:
+      // their data properties would invite reads the carried value cannot answer.
+      const dataProperties = checker.getPropertiesOfType(type).some(property =>
+        checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+      return dataProperties ? null : 'opaque'
+    }
     // Optional properties anchor too, now that they model as maybe-undefined values: an
     // all-optional config record ({volume?: number}) is a weak type TypeScript refuses to
     // assign primitives to, so the primitive-inhabitation worry that bars `{}` does not
@@ -684,7 +726,16 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
     // satisfies `{}`, and a number satisfies `{toString(): string}` — letting a number
     // and a record meet at a join.
     if (checker.getIndexInfosOfType(type).length > 0) return null
-    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) {
+      // A pure function type — call signatures and nothing else — is carried opaquely,
+      // like a callback stored in a record already is: calls to it reject at the call
+      // gate (the callee must be a top-level function), so carrying makes callback
+      // PARAMETERS as cheap as callback properties. Hybrid callable-objects keep out:
+      // their data properties would invite reads the carried value cannot answer.
+      const dataProperties = checker.getPropertiesOfType(type).some(property =>
+        checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+      return dataProperties ? null : 'opaque'
+    }
     // Optional properties anchor too, now that they model as maybe-undefined values: an
     // all-optional config record ({volume?: number}) is a weak type TypeScript refuses to
     // assign primitives to, so the primitive-inhabitation worry that bars `{}` does not
@@ -693,6 +744,9 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
       checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
     return anchored ? 'object' : null
   }
+  // `unknown` is the SAFE any: the checker forces narrowing before any use, so its word
+  // stays intact and the value carries without claims — unlike `any`, which stays out.
+  if ((type.flags & ts.TypeFlags.Unknown) !== 0) return 'opaque'
   if (type.isUnion()) {
     // `T | null`, `T | undefined`, and `T | null | undefined` classify as nullable when T
     // itself classifies to one kind. Gates that cannot carry a missing value keep
@@ -842,6 +896,9 @@ function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[
     }
     return `record{${properties.sort().join(',')}}`
   }
+  // `unknown` is the SAFE any: the checker forces narrowing before any use, so its word
+  // stays intact and the value carries without claims — unlike `any`, which stays out.
+  if ((type.flags & ts.TypeFlags.Unknown) !== 0) return 'opaque'
   if (type.isUnion()) {
     if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
     if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
@@ -869,6 +926,15 @@ function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checke
   // the undefined sentinel and object literals fill omitted ones explicitly, so a record
   // value always carries every property its static type declares — there is always
   // something honest to read.
+  const receiverType = checker.getTypeAtLocation(access.expression)
+  const property = checker.getPropertyOfType(receiverType, access.name.text)
+  // point.toString type-checks on every object literal, but the record value carries only
+  // its own properties — an inherited prototype member has no honest answer. The
+  // ownership test is the .d.ts rule: a property symbol declared only in declaration
+  // files was not written by the project, and on a project record that means prototype.
+  if (valueKind(receiverType, checker) === 'object' && property != null && declaredOnlyInDeclarationFiles(property)) {
+    throw unsupported(access, {kind: 'prototypeMemberRead', property: access.name.text})
+  }
   const type = checker.getTypeAtLocation(access)
   if (valueKind(type, checker) != null) return
   throw unsupported(access, {kind: 'valueType', typeText: checker.typeToString(type)})
