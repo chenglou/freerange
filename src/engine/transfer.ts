@@ -225,6 +225,13 @@ function evaluateInstructionKinded(
       return value(evaluateNumberCheck(instruction.predicate, operand))
     }
     case 'tagCheck': {
+      const operand = requiredValue(state, instruction.union)
+      // A plain record can reach a tag check: a builder whose declared return is a single
+      // variant produces a record, and the caller's union-typed binding checks its tag.
+      // The record's tag value is an opaque string the analysis never learned, so the
+      // check is honestly unknown and both branches analyze — the same dispatch the
+      // shared-shape classification used to give this code.
+      if (operand.kind === 'record') return value(unknownBoolean())
       const union = requiredTaggedUnion(state, instruction.union)
       const matches = union.variants.some(variant => variant.tagValue === instruction.tagValue)
       const misses = union.variants.some(variant => variant.tagValue !== instruction.tagValue)
@@ -234,6 +241,13 @@ function evaluateInstructionKinded(
         : equals)
     }
     case 'inCheck': {
+      const operand = requiredValue(state, instruction.union)
+      // A plain record answers presence directly (see the tagCheck arm for how one gets
+      // here): required property yes, optional unknown, missing no.
+      if (operand.kind === 'record') {
+        const presence = variantPropertyPresence(operand, instruction.property)
+        return value({kind: 'boolean', canBeTrue: presence !== 'absent', canBeFalse: presence !== 'present'})
+      }
       const union = requiredTaggedUnion(state, instruction.union)
       let hasIt = false
       let lacksIt = false
@@ -498,6 +512,9 @@ export function refineTagCheck(
   producers: Array<InstructionIR | undefined>,
 ): ExecutionState | null {
   const result = cloneState(state)
+  // A record operand has nothing to refine (its tag value was never learned); both
+  // branches keep the state, mirroring the unknown-boolean evaluation above.
+  if (requiredValue(result, check.union).kind === 'record') return result
   const union = requiredTaggedUnion(result, check.union)
   const wantMatch = truth !== check.negated
   const variants = union.variants.filter(variant => (variant.tagValue === check.tagValue) === wantMatch)
@@ -529,6 +546,14 @@ export function refineInCheck(
   producers: Array<InstructionIR | undefined>,
 ): ExecutionState | null {
   const result = cloneState(state)
+  const recordOperand = requiredValue(result, check.union)
+  if (recordOperand.kind === 'record') {
+    // Presence on a record either decides the branch or (optional) stays unknown; a
+    // decided branch that contradicts the record prunes.
+    const presence = variantPropertyPresence(recordOperand, check.property)
+    if (presence === 'unknown') return result
+    return (presence === 'present') === truth ? result : null
+  }
   const union = requiredTaggedUnion(result, check.union)
   const variants = union.variants.filter(variant => {
     const presence = variantPropertyPresence(variant.record, check.property)

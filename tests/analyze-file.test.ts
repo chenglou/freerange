@@ -2330,6 +2330,26 @@ ${chain}
     expect(analyzedFunction(report, 'pageOf').ensures).toEqual(['return is a finite integer number from 1 through 2'])
   })
 
+  test('tag checks on plain-record operands dispatch blind; inherited lib properties stay boundary leaves', () => {
+    // A builder whose declared return is a single variant produces a plain record; the
+    // caller's union-typed binding then tag-checks it. The record's tag was never
+    // learned, so the check is honestly unknown and both branches analyze — the round-2
+    // regression (a kind-mismatch stop) healed. And a project interface extending a lib
+    // interface contracts only the properties the project wrote.
+    const report = analyzeSource('record-dispatch.ts', `
+      type Route = {kind: 'home'; scroll: number} | {kind: 'about'; scroll: number}
+      function openHome(): {kind: 'home'; scroll: number} { return {kind: 'home', scroll: 3} }
+      function openAbout(): {kind: 'about'; scroll: number} { return {kind: 'about', scroll: 14} }
+      export function currentScroll(flag: boolean): number {
+        const route: Route = flag ? openHome() : openAbout()
+        if (route.kind === 'home') { return route.scroll }
+        return route.scroll
+      }
+    `)
+    expect(analyzedFunction(report, 'currentScroll').ensures)
+      .toEqual(['return is a finite integer number from 3 through 14'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

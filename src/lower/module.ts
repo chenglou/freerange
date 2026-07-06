@@ -339,8 +339,12 @@ function declaredRecordProperties(
     // is carried without claims, and a read that needs more than carrying is gated at the
     // read position (numeric use rejects at lowering; a modeled-kind read of the
     // unclassified value stops at the kind-mismatch backstop). The record's NUMERIC
-    // contract survives its weird neighbors.
-    const propertyDeclared = walked ?? {kind: 'opaque'}
+    // contract survives its weird neighbors. Properties the project did not write —
+    // inherited from a lib interface the project type extends — are boundary leaves for
+    // the same reason whole lib types are: without this, `interface SizedElement extends
+    // HTMLElement` floods the report with assumes lines about clientWidth and friends.
+    const opaqueLeaf: DeclaredKind = {kind: 'opaque'}
+    const propertyDeclared = declaredOnlyInDeclarationFiles(property) ? opaqueLeaf : (walked ?? opaqueLeaf)
     // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
     // value machinery models; under exactOptionalPropertyTypes (which the analyzer forces)
     // a well-typed value's optional property is either absent or a T, never an explicit
