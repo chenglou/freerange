@@ -719,13 +719,21 @@ function writeThroughProducers(
     }
     return
   }
-  // A module read's refinement narrows the SLOT: within one evaluation the slot holds
-  // the very value the read produced, so the fact carries to later re-reads — the
-  // parse-then-throw top-level guard publishes its laundered value, and the
-  // read-check-read spelling on module bindings narrows without a local copy. Sound
-  // because the state is branch-cloned and later writes or calls replace slots wholesale.
+  // A module read's refinement narrows the SLOT, so the fact carries to later re-reads —
+  // the parse-then-throw top-level guard publishes its laundered value, and the
+  // read-check-read spelling narrows without a local copy. The reference-identity guard
+  // is what makes it sound: a refinement can fire AFTER a rebind (read a snapshot, write
+  // the binding, then branch on the snapshot), and clobbering the fresh slot with the
+  // refined stale value published a false ensures (a review round ran the
+  // counterexample). The slot narrows only while it still holds the very object the read
+  // produced; rebinds and calls that touched the binding store different objects, and a
+  // callee that left it alone passes the same reference through, which is exactly when
+  // the fact still applies.
   if (producer?.kind === 'moduleRead') {
-    state.shared.modules[producer.binding] = {kind: 'value', value: met}
+    const slot = state.shared.modules[producer.binding]
+    if (slot?.kind === 'value' && slot.value === current) {
+      state.shared.modules[producer.binding] = {kind: 'value', value: met}
+    }
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
     const parent = state.frame.values[producer.array]

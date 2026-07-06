@@ -188,13 +188,19 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
     const hull = taggedUnionHull(left)
     return hull == null ? null : joinRecords(hull, right)
   }
+  // Opaque absorbs any mixed meet: an opaque value carries no claims, so it soundly
+  // covers a number or boolean that joins into it — every use that needs more than
+  // carrying is gated at the use position or stops at the kind-mismatch backstop. This is
+  // what keeps `typeof value === 'number' ? value : fallback` (the unknown-typed
+  // fallback idiom) a claim-free analyzed function instead of a join crash: the true arm
+  // stays opaque in our model even though the checker narrowed it.
+  if (left.kind === 'opaque' || right.kind === 'opaque') return {kind: 'opaque'}
   if (left.kind !== right.kind) return null
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
     case 'boolean': return joinBooleans(left, right as AbstractBoolean)
     case 'record': return joinRecords(left, right as AbstractRecord)
     case 'void': return left
-    case 'opaque': return left
     case 'taggedUnion': return joinTaggedUnions(left, right as AbstractTaggedUnion)
     // Handled by the structural arms above; unreachable here.
     case 'tuple':

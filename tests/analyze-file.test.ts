@@ -2521,6 +2521,31 @@ ${chain}
     expect(analyzedFunction(report, 'reader').ensures).toEqual(['return is a finite integer number from 4 through 4'])
   })
 
+  test('slot narrowing survives the stale-snapshot attack; mixed joins degrade to opaque', () => {
+    // Read a snapshot, rebind the module binding, then branch on the snapshot: the
+    // refinement must NOT clobber the fresh slot with the refined stale value (a review
+    // round ran the counterexample — the ensures excluded the runtime -1). The
+    // reference-identity guard keeps the slot narrowing only while it still holds the
+    // very object the read produced. And typeof value === 'number' ? value : fallback on
+    // unknown joins opaque with number — the join absorbs into a claim-free opaque
+    // instead of crashing, so the function analyzes with honest empty ensures.
+    const report = analyzeSource('stale-and-mixed.ts', `
+      let counter = 0
+      export function setCounter(v: number): void { counter = v }
+      export function stale(): number {
+        const snapshot = counter
+        counter = -1
+        if (snapshot > 5) { return counter }
+        return 0
+      }
+      export function numberOr(value: unknown, fallback: number): number {
+        return typeof value === 'number' ? value : fallback
+      }
+    `)
+    expect(analyzedFunction(report, 'stale').ensures).toEqual(['return is a finite integer number from -1 through 0'])
+    expect(analyzedFunction(report, 'numberOr').ensures).toEqual([])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
