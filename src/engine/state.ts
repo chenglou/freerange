@@ -3,14 +3,34 @@ import {joinValues, sameValues, widenValue} from '../domain/value.ts'
 
 export type FunctionFrame = {
   values: Array<AbstractValue | undefined>
+  // For each ValueID produced by a moduleRead: the slot version the read observed (see
+  // ModuleSlot.version). A refinement of the read's result may narrow the slot only while
+  // the slot still carries that version.
+  readVersions: Array<number | undefined>
 }
 
 // One module binding's storage. Uninitialized is a distinct state (not just an unknown
 // value) so runtime import-cycle support can be added later; reading an uninitialized slot
 // stops the path.
+//
+// version stamps the last write: every moduleWrite, moduleHavoc, and seeding draws a fresh
+// number, and a join keeps the version only when every joined path agrees (mixedSlotVersion
+// otherwise). "slot.version equals the version a read observed" therefore means no write
+// came between the read and now, on every path the state covers — the condition under
+// which a fact about the read's result also describes the slot's current content. An
+// earlier design compared object identity (slot.value === the read's frame value) instead;
+// a review round defeated it with a merge whose join kept one path's identities for a
+// state that also covers the other path.
 export type ModuleSlot =
   | {kind: 'uninitialized'}
-  | {kind: 'value'; value: AbstractValue}
+  | {kind: 'value'; value: AbstractValue; version: number}
+
+export const mixedSlotVersion = -1
+let slotVersionCounter = 0
+export function freshSlotVersion(): number {
+  slotVersionCounter += 1
+  return slotVersionCounter
+}
 
 export type SharedState = {
   // Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
@@ -71,7 +91,7 @@ export function cloneSharedState(state: SharedState): SharedState {
 
 export function cloneState(state: ExecutionState): ExecutionState {
   return {
-    frame: {values: state.frame.values.slice()},
+    frame: {values: state.frame.values.slice(), readVersions: state.frame.readVersions.slice()},
     shared: cloneSharedState(state.shared),
     validIndexPairs: new Set(state.validIndexPairs),
   }
@@ -87,12 +107,23 @@ export function joinStates(left: ExecutionState, right: ExecutionState): Executi
     else if (rightValue == null) values[index] = leftValue
     else values[index] = joinValues(leftValue, rightValue)
   }
+  // A read version survives the join only when both sides observed the same one — if any
+  // joined path saw a different slot state (or never ran the read), the fact is dropped
+  // and the read's refinements stop narrowing the slot.
+  const readVersions: FunctionFrame['readVersions'] = []
+  const readLength = Math.max(left.frame.readVersions.length, right.frame.readVersions.length)
+  for (let index = 0; index < readLength; index++) {
+    const leftVersion = left.frame.readVersions[index]
+    if (leftVersion != null && leftVersion === right.frame.readVersions[index]) {
+      readVersions[index] = leftVersion
+    }
+  }
   const validIndexPairs = new Set<string>()
   for (const pair of left.validIndexPairs) {
     if (right.validIndexPairs.has(pair)) validIndexPairs.add(pair)
   }
   return {
-    frame: {values},
+    frame: {values, readVersions},
     shared: {
       modules: joinModuleSlots(left.shared.modules, right.shared.modules),
     },
@@ -110,7 +141,11 @@ export function joinModuleSlots(left: ModuleSlot[], right: ModuleSlot[]): Module
     joined.push(
       leftSlot.kind === 'uninitialized' || rightSlot.kind === 'uninitialized'
         ? {kind: 'uninitialized'}
-        : {kind: 'value', value: joinValues(leftSlot.value, rightSlot.value)},
+        : {
+          kind: 'value',
+          value: joinValues(leftSlot.value, rightSlot.value),
+          version: leftSlot.version === rightSlot.version ? leftSlot.version : mixedSlotVersion,
+        },
     )
   }
   return joined
@@ -125,12 +160,21 @@ export function sameState(left: ExecutionState, right: ExecutionState): boolean 
       if (leftValue !== rightValue) return false
     } else if (!sameValues(leftValue, rightValue)) return false
   }
+  // Versions are part of the state: two states with equal values but different write
+  // histories license different slot narrowings, so absorbing one into the other (the
+  // propagate fast-path keeps the stored state when the join changes nothing) would let a
+  // narrowing licensed on one path fire on a merged state covering both.
+  const readLength = Math.max(left.frame.readVersions.length, right.frame.readVersions.length)
+  for (let index = 0; index < readLength; index++) {
+    if (left.frame.readVersions[index] !== right.frame.readVersions[index]) return false
+  }
   for (let index = 0; index < left.shared.modules.length; index++) {
     const leftSlot = left.shared.modules[index]!
     const rightSlot = right.shared.modules[index]!
     if (leftSlot.kind !== rightSlot.kind) return false
-    if (leftSlot.kind === 'value' && rightSlot.kind === 'value' && !sameValues(leftSlot.value, rightSlot.value)) {
-      return false
+    if (leftSlot.kind === 'value' && rightSlot.kind === 'value') {
+      if (leftSlot.version !== rightSlot.version) return false
+      if (!sameValues(leftSlot.value, rightSlot.value)) return false
     }
   }
   if (left.validIndexPairs.size !== right.validIndexPairs.size) return false
@@ -153,7 +197,8 @@ export function widenState(previous: ExecutionState, next: ExecutionState): Exec
     const previousSlot = previous.shared.modules[index]!
     const slot = widened.shared.modules[index]!
     if (previousSlot.kind === 'value' && slot.kind === 'value') {
-      widened.shared.modules[index] = {kind: 'value', value: widenValue(previousSlot.value, slot.value)}
+      // The version stays the joined one: widening loosens the value cover, it is not a write.
+      widened.shared.modules[index] = {kind: 'value', value: widenValue(previousSlot.value, slot.value), version: slot.version}
     }
   }
   return widened

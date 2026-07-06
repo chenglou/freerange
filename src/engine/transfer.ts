@@ -33,7 +33,7 @@ import {
 } from '../requirements/infer.ts'
 import type {BoundsAssumption, InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 import {completedEvaluation, type FunctionEvaluation, type Stop} from './outcome.ts'
-import {cloneState, dropModuleRootedPairs, validIndexKey, type ExecutionState, type SharedState} from './state.ts'
+import {cloneState, dropModuleRootedPairs, freshSlotVersion, mixedSlotVersion, validIndexKey, type ExecutionState, type SharedState} from './state.ts'
 
 type EvaluateFunction = (
   functionID: FunctionID,
@@ -270,9 +270,18 @@ function evaluateInstructionKinded(
     }
     case 'nullishCheck': {
       const operand = requiredValue(state, instruction.value)
-      const canBeSentinel = operand.kind === 'nullish' || operand.kind === 'maybeNullish'
-        ? instruction.sentinel === 'nullish' || sentinelsAdmit(operand.sentinels, instruction.sentinel)
-        : false
+      // Opaque carries no claims, so the runtime value may itself be null or undefined —
+      // an unknown-typed parameter often is. A bare opaque, or a maybeNullish whose inner
+      // is opaque, therefore answers unknown: the sentinels set only describes what the
+      // nullish side of a join contributed, not what the opaque side may hold. (A review
+      // round caught the old definitely-false answer publishing a dead branch for
+      // `if (value === undefined)` on an unknown-typed value.)
+      const opaqueInside = operand.kind === 'opaque'
+        || (operand.kind === 'maybeNullish' && operand.inner.kind === 'opaque')
+      const canBeSentinel = opaqueInside
+        || (operand.kind === 'nullish' || operand.kind === 'maybeNullish'
+          ? instruction.sentinel === 'nullish' || sentinelsAdmit(operand.sentinels, instruction.sentinel)
+          : false)
       const canMiss = operand.kind === 'nullish'
         // A pure missing value fails a strict check only when it can be the OTHER sentinel.
         ? instruction.sentinel !== 'nullish' && operand.sentinels !== instruction.sentinel
@@ -293,6 +302,9 @@ function evaluateInstructionKinded(
       if (slot.kind === 'uninitialized') {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
       }
+      // Remember which slot version this read observed; a later refinement of the read's
+      // result narrows the slot only while the version still matches (see ModuleSlot).
+      state.frame.readVersions[instruction.result] = slot.version
       return passthroughValue(slot.value)
     }
     case 'moduleWrite': {
@@ -306,7 +318,7 @@ function evaluateInstructionKinded(
       // category is single-kind: value/kind writes are type-checked against the declared
       // number, boolean, or record shape.
       if (binding.category.kind !== 'opaque') {
-        state.shared.modules[instruction.binding] = {kind: 'value', value: assigned}
+        state.shared.modules[instruction.binding] = {kind: 'value', value: assigned, version: freshSlotVersion()}
       }
       // A bounds check proven against the binding's previous value must not survive the
       // rebind: `data = [7]` can shrink the array under a recorded pair.
@@ -321,7 +333,7 @@ function evaluateInstructionKinded(
       // any assumes line, so the reset must include NaN and infinities.
       state.shared.modules[instruction.binding] = declaredKind == null
         ? {kind: 'uninitialized'}
-        : {kind: 'value', value: coveringKindValue(declaredKind)}
+        : {kind: 'value', value: coveringKindValue(declaredKind), version: freshSlotVersion()}
       dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
       return value({kind: 'void'})
     }
@@ -638,8 +650,19 @@ function refineForSentinel(
       return sentinelsAdmit(operand.sentinels, sentinel) ? {kind: 'nullish', sentinels: sentinel} : null
     }
     if (operand.kind === 'maybeNullish') {
-      if (sentinel === 'nullish') return {kind: 'nullish', sentinels: operand.sentinels}
-      return sentinelsAdmit(operand.sentinels, sentinel) ? {kind: 'nullish', sentinels: sentinel} : null
+      // An opaque inner can be either sentinel at runtime, beyond what the wrapper's
+      // sentinels set lists — the branch stays live and widens to both.
+      const opaqueInner = operand.inner.kind === 'opaque'
+      if (sentinel === 'nullish') {
+        return {kind: 'nullish', sentinels: opaqueInner ? 'both' : operand.sentinels}
+      }
+      return sentinelsAdmit(operand.sentinels, sentinel) || opaqueInner
+        ? {kind: 'nullish', sentinels: sentinel}
+        : null
+    }
+    // A bare opaque may be the sentinel too; this branch pins it down to exactly that.
+    if (operand.kind === 'opaque') {
+      return {kind: 'nullish', sentinels: sentinel === 'nullish' ? 'both' : sentinel}
     }
     // A value that is never missing cannot take this branch.
     return null
@@ -721,18 +744,20 @@ function writeThroughProducers(
   }
   // A module read's refinement narrows the SLOT, so the fact carries to later re-reads —
   // the parse-then-throw top-level guard publishes its laundered value, and the
-  // read-check-read spelling narrows without a local copy. The reference-identity guard
-  // is what makes it sound: a refinement can fire AFTER a rebind (read a snapshot, write
-  // the binding, then branch on the snapshot), and clobbering the fresh slot with the
-  // refined stale value published a false ensures (a review round ran the
-  // counterexample). The slot narrows only while it still holds the very object the read
-  // produced; rebinds and calls that touched the binding store different objects, and a
-  // callee that left it alone passes the same reference through, which is exactly when
-  // the fact still applies.
+  // read-check-read spelling narrows without a local copy. The version guard is what
+  // makes it sound: a refinement can fire AFTER a rebind (read a snapshot, write the
+  // binding, then branch on the snapshot), and clobbering the fresh slot with the refined
+  // stale value published a false ensures (a review round ran the counterexample). The
+  // slot narrows only while its version matches the one the read observed — no write in
+  // between, on every path the state covers (see ModuleSlot on why versions rather than
+  // object identity). The slot's value can meanwhile be tighter than this read's frame
+  // value (another read's refinement of the same slot landed first), so the write meets
+  // the two covers instead of overwriting.
   if (producer?.kind === 'moduleRead') {
     const slot = state.shared.modules[producer.binding]
-    if (slot?.kind === 'value' && slot.value === current) {
-      state.shared.modules[producer.binding] = {kind: 'value', value: met}
+    const observed = state.frame.readVersions[id]
+    if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
+      state.shared.modules[producer.binding] = {kind: 'value', value: meetValues(slot.value, met), version: slot.version}
     }
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {

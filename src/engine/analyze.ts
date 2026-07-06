@@ -15,6 +15,7 @@ import {
   cloneSharedState,
   cloneState,
   emptySharedState,
+  freshSlotVersion,
   joinModuleSlots,
   joinStates,
   sameState,
@@ -126,10 +127,10 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, modul
 function seedModuleSlots(program: ProgramIR, moduleValues: Array<AbstractValue | null>): ModuleSlot[] {
   return program.moduleBindings.map((binding, index) => {
     const published = moduleValues[index]
-    if (published != null) return {kind: 'value', value: published}
+    if (published != null) return {kind: 'value', value: published, version: freshSlotVersion()}
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) return {kind: 'uninitialized'}
-    return {kind: 'value', value: declaredKindValue(declaredKind)}
+    return {kind: 'value', value: declaredKindValue(declaredKind), version: freshSlotVersion()}
   })
 }
 
@@ -238,7 +239,7 @@ function runEvaluation(
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
   const initial: ExecutionState = {
-    frame: {values: []},
+    frame: {values: [], readVersions: []},
     shared: cloneSharedState(sharedState),
     // Call sites seed the caller's proven argument relations (keyed p0, p1, ... which is
     // exactly what canonicalValueKey produces for the parameters here).

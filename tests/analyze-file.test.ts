@@ -2524,9 +2524,9 @@ ${chain}
   test('slot narrowing survives the stale-snapshot attack; mixed joins degrade to opaque', () => {
     // Read a snapshot, rebind the module binding, then branch on the snapshot: the
     // refinement must NOT clobber the fresh slot with the refined stale value (a review
-    // round ran the counterexample — the ensures excluded the runtime -1). The
-    // reference-identity guard keeps the slot narrowing only while it still holds the
-    // very object the read produced. And typeof value === 'number' ? value : fallback on
+    // round ran the counterexample — the ensures excluded the runtime -1). The version
+    // guard keeps the slot narrowing only while no write touched the slot since the
+    // read. And typeof value === 'number' ? value : fallback on
     // unknown joins opaque with number — the join absorbs into a claim-free opaque
     // instead of crashing, so the function analyzes with honest empty ensures.
     const report = analyzeSource('stale-and-mixed.ts', `
@@ -2544,6 +2544,43 @@ ${chain}
     `)
     expect(analyzedFunction(report, 'stale').ensures).toEqual(['return is a finite integer number from -1 through 0'])
     expect(analyzedFunction(report, 'numberOr').ensures).toEqual([])
+  })
+
+  test('slot narrowing survives the merge-conflation attack; sentinel checks on opaque stay live', () => {
+    // Two counterexamples from a review round. First: the ternary merge makes the two
+    // paths' states structurally equal, so the merge keeps the stored path's bookkeeping,
+    // and `counter = chosen` puts a value back in the slot — but on the false path that
+    // value is `other`, not the snapshot, so `snapshot > 5` must not narrow the slot
+    // (runtime: setCounter(10) then subtle(false, -3) returns -3; the old ensures said at
+    // least 0). The version guard drops the narrowing because the write stamped a fresh
+    // version that no longer matches the one the read observed. Second: an unknown-typed
+    // value can BE undefined at runtime, so `=== undefined` keeps both branches live —
+    // checked directly on the parameter and through a null join (which wraps the opaque
+    // in a maybeNullish whose sentinels list only null).
+    const report = analyzeSource('merge-and-sentinel.ts', `
+      let counter = 0
+      export function setCounter(v: number): void { counter = v }
+      export function subtle(flag: boolean, other: number): number {
+        const snapshot = counter
+        const chosen = flag ? snapshot : other
+        counter = chosen
+        if (snapshot > 5) { return counter }
+        return 0
+      }
+      export function viaNullJoin(value: unknown, useNull: boolean, useLeft: boolean, n: number): number {
+        const withNull = useNull ? value : null
+        const v = useLeft ? withNull : n
+        if (v === undefined) { return -1 }
+        return 0
+      }
+      export function direct(value: unknown): number {
+        if (value === undefined) { return -1 }
+        return 0
+      }
+    `)
+    expect(analyzedFunction(report, 'subtle').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'viaNullJoin').ensures).toEqual(['return is a finite integer number from -1 through 0'])
+    expect(analyzedFunction(report, 'direct').ensures).toEqual(['return is a finite integer number from -1 through 0'])
   })
 
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
