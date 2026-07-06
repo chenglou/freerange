@@ -911,16 +911,17 @@ describe('analyzeFile', () => {
     // Shapes are fingerprinted to every depth: payloads diverging two levels down reject at
     // the declarator (a narrowed read could otherwise reach a property the join dropped),
     // while a union of one recursive shape joins losslessly — its discriminant reads
-    // directly and computes like any number, literal union included.
+    // directly and computes like any number, literal union included. The diverging shapes
+    // here carry no discriminant (status is a full string on both sides); with a literal
+    // or boolean tag the union would instead analyze through variant narrowing.
     const report = analyzeSource('union-shapes.ts', `
-      type Loaded = {ok: true; data: {metrics: {width: number}}}
-      type Failed = {ok: false; data: {metrics: {code: number}}}
+      type Loaded = {status: string; data: {metrics: {width: number}}}
+      type Failed = {status: string; data: {metrics: {code: number}}}
       export function measure(loadedCount: number): number {
         const state: Loaded | Failed = loadedCount > 0
-          ? {ok: true, data: {metrics: {width: 640}}}
-          : {ok: false, data: {metrics: {code: 404}}}
-        const {ok} = state
-        return ok ? 1 : 0
+          ? {status: 'loaded', data: {metrics: {width: 640}}}
+          : {status: 'failed', data: {metrics: {code: 404}}}
+        return loadedCount
       }
       type Speed = {mode: 1} | {mode: 2}
       export function speedMode(fast: number): number {
@@ -2230,6 +2231,56 @@ ${chain}
     expect(analyzedFunction(report, 'total').assumptions).toEqual([
       "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
       "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
+    ])
+  })
+
+  test('tagged unions: boolean tags and literal-union tags dispatch like string tags', () => {
+    // The Result pattern (`ok: true` / `ok: false`) and a variant whose tag is a union of
+    // literals both count as discriminants now. A multi-literal tag expands into one
+    // variant per literal sharing the record shape, so the check machinery only ever sees
+    // single-literal tags; `if (result.ok)` narrows like `result.ok === true`, and the
+    // negated and strict-compare spellings narrow too. The tag property contributes no
+    // line of its own — the `(when ...)` qualifier already pins it.
+    const report = analyzeSource('near-miss-tags.ts', `
+      type Parsed = {ok: true; value: number} | {ok: false; code: number}
+      export function unwrapOr(result: Parsed, fallback: number): number {
+        if (result.ok) { return result.value }
+        return fallback
+      }
+      export function negated(result: Parsed): number {
+        if (!result.ok) { return result.code }
+        return 0
+      }
+      export function makeBoth(raw: number): Parsed {
+        if (raw > 0) { return {ok: true, value: raw} }
+        return {ok: false, code: 400}
+      }
+      type Nav =
+        | {type: 'desktopCollapsedNav' | 'desktopExpandedNav'; navWidth: number}
+        | {type: 'mobileNav'; sheetHeight: number}
+      export function navSpace(nav: Nav): number {
+        switch (nav.type) {
+          case 'desktopCollapsedNav': return nav.navWidth
+          case 'desktopExpandedNav': return nav.navWidth
+          case 'mobileNav': return nav.sheetHeight
+        }
+      }
+    `)
+    expect(analyzedFunction(report, 'unwrapOr').assumptions).toEqual([
+      'result.value is finite and not NaN (when result.ok is true)',
+      'result.code is finite and not NaN (when result.ok is false)',
+      'fallback is finite and not NaN',
+    ])
+    expect(analyzedFunction(report, 'negated').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'makeBoth').ensures).toEqual([
+      'return.ok is true or false',
+      'return.value is a finite number more than 0 (when return.ok is true)',
+      'return.code is a finite integer number from 400 through 400 (when return.ok is false)',
+    ])
+    expect(analyzedFunction(report, 'navSpace').assumptions).toEqual([
+      "nav.navWidth is finite and not NaN (when nav.type is 'desktopCollapsedNav')",
+      "nav.navWidth is finite and not NaN (when nav.type is 'desktopExpandedNav')",
+      "nav.sheetHeight is finite and not NaN (when nav.type is 'mobileNav')",
     ])
   })
 

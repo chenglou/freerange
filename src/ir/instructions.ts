@@ -33,7 +33,7 @@ export type InstructionIR =
   // route.type === 'lightbox': consumes the tagged-union value directly (the tag read
   // never becomes a property instruction), and branch refinement keeps only the matching
   // variants on the true side, the rest on the false side.
-  | (InstructionBase & {kind: 'tagCheck'; union: ValueID; tagValue: string; negated: boolean})
+  | (InstructionBase & {kind: 'tagCheck'; union: ValueID; tagValue: string | boolean; negated: boolean})
   // 'tab' in route: presence of a property splits the variants that declare it from those
   // that do not — the check TypeScript itself uses to tell apart two variants sharing a
   // tag value. Sound relative to the documented no-excess-properties assumption, the same
@@ -88,7 +88,7 @@ export type InstructionIR =
   // tag is set when the literal's contextual type is a tagged union and the literal names
   // its tag with a string literal — the engine then builds a single-variant union, so
   // branches building different variants join per tag instead of dropping properties.
-  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]; tag?: {property: string; value: string}})
+  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]; tag?: {property: string; value: string | boolean}})
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
 
 // Every ValueID operand an instruction reads, enumerated next to the type so a new kind or

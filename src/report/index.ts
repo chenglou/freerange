@@ -148,6 +148,13 @@ export function formatReport(report: AnalysisReport): string {
   return lines.join('\n')
 }
 
+
+// A string tag prints quoted ('lightbox'); a boolean tag prints bare (true), matching how
+// each is written in the type.
+function formatTagValue(tagValue: string | boolean): string {
+  return typeof tagValue === 'string' ? `'${tagValue}'` : String(tagValue)
+}
+
 function assumptionLines(
   fn: FunctionIR,
   program: ProgramIR,
@@ -234,15 +241,17 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
     }
     case 'taggedUnion': {
       // Per-variant leaf lines, each qualified by the tag — e.g. `route.index is finite
-      // and not NaN (when route.type is 'lightbox')`. The tag property itself is an
-      // opaque leaf and contributes no line.
+      // and not NaN (when route.type is 'lightbox')`. The tag property itself is skipped:
+      // a string tag is an opaque leaf with no line anyway, and a boolean tag's "ok is a
+      // boolean" would restate what the qualifier already pins.
       for (const variant of declared.variants) {
         const leaf: string[] = []
         for (const property of variant.properties) {
+          if (property.name === declared.tagProperty) continue
           pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, leaf)
         }
         for (const line of leaf) {
-          assumptions.push(`${line} (when ${path}.${declared.tagProperty} is '${variant.tagValue}')`)
+          assumptions.push(`${line} (when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)})`)
         }
       }
       break
@@ -509,14 +518,21 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
     case 'taggedUnion': {
       // One line naming the possible tags, then each variant's facts qualified by its
       // tag — e.g. `return.width is a finite number (when return.type is 'sidebar')`.
-      const tags = value.variants.map(variant => `'${variant.tagValue}'`).join(' or ')
+      const tags = value.variants.map(variant => formatTagValue(variant.tagValue)).join(' or ')
       const lines = [`${path}.${value.tagProperty} is ${tags}`]
       for (const variant of value.variants) {
+        // The tag property is dropped from each variant's summaries: the tags line and
+        // the qualifier already say its value, and a boolean tag's exact constant would
+        // otherwise restate it (`return.ok is true (when return.ok is true)`).
+        const withoutTag: typeof variant.record = {
+          kind: 'record',
+          properties: variant.record.properties.filter(property => property.name !== value.tagProperty),
+        }
         if (value.variants.length === 1) {
-          lines.push(...returnSummaries(path, variant.record, program))
+          lines.push(...returnSummaries(path, withoutTag, program))
         } else {
-          lines.push(...returnSummaries(path, variant.record, program)
-            .map(line => `${line} (when ${path}.${value.tagProperty} is '${variant.tagValue}')`))
+          lines.push(...returnSummaries(path, withoutTag, program)
+            .map(line => `${line} (when ${path}.${value.tagProperty} is ${formatTagValue(variant.tagValue)})`))
         }
       }
       return lines

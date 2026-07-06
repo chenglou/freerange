@@ -82,7 +82,7 @@ export function joinSentinels(left: NullishSentinels, right: NullishSentinels): 
 // ever remove variants — so the representation is bounded by what the author wrote. A
 // single-variant value stays in this form (rather than collapsing to a plain record) so a
 // later check against another tag is definitely false and dead branches prune.
-export type TaggedVariant = {tagValue: string; record: AbstractRecord}
+export type TaggedVariant = {tagValue: string | boolean; record: AbstractRecord}
 
 export type AbstractTaggedUnion = {
   kind: 'taggedUnion'

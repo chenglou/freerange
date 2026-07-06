@@ -272,22 +272,27 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (contextMembers.length === 1 && valueKind(contextMembers[0]!, context.checker) === 'object') {
       fillOptionalsFrom(contextMembers[0]!)
     }
-    let tag: {property: string; value: string} | null = null
+    let tag: {property: string; value: string | boolean} | null = null
     if (contextMembers.length > 1) {
       const tagProperty = taggedUnionProperty(contextMembers, context.checker)
       if (tagProperty != null) {
         const ownTag = context.checker.getPropertyOfType(context.checker.getTypeAtLocation(current), tagProperty)
         const ownTagType = ownTag == null ? null : context.checker.getTypeOfSymbol(ownTag)
-        if (ownTagType != null && ownTagType.isStringLiteral()) {
-          tag = {property: tagProperty, value: ownTagType.value}
-          // The variant's own optionals fill too — from every contextual member carrying
-          // this tag value, so a duplicate-tag literal covers both shapes' optionals.
-          // Filling never breaks the in-check split: an optional property reads as
-          // unknown presence either way.
+        // The literal must pin ONE tag value ({ok: true}, {type: 'lightbox'}); a tag
+        // written from a union-typed variable pins nothing and the value stays a record.
+        const ownLiterals = ownTagType == null ? null : tagLiteralValues(ownTagType)
+        const ownLiteral = ownLiterals != null && ownLiterals.length === 1 ? ownLiterals[0]! : null
+        if (ownLiteral != null) {
+          tag = {property: tagProperty, value: ownLiteral}
+          // The variant's own optionals fill too — from every contextual member whose tag
+          // values include this one, so a duplicate-tag literal covers both shapes'
+          // optionals. Filling never breaks the in-check split: an optional property
+          // reads as unknown presence either way.
           for (const member of contextMembers) {
             const memberTag = context.checker.getPropertyOfType(member, tagProperty)
             const memberTagType = memberTag == null ? null : context.checker.getTypeOfSymbol(memberTag)
-            if (memberTagType != null && memberTagType.isStringLiteral() && memberTagType.value === ownTagType.value) {
+            const memberLiterals = memberTagType == null ? null : tagLiteralValues(memberTagType)
+            if (memberLiterals != null && memberLiterals.includes(ownLiteral)) {
               fillOptionalsFrom(member)
             }
           }
@@ -655,7 +660,15 @@ export function lowerBranchingCondition(
     return
   }
   requireBooleanCondition(current, context.checker)
-  const condition = lowerExpression(current, context)
+  // `if (result.ok)` where ok is a boolean-valued tag: truthiness of the tag IS the
+  // tag check against true, so the branches narrow the variant list exactly like the
+  // `result.ok === true` spelling. Only boolean tags take this route — a string tag's
+  // truthiness would additionally hinge on the empty string, which requireBooleanCondition
+  // rejects anyway.
+  const tagUnion = taggedUnionTagRead(current, context)
+  const condition = tagUnion != null
+    ? addInstruction(context, current, {kind: 'tagCheck', union: lowerExpression(tagUnion, context), tagValue: true, negated: false})
+    : lowerExpression(current, context)
   terminate(context.currentBlock, {
     kind: 'branch',
     condition,
@@ -822,17 +835,52 @@ export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.Typ
   for (const member of members) {
     if (valueKind(member, checker, depth + 1) !== 'object') return null
   }
+  // Two passes: a property whose tag is a SINGLE literal per member (`ok: true` /
+  // `ok: false`, `type: 'lightbox'`) is a real discriminant and wins first. Only then do
+  // multi-literal tags qualify (`type: 'desktopCollapsedNav' | 'desktopExpandedNav'` in
+  // one variant, or a plain boolean property every member carries) — otherwise a
+  // non-discriminating `enabled: boolean` shared by all members could shadow the actual
+  // tag declared after it.
   const first = members[0]!
-  candidates: for (const candidate of checker.getPropertiesOfType(first)) {
-    if ((candidate.flags & ts.SymbolFlags.Optional) !== 0) continue
+  const qualifies = (candidateName: string, singleLiteralOnly: boolean): boolean => {
     for (const member of members) {
-      const property = checker.getPropertyOfType(member, candidate.name)
-      if (property == null || (property.flags & ts.SymbolFlags.Optional) !== 0) continue candidates
-      if (!checker.getTypeOfSymbol(property).isStringLiteral()) continue candidates
+      const property = checker.getPropertyOfType(member, candidateName)
+      if (property == null || (property.flags & ts.SymbolFlags.Optional) !== 0) return false
+      const literals = tagLiteralValues(checker.getTypeOfSymbol(property))
+      if (literals == null || (singleLiteralOnly && literals.length !== 1)) return false
     }
-    return candidate.name
+    return true
+  }
+  for (const singleLiteralOnly of [true, false]) {
+    for (const candidate of checker.getPropertiesOfType(first)) {
+      if ((candidate.flags & ts.SymbolFlags.Optional) !== 0) continue
+      if (qualifies(candidate.name, singleLiteralOnly)) return candidate.name
+    }
   }
   return null
+}
+
+// The literal tag values a tag property's type covers: a string or boolean literal gives
+// one, a union of such literals gives one per member — and `ok: boolean` arrives here as
+// the checker's `true | false` union, so it gives both. Null when any member is not such
+// a literal (a number tag, a full string). The list is bounded by what the author wrote
+// in the type.
+export function tagLiteralValues(type: ts.Type): Array<string | boolean> | null {
+  const single = (member: ts.Type): string | boolean | null => {
+    if (member.isStringLiteral()) return member.value
+    if ((member.flags & ts.TypeFlags.BooleanLiteral) !== 0) {
+      return (member as unknown as {intrinsicName: string}).intrinsicName === 'true'
+    }
+    return null
+  }
+  const members = type.isUnion() ? type.types : [type]
+  const literals: Array<string | boolean> = []
+  for (const member of members) {
+    const literal = single(member)
+    if (literal == null) return null
+    literals.push(literal)
+  }
+  return literals
 }
 
 // One shared kind for a group of union members, or null. Object, array, and tuple members
@@ -1023,18 +1071,22 @@ export function taggedUnionTagRead(expression: ts.Expression, context: FunctionC
   return tagProperty === unwrapped.name.text ? unwrapped.expression : null
 }
 
-// route.type === 'lightbox' (and !==, and the loose spellings): the check consumes the
-// union value directly and the branches narrow its variant list — the same move the null
-// checks make, pointed at a string tag. The string side must be a literal; comparing two
-// tag reads to each other stays an unknown boolean through the opaque path.
+// route.type === 'lightbox' (and !==, the loose spellings, and result.ok === true): the
+// check consumes the union value directly and the branches narrow its variant list — the
+// same move the null checks make, pointed at the tag. The compared side must be a string
+// or boolean literal; comparing two tag reads to each other stays an unknown boolean
+// through the opaque path.
 function tagCheckComparison(expression: ts.BinaryExpression, context: FunctionContext): ValueID | null {
   const operator = expression.operatorToken.kind
   const equals = operator === ts.SyntaxKind.EqualsEqualsEqualsToken || operator === ts.SyntaxKind.EqualsEqualsToken
   const notEquals = operator === ts.SyntaxKind.ExclamationEqualsEqualsToken || operator === ts.SyntaxKind.ExclamationEqualsToken
   if (!equals && !notEquals) return null
-  const literalOf = (side: ts.Expression): string | null => {
+  const literalOf = (side: ts.Expression): string | boolean | null => {
     const unwrapped = unwrap(side, context.checker)
-    return ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped) ? unwrapped.text : null
+    if (ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped)) return unwrapped.text
+    if (unwrapped.kind === ts.SyntaxKind.TrueKeyword) return true
+    if (unwrapped.kind === ts.SyntaxKind.FalseKeyword) return false
+    return null
   }
   const sides = [
     {union: taggedUnionTagRead(expression.left, context), literal: literalOf(expression.right)},

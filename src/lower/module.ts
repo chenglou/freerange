@@ -15,7 +15,7 @@ import {
 import {assertAccepted} from './accept.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
-import {lowerExpression, taggedUnionProperty, valueKind} from './expression.ts'
+import {lowerExpression, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
 export type ModuleScan = {
@@ -375,23 +375,28 @@ function wrapOptional(declared: DeclaredKind): DeclaredKind {
   return {kind: 'nullish', inner: declared, sentinels: 'undefined'}
 }
 
-// One union member as a variant: its value for the union's tag property plus its record
-// walk. The tag rides along inside the variant's record as an ordinary opaque leaf; the
-// union structure carries which value it is.
-function declaredTaggedVariant(
+// One union member as variants: its values for the union's tag property plus its record
+// walk. A member whose tag is a single literal gives one variant; a tag written as a
+// union of literals (`type: 'desktopCollapsedNav' | 'desktopExpandedNav'`, or a plain
+// boolean — the checker's `true | false`) expands into one variant per literal, all
+// sharing the member's record shape, so the check machinery only ever sees single-literal
+// tags. The expansion is bounded by the literals the author wrote. The tag rides along
+// inside each variant's record as an ordinary leaf; the union structure carries which
+// value it is.
+function declaredTaggedVariants(
   member: ts.Type,
   tagProperty: string,
   location: ts.Node,
   checker: ts.TypeChecker,
   seen: ts.Type[],
-): DeclaredVariant | null {
+): DeclaredVariant[] | null {
   const tag = checker.getPropertyOfType(member, tagProperty)
   if (tag == null) return null
-  const tagType = checker.getTypeOfSymbol(tag)
-  if (!tagType.isStringLiteral()) return null
+  const literals = tagLiteralValues(checker.getTypeOfSymbol(tag))
+  if (literals == null) return null
   const properties = declaredRecordProperties(member, location, checker, seen)
   if (properties == null) return null
-  return {tagValue: tagType.value, properties}
+  return literals.map(tagValue => ({tagValue, properties}))
 }
 
 // The classification walk is pure over the type, and the checker interns types, so one
@@ -450,12 +455,12 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
           const unionVariants: DeclaredVariant[] = []
           let allClassified = true
           for (const member of rest) {
-            const variant = declaredTaggedVariant(member, restTagProperty, location, checker, seen)
-            if (variant == null) {
+            const variants = declaredTaggedVariants(member, restTagProperty, location, checker, seen)
+            if (variants == null) {
               allClassified = false
               break
             }
-            unionVariants.push(variant)
+            unionVariants.push(...variants)
           }
           const [firstVariant, ...restVariants] = unionVariants
           if (allClassified && firstVariant != null) {
@@ -511,9 +516,9 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       if (tagProperty == null) return null
       const variants: DeclaredVariant[] = []
       for (const member of type.types) {
-        const variant = declaredTaggedVariant(member, tagProperty, location, checker, seen)
-        if (variant == null) return null
-        variants.push(variant)
+        const memberVariants = declaredTaggedVariants(member, tagProperty, location, checker, seen)
+        if (memberVariants == null) return null
+        variants.push(...memberVariants)
       }
       const [firstVariant, ...restVariants] = variants
       if (firstVariant == null) return null

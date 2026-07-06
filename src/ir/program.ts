@@ -162,7 +162,7 @@ export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 // a record with a fixed property shape (shapes nest — module state is a tree of records).
 // The promise is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in
 // any write position, so the report prints a condition for every read that rests on one.
-export type DeclaredVariant = {tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}
+export type DeclaredVariant = {tagValue: string | boolean; properties: Array<{name: string; declared: DeclaredKind}>}
 
 export type DeclaredKind =
   | {kind: 'number'}
