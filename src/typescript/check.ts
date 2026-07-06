@@ -15,6 +15,11 @@ const compilerOptions: ts.CompilerOptions = {
   // Bare arr[i] must type T | undefined so the analyzer can tell an honest possibly-missing
   // read from an asserted arr[i]! — the decisions doc's stated regime for element reads.
   noUncheckedIndexedAccess: true,
+  // The optionals soundness anchor: under this flag a well-typed optional property is
+  // either absent or a T, never explicitly set to undefined, so the analyzer's collapse
+  // of absence into the undefined sentinel is exact. The doc cites this flag; it must
+  // actually be on (a review round caught it set in the survey harness but not here).
+  exactOptionalPropertyTypes: true,
   noEmit: true,
   skipLibCheck: true,
   types: [],

@@ -12,6 +12,7 @@ import {
   type SourceSpan,
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
+import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, taggedUnionProperty, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
@@ -481,6 +482,13 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       return {kind: 'tuple', elements}
     }
     case 'object': {
+      // A record type the PROJECT did not write — HTMLDivElement, a library's config
+      // interface, anything declared only in .d.ts files — is carried as an opaque leaf,
+      // not contracted: walking a DOM interface would flood the report with hundreds of
+      // assumes lines about properties nobody reads, and the project cannot uphold
+      // contracts on shapes it does not own. (Math and friends never reach here — value
+      // reads of them are gated elsewhere.)
+      if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return {kind: 'opaque'}
       // A recursive declared type (e.g. a linked list) would nest forever; the binding
       // stays opaque. The seen check catches direct recursion; the depth cap catches
       // recursive generics, whose every level is a fresh instantiation the seen check

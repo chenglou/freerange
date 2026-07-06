@@ -383,7 +383,7 @@ describe('analyzeFile', () => {
     expect(report.functions).toEqual([{
       kind: 'unsupported',
       name: 'pickShape',
-      unsupported: `value of type { x: number; y?: undefined; } | { x: number; y: number; } at ${file}:2:7`,
+      unsupported: `value of type { x: number; y?: never; } | { x: number; y: number; } at ${file}:2:7`,
     }])
   })
 

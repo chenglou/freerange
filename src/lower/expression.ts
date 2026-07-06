@@ -224,12 +224,21 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         lastByName.set(member.name, {name: member.name, value: absent})
       }
     }
-    if (contextual != null && !contextual.isUnion() && valueKind(contextual, context.checker) === 'object') {
-      fillOptionalsFrom(contextual)
+    // The contextual type may sit behind a nullable wrapper (`const config: Config |
+    // null = flag ? {...} : null`): the literal builds the non-missing part, so the
+    // filling and tag detection look through the wrapper at those members.
+    const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+    const contextMembers: readonly ts.Type[] = contextual == null
+      ? []
+      : contextual.isUnion()
+        ? contextual.types.filter(member => (member.flags & missingFlags) === 0)
+        : [contextual]
+    if (contextMembers.length === 1 && valueKind(contextMembers[0]!, context.checker) === 'object') {
+      fillOptionalsFrom(contextMembers[0]!)
     }
     let tag: {property: string; value: string} | null = null
-    if (contextual != null && contextual.isUnion() && valueKind(contextual, context.checker) === 'taggedUnion') {
-      const tagProperty = taggedUnionProperty(contextual.types, context.checker)
+    if (contextMembers.length > 1) {
+      const tagProperty = taggedUnionProperty(contextMembers, context.checker)
       if (tagProperty != null) {
         const ownTag = context.checker.getPropertyOfType(context.checker.getTypeAtLocation(current), tagProperty)
         const ownTagType = ownTag == null ? null : context.checker.getTypeOfSymbol(ownTag)
@@ -239,7 +248,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           // this tag value, so a duplicate-tag literal covers both shapes' optionals.
           // Filling never breaks the in-check split: an optional property reads as
           // unknown presence either way.
-          for (const member of contextual.types) {
+          for (const member of contextMembers) {
             const memberTag = context.checker.getPropertyOfType(member, tagProperty)
             const memberTagType = memberTag == null ? null : context.checker.getTypeOfSymbol(memberTag)
             if (memberTagType != null && memberTagType.isStringLiteral() && memberTagType.value === ownTagType.value) {
@@ -635,9 +644,12 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
   if (type.isIntersection() && type.types.every(member => valueKind(member, checker, depth + 1) === 'object')) {
     if (checker.getIndexInfosOfType(type).length > 0) return null
     if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    // Optional properties anchor too, now that they model as maybe-undefined values: an
+    // all-optional config record ({volume?: number}) is a weak type TypeScript refuses to
+    // assign primitives to, so the primitive-inhabitation worry that bars `{}` does not
+    // apply — only a type with NO data properties at all stays out.
     const anchored = checker.getPropertiesOfType(type).some(property =>
-      (property.flags & ts.SymbolFlags.Optional) === 0
-      && checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+      checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
     return anchored ? 'object' : null
   }
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
@@ -655,9 +667,12 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
     // and a record meet at a join.
     if (checker.getIndexInfosOfType(type).length > 0) return null
     if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return null
+    // Optional properties anchor too, now that they model as maybe-undefined values: an
+    // all-optional config record ({volume?: number}) is a weak type TypeScript refuses to
+    // assign primitives to, so the primitive-inhabitation worry that bars `{}` does not
+    // apply — only a type with NO data properties at all stays out.
     const anchored = checker.getPropertiesOfType(type).some(property =>
-      (property.flags & ts.SymbolFlags.Optional) === 0
-      && checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
+      checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
     return anchored ? 'object' : null
   }
   if (type.isUnion()) {
@@ -675,12 +690,13 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
       if (restKind != null) return 'nullable'
       return taggedUnionProperty(rest, checker, depth) == null ? null : 'nullable'
     }
-    const shared = classifyUnionMembers(type.types, checker, depth + 1)
-    if (shared != null) return shared
-    // Distinct record shapes told apart by a shared string-literal property — the
-    // discriminated union the fingerprint comment below calls latent. Recognized here so
-    // the gates admit it; the engine carries one record per tag value.
-    return taggedUnionProperty(type.types, checker, depth) == null ? null : 'taggedUnion'
+    // A shared string-literal property makes the union tagged — checked BEFORE the
+    // shared-shape classification, because route variants that differ only by tag value
+    // (or only by properties an in-check splits) must not collapse into one merged
+    // record whose tag check narrows nothing. Unions without a tag fall back to the
+    // shared-kind rule (identical-shape aliases, literal unions, and friends).
+    if (taggedUnionProperty(type.types, checker, depth) != null) return 'taggedUnion'
+    return classifyUnionMembers(type.types, checker, depth + 1)
   }
   return null
 }
@@ -748,14 +764,30 @@ function classifyUnionMembers(
 // 'other' labels a kind the analysis cannot represent; 'other' matches 'other', which is
 // safe not because such values cannot exist — a property typed
 // {width: number} | {code: number} is 'other' and its values are ordinary literals — but
-// because every read of an 'other' property is rejected: direct access and destructuring
-// gate the result type through valueKind, and spreads gate each copied property the same
-// way. A fingerprint the seen set or depth cap CUT SHORT is different: below the cutoff
+// because every read of an 'other' property is gated: direct access and destructuring
+// gate the result type through valueKind, spreads gate each copied property, and a read
+// the gates admit against a value the walk carried opaquely stops at the kind-mismatch
+// backstop. A fingerprint the seen set or depth cap CUT SHORT is different: below the cutoff
 // there can be readable properties the comparison never saw (discriminant narrowing types
 // deep reads against a single member), so a truncated fingerprint is null and never
 // compares equal — the union is rejected, mirroring how the module shape walk goes opaque
 // at its cap.
 function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
+  // An intersection fingerprints by its merged property view — the checker's property
+  // queries already answer for the whole intersection — so two route variants written as
+  // Base & {...} get DIFFERENT fingerprints and their union classifies as tagged instead
+  // of collapsing into one merged record whose tag check narrows nothing.
+  if (type.isIntersection() && valueKind(type, checker) === 'object') {
+    if (seen.length >= 8 || seen.includes(type)) return null
+    const parts: string[] = []
+    for (const property of checker.getPropertiesOfType(type)) {
+      if ((property.flags & ts.SymbolFlags.Optional) !== 0) continue
+      const propertyShape = shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])
+      if (propertyShape == null) return null
+      parts.push(`${property.name}:${propertyShape}`)
+    }
+    return `{${parts.sort().join(',')}}`
+  }
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   if ((type.flags & ts.TypeFlags.StringLike) !== 0) return 'opaque'
