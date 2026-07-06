@@ -3,7 +3,7 @@ import {formatSite, type ProgramIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
 export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
-  const operation = precondition.kind === 'inBounds' ? 'element read' : 'division'
+  const operation = precondition.kind === 'inBounds' ? 'element read' : precondition.operation
   return `${conditionWords(precondition, parameterNames)} (${operation} at ${formatSite(program, precondition.site)})`
 }
 
@@ -13,7 +13,7 @@ export function formatObservedNeed(precondition: InferredPrecondition, parameter
   if (precondition.kind === 'inBounds') {
     return `the element read at ${formatSite(program, precondition.site)} hits an element only when ${conditionWords(precondition, parameterNames)}`
   }
-  return `the division at ${formatSite(program, precondition.site)} gives a finite result only when ${conditionWords(precondition, parameterNames)}`
+  return `the ${precondition.operation} at ${formatSite(program, precondition.site)} gives a finite result only when ${conditionWords(precondition, parameterNames)}`
 }
 
 function conditionWords(precondition: InferredPrecondition, parameterNames: string[]): string {
@@ -52,5 +52,6 @@ function operatorText(operator: ArithmeticOperator): string {
     case 'subtract': return '-'
     case 'multiply': return '*'
     case 'divide': return '/'
+    case 'remainder': return '%'
   }
 }

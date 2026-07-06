@@ -429,7 +429,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
     case 'binaryOperator': return reason.operator === '!==' || reason.operator === '!='
       ? `binary operator ${reason.operator} (not-equal narrowing is not modeled; invert to === with an early return, e.g. if (columnCount === 0) return 0)`
-      : `binary operator ${reason.operator} (supported: + - * /, comparisons, and boolean && || !)`
+      : `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
       ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
       : `function call ${reason.callee}`

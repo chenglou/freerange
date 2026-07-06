@@ -125,6 +125,38 @@ function lowerFunction(
     parameters: [],
   }
   for (const parameter of declaration.parameters) {
+    // `function area({width, height}: Size)` lowers as a synthetic record parameter plus
+    // one property read per name — the same classification named parameters use, the
+    // same reads body destructuring uses. Assumes lines name the parameter by its
+    // pattern text ({width, height}.width is finite...). Defaults and rest inside the
+    // pattern stay out, like the body form.
+    if (ts.isObjectBindingPattern(parameter.name)) {
+      const type = lowerParameterType(parameter, checker)
+      if (parameter.initializer != null) {
+        throw unsupported(parameter, {kind: 'parameterDefaultValue', name: parameter.name.getText(sourceFile)})
+      }
+      const value = context.nextValue++
+      context.parameters.push({value, name: parameter.name.getText(sourceFile), type})
+      for (const element of parameter.name.elements) {
+        if (!ts.isIdentifier(element.name) || element.dotDotDotToken != null || element.initializer != null) {
+          throw unsupported(element, {kind: 'destructuredParameter'})
+        }
+        const property = element.propertyName == null
+          ? element.name.text
+          : ts.isIdentifier(element.propertyName) ? element.propertyName.text : null
+        if (property == null) throw unsupported(element, {kind: 'destructuredParameter'})
+        const read: MutableBlock['instructions'][number] = {
+          kind: 'property',
+          object: value,
+          property,
+          result: context.nextValue++,
+          site: addSite(context, element),
+        }
+        entry.instructions.push(read)
+        context.bindings.set(requiredSymbol(element.name, checker), read.result)
+      }
+      continue
+    }
     if (!ts.isIdentifier(parameter.name)) throw unsupported(parameter.name, {kind: 'destructuredParameter'})
     // A rest parameter is one declaration for any number of arguments; the engine's
     // one-value-per-parameter seeding cannot represent that.

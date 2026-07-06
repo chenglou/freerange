@@ -1,4 +1,5 @@
 import {
+  remainderNumbers,
   roundedNumber,
   squareRootNumber,
   nextDown,
@@ -492,20 +493,27 @@ function evaluateInstructionKinded(
         return computedNumber(clamped, [left, right], instruction.site)
       }
       if (
-        instruction.operator === 'divide'
+        (instruction.operator === 'divide' || instruction.operator === 'remainder')
         && includesZero(right)
         && context.usedOutsideCompare[instruction.result] === true
       ) {
+        const operation = instruction.operator === 'divide' ? 'division' : 'remainder'
         const expression = numericExpression(instruction.right, context.expressionContext)
         if (expression == null) {
           return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
         }
-        addPrecondition(context.preconditions, peelNonzero(expression, instruction.site))
+        addPrecondition(context.preconditions, peelNonzero(expression, instruction.site, operation))
         // Ensures assume the requires: with the nonzero requirement recorded, the quotient
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
-        // zero and stays possibly non-finite.
-        return computedNumber(divideNumbersNonzeroDivisor(left, right), [left, right], instruction.site)
+        // zero and stays possibly non-finite. The remainder is bounded by both operands.
+        return computedNumber(
+          instruction.operator === 'divide'
+            ? divideNumbersNonzeroDivisor(left, right)
+            : remainderNumbers(left, right, true),
+          [left, right],
+          instruction.site,
+        )
       }
       return computedNumber(evaluateBinary(instruction.operator, left, right), [left, right], instruction.site)
     }
@@ -1005,6 +1013,7 @@ function evaluateBinary(
     case 'subtract': return subtractNumbers(left, right)
     case 'multiply': return multiplyNumbers(left, right)
     case 'divide': return divideNumbers(left, right)
+    case 'remainder': return remainderNumbers(left, right, false)
   }
 }
 

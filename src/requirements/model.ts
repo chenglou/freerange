@@ -26,6 +26,8 @@ export type InferredPrecondition =
   | {
       kind: 'nonzero'
       expression: NumericExpression
+      // Which operation needs the divisor nonzero — division or remainder — for the prose.
+      operation: 'division' | 'remainder'
       // The operation that needs the requirement (today always a division). Propagated
       // records keep the callee's site, so a caller's report points at the actual division
       // even when the requirement surfaces two calls up.
@@ -49,5 +51,6 @@ export type InferredPrecondition =
       kind: 'notEqualConstant'
       expression: NumericExpression
       value: number
+      operation: 'division' | 'remainder'
       site: SiteID
     }

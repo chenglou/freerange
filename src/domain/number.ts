@@ -257,6 +257,30 @@ export function squareRootNumber(value: AbstractNumber): AbstractNumber {
   }
 }
 
+// JS remainder: the result's sign follows the dividend, its magnitude stays below both
+// |dividend| and |divisor|, and it is NaN exactly when the dividend is infinite or the
+// divisor is zero (or either is NaN). With the divisor's nonzero requirement recorded and
+// a finite dividend, the result is genuinely finite and NaN-free.
+export function remainderNumbers(left: AbstractNumber, right: AbstractNumber, divisorNonzero: boolean): AbstractNumber {
+  if (left.mayBeNaN || right.mayBeNaN) return unknownNumber()
+  const divisorMayBeZero = !divisorNonzero && includesZero(right)
+  const dividendMayBeInfinite = !isFiniteNumber(left)
+  const magnitude = Math.min(
+    Math.max(Math.abs(left.lower), Math.abs(left.upper)),
+    Math.max(Math.abs(right.lower), Math.abs(right.upper)),
+  )
+  // Integer operands with a bounded divisor tighten by one: |r| <= |b| - 1.
+  const integer = left.integer && right.integer
+  const bound = integer && Number.isFinite(magnitude) ? Math.max(magnitude - 1, 0) : magnitude
+  return {
+    kind: 'number',
+    lower: left.lower < 0 ? (Number.isFinite(bound) ? -bound : Number.NEGATIVE_INFINITY) : 0,
+    upper: left.upper > 0 ? (Number.isFinite(bound) ? bound : Number.POSITIVE_INFINITY) : 0,
+    integer,
+    mayBeNaN: divisorMayBeZero || dividendMayBeInfinite,
+  }
+}
+
 export function absoluteNumber(value: AbstractNumber): AbstractNumber {
   const lower = value.lower >= 0 ? value.lower : value.upper <= 0 ? -value.upper : 0
   return {

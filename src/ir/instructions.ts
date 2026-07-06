@@ -7,7 +7,7 @@ type InstructionBase = {
 }
 
 export type ComparisonOperator = 'lessThan' | 'lessThanOrEqual' | 'greaterThan' | 'greaterThanOrEqual' | 'equal' | 'notEqual'
-export type ArithmeticOperator = 'add' | 'subtract' | 'multiply' | 'divide'
+export type ArithmeticOperator = 'add' | 'subtract' | 'multiply' | 'divide' | 'remainder'
 
 type ObjectPropertyIR = {
   name: string

@@ -120,7 +120,7 @@ describe('analyzeFile', () => {
         return remainderWidth(width) + 1
       }
       export function remainderWidth(width: number): number {
-        return width % 2
+        return width ** 2
       }
       export function nonnegativeWidth(width: number): number {
         if (width < 0) return 0
@@ -139,7 +139,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'remainderWidth',
-        unsupported: `binary operator % (supported: + - * /, comparisons, and boolean && || !) at ${file}:6:16`,
+        unsupported: `binary operator ** (supported: + - * / %, comparisons, and boolean && || !) at ${file}:6:16`,
       },
       {
         kind: 'analyzed',
@@ -200,7 +200,7 @@ describe('analyzeFile', () => {
         return remainderWidth(width) + 1
       }
       export function remainderWidth(width: number): number {
-        return width % 2
+        return width ** 2
       }
     `)
     const file = resolve('two-hop.ts')
@@ -222,7 +222,7 @@ describe('analyzeFile', () => {
       {
         kind: 'unsupported',
         name: 'remainderWidth',
-        unsupported: `binary operator % (supported: + - * /, comparisons, and boolean && || !) at ${file}:9:16`,
+        unsupported: `binary operator ** (supported: + - * / %, comparisons, and boolean && || !) at ${file}:9:16`,
       },
     ])
   })
@@ -471,7 +471,7 @@ describe('analyzeFile', () => {
         oops(width)
       }
       function oops(value: number): number {
-        return value % 2
+        return value ** 2
       }
       export function readAfterCall(): number {
         poison()
@@ -553,7 +553,7 @@ describe('analyzeFile', () => {
         return unsupportedThing(flag)
       }
       export function unsupportedThing(value: number): number {
-        return value % 2
+        return value ** 2
       }
     `)
     const file = resolve('no-contract.ts')
@@ -2453,6 +2453,50 @@ ${chain}
     expect(analyzedFunction(report, 'domCheck').ensures).toEqual(['return is a finite number'])
   })
 
+  test('pattern sweep: logical assignments, remainder, optional chaining, destructured parameters', () => {
+    const report = analyzeSource('sweep-group4.ts', `
+      export function nullishAssign(timeout: number | null): number {
+        let effective = timeout
+        effective ??= 250
+        return effective
+      }
+      export function modulo(index: number, length: number): number {
+        if (length === 0) { return 0 }
+        return index % length
+      }
+      export function moduloRequires(index: number, length: number): number {
+        return index % length
+      }
+      export function chainRead(config: {volume: number} | null): number {
+        return config?.volume ?? 5
+      }
+      type Size = {width: number; height: number}
+      export function area({width, height}: Size): number {
+        return Math.min(width * height, 5000)
+      }
+      export function ratioReq({width, height}: Size): number {
+        return width / height
+      }
+    `)
+    const file = resolve('sweep-group4.ts')
+    expect(analyzedFunction(report, 'nullishAssign').ensures).toEqual(['return is a finite number'])
+    // The === 0 guard discharges the remainder's obligation like division's.
+    expect(analyzedFunction(report, 'modulo').requires).toEqual([])
+    expect(analyzedFunction(report, 'modulo').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'moduloRequires').requires)
+      .toEqual([`length is nonzero (remainder at ${file}:12:16)`])
+    expect(analyzedFunction(report, 'chainRead').assumptions)
+      .toEqual(['config is null or config.volume is finite and not NaN'])
+    expect(analyzedFunction(report, 'chainRead').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'area').assumptions).toEqual([
+      '{width, height}.width is finite and not NaN',
+      '{width, height}.height is finite and not NaN',
+    ])
+    // Requirements name destructured properties through the synthetic record parameter.
+    expect(analyzedFunction(report, 'ratioReq').requires)
+      .toEqual([`{width, height}.height is nonzero (division at ${file}:22:16)`])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
@@ -2465,7 +2509,7 @@ ${chain}
         return scale
       }
       function runsUnsupported(): number {
-        return 1 % 2
+        return 1 ** 2
       }
     `)
     const file = resolve('module-stop.ts')

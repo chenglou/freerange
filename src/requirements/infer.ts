@@ -145,7 +145,7 @@ export function addPrecondition(preconditions: InferredPrecondition[], candidate
 // The multiply case recurses (still a nonzero form); a peel against a constant ends the
 // chain (width is not 4 is an endpoint — further peeling through rounding would lie).
 // Termination is structural: every step shrinks the expression.
-export function peelNonzero(expression: NumericExpression, site: SiteID): InferredPrecondition {
+export function peelNonzero(expression: NumericExpression, site: SiteID, operation: 'division' | 'remainder'): InferredPrecondition {
   if (expression.kind === 'binary') {
     const {operator, left, right} = expression
     const constantSide = right.kind === 'constant' ? right : left.kind === 'constant' ? left : null
@@ -153,17 +153,17 @@ export function peelNonzero(expression: NumericExpression, site: SiteID): Inferr
     if (constantSide != null && Number.isFinite(constantSide.value)) {
       if (operator === 'subtract') {
         // c - X and X - c both peel to X is not c.
-        return {kind: 'notEqualConstant', expression: otherSide, value: constantSide.value, site}
+        return {kind: 'notEqualConstant', expression: otherSide, value: constantSide.value, operation, site}
       }
       if (operator === 'add') {
-        return {kind: 'notEqualConstant', expression: otherSide, value: -constantSide.value, site}
+        return {kind: 'notEqualConstant', expression: otherSide, value: -constantSide.value, operation, site}
       }
       if (operator === 'multiply' && Math.abs(constantSide.value) >= 1) {
-        return peelNonzero(otherSide, site)
+        return peelNonzero(otherSide, site, operation)
       }
     }
   }
-  return {kind: 'nonzero', expression, site}
+  return {kind: 'nonzero', expression, operation, site}
 }
 
 // Deduplication is by expression only: when two operations need the same requirement, the

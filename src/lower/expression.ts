@@ -51,6 +51,34 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         assignIdentifier(symbol, assignment.target, stored, current, context)
         return
       }
+      case 'logical': {
+        // `x ??= v` / `x ||= v` / `x &&= v` in statement position: the target rebinds to
+        // the same value branch the expression spellings lower to — ?? through the
+        // missing-value machinery for any carried kind, || and && over booleans.
+        const currentValue = identifierValue(symbol, assignment.target, context)
+        const targetType = context.checker.getTypeAtLocation(assignment.target)
+        let condition: ValueID
+        if (assignment.logical === 'nullish') {
+          condition = addInstruction(context, current, {kind: 'nullishCheck', value: currentValue, sentinel: 'nullish', negated: true})
+        } else {
+          if (valueKind(targetType, context.checker) !== 'boolean') {
+            throw unsupported(assignment.target, {kind: 'nonBooleanCondition', typeText: context.checker.typeToString(targetType)})
+          }
+          condition = currentValue
+        }
+        // For ??= and ||= the kept arm is the current value; for &&= the kept arm is the
+        // false side. lowerValueBranch orders (whenTrue, whenFalse).
+        const keepOnTrue = assignment.logical !== 'and'
+        const rebound = lowerValueBranch(
+          current,
+          condition,
+          keepOnTrue ? () => currentValue : () => lowerExpression(assignment.node.right, context),
+          keepOnTrue ? () => lowerExpression(assignment.node.right, context) : () => currentValue,
+          context,
+        )
+        assignIdentifier(symbol, assignment.target, rebound, current, context)
+        return
+      }
       case 'compound': {
         // `message += suffix` is string concatenation when the checker types the result
         // as a string — the target rebinds to an opaque value, like `width + 'px'` in
@@ -434,6 +462,26 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (platform != null) {
       return addInstruction(context, current, {kind: 'platformValue', ...platform})
     }
+    // config?.volume: read when the receiver is present, undefined when missing — the
+    // nullish machinery's value branch, with the true arm reading through the narrowed
+    // receiver. Each ?. link carries its own check, so config?.inner?.volume works
+    // link by link; the mixed spelling a?.b.c keeps rejecting at the .c receiver gate.
+    if (current.questionDotToken != null) {
+      const receiver = lowerExpression(current.expression, context)
+      const present = addInstruction(context, current, {kind: 'nullishCheck', value: receiver, sentinel: 'nullish', negated: true})
+      return lowerValueBranch(
+        current,
+        present,
+        () => {
+          // The branch refinement unwrapped the receiver's slot; the read must still
+          // pass the same gates a plain read does, against the non-missing part.
+          requireAccessedPropertyKind(current, context.checker)
+          return addInstruction(context, current, {kind: 'property', object: receiver, property: current.name.text})
+        },
+        () => addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'undefined'}),
+        context,
+      )
+    }
     const objectType = context.checker.getTypeAtLocation(current.expression)
     const receiverKind = valueKind(objectType, context.checker)
     if ((receiverKind === 'array' || receiverKind === 'tuple') && current.name.text === 'length') {
@@ -480,6 +528,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
 export type IdentifierAssignment =
   | {form: 'assign'; target: ts.Identifier; node: ts.BinaryExpression}
   | {form: 'compound'; target: ts.Identifier; node: ts.BinaryExpression; operator: Extract<InstructionIR, {kind: 'binary'}>['operator']}
+  | {form: 'logical'; target: ts.Identifier; node: ts.BinaryExpression; logical: 'nullish' | 'or' | 'and'}
   | {form: 'update'; target: ts.Identifier; node: ts.PrefixUnaryExpression | ts.PostfixUnaryExpression}
 
 export function identifierAssignment(node: ts.Node): IdentifierAssignment | null {
@@ -487,6 +536,11 @@ export function identifierAssignment(node: ts.Node): IdentifierAssignment | null
     if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) return {form: 'assign', target: node.left, node}
     const operator = compoundAssignmentOperator(node.operatorToken.kind)
     if (operator != null) return {form: 'compound', target: node.left, node, operator}
+    const logical = node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken ? 'nullish'
+      : node.operatorToken.kind === ts.SyntaxKind.BarBarEqualsToken ? 'or'
+      : node.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandEqualsToken ? 'and'
+      : null
+    if (logical != null) return {form: 'logical', target: node.left, node, logical}
   }
   if (
     (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
@@ -635,6 +689,7 @@ function arithmeticOperator(kind: ts.SyntaxKind): Extract<InstructionIR, {kind: 
     case ts.SyntaxKind.MinusToken: return 'subtract'
     case ts.SyntaxKind.AsteriskToken: return 'multiply'
     case ts.SyntaxKind.SlashToken: return 'divide'
+    case ts.SyntaxKind.PercentToken: return 'remainder'
     default: return null
   }
 }
@@ -927,12 +982,15 @@ function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checke
   // value always carries every property its static type declares — there is always
   // something honest to read.
   const receiverType = checker.getTypeAtLocation(access.expression)
-  const property = checker.getPropertyOfType(receiverType, access.name.text)
+  // For an optional read the receiver includes the missing sentinels; the property lives
+  // on the non-missing part, which getNonNullableType strips to.
+  const presentType = access.questionDotToken != null ? checker.getNonNullableType(receiverType) : receiverType
+  const property = checker.getPropertyOfType(presentType, access.name.text)
   // point.toString type-checks on every object literal, but the record value carries only
   // its own properties — an inherited prototype member has no honest answer. The
   // ownership test is the .d.ts rule: a property symbol declared only in declaration
   // files was not written by the project, and on a project record that means prototype.
-  if (valueKind(receiverType, checker) === 'object' && property != null && declaredOnlyInDeclarationFiles(property)) {
+  if (valueKind(presentType, checker) === 'object' && property != null && declaredOnlyInDeclarationFiles(property)) {
     throw unsupported(access, {kind: 'prototypeMemberRead', property: access.name.text})
   }
   const type = checker.getTypeAtLocation(access)
