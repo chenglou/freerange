@@ -89,6 +89,7 @@ function walkExpression(value: ValueID, context: ExpressionContext): NumericExpr
     case 'opaqueConstant':
     case 'unknownBoolean':
     case 'mathUnary':
+    case 'stringLength':
     case 'numberCheck':
     case 'tagCheck':
     case 'inCheck':

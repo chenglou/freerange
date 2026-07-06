@@ -132,7 +132,14 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
   // itself and every case emits a tag check, so each body knows its exact shape — the
   // same narrowing the === spelling gets.
   const tagUnionExpression = taggedUnionTagRead(statement.expression, context)
-  if (tagUnionExpression == null && subjectKind !== 'number' && subjectKind !== 'opaque') {
+  // A possibly-missing string subject (mode: string | undefined) dispatches like the ===
+  // spelling does: the missing value simply matches no case, so the unknown-boolean arm
+  // covers it. Every non-missing member must be a string for that to hold.
+  const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+  const nullableOpaqueSubject = subjectKind === 'nullable' && subjectType.isUnion()
+    && subjectType.types.every(member =>
+      (member.flags & missingFlags) !== 0 || valueKind(member, context.checker) === 'opaque')
+  if (tagUnionExpression == null && subjectKind !== 'number' && subjectKind !== 'opaque' && !nullableOpaqueSubject) {
     throw unsupported(statement.expression, {kind: 'switchSubject', typeText: context.checker.typeToString(subjectType)})
   }
   const subject = lowerExpression(tagUnionExpression ?? statement.expression, context)
@@ -188,7 +195,8 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
     // label's false edge to the next group (or the default / the no-match exit).
     for (const label of group.labels) {
       const labelKind = valueKind(context.checker.getTypeAtLocation(label), context.checker)
-      if (tagUnionExpression == null && labelKind !== subjectKind) {
+      const effectiveSubjectKind = nullableOpaqueSubject ? 'opaque' : subjectKind
+      if (tagUnionExpression == null && labelKind !== effectiveSubjectKind) {
         throw unsupported(label, {kind: 'switchSubject', typeText: context.checker.typeToString(context.checker.getTypeAtLocation(label))})
       }
       let condition: ValueID
@@ -200,7 +208,7 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
         condition = addInstruction(context, label, {kind: 'tagCheck', union: subject, tagValue: unwrappedLabel.text, negated: false})
       } else {
         const labelValue = lowerExpression(label, context)
-        condition = subjectKind === 'number'
+        condition = effectiveSubjectKind === 'number'
           ? addInstruction(context, label, {kind: 'compare', operator: 'equal', left: subject, right: labelValue})
           : addInstruction(context, label, {kind: 'unknownBoolean'})
       }

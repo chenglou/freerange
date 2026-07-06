@@ -362,11 +362,28 @@ function evaluateInstructionKinded(
       if (propertyValue == null) throw new KindMismatch(`Record has no property ${instruction.property}`)
       return passthroughValue(propertyValue)
     }
-    case 'compare': return value(compareNumbers(
-      requiredNumber(state, instruction.left),
-      requiredNumber(state, instruction.right),
-      instruction.operator,
-    ))
+    case 'compare': {
+      // Equality dispatches on the operand kind: booleans answer from their exact
+      // two-point lattice, numbers from their intervals.
+      const left = requiredValue(state, instruction.left)
+      const right = requiredValue(state, instruction.right)
+      if (left.kind === 'boolean' && right.kind === 'boolean'
+        && (instruction.operator === 'equal' || instruction.operator === 'notEqual')) {
+        return value(compareBooleans(left, right, instruction.operator === 'notEqual'))
+      }
+      return value(compareNumbers(
+        requiredNumber(state, instruction.left),
+        requiredNumber(state, instruction.right),
+        instruction.operator,
+      ))
+    }
+    case 'stringLength': return computedNumber({
+      kind: 'number',
+      lower: 0,
+      upper: Number.MAX_SAFE_INTEGER,
+      integer: true,
+      mayBeNaN: false,
+    }, [], instruction.site)
     case 'mathUnary': {
       const operand = requiredNumber(state, instruction.value)
       return computedNumber(
@@ -809,6 +826,27 @@ export function refineComparison(
 ): ExecutionState | null {
   const producers = expressionContext.instructionByValue
   const result = cloneState(state)
+  // Boolean equality refines exactly over the two-point lattice: in the branch where
+  // flag === true held, flag IS true. A contradiction (both sides known, and the branch
+  // demands they differ from what they are) prunes.
+  const leftOperand = requiredValue(result, comparison.left)
+  const rightOperand = requiredValue(result, comparison.right)
+  if (leftOperand.kind === 'boolean' && rightOperand.kind === 'boolean') {
+    const equalHolds = truth === (comparison.operator === 'equal')
+    const known = (side: AbstractBoolean): boolean | null =>
+      side.canBeTrue === side.canBeFalse ? null : side.canBeTrue
+    const refineTo = (id: ValueID, mustBe: boolean): boolean => {
+      const current = requiredBoolean(result, id)
+      if (mustBe ? !current.canBeTrue : !current.canBeFalse) return false
+      writeThroughProducers(result, id, {kind: 'boolean', canBeTrue: mustBe, canBeFalse: !mustBe}, producers)
+      return true
+    }
+    const leftKnown = known(leftOperand)
+    const rightKnown = known(rightOperand)
+    if (rightKnown != null && !refineTo(comparison.left, equalHolds ? rightKnown : !rightKnown)) return null
+    if (leftKnown != null && !refineTo(comparison.right, equalHolds ? leftKnown : !leftKnown)) return null
+    return result
+  }
   const left = requiredNumber(result, comparison.left)
   const right = requiredNumber(result, comparison.right)
   const operator = truth ? comparison.operator : invertedComparison(comparison.operator)
@@ -980,6 +1018,17 @@ function compareNumbers(left: AbstractNumber, right: AbstractNumber, operator: C
       return {kind: 'boolean', canBeTrue: equal.canBeFalse, canBeFalse: equal.canBeTrue}
     }
   }
+}
+
+// Exact over the two-point lattice: definitely equal when both sides are the same known
+// constant, definitely different when they are opposite known constants.
+function compareBooleans(left: AbstractBoolean, right: AbstractBoolean, negated: boolean): AbstractBoolean {
+  const leftKnown = left.canBeTrue !== left.canBeFalse
+  const rightKnown = right.canBeTrue !== right.canBeFalse
+  const definitelyEqual = leftKnown && rightKnown && left.canBeTrue === right.canBeTrue
+  const definitelyDifferent = leftKnown && rightKnown && left.canBeTrue !== right.canBeTrue
+  const equals = booleanRange(definitelyEqual, definitelyDifferent)
+  return negated ? {kind: 'boolean', canBeTrue: equals.canBeFalse, canBeFalse: equals.canBeTrue} : equals
 }
 
 function booleanRange(definitelyTrue: boolean, definitelyFalse: boolean): AbstractBoolean {

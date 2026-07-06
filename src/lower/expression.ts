@@ -324,6 +324,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (arithmetic == null && comparison == null) {
       throw unsupported(current, {kind: 'binaryOperator', operator: current.operatorToken.getText(context.sourceFile)})
     }
+    // flag === true and flag !== other: booleans are modeled exactly, so equality over
+    // them answers exactly too (the engine's compare arm dispatches on the operand kind).
+    if ((comparison === 'equal' || comparison === 'notEqual')
+      && valueKind(context.checker.getTypeAtLocation(current.left), context.checker) === 'boolean'
+      && valueKind(context.checker.getTypeAtLocation(current.right), context.checker) === 'boolean') {
+      const left = lowerExpression(current.left, context)
+      const right = lowerExpression(current.right, context)
+      return addInstruction(context, current, {kind: 'compare', operator: comparison, left, right})
+    }
     requireNumberType(current.left, context.checker)
     requireNumberType(current.right, context.checker)
     const left = lowerExpression(current.left, context)
@@ -397,6 +406,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if ((receiverKind === 'array' || receiverKind === 'tuple') && current.name.text === 'length') {
       const array = lowerExpression(current.expression, context)
       return addInstruction(context, current, {kind: 'arrayLength', array})
+    }
+    // A string's length is the one modeled read on an opaque string: a fresh nonnegative
+    // integer (each read fresh — two reads of the same string relate only through a
+    // local, the same freshness story as element reads). Every other string property
+    // keeps rejecting below.
+    if (receiverKind === 'opaque' && current.name.text === 'length'
+      && (objectType.flags & ts.TypeFlags.StringLike) !== 0) {
+      lowerExpression(current.expression, context)
+      return addInstruction(context, current, {kind: 'stringLength'})
     }
     // An enum member read gets its own name and rewrite; the generic receiver prose
     // ("property read from typeof Direction") names the checker's type, not the construct.
@@ -1001,30 +1019,39 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     const value = lowerExpression(expression.right.expression, context)
     return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'undefined', negated})
   }
-  // `typeof x === 'number'` on a value whose only non-missing kind IS number equals
-  // "x is not missing" — the common narrowing spelling for number | undefined.
-  const isNumberString = (side: ts.Expression): boolean => {
-    const unwrapped = unwrap(side, context.checker)
-    return ts.isStringLiteral(unwrapped) && unwrapped.text === 'number'
+  // `typeof x === 'number'` (or 'string', or 'boolean') on a value whose only
+  // non-missing kind matches the literal equals "x is not missing" — the common
+  // narrowing spelling for number | undefined and friends. Which analyzer kind each
+  // typeof answer names:
+  const typeofKinds: Record<string, 'number' | 'opaque' | 'boolean'> = {
+    number: 'number',
+    string: 'opaque',
+    boolean: 'boolean',
   }
-  const typeofNumberSide = ts.isTypeOfExpression(expression.left) && isNumberString(expression.right)
-    ? expression.left
-    : ts.isTypeOfExpression(expression.right) && isNumberString(expression.left)
-      ? expression.right
+  const typeofLiteral = (side: ts.Expression): string | null => {
+    const unwrapped = unwrap(side, context.checker)
+    return ts.isStringLiteral(unwrapped) && typeofKinds[unwrapped.text] != null ? unwrapped.text : null
+  }
+  const typeofSide = ts.isTypeOfExpression(expression.left) && typeofLiteral(expression.right) != null
+    ? {operand: expression.left, literal: typeofLiteral(expression.right)!}
+    : ts.isTypeOfExpression(expression.right) && typeofLiteral(expression.left) != null
+      ? {operand: expression.right, literal: typeofLiteral(expression.left)!}
       : null
-  if (typeofNumberSide != null) {
-    const operandType = context.checker.getTypeAtLocation(typeofNumberSide.expression)
+  if (typeofSide != null) {
+    const operandType = context.checker.getTypeAtLocation(typeofSide.operand.expression)
     const operandKind = valueKind(operandType, context.checker)
-    // Only when every non-missing member IS a number: on {x: number} | null or
-    // boolean | undefined, typeof never yields 'number' for the present value, so the
-    // not-missing translation would prune the genuinely-taken present path.
+    const wanted = typeofKinds[typeofSide.literal]!
+    // Only when every non-missing member IS the named kind: on {x: number} | null or
+    // boolean | undefined checked for 'number', typeof never yields the literal for the
+    // present value, so the not-missing translation would prune the genuinely-taken
+    // present path.
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
-    const restIsNumber = operandKind === 'number'
+    const restMatches = operandKind === wanted
       || (operandKind === 'nullable' && operandType.isUnion()
         && operandType.types.every(member =>
-          (member.flags & missing) !== 0 || valueKind(member, context.checker) === 'number'))
-    if (restIsNumber) {
-      const value = lowerExpression(typeofNumberSide.expression, context)
+          (member.flags & missing) !== 0 || valueKind(member, context.checker) === wanted))
+    if (restMatches) {
+      const value = lowerExpression(typeofSide.operand.expression, context)
       return addInstruction(context, expression, {kind: 'nullishCheck', value, sentinel: 'nullish', negated: !negated})
     }
   }

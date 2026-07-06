@@ -2394,6 +2394,33 @@ ${chain}
     expect(caller.stopped[0]).toContain('throws on every path and never returns')
   })
 
+  test('pattern sweep: boolean equality, string length, typeof strings, nullable switch subjects', () => {
+    const report = analyzeSource('sweep-group2.ts', `
+      export function boolEq(config: {enabled: boolean}, x: number): number {
+        if (config.enabled === true) { return x }
+        return 0
+      }
+      export function nameLength(name: string): number {
+        return Math.min(name.length, 40)
+      }
+      export function typeofString(input: string | undefined, x: number): number {
+        if (typeof input === 'string') { return x }
+        return 0
+      }
+      export function switchNullable(mode: string | undefined, a: number, b: number): number {
+        switch (mode) {
+          case 'wide': return a
+          default: return b
+        }
+      }
+    `)
+    expect(analyzedFunction(report, 'boolEq').ensures).toEqual(['return is a finite number'])
+    // .length is a fresh nonnegative integer; the clamp gives the exact range.
+    expect(analyzedFunction(report, 'nameLength').ensures).toEqual(['return is a finite integer number from 0 through 40'])
+    expect(analyzedFunction(report, 'typeofString').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'switchNullable').ensures).toEqual(['return is a finite number'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

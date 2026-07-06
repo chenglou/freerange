@@ -68,6 +68,9 @@ export type InstructionIR =
   // additionally lives in the requirement expression language; these can join it when a
   // rounded divisor shows the need.
   | (InstructionBase & {kind: 'mathUnary'; operator: 'ceil' | 'round' | 'trunc' | 'sqrt'; value: ValueID})
+  // A string's .length: a fresh nonnegative integer, no operand carried (the string is
+  // opaque and the length is unrelated across reads).
+  | (InstructionBase & {kind: 'stringLength'})
   // Number.isInteger(x) / Number.isFinite(x) / Number.isNaN(x): a boolean over one number
   // operand, with branch refinement like nullishCheck — the true branch of isInteger knows
   // the value is an integer (and finite, and not NaN), the false branch of isFinite prunes
@@ -94,6 +97,7 @@ export function forEachOperand(instruction: InstructionIR, visit: (operand: Valu
     case 'nullishConstant':
     case 'opaqueConstant':
     case 'unknownBoolean':
+    case 'stringLength':
     case 'booleanConstant':
     case 'moduleRead':
     case 'moduleHavoc':
