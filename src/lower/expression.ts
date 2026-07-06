@@ -317,12 +317,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
     return addInstruction(context, current, {kind: 'opaqueConstant'})
   }
-  // A cast TO an opaque type (`x as unknown`, `x as any`) — the only as/angle form unwrap
-  // does not peel. The operand still lowers (an unsupported construct inside it rejects as
-  // usual), but its claims are erased: TypeScript routes every cross-kind cast chain
-  // through this form, so the erasure is what keeps `true as unknown as number` from
-  // carrying a boolean into number positions — downstream sees a claim-free value whose
-  // uses stop at the gates and whose joins absorb.
+  // A kind-changing cast (`x as unknown`, `x as any`, `true as {}`) — every as/angle form
+  // unwrap does not peel. The operand still lowers (an unsupported construct inside it
+  // rejects as usual), but its claims are erased: downstream sees a claim-free value
+  // whose uses stop at the gates and whose joins absorb, which is what keeps
+  // `true as unknown as number` (and the `{}`-comparability spelling of the same launder)
+  // from carrying a boolean into number positions.
   if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
     lowerExpression(current.expression, context)
     return addInstruction(context, current, {kind: 'opaqueConstant'})
@@ -626,14 +626,34 @@ function lowerConditionalExpression(expression: ts.ConditionalExpression, contex
   if (valueKind(resultType, context.checker) == null) {
     throw unsupported(expression, {kind: 'valueType', typeText: context.checker.typeToString(resultType)})
   }
-  const condition = lowerExpression(expression.condition, context)
-  return lowerValueBranch(
-    expression,
-    condition,
-    () => lowerExpression(expression.whenTrue, context),
-    () => lowerExpression(expression.whenFalse, context),
-    context,
-  )
+  // Through the same short-circuit branching statement ifs use, so an `&&`-joined
+  // condition refines each conjunct in the arms — `a > 0 && b > 0 ? a / b : 0`
+  // discharges b's nonzero exactly like the if-statement spelling does. Lowering the
+  // condition as one boolean expression (the previous shape) hid the conjuncts behind a
+  // joined block parameter no branch refinement could see through; a conversion pass on
+  // the owner's repo caught the asymmetry.
+  const whenTrue = createBlock(context)
+  const whenFalse = createBlock(context)
+  lowerBranchingCondition(expression.condition, whenTrue, whenFalse, context)
+  context.currentBlock = context.blocks[whenTrue]!
+  const trueValue = lowerExpression(expression.whenTrue, context)
+  const trueBlock = context.currentBlock
+  context.currentBlock = context.blocks[whenFalse]!
+  const falseValue = lowerExpression(expression.whenFalse, context)
+  const falseBlock = context.currentBlock
+  const continuation = createBlock(context, 1)
+  terminate(trueBlock, {
+    kind: 'jump',
+    target: {block: continuation, arguments: [trueValue]},
+    site: addSite(context, expression),
+  })
+  terminate(falseBlock, {
+    kind: 'jump',
+    target: {block: continuation, arguments: [falseValue]},
+    site: addSite(context, expression),
+  })
+  context.currentBlock = context.blocks[continuation]!
+  return context.currentBlock.parameters[0]!
 }
 
 // `a && b` evaluates b only when a is true and yields false otherwise; `a || b` mirrors it —
@@ -1330,14 +1350,21 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
     // peeling carries the operand's value through — `as const` exactly, and same-kind
     // casts like `label as ActionType` or `{value: width} as {value: number}` (where the
     // asserted type licenses reads the carried value cannot answer, the engine's
-    // kind-mismatch backstop stops that path honestly). The one form NOT peeled is a cast
-    // whose asserted type is opaque (`x as unknown`, `x as any`): that cast is an erasure
-    // point — TypeScript only permits cross-kind casts through it, so lowering emits a
-    // claim-free opaque there instead of letting the operand's claims travel across the
-    // kind change (see the as/angle arm in lowerExpression).
+    // kind-mismatch backstop stops that path honestly). A cast that CHANGES the value
+    // kind is an erasure point instead: lowering emits a claim-free opaque (see the
+    // as/angle arm in lowerExpression), so the operand's claims never travel across a
+    // kind change. Same-kind-or-erase is decided from our own classification, never from
+    // TypeScript's cast rules — an earlier design erased only `as unknown`/`as any` on
+    // the belief that TS forces cross-kind chains through them, and a review round
+    // crashed it with the comparability route `true as {} as number` (both sides
+    // assignable to {}, diagnostic-clean).
     if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))
       && (ts.isConstTypeReference(current.type)
-        || valueKind(checker.getTypeAtLocation(current), checker) !== 'opaque')) {
+        || (() => {
+          const assertedKind = valueKind(checker.getTypeAtLocation(current), checker)
+          return assertedKind != null
+            && assertedKind === valueKind(checker.getTypeAtLocation(current.expression), checker)
+        })())) {
       current = current.expression
       continue
     }

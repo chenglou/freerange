@@ -1,3 +1,4 @@
+import {mixedSlotVersion, type ExecutionState} from '../engine/state.ts'
 import type {SiteID, ValueID} from '../ir/ids.ts'
 import type {InstructionIR} from '../ir/instructions.ts'
 import type {FunctionIR} from '../ir/program.ts'
@@ -122,12 +123,25 @@ function walkExpression(value: ValueID, context: ExpressionContext): NumericExpr
 // binding identity, and a property read off the same base names the same immutable
 // record's property. A rebound local resolves to a different underlying value, giving a
 // different key by construction.
-export function canonicalValueKey(value: ValueID, context: ExpressionContext): string {
+export function canonicalValueKey(value: ValueID, context: ExpressionContext, state: ExecutionState): string {
   const parameterIndex = context.parameterIndexByValue[value]
   if (parameterIndex != null) return `p${parameterIndex}`
   const producer = context.instructionByValue[value]
-  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context)}.${producer.property}`
-  if (producer?.kind === 'moduleRead') return `m${producer.binding}`
+  if (producer?.kind === 'property') return `${canonicalValueKey(producer.object, context, state)}.${producer.property}`
+  if (producer?.kind === 'moduleRead') {
+    // The binding name (m3) speaks for the binding's CURRENT content, but a read taken
+    // before a rebind still flows around as a value (`const alias = arr; arr = [7]`), and
+    // naming that stale read m3 would let a bounds pair proven against the old array
+    // certify element reads of the new, shorter one (a review round ran the
+    // counterexample). The slot-narrowing version guard decides: the key is
+    // binding-rooted only while no write intervened since this read; otherwise it names
+    // the immutable value itself, which a fresh read of the binding never matches.
+    const slot = state.shared.modules[producer.binding]
+    const observed = state.frame.readVersions[value]
+    if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
+      return `m${producer.binding}`
+    }
+  }
   return `v${value}`
 }
 

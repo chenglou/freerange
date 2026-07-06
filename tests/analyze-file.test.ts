@@ -1131,26 +1131,40 @@ describe('analyzeFile', () => {
   })
 
   test('a narrowing shape the analysis does not model stops the path honestly', () => {
-    // Value-position compound conditions do not short-circuit (only statement conditions
-    // do), so the ternary's guard reaches the multiplication unnarrowed — the backstop
-    // records a stop instead of crashing the run, and the sibling function still reports.
+    // A claim-free opaque (here from a kind-changing cast) flowing into arithmetic is a
+    // narrowing the analysis does not model — the backstop records a stop instead of
+    // crashing the run, and the sibling function still reports. (The previous fixture
+    // used a ternary with an &&-joined guard, which lowers through the statement-if
+    // branching now and analyzes fully.)
     const report = analyzeSource('nullish-backstop.ts', `
-      export function ternaryGuard(maybe: number | null): number {
-        return maybe !== null && maybe > 3 ? maybe * 2 : 0
+      export function carriedOpaque(value: unknown, flag: boolean): number {
+        let n = 1
+        if (flag) { n = value as number }
+        return n * 2
       }
       export function healthy(x: number): number {
         return x + 1
+      }
+      export function ternaryGuard(maybe: number | null): number {
+        return maybe !== null && maybe > 3 ? maybe * 2 : 0
       }
     `)
     const file = resolve('nullish-backstop.ts')
     expect(report.functions[0]).toEqual({
       kind: 'partial',
-      name: 'ternaryGuard',
-      assumptions: ['maybe is null or a finite non-NaN number'],
-      stopped: [`narrows a value in a way the analysis does not model (at ${file}:3:46)`],
-      observed: ['return is a finite integer number from 0 through 0'],
+      name: 'carriedOpaque',
+      assumptions: ['flag is a boolean'],
+      stopped: [`narrows a value in a way the analysis does not model (at ${file}:5:16)`],
+      // The branches merge before the multiply, and the joined n is opaque, so both
+      // paths stop there — no completed return remains to report as evidence.
+      observed: [],
     })
     expect(analyzedFunction(report, 'healthy').ensures).toEqual(['return is a finite number'])
+    // The ternary's compound guard short-circuits like the statement spelling, so both
+    // conjuncts refine the true arm: the null check discharges and maybe > 3 bounds the
+    // multiplication (which can still overflow at the finite extremes).
+    expect(analyzedFunction(report, 'ternaryGuard').ensures)
+      .toEqual([`return is a possibly non-finite number from 0 through Infinity (can overflow at ${file}:11:46)`])
   })
 
   test('nullish module bindings seed their declared kind with sentinel prose', () => {
@@ -2282,6 +2296,51 @@ ${chain}
       "nav.navWidth is finite and not NaN (when nav.type is 'desktopExpandedNav')",
       "nav.sheetHeight is finite and not NaN (when nav.type is 'mobileNav')",
     ])
+  })
+
+  test('review round: cast laundering cannot crash joins, same-tag shapes share claims, stale aliases lose their binding key', () => {
+    // Three counterexamples from one round. (1) `true as {} as number` is diagnostic-clean
+    // TypeScript (comparability through {}), so the erasure rule must not trust "cross-kind
+    // casts go through as-unknown" — any kind-CHANGING cast erases to opaque now, and the
+    // laundered write joins instead of crashing. (2) Two variants sharing a tag value
+    // (here from the boolean expansion) must not publish each other's exclusive properties
+    // as unconditional — claims group by tag value with presence qualifiers. (3) A bounds
+    // pair proven against a pre-rebind alias must not certify reads of the rebound array:
+    // the canonical key is binding-rooted only while the slot version still matches.
+    const report = analyzeSource('round-counterexamples.ts', `
+      export function launderJoin(flag: boolean): number {
+        let value: number = 1
+        if (flag) { value = true as {} as number }
+        return value * 2
+      }
+      type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
+      export function makeMixed(useFirst: boolean): Mixed {
+        if (useFirst) { return {ok: false, x: 1} }
+        return {ok: false, y: 2}
+      }
+      let arrOne = [1, 2, 3, 4, 5, 6, 7]
+      export function guardStaleAlias(i: number): number {
+        const alias = arrOne
+        arrOne = [7]
+        if (Number.isInteger(i) && i >= 0 && i < alias.length) {
+          return arrOne[i]!
+        }
+        return -1
+      }
+    `)
+    const file = resolve('round-counterexamples.ts')
+    // The laundered value is claim-free: the multiply stops, nothing crashes, and the
+    // sibling functions still report.
+    expect(report.functions.find(fn => fn.name === 'launderJoin')?.kind).toBe('partial')
+    expect(analyzedFunction(report, 'makeMixed').ensures).toEqual([
+      'return.ok is false',
+      'return.x is a finite integer number from 1 through 1 (when return.ok is false and return.x is present)',
+      'return.y is a finite integer number from 2 through 2 (when return.ok is false and return.y is present)',
+    ])
+    // The read keeps its honest in-bounds assumption instead of a false certification.
+    expect(analyzedFunction(report, 'guardStaleAlias').assumptions).toContain(
+      `the element read at ${file}:17:18 is in bounds`,
+    )
   })
 
   test('review round: duplicate-tag variants survive self-joins, rebuilds and presets never crash', () => {

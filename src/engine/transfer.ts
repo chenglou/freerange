@@ -187,8 +187,8 @@ function evaluateInstructionKinded(
         || (index.integer && !index.mayBeNaN && index.lower >= 0
           && hasValidIndexPair(
             state.validIndexPairs,
-            canonicalValueKey(instruction.index, context.expressionContext),
-            canonicalValueKey(instruction.array, context.expressionContext),
+            canonicalValueKey(instruction.index, context.expressionContext, state),
+            canonicalValueKey(instruction.array, context.expressionContext, state),
           ))
       // A provably out-of-bounds read: for the asserted form the assertion lied; for the
       // bare form the value is exactly undefined. An empty sequence is the special case
@@ -461,7 +461,7 @@ function evaluateInstructionKinded(
       // through argument values: every argument pair whose valid-index relation holds
       // here seeds the same relation on the callee's parameters, so a guarded call site
       // discharges the callee's element read instead of inheriting its requirement.
-      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext))
+      const argumentKeys = instruction.arguments.map(id => canonicalValueKey(id, context.expressionContext, state))
       const seededIndexPairs: ValidIndexPair[] = []
       for (let indexPosition = 0; indexPosition < argumentKeys.length; indexPosition++) {
         for (let arrayPosition = 0; arrayPosition < argumentKeys.length; arrayPosition++) {
@@ -986,8 +986,8 @@ function refineComparison(
     if (rightProducer?.kind === 'arrayLength') {
       addValidIndexPair(
         result.validIndexPairs,
-        canonicalValueKey(comparison.left, expressionContext),
-        canonicalValueKey(rightProducer.array, expressionContext),
+        canonicalValueKey(comparison.left, expressionContext, result),
+        canonicalValueKey(rightProducer.array, expressionContext, result),
       )
     }
   }
@@ -996,8 +996,8 @@ function refineComparison(
     if (leftProducer?.kind === 'arrayLength') {
       addValidIndexPair(
         result.validIndexPairs,
-        canonicalValueKey(comparison.right, expressionContext),
-        canonicalValueKey(leftProducer.array, expressionContext),
+        canonicalValueKey(comparison.right, expressionContext, result),
+        canonicalValueKey(leftProducer.array, expressionContext, result),
       )
     }
   }

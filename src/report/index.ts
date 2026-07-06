@@ -1,5 +1,5 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
-import type {AbstractValue} from '../domain/value.ts'
+import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
 import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
@@ -243,15 +243,25 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // Per-variant leaf lines, each qualified by the tag — e.g. `route.index is finite
       // and not NaN (when route.type is 'lightbox')`. The tag property itself is skipped:
       // a string tag is an opaque leaf with no line anyway, and a boolean tag's "ok is a
-      // boolean" would restate what the qualifier already pins.
+      // boolean" would restate what the qualifier already pins. When several variants
+      // share one tag value (two shapes told apart by an in-check, or the expansion of a
+      // plain-boolean tag), the tag alone does not pin the shape, so each line adds a
+      // presence qualifier — the assumption then speaks only about values that actually
+      // carry the property.
       for (const variant of declared.variants) {
+        const sharedTag = declared.variants.filter(candidate => candidate.tagValue === variant.tagValue).length > 1
         const leaf: string[] = []
         for (const property of variant.properties) {
           if (property.name === declared.tagProperty) continue
-          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, leaf)
+          const qualifier = sharedTag
+            ? `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)} and ${path}.${property.name} is present`
+            : `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)}`
+          const perProperty: string[] = []
+          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty)
+          for (const line of perProperty) leaf.push(`${line} (${qualifier})`)
         }
         for (const line of leaf) {
-          assumptions.push(`${line} (when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)})`)
+          if (!assumptions.includes(line)) assumptions.push(line)
         }
       }
       break
@@ -516,21 +526,46 @@ function returnSummaries(path: string, value: AbstractValue, program: ProgramIR)
     case 'taggedUnion': {
       // One line naming the possible tags, then each variant's facts qualified by its
       // tag — e.g. `return.width is a finite number (when return.type is 'sidebar')`.
-      const tags = value.variants.map(variant => formatTagValue(variant.tagValue)).join(' or ')
-      const lines = [`${path}.${value.tagProperty} is ${tags}`]
+      const uniqueTags: Array<string | boolean> = []
       for (const variant of value.variants) {
-        // The tag property is dropped from each variant's summaries: the tags line and
-        // the qualifier already say its value, and a boolean tag's exact constant would
-        // otherwise restate it (`return.ok is true (when return.ok is true)`).
-        const withoutTag: typeof variant.record = {
-          kind: 'record',
-          properties: variant.record.properties.filter(property => property.name !== value.tagProperty),
+        if (!uniqueTags.includes(variant.tagValue)) uniqueTags.push(variant.tagValue)
+      }
+      const lines = [`${path}.${value.tagProperty} is ${uniqueTags.map(formatTagValue).join(' or ')}`]
+      // Claims group by tag value, because the tag is all a caller can dispatch on: when
+      // several variants share one tag value (shapes told apart by an in-check, or the
+      // expansion of a plain-boolean tag), a property's claim must hold across the whole
+      // group — values join, and a property only some shapes carry gets a presence
+      // qualifier. A review round caught the per-variant version publishing two same-tag
+      // shapes' exclusive properties as unconditional: mutually exclusive claims, at
+      // least one false on every call. The tag property itself is skipped — the tags
+      // line and the qualifier already say its value.
+      for (const tagValue of uniqueTags) {
+        const group = value.variants.filter(variant => variant.tagValue === tagValue)
+        const names: string[] = []
+        for (const variant of group) {
+          for (const property of variant.record.properties) {
+            if (property.name === value.tagProperty) continue
+            if (!names.includes(property.name)) names.push(property.name)
+          }
         }
-        if (value.variants.length === 1) {
-          lines.push(...returnSummaries(path, withoutTag, program))
-        } else {
-          lines.push(...returnSummaries(path, withoutTag, program)
-            .map(line => `${line} (when ${path}.${value.tagProperty} is ${formatTagValue(variant.tagValue)})`))
+        for (const name of names) {
+          const carried = group
+            .map(variant => recordProperty(variant.record, name))
+            .filter(propertyValue => propertyValue != null)
+          let joined: AbstractValue | null = null
+          for (const propertyValue of carried) {
+            joined = joined == null ? propertyValue : tryJoinValues(joined, propertyValue)
+            if (joined == null) break
+          }
+          // Mixed kinds across same-tag shapes: nothing sound to say about the property.
+          if (joined == null) continue
+          const qualifier = value.variants.length === 1
+            ? null
+            : carried.length === group.length
+              ? `when ${path}.${value.tagProperty} is ${formatTagValue(tagValue)}`
+              : `when ${path}.${value.tagProperty} is ${formatTagValue(tagValue)} and ${path}.${name} is present`
+          const summaries = returnSummaries(`${path}.${name}`, joined, program)
+          lines.push(...(qualifier == null ? summaries : summaries.map(line => `${line} (${qualifier})`)))
         }
       }
       return lines
