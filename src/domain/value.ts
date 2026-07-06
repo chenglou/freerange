@@ -29,8 +29,17 @@ type AbstractVoid = {
 // boolean; every operation ON one is rejected at lowering. Nothing numeric is ever said
 // about it, so nothing unsound can be: its whole job is to stop non-numeric content from
 // rejecting the function around it.
+//
+// content is the one exception, carried when the string's exact text is KNOWN — a written
+// string literal, or a tagged-union tag property seeded from its declared variant. Its
+// only consumer is the object-literal variant pin: the tag a value actually holds decides
+// the variant, so an assertion's type-level claim (erased casts carry no content) cannot
+// pin a variant it does not hold — a review round chained three type-channel launders
+// (cast tag, quoted-key cast tag, spread of a cast-tagged template) that syntactic guards
+// kept missing, and value-carried content closes the channel by construction.
 export type AbstractOpaque = {
   kind: 'opaque'
+  content?: string
 }
 
 // A tuple: fixed length, one value per position — produced by literals whose static type
@@ -196,8 +205,13 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
   // carrying is gated at the use position or stops at the kind-mismatch backstop. This is
   // what keeps `typeof value === 'number' ? value : fallback` (the unknown-typed
   // fallback idiom) a claim-free analyzed function instead of a join crash: the true arm
-  // stays opaque in our model even though the checker narrowed it.
-  if (left.kind === 'opaque' || right.kind === 'opaque') return {kind: 'opaque'}
+  // stays opaque in our model even though the checker narrowed it. Known string content
+  // survives only when both sides agree on it.
+  if (left.kind === 'opaque' || right.kind === 'opaque') {
+    if (left.kind === 'opaque' && right.kind === 'opaque'
+      && left.content != null && left.content === right.content) return {kind: 'opaque', content: left.content}
+    return {kind: 'opaque'}
+  }
   if (left.kind !== right.kind) return null
   switch (left.kind) {
     case 'number': return joinNumbers(left, right as AbstractNumber)
@@ -316,7 +330,7 @@ export function sameValues(left: AbstractValue, right: AbstractValue): boolean {
         })
     }
     case 'void': return true
-    case 'opaque': return true
+    case 'opaque': return left.content === (right as AbstractOpaque).content
     case 'nullish': return left.sentinels === (right as AbstractNullish).sentinels
     case 'maybeNullish': {
       const other = right as AbstractMaybeNullish
@@ -408,7 +422,8 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
       }
     }
     // Bounded lattices need no widening: booleans have height two, the missing sentinels
-    // form a three-point lattice, void and opaque are points.
+    // form a three-point lattice, void is a point, and opaque has height two (known
+    // content above the bare point).
     case 'boolean':
     case 'void':
     case 'nullish':

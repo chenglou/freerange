@@ -156,7 +156,8 @@ function evaluateInstructionKinded(
   switch (instruction.kind) {
     case 'constant': return passthroughValue(constantNumber(instruction.value))
     case 'nullishConstant': return value({kind: 'nullish', sentinels: instruction.sentinel})
-    case 'opaqueConstant': return value({kind: 'opaque'})
+    case 'opaqueConstant': return value(
+      instruction.content == null ? {kind: 'opaque'} : {kind: 'opaque', content: instruction.content})
     case 'unknownBoolean': return value(unknownBoolean())
     case 'arrayLiteral': {
       const elements = instruction.elements.map(id => requiredValue(state, id))
@@ -344,10 +345,25 @@ function evaluateInstructionKinded(
         value: requiredValue(state, property.value),
       })))
       if (instruction.tag == null) return value(record)
+      // The variant pin comes from the tag property's VALUE — known string content (a
+      // written literal, or a tag seeded from its declared variant and carried through
+      // spreads and bindings) or an exact boolean. The checker's TYPE for the tag is
+      // deliberately not consulted: a review round chained three assertion launders
+      // (cast tag, quoted-key cast tag, spread of a cast-tagged template) through the
+      // type channel, while erased casts by construction carry no content. A tag value
+      // the engine cannot pin leaves the literal a plain record, whose tag checks
+      // dispatch as unknown booleans and whose reads fall to the record-hull backstop.
+      const tagPropertyValue = recordProperty(record, instruction.tag.property)
+      const pinned = tagPropertyValue?.kind === 'opaque' && tagPropertyValue.content != null
+        ? tagPropertyValue.content
+        : tagPropertyValue?.kind === 'boolean' && tagPropertyValue.canBeTrue !== tagPropertyValue.canBeFalse
+          ? tagPropertyValue.canBeTrue
+          : null
+      if (pinned == null) return value(record)
       return value({
         kind: 'taggedUnion',
         tagProperty: instruction.tag.property,
-        variants: [{tagValue: instruction.tag.value, record}],
+        variants: [{tagValue: pinned, record}],
       })
     }
     case 'property': {

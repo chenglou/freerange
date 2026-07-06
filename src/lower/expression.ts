@@ -272,39 +272,27 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     if (contextMembers.length === 1 && valueKind(contextMembers[0]!, context.checker) === 'object') {
       fillOptionalsFrom(contextMembers[0]!)
     }
-    let tag: {property: string; value: string | boolean} | null = null
+    let tag: {property: string} | null = null
     if (contextMembers.length > 1) {
       const tagProperty = taggedUnionProperty(contextMembers, context.checker)
       if (tagProperty != null) {
-        const ownTag = context.checker.getPropertyOfType(context.checker.getTypeAtLocation(current), tagProperty)
-        const ownTagType = ownTag == null ? null : context.checker.getTypeOfSymbol(ownTag)
-        // The literal must pin ONE tag value ({ok: true}, {type: 'lightbox'}); a tag
-        // written from a union-typed variable pins nothing and the value stays a record.
-        const ownLiterals = ownTagType == null ? null : tagLiteralValues(ownTagType)
-        // And the tag position must not be an assertion: `{kind: raw as 'lightbox'}` has
-        // the asserted literal as its checker type while the runtime tag is whatever raw
-        // holds — pinning the variant from it published a dead-branch ensures a review
-        // round falsified. Assertions erase in value position; this keeps the erased
-        // claim from re-entering through the promotion. A shorthand or spread-carried tag
-        // pins fine (the checker's word there is honest, no assertion involved).
-        const tagAssignment = ts.isObjectLiteralExpression(current)
-          ? current.properties.find(property =>
-            ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === tagProperty)
-          : undefined
-        const tagWrittenThroughAssertion = tagAssignment != null && ts.isPropertyAssignment(tagAssignment)
-          && (() => {
-            const initializer = unwrap(tagAssignment.initializer, context.checker)
-            return ts.isAsExpression(initializer) || ts.isTypeAssertionExpression(initializer)
-          })()
-        const ownLiteral = !tagWrittenThroughAssertion && ownLiterals != null && ownLiterals.length === 1
-          ? ownLiterals[0]!
-          : null
+        // WHICH property is the tag comes from the type (a property name carries no
+        // claim); WHICH VARIANT the literal builds is decided by the engine from the tag
+        // property's runtime-tracked value, never from the checker's type of the tag —
+        // the type channel is assertion-taintable at any distance (a review round chained
+        // `{kind: raw as 'lightbox'}`, its quoted-key spelling, and a spread of a
+        // cast-tagged template), while value-carried content only ever originates from
+        // written literals and declared-variant seeding.
+        tag = {property: tagProperty}
+        // Optional filling still needs the tag value at lowering; a literal WRITTEN in
+        // the tag position provides it (the same trust rule tag-check comparisons and
+        // switch labels follow). The variant's own optionals fill from every contextual
+        // member whose tag values include the written one, so a duplicate-tag literal
+        // covers both shapes' optionals; filling never breaks the in-check split — an
+        // optional property reads as unknown presence either way. Rebuild spreads carry
+        // their source's filled optionals along, so they need no filling here.
+        const ownLiteral = writtenTagLiteral(current, tagProperty, context)
         if (ownLiteral != null) {
-          tag = {property: tagProperty, value: ownLiteral}
-          // The variant's own optionals fill too — from every contextual member whose tag
-          // values include this one, so a duplicate-tag literal covers both shapes'
-          // optionals. Filling never breaks the in-check split: an optional property
-          // reads as unknown presence either way.
           for (const member of contextMembers) {
             const memberTag = context.checker.getPropertyOfType(member, tagProperty)
             const memberTagType = memberTag == null ? null : context.checker.getTypeOfSymbol(memberTag)
@@ -332,7 +320,9 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'null'})
   }
   if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
-    return addInstruction(context, current, {kind: 'opaqueConstant'})
+    // The exact text rides along: its one consumer is the tagged-union variant pin, which
+    // trusts only value-carried content (see the engine's object arm).
+    return addInstruction(context, current, {kind: 'opaqueConstant', content: current.text})
   }
   // Any assertion except `as const` (which unwrap peels). The operand still lowers (an
   // unsupported construct inside it rejects as usual), but its claims are erased:
@@ -905,6 +895,30 @@ export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.Typ
       if ((candidate.flags & ts.SymbolFlags.Optional) !== 0) continue
       if (qualifies(candidate.name, singleLiteralOnly)) return candidate.name
     }
+  }
+  return null
+}
+
+
+// The literal written in an object literal's tag position, or null: a string literal, a
+// no-substitution template, or the true/false keywords, seen through parens, satisfies,
+// and as-const (unwrap peels exactly those). Quoted property names count — the rule is
+// about the VALUE being a written literal, not about how the key is spelled.
+function writtenTagLiteral(
+  literal: ts.Expression,
+  tagProperty: string,
+  context: FunctionContext,
+): string | boolean | null {
+  if (!ts.isObjectLiteralExpression(literal)) return null
+  for (const property of literal.properties) {
+    if (!ts.isPropertyAssignment(property)) continue
+    const name = ts.isIdentifier(property.name) || ts.isStringLiteral(property.name) ? property.name.text : null
+    if (name !== tagProperty) continue
+    const initializer = unwrap(property.initializer, context.checker)
+    if (ts.isStringLiteral(initializer) || ts.isNoSubstitutionTemplateLiteral(initializer)) return initializer.text
+    if (initializer.kind === ts.SyntaxKind.TrueKeyword) return true
+    if (initializer.kind === ts.SyntaxKind.FalseKeyword) return false
+    return null
   }
   return null
 }

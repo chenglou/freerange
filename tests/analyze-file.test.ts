@@ -2335,6 +2335,17 @@ ${chain}
       export function launderTag(raw: string): number {
         return measureFrame({kind: raw as 'lightbox', width: 100})
       }
+      export function launderQuotedTag(raw: string): number {
+        return measureFrame({'kind': raw as 'lightbox', width: 100})
+      }
+      export function launderSpreadTag(raw: string): number {
+        const template = {kind: raw as 'lightbox', width: 100}
+        return measureFrame({...template, width: 200})
+      }
+      export function rebuildKeepsPin(frame: Frame): Frame {
+        if (frame.kind === 'lightbox') { return {...frame, width: frame.width + 4} }
+        return frame
+      }
       type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
       export function makeMixed(useFirst: boolean): Mixed {
         if (useFirst) { return {ok: false, x: 1} }
@@ -2363,7 +2374,15 @@ ${chain}
     // variant (the asserted literal is the checker's word, not the runtime tag — pinning
     // it published a dead-branch ensures falsified at runtime).
     expect(report.functions.find(fn => fn.name === 'launderCondition')?.kind).toBe('partial')
+    // The tag pin is value-driven (known string content / exact booleans), so no
+    // type-channel spelling — direct cast, quoted key, spread of a cast-tagged template —
+    // can pin a variant the runtime tag does not hold, while the rebuild idiom keeps its
+    // pin through the declared variant's exact tag value.
     expect(report.functions.find(fn => fn.name === 'launderTag')?.kind).toBe('partial')
+    expect(report.functions.find(fn => fn.name === 'launderQuotedTag')?.kind).toBe('partial')
+    expect(report.functions.find(fn => fn.name === 'launderSpreadTag')?.kind).toBe('partial')
+    expect(analyzedFunction(report, 'rebuildKeepsPin').ensures)
+      .toContain("return.kind is 'lightbox' or 'archive'")
     expect(analyzedFunction(report, 'makeMixed').ensures).toEqual([
       'return.ok is false',
       'return.x is a finite integer number from 1 through 1 (when return.ok is false and return.x is present)',
@@ -2371,7 +2390,7 @@ ${chain}
     ])
     // The read keeps its honest in-bounds assumption instead of a false certification.
     expect(analyzedFunction(report, 'guardStaleAlias').assumptions).toContain(
-      `the element read at ${file}:39:18 is in bounds`,
+      `the element read at ${file}:50:18 is in bounds`,
     )
   })
 

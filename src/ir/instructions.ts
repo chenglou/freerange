@@ -18,7 +18,7 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'constant'; value: number})
   | (InstructionBase & {kind: 'nullishConstant'; sentinel: 'null' | 'undefined'})
   // A value the analysis carries without claims — a string literal, a template string.
-  | (InstructionBase & {kind: 'opaqueConstant'})
+  | (InstructionBase & {kind: 'opaqueConstant'; content?: string})
   // A boolean the analysis knows nothing about — comparing two opaque values.
   | (InstructionBase & {kind: 'unknownBoolean'})
   | (InstructionBase & {kind: 'arrayLiteral'; elements: ValueID[]; form: 'tuple' | 'array'})
@@ -88,7 +88,7 @@ export type InstructionIR =
   // tag is set when the literal's contextual type is a tagged union and the literal names
   // its tag with a string literal — the engine then builds a single-variant union, so
   // branches building different variants join per tag instead of dropping properties.
-  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]; tag?: {property: string; value: string | boolean}})
+  | (InstructionBase & {kind: 'object'; properties: ObjectPropertyIR[]; tag?: {property: string}})
   | (InstructionBase & {kind: 'property'; object: ValueID; property: string})
 
 // Every ValueID operand an instruction reads, enumerated next to the type so a new kind or

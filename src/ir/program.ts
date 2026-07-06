@@ -237,7 +237,9 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
         tagValue: variant.tagValue,
         record: recordValue(variant.properties.map(property => ({
           name: property.name,
-          value: declaredKindValue(property.declared),
+          value: property.name === declared.tagProperty
+            ? exactTagValue(variant.tagValue)
+            : declaredKindValue(property.declared),
         }))),
       })
       const [firstVariant, ...restVariants] = declared.variants
@@ -249,6 +251,18 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
     }
     case 'opaque': return {kind: 'opaque'}
   }
+}
+
+
+// Inside a declared variant, the tag property holds exactly its tag value — the string
+// content or the pinned boolean — rather than the walked hedge. This is what lets the
+// rebuild idiom keep its variant: after `frame.type === 'sidebar'` narrows the union,
+// `{...frame, width}` copies a tag whose VALUE still says 'sidebar', and the engine's
+// object arm pins from that value (an unnarrowed multi-variant union joins its tags to
+// bare opaque or an unknown boolean, so nothing pins — correctly).
+function exactTagValue(tagValue: string | boolean): AbstractValue {
+  if (typeof tagValue === 'string') return {kind: 'opaque', content: tagValue}
+  return {kind: 'boolean', canBeTrue: tagValue, canBeFalse: !tagValue}
 }
 
 // Whether values of this declared kind can be mutated through an alias: a record, tuple,
@@ -299,7 +313,9 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
         tagValue: variant.tagValue,
         record: recordValue(variant.properties.map(property => ({
           name: property.name,
-          value: coveringKindValue(property.declared),
+          value: property.name === declared.tagProperty
+            ? exactTagValue(variant.tagValue)
+            : coveringKindValue(property.declared),
         }))),
       })
       const [firstVariant, ...restVariants] = declared.variants
