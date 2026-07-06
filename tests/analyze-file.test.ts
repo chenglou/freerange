@@ -2313,6 +2313,16 @@ ${chain}
         if (flag) { value = true as {} as number }
         return value * 2
       }
+      const boolFlags: boolean[] = [true, false]
+      export function launderElements(index: number): number {
+        const values = boolFlags as unknown[] as number[]
+        const first = values[0]!
+        return index > 0 ? first : 3
+      }
+      export function launderTuple(flag: boolean): number {
+        const pair = [true, false] as [unknown, unknown] as [number, number]
+        return flag ? pair[0]! : 3
+      }
       type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
       export function makeMixed(useFirst: boolean): Mixed {
         if (useFirst) { return {ok: false, x: 1} }
@@ -2330,8 +2340,12 @@ ${chain}
     `)
     const file = resolve('round-counterexamples.ts')
     // The laundered value is claim-free: the multiply stops, nothing crashes, and the
-    // sibling functions still report.
+    // sibling functions still report. The element-level spellings (containers match,
+    // elements differ — a later round's catch) erase the same way, because sameness is
+    // the recursive shape fingerprint, not the top-level kind.
     expect(report.functions.find(fn => fn.name === 'launderJoin')?.kind).toBe('partial')
+    expect(report.functions.find(fn => fn.name === 'launderElements')?.kind).toBe('partial')
+    expect(report.functions.find(fn => fn.name === 'launderTuple')?.kind).toBe('partial')
     expect(analyzedFunction(report, 'makeMixed').ensures).toEqual([
       'return.ok is false',
       'return.x is a finite integer number from 1 through 1 (when return.ok is false and return.x is present)',
@@ -2339,7 +2353,7 @@ ${chain}
     ])
     // The read keeps its honest in-bounds assumption instead of a false certification.
     expect(analyzedFunction(report, 'guardStaleAlias').assumptions).toContain(
-      `the element read at ${file}:17:18 is in bounds`,
+      `the element read at ${file}:27:18 is in bounds`,
     )
   })
 

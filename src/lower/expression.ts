@@ -1347,23 +1347,26 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
       continue
     }
     // An assertion changes only the static type; the runtime value IS the operand, so
-    // peeling carries the operand's value through — `as const` exactly, and same-kind
-    // casts like `label as ActionType` or `{value: width} as {value: number}` (where the
-    // asserted type licenses reads the carried value cannot answer, the engine's
-    // kind-mismatch backstop stops that path honestly). A cast that CHANGES the value
-    // kind is an erasure point instead: lowering emits a claim-free opaque (see the
-    // as/angle arm in lowerExpression), so the operand's claims never travel across a
-    // kind change. Same-kind-or-erase is decided from our own classification, never from
-    // TypeScript's cast rules — an earlier design erased only `as unknown`/`as any` on
-    // the belief that TS forces cross-kind chains through them, and a review round
-    // crashed it with the comparability route `true as {} as number` (both sides
-    // assignable to {}, diagnostic-clean).
+    // peeling carries the operand's value through — `as const` exactly, and same-shape
+    // casts like `{value: width} as {value: number}` (where the asserted type licenses
+    // reads the carried value cannot answer, the engine's kind-mismatch backstop stops
+    // that path honestly). A cast that CHANGES the shape is an erasure point instead:
+    // lowering emits a claim-free opaque (see the as/angle arm in lowerExpression), so
+    // the operand's claims never travel across a kind change. Sameness is the recursive
+    // shape fingerprint — kind agreement at EVERY level — decided from our own
+    // classification, never from TypeScript's cast rules: an earlier design erased only
+    // `as unknown`/`as any` on the belief that TS forces cross-kind chains through them,
+    // and a review round crashed it with the comparability route `true as {} as number`;
+    // the next round crashed the top-level-kind repair one structural level down with
+    // `flags as unknown[] as number[]` (containers match, elements differ — and tuples
+    // classify without examining elements at all). The fingerprint carries both by
+    // construction.
     if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))
       && (ts.isConstTypeReference(current.type)
         || (() => {
-          const assertedKind = valueKind(checker.getTypeAtLocation(current), checker)
-          return assertedKind != null
-            && assertedKind === valueKind(checker.getTypeAtLocation(current.expression), checker)
+          const assertedShape = shapeFingerprint(checker.getTypeAtLocation(current), checker, [])
+          return assertedShape != null
+            && assertedShape === shapeFingerprint(checker.getTypeAtLocation(current.expression), checker, [])
         })())) {
       current = current.expression
       continue
