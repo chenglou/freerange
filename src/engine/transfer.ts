@@ -242,11 +242,16 @@ function evaluateInstructionKinded(
     }
     case 'inCheck': {
       const operand = requiredValue(state, instruction.union)
-      // A plain record answers presence directly (see the tagCheck arm for how one gets
-      // here): required property yes, optional unknown, missing no.
+      // A plain record answers presence in ONE direction only (see the tagCheck arm for
+      // how one gets here): a property present in the abstract record was present on
+      // every joined source, so 'in' is definitely true — but a MISSING name proves
+      // nothing, because record joins drop the properties the sides disagree on, and
+      // claiming the branch dead published a wrong ensures on the builder idiom (a review
+      // round caught it: joined {kind, scroll} and {kind, tab} lose 'tab', while runtime
+      // 'tab' in route is true half the time). Absent answers unknown.
       if (operand.kind === 'record') {
         const presence = variantPropertyPresence(operand, instruction.property)
-        return value({kind: 'boolean', canBeTrue: presence !== 'absent', canBeFalse: presence !== 'present'})
+        return value({kind: 'boolean', canBeTrue: true, canBeFalse: presence !== 'present'})
       }
       const union = requiredTaggedUnion(state, instruction.union)
       let hasIt = false
@@ -548,11 +553,11 @@ export function refineInCheck(
   const result = cloneState(state)
   const recordOperand = requiredValue(result, check.union)
   if (recordOperand.kind === 'record') {
-    // Presence on a record either decides the branch or (optional) stays unknown; a
-    // decided branch that contradicts the record prunes.
+    // Only the present direction decides (a join never invents a property); a missing
+    // name may be a join casualty, so it prunes nothing.
     const presence = variantPropertyPresence(recordOperand, check.property)
-    if (presence === 'unknown') return result
-    return (presence === 'present') === truth ? result : null
+    if (presence === 'present' && !truth) return null
+    return result
   }
   const union = requiredTaggedUnion(result, check.union)
   const variants = union.variants.filter(variant => {

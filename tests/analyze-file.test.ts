@@ -2350,6 +2350,25 @@ ${chain}
       .toEqual(['return is a finite integer number from 3 through 14'])
   })
 
+  test('in-checks on joined records never prune the absent side', () => {
+    // The join of {kind, scroll} and {kind, tab} keeps only 'kind' — the missing 'tab' is
+    // a join casualty, not proof of runtime absence, so the in-check's true branch stays
+    // reachable (probe(false) returns 999 at runtime). Only the present direction
+    // decides: a join never invents a property.
+    const report = analyzeSource('in-joined-record.ts', `
+      type Route = {kind: 'home'; scroll: number} | {kind: 'about'; tab: number}
+      function openHome(): {kind: 'home'; scroll: number} { return {kind: 'home', scroll: 3} }
+      function openAbout(): {kind: 'about'; tab: number} { return {kind: 'about', tab: 5} }
+      export function probe(flag: boolean): number {
+        const route: Route = flag ? openHome() : openAbout()
+        if ('tab' in route) { return 999 }
+        return 1
+      }
+    `)
+    expect(analyzedFunction(report, 'probe').ensures)
+      .toEqual(['return is a finite integer number from 1 through 999'])
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12
