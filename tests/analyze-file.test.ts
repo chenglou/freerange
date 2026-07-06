@@ -2863,15 +2863,16 @@ ${chain}
       .toEqual(['return is a finite integer number from 3 through 3'])
   })
 
-  test('type assertions carry their operand; casts through unknown erase to opaque', () => {
-    // An assertion changes only the static type — the runtime value IS the operand — so a
-    // same-shape cast like `{value: width} as {value: number}` carries the record through
-    // and its reads keep their facts. Cross-kind chains are different: TypeScript only
-    // permits them through an `as unknown`/`as any` step, and that step erases the
-    // operand's claims to opaque, so `true as unknown as number` puts a claim-free value
-    // (never a trusted boolean, never a fabricated number) in the slot. poke analyzes;
-    // its write leaves count demoted, so readers keep the declared-kind assumes line and
-    // nothing ever claims the slot holds the boolean.
+  test('type assertions erase to claim-free opaque; only as const peels', () => {
+    // An assertion is exactly where the checker's word and the runtime value may diverge,
+    // so every as/angle cast erases the operand's claims — `true as unknown as number`
+    // puts a claim-free value (never a trusted boolean, never a fabricated number) in the
+    // slot, and the same holds for every comparability spelling (through {}, Object,
+    // unknown[], optional-property collisions — three review rounds each defeated a
+    // cleverer carry license before the license was removed outright). The function
+    // around a cast still analyzes; what dies is only the path that USES the erased
+    // value, honestly. poke analyzes; its write leaves count demoted, so readers keep the
+    // declared-kind assumes line and nothing ever claims the slot holds the boolean.
     const report = analyzeSource('module-assertion.ts', `
       let count = 1
       export function poke(flag: number): number {
@@ -2890,7 +2891,8 @@ ${chain}
     `)
     expect(analyzedFunction(report, 'poke').ensures)
       .toEqual(['return is a finite integer number from 0 through 0'])
-    expect(analyzedFunction(report, 'sameShape').ensures).toEqual(['return is a finite number'])
+    // The cast erased the record's claims; the read of the opaque stops that path.
+    expect(report.functions.find(fn => fn.name === 'sameShape')?.kind).toBe('partial')
     // The scan still counts poke's write, so count keeps only its declared kind.
     const reader = analyzedFunction(report, 'currentCount')
     expect(reader.assumptions).toEqual(['count is finite and not NaN'])

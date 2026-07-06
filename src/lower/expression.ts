@@ -317,12 +317,11 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
     return addInstruction(context, current, {kind: 'opaqueConstant'})
   }
-  // A kind-changing cast (`x as unknown`, `x as any`, `true as {}`) — every as/angle form
-  // unwrap does not peel. The operand still lowers (an unsupported construct inside it
-  // rejects as usual), but its claims are erased: downstream sees a claim-free value
-  // whose uses stop at the gates and whose joins absorb, which is what keeps
-  // `true as unknown as number` (and the `{}`-comparability spelling of the same launder)
-  // from carrying a boolean into number positions.
+  // Any assertion except `as const` (which unwrap peels). The operand still lowers (an
+  // unsupported construct inside it rejects as usual), but its claims are erased:
+  // downstream sees a claim-free value whose uses stop at the gates and whose joins
+  // absorb, which is what keeps `true as unknown as number` — and every comparability
+  // spelling of the same launder — from carrying a boolean into number positions.
   if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
     lowerExpression(current.expression, context)
     return addInstruction(context, current, {kind: 'opaqueConstant'})
@@ -1346,28 +1345,19 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
       current = current.expression
       continue
     }
-    // An assertion changes only the static type; the runtime value IS the operand, so
-    // peeling carries the operand's value through — `as const` exactly, and same-shape
-    // casts like `{value: width} as {value: number}` (where the asserted type licenses
-    // reads the carried value cannot answer, the engine's kind-mismatch backstop stops
-    // that path honestly). A cast that CHANGES the shape is an erasure point instead:
-    // lowering emits a claim-free opaque (see the as/angle arm in lowerExpression), so
-    // the operand's claims never travel across a kind change. Sameness is the recursive
-    // shape fingerprint — kind agreement at EVERY level — decided from our own
-    // classification, never from TypeScript's cast rules: an earlier design erased only
-    // `as unknown`/`as any` on the belief that TS forces cross-kind chains through them,
-    // and a review round crashed it with the comparability route `true as {} as number`;
-    // the next round crashed the top-level-kind repair one structural level down with
-    // `flags as unknown[] as number[]` (containers match, elements differ — and tuples
-    // classify without examining elements at all). The fingerprint carries both by
-    // construction.
+    // Only `as const` peels: TypeScript permits it solely on literals and it narrows the
+    // literal to its own literal type, so the value kind provably cannot change. Every
+    // other as/angle assertion is an erasure point (see the as/angle arm in
+    // lowerExpression) — an assertion is exactly where the checker's word and the runtime
+    // value may diverge, and claim-free is the one honest reading. Three review rounds
+    // settled this: each attempt to LICENSE carrying (asserted kind matches operand kind;
+    // then recursive shape fingerprints) was defeated by another diagnostic-clean aliasing
+    // route (`true as {} as number` via comparability, `flags as unknown[] as number[]`
+    // at the element level, optional-property and heterogeneous-union fingerprint
+    // collisions). No type-level test can be finer than TypeScript's own cast
+    // permissiveness, so the license is gone rather than repaired again.
     if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))
-      && (ts.isConstTypeReference(current.type)
-        || (() => {
-          const assertedShape = shapeFingerprint(checker.getTypeAtLocation(current), checker, [])
-          return assertedShape != null
-            && assertedShape === shapeFingerprint(checker.getTypeAtLocation(current.expression), checker, [])
-        })())) {
+      && ts.isConstTypeReference(current.type)) {
       current = current.expression
       continue
     }
