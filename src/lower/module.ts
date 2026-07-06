@@ -183,7 +183,7 @@ export function lowerModuleInitializer(
     if (skippedAtTopLevel(statement)) continue
     const recovery = snapshotLowering(context)
     try {
-      assertAccepted(statement, checker)
+      assertAccepted(statement)
       if (ts.isVariableStatement(statement)) {
         lowerTopLevelDeclarations(statement, context, scan)
         continue

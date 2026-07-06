@@ -2790,11 +2790,15 @@ ${chain}
       .toEqual(['return is a finite integer number from 3 through 3'])
   })
 
-  test('rejects type assertions', () => {
-    // An assertion changes the static type without changing the value; everything downstream
-    // is keyed to static types, so `true as unknown as number` would put a boolean where
-    // number invariants apply. Rejected wholesale — a same-shape assertion like
-    // `{value: width} as {value: number}` is rejected too, not special-cased.
+  test('type assertions carry their operand; casts through unknown erase to opaque', () => {
+    // An assertion changes only the static type — the runtime value IS the operand — so a
+    // same-shape cast like `{value: width} as {value: number}` carries the record through
+    // and its reads keep their facts. Cross-kind chains are different: TypeScript only
+    // permits them through an `as unknown`/`as any` step, and that step erases the
+    // operand's claims to opaque, so `true as unknown as number` puts a claim-free value
+    // (never a trusted boolean, never a fabricated number) in the slot. poke analyzes;
+    // its write leaves count demoted, so readers keep the declared-kind assumes line and
+    // nothing ever claims the slot holds the boolean.
     const report = analyzeSource('module-assertion.ts', `
       let count = 1
       export function poke(flag: number): number {
@@ -2811,14 +2815,10 @@ ${chain}
         return box.value
       }
     `)
-    const file = resolve('module-assertion.ts')
-    expect(report.functions.find(fn => fn.name === 'poke')).toEqual({
-      kind: 'unsupported',
-      name: 'poke',
-      unsupported: `a type assertion to number (remove the assertion and declare the intended type instead) at ${file}:5:19`,
-    })
-    expect(report.functions.find(fn => fn.name === 'sameShape')?.kind).toBe('unsupported')
-    // The scan still counts the unanalyzed write, so count keeps only its declared kind.
+    expect(analyzedFunction(report, 'poke').ensures)
+      .toEqual(['return is a finite integer number from 0 through 0'])
+    expect(analyzedFunction(report, 'sameShape').ensures).toEqual(['return is a finite number'])
+    // The scan still counts poke's write, so count keeps only its declared kind.
     const reader = analyzedFunction(report, 'currentCount')
     expect(reader.assumptions).toEqual(['count is finite and not NaN'])
   })
@@ -2875,11 +2875,13 @@ ${chain}
     })
   })
 
-  test('rejects values typed any wherever they flow', () => {
+  test('values typed any carry claim-free; every use of one stops instead of trusting the type', () => {
     // TypeScript accepts an any-typed value in every position, so a type-checked function
-    // can still put a boolean into a number variable; the value's own expression is
-    // rejected, which covers declarations, call arguments, and returns alike. Each shape
-    // below crashed the engine before the acceptance check existed.
+    // can still put a boolean into a number variable. The value carries as opaque — the
+    // checker's word is void, so nothing is claimed — and each downstream use hits a
+    // gate: arithmetic on it stops the path, an argument to a numeric callee stops at the
+    // call, and a bare return publishes no ensures. Each shape below crashed the engine
+    // before any-typed values were modeled at all, and rejected wholesale after that.
     const report = analyzeSource('module-any.ts', `
       export function launder(): number {
         const hidden: any = true
@@ -2901,39 +2903,15 @@ ${chain}
         return width + 1
       }
     `)
-    const file = resolve('module-any.ts')
-    expect(report.functions).toEqual([
-      {
-        kind: 'unsupported',
-        name: 'launder',
-        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:3:15`,
-      },
-      {
-        kind: 'analyzed',
-        name: 'double',
-        assumptions: ['width is finite and not NaN'],
-        requires: [],
-        // Doubling can overflow to Infinity at the finite extremes; the suffix names it.
-        ensures: [`return is a possibly non-finite number from -Infinity through Infinity (can overflow at ${file}:8:16)`],
-      },
-      {
-        kind: 'unsupported',
-        name: 'laundersArgument',
-        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:11:15`,
-      },
-      {
-        kind: 'unsupported',
-        name: 'laundersReturn',
-        unsupported: `a value typed any (give it a concrete number, boolean, or object type) at ${file}:15:15`,
-      },
-      {
-        kind: 'analyzed',
-        name: 'passThrough',
-        assumptions: ['width is finite and not NaN'],
-        requires: [],
-        ensures: ['return is a finite number'],
-      },
-    ])
+    // launder's addition and laundersArgument's call both stop on the carried opaque; the
+    // stop names the narrowing mismatch, and no numeric claim is published for any of them.
+    const launder = report.functions.find(fn => fn.name === 'launder')
+    expect(launder?.kind).toBe('partial')
+    const laundersArgument = report.functions.find(fn => fn.name === 'laundersArgument')
+    expect(laundersArgument?.kind).toBe('partial')
+    // A bare return of the carried value completes — with an empty contract.
+    expect(analyzedFunction(report, 'laundersReturn').ensures).toEqual([])
+    expect(analyzedFunction(report, 'passThrough').ensures).toEqual(['return is a finite number'])
   })
 
   test('hedges boolean module reads whose writes the analysis never sees', () => {

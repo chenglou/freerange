@@ -95,12 +95,8 @@ export type UnsupportedReason =
   | {kind: 'nonNumberOperand'; typeText: string}
   // A branch condition whose type is not boolean, e.g. `if (width)` truthiness on a number.
   | {kind: 'nonBooleanCondition'; typeText: string}
-  // The acceptance rules (see current-decisions.md): an expression typed `any`, a type
-  // assertion written with `as` or angle brackets, or a `var` declaration. Each is a spot
-  // where the checker's word — the foundation of every guarantee — is void or the binding
-  // model does not apply.
-  | {kind: 'anyTyped'}
-  | {kind: 'typeAssertion'; typeText: string}
+  // The acceptance rules (see current-decisions.md): `var` hoists, so one variable can
+  // have several declaration sites and the binding model does not apply.
   | {kind: 'varDeclaration'}
   // The identifier `eval` appears somewhere in the file. An eval string can rewrite any
   // binding in the file at runtime, so every function in the file carries this reason —
@@ -117,8 +113,8 @@ export type UnsupportedReason =
   | {kind: 'valueType'; typeText: string}
   // A non-null assertion that changes the value kind, e.g. `x!` with `x: number | null`.
   // Past the assertion, the static type stops describing the value the analysis models.
-  // (`as` and angle-bracket assertions are rejected earlier by the acceptance check, so
-  // only `!` reaches this reason.)
+  // (`as` and angle-bracket assertions carry their operand instead — the runtime value is
+  // unchanged — so only `!` reaches this reason.)
   | {kind: 'kindChangingAssertion'; fromText: string; toText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}

@@ -2,48 +2,25 @@ import * as ts from 'typescript'
 import {unsupported} from './context.ts'
 
 // The early acceptance check from current-decisions.md ("What TypeScript code does the
-// analyzer accept?"). Everything here rejects code where the checker's word is void, before
-// lowering ever sees it, so lowering and the engine can key everything to static types.
-// Called once per function declaration and once per top-level statement of the module
-// initializer; a violation throws LoweringStop and is caught like any other rejection.
-export function assertAccepted(root: ts.Node, checker: ts.TypeChecker): void {
+// analyzer accept?"): the wholesale structural rules — property writes (values are
+// immutable after construction) and `var` — checked before lowering ever sees the code.
+// (`any`-typed values and type assertions used to be rejected here too; both are carried
+// claim-free now — see valueKind's opaque arm and unwrap's assertion peeling.) Called once
+// per function declaration and once per top-level statement of the module initializer; a
+// violation throws LoweringStop and is caught like any other rejection.
+export function assertAccepted(root: ts.Node): void {
   const visit = (node: ts.Node): void => {
-    // Type annotations hold no runtime values, and their inner nodes confuse the expression
-    // check below — the literal in `let stepped: 1 | 2` is a numeric-literal node that the
-    // checker types as `any` when asked out of value position. Statement labels and
-    // `export default` are outside the subset regardless, but their inner nodes confuse the
-    // checker the same way, so lowering's own catch-alls report them under accurate names.
-    if (ts.isTypeNode(node) || ts.isExportAssignment(node)) return
-    if (ts.isLabeledStatement(node)) {
-      visit(node.statement)
+    // Type annotations hold no runtime values, so there is nothing to check inside them.
+    if (ts.isTypeNode(node)) return
+    // JSX never lowers (the expression catch-all names it), but its tag names and
+    // attribute slots answer `any` to getTypeAtLocation even in diagnostic-clean files —
+    // an SVG-heavy component would otherwise misfile under any-typed instead of its real
+    // JSX rejection. Only the embedded {expressions} hold checkable runtime values.
+    // (`any`-typed values themselves are carried claim-free since the opaque-carry
+    // change, so this skip is about honest rejection reasons, not soundness.)
+    if (ts.isJsxElement(node) || ts.isJsxSelfClosingElement(node) || ts.isJsxFragment(node)) {
+      visitJsxValues(node)
       return
-    }
-    if (ts.isBreakOrContinueStatement(node)) return
-    // The property name in `const {dest: destination} = config` is not a value expression
-    // either; only the bound name and a default value hold runtime values.
-    if (ts.isBindingElement(node)) {
-      visit(node.name)
-      if (node.initializer != null) visit(node.initializer)
-      return
-    }
-    // TypeScript accepts an `any`-typed value in every position, so a fully type-checked
-    // function can still put a boolean into a `number` variable, e.g. `count = value` with
-    // `value: any`. Rejecting the `any`-typed expression itself covers every position the
-    // value could flow into.
-    if (ts.isExpression(node) && (checker.getTypeAtLocation(node).flags & ts.TypeFlags.Any) !== 0) {
-      throw unsupported(node, {kind: 'anyTyped'})
-    }
-    // An assertion changes the static type without changing the value, e.g.
-    // `true as unknown as number` puts a boolean where every downstream computation
-    // expects a number. `as const` is the exception that cannot lie: TypeScript only
-    // permits it on literals, and it narrows the literal to its own literal type, e.g.
-    // `24 as const` has type 24 — so it passes. The non-null assertion `x!` is not
-    // rejected here either; lowering accepts it while it does not change the value kind.
-    if ((ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && !ts.isConstTypeReference(node.type)) {
-      throw unsupported(node, {
-        kind: 'typeAssertion',
-        typeText: checker.typeToString(checker.getTypeAtLocation(node)),
-      })
     }
     // Values are immutable after construction: any write through a property access —
     // plain, compound, or ++/-- — is rejected with rebinding as the suggested rewrite.
@@ -69,6 +46,13 @@ export function assertAccepted(root: ts.Node, checker: ts.TypeChecker): void {
       throw unsupported(node, {kind: 'varDeclaration'})
     }
     ts.forEachChild(node, visit)
+  }
+  const visitJsxValues = (jsx: ts.Node): void => {
+    if (ts.isJsxExpression(jsx)) {
+      if (jsx.expression != null) visit(jsx.expression)
+      return
+    }
+    ts.forEachChild(jsx, visitJsxValues)
   }
   visit(root)
 }

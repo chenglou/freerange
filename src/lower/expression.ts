@@ -317,6 +317,16 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
   if (ts.isStringLiteral(current) || ts.isNoSubstitutionTemplateLiteral(current)) {
     return addInstruction(context, current, {kind: 'opaqueConstant'})
   }
+  // A cast TO an opaque type (`x as unknown`, `x as any`) — the only as/angle form unwrap
+  // does not peel. The operand still lowers (an unsupported construct inside it rejects as
+  // usual), but its claims are erased: TypeScript routes every cross-kind cast chain
+  // through this form, so the erasure is what keeps `true as unknown as number` from
+  // carrying a boolean into number positions — downstream sees a claim-free value whose
+  // uses stop at the gates and whose joins absorb.
+  if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
+    lowerExpression(current.expression, context)
+    return addInstruction(context, current, {kind: 'opaqueConstant'})
+  }
   if (ts.isTemplateExpression(current)) {
     // `${width}px` — the interpolated expressions lower (they must be representable), the
     // result is carried without claims.
@@ -794,9 +804,12 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
       checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
     return anchored ? 'object' : null
   }
-  // `unknown` is the SAFE any: the checker forces narrowing before any use, so its word
-  // stays intact and the value carries without claims — unlike `any`, which stays out.
-  if ((type.flags & ts.TypeFlags.Unknown) !== 0) return 'opaque'
+  // `unknown` and `any` both carry without claims. For unknown the checker forces
+  // narrowing before any use, so its word stays intact; for any the checker's word is
+  // void, and claim-free is the one honest reading — nothing numeric is ever said about
+  // the value, every operation on it stops at the gates, and a write of one into a typed
+  // binding leaves the binding opaque instead of letting the declared type re-mint claims.
+  if ((type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0) return 'opaque'
   if (type.isUnion()) {
     // `T | null`, `T | undefined`, and `T | null | undefined` classify as nullable when T
     // itself classifies to one kind. Gates that cannot carry a missing value keep
@@ -981,9 +994,12 @@ function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[
     }
     return `record{${properties.sort().join(',')}}`
   }
-  // `unknown` is the SAFE any: the checker forces narrowing before any use, so its word
-  // stays intact and the value carries without claims — unlike `any`, which stays out.
-  if ((type.flags & ts.TypeFlags.Unknown) !== 0) return 'opaque'
+  // `unknown` and `any` both carry without claims. For unknown the checker forces
+  // narrowing before any use, so its word stays intact; for any the checker's word is
+  // void, and claim-free is the one honest reading — nothing numeric is ever said about
+  // the value, every operation on it stops at the gates, and a write of one into a typed
+  // binding leaves the binding opaque instead of letting the declared type re-mint claims.
+  if ((type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0) return 'opaque'
   if (type.isUnion()) {
     if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
     if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
@@ -1310,10 +1326,18 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
       current = current.expression
       continue
     }
-    // Only `as const` assertions reach here — the acceptance check rejected every other
-    // as/angle-bracket form before lowering started — and a const assertion narrows a
-    // literal to its own literal type, so peeling it changes nothing.
-    if (ts.isAsExpression(current) || ts.isTypeAssertionExpression(current)) {
+    // An assertion changes only the static type; the runtime value IS the operand, so
+    // peeling carries the operand's value through — `as const` exactly, and same-kind
+    // casts like `label as ActionType` or `{value: width} as {value: number}` (where the
+    // asserted type licenses reads the carried value cannot answer, the engine's
+    // kind-mismatch backstop stops that path honestly). The one form NOT peeled is a cast
+    // whose asserted type is opaque (`x as unknown`, `x as any`): that cast is an erasure
+    // point — TypeScript only permits cross-kind casts through it, so lowering emits a
+    // claim-free opaque there instead of letting the operand's claims travel across the
+    // kind change (see the as/angle arm in lowerExpression).
+    if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))
+      && (ts.isConstTypeReference(current.type)
+        || valueKind(checker.getTypeAtLocation(current), checker) !== 'opaque')) {
       current = current.expression
       continue
     }

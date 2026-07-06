@@ -448,8 +448,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'statementAfterReturn': return 'statements after return'
     case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
     case 'propertyWrite': return 'a write into an object (values are immutable; rebind a variable to a fresh object instead)'
-    case 'anyTyped': return 'a value typed any (give it a concrete number, boolean, or object type)'
-    case 'typeAssertion': return `a type assertion to ${reason.typeText} (remove the assertion and declare the intended type instead)`
     case 'varDeclaration': return 'var declarations (use let or const)'
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'

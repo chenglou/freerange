@@ -96,7 +96,7 @@ function lowerFunction(
   if (declaration.asteriskToken != null || declaration.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.AsyncKeyword) === true) {
     throw unsupported(declaration, {kind: 'asyncOrGeneratorFunction'})
   }
-  assertAccepted(declaration, checker)
+  assertAccepted(declaration)
   const signature = checker.getSignatureFromDeclaration(declaration)
   // A type predicate (`shape is Circle`, `asserts x`) is the checker taking the author's
   // word: callers' narrowing then exposes properties the analysis cannot confirm the
