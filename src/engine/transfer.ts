@@ -1072,6 +1072,27 @@ export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoo
   return value
 }
 
+// The branch terminator's condition read, with the same KindMismatch-to-stop conversion
+// evaluateInstruction gives instruction operands. The static type of a condition can lie
+// about the value's kind — `if (setting as boolean)` passes the boolean-condition gate on
+// the checker's word while the erased cast's value is opaque — and the terminator sits
+// outside evaluateInstruction's catch, so without this wrapper the mismatch that every
+// other opaque use converts to an honest stop escaped as a crash (a review round ran it).
+export function branchConditionOutcome(
+  state: ExecutionState,
+  id: ValueID,
+  site: SiteID,
+): {kind: 'value'; value: AbstractBoolean} | {kind: 'stop'; stop: Stop} {
+  try {
+    return {kind: 'value', value: requiredBoolean(state, id)}
+  } catch (error) {
+    if (error instanceof KindMismatch) {
+      return {kind: 'stop', stop: {site, reason: {kind: 'unmodeledNarrowing'}}}
+    }
+    throw error
+  }
+}
+
 // A constant in-bounds index picks the exact tuple element; anything else takes the hull.
 // Returns null only for the empty tuple.
 function tupleElement(tuple: Extract<AbstractValue, {kind: 'tuple'}>, index: AbstractNumber): AbstractValue | null {

@@ -27,10 +27,10 @@ import {
 } from './state.ts'
 import {
   asRefinableCheck,
+  branchConditionOutcome,
   collectNonCompareUses,
   evaluateInstruction,
   refineCheck,
-  requiredBoolean,
   requiredValue,
 } from './transfer.ts'
 
@@ -342,7 +342,13 @@ function runEvaluation(
         break
       }
       case 'branch': {
-        const condition = requiredBoolean(state, block.terminator.condition)
+        const conditionOutcome = branchConditionOutcome(state, block.terminator.condition, block.terminator.site)
+        if (conditionOutcome.kind === 'stop') {
+          addStop(run, blockID, conditionOutcome.stop, state.shared.modules.slice(), block.instructions.length)
+          run.blocks[blockID]!.pendingReturn = null
+          break
+        }
+        const condition = conditionOutcome.value
         // expressionContext.instructionByValue is the one which-instruction-produced-this
         // table; a condition refines only when that instruction is a check (refineCheck
         // dispatches over the check kinds in one place).

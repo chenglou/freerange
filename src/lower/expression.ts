@@ -281,7 +281,24 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         // The literal must pin ONE tag value ({ok: true}, {type: 'lightbox'}); a tag
         // written from a union-typed variable pins nothing and the value stays a record.
         const ownLiterals = ownTagType == null ? null : tagLiteralValues(ownTagType)
-        const ownLiteral = ownLiterals != null && ownLiterals.length === 1 ? ownLiterals[0]! : null
+        // And the tag position must not be an assertion: `{kind: raw as 'lightbox'}` has
+        // the asserted literal as its checker type while the runtime tag is whatever raw
+        // holds — pinning the variant from it published a dead-branch ensures a review
+        // round falsified. Assertions erase in value position; this keeps the erased
+        // claim from re-entering through the promotion. A shorthand or spread-carried tag
+        // pins fine (the checker's word there is honest, no assertion involved).
+        const tagAssignment = ts.isObjectLiteralExpression(current)
+          ? current.properties.find(property =>
+            ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === tagProperty)
+          : undefined
+        const tagWrittenThroughAssertion = tagAssignment != null && ts.isPropertyAssignment(tagAssignment)
+          && (() => {
+            const initializer = unwrap(tagAssignment.initializer, context.checker)
+            return ts.isAsExpression(initializer) || ts.isTypeAssertionExpression(initializer)
+          })()
+        const ownLiteral = !tagWrittenThroughAssertion && ownLiterals != null && ownLiterals.length === 1
+          ? ownLiterals[0]!
+          : null
         if (ownLiteral != null) {
           tag = {property: tagProperty, value: ownLiteral}
           // The variant's own optionals fill too — from every contextual member whose tag

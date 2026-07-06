@@ -2323,6 +2323,18 @@ ${chain}
         const pair = [true, false] as [unknown, unknown] as [number, number]
         return flag ? pair[0]! : 3
       }
+      export function launderCondition(setting: unknown): number {
+        if (setting as boolean) { return 1 }
+        return 0
+      }
+      type Frame = {kind: 'lightbox'; width: number} | {kind: 'archive'; count: number}
+      function measureFrame(frame: Frame): number {
+        if (frame.kind === 'archive') { return frame.count }
+        return frame.width
+      }
+      export function launderTag(raw: string): number {
+        return measureFrame({kind: raw as 'lightbox', width: 100})
+      }
       type Mixed = {ok: boolean; x: number} | {ok: false; y: number}
       export function makeMixed(useFirst: boolean): Mixed {
         if (useFirst) { return {ok: false, x: 1} }
@@ -2346,6 +2358,12 @@ ${chain}
     expect(report.functions.find(fn => fn.name === 'launderJoin')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderElements')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderTuple')?.kind).toBe('partial')
+    // A cast in condition position stops honestly instead of crashing the terminator's
+    // boolean read, and a cast in an object literal's TAG position must not pin the
+    // variant (the asserted literal is the checker's word, not the runtime tag — pinning
+    // it published a dead-branch ensures falsified at runtime).
+    expect(report.functions.find(fn => fn.name === 'launderCondition')?.kind).toBe('partial')
+    expect(report.functions.find(fn => fn.name === 'launderTag')?.kind).toBe('partial')
     expect(analyzedFunction(report, 'makeMixed').ensures).toEqual([
       'return.ok is false',
       'return.x is a finite integer number from 1 through 1 (when return.ok is false and return.x is present)',
@@ -2353,7 +2371,7 @@ ${chain}
     ])
     // The read keeps its honest in-bounds assumption instead of a false certification.
     expect(analyzedFunction(report, 'guardStaleAlias').assumptions).toContain(
-      `the element read at ${file}:27:18 is in bounds`,
+      `the element read at ${file}:39:18 is in bounds`,
     )
   })
 
