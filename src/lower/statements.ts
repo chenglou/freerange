@@ -4,8 +4,8 @@ import {
   addInstruction,
   addSite,
   bindingsVisibleAfterBranch,
-  changedBindings,
   createBlock,
+  mergeAtContinuation,
   requiredBranchBinding,
   requiredSymbol,
   terminate,
@@ -101,23 +101,7 @@ function lowerIfStatement(statement: ts.IfStatement, context: FunctionContext): 
     return
   }
 
-  const changed = changedBindings(bindingsBeforeBranch, trueBranch.bindings, falseBranch.bindings)
-  const continuation = createBlock(context, changed.length)
-  terminate(trueBranch.block, {
-    kind: 'jump',
-    target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, trueBranch.bindings))},
-    site: addSite(context, statement),
-  })
-  terminate(falseBranch.block, {
-    kind: 'jump',
-    target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, falseBranch.bindings))},
-    site: addSite(context, statement),
-  })
-  context.currentBlock = context.blocks[continuation]!
-  context.bindings = new Map(bindingsBeforeBranch)
-  for (let index = 0; index < changed.length; index++) {
-    context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
-  }
+  mergeAtContinuation([trueBranch, falseBranch], bindingsBeforeBranch, statement, context)
 }
 
 // Switch without fallthrough (owner decision): every non-empty case body must end in a
@@ -248,23 +232,7 @@ function lowerSwitchStatement(statement: ts.SwitchStatement, context: FunctionCo
     context.bindings = bindingsVisibleAfterBranch(bindingsBefore, exits[0]!.bindings)
     return
   }
-  const changed: ts.Symbol[] = []
-  for (const [symbol, value] of bindingsBefore) {
-    if (exits.some(exit => requiredBranchBinding(symbol, exit.bindings) !== value)) changed.push(symbol)
-  }
-  const continuation = createBlock(context, changed.length)
-  for (const exit of exits) {
-    terminate(exit.block, {
-      kind: 'jump',
-      target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, exit.bindings))},
-      site: addSite(context, statement),
-    })
-  }
-  context.currentBlock = context.blocks[continuation]!
-  context.bindings = new Map(bindingsBefore)
-  for (let index = 0; index < changed.length; index++) {
-    context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
-  }
+  mergeAtContinuation(exits, bindingsBefore, statement, context)
 }
 
 // `for (const x of arr)` desugars to a counter loop: a synthetic counter rides the loop

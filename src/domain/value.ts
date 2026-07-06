@@ -82,13 +82,16 @@ export function joinSentinels(left: NullishSentinels, right: NullishSentinels): 
 // ever remove variants — so the representation is bounded by what the author wrote. A
 // single-variant value stays in this form (rather than collapsing to a plain record) so a
 // later check against another tag is definitely false and dead branches prune.
+export type TaggedVariant = {tagValue: string; record: AbstractRecord}
+
 export type AbstractTaggedUnion = {
   kind: 'taggedUnion'
   tagProperty: string
-  // Non-empty; declared order. Two variants MAY share a tag value (they then differ by
+  // Declared order; the tuple form carries the non-emptiness so consumers need no
+  // defensive emptiness handling. Two variants MAY share a tag value (they then differ by
   // which properties they carry, told apart by an in-check), so joins pair variants by
   // tag AND property-name shape, never by tag alone.
-  variants: Array<{tagValue: string; record: AbstractRecord}>
+  variants: [TaggedVariant, ...TaggedVariant[]]
 }
 
 export type AbstractValue =
@@ -220,16 +223,15 @@ export function tryJoinValues(left: AbstractValue, right: AbstractValue): Abstra
 // kind mismatch.
 function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion): AbstractTaggedUnion | null {
   if (left.tagProperty !== right.tagProperty) return null
-  const variants: AbstractTaggedUnion['variants'] = []
-  for (const variant of left.variants) {
+  const pairWithRight = (variant: TaggedVariant): TaggedVariant => {
     const other = right.variants.find(candidate =>
       candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
-    if (other == null) {
-      variants.push(variant)
-      continue
-    }
-    variants.push({tagValue: variant.tagValue, record: joinRecords(variant.record, other.record)})
+    return other == null
+      ? variant
+      : {tagValue: variant.tagValue, record: joinRecords(variant.record, other.record)}
   }
+  const [firstLeft, ...restLeft] = left.variants
+  const variants: AbstractTaggedUnion['variants'] = [pairWithRight(firstLeft), ...restLeft.map(pairWithRight)]
   for (const variant of right.variants) {
     const paired = left.variants.some(candidate =>
       candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
@@ -241,7 +243,7 @@ function joinTaggedUnions(left: AbstractTaggedUnion, right: AbstractTaggedUnion)
 // The record covering every variant at once: properties all variants share, each joined
 // across them. What a tagged union degrades to when it meets a plain record.
 function taggedUnionHull(union: AbstractTaggedUnion): AbstractRecord | null {
-  let hull: AbstractValue | null = union.variants[0]?.record ?? null
+  let hull: AbstractValue | null = union.variants[0].record
   for (let index = 1; index < union.variants.length; index++) {
     if (hull == null) return null
     hull = tryJoinValues(hull, union.variants[index]!.record)
@@ -391,16 +393,18 @@ export function widenValue(previous: AbstractValue, next: AbstractValue): Abstra
       if (previous.kind !== 'taggedUnion' || previous.tagProperty !== next.tagProperty) return next
       // The variant list is bounded by the declared type, so only the records inside need
       // widening — per tag value, like record properties.
+      const widenVariant = (variant: TaggedVariant): TaggedVariant => {
+        const before = previous.variants.find(candidate =>
+          candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
+        if (before == null) return variant
+        const widened = widenValue(before.record, variant.record)
+        return widened.kind === 'record' ? {tagValue: variant.tagValue, record: widened} : variant
+      }
+      const [firstNext, ...restNext] = next.variants
       return {
         kind: 'taggedUnion',
         tagProperty: next.tagProperty,
-        variants: next.variants.map(variant => {
-          const before = previous.variants.find(candidate =>
-            candidate.tagValue === variant.tagValue && sameVariantShape(candidate.record, variant.record))
-          if (before == null) return variant
-          const widened = widenValue(before.record, variant.record)
-          return widened.kind === 'record' ? {tagValue: variant.tagValue, record: widened} : variant
-        }),
+        variants: [widenVariant(firstNext), ...restNext.map(widenVariant)],
       }
     }
     // Bounded lattices need no widening: booleans have height two, the missing sentinels

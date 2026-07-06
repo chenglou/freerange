@@ -43,20 +43,27 @@ export type ExecutionState = {
   shared: SharedState
   // The one relational fact the analysis carries: "this value is a valid index into
   // that array" — established by the bounds-check guard `i >= 0 && i < arr.length`
-  // (the lower bound and integrality live on the value's own interval; the set records
-  // only the below-length half, keyed by canonical value names so repeated property
+  // (the lower bound and integrality live on the value's own interval; the list records
+  // only the below-length half, named by canonical value keys so repeated property
   // reads of the same record match, and seeded across calls for argument pairs).
   // Parameter- and value-rooted pairs never invalidate (immutable values); module-rooted
   // pairs drop at module writes, havocs, and calls — see dropModuleRootedPairs. Sound to keep for the
   // whole evaluation: IR values never change and arrays are immutable after construction,
   // so the fact cannot be invalidated — joins still intersect, since a fact must hold on
   // every incoming path. Deliberately not a general relational domain: one relation kind,
-  // no transitivity, no arithmetic over it.
-  validIndexPairs: Set<string>
+  // no transitivity, no arithmetic over it. A handful of pairs per state at most, so a
+  // plain deduplicated array with linear scans.
+  validIndexPairs: ValidIndexPair[]
 }
 
-export function validIndexKey(indexKey: string, arrayKey: string): string {
-  return `${indexKey}<${arrayKey}`
+export type ValidIndexPair = {index: string; array: string}
+
+export function hasValidIndexPair(pairs: ValidIndexPair[], index: string, array: string): boolean {
+  return pairs.some(pair => pair.index === index && pair.array === array)
+}
+
+export function addValidIndexPair(pairs: ValidIndexPair[], index: string, array: string): void {
+  if (!hasValidIndexPair(pairs, index, array)) pairs.push({index, array})
 }
 
 // Canonical keys rooted at a module binding (m3, m3.sizes) name the binding, not the
@@ -65,17 +72,12 @@ export function validIndexKey(indexKey: string, arrayKey: string): string {
 // at moduleWrite and moduleHavoc with the written binding, and after a completed call
 // with null (the callee may have written any binding; parameter- and value-rooted pairs
 // survive, since those name immutable values the callee cannot swap out).
-export function dropModuleRootedPairs(pairs: Set<string>, binding: number | null): void {
+export function dropModuleRootedPairs(pairs: ValidIndexPair[], binding: number | null): ValidIndexPair[] {
   const root = binding == null ? null : `m${binding}`
   const affected = (key: string): boolean => root == null
     ? /^m\d/.test(key)
-    : key === root || key.startsWith(`${root}.`) || key.startsWith(`${root}<`)
-  for (const pair of [...pairs]) {
-    const separator = pair.indexOf('<')
-    const indexKey = pair.slice(0, separator)
-    const arrayKey = pair.slice(separator + 1)
-    if (affected(indexKey) || affected(arrayKey)) pairs.delete(pair)
-  }
+    : key === root || key.startsWith(`${root}.`)
+  return pairs.filter(pair => !affected(pair.index) && !affected(pair.array))
 }
 
 export function emptySharedState(moduleCount: number): SharedState {
@@ -93,7 +95,8 @@ export function cloneState(state: ExecutionState): ExecutionState {
   return {
     frame: {values: state.frame.values.slice(), readVersions: state.frame.readVersions.slice()},
     shared: cloneSharedState(state.shared),
-    validIndexPairs: new Set(state.validIndexPairs),
+    // Pair objects are never mutated, only appended or filtered, so a shallow copy suffices.
+    validIndexPairs: state.validIndexPairs.slice(),
   }
 }
 
@@ -118,10 +121,8 @@ export function joinStates(left: ExecutionState, right: ExecutionState): Executi
       readVersions[index] = leftVersion
     }
   }
-  const validIndexPairs = new Set<string>()
-  for (const pair of left.validIndexPairs) {
-    if (right.validIndexPairs.has(pair)) validIndexPairs.add(pair)
-  }
+  const validIndexPairs = left.validIndexPairs.filter(pair =>
+    hasValidIndexPair(right.validIndexPairs, pair.index, pair.array))
   return {
     frame: {values, readVersions},
     shared: {
@@ -151,7 +152,16 @@ export function joinModuleSlots(left: ModuleSlot[], right: ModuleSlot[]): Module
   return joined
 }
 
+// The completeness check for sameState: every ExecutionState field must be listed here,
+// and the comparison below must actually compare it. A field added to the type breaks
+// compilation on this record until sameState handles it — a fact the equality skips is a
+// fact the propagate fast-path can silently absorb across paths, which was a review-caught
+// unsoundness (slot versions missing from the comparison). cloneState and joinStates need
+// no such check: their returned object literals already fail to compile on a missing field.
+const comparedStateFields: Record<keyof ExecutionState, true> = {frame: true, shared: true, validIndexPairs: true}
+
 export function sameState(left: ExecutionState, right: ExecutionState): boolean {
+  void comparedStateFields
   if (left.frame.values.length !== right.frame.values.length) return false
   for (let index = 0; index < left.frame.values.length; index++) {
     const leftValue = left.frame.values[index]
@@ -177,9 +187,9 @@ export function sameState(left: ExecutionState, right: ExecutionState): boolean 
       if (!sameValues(leftSlot.value, rightSlot.value)) return false
     }
   }
-  if (left.validIndexPairs.size !== right.validIndexPairs.size) return false
+  if (left.validIndexPairs.length !== right.validIndexPairs.length) return false
   for (const pair of left.validIndexPairs) {
-    if (!right.validIndexPairs.has(pair)) return false
+    if (!hasValidIndexPair(right.validIndexPairs, pair.index, pair.array)) return false
   }
   return true
 }

@@ -743,31 +743,13 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
     const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
     return element != null && valueKind(element, checker, depth + 1) != null ? 'array' : null
   }
-  // An intersection of object types (`Base & {subPage: 'select'}` — the extends idiom for
-  // route variants) merges into one record shape; the checker's property and signature
-  // queries below already answer for the merged view, so the intersection runs the same
-  // object checks. A member outside the object kind keeps the whole intersection out.
-  if (type.isIntersection() && type.types.every(member => valueKind(member, checker, depth + 1) === 'object')) {
-    if (checker.getIndexInfosOfType(type).length > 0) return null
-    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) {
-      // A pure function type — call signatures and nothing else — is carried opaquely,
-      // like a callback stored in a record already is: calls to it reject at the call
-      // gate (the callee must be a top-level function), so carrying makes callback
-      // PARAMETERS as cheap as callback properties. Hybrid callable-objects keep out:
-      // their data properties would invite reads the carried value cannot answer.
-      const dataProperties = checker.getPropertiesOfType(type).some(property =>
-        checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
-      return dataProperties ? null : 'opaque'
-    }
-    // Optional properties anchor too, now that they model as maybe-undefined values: an
-    // all-optional config record ({volume?: number}) is a weak type TypeScript refuses to
-    // assign primitives to, so the primitive-inhabitation worry that bars `{}` does not
-    // apply — only a type with NO data properties at all stays out.
-    const anchored = checker.getPropertiesOfType(type).some(property =>
-      checker.getTypeOfSymbol(property).getCallSignatures().length === 0)
-    return anchored ? 'object' : null
-  }
-  if ((type.flags & ts.TypeFlags.Object) !== 0) {
+  // Object types and intersections of object types (`Base & {subPage: 'select'}` — the
+  // extends idiom for route variants) run the same classification: the checker's property
+  // and signature queries answer for an intersection's merged view, so one body serves
+  // both. A member outside the object kind keeps the whole intersection out.
+  const objectLike = (type.flags & ts.TypeFlags.Object) !== 0
+    || (type.isIntersection() && type.types.every(member => valueKind(member, checker, depth + 1) === 'object'))
+  if (objectLike) {
     // An index signature, e.g. Record<string, number>, admits properties the type never
     // names: a value typed with one can carry any key set at runtime, so the abstract
     // record — built from a specific literal — cannot honor reads or spreads the signature

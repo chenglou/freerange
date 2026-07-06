@@ -23,15 +23,13 @@ import {
   type ExecutionState,
   type ModuleSlot,
   type SharedState,
+  type ValidIndexPair,
 } from './state.ts'
 import {
+  asRefinableCheck,
   collectNonCompareUses,
   evaluateInstruction,
-  refineComparison,
-  refineNumberCheck,
-  refineInCheck,
-  refineTagCheck,
-  refineNullishCheck,
+  refineCheck,
   requiredBoolean,
   requiredValue,
 } from './transfer.ts'
@@ -151,7 +149,7 @@ function publishedModuleValues(
   const demoted = new Set<ModuleBindingID>()
   const successors = blockSuccessors(fn)
   for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
-    const stopIndex = run.stopIndexByBlock[blockID]
+    const stopIndex = run.blocks[blockID]!.stopIndex
     if (stopIndex == null) continue
     for (const instruction of fn.blocks[blockID]!.instructions.slice(stopIndex)) {
       if (instruction.kind === 'moduleWrite') demoted.add(instruction.binding)
@@ -201,27 +199,30 @@ type IncomingState = {
   updateCount: number
 }
 
+// One block's bookkeeping for the run; every field lives and dies with the evaluation, so
+// they share one record per block instead of parallel arrays that could drift apart.
+type BlockRun = {
+  incoming: IncomingState | null
+  // The instruction index where the block first stopped (instructions.length for a stop
+  // terminator); null when no visit stopped. The module publish rule demotes writes from
+  // here onward, and the failed-header closure treats the block as cut.
+  stopIndex: number | null
+  // A loop header whose state never stabilized. Returns reachable from a failed header
+  // are not evidence — they were computed from a state short of its fixed point.
+  failedHeader: boolean
+  // The latest return recorded from the block; overwritten on re-visits (incoming states
+  // grow monotonically, so the last visit supersedes earlier ones) and joined only after
+  // the worklist drains.
+  pendingReturn: {value: AbstractValue; shared: SharedState} | null
+}
+
 // Everything one evaluation accumulates; created and discarded together.
 type EvaluationRun = {
   fn: FunctionIR
-  incoming: Array<IncomingState | undefined>
+  // Dense, indexed by BlockID.
+  blocks: BlockRun[]
   queue: BlockID[]
   stops: Stop[]
-  // By SiteID: the first stop at a site wins, so re-visits (loop rounds, both arms of a
-  // branch reaching one call) cannot grow the list past the function's site count.
-  stopRecordedBySite: boolean[]
-  // By BlockID: blocks whose visit recorded a stop, for the failed-header closure below.
-  stopBlocks: boolean[]
-  // By BlockID: the instruction index where the block first stopped (instructions.length
-  // for a stop terminator). The module publish rule demotes writes from here onward.
-  stopIndexByBlock: Array<number | undefined>
-  // By BlockID: loop headers whose state never stabilized. Returns reachable from a failed
-  // header are not evidence — they were computed from a state short of its fixed point.
-  failedHeaders: boolean[]
-  // By BlockID: the latest return recorded from each block; overwritten on re-visits
-  // (incoming states grow monotonically, so the last visit supersedes earlier ones) and
-  // joined only after the worklist drains.
-  pendingReturns: Array<{value: AbstractValue; shared: SharedState} | undefined>
   // The module slots at every stop, joined with the normal end by the publish rule.
   moduleEnds: ModuleSlot[][]
 }
@@ -234,7 +235,7 @@ function runEvaluation(
   sharedState: SharedState,
   program: ProgramIR,
   callStack: FunctionID[],
-  seededIndexPairs?: Set<string>,
+  seededIndexPairs?: ValidIndexPair[],
 ): {evaluation: FunctionEvaluation; run: EvaluationRun} {
   if (arguments_.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} arguments for ${fn.name}`)
   if (argumentExpressions.length !== fn.parameters.length) throw new Error(`Expected ${fn.parameters.length} argument expressions for ${fn.name}`)
@@ -243,7 +244,7 @@ function runEvaluation(
     shared: cloneSharedState(sharedState),
     // Call sites seed the caller's proven argument relations (keyed p0, p1, ... which is
     // exactly what canonicalValueKey produces for the parameters here).
-    validIndexPairs: seededIndexPairs ?? new Set(),
+    validIndexPairs: seededIndexPairs ?? [],
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     initial.frame.values[fn.parameters[index]!.value] = arguments_[index]!
@@ -254,17 +255,12 @@ function runEvaluation(
   const boundsAssumptions: BoundsAssumption[] = []
   const run: EvaluationRun = {
     fn,
-    incoming: [],
+    blocks: fn.blocks.map(() => ({incoming: null, stopIndex: null, failedHeader: false, pendingReturn: null})),
     queue: [fn.entry],
     stops: [],
-    stopRecordedBySite: [],
-    stopBlocks: [],
-    stopIndexByBlock: [],
-    failedHeaders: [],
-    pendingReturns: [],
     moduleEnds: [],
   }
-  run.incoming[fn.entry] = {state: initial, updateCount: 0}
+  run.blocks[fn.entry]!.incoming = {state: initial, updateCount: 0}
   // Invariant for the whole evaluation (engineering.md's loop-invariant rule): built once
   // instead of allocating a context object and closure per instruction per fixed-point
   // round. preconditions is shared by reference and accumulates.
@@ -281,7 +277,7 @@ function runEvaluation(
       expressions: Array<NumericExpression | null>,
       calleeState: SharedState,
       stack: FunctionID[],
-      seededIndexPairs: Set<string>,
+      seededIndexPairs: ValidIndexPair[],
     ) => {
       const calleeFn = program.functions[callee]
       if (calleeFn == null) throw new Error(`Unknown function ${callee}`)
@@ -294,7 +290,7 @@ function runEvaluation(
   while (queueIndex < run.queue.length) {
     const blockID = run.queue[queueIndex++]!
     const block = fn.blocks[blockID]
-    const entry = run.incoming[blockID]
+    const entry = run.blocks[blockID]?.incoming
     if (block == null || entry == null) throw new Error(`Missing block ${blockID} in ${fn.name}`)
     const state = cloneState(entry.state)
     let stopped = false
@@ -303,7 +299,7 @@ function runEvaluation(
       const result = evaluateInstruction(instruction, state, transferContext)
       if (result.kind === 'ends') {
         // The path terminates like an inline throw: nothing recorded, nothing returned.
-        run.pendingReturns[blockID] = undefined
+        run.blocks[blockID]!.pendingReturn = null
         stopped = true
         break
       }
@@ -311,7 +307,7 @@ function runEvaluation(
         addStop(run, blockID, result.stop, state.shared.modules.slice(), index)
         // A return recorded by an earlier visit of this block described a smaller incoming
         // state; the stop supersedes it.
-        run.pendingReturns[blockID] = undefined
+        run.blocks[blockID]!.pendingReturn = null
         stopped = true
         break
       }
@@ -323,7 +319,7 @@ function runEvaluation(
         const value = block.terminator.value == null
           ? {kind: 'void'} as const
           : requiredValue(state, block.terminator.value)
-        run.pendingReturns[blockID] = {value, shared: cloneSharedState(state.shared)}
+        run.blocks[blockID]!.pendingReturn = {value, shared: cloneSharedState(state.shared)}
         break
       }
       // A thrown path ends without contributing: no return value, no stop record. The
@@ -348,41 +344,21 @@ function runEvaluation(
       case 'branch': {
         const condition = requiredBoolean(state, block.terminator.condition)
         // expressionContext.instructionByValue is the one which-instruction-produced-this
-        // table; a condition refines only when that instruction is a comparison.
-        const producer = expressionContext.instructionByValue[block.terminator.condition]
-        const comparison = producer?.kind === 'compare' ? producer : undefined
-        const nullishCheck = producer?.kind === 'nullishCheck' ? producer : undefined
-        const numberCheck = producer?.kind === 'numberCheck' ? producer : undefined
-        const tagCheck = producer?.kind === 'tagCheck' ? producer : undefined
-        const inCheck = producer?.kind === 'inCheck' ? producer : undefined
+        // table; a condition refines only when that instruction is a check (refineCheck
+        // dispatches over the check kinds in one place).
+        const check = asRefinableCheck(expressionContext.instructionByValue[block.terminator.condition])
         if (condition.canBeTrue) {
-          // refineComparison clones internally; the bare-condition arm clones only when the
+          // refineCheck clones internally; the bare-condition arm clones only when the
           // other arm still needs the working state.
-          const branch = comparison != null
-            ? refineComparison(state, comparison, true, expressionContext)
-            : nullishCheck != null
-              ? refineNullishCheck(state, nullishCheck, true, expressionContext.instructionByValue)
-              : numberCheck != null
-                ? refineNumberCheck(state, numberCheck, true, expressionContext.instructionByValue)
-                : tagCheck != null
-                  ? refineTagCheck(state, tagCheck, true, expressionContext.instructionByValue)
-                  : inCheck != null
-                    ? refineInCheck(state, inCheck, true, expressionContext.instructionByValue)
-                    : condition.canBeFalse ? cloneState(state) : state
+          const branch = check != null
+            ? refineCheck(state, check, true, expressionContext)
+            : condition.canBeFalse ? cloneState(state) : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenTrue, run)
         }
         if (condition.canBeFalse) {
-          const branch = comparison != null
-            ? refineComparison(state, comparison, false, expressionContext)
-            : nullishCheck != null
-              ? refineNullishCheck(state, nullishCheck, false, expressionContext.instructionByValue)
-              : numberCheck != null
-                ? refineNumberCheck(state, numberCheck, false, expressionContext.instructionByValue)
-                : tagCheck != null
-                  ? refineTagCheck(state, tagCheck, false, expressionContext.instructionByValue)
-                  : inCheck != null
-                    ? refineInCheck(state, inCheck, false, expressionContext.instructionByValue)
-                    : state
+          const branch = check != null
+            ? refineCheck(state, check, false, expressionContext)
+            : state
           if (branch != null) propagate(branch, blockID, block.terminator.whenFalse, run)
         }
         break
@@ -397,26 +373,27 @@ function runEvaluation(
   // therefore failed too. Slightly conservative: evidence from the path where the loop body
   // runs zero times is also suppressed when the stop existed from the first round.
   // Reachability from each stopping block is computed once, and the whole pass is skipped
-  // when nothing stopped (stopBlocks is only ever set by addStop).
+  // when nothing stopped (a stop always sets both a stops entry and its block's stopIndex).
   const suppressed: boolean[] = []
   if (run.stops.length > 0) {
     const reachedFromStop: Array<boolean[] | undefined> = []
-    for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
-      if (run.stopBlocks[stopBlock] === true) reachedFromStop[stopBlock] = reachableFrom(successors, stopBlock)
+    for (let stopBlock = 0; stopBlock < run.blocks.length; stopBlock++) {
+      if (run.blocks[stopBlock]!.stopIndex != null) reachedFromStop[stopBlock] = reachableFrom(successors, stopBlock)
     }
     for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
       if (fn.blocks[headerID]!.loopHeader == null) continue
-      const reachedFromHeader = run.failedHeaders[headerID] === true ? undefined : reachableFrom(successors, headerID)
+      const header = run.blocks[headerID]!
+      const reachedFromHeader = header.failedHeader ? undefined : reachableFrom(successors, headerID)
       if (reachedFromHeader != null) {
-        for (let stopBlock = 0; stopBlock < run.stopBlocks.length; stopBlock++) {
-          if (run.stopBlocks[stopBlock] !== true || reachedFromHeader[stopBlock] !== true) continue
+        for (let stopBlock = 0; stopBlock < run.blocks.length; stopBlock++) {
+          if (run.blocks[stopBlock]!.stopIndex == null || reachedFromHeader[stopBlock] !== true) continue
           if (reachedFromStop[stopBlock]![headerID] === true) {
-            run.failedHeaders[headerID] = true
+            header.failedHeader = true
             break
           }
         }
       }
-      if (run.failedHeaders[headerID] !== true) continue
+      if (!header.failedHeader) continue
       const reached = reachedFromHeader ?? reachableFrom(successors, headerID)
       for (let block = 0; block < fn.blocks.length; block++) {
         if (reached[block] === true) suppressed[block] = true
@@ -426,7 +403,7 @@ function runEvaluation(
 
   let normal: FunctionEvaluation['normal'] = null
   for (let blockID = 0; blockID < fn.blocks.length; blockID++) {
-    const pending = run.pendingReturns[blockID]
+    const pending = run.blocks[blockID]!.pendingReturn
     if (pending == null || suppressed[blockID] === true) continue
     if (normal == null) {
       normal = {returnValue: pending.value, sharedState: pending.shared}
@@ -451,13 +428,13 @@ function runEvaluation(
   if (normal == null && run.stops.length === 0) {
     for (let headerID = 0; headerID < fn.blocks.length; headerID++) {
       const header = fn.blocks[headerID]!
-      const entry_ = run.incoming[headerID]
+      const entry_ = run.blocks[headerID]!.incoming
       if (header.loopHeader == null || entry_ == null) continue
       const downstream = reachableFrom(successors, headerID)
       let visitedDownstream = false
       let stuckInCycle = true
       for (let block = 0; block < fn.blocks.length; block++) {
-        if (downstream[block] !== true || run.incoming[block] == null) continue
+        if (downstream[block] !== true || run.blocks[block]!.incoming == null) continue
         visitedDownstream = true
         if (reachableFrom(successors, block)[headerID] !== true) {
           stuckInCycle = false
@@ -486,14 +463,15 @@ function addStop(
   moduleCapture: ModuleSlot[],
   instructionIndex: number,
 ): void {
-  run.stopBlocks[blockID] = true
-  const existingIndex = run.stopIndexByBlock[blockID]
-  if (existingIndex == null || instructionIndex < existingIndex) {
-    run.stopIndexByBlock[blockID] = instructionIndex
+  const block = run.blocks[blockID]!
+  if (block.stopIndex == null || instructionIndex < block.stopIndex) {
+    block.stopIndex = instructionIndex
   }
   run.moduleEnds.push(moduleCapture)
-  if (run.stopRecordedBySite[stop.site] === true) return
-  run.stopRecordedBySite[stop.site] = true
+  // The first stop at a site wins, so re-visits (loop rounds, both arms of a branch
+  // reaching one call) cannot grow the list past the function's site count. A linear scan,
+  // like the precondition and bounds-assumption dedups: the list is small by the same bound.
+  if (run.stops.some(existing => existing.site === stop.site)) return
   run.stops.push(stop)
 }
 
@@ -518,9 +496,9 @@ function propagate(
   for (let index = 0; index < target.parameters.length; index++) {
     candidate.frame.values[target.parameters[index]!] = argumentValues[index]!
   }
-  const previous = run.incoming[edge.block]
+  const previous = run.blocks[edge.block]!.incoming
   if (previous == null) {
-    run.incoming[edge.block] = {state: candidate, updateCount: 0}
+    run.blocks[edge.block]!.incoming = {state: candidate, updateCount: 0}
     run.queue.push(edge.block)
     return
   }
@@ -536,10 +514,10 @@ function propagate(
         state.shared.modules.slice(),
         0,
       )
-      run.failedHeaders[edge.block] = true
+      run.blocks[edge.block]!.failedHeader = true
       return
     }
-    run.incoming[edge.block] = {state: joined, updateCount: previous.updateCount + 1}
+    run.blocks[edge.block]!.incoming = {state: joined, updateCount: previous.updateCount + 1}
     run.queue.push(edge.block)
   }
 }

@@ -123,16 +123,40 @@ export function requiredSymbol(node: ts.Node, checker: ts.TypeChecker): ts.Symbo
 
 export function changedBindings(
   before: Map<ts.Symbol, ValueID>,
-  whenTrue: Map<ts.Symbol, ValueID>,
-  whenFalse: Map<ts.Symbol, ValueID>,
+  branches: Array<Map<ts.Symbol, ValueID>>,
 ): ts.Symbol[] {
   const changed: ts.Symbol[] = []
   for (const [symbol, value] of before) {
-    if (requiredBranchBinding(symbol, whenTrue) !== value || requiredBranchBinding(symbol, whenFalse) !== value) {
-      changed.push(symbol)
-    }
+    if (branches.some(branch => requiredBranchBinding(symbol, branch) !== value)) changed.push(symbol)
   }
   return changed
+}
+
+// Several branches continue past a statement (an if/else where both arms fall through, a
+// switch with breaking bodies plus the no-match path): create the continuation block with
+// one parameter per binding any branch changed, jump every branch to it carrying its own
+// values, and rebind the changed symbols to the continuation's parameters. Callers handle
+// the zero-continuing and one-continuing cases themselves — no merge is needed there.
+export function mergeAtContinuation(
+  exits: Array<{block: MutableBlock; bindings: Map<ts.Symbol, ValueID>}>,
+  bindingsBefore: Map<ts.Symbol, ValueID>,
+  statement: ts.Statement,
+  context: FunctionContext,
+): void {
+  const changed = changedBindings(bindingsBefore, exits.map(exit => exit.bindings))
+  const continuation = createBlock(context, changed.length)
+  for (const exit of exits) {
+    terminate(exit.block, {
+      kind: 'jump',
+      target: {block: continuation, arguments: changed.map(symbol => requiredBranchBinding(symbol, exit.bindings))},
+      site: addSite(context, statement),
+    })
+  }
+  context.currentBlock = context.blocks[continuation]!
+  context.bindings = new Map(bindingsBefore)
+  for (let index = 0; index < changed.length; index++) {
+    context.bindings.set(changed[index]!, context.currentBlock.parameters[index]!)
+  }
 }
 
 export function bindingsVisibleAfterBranch(

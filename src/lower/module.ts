@@ -5,6 +5,7 @@ import {
   holdsMutableStructure,
   moduleInitializerName,
   type DeclaredKind,
+  type DeclaredVariant,
   type FunctionIR,
   type InitializerSkip,
   type ModuleBindingCategory,
@@ -383,7 +384,7 @@ function declaredTaggedVariant(
   location: ts.Node,
   checker: ts.TypeChecker,
   seen: ts.Type[],
-): {tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>} | null {
+): DeclaredVariant | null {
   const tag = checker.getPropertyOfType(member, tagProperty)
   if (tag == null) return null
   const tagType = checker.getTypeOfSymbol(tag)
@@ -446,7 +447,7 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
         // carries it like any other inner.
         const restTagProperty = inner == null ? taggedUnionProperty(rest, checker) : null
         if (restTagProperty != null) {
-          const unionVariants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}> = []
+          const unionVariants: DeclaredVariant[] = []
           let allClassified = true
           for (const member of rest) {
             const variant = declaredTaggedVariant(member, restTagProperty, location, checker, seen)
@@ -456,7 +457,10 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
             }
             unionVariants.push(variant)
           }
-          if (allClassified) inner = {kind: 'taggedUnion', tagProperty: restTagProperty, variants: unionVariants}
+          const [firstVariant, ...restVariants] = unionVariants
+          if (allClassified && firstVariant != null) {
+            inner = {kind: 'taggedUnion', tagProperty: restTagProperty, variants: [firstVariant, ...restVariants]}
+          }
         }
       }
       if (inner == null) return null
@@ -505,13 +509,15 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       if (!type.isUnion()) return null
       const tagProperty = taggedUnionProperty(type.types, checker)
       if (tagProperty == null) return null
-      const variants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}> = []
+      const variants: DeclaredVariant[] = []
       for (const member of type.types) {
         const variant = declaredTaggedVariant(member, tagProperty, location, checker, seen)
         if (variant == null) return null
         variants.push(variant)
       }
-      return {kind: 'taggedUnion', tagProperty, variants}
+      const [firstVariant, ...restVariants] = variants
+      if (firstVariant == null) return null
+      return {kind: 'taggedUnion', tagProperty, variants: [firstVariant, ...restVariants]}
     }
     case null: return null
   }

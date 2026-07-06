@@ -1,6 +1,6 @@
 import type * as ts from 'typescript'
 import {finiteInputNumber, unknownNumber} from '../domain/number.ts'
-import {recordValue, unknownBoolean, type AbstractValue} from '../domain/value.ts'
+import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
 import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
@@ -162,6 +162,8 @@ export type FunctionLowering = FunctionIR | UnsupportedFunctionIR
 // a record with a fixed property shape (shapes nest — module state is a tree of records).
 // The promise is an assumption, not a guarantee: TypeScript accepts an `any`-typed value in
 // any write position, so the report prints a condition for every read that rests on one.
+export type DeclaredVariant = {tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}
+
 export type DeclaredKind =
   | {kind: 'number'}
   | {kind: 'boolean'}
@@ -179,7 +181,7 @@ export type DeclaredKind =
   // (route.type is 'explore' or 'lightbox'). The variant list is written in the type;
   // analysis only ever removes variants. The tag rides inside each variant's properties
   // as an ordinary opaque leaf; tagProperty and tagValue carry which one it is.
-  | {kind: 'taggedUnion'; tagProperty: string; variants: Array<{tagValue: string; properties: Array<{name: string; declared: DeclaredKind}>}>}
+  | {kind: 'taggedUnion'; tagProperty: string; variants: [DeclaredVariant, ...DeclaredVariant[]]}
 
 // What a function may assume about a module-level binding, decided once by a whole-file
 // scan before any lowering. The rule: trust a value only when every possible write to it
@@ -234,16 +236,20 @@ export function declaredKindValue(declared: DeclaredKind): AbstractValue {
       element: declaredKindValue(declared.element),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
-    case 'taggedUnion': return {
-      kind: 'taggedUnion',
-      tagProperty: declared.tagProperty,
-      variants: declared.variants.map(variant => ({
+    case 'taggedUnion': {
+      const convertVariant = (variant: DeclaredVariant): TaggedVariant => ({
         tagValue: variant.tagValue,
         record: recordValue(variant.properties.map(property => ({
           name: property.name,
           value: declaredKindValue(property.declared),
         }))),
-      })),
+      })
+      const [firstVariant, ...restVariants] = declared.variants
+      return {
+        kind: 'taggedUnion',
+        tagProperty: declared.tagProperty,
+        variants: [convertVariant(firstVariant), ...restVariants.map(convertVariant)],
+      }
     }
     case 'opaque': return {kind: 'opaque'}
   }
@@ -292,16 +298,20 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
       element: coveringKindValue(declared.element),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
-    case 'taggedUnion': return {
-      kind: 'taggedUnion',
-      tagProperty: declared.tagProperty,
-      variants: declared.variants.map(variant => ({
+    case 'taggedUnion': {
+      const convertVariant = (variant: DeclaredVariant): TaggedVariant => ({
         tagValue: variant.tagValue,
         record: recordValue(variant.properties.map(property => ({
           name: property.name,
           value: coveringKindValue(property.declared),
         }))),
-      })),
+      })
+      const [firstVariant, ...restVariants] = declared.variants
+      return {
+        kind: 'taggedUnion',
+        tagProperty: declared.tagProperty,
+        variants: [convertVariant(firstVariant), ...restVariants.map(convertVariant)],
+      }
     }
     case 'opaque': return {kind: 'opaque'}
   }
