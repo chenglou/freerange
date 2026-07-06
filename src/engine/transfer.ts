@@ -123,6 +123,7 @@ export function collectNonCompareUses(fn: FunctionIR): boolean[] {
       case 'branch': used[block.terminator.condition] = true; markEdge(block.terminator.whenTrue); markEdge(block.terminator.whenFalse); break
       case 'jump': markEdge(block.terminator.target); break
       case 'stop': break
+      case 'thrown': break
     }
   }
   return used
@@ -439,7 +440,13 @@ function evaluateInstructionKinded(
       // module writes cannot become this caller's state.
       const completed = completedEvaluation(evaluation)
       if (completed == null) {
-        return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'calleeStopped', callee: instruction.function}}}
+        // A callee that throws on every path is fully analyzed; the call just never
+        // returns, so this path ends with its own honest reason rather than the
+        // callee-stopped prose.
+        const alwaysThrows = evaluation.stops.length === 0 && evaluation.normal == null
+        return {kind: 'stop', stop: {site: instruction.site, reason: alwaysThrows
+          ? {kind: 'calleeAlwaysThrows', callee: instruction.function}
+          : {kind: 'calleeStopped', callee: instruction.function}}}
       }
       state.shared = completed.sharedState
       // The callee may have rebound any module binding; only module-rooted pairs are at

@@ -75,16 +75,16 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
       argumentExpressions.push({kind: 'parameter', index})
     }
     const {evaluation} = runEvaluation(fn, functionID, arguments_, argumentExpressions, sharedState, program, [])
-    functions.push(publishedAnalysis(fn, evaluation))
+    functions.push(publishedAnalysis(fn, evaluation, program.moduleBindings.length))
   }
   return {
     functions,
-    initializer: publishedAnalysis(program.initializer, initializer.evaluation),
+    initializer: publishedAnalysis(program.initializer, initializer.evaluation, program.moduleBindings.length),
     moduleValues,
   }
 }
 
-function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): FunctionAnalysis {
+function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation, moduleCount: number): FunctionAnalysis {
   const completed = completedEvaluation(evaluation)
   if (completed != null) {
     return {
@@ -97,6 +97,18 @@ function publishedAnalysis(fn: FunctionIR, evaluation: FunctionEvaluation): Func
     }
   }
   const [firstStop, ...laterStops] = evaluation.stops
+  // Every path throws: the function is fully analyzed, it just never returns normally —
+  // no ensures lines exist to print, and callers stop honestly at the call.
+  if (firstStop == null && evaluation.normal == null) {
+    return {
+      kind: 'analyzed',
+      lowering: fn,
+      preconditions: evaluation.preconditions,
+      boundsAssumptions: evaluation.boundsAssumptions,
+      returnValue: {kind: 'void'},
+      sharedState: emptySharedState(moduleCount),
+    }
+  }
   if (firstStop == null) throw new Error(`Function ${fn.name} has no reachable return`)
   return {
     kind: 'partial',
@@ -307,6 +319,11 @@ function runEvaluation(
         run.pendingReturns[blockID] = {value, shared: cloneSharedState(state.shared)}
         break
       }
+      // A thrown path ends without contributing: no return value, no stop record. The
+      // exception would propagate past every analyzed caller (no catch in the subset),
+      // so no analyzed continuation observes anything from this path.
+      case 'thrown':
+        break
       case 'stop': {
         addStop(
           run,
@@ -525,6 +542,7 @@ function blockSuccessors(fn: FunctionIR): BlockID[][] {
     switch (block.terminator.kind) {
       case 'return': return []
       case 'stop': return []
+      case 'thrown': return []
       case 'jump': return [block.terminator.target.block]
       case 'branch': return [block.terminator.whenTrue.block, block.terminator.whenFalse.block]
     }

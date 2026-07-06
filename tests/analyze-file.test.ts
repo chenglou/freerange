@@ -2369,6 +2369,31 @@ ${chain}
       .toEqual(['return is a finite integer number from 1 through 999'])
   })
 
+  test('throw guards discharge obligations; always-throwing functions never return', () => {
+    // A thrown path simply ends — no exception modeling needed, because the subset has no
+    // catch: nothing analyzed can observe anything after a throw. The guard clause's
+    // branch refinement then discharges the division, a function that throws on every
+    // path is analyzed with no ensures (it never returns normally), and its callers stop
+    // with the honest reason.
+    const report = analyzeSource('throw-guards.ts', `
+      export function divideWidth(width: number, columns: number): number {
+        if (columns === 0) { throw new Error('bad grid') }
+        return width / columns
+      }
+      export function fail(code: number): number {
+        throw new Error('nope ' + code)
+      }
+      export function caller(x: number): number {
+        return fail(x) + 1
+      }
+    `)
+    expect(analyzedFunction(report, 'divideWidth').requires).toEqual([])
+    expect(analyzedFunction(report, 'fail').ensures).toEqual([])
+    const caller = report.functions.find(fn => fn.name === 'caller')!
+    if (caller.kind !== 'partial') throw new Error(`expected caller partial, got ${caller.kind}`)
+    expect(caller.stopped[0]).toContain('throws on every path and never returns')
+  })
+
   test('publishes values initialized before a top-level stop and distrusts writes after it', () => {
     const report = analyzeSource('module-stop.ts', `
       const boxesGapY = 12

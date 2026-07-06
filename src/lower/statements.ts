@@ -68,6 +68,12 @@ export function lowerStatement(statement: ts.Statement, context: FunctionContext
     lowerSwitchStatement(statement, context)
     return
   }
+  // Guard clauses: `if (columns === 0) throw new Error('bad grid')`. The branch
+  // refinement then proves the fall-through nonzero, and the thrown path simply ends.
+  if (ts.isThrowStatement(statement)) {
+    terminate(context.currentBlock, {kind: 'thrown', site: addSite(context, statement)})
+    return
+  }
   throw unsupported(statement, {kind: 'statementForm', syntax: ts.SyntaxKind[statement.kind]})
 }
 

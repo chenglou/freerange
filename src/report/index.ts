@@ -352,6 +352,9 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'outOfBoundsRead': {
       return `reads an element provably outside the array (at ${formatSite(program, stop.site)})`
     }
+    case 'calleeAlwaysThrows': {
+      return `calls ${functionName(program, reason.callee)}, which throws on every path and never returns (call at ${formatSite(program, stop.site)})`
+    }
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
     }

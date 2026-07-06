@@ -34,6 +34,9 @@ export type StopReason =
   // is no element the assertion could produce. An empty array is the special case where
   // every read qualifies.
   | {kind: 'outOfBoundsRead'}
+  // The called function throws on every path, so this call never returns normally and
+  // the caller's continuation is unreachable.
+  | {kind: 'calleeAlwaysThrows'; callee: FunctionID}
 
 export type Stop = {
   site: SiteID

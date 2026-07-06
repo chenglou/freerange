@@ -135,3 +135,10 @@ export type TerminatorIR =
   // replacement initializer; ordinary functions discard their whole body when lowering
   // stops, and the real initializer skips statements instead.
   | {kind: 'stop'; site: SiteID; reason: UnsupportedReason}
+  // A throw statement: the path ends and contributes nothing — no return value, no stop,
+  // no successor. Sound without modeling exceptions because the subset has no catch: a
+  // thrown path cannot be observed by any analyzed continuation, in this function or any
+  // caller. The thrown expression is deliberately NOT lowered (nothing after it runs);
+  // the acceptance pre-pass still vets it for any/assertions, and the eval scan is
+  // file-wide.
+  | {kind: 'thrown'; site: SiteID}
