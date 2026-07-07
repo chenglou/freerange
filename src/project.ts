@@ -150,7 +150,10 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     ...requiresIndex.map(line => `  ${line}`),
     '',
     'rejection reasons:',
-    ...[...reasonCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
+    ...[...reasonCounts.entries()].filter(([, count]) => count > 1).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
+    // Once-seen reasons are a tail, not a trend — atop the tally they read as noise, and
+    // their actionable form (location plus rewrite hint) lives in the per-file reports.
+    `  seen once: ${[...reasonCounts.entries()].filter(([, count]) => count === 1).map(([reason]) => reason).sort().join(', ')}`,
     '',
     'stop reasons:',
     ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),

@@ -475,7 +475,13 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           value,
         })
       }
-      throw unsupported(current, {kind: 'call', callee: calleeDisplayName(current.expression, context.sourceFile)})
+      const arrayMethod = ts.isPropertyAccessExpression(current.expression)
+        && context.checker.isArrayType(context.checker.getTypeAtLocation(current.expression.expression))
+      throw unsupported(current, {
+        kind: 'call',
+        callee: calleeDisplayName(current.expression, context.sourceFile),
+        ...(arrayMethod ? {arrayMethod: true} : {}),
+      })
     }
   }
   if (ts.isPropertyAccessExpression(current)) {

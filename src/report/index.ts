@@ -459,7 +459,9 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
       : `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
       ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
-      : `function call ${reason.callee}`
+      : reason.arrayMethod === true
+        ? `function call ${reason.callee} (array methods are outside the subset; rewrite as a for-of loop over the same array)`
+        : `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
     case 'nonBooleanCondition': return `condition of type ${reason.typeText} (compare explicitly, e.g. width > 0 or mode !== undefined)`

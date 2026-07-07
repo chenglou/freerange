@@ -81,9 +81,11 @@ export type UnsupportedReason =
   | {kind: 'prototypeMemberRead'; property: string}
   // e.g. '%', '&&', '**', '??'
   | {kind: 'binaryOperator'; operator: string}
-  // Callee is neither a top-level function in this file nor supported Math. `callee` is the
-  // callee's source text, e.g. 'requestAnimationFrame' or a shadowed 'Math.max'.
-  | {kind: 'call'; callee: string}
+  // Callee is neither a top-level function in this file nor supported Math. `callee` is a
+  // short display name — an identifier, dotted pair, or (…).method for computed receivers.
+  // arrayMethod marks a method called on an array value, where the rewrite that brings the
+  // code inside the subset is unambiguous: a for-of loop over the same array.
+  | {kind: 'call'; callee: string; arrayMethod?: boolean}
   // A call passing fewer arguments than the callee declares. TypeScript accepts the shorter
   // call when the omitted parameters have default values, e.g. scaled() calling
   // `function scaled(width: number = 5)`, but lowering never reads parameter initializers,
