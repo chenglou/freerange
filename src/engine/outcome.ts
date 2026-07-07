@@ -13,7 +13,6 @@ export type StopReason =
   | {kind: 'calleeStopped'; callee: FunctionID}
   // A divisor may be zero and no requirement over the caller-visible parameters can name
   // it (e.g. dividing by a platform read).
-  | {kind: 'divisorUnknown'}
   | {kind: 'loopLimit'; updates: number}
   // A loop whose exit edge is never taken on any analyzed path, e.g.
   // `for (let index = 0; true; index += 1) {}`. The fixed point converged with every path

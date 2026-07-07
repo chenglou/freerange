@@ -222,7 +222,7 @@ function evaluateInstructionKinded(
             site: instruction.site,
           })
         } else {
-          addBoundsAssumption(context.boundsAssumptions, {site: instruction.site})
+          addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'elementInBounds'})
         }
       }
       return passthroughValue(element)
@@ -534,9 +534,16 @@ function evaluateInstructionKinded(
         const operation = instruction.operator === 'divide' ? 'division' : 'remainder'
         const expression = numericExpression(instruction.right, context.expressionContext)
         if (expression == null) {
-          return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'divisorUnknown'}}}
+          // The divisor is not expressible over the caller's arguments (a join, a module
+          // read, an element read, a call result, or an exhausted expression walk), so no
+          // requirement can be minted. Record the nonzero assumption instead of stopping —
+          // the same channel asserted element reads use — and compute below as if it
+          // holds: a zero divisor at runtime violates the printed assumes line, making
+          // the downstream claims vacuous, exactly like every other assumes line.
+          addBoundsAssumption(context.boundsAssumptions, {site: instruction.site, kind: 'nonzeroDivisor'})
+        } else {
+          addPrecondition(context.preconditions, peelNonzero(expression, instruction.site, operation))
         }
-        addPrecondition(context.preconditions, peelNonzero(expression, instruction.site, operation))
         // Ensures assume the requires: with the nonzero requirement recorded, the quotient
         // is computed over the divisor's range with zero cut out. An integer divisor gives
         // a genuinely finite result; a non-integer one can still sit arbitrarily close to
@@ -555,7 +562,9 @@ function evaluateInstructionKinded(
 }
 
 export function addBoundsAssumption(assumptions: BoundsAssumption[], candidate: BoundsAssumption): void {
-  if (!assumptions.some(assumption => assumption.site === candidate.site)) assumptions.push(candidate)
+  if (!assumptions.some(assumption => assumption.site === candidate.site && assumption.kind === candidate.kind)) {
+    assumptions.push(candidate)
+  }
 }
 
 function sentinelsAdmit(sentinels: 'null' | 'undefined' | 'both', sentinel: 'null' | 'undefined'): boolean {

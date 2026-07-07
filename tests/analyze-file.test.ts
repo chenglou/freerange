@@ -444,7 +444,14 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 1 through 1'])
   })
 
-  test('records one stop when a loop revisits the same division', () => {
+  test('an unnameable divisor records one nonzero assumption instead of stopping', () => {
+    // The divisor is a loop-carried block parameter, outside the requirement language, so
+    // no caller requirement exists. This used to stop the path with divisorUnknown and
+    // lose everything downstream; it now records the assumption through the same channel
+    // asserted element reads use, and the quotient computes over the divisor's range with
+    // zero cut out — an integer nonzero divisor has magnitude at least 1, so the return
+    // is genuinely finite GIVEN the assumes line. (At runtime step does reach 0 for
+    // count >= 2; the violated assumption makes the claims vacuous, like any assumes.)
     const report = analyzeSource('revisited-division.ts', `
       export function drain(count: number): number {
         let total = 100
@@ -457,13 +464,12 @@ describe('analyzeFile', () => {
       }
     `)
     const file = resolve('revisited-division.ts')
-    expect(report.functions).toEqual([{
-      kind: 'partial',
-      name: 'drain',
-      assumptions: ['count is finite and not NaN'],
-      stopped: [`cannot infer a nonzero requirement for the division at ${file}:6:19`],
-      observed: [],
-    }])
+    const drain = analyzedFunction(report, 'drain')
+    expect(drain.assumptions).toEqual([
+      'count is finite and not NaN',
+      `the divisor at ${file}:6:19 is nonzero`,
+    ])
+    expect(drain.ensures).toEqual(['return is a finite number'])
   })
 
   test('does not analyze caller statements past a stopped call or leak callee state changes', () => {
@@ -1905,10 +1911,12 @@ describe('analyzeFile', () => {
       .toEqual([`(slot + 1) is a valid sizes index (element read at ${file}:7:16)`])
   })
 
-  test('the expression walk budget stops re-expansion blowup with the honest divisorUnknown', () => {
+  test('the expression walk budget falls back to the honest divisor assumption', () => {
     // Each squaring doubles the expression tree (the defining DAG is linear, the tree is
     // exponential); the walk charges instruction expansions against the function's own
     // instruction count, so the requirement can never be more complex than the function.
+    // Exhaustion lands in the same fallback an unnameable divisor gets: one assumes line,
+    // and the function keeps its contract.
     const chain = Array.from({length: 20}, () => '  a = a * a').join('\n')
     const report = analyzeSource('walk-budget.ts', `
       export function monster(total: number, x: number): number {
@@ -1917,9 +1925,8 @@ ${chain}
         return total / a
       }
     `)
-    const monster = report.functions.find(fn => fn.name === 'monster')!
-    if (monster.kind !== 'partial') throw new Error(`expected monster to be partial, got ${monster.kind}`)
-    expect(monster.stopped[0]).toContain('cannot infer a nonzero requirement')
+    const monster = analyzedFunction(report, 'monster')
+    expect(monster.assumptions).toContain(`the divisor at walk-budget.ts:24:16 is nonzero`)
   })
 
   test('Number.isFinite narrows: the passing branch is finite, the failing branch prunes when provably finite', () => {

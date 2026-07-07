@@ -20,6 +20,12 @@ export type NumericExpression =
 // expression language (an assumption line needs only its site).
 export type BoundsAssumption = {
   site: SiteID
+  // What is taken on faith at the site: an asserted element read is in bounds, or a
+  // divisor the requirement language cannot express over the caller's arguments (a join,
+  // a module read, an element read, a call result — or an exhausted expression walk) is
+  // nonzero. The divisor case is the fallback for what used to be the divisorUnknown
+  // stop: one honest assumes line instead of losing everything downstream of the division.
+  kind: 'elementInBounds' | 'nonzeroDivisor'
 }
 
 export type InferredPrecondition =

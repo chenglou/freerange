@@ -32,7 +32,9 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
     ? analysis.initializer.boundsAssumptions
     : analysis.initializer.kind === 'partial' ? analysis.initializer.observedBoundsAssumptions : []
   const initializerBoundsLines = initializerBounds.map(assumption =>
-    `the element read at ${formatSite(program, assumption.site)} is in bounds`)
+    assumption.kind === 'elementInBounds'
+      ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
+      : `the divisor at ${formatSite(program, assumption.site)} is nonzero`)
   const readsModules = moduleReadingFunctions(program)
   // Top-level code runs before any function, so its entry comes first — but only when it
   // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
@@ -174,8 +176,11 @@ function assumptionLines(
   }
   for (const assumption of boundsAssumptions) {
     // The engine could not prove the asserted element read in bounds; the entry's
-    // guarantees rest on it. E.g. `the element read at demo.ts:4:10 is in bounds`.
-    assumptions.push(`the element read at ${formatSite(program, assumption.site)} is in bounds`)
+    // guarantees rest on it. E.g. `the element read at demo.ts:4:10 is in bounds`, or,
+    // for a divisor no requirement could name, `the divisor at demo.ts:4:10 is nonzero`.
+    assumptions.push(assumption.kind === 'elementInBounds'
+      ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
+      : `the divisor at ${formatSite(program, assumption.site)} is nonzero`)
   }
   return assumptions
 }
@@ -373,9 +378,6 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     }
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
-    }
-    case 'divisorUnknown': {
-      return `cannot infer a nonzero requirement for the division at ${formatSite(program, stop.site)}`
     }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
