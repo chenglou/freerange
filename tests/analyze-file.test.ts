@@ -946,6 +946,28 @@ describe('analyzeFile', () => {
       .toEqual(['return is a finite integer number from 2 through 3'])
   })
 
+  test('a declaration-file-typed property fingerprints as an opaque leaf', () => {
+    // The gallery's BoxData — springs plus a DOM node field — classified null inside
+    // `Box | undefined`, because the shape fingerprint walked INTO HTMLDivElement's
+    // hundreds of properties and burned the depth cap, where declaredKind's rule already
+    // carries foreign types as claim-free leaves. The fingerprint now applies the same
+    // rule, so the asserted element read analyzes and the record's own numeric claims
+    // survive around the carried node.
+    const report = analyzeSource('dom-leaf-shape.ts', `
+      type Spring = {pos: number, dest: number}
+      type Box = {id: string, x: Spring, node: HTMLDivElement}
+      export function hitTest(data: Box[], pointerX: number): number | null {
+        for (let i = 0; i < data.length; i++) {
+          const {x} = data[i]!
+          if (x.dest <= pointerX) { return i }
+        }
+        return null
+      }
+    `)
+    expect(analyzedFunction(report, 'hitTest').ensures)
+      .toEqual(['return is null or a finite integer number from 0 through 4294967294'])
+  })
+
   test('rejects reads of inherited prototype members', () => {
     // toString type-checks on every object literal, but the record value carries only its
     // own properties; the callable type fails the value-kind gate.

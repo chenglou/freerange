@@ -1115,6 +1115,12 @@ function shapeFingerprintUncached(type: ts.Type, checker: ts.TypeChecker, seen: 
   }
   if ((type.flags & ts.TypeFlags.Object) !== 0) {
     if (seen.length >= 8 || seen.includes(type)) return null
+    // A type the project did not write — HTMLDivElement, a library interface — is a
+    // claim-free leaf, the same rule declaredKind applies: its value is carried opaque,
+    // so 'opaque' is its honest shape (walking a DOM interface's hundreds of properties
+    // just burned the depth cap and vetoed the record around it — the gallery's BoxData,
+    // springs plus a node field, classified null because of this gap).
+    if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return 'opaque'
     if (checker.getIndexInfosOfType(type).length > 0) return 'other'
     if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return 'other'
     const properties: string[] = []
