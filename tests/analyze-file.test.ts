@@ -1,12 +1,17 @@
 import {describe, expect, test} from 'bun:test'
 import {readFileSync} from 'node:fs'
-import {resolve} from 'node:path'
+// Report paths are relative to the analysis base (the working directory here), so the
+// expected path for a test source named `x.ts` is just `x.ts`.
+const resolve = (file: string): string => file
 import {analyzeFile, analyzeSource, formatReport, type AnalysisReport} from '../src/index.ts'
 
 const fixture = new URL('./fixtures/grid-metrics.ts', import.meta.url).pathname
 const showcaseFixture = new URL('./fixtures/showcase.ts', import.meta.url).pathname
+// Report lines print the fixture relative to the working directory (the repo root).
+const showcaseReportPath = 'tests/fixtures/showcase.ts'
 const mutationFixture = new URL('./fixtures/object-mutation.ts', import.meta.url).pathname
 const preconditionsFixture = new URL('./fixtures/preconditions.ts', import.meta.url).pathname
+const preconditionsReportPath = 'tests/fixtures/preconditions.ts'
 
 function analyzedFunction(report: AnalysisReport, name: string) {
   const fn = report.functions.find(candidate => candidate.name === name)
@@ -48,7 +53,7 @@ describe('analyzeFile', () => {
     expect(analyzedFunction(report, 'headOr').assumptions)
       .toEqual(['every values element is finite and not NaN', 'fallback is finite and not NaN'])
     expect(analyzedFunction(report, 'widthPerColumn').requires)
-      .toEqual([`grid.columnCount is nonzero (division at ${showcaseFixture}:78:10)`])
+      .toEqual([`grid.columnCount is nonzero (division at ${showcaseReportPath}:78:10)`])
   })
 
   test('reports inferred properties of a returned object', () => {
@@ -587,7 +592,7 @@ describe('analyzeFile', () => {
     const report = analyzeFile(preconditionsFixture)
     // The division lives inside divideWidth at 6:10. Callers that inherit the requirement
     // keep that site, so their reports point at the actual division, not at their call.
-    const divisionLocation = `(division at ${preconditionsFixture}:6:10)`
+    const divisionLocation = `(division at ${preconditionsReportPath}:6:10)`
     expect(analyzedFunction(report, 'divideWidth').requires)
       .toEqual([`columnCount is nonzero ${divisionLocation}`])
     expect(analyzedFunction(report, 'divideThroughCaller').requires)
@@ -3398,6 +3403,7 @@ ${chain}
 
   test('reads imported const numeric literals exactly; other imports still stop', () => {
     const importsFixture = new URL('./fixtures/module-imports.ts', import.meta.url).pathname
+const importsReportPath = 'tests/fixtures/module-imports.ts'
     const report = analyzeFile(importsFixture)
     expect(report.functions).toEqual([{
       // importedPad resolves to `export const importedPad = 7` in the helper file, so the
@@ -3412,7 +3418,7 @@ ${chain}
       kind: 'partial',
       name: 'shiftedBy',
       assumptions: ['width is finite and not NaN'],
-      stopped: [`reads importedOffset, which is imported from another module (read at ${importsFixture}:10:18)`],
+      stopped: [`reads importedOffset, which is imported from another module (read at ${importsReportPath}:10:18)`],
       observed: [],
     }])
   })

@@ -1,3 +1,4 @@
+import {relative} from 'node:path'
 import type * as ts from 'typescript'
 import {finiteInputNumber, unknownNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
@@ -113,8 +114,8 @@ export type UnsupportedReason =
   | {kind: 'valueType'; typeText: string}
   // A non-null assertion that changes the value kind, e.g. `x!` with `x: number | null`.
   // Past the assertion, the static type stops describing the value the analysis models.
-  // (`as` and angle-bracket assertions carry their operand instead — the runtime value is
-  // unchanged — so only `!` reaches this reason.)
+  // (`as` and angle-bracket assertions erase to a claim-free opaque instead, so only `!`
+  // reaches this reason.)
   | {kind: 'kindChangingAssertion'; fromText: string; toText: string}
   | {kind: 'propertyReadOnNonObject'; typeText: string}
   | {kind: 'statementAfterReturn'}
@@ -346,6 +347,8 @@ export type ModuleBindingIR = {
 
 export type ProgramIR = {
   file: string
+  // What report paths are made relative to; see reportPath.
+  baseDirectory: string
   // Offset of each line's first character, copied from ts.SourceFile.getLineStarts(), so
   // locations can be formatted after the TypeScript objects are gone (analyzeSource inputs
   // never exist on disk, so re-reading the file is not an option).
@@ -384,7 +387,14 @@ export function nodeSpan(sourceFile: ts.SourceFile, node: ts.Node): SourceSpan {
 // A site rendered as file:line:column, the form every report line uses.
 export function formatSite(program: ProgramIR, site: SiteID): string {
   const {line, column} = siteLocation(program, site)
-  return `${program.file}:${line}:${column}`
+  return `${reportPath(program)}:${line}:${column}`
+}
+
+// Report lines name files relative to the analysis base (the repo root in project runs,
+// the working directory for single files): shorter lines, and the report survives being
+// checked in or diffed across machines, which absolute paths never do.
+export function reportPath(program: ProgramIR): string {
+  return relative(program.baseDirectory, program.file)
 }
 
 // 1-based line and column of a site's start offset.

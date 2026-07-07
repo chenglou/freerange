@@ -2,7 +2,7 @@ import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/n
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
-import {declaredKindOf, formatSite, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -105,7 +105,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
     }
   }
-  return {file: program.file, functions}
+  return {file: reportPath(program), functions}
 }
 
 // The legend targets a reader — usually another model — that has never seen a freerange

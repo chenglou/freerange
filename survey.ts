@@ -75,7 +75,7 @@ for (const sourceFile of sourceFiles) {
     continue
   }
   try {
-    const lowered = lowerSource({sourceFile, checker})
+    const lowered = lowerSource({sourceFile, checker}, resolve(repoRoot))
     const analysis = analyzeProgram(lowered)
     const report = createReport(lowered, analysis)
     const functionReports = report.functions.filter(entry => entry.name !== 'module initialization')

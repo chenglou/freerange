@@ -7,7 +7,7 @@ import {valueKind} from './expression.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
 
-export function lowerSource(checked: CheckedSource): ProgramIR {
+export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
   const {sourceFile, checker} = checked
   const declarations: ts.FunctionDeclaration[] = []
   for (const statement of sourceFile.statements) {
@@ -19,6 +19,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
   // analyzed.
   const rejectFile = (span: SourceSpan, reason: UnsupportedReason): ProgramIR => ({
     file: sourceFile.fileName,
+    baseDirectory,
     lineStarts: [...sourceFile.getLineStarts()],
     sites: [span],
     functions: declarations.map(declaration => ({
@@ -72,6 +73,7 @@ export function lowerSource(checked: CheckedSource): ProgramIR {
   const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
   return {
     file: sourceFile.fileName,
+    baseDirectory,
     lineStarts: [...sourceFile.getLineStarts()],
     sites,
     functions,
@@ -135,11 +137,15 @@ function lowerFunction(
     // pattern stay out, like the body form.
     if (ts.isObjectBindingPattern(parameter.name)) {
       const type = lowerParameterType(parameter, checker)
+      // The pattern text becomes the parameter's report name; a pattern the author wrapped
+      // across source lines would otherwise break the one-fact-per-line report format
+      // (`assumes: {` and orphan fragments — a corpus census caught eight of these).
+      const patternName = parameter.name.getText(sourceFile).replace(/\s+/g, ' ')
       if (parameter.initializer != null) {
-        throw unsupported(parameter, {kind: 'parameterDefaultValue', name: parameter.name.getText(sourceFile)})
+        throw unsupported(parameter, {kind: 'parameterDefaultValue', name: patternName})
       }
       const value = context.nextValue++
-      context.parameters.push({value, name: parameter.name.getText(sourceFile), type})
+      context.parameters.push({value, name: patternName, type})
       for (const element of parameter.name.elements) {
         if (!ts.isIdentifier(element.name) || element.dotDotDotToken != null || element.initializer != null) {
           throw unsupported(element, {kind: 'destructuredParameter'})

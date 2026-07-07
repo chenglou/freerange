@@ -3,8 +3,8 @@ import {lowerSource} from './lower/program.ts'
 import {createReport, type AnalysisReport} from './report/index.ts'
 import {checkFile, checkSource} from './typescript/check.ts'
 
-export function analyzeFile(file: string): AnalysisReport {
-  const program = lowerSource(checkFile(file))
+export function analyzeFile(file: string, baseDirectory?: string): AnalysisReport {
+  const program = lowerSource(checkFile(file), baseDirectory)
   return createReport(program, analyzeProgram(program))
 }
 
