@@ -111,27 +111,32 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
 }
 
 // The legend targets a reader — usually another model — that has never seen a freerange
-// report: each line kind in one sentence, so the report is self-describing.
-const legend = [
+// report: each line kind in one sentence, so the report is self-describing. Exported so
+// project runs (the survey) can write it ONCE per run instead of per file — it was 28% of
+// the report corpus, and every reader learned to skip it.
+export const reportLegend = [
   '# freerange: static analysis of the numeric behavior of each top-level function.',
-  '# assumes:  input facts taken on faith; the lines below hold only when these do.',
   '# requires: conditions the caller must make true; given them, the ensures lines hold.',
   '# ensures:  guarantees about the returned value whenever the function returns.',
+  '# assumes:  input facts taken on faith; no other line holds unless these do.',
   '# unsupported: the function uses code outside the analyzed subset; the message names the construct and, when one exists, the rewrite that brings it inside.',
   '# stopped:  analysis halted partway on some path; the entry describes only what ran before the stop.',
   '# skipped:  a top-level statement the module analysis stepped over; anything it could write is distrusted.',
   '# on analyzed paths: evidence from the paths that completed - not a guarantee for the whole function.',
-]
+].join('\n')
 
-export function formatReport(report: AnalysisReport): string {
-  const lines: string[] = [...legend, report.file]
+// Within an entry, line kinds print rarest-and-most-actionable first: requires (what the
+// caller must arrange), ensures (what it gets), assumes (what is being trusted — the
+// bulkiest kind, and the one every reader scans past to reach the other two).
+export function formatReport(report: AnalysisReport, options?: {legend?: boolean}): string {
+  const lines: string[] = options?.legend === false ? [report.file] : [reportLegend, report.file]
   for (const fn of report.functions) {
     lines.push('', fn.name)
     switch (fn.kind) {
       case 'analyzed': {
-        for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
         for (const precondition of fn.requires) lines.push(`  requires: ${precondition}`)
         for (const guarantee of fn.ensures) lines.push(`  ensures: ${guarantee}`)
+        for (const assumption of fn.assumptions) lines.push(`  assumes: ${assumption}`)
         break
       }
       case 'unsupported': {

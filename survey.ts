@@ -10,7 +10,7 @@ import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeProgram} from './src/engine/analyze.ts'
 import {lowerSource} from './src/lower/program.ts'
-import {createReport, formatReport} from './src/report/index.ts'
+import {createReport, formatReport, reportLegend} from './src/report/index.ts'
 
 const [repoRoot, outputDirectory] = process.argv.slice(2)
 if (repoRoot == null || outputDirectory == null) {
@@ -54,6 +54,10 @@ const stopCounts = new Map<string, number>()
 const bump = (map: Map<string, number>, key: string): void => {
   map.set(key, (map.get(key) ?? 0) + 1)
 }
+
+// Every requires line in the run, with its home — the rarest and most actionable content,
+// surfaced in SUMMARY.txt instead of buried under the assumes bulk.
+const requiresIndex: string[] = []
 
 const sourceFiles = program.getSourceFiles().filter(sourceFile =>
   !sourceFile.fileName.includes('node_modules')
@@ -104,7 +108,12 @@ for (const sourceFile of sourceFiles) {
       unsupported,
       verdict: functionReports.length === 0 ? 'noFunctions' : 'analyzed',
     })
-    writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`, formatReport(report))
+    for (const entry of functionReports) {
+      if (entry.kind === 'analyzed') {
+        for (const precondition of entry.requires) requiresIndex.push(`${shortName} ${entry.name}: ${precondition}`)
+      }
+    }
+    writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`, formatReport(report, {legend: false}))
   } catch (error) {
     rows.push({file: shortName, functions: 0, analyzed: 0, partial: 0, unsupported: 0, verdict: 'typeErrors'})
     writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`, `ANALYZER ERROR: ${String(error)}\n`)
@@ -135,3 +144,20 @@ for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)
   console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
 }
 writeFileSync(`${outputDirectory}/__rows.json`, JSON.stringify(rows, null, 1))
+// The legend once per run (per-file reports omit it), and the summary this run's
+// measuring otherwise gets rebuilt by hand: totals, the full reason and stop tallies,
+// and the requires index. Checked in, its diff is the progress metric.
+writeFileSync(`${outputDirectory}/LEGEND.txt`, `${reportLegend}\n`)
+const summary = [
+  JSON.stringify(totals),
+  '',
+  `requires (${requiresIndex.length}):`,
+  ...requiresIndex.map(line => `  ${line}`),
+  '',
+  'rejection reasons:',
+  ...[...reasonCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
+  '',
+  'stop reasons:',
+  ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
+]
+writeFileSync(`${outputDirectory}/SUMMARY.txt`, summary.join('\n') + '\n')
