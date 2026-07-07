@@ -475,7 +475,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           value,
         })
       }
-      throw unsupported(current, {kind: 'call', callee: current.expression.getText(context.sourceFile)})
+      throw unsupported(current, {kind: 'call', callee: calleeDisplayName(current.expression, context.sourceFile)})
     }
   }
   if (ts.isPropertyAccessExpression(current)) {
@@ -941,6 +941,26 @@ function taggedUnionPropertyUncached(members: readonly ts.Type[], checker: ts.Ty
   return null
 }
 
+
+
+// The callee as a short display name for the call rejection. A method on a simple
+// receiver reads naturally (localStorage.getItem, Math.max — one or two identifiers); a
+// method on a computed receiver — a call result, a regex literal, a chained pipeline —
+// collapses to (…).method. Raw source text carried newlines into the report (breaking
+// the one-fact-per-line format) and made the survey tally fragment into one bucket per
+// call site; the collapsed form keeps lines whole and groups the tally by method.
+function calleeDisplayName(expression: ts.Expression, sourceFile: ts.SourceFile): string {
+  if (ts.isPropertyAccessExpression(expression)) {
+    const receiver = expression.expression
+    const receiverName = ts.isIdentifier(receiver)
+      ? receiver.text
+      : ts.isPropertyAccessExpression(receiver) && ts.isIdentifier(receiver.expression)
+        ? `${receiver.expression.text}.${receiver.name.text}`
+        : '(…)'
+    return `${receiverName}.${expression.name.text}`
+  }
+  return expression.getText(sourceFile).replace(/\s+/g, ' ').slice(0, 60)
+}
 
 // The literal written in an object literal's tag position, or null: a string literal, a
 // no-substitution template, or the true/false keywords, seen through parens, satisfies,
