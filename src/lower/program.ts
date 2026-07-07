@@ -234,7 +234,7 @@ function lowerParameterType(parameter: ts.ParameterDeclaration, checker: ts.Type
   // The same recursive classification module bindings use: numbers, booleans, records
   // (opaque leaves included — an id: string property is carried, not rejected), nullable
   // wrappers, arrays, tuples, and bare opaque (a plain string parameter).
-  const declared = declaredKind(checker.getTypeAtLocation(parameter), parameter, checker, [])
+  const declared = declaredKind(checker.getTypeAtLocation(parameter), checker, [])
   if (declared == null) {
     throw unsupported(parameter, {kind: 'parameterType', typeText: checker.typeToString(checker.getTypeAtLocation(parameter))})
   }

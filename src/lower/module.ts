@@ -367,7 +367,7 @@ function allModuleWritesIn(
 }
 
 function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleBindingCategory {
-  const declared = declaredKind(checker.getTypeAtLocation(name), name, checker, [])
+  const declared = declaredKind(checker.getTypeAtLocation(name), checker, [])
   return declared == null ? {kind: 'opaque'} : {kind: 'value', declaredKind: declared}
 }
 
@@ -380,17 +380,15 @@ function declaredCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 // which a record value can say anything about.
 function declaredRecordProperties(
   type: ts.Type,
-  location: ts.Node,
   checker: ts.TypeChecker,
   seen: ts.Type[],
 ): Array<{name: string; declared: DeclaredKind}> | null {
-  if (seen.length >= 8 || seen.includes(type)) return null
+  if (cutByAncestor(seen, type)) return null
   const properties: Array<{name: string; declared: DeclaredKind}> = []
   for (const property of checker.getPropertiesOfType(type)) {
     const optional = (property.flags & ts.SymbolFlags.Optional) !== 0
     const walked = declaredKind(
-      checker.getTypeOfSymbolAtLocation(property, location),
-      location,
+      checker.getTypeOfSymbol(property),
       checker,
       [...seen, type],
     )
@@ -445,7 +443,6 @@ function wrapOptional(declared: DeclaredKind): DeclaredKind {
 function declaredTaggedVariants(
   member: ts.Type,
   tagProperty: string,
-  location: ts.Node,
   checker: ts.TypeChecker,
   seen: ts.Type[],
 ): DeclaredVariant[] | null {
@@ -453,33 +450,55 @@ function declaredTaggedVariants(
   if (tag == null) return null
   const literals = tagLiteralValues(checker.getTypeOfSymbol(tag))
   if (literals == null) return null
-  const properties = declaredRecordProperties(member, location, checker, seen)
+  const properties = declaredRecordProperties(member, checker, seen)
   if (properties == null) return null
   return literals.map(tagValue => ({tagValue, properties}))
 }
 
 // The classification walk is pure over the type, and the checker interns types, so one
-// walk per type identity suffices — without this, every function taking a ValidRoute-
-// sized union re-walks its 17 variants through the checker's slow property queries. The
-// location parameter does not affect the result for accepted types (instantiated
-// generics are distinct type identities), so the cache keys on the type alone. Cached
-// nulls matter as much as hits: rejection walks repeat too.
-const declaredKindCache = new WeakMap<ts.Type, DeclaredKind | null>()
+// walk per (type, remaining depth) suffices. The type graph is a DAG with heavy sharing,
+// and the walk previously ran once per PATH — exponential in the depth cap; a profile
+// caught 35 million property resolutions over ~216 distinct types in one file, all of
+// lowering's residual cost. Cached nulls matter as much as hits: rejection walks repeat
+// too.
+//
+// Two disciplines make a memoized answer bit-identical to the walk it replaces. Depth is
+// part of the key, because the cap makes deep results budget-dependent. And a result is
+// stored only when its walk never cut against an IN-PROGRESS ancestor (seen.includes) —
+// such a cut is what makes a result depend on which path reached it. A clean result is
+// context-free wherever it is reused: reaching some other path's ancestor from inside
+// this subtree would require a cycle through this type, and that cycle would have cut
+// this very walk at the type itself, making it non-clean. Depth-cap cuts are
+// deterministic per depth and stay storable.
+const declaredKindByDepth = new WeakMap<ts.Type, Array<DeclaredKind | null>>()
+// Bumped at every in-progress-ancestor cut; a walk whose subtree bumped it is not stored.
+let ancestorCuts = 0
 
-export function declaredKind(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
-  // Recursive walks (seen non-empty) must not poison the cache: a type reached inside a
-  // cycle classifies null there, while the same type from the top may classify fine.
-  if (seen.length === 0) {
-    const cached = declaredKindCache.get(type)
-    if (cached !== undefined) return cached
-    const walked = declaredKindUncached(type, location, checker, seen)
-    declaredKindCache.set(type, walked)
-    return walked
+function cutByAncestor(seen: ts.Type[], type: ts.Type): boolean {
+  if (seen.length >= 8) return true
+  if (seen.includes(type)) {
+    ancestorCuts += 1
+    return true
   }
-  return declaredKindUncached(type, location, checker, seen)
+  return false
 }
 
-function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+export function declaredKind(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
+  const depth = seen.length
+  let byDepth = declaredKindByDepth.get(type)
+  if (byDepth == null) {
+    byDepth = []
+    declaredKindByDepth.set(type, byDepth)
+  }
+  const cached = byDepth[depth]
+  if (cached !== undefined) return cached
+  const cutsBefore = ancestorCuts
+  const walked = declaredKindUncached(type, checker, seen)
+  if (ancestorCuts === cutsBefore) byDepth[depth] = walked
+  return walked
+}
+
+function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): DeclaredKind | null {
   switch (valueKind(type, checker)) {
     case 'number': return {kind: 'number'}
     case 'boolean': return {kind: 'boolean'}
@@ -492,14 +511,14 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       if (rest.length === 0) return null
       let inner: DeclaredKind | null
       if (rest.length === 1) {
-        inner = declaredKind(rest[0]!, location, checker, seen)
+        inner = declaredKind(rest[0]!, checker, seen)
       } else {
         // `'compact' | 'wide' | undefined`, `4 | 8 | undefined`, `boolean | null` (the
         // checker splits boolean into true | false): several non-missing members are
         // fine when they collapse to one scalar kind, the same rule valueKind applies
         // to the bare union. Structural members keep the exactly-one rule — two record
         // shapes under a nullish wrapper are a tagged union, not a nullable record.
-        const members = rest.map(member => declaredKind(member, location, checker, seen))
+        const members = rest.map(member => declaredKind(member, checker, seen))
         const first = members[0]
         inner = first != null
           && (first.kind === 'number' || first.kind === 'boolean' || first.kind === 'opaque')
@@ -514,7 +533,7 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
           const unionVariants: DeclaredVariant[] = []
           let allClassified = true
           for (const member of rest) {
-            const variants = declaredTaggedVariants(member, restTagProperty, location, checker, seen)
+            const variants = declaredTaggedVariants(member, restTagProperty, checker, seen)
             if (variants == null) {
               allClassified = false
               break
@@ -539,14 +558,14 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
     case 'array': {
       const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
       if (element == null) return null
-      const elementKind = declaredKind(element, location, checker, [...seen, type])
+      const elementKind = declaredKind(element, checker, [...seen, type])
       return elementKind == null ? null : {kind: 'array', element: elementKind}
     }
     case 'tuple': {
-      if (seen.length >= 8 || seen.includes(type)) return null
+      if (cutByAncestor(seen, type)) return null
       const elements: DeclaredKind[] = []
       for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
-        const element = declaredKind(elementType, location, checker, [...seen, type])
+        const element = declaredKind(elementType, checker, [...seen, type])
         if (element == null) return null
         elements.push(element)
       }
@@ -566,7 +585,7 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       // recursive generics, whose every level is a fresh instantiation the seen check
       // cannot recognize (and whose instantiation chain would otherwise run away inside
       // the checker itself). No real state tree nests eight records deep.
-      const properties = declaredRecordProperties(type, location, checker, seen)
+      const properties = declaredRecordProperties(type, checker, seen)
       return properties == null ? null : {kind: 'record', properties}
     }
     case 'taggedUnion': {
@@ -575,7 +594,7 @@ function declaredKindUncached(type: ts.Type, location: ts.Node, checker: ts.Type
       if (tagProperty == null) return null
       const variants: DeclaredVariant[] = []
       for (const member of type.types) {
-        const memberVariants = declaredTaggedVariants(member, tagProperty, location, checker, seen)
+        const memberVariants = declaredTaggedVariants(member, tagProperty, checker, seen)
         if (memberVariants == null) return null
         variants.push(...memberVariants)
       }
