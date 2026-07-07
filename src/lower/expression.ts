@@ -774,10 +774,34 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 // number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
 // union that needs discriminant support, or an inconsistency worth naming), or falls
 // outside the accepted kinds entirely (e.g. string).
-export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | 'taggedUnion' | null {
+type ValueKindResult = 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | 'taggedUnion' | null
+
+// Exact memoization keyed on (interned type, remaining depth budget): the walk is pure
+// over both, so the cache cannot change any answer — it only stops the same type being
+// re-walked from every expression node that mentions it. A profiling pass measured one
+// context-bag file issuing 757 million checker queries over ~216 distinct types, ~93% of
+// the whole survey's wall time, precisely because these walks recompute per call site.
+// (declaredKind has had the same cache since the tagged-union milestone; valueKind,
+// shapeFingerprint, and taggedUnionProperty gain theirs here.)
+const valueKindCache = new WeakMap<ts.Type, ValueKindResult[]>()
+
+export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): ValueKindResult {
   // The depth guard bounds recursion into element types (a recursive `type T = T[]` would
   // otherwise loop); past it, nothing classifies.
   if (depth > 8) return null
+  let byDepth = valueKindCache.get(type)
+  if (byDepth == null) {
+    byDepth = []
+    valueKindCache.set(type, byDepth)
+  }
+  const cached = byDepth[depth]
+  if (cached !== undefined) return cached
+  const result = valueKindUncached(type, checker, depth)
+  byDepth[depth] = result
+  return result
+}
+
+function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number): ValueKindResult {
   if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
   if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
   // Strings are carried without claims: a label or id must not reject the numeric
@@ -869,8 +893,26 @@ export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): 'n
 // {type: 'updates'; article}`): a tag check then keeps both, and telling them apart takes
 // an `in` check, exactly as it does in TypeScript's own narrowing. Null when no property
 // qualifies.
+// Keyed on the members ARRAY: a union type's .types array is interned by the checker, so
+// the reference identifies the member set exactly. Freshly built arrays (the nullable
+// walk's rest members) simply miss — correct, just unmemoized.
+const taggedUnionPropertyCache = new WeakMap<readonly ts.Type[], Array<string | null>>()
+
 export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.TypeChecker, depth = 0): string | null {
   if (members.length < 2) return null
+  let byDepth = taggedUnionPropertyCache.get(members)
+  if (byDepth == null) {
+    byDepth = []
+    taggedUnionPropertyCache.set(members, byDepth)
+  }
+  const cached = byDepth[depth]
+  if (cached !== undefined) return cached
+  const result = taggedUnionPropertyUncached(members, checker, depth)
+  byDepth[depth] = result
+  return result
+}
+
+function taggedUnionPropertyUncached(members: readonly ts.Type[], checker: ts.TypeChecker, depth: number): string | null {
   for (const member of members) {
     if (valueKind(member, checker, depth + 1) !== 'object') return null
   }
@@ -992,7 +1034,21 @@ function classifyUnionMembers(
 // deep reads against a single member), so a truncated fingerprint is null and never
 // compares equal — the union is rejected, mirroring how the module shape walk goes opaque
 // at its cap.
+// Same discipline as declaredKindCache: only walks that started fresh (seen empty) are
+// canonical — a type reached inside its own recursion fingerprints null there while the
+// same type from the top may fingerprint fine, so recursive walks neither read nor write.
+const shapeFingerprintCache = new WeakMap<ts.Type, string | null>()
+
 function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
+  if (seen.length > 0) return shapeFingerprintUncached(type, checker, seen)
+  const cached = shapeFingerprintCache.get(type)
+  if (cached !== undefined) return cached
+  const result = shapeFingerprintUncached(type, checker, seen)
+  shapeFingerprintCache.set(type, result)
+  return result
+}
+
+function shapeFingerprintUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
   // An intersection fingerprints by its merged property view — the checker's property
   // queries already answer for the whole intersection — so two route variants written as
   // Base & {...} get DIFFERENT fingerprints and their union classifies as tagged instead
