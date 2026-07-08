@@ -3661,6 +3661,40 @@ export function Gallery() {
     ])
   })
 
+  test('a stale length read cannot discharge the style line element read', () => {
+    // Two review-round shapes. A module record's array popped through an alias inside a
+    // body-called function: the const chain refuses to follow anything touching a
+    // record-holding module binding, so the element read keeps its in-bounds guard. And
+    // an alias const (`const stale = props.sizes`) may not inline — only primitive-valued
+    // consts do — so the style line cannot receive the instance observed at the const's
+    // line. Before these rules, both shapes printed a guard-free finite claim while the
+    // runtime rendered NaN.
+    const moduleStore = slotLines(`
+const store = {sizes: [10, 20, 30]}
+export function dropLast() { const sizesAlias = store.sizes; sizesAlias.pop() }
+export function Widget(props: {position: number}) {
+  const index = Math.floor(Math.min(Math.max(props.position, 0), 9))
+  const count = store.sizes.length
+  dropLast()
+  return <div style={{width: index < count ? store.sizes[index]! - 0 : 0}} />
+}
+`)
+    expect(moduleStore).toHaveLength(1)
+    expect(moduleStore[0]).toContain('guard to add: the element read at slots.tsx:8:46 is in bounds')
+    const aliasConst = slotLines(`
+export function Widget(props: {sizes: number[]; position: number}) {
+  const stale = props.sizes
+  const count = props.sizes.length
+  const index = Math.floor(Math.min(Math.max(props.position, 0), 9))
+  const local = props.sizes
+  local.pop()
+  return <div style={{width: index < count ? stale[index]! - 0 : 0}} />
+}
+`)
+    expect(aliasConst).toHaveLength(1)
+    expect(aliasConst[0]).toContain('guard to add: the element read at slots.tsx:8:46 is in bounds')
+  })
+
   test('a followed const that trips the lowering retries without following, staying analyzed', () => {
     // The width const's ternary condition is a bare number — outside the subset, found
     // only when the lowering runs. The slot must fall back to plain parameter treatment,

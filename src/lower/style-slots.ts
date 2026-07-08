@@ -16,7 +16,7 @@
 // ProgramIR.styleSlots, which the report uses to keep them out of the ordinary entries.
 
 import * as ts from 'typescript'
-import {nodeSpan, type FunctionIR, type FunctionLowering, type SourceSpan} from '../ir/program.ts'
+import {declaredKindOf, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type SourceSpan} from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {addSite, LoweringStop, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
@@ -104,30 +104,30 @@ export function lowerStyleSlots(
     // A spread (or any other member form) can override the slots written after it at
     // runtime, so the whole object is skipped rather than checking slots that may not be
     // the effective values.
-    const members: Array<ts.PropertyAssignment | ts.ShorthandPropertyAssignment> = []
+    // Validation happens for every member BEFORE any slot is produced: a dynamic key or a
+    // spread anywhere in the object can override any sibling at runtime, so a whole-object
+    // skip must not leave slots already emitted for earlier members (a review round caught
+    // the skip firing only from the offending member onward).
+    const members: Array<{name: string; value: ts.Expression}> = []
     for (const member of styleValue.properties) {
       if (!ts.isPropertyAssignment(member) && !ts.isShorthandPropertyAssignment(member)) {
         recordSkip(null, member, {kind: 'expressionForm', syntax: ts.SyntaxKind[member.kind]})
         return
       }
-      members.push(member)
-    }
-    for (const member of members) {
       if (ts.isShorthandPropertyAssignment(member)) {
-        visitSlotValue(member.name.text, member.name)
+        members.push({name: member.name.text, value: member.name})
         continue
       }
       // A computed key whose text is statically known — the CSS-custom-property idiom
-      // `['--loupe-image-left' as string]: offset` — is an ordinary named property. A key
-      // whose text is NOT known could name any sibling at runtime and override a slot
-      // already checked, so the whole object is skipped, same as a spread.
+      // `['--loupe-image-left' as string]: offset` — is an ordinary named property.
       const keyText = literalKeyText(member.name)
       if (keyText == null) {
         recordSkip(null, member.name, {kind: 'computedPropertyName'})
         return
       }
-      visitSlotValue(keyText, member.initializer)
+      members.push({name: keyText, value: member.initializer})
     }
+    for (const member of members) visitSlotValue(member.name, member.value)
   }
   const visit = (node: ts.Node): void => {
     if (ts.isJsxAttribute(node) && ts.isIdentifier(node.name) && node.name.text === 'style') {
@@ -276,13 +276,22 @@ function collectSlotDependencies(
     while (pending.length > 0) {
       const {symbol, node} = pending.pop()!
       if (parameters.has(symbol) || inlined.has(symbol)) continue
-      if (scan.bindingsBySymbol.has(symbol) || functionsBySymbol.has(symbol)) {
-        // A module-level `let` some function writes may change between the const lines
-        // and the style line like any other mutable state, and a const relocating its
-        // read into the synthetic function would sidestep the module channel's version
-        // stamps (no call happens inside the synthetic function to advance them). Module
-        // consts and function references stay free.
-        if (scan.bindingsBySymbol.has(symbol) && reassigned.has(symbol)) sawReassignedLeaf = true
+      const moduleBinding = scan.bindingsBySymbol.get(symbol)
+      if (moduleBinding != null || functionsBySymbol.has(symbol)) {
+        // Module bindings are shared state the severing cannot copy: a read relocated
+        // into the synthetic function sidesteps the module channel's version stamps (no
+        // call inside the synthetic function ever advances them), so a fact learned from
+        // a const-line read could discharge an obligation on the style line's own read.
+        // Two cases poison the following outright: a binding some code writes (a module
+        // `let` assigned anywhere), and a binding holding a record or array — the binding
+        // itself never changes, but its CONTENTS can, through aliases no write scan
+        // closes (a review round popped a module record's array inside a body-called
+        // function and a stale length guard discharged the style line's asserted read).
+        // Primitive never-written module constants stay free: genuinely immutable, so a
+        // fact about them is true at both observation moments.
+        if (moduleBinding != null && (reassigned.has(symbol) || !primitiveDeclaredKind(declaredKindOf(scan.bindings[moduleBinding]!.category)))) {
+          sawReassignedLeaf = true
+        }
         continue
       }
       const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
@@ -298,7 +307,13 @@ function collectSlotDependencies(
         parameters.set(symbol, node)
         continue
       }
-      const initializer = allowInlining && inlined.size < inlinedConstCap ? inlinableConstInitializer(declaration) : null
+      // Only a primitive-valued const may inline. A const holding an object or array —
+      // even via a bare alias like `const stale = props.sizes` — would hand the style
+      // line the instance observed at the const's line, defeating the fresh-instance
+      // severing: facts tied to that instance (a valid-index relation, a narrowing)
+      // would connect the two observation moments again.
+      const primitiveConst = primitiveType(checker.getTypeAtLocation(declaration))
+      const initializer = allowInlining && primitiveConst && inlined.size < inlinedConstCap ? inlinableConstInitializer(declaration) : null
       if (initializer != null) {
         inlined.set(symbol, {initializer, position: declaration.pos})
         pending.push(...valueUseIdentifiers(initializer, sourceFile, checker))
@@ -314,6 +329,16 @@ function collectSlotDependencies(
   const first = collect(followConsts)
   if (first.sawReassignedLeaf && first.prelude.length > 0) return collect(false)
   return first
+}
+
+// A number, boolean, or string: a value, not a container — it cannot be mutated through
+// an alias, so carrying it across the two observation moments is sound.
+function primitiveType(type: ts.Type): boolean {
+  return (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike)) !== 0
+}
+
+function primitiveDeclaredKind(declared: DeclaredKind | null): boolean {
+  return declared != null && (declared.kind === 'number' || declared.kind === 'boolean' || declared.kind === 'opaque')
 }
 
 // A const the walk may inline: identifier-named (destructuring keeps parameter treatment),
