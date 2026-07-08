@@ -23,7 +23,7 @@ export type AnalysisReport = {
   styleSlots: StyleSlotLine[]
 }
 
-export type StyleSlotVerdict = 'may be NaN' | 'may reach Infinity' | 'may be zero or negative' | 'needs a guard' | 'ok' | 'skipped'
+export type StyleSlotVerdict = 'may be NaN' | 'may reach Infinity' | 'may overflow to Infinity' | 'may be zero or negative' | 'needs a guard' | 'ok' | 'skipped'
 export type StyleSlotLine = {
   verdict: StyleSlotVerdict
   line: string
@@ -138,10 +138,11 @@ const positiveStyleProperties = new Set(['aspectRatio'])
 const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
   'may be NaN': 0,
   'may reach Infinity': 1,
-  'may be zero or negative': 2,
-  'needs a guard': 3,
-  'ok': 4,
-  'skipped': 5,
+  'may overflow to Infinity': 2,
+  'may be zero or negative': 3,
+  'needs a guard': 4,
+  'ok': 5,
+  'skipped': 6,
 }
 
 function styleSlotLines(program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine[] {
@@ -176,7 +177,14 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
       const summary = numberSummary('the value', value, program) + (guard == null ? '' : `; guard to add: ${guard}`)
       if (value.mayBeNaN) return slotLine('may be NaN', `${name}: ${summary}`, guard)
       if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {
-        return slotLine('may reach Infinity', `${name}: ${summary}`, guard)
+        // Two different findings share an Infinity bound. With a division around, a zero
+        // divisor produces Infinity from everyday values (width / 0) — as reachable as the
+        // NaN class. Without one, Infinity needs a value near the top of what a JS number
+        // can hold (~1.8e308), which layout math only sees after something else already
+        // went wrong — real, but a missing-floor observation rather than a bug.
+        const divisionInvolved = fn.preconditions.some(precondition => precondition.kind !== 'inBounds')
+          || fn.boundsAssumptions.some(assumption => assumption.kind === 'nonzeroDivisor')
+        return slotLine(divisionInvolved ? 'may reach Infinity' : 'may overflow to Infinity', `${name}: ${summary}`, guard)
       }
       if ((nonnegativeStyleProperties.has(slot.property) && value.lower < 0)
         || (positiveStyleProperties.has(slot.property) && value.lower <= 0)) {

@@ -117,17 +117,19 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
         styleSlotLines.push({file: shortName, verdict: slot.verdict, line: slot.line})
         bump(styleSlotCounts, slot.verdict)
         // Lint: a bad number reaching a rendered style value fails silently — the browser
-        // drops the declaration without an error. NaN is the sharp class (0/0 and friends);
-        // Infinity is overflow-only and kept as its own rule so its noise is judgeable.
-        if (slot.verdict === 'may be NaN' || slot.verdict === 'may reach Infinity') {
+        // drops the declaration without an error. NaN and division-reachable Infinity are
+        // warnings (a zero among everyday values produces them); overflow-only Infinity
+        // needs a value near the top of what a JS number holds, so it demotes to a note —
+        // a missing-floor observation, not a bug.
+        if (slot.verdict === 'may be NaN' || slot.verdict === 'may reach Infinity' || slot.verdict === 'may overflow to Infinity') {
           const what = slot.verdict === 'may be NaN' ? 'NaN' : 'Infinity'
           lintEntries.push({
             file: shortName,
             line: slot.location.line,
             column: slot.location.column,
-            level: 'warning',
+            level: slot.verdict === 'may overflow to Infinity' ? 'note' : 'warning',
             message: `${what} can reach this ${slot.property} style value — invalid CSS, silently dropped${slot.guard == null ? '' : `. Guard: ${slot.guard}`}`,
-            rule: slot.verdict === 'may be NaN' ? 'style-nan' : 'style-infinity',
+            rule: slot.verdict === 'may be NaN' ? 'style-nan' : slot.verdict === 'may reach Infinity' ? 'style-infinity' : 'style-overflow',
           })
         }
       }
@@ -205,7 +207,7 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)) {
     console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
   }
-  const styleSlotOrder = ['may be NaN', 'may reach Infinity', 'may be zero or negative', 'needs a guard', 'ok', 'skipped']
+  const styleSlotOrder = ['may be NaN', 'may reach Infinity', 'may overflow to Infinity', 'may be zero or negative', 'needs a guard', 'ok', 'skipped']
   if (styleSlotLines.length > 0) {
     console.log('--- style slots ---')
     for (const verdict of styleSlotOrder) {
