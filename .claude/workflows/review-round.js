@@ -57,14 +57,17 @@ const PREAMBLE = [
   'failure to the commit under review.',
 ].join('\n')
 
-if (args == null || args.commit == null || args.lenses == null) {
+// The harness can deliver args as a JSON string (observed when the skill invocation
+// round-trips through a resume); accept both forms.
+const roundArgs = typeof args === 'string' ? JSON.parse(args) : args
+if (roundArgs == null || roundArgs.commit == null || roundArgs.lenses == null) {
   throw new Error('review-round needs args {commit, context, lenses: [{key, prompt}]}')
 }
 
-const header = `${PREAMBLE}\n\nUnder review: commit ${args.commit} (git show ${args.commit}).\n${args.context ?? ''}\n`
+const header = `${PREAMBLE}\n\nUnder review: commit ${roundArgs.commit} (git show ${roundArgs.commit}).\n${roundArgs.context ?? ''}\n`
 
 phase('Attack')
-const attacks = await parallel(args.lenses.map(lens => () =>
+const attacks = await parallel(roundArgs.lenses.map(lens => () =>
   agent(`${header}\nLens: ${lens.prompt}\nCap 4 findings; return probesRun. An empty list with a real probesRun count is a fine answer.`,
     {label: `find:${lens.key}`, phase: 'Attack', schema: FINDINGS_SCHEMA, effort: 'high'})))
 
@@ -73,11 +76,11 @@ const raw = []
 for (let index = 0; index < attacks.length; index++) {
   const found = attacks[index]
   if (found == null) continue
-  for (const finding of found.findings) raw.push({...finding, lens: args.lenses[index].key})
+  for (const finding of found.findings) raw.push({...finding, lens: roundArgs.lenses[index].key})
 }
 log(`${raw.length} raw findings, ${dead} dead lens agents, probes: ${attacks.filter(Boolean).map(found => found.probesRun).join('+')}`)
 
-if (args.verify === false || raw.length === 0) {
+if (roundArgs.verify === false || raw.length === 0) {
   return {verdict: dead > 0 ? 'INCOMPLETE-DEAD-LENSES' : 'completed', deadLenses: dead, confirmed: raw, refuted: []}
 }
 
