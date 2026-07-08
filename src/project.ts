@@ -160,9 +160,13 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
       if (count != null) console.log(`${String(count).padStart(5)}  ${verdict}`)
     }
     const slotReport = [
-      'Numeric JSX style values, each analyzed as if extracted into its own function.',
-      'A flagged slot is the requires line that extraction would surface; the fix is the',
-      'extract-to-.ts rewrite with the named guard. Grouped worst-first.',
+      'Numeric JSX style values, each analyzed as if extracted into its own function:',
+      'variables from the surrounding component are inputs assumed to match their declared',
+      'types, and the component body is deliberately not read. So a flag means the',
+      'expression does not defend itself — a check earlier in the component may already',
+      'prevent the bad case; look before fixing. The fix is the extract-to-.ts rewrite',
+      'with the named guard, which also moves the math to where the analysis can verify',
+      'the guard for good. Grouped worst-first.',
     ]
     for (const verdict of styleSlotOrder) {
       const group = styleSlotLines.filter(slot => slot.verdict === verdict)
