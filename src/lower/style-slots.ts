@@ -69,18 +69,31 @@ export function lowerStyleSlots(
       }
     }
   }
-  // A slot is checked when its value's type is a plain number — that is the trigger, not a
-  // property-name list, because a NaN stringifies to invalid CSS on every property. String
-  // values are left alone except for their template interpolations: in
-  // `width: `${percentage}%`` the interpolated number carries the same silent failure.
+  // A slot is checked when its value's type is a plain number or a number-when-present
+  // union (`number | undefined`, the standard React conditional-style idiom — undefined
+  // means the declaration is simply not applied, and the number arm carries the usual
+  // hazards). The value's type is the trigger, not a property-name list, because a NaN
+  // stringifies to invalid CSS on every property. String values are left alone except for
+  // their template interpolations: in `width: `${percentage}%`` the interpolated number
+  // carries the same silent failure.
+  const numericWhenPresent = (type: ts.Type): boolean => {
+    const kind = valueKind(type, checker)
+    if (kind === 'number') return true
+    if (kind !== 'nullable' || !type.isUnion()) return false
+    const present = type.types.filter(member => (member.flags & (ts.TypeFlags.Null | ts.TypeFlags.Undefined)) === 0)
+    return present.length > 0 && present.every(member => valueKind(member, checker) === 'number')
+  }
   const visitSlotValue = (property: string, value: ts.Expression): void => {
     if (ts.isTemplateExpression(value)) {
       for (const span of value.templateSpans) {
+        // Templates stay plain-number only: an undefined interpolation renders the TEXT
+        // "undefined" into the CSS — not the clean absent-declaration a direct undefined
+        // value gets — so the when-present blessing would be wrong here.
         if (valueKind(checker.getTypeAtLocation(span.expression), checker) === 'number') lowerSlot(property, span.expression)
       }
       return
     }
-    if (valueKind(checker.getTypeAtLocation(value), checker) === 'number') lowerSlot(property, value)
+    if (numericWhenPresent(checker.getTypeAtLocation(value))) lowerSlot(property, value)
   }
   const visitStyleAttribute = (attribute: ts.JsxAttribute): void => {
     const initializer = attribute.initializer

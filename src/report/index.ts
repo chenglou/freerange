@@ -244,7 +244,12 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
     case 'partial':
       return slotLine('skipped', `${name}: ${formatStop(fn.stops[0], program, analysis)}`)
     case 'analyzed': {
-      const value = fn.returnValue
+      // A `number | undefined` style value is the React conditional-style idiom: a missing
+      // value means the declaration is simply not applied, so the checks run on the
+      // number-when-present part and the line says so.
+      const returned = fn.returnValue
+      const whenPresent = returned.kind === 'maybeNullish' && returned.inner.kind === 'number'
+      const value = whenPresent ? returned.inner as AbstractNumber : returned
       if (value.kind !== 'number') return slotLine('skipped', `${name}: the value is not a plain number`)
       const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
       // The requirement inference already names the guard a bad value needs (e.g. `total
@@ -270,7 +275,7 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
         ...initializerBoundsLines,
       ])]
       const assumesSuffix = assumes.length === 0 ? '' : `; assumes: ${assumes.join(', ')}`
-      const core = numberSummary('the value', value, program)
+      const core = (whenPresent ? 'when present, ' : '') + numberSummary('the value', value, program)
       const summary = core + (guard == null ? '' : `; guard to add: ${guard}`) + assumesSuffix
       if (value.mayBeNaN) return slotLine('may be NaN', `${name}: ${summary}`, guard)
       if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {

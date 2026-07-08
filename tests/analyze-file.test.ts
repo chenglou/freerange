@@ -3661,6 +3661,19 @@ export function Gallery() {
     ])
   })
 
+  test('a number-or-undefined style value is checked on its number-when-present part', () => {
+    // The React conditional-style idiom: undefined means the declaration is simply not
+    // applied (no silent failure), and the number arm carries the usual hazards. A review
+    // round found these slots were invisible — neither checked nor counted.
+    expect(slotLines(`
+export function Panel(props: {open: boolean; panelWidth: number; total: number}) {
+  return <div style={{width: props.open ? props.panelWidth / props.total : undefined}} />
+}
+`)).toEqual([
+      'may reach Infinity: style.width at 3:30: when present, the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:43); guard to add: props.total is nonzero (division at slots.tsx:3:43); assumes: props.open is a boolean, props.panelWidth is finite and not NaN, props.total is finite and not NaN',
+    ])
+  })
+
   test('a stale length read cannot discharge the style line element read', () => {
     // Two review-round shapes. A module record's array popped through an alias inside a
     // body-called function: the const chain refuses to follow anything touching a
