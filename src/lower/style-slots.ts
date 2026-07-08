@@ -361,12 +361,17 @@ function valueUseIdentifiers(
   return found
 }
 
-// Every variable some expression writes: `x = 5`, `x += 1`, `x++`. Property writes count
-// against the variable at the base of the path — `sizeRef.current.w = 5` marks sizeRef —
-// because a const computed from sizeRef before that line and a style value reading
-// sizeRef after it would otherwise be treated as seeing the same numbers. Built once per
-// file. A const chain that leans on one of these is not inlined — see
-// collectSlotDependencies.
+// Every variable some code may write between a const's line and the style line. Direct
+// writes: `x = 5`, `x += 1`, `x++`. Property writes count against the variable at the
+// base of the path — `sizeRef.current.w = 5` marks sizeRef — because a const computed
+// from sizeRef before that line and a style value reading sizeRef after it would
+// otherwise be treated as seeing the same numbers. Mutation without assignment syntax
+// counts too: a method call may mutate its receiver (`items.push(job)` marks items;
+// Math is exempt), and a call may mutate an object handed to it
+// (`Object.assign(sizeRef.current, patch)` — any argument whose type is not a plain
+// number, boolean, or string marks its base variable). Built once per file; closures are
+// covered because the walk descends into every function body. A const chain that leans
+// on a marked variable is not inlined — see collectSlotDependencies.
 function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): Set<ts.Symbol> {
   const written = new Set<ts.Symbol>()
   const record = (node: ts.Node): void => {
@@ -378,6 +383,11 @@ function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): 
     const symbol = checker.getSymbolAtLocation(target)
     if (symbol != null) written.add(symbol)
   }
+  const primitiveArgument = (argument: ts.Expression): boolean => {
+    const flags = checker.getTypeAtLocation(argument).flags
+    return (flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike
+      | ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0
+  }
   const visit = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node)
       && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
@@ -387,6 +397,17 @@ function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): 
     if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
       && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
       record(node.operand)
+    }
+    if (ts.isDeleteExpression(node)) record(node.expression)
+    if (ts.isCallExpression(node)) {
+      const receiverIsMath = ts.isPropertyAccessExpression(node.expression)
+        && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Math'
+      if (ts.isPropertyAccessExpression(node.expression) && !receiverIsMath) record(node.expression.expression)
+      if (!receiverIsMath) {
+        for (const argument of node.arguments) {
+          if (!primitiveArgument(argument)) record(argument)
+        }
+      }
     }
     ts.forEachChild(node, visit)
   }
