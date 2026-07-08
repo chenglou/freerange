@@ -1,11 +1,12 @@
 import * as ts from 'typescript'
-import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type UnsupportedReason} from '../ir/program.ts'
+import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
 import {addSite, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
+import {lowerStyleSlots} from './style-slots.ts'
 
 export function lowerSource(checked: CheckedSource, baseDirectory: string = process.cwd()): ProgramIR {
   const {sourceFile, checker} = checked
@@ -38,6 +39,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
       blocks: [{loopHeader: null, parameters: [], instructions: [], terminator: {kind: 'stop', site: 0, reason}}],
     },
     initializerSkips: [],
+    styleSlots: [],
   })
   const suppression = typeCheckSuppressionMention(sourceFile)
   if (suppression != null) return rejectFile(suppression, {kind: 'typeCheckSuppressed'})
@@ -71,6 +73,14 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     }
   }
   const {initializer, skips} = lowerModuleInitializer(sourceFile, checker, functionsBySymbol, scan, sites)
+  // Style slots come last so every declared function keeps its FunctionID; see StyleSlotIR.
+  const styleSlots: StyleSlotIR[] = []
+  if (sourceFile.fileName.endsWith('.tsx')) {
+    for (const slot of lowerStyleSlots(sourceFile, checker, functionsBySymbol, scan, sites)) {
+      functions.push(slot.lowering)
+      styleSlots.push({fn: functions.length - 1, property: slot.property})
+    }
+  }
   return {
     file: sourceFile.fileName,
     baseDirectory,
@@ -80,6 +90,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
     moduleBindings: scan.bindings,
     initializer,
     initializerSkips: skips,
+    styleSlots,
   }
 }
 

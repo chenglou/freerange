@@ -2,7 +2,7 @@ import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/n
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
-import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -17,7 +17,14 @@ export type FunctionReport =
 export type AnalysisReport = {
   file: string
   functions: FunctionReport[]
+  // One line per numeric JSX style value, most severe verdict first. Empty outside .tsx
+  // files. Advisory: a flagged slot is the requires line the extract-to-.ts rewrite would
+  // surface, not a change to any function's contract.
+  styleSlots: StyleSlotLine[]
 }
+
+export type StyleSlotVerdict = 'may be NaN' | 'may reach Infinity' | 'may be zero or negative' | 'needs a guard' | 'ok' | 'skipped'
+export type StyleSlotLine = {verdict: StyleSlotVerdict; line: string}
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
@@ -58,7 +65,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       observed,
     })
   }
+  const slotIds = new Set(program.styleSlots.map(slot => slot.fn))
   for (let functionID = 0; functionID < analysis.functions.length; functionID++) {
+    // Style slots print in their own section, not as function entries.
+    if (slotIds.has(functionID)) continue
     const fn = analysis.functions[functionID]!
     switch (fn.kind) {
       case 'notLowered': {
@@ -107,7 +117,64 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
     }
   }
-  return {file: reportPath(program), functions}
+  return {file: reportPath(program), functions, styleSlots: styleSlotLines(program, analysis)}
+}
+
+// Which numeric style properties additionally reject negative values (or zero too, for
+// aspectRatio): the browser drops the whole declaration, as silently as it drops NaN.
+// Finiteness needs no catalog — NaN and Infinity stringify to invalid CSS on every
+// property — so membership here only adds the sign check.
+const nonnegativeStyleProperties = new Set(['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderWidth', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRadius', 'fontSize', 'gap', 'rowGap', 'columnGap', 'flexBasis'])
+const positiveStyleProperties = new Set(['aspectRatio'])
+
+const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
+  'may be NaN': 0,
+  'may reach Infinity': 1,
+  'may be zero or negative': 2,
+  'needs a guard': 3,
+  'ok': 4,
+  'skipped': 5,
+}
+
+function styleSlotLines(program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine[] {
+  const lines = program.styleSlots.map(slot => styleSlotLine(slot, analysis.functions[slot.fn]!, program, analysis))
+  return lines.sort((a, b) => styleSlotSeverity[a.verdict] - styleSlotSeverity[b.verdict])
+}
+
+function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine {
+  const name = fn.lowering.name
+  switch (fn.kind) {
+    case 'notLowered':
+      return {verdict: 'skipped', line: `${name}: ${formatUnsupportedReason(fn.lowering.reason)} at ${formatSite(program, fn.lowering.site)}`}
+    case 'partial':
+      return {verdict: 'skipped', line: `${name}: ${formatStop(fn.stops[0], program, analysis)}`}
+    case 'analyzed': {
+      const value = fn.returnValue
+      if (value.kind !== 'number') return {verdict: 'skipped', line: `${name}: the value is not a plain number`}
+      const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
+      // The requirement inference already names the guard a bad value needs (e.g. `total
+      // is nonzero` for a division); a flagged line carries that name so the rewrite is
+      // spelled out, not just the symptom.
+      const needs = [
+        ...fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
+        ...fn.boundsAssumptions.map(assumption => assumption.kind === 'elementInBounds'
+          ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
+          : `the divisor at ${formatSite(program, assumption.site)} is nonzero`),
+      ]
+      const guardSuffix = needs.length > 0 ? `; guard to add: ${needs.join(' and ')}` : ''
+      const summary = numberSummary('the value', value, program) + guardSuffix
+      if (value.mayBeNaN) return {verdict: 'may be NaN', line: `${name}: ${summary}`}
+      if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {
+        return {verdict: 'may reach Infinity', line: `${name}: ${summary}`}
+      }
+      if ((nonnegativeStyleProperties.has(slot.property) && value.lower < 0)
+        || (positiveStyleProperties.has(slot.property) && value.lower <= 0)) {
+        return {verdict: 'may be zero or negative', line: `${name}: ${summary}`}
+      }
+      if (needs.length > 0) return {verdict: 'needs a guard', line: `${name}: only safe when ${needs.join(' and ')}`}
+      return {verdict: 'ok', line: `${name}: ${summary}`}
+    }
+  }
 }
 
 // The legend targets a reader — usually another model — that has never seen a freerange
@@ -151,6 +218,10 @@ export function formatReport(report: AnalysisReport, options?: {legend?: boolean
         break
       }
     }
+  }
+  if (report.styleSlots.length > 0) {
+    lines.push('', 'style slots (each numeric JSX style value, analyzed as if extracted into its own function):')
+    for (const slot of report.styleSlots) lines.push(`  ${slot.verdict}: ${slot.line}`)
   }
   return lines.join('\n')
 }

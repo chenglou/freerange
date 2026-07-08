@@ -2,7 +2,7 @@ import {relative} from 'node:path'
 import type * as ts from 'typescript'
 import {finiteInputNumber, unknownNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
-import type {BlockID, SiteID, ValueID} from './ids.ts'
+import type {BlockID, FunctionID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
 type ParameterIR = {
@@ -371,7 +371,15 @@ export type ProgramIR = {
   initializer: FunctionIR
   // Top-level statements the initializer's lowering skipped instead of stopping at.
   initializerSkips: InitializerSkip[]
+  // Numeric JSX style values (`style={{width: computedWidth}}`), each lowered as its own
+  // synthetic function and appended to `functions` after every declared function — so a
+  // call inside a slot still resolves same-file callees by their real FunctionIDs, while
+  // nothing can call a slot (no symbol maps to one). The report reads this list to keep
+  // slot entries out of the ordinary function entries. Empty for non-.tsx files.
+  styleSlots: StyleSlotIR[]
 }
+
+export type StyleSlotIR = {fn: FunctionID; property: string}
 
 // The synthetic initializer's display and IR name, shared by its two producers and read
 // back by the report, so the strings cannot drift apart.

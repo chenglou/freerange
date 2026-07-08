@@ -54,6 +54,10 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   // surfaced in SUMMARY.txt instead of buried under the assumes bulk.
   const requiresIndex: string[] = []
 
+  // Every numeric JSX style value in the run, one verdict line each, for STYLE-SLOTS.txt.
+  const styleSlotLines: Array<{file: string; verdict: string; line: string}> = []
+  const styleSlotCounts = new Map<string, number>()
+
   const sourceFiles = program.getSourceFiles().filter(sourceFile =>
     !sourceFile.fileName.includes('node_modules')
     && !sourceFile.isDeclarationFile
@@ -86,14 +90,24 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
         if (entry.kind === 'partial') partial++
         if (entry.kind === 'unsupported') unsupported++
       }
-      // Reason tags from the IR, not prose, so the tally is stable.
-      for (const fn of lowered.functions) {
+      // Reason tags from the IR, not prose, so the tally is stable. Style slots have their
+      // own tally below and stay out of the function ones.
+      const slotIds = new Set(lowered.styleSlots.map(slot => slot.fn))
+      for (let fnId = 0; fnId < lowered.functions.length; fnId++) {
+        const fn = lowered.functions[fnId]!
+        if (slotIds.has(fnId)) continue
         if (fn.kind === 'unsupported') bump(reasonCounts, fn.reason.kind === 'call' ? `call:${fn.reason.callee}` : fn.reason.kind)
       }
-      for (const fn of analysis.functions) {
+      for (let fnId = 0; fnId < analysis.functions.length; fnId++) {
+        const fn = analysis.functions[fnId]!
+        if (slotIds.has(fnId)) continue
         if (fn.kind === 'partial') {
           for (const stop of fn.stops) bump(stopCounts, stop.reason.kind)
         }
+      }
+      for (const slot of report.styleSlots) {
+        styleSlotLines.push({file: shortName, verdict: slot.verdict, line: slot.line})
+        bump(styleSlotCounts, slot.verdict)
       }
       rows.push({
         file: shortName,
@@ -138,6 +152,26 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)) {
     console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
   }
+  const styleSlotOrder = ['may be NaN', 'may reach Infinity', 'may be zero or negative', 'needs a guard', 'ok', 'skipped']
+  if (styleSlotLines.length > 0) {
+    console.log('--- style slots ---')
+    for (const verdict of styleSlotOrder) {
+      const count = styleSlotCounts.get(verdict)
+      if (count != null) console.log(`${String(count).padStart(5)}  ${verdict}`)
+    }
+    const slotReport = [
+      'Numeric JSX style values, each analyzed as if extracted into its own function.',
+      'A flagged slot is the requires line that extraction would surface; the fix is the',
+      'extract-to-.ts rewrite with the named guard. Grouped worst-first.',
+    ]
+    for (const verdict of styleSlotOrder) {
+      const group = styleSlotLines.filter(slot => slot.verdict === verdict)
+      if (group.length === 0) continue
+      slotReport.push('', `${verdict} (${group.length}):`)
+      for (const slot of group) slotReport.push(`  ${slot.file} ${slot.line}`)
+    }
+    writeFileSync(`${outputDirectory}/STYLE-SLOTS.txt`, slotReport.join('\n') + '\n')
+  }
   writeFileSync(`${outputDirectory}/__rows.json`, JSON.stringify(rows, null, 1))
   // The legend once per run (per-file reports omit it), and the summary this run's
   // measuring otherwise gets rebuilt by hand: totals, the full reason and stop tallies,
@@ -157,6 +191,14 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     '',
     'stop reasons:',
     ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
+    ...(styleSlotLines.length > 0
+      ? [
+          '',
+          'style slots (see STYLE-SLOTS.txt):',
+          ...styleSlotOrder.filter(verdict => styleSlotCounts.has(verdict))
+            .map(verdict => `${String(styleSlotCounts.get(verdict)).padStart(5)}  ${verdict}`),
+        ]
+      : []),
   ]
   writeFileSync(`${outputDirectory}/SUMMARY.txt`, summary.join('\n') + '\n')
 
