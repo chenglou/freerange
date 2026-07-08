@@ -71,6 +71,15 @@ export function lowerStyleSlots(
   const visitStyleAttribute = (attribute: ts.JsxAttribute): void => {
     const initializer = attribute.initializer
     if (initializer == null || !ts.isJsxExpression(initializer) || initializer.expression == null) return
+    // Only a DOM tag (lowercase intrinsic name: div, span, canvas) renders its style
+    // values as CSS. On a component, style is an ordinary prop — it usually reaches a DOM
+    // tag eventually, but following it there is component-body analysis, deliberately not
+    // taken on; the named skip keeps the census honest about how much rides on components.
+    const tagName = attribute.parent.parent.tagName
+    if (!ts.isIdentifier(tagName) || !/^[a-z]/.test(tagName.text)) {
+      recordSkip(null, attribute, {kind: 'styleOnComponent'})
+      return
+    }
     const styleValue = initializer.expression
     // `style={precomputedStyle}` — the object is built elsewhere; nothing here names the
     // slots. Recorded so the coverage tally is honest about what the pass never saw.

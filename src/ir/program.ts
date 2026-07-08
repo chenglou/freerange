@@ -76,6 +76,10 @@ export type UnsupportedReason =
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
+  // A style attribute on a custom component, e.g. <ProgressBar style={{...}}>: only a DOM
+  // tag renders its style values as CSS; a component's style prop is an ordinary value the
+  // component may forward, transform, or ignore. Used only by the style-slot pass.
+  | {kind: 'styleOnComponent'}
   | {kind: 'enumMemberRead'}
   // point.toString and friends: a prototype member the record value cannot answer.
   | {kind: 'prototypeMemberRead'; property: string}
