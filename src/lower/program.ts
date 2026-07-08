@@ -78,7 +78,7 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
   if (sourceFile.fileName.endsWith('.tsx')) {
     for (const slot of lowerStyleSlots(sourceFile, checker, functionsBySymbol, scan, sites)) {
       functions.push(slot.lowering)
-      styleSlots.push({fn: functions.length - 1, property: slot.property})
+      styleSlots.push({fn: functions.length - 1, property: slot.property, site: slot.site})
     }
   }
   return {

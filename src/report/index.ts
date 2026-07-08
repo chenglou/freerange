@@ -2,7 +2,7 @@ import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/n
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
-import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, reportPath, siteLocation, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -24,7 +24,15 @@ export type AnalysisReport = {
 }
 
 export type StyleSlotVerdict = 'may be NaN' | 'may reach Infinity' | 'may be zero or negative' | 'needs a guard' | 'ok' | 'skipped'
-export type StyleSlotLine = {verdict: StyleSlotVerdict; line: string}
+export type StyleSlotLine = {
+  verdict: StyleSlotVerdict
+  line: string
+  property: string
+  // Of the slot expression itself, for lint-style file:line:column output.
+  location: {line: number; column: number}
+  // The guard the requirement inference named (e.g. `totalFrames is nonzero`), when one exists.
+  guard: string | null
+}
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
@@ -143,14 +151,17 @@ function styleSlotLines(program: ProgramIR, analysis: ProgramAnalysis): StyleSlo
 
 function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine {
   const name = fn.lowering.name
+  const location = siteLocation(program, slot.site)
+  const slotLine = (verdict: StyleSlotVerdict, line: string, guard: string | null = null): StyleSlotLine =>
+    ({verdict, line, property: slot.property, location, guard})
   switch (fn.kind) {
     case 'notLowered':
-      return {verdict: 'skipped', line: `${name}: ${formatUnsupportedReason(fn.lowering.reason)} at ${formatSite(program, fn.lowering.site)}`}
+      return slotLine('skipped', `${name}: ${formatUnsupportedReason(fn.lowering.reason)} at ${formatSite(program, fn.lowering.site)}`)
     case 'partial':
-      return {verdict: 'skipped', line: `${name}: ${formatStop(fn.stops[0], program, analysis)}`}
+      return slotLine('skipped', `${name}: ${formatStop(fn.stops[0], program, analysis)}`)
     case 'analyzed': {
       const value = fn.returnValue
-      if (value.kind !== 'number') return {verdict: 'skipped', line: `${name}: the value is not a plain number`}
+      if (value.kind !== 'number') return slotLine('skipped', `${name}: the value is not a plain number`)
       const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
       // The requirement inference already names the guard a bad value needs (e.g. `total
       // is nonzero` for a division); a flagged line carries that name so the rewrite is
@@ -161,18 +172,18 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
           ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
           : `the divisor at ${formatSite(program, assumption.site)} is nonzero`),
       ]
-      const guardSuffix = needs.length > 0 ? `; guard to add: ${needs.join(' and ')}` : ''
-      const summary = numberSummary('the value', value, program) + guardSuffix
-      if (value.mayBeNaN) return {verdict: 'may be NaN', line: `${name}: ${summary}`}
+      const guard = needs.length > 0 ? needs.join(' and ') : null
+      const summary = numberSummary('the value', value, program) + (guard == null ? '' : `; guard to add: ${guard}`)
+      if (value.mayBeNaN) return slotLine('may be NaN', `${name}: ${summary}`, guard)
       if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {
-        return {verdict: 'may reach Infinity', line: `${name}: ${summary}`}
+        return slotLine('may reach Infinity', `${name}: ${summary}`, guard)
       }
       if ((nonnegativeStyleProperties.has(slot.property) && value.lower < 0)
         || (positiveStyleProperties.has(slot.property) && value.lower <= 0)) {
-        return {verdict: 'may be zero or negative', line: `${name}: ${summary}`}
+        return slotLine('may be zero or negative', `${name}: ${summary}`, guard)
       }
-      if (needs.length > 0) return {verdict: 'needs a guard', line: `${name}: only safe when ${needs.join(' and ')}`}
-      return {verdict: 'ok', line: `${name}: ${summary}`}
+      if (guard != null) return slotLine('needs a guard', `${name}: only safe when ${guard}`, guard)
+      return slotLine('ok', `${name}: ${summary}`)
     }
   }
 }

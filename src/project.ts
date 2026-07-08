@@ -9,7 +9,9 @@ import {mkdirSync, writeFileSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeProgram} from './engine/analyze.ts'
+import {siteLocation} from './ir/program.ts'
 import {lowerSource} from './lower/program.ts'
+import {formatPrecondition} from './report/format-requirement.ts'
 import {createReport, formatReport, reportLegend} from './report/index.ts'
 
 export function runProject(repoRoot: string, outputDirectory: string): void {
@@ -57,6 +59,12 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   // Every numeric JSX style value in the run, one verdict line each, for STYLE-SLOTS.txt.
   const styleSlotLines: Array<{file: string; verdict: string; line: string}> = []
   const styleSlotCounts = new Map<string, number>()
+
+  // The linter view: only obligations nobody discharges, at points where failure is
+  // silent, one conventional file:line:column line each — against the per-file reports,
+  // which print everything the analysis knows. See the LINT.txt header for the levels.
+  type LintEntry = {file: string; line: number; column: number; level: 'error' | 'warning' | 'note'; message: string; rule: string}
+  const lintEntries: LintEntry[] = []
 
   const sourceFiles = program.getSourceFiles().filter(sourceFile =>
     !sourceFile.fileName.includes('node_modules')
@@ -108,6 +116,51 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
       for (const slot of report.styleSlots) {
         styleSlotLines.push({file: shortName, verdict: slot.verdict, line: slot.line})
         bump(styleSlotCounts, slot.verdict)
+        // Lint: a bad number reaching a rendered style value fails silently — the browser
+        // drops the declaration without an error. NaN is the sharp class (0/0 and friends);
+        // Infinity is overflow-only and kept as its own rule so its noise is judgeable.
+        if (slot.verdict === 'may be NaN' || slot.verdict === 'may reach Infinity') {
+          const what = slot.verdict === 'may be NaN' ? 'NaN' : 'Infinity'
+          lintEntries.push({
+            file: shortName,
+            line: slot.location.line,
+            column: slot.location.column,
+            level: 'warning',
+            message: `${what} can reach this ${slot.property} style value — invalid CSS, silently dropped${slot.guard == null ? '' : `. Guard: ${slot.guard}`}`,
+            rule: slot.verdict === 'may be NaN' ? 'style-nan' : 'style-infinity',
+          })
+        }
+      }
+      for (let fnId = 0; fnId < analysis.functions.length; fnId++) {
+        const fn = analysis.functions[fnId]!
+        if (slotIds.has(fnId)) continue
+        // Lint: the two stop kinds that are findings in their own right, not coverage gaps.
+        if (fn.kind === 'partial') {
+          for (const stop of fn.stops) {
+            if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
+            const location = siteLocation(lowered, stop.site)
+            lintEntries.push(stop.reason.kind === 'outOfBoundsRead'
+              ? {file: shortName, line: location.line, column: location.column, level: 'error', message: `asserted element read (arr[i]!) is provably out of bounds in ${fn.lowering.name}`, rule: 'out-of-bounds-read'}
+              : {file: shortName, line: location.line, column: location.column, level: 'warning', message: `loop in ${fn.lowering.name} has no analyzable exit — it may never terminate`, rule: 'non-exiting-loop'})
+          }
+        }
+        // Lint: an obligation that escaped to the function boundary — every same-file call
+        // discharging it stays silent, so what remains is a contract outside callers must
+        // uphold, unverifiable from this repo's analyzed subset alone.
+        if (fn.kind === 'analyzed') {
+          const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
+          for (const precondition of fn.preconditions) {
+            const location = siteLocation(lowered, precondition.site)
+            lintEntries.push({
+              file: shortName,
+              line: location.line,
+              column: location.column,
+              level: 'note',
+              message: `callers of ${fn.lowering.name} must keep ${formatPrecondition(precondition, parameterNames, lowered)}`,
+              rule: 'caller-contract',
+            })
+          }
+        }
       }
       rows.push({
         file: shortName,
@@ -176,6 +229,25 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     }
     writeFileSync(`${outputDirectory}/STYLE-SLOTS.txt`, slotReport.join('\n') + '\n')
   }
+  lintEntries.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
+  const lintCounts = new Map<string, number>()
+  for (const entry of lintEntries) bump(lintCounts, `${entry.level}:${entry.rule}`)
+  console.log('--- lint ---')
+  for (const [rule, count] of [...lintCounts.entries()].sort((a, b) => b[1] - a[1])) {
+    console.log(`${String(count).padStart(5)}  ${rule}`)
+  }
+  const lintReport = [
+    'freerange lint: only obligations nobody discharges, at points where failure is silent.',
+    'error   = provably wrong on some reachable path.',
+    'warning = a representable bad value can reach this point and nothing defends against it.',
+    '          A check the analysis cannot see (earlier in a component body) may exist: look',
+    '          before fixing. The named guard is the fix either way.',
+    'note    = a contract outside callers must uphold; unverifiable from this repo alone.',
+    'The full value analysis (every function, every range) lives in the per-file reports.',
+    '',
+    ...lintEntries.map(entry => `${entry.file}:${entry.line}:${entry.column}  ${entry.level}  ${entry.message}  [${entry.rule}]`),
+  ]
+  writeFileSync(`${outputDirectory}/LINT.txt`, lintReport.join('\n') + '\n')
   writeFileSync(`${outputDirectory}/__rows.json`, JSON.stringify(rows, null, 1))
   // The legend once per run (per-file reports omit it), and the summary this run's
   // measuring otherwise gets rebuilt by hand: totals, the full reason and stop tallies,

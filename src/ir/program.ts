@@ -383,7 +383,7 @@ export type ProgramIR = {
   styleSlots: StyleSlotIR[]
 }
 
-export type StyleSlotIR = {fn: FunctionID; property: string}
+export type StyleSlotIR = {fn: FunctionID; property: string; site: SiteID}
 
 // The synthetic initializer's display and IR name, shared by its two producers and read
 // back by the report, so the strings cannot drift apart.

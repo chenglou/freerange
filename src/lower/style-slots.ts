@@ -22,7 +22,7 @@ import {addSite, LoweringStop, sealBlocks, terminate, unsupported, type Function
 import {lowerExpression, valueKind} from './expression.ts'
 import {declaredKind, type ModuleScan} from './module.ts'
 
-export type LoweredStyleSlot = {property: string; lowering: FunctionLowering}
+export type LoweredStyleSlot = {property: string; lowering: FunctionLowering; site: number}
 
 export function lowerStyleSlots(
   sourceFile: ts.SourceFile,
@@ -41,18 +41,22 @@ export function lowerStyleSlots(
     slots.push({
       property: property ?? '(whole object)',
       lowering: {kind: 'unsupported', name: slotName(property, node), site: sites.length - 1, reason},
+      site: sites.length - 1,
     })
   }
   const lowerSlot = (property: string, expression: ts.Expression): void => {
+    sites.push(nodeSpan(sourceFile, expression))
+    const site = sites.length - 1
     try {
       slots.push({
         property,
         lowering: lowerSlotFunction(slotName(property, expression), expression, sourceFile, checker, functionsBySymbol, scan, sites),
+        site,
       })
     } catch (error) {
       if (!(error instanceof LoweringStop)) throw error
       sites.push(nodeSpan(sourceFile, error.node))
-      slots.push({property, lowering: {kind: 'unsupported', name: slotName(property, expression), site: sites.length - 1, reason: error.reason}})
+      slots.push({property, lowering: {kind: 'unsupported', name: slotName(property, expression), site: sites.length - 1, reason: error.reason}, site})
     }
   }
   // A slot is checked when its value's type is a plain number — that is the trigger, not a
