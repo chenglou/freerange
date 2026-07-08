@@ -1,0 +1,4 @@
+src/engine/outcome.ts
+
+completedEvaluation
+  unsupported: value of type CompletedEvaluation | null at src/engine/outcome.ts:64:70

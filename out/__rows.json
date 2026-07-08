@@ -1,0 +1,290 @@
+[
+ {
+  "file": "src/ir/ids.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "src/domain/number.ts",
+  "functions": 26,
+  "analyzed": 5,
+  "partial": 3,
+  "unsupported": 18,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/domain/value.ts",
+  "functions": 15,
+  "analyzed": 5,
+  "partial": 1,
+  "unsupported": 9,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/ir/program.ts",
+  "functions": 9,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 9,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/ir/instructions.ts",
+  "functions": 1,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 1,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/engine/state.ts",
+  "functions": 11,
+  "analyzed": 1,
+  "partial": 0,
+  "unsupported": 10,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/requirements/model.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "src/requirements/infer.ts",
+  "functions": 8,
+  "analyzed": 0,
+  "partial": 4,
+  "unsupported": 4,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/engine/outcome.ts",
+  "functions": 1,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 1,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/engine/transfer.ts",
+  "functions": 39,
+  "analyzed": 13,
+  "partial": 4,
+  "unsupported": 22,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/engine/analyze.ts",
+  "functions": 9,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 9,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/typescript/check.ts",
+  "functions": 4,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 4,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/context.ts",
+  "functions": 13,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 13,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/accept.ts",
+  "functions": 3,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 3,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/platform.ts",
+  "functions": 2,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 2,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/expression.ts",
+  "functions": 38,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 38,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/statements.ts",
+  "functions": 9,
+  "analyzed": 0,
+  "partial": 1,
+  "unsupported": 8,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/module.ts",
+  "functions": 16,
+  "analyzed": 1,
+  "partial": 0,
+  "unsupported": 15,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/style-slots.ts",
+  "functions": 7,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 7,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/lower/program.ts",
+  "functions": 6,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 6,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/report/format-requirement.ts",
+  "functions": 5,
+  "analyzed": 0,
+  "partial": 2,
+  "unsupported": 3,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/report/index.ts",
+  "functions": 19,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 19,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/index.ts",
+  "functions": 2,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 2,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "src/project.ts",
+  "functions": 1,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 1,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "fr.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "knip.config.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "survey.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "demo/data.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "demo/index.ts",
+  "functions": 14,
+  "analyzed": 10,
+  "partial": 0,
+  "unsupported": 4,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/analyze-file.test.ts",
+  "functions": 1,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 1,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/fixtures/grid-metrics.ts",
+  "functions": 3,
+  "analyzed": 3,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/fixtures/module-imports-helper.ts",
+  "functions": 0,
+  "analyzed": 0,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "noFunctions"
+ },
+ {
+  "file": "tests/fixtures/module-imports.ts",
+  "functions": 2,
+  "analyzed": 1,
+  "partial": 1,
+  "unsupported": 0,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/fixtures/object-mutation.ts",
+  "functions": 3,
+  "analyzed": 3,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/fixtures/preconditions.ts",
+  "functions": 6,
+  "analyzed": 6,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "analyzed"
+ },
+ {
+  "file": "tests/fixtures/showcase.ts",
+  "functions": 11,
+  "analyzed": 11,
+  "partial": 0,
+  "unsupported": 0,
+  "verdict": "analyzed"
+ }
+]

@@ -1,0 +1,164 @@
+src/domain/number.ts
+
+module initialization
+  skipped: expression (NewExpression) at src/domain/number.ts:31:24
+  skipped: expression (NewExpression) at src/domain/number.ts:32:21
+
+nextUp
+  unsupported: property read from NumberConstructor at src/domain/number.ts:38:27
+
+nextDown
+  assumes: value is finite and not NaN
+  stopped: calls nextUp, which hit unsupported code (call at src/domain/number.ts:45:11)
+
+isFiniteNumber
+  ensures: return is true
+  assumes: value.lower is finite and not NaN
+  assumes: value.upper is finite and not NaN
+  assumes: value.integer is a boolean
+  assumes: value.mayBeNaN is a boolean
+  assumes: value.excludesPoint is undefined or a finite non-NaN number
+  assumes: value.lossSite is undefined or a finite non-NaN number
+
+finiteInputNumber
+  unsupported: property read from NumberConstructor at src/domain/number.ts:55:13
+
+constantNumber
+  ensures: return.lower is a finite number
+  ensures: return.upper is a finite number
+  ensures: return.integer is boolean
+  ensures: return.mayBeNaN is false
+  ensures: return.excludesPoint is undefined
+  ensures: return.lossSite is undefined
+  assumes: value is finite and not NaN
+
+addNumbers
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/domain/number.ts:100:5
+
+subtractNumbers
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/domain/number.ts:115:36
+
+multiplyNumbers
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/domain/number.ts:138:5
+
+divideNumbers
+  unsupported: expression (SpreadElement) at src/domain/number.ts:161:25
+
+divideAcrossZero
+  unsupported: function call (…).filter (array methods are outside the subset; rewrite as a for-of loop over the same array) at src/domain/number.ts:190:17
+
+floorNumber
+  ensures: return.lower is a finite integer number
+  ensures: return.upper is a finite integer number
+  ensures: return.integer is true
+  ensures: return.mayBeNaN is boolean
+  ensures: return.excludesPoint is undefined
+  ensures: return.lossSite is undefined
+  assumes: value.lower is finite and not NaN
+  assumes: value.upper is finite and not NaN
+  assumes: value.integer is a boolean
+  assumes: value.mayBeNaN is a boolean
+  assumes: value.excludesPoint is undefined or a finite non-NaN number
+  assumes: value.lossSite is undefined or a finite non-NaN number
+
+divideNumbersNonzeroDivisor
+  assumes: left.lower is finite and not NaN
+  assumes: left.upper is finite and not NaN
+  assumes: left.integer is a boolean
+  assumes: left.mayBeNaN is a boolean
+  assumes: left.excludesPoint is undefined or a finite non-NaN number
+  assumes: left.lossSite is undefined or a finite non-NaN number
+  assumes: right.lower is finite and not NaN
+  assumes: right.upper is finite and not NaN
+  assumes: right.integer is a boolean
+  assumes: right.mayBeNaN is a boolean
+  assumes: right.excludesPoint is undefined or a finite non-NaN number
+  assumes: right.lossSite is undefined or a finite non-NaN number
+  stopped: calls includesZero, which hit unsupported code (call at src/domain/number.ts:224:8)
+  stopped: calls unknownNumber, which hit unsupported code (call at src/domain/number.ts:223:42)
+
+roundedNumber
+  unsupported: read of the inherited prototype member ceil (records carry only their own data properties) at src/domain/number.ts:232:39
+
+squareRootNumber
+  unsupported: property read from NumberConstructor at src/domain/number.ts:249:36
+
+remainderNumbers
+  unsupported: property read from NumberConstructor at src/domain/number.ts:281:64
+
+absoluteNumber
+  ensures: return.lower is a finite number at least 0
+  ensures: return.upper is a finite number
+  ensures: return.integer is boolean
+  ensures: return.mayBeNaN is boolean
+  ensures: return.excludesPoint is undefined
+  ensures: return.lossSite is undefined
+  assumes: value.lower is finite and not NaN
+  assumes: value.upper is finite and not NaN
+  assumes: value.integer is a boolean
+  assumes: value.mayBeNaN is a boolean
+  assumes: value.excludesPoint is undefined or a finite non-NaN number
+  assumes: value.lossSite is undefined or a finite non-NaN number
+
+minimumNumbers
+  unsupported: expression (SpreadElement) at src/domain/number.ts:303:21
+
+maximumNumbers
+  unsupported: expression (SpreadElement) at src/domain/number.ts:314:21
+
+includesZero
+  unsupported: non-number operand of type number | undefined at src/domain/number.ts:322:50
+
+pointExcluded
+  unsupported: non-number operand of type number | undefined at src/domain/number.ts:330:10
+
+joinNumbers
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/domain/number.ts:349:7
+
+sameNumbers
+  unsupported: non-number operand of type number | undefined at src/domain/number.ts:363:8
+
+widenNumber
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/domain/number.ts:379:30
+
+boundedResult
+  assumes: lower is finite and not NaN
+  assumes: upper is finite and not NaN
+  assumes: integer is a boolean
+  assumes: left.lower is finite and not NaN
+  assumes: left.upper is finite and not NaN
+  assumes: left.integer is a boolean
+  assumes: left.mayBeNaN is a boolean
+  assumes: left.excludesPoint is undefined or a finite non-NaN number
+  assumes: left.lossSite is undefined or a finite non-NaN number
+  assumes: right.lower is finite and not NaN
+  assumes: right.upper is finite and not NaN
+  assumes: right.integer is a boolean
+  assumes: right.mayBeNaN is a boolean
+  assumes: right.excludesPoint is undefined or a finite non-NaN number
+  assumes: right.lossSite is undefined or a finite non-NaN number
+  stopped: calls unknownNumber, which hit unsupported code (call at src/domain/number.ts:405:42)
+  on analyzed paths: return.lower is a finite number
+  on analyzed paths: return.upper is a finite number
+  on analyzed paths: return.integer is boolean
+  on analyzed paths: return.mayBeNaN is false
+  on analyzed paths: return.excludesPoint is undefined
+  on analyzed paths: return.lossSite is undefined
+
+safeOperands
+  ensures: return is boolean
+  assumes: left.lower is finite and not NaN
+  assumes: left.upper is finite and not NaN
+  assumes: left.integer is a boolean
+  assumes: left.mayBeNaN is a boolean
+  assumes: left.excludesPoint is undefined or a finite non-NaN number
+  assumes: left.lossSite is undefined or a finite non-NaN number
+  assumes: right.lower is finite and not NaN
+  assumes: right.upper is finite and not NaN
+  assumes: right.integer is a boolean
+  assumes: right.mayBeNaN is a boolean
+  assumes: right.excludesPoint is undefined or a finite non-NaN number
+  assumes: right.lossSite is undefined or a finite non-NaN number
+
+unknownNumber
+  unsupported: property read from NumberConstructor at src/domain/number.ts:416:12

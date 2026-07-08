@@ -129,11 +129,40 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
 }
 
 // Which numeric style properties additionally reject negative values (or zero too, for
-// aspectRatio): the browser drops the whole declaration, as silently as it drops NaN.
-// Finiteness needs no catalog — NaN and Infinity stringify to invalid CSS on every
-// property — so membership here only adds the sign check.
-const nonnegativeStyleProperties = new Set(['width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft', 'borderWidth', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth', 'borderRadius', 'fontSize', 'gap', 'rowGap', 'columnGap', 'flexBasis'])
-const positiveStyleProperties = new Set(['aspectRatio'])
+// the positive set): the browser drops the whole declaration, as silently as it drops
+// NaN. Finiteness needs no catalog — NaN and Infinity stringify to invalid CSS on every
+// property — so membership here only adds the sign check. The list is the exhaustive
+// sweep of CSS properties that take a plain number in a React style object and specify a
+// [0,∞] (or (0,∞]) range; properties where negative values are meaningful (top, left,
+// margin, letterSpacing, zIndex, order, the scale transform) are deliberately absent, and
+// opacity is absent because the browser clamps out-of-range opacity instead of dropping it.
+const nonnegativeStyleProperties = new Set([
+  // Box sizes, physical and logical.
+  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+  'blockSize', 'inlineSize', 'minBlockSize', 'minInlineSize', 'maxBlockSize', 'maxInlineSize',
+  // Padding, physical and logical. Margins are absent: negative margins are valid layout.
+  'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
+  'paddingInline', 'paddingInlineStart', 'paddingInlineEnd',
+  'paddingBlock', 'paddingBlockStart', 'paddingBlockEnd',
+  // Border and outline widths.
+  'borderWidth', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
+  'borderInlineWidth', 'borderInlineStartWidth', 'borderInlineEndWidth',
+  'borderBlockWidth', 'borderBlockStartWidth', 'borderBlockEndWidth',
+  'outlineWidth', 'columnRuleWidth',
+  // Corner radii, physical and logical.
+  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
+  'borderBottomLeftRadius', 'borderBottomRightRadius',
+  'borderStartStartRadius', 'borderStartEndRadius', 'borderEndStartRadius', 'borderEndEndRadius',
+  // Text and font. lineHeight's number form multiplies fontSize and must be nonnegative.
+  'fontSize', 'lineHeight', 'tabSize',
+  // Flex and grid.
+  'gap', 'rowGap', 'columnGap', 'flexBasis', 'flexGrow', 'flexShrink',
+  // Multi-column and rendering.
+  'columnWidth', 'perspective', 'strokeWidth',
+])
+// Zero is invalid too: an aspect ratio of 0, a 0-column layout, a 0-line clamp are all
+// dropped declarations.
+const positiveStyleProperties = new Set(['aspectRatio', 'columnCount', 'widows', 'orphans', 'lineClamp', 'WebkitLineClamp', 'zoom'])
 
 const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
   'may be NaN': 0,

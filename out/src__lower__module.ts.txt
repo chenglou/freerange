@@ -1,0 +1,52 @@
+src/lower/module.ts
+
+module initialization
+  skipped: expression (NewExpression) at src/lower/module.ts:473:29
+
+scanModuleBindings
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:33:63
+
+importedCategory
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:122:48
+
+numericLiteralValue
+  unsupported: statement (WhileStatement) at src/lower/module.ts:142:3
+
+moduleWritesIn
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:159:3
+
+lowerModuleInitializer
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:215:3
+
+lowerTopLevelDeclarations
+  unsupported: value of type NodeArray<VariableDeclaration> at src/lower/module.ts:297:28
+
+skippedAtTopLevel
+  unsupported: function call ts.isFunctionDeclaration at src/lower/module.ts:342:11
+
+allModuleWritesIn
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:351:3
+
+declaredCategory
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:369:48
+
+declaredRecordProperties
+  unsupported: value of type { name: string; declared: DeclaredKind; }[] | null at src/lower/module.ts:385:4
+
+wrapOptional
+  ensures: return.kind is 'nullish'
+
+declaredTaggedVariants
+  unsupported: value of type DeclaredVariant[] | null at src/lower/module.ts:448:4
+
+cutByAncestor
+  unsupported: function call seen.includes (array methods are outside the subset; rewrite as a for-of loop over the same array) at src/lower/module.ts:479:7
+
+declaredKind
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:486:45
+
+declaredKindUncached
+  unsupported: function parameter with type TypeChecker at src/lower/module.ts:501:46
+
+demote
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/lower/module.ts:615:7

@@ -1,0 +1,16 @@
+tests/fixtures/grid-metrics.ts
+
+clamp
+  ensures: return is a finite number
+  assumes: min is finite and not NaN
+  assumes: value is finite and not NaN
+  assumes: max is finite and not NaN
+
+calculateGridMetrics
+  ensures: return.columnCount is a finite integer number from 1 through 7
+  ensures: return.maximumBoxWidth is a finite number at least 1
+  assumes: containerWidth is finite and not NaN
+
+maximumBoxWidthForContainer
+  ensures: return is a finite number at least 1
+  assumes: containerWidth is finite and not NaN

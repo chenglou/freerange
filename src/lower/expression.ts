@@ -152,7 +152,15 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return lowerConditionalExpression(current, context)
   }
   if (ts.isIdentifier(current)) {
-    return identifierValue(requiredSymbol(current, context.checker), current, context)
+    // A shorthand property's identifier arrives here only from the style-slot pass, where
+    // the shorthand ({width}) is itself the slot expression. The checker resolves the bare
+    // identifier to the property symbol; the binding lives under the value symbol. Object
+    // literals lowered whole never reach this arm with a shorthand — the object literal
+    // arm below resolves its own members.
+    const shorthandValue = ts.isShorthandPropertyAssignment(current.parent)
+      ? context.checker.getShorthandAssignmentValueSymbol(current.parent)
+      : null
+    return identifierValue(shorthandValue ?? requiredSymbol(current, context.checker), current, context)
   }
   if (ts.isArrayLiteralExpression(current)) {
     const literalType = context.checker.getTypeAtLocation(current)

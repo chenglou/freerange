@@ -1,0 +1,11 @@
+src/lower/platform.ts
+
+module initialization
+  skipped: property read from NumberConstructor at src/lower/platform.ts:30:28
+  skipped: property read from NumberConstructor at src/lower/platform.ts:34:95
+
+platformFact
+  unsupported: function parameter with type TypeChecker at src/lower/platform.ts:54:72
+
+declaredOnlyInDeclarationFiles
+  unsupported: read of the inherited prototype member declarations (records carry only their own data properties) at src/lower/platform.ts:77:24

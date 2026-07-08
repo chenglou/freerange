@@ -1,0 +1,6 @@
+survey.ts
+
+module initialization
+  skipped: variables without identifier names and initializers at survey.ts:9:7
+  skipped: unknown identifier repoRoot at survey.ts:10:5
+  skipped: function call runProject at survey.ts:14:1

@@ -1,0 +1,16 @@
+src/typescript/check.ts
+
+module initialization
+  skipped: property read from typeof ScriptTarget at src/typescript/check.ts:10:11
+
+checkFile
+  unsupported: function call resolve at src/typescript/check.ts:29:24
+
+checkSource
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/typescript/check.ts:41:3
+
+checkedSource
+  unsupported: function parameter with type Program at src/typescript/check.ts:51:24
+
+formatDiagnostics
+  unsupported: function call (…).join (array methods are outside the subset; rewrite as a for-of loop over the same array) at src/typescript/check.ts:60:10

@@ -241,13 +241,21 @@ function collectSlotDependencies(
       if (declaration == null) continue
       // Imports and lib globals: their declarations live in other files.
       if (declaration.getSourceFile() !== sourceFile) continue
+      // The write check comes BEFORE the inlining attempt: a const object whose property
+      // the body writes (`const sizeRef = {current: {w: 4}}; ... sizeRef.current.w = 9`)
+      // must not inline either — the inlined literal would carry the stale 4 as an exact
+      // value while the style line reads the 9.
+      if (reassigned.has(symbol)) {
+        sawReassignedLeaf = true
+        parameters.set(symbol, node)
+        continue
+      }
       const initializer = allowInlining && inlined.size < inlinedConstCap ? inlinableConstInitializer(declaration) : null
       if (initializer != null) {
         inlined.set(symbol, {initializer, position: declaration.pos})
         pending.push(...valueUseIdentifiers(initializer, sourceFile, checker))
         continue
       }
-      if (reassigned.has(symbol)) sawReassignedLeaf = true
       parameters.set(symbol, node)
     }
     const prelude = [...inlined.entries()]
@@ -353,13 +361,21 @@ function valueUseIdentifiers(
   return found
 }
 
-// Every variable some expression writes: `x = 5`, `x += 1`, `x++`. Built once per file.
-// A const chain that leans on one of these is not inlined — see collectSlotDependencies.
+// Every variable some expression writes: `x = 5`, `x += 1`, `x++`. Property writes count
+// against the variable at the base of the path — `sizeRef.current.w = 5` marks sizeRef —
+// because a const computed from sizeRef before that line and a style value reading
+// sizeRef after it would otherwise be treated as seeing the same numbers. Built once per
+// file. A const chain that leans on one of these is not inlined — see
+// collectSlotDependencies.
 function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): Set<ts.Symbol> {
   const written = new Set<ts.Symbol>()
   const record = (node: ts.Node): void => {
-    if (!ts.isIdentifier(node)) return
-    const symbol = checker.getSymbolAtLocation(node)
+    let target = node
+    while (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target) || ts.isParenthesizedExpression(target) || ts.isNonNullExpression(target)) {
+      target = target.expression
+    }
+    if (!ts.isIdentifier(target)) return
+    const symbol = checker.getSymbolAtLocation(target)
     if (symbol != null) written.add(symbol)
   }
   const visit = (node: ts.Node): void => {

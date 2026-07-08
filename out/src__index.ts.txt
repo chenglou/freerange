@@ -1,0 +1,7 @@
+src/index.ts
+
+analyzeFile
+  unsupported: function call lowerSource at src/index.ts:7:19
+
+analyzeSource
+  unsupported: function call lowerSource at src/index.ts:12:19

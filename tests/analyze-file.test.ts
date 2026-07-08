@@ -3476,3 +3476,183 @@ const importsReportPath = 'tests/fixtures/module-imports.ts'
       .toEqual(['return is a finite integer number at least 0'])
   })
 })
+describe('style slots', () => {
+  // Each numeric JSX style value analyzed as its own synthetic function; these pins cover
+  // the collection rules (DOM tags only, literal objects only), the const-following walk
+  // and its two refusal hazards, the verdict tiers, and the retry that keeps a slot
+  // analyzed when a followed const trips the lowering.
+  const slotLines = (source: string): string[] => {
+    const report = analyzeSource(resolve('slots.tsx'), source)
+    return report.styleSlots.map(slot => `${slot.verdict}: ${slot.line}`)
+  }
+
+  test('a division right in the style value flags NaN and names the guard', () => {
+    expect(slotLines(`
+export function LoadBar(props: {loaded: number; total: number}) {
+  return <div style={{width: (props.loaded / props.total) * 100}} />
+}
+`)).toEqual([
+      'may be NaN: style.width at 3:30: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:31); guard to add: props.total is nonzero (division at slots.tsx:3:31)',
+    ])
+  })
+
+  test('a division hidden behind consts flags too, pointing at the const line', () => {
+    expect(slotLines(`
+type Job = {width: number; height: number}
+export function ImageCard(props: {job: Job; columnWidth: number}) {
+  const padding = 16
+  const usableWidth = props.columnWidth - padding * 2
+  const cardHeight = (usableWidth * props.job.height) / props.job.width
+  return <div style={{height: cardHeight}} />
+}
+`)).toEqual([
+      'may be NaN: style.height at 7:31: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:6:23); guard to add: props.job.width is nonzero (division at slots.tsx:6:22)',
+    ])
+  })
+
+  test('a clamped const chain proves its exact range', () => {
+    expect(slotLines(`
+type Job = {width: number; height: number}
+export function SafeCard(props: {job: Job; columnWidth: number}) {
+  const safeWidth = Math.max(1, props.job.width)
+  const cardHeight = Math.min(600, (props.columnWidth * props.job.height) / safeWidth)
+  return <div style={{height: Math.max(0, cardHeight)}} />
+}
+`)).toEqual([
+      'ok: style.height at 6:31: the value is a finite number from 0 through 600',
+    ])
+  })
+
+  test('a reassigned variable disables const following: no exact-zero claim across the write', () => {
+    // early was computed with scale = 2, the slot reads scale after the `scale = 0` line;
+    // following the const would treat both reads as one value. The slot falls back to
+    // parameter treatment (overflow possible), never to `exactly early - 0`.
+    expect(slotLines(`
+export function Mutated(props: {count: number}) {
+  let scale = 2
+  const early = props.count * scale
+  scale = 0
+  return <div style={{width: early - props.count * scale}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:38)',
+    ])
+  })
+
+  test('a property write disables const following for the written object', () => {
+    // sizeRef the binding is never reassigned, but sizeRef.current.w is — inlining the
+    // object literal would carry the stale 4 as an exact value while the style line reads
+    // the 9.
+    expect(slotLines(`
+export function Gauge(props: {ratio: number}) {
+  const sizeRef = {current: {w: 4}}
+  const early = sizeRef.current.w * 2
+  sizeRef.current.w = 9
+  return <div style={{width: early - sizeRef.current.w}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:30)',
+    ])
+  })
+
+  test('style on a component is a named skip, not a checked slot', () => {
+    // Only a DOM tag renders its style values as CSS; a component's style prop is an
+    // ordinary value the component may forward, transform, or ignore — even one holding
+    // a division by zero stays uncheckable from here.
+    expect(slotLines(`
+function Inner(props: {style: {width: number}}) {
+  return null
+}
+export function Outer(props: {size: number}) {
+  return <Inner style={{width: props.size / 0}} />
+}
+`)).toEqual([
+      'skipped: style at 6:17: style on a component, not a DOM tag — only DOM tags render style values as CSS at slots.tsx:6:17',
+    ])
+  })
+
+  test('style holding a variable and style with a spread are named skips', () => {
+    expect(slotLines(`
+export function Precomputed(props: {panel: {width: number}}) {
+  return <div style={props.panel} />
+}
+`)).toEqual([
+      'skipped: style at 3:22: expression (PropertyAccessExpression) at slots.tsx:3:22',
+    ])
+    expect(slotLines(`
+export function Spread(props: {base: {width: number}; size: number}) {
+  return <div style={{...props.base, width: props.size}} />
+}
+`)).toEqual([
+      'skipped: style at 3:23: expression (SpreadAssignment) at slots.tsx:3:23',
+    ])
+  })
+
+  test('a number interpolated into a template string is checked like a direct value', () => {
+    expect(slotLines(`
+export function Progress(props: {loaded: number; total: number}) {
+  return <div style={{width: \`\${(props.loaded / props.total) * 100}%\`}} />
+}
+`)).toEqual([
+      'may be NaN: style.width at 3:33: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:34); guard to add: props.total is nonzero (division at slots.tsx:3:34)',
+    ])
+  })
+
+  test('the Infinity tiers: reachable through a zero divisor vs overflow-only', () => {
+    // 10 / parts cannot be NaN (the numerator is a nonzero constant) but a zero divisor
+    // makes it Infinity from everyday values — a warning-tier finding with a named guard.
+    expect(slotLines(`
+export function FixedNumerator(props: {parts: number}) {
+  return <div style={{width: 10 / props.parts}} />
+}
+`)).toEqual([
+      'may reach Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30); guard to add: props.parts is nonzero (division at slots.tsx:3:30)',
+    ])
+    // size * 2 only reaches Infinity near the top of what a JS number holds; left has no
+    // sign constraint, so the bare finite value is fine there.
+    expect(slotLines(`
+export function Doubled(props: {size: number}) {
+  return <div style={{width: props.size * 2, left: props.size}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30)',
+      'ok: style.left at 3:52: the value is a finite number',
+    ])
+  })
+
+  test('a shorthand style member reads the variable it names', () => {
+    expect(slotLines(`
+export function Shorthand(props: {size: number}) {
+  const width = Math.max(0, props.size)
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'ok: style.width at 4:23: the value is a finite number at least 0',
+    ])
+  })
+
+  test('a module constant reads exactly inside a slot', () => {
+    expect(slotLines(`
+const CARD_GAP = 8
+export function Gapped(props: {index: number}) {
+  return <div style={{left: CARD_GAP * 2}} />
+}
+`)).toEqual([
+      'ok: style.left at 4:29: the value is a finite integer number from 16 through 16',
+    ])
+  })
+
+  test('a followed const that trips the lowering retries without following, staying analyzed', () => {
+    // The width const's ternary condition is a bare number — outside the subset, found
+    // only when the lowering runs. The slot must fall back to plain parameter treatment,
+    // not demote to skipped: an earlier version lost six gallery findings exactly here.
+    expect(slotLines(`
+export function Retry(props: {mode: number; size: number}) {
+  const width = props.mode ? props.size : 100
+  return <div style={{width: width * 2}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 4:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:30)',
+    ])
+  })
+})

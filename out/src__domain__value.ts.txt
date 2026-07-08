@@ -1,0 +1,119 @@
+src/domain/value.ts
+
+joinSentinels
+
+unknownBoolean
+  ensures: return.canBeTrue is true
+  ensures: return.canBeFalse is true
+
+recordValue
+  ensures: return.properties.length is a finite integer number from 0 through 4294967295
+  ensures: return.properties[each].value.kind is 'number' or 'boolean' or 'record' or 'void' or 'nullish' or 'maybeNullish' or 'tuple' or 'array' or 'opaque' or 'taggedUnion'
+  ensures: return.properties[each].value.lower is a finite number (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.upper is a finite number (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.integer is boolean (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.mayBeNaN is boolean (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.excludesPoint is undefined or a finite number (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.lossSite is undefined or a finite number (when return.properties[each].value.kind is 'number')
+  ensures: return.properties[each].value.canBeTrue is boolean (when return.properties[each].value.kind is 'boolean')
+  ensures: return.properties[each].value.canBeFalse is boolean (when return.properties[each].value.kind is 'boolean')
+  ensures: return.properties[each].value.properties.length is a finite integer number from 0 through 4294967295 (when return.properties[each].value.kind is 'record')
+  ensures: return.properties[each].value.length.lower is a finite number (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.length.upper is a finite number (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.length.integer is boolean (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.length.mayBeNaN is boolean (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.length.excludesPoint is undefined or a finite number (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.length.lossSite is undefined or a finite number (when return.properties[each].value.kind is 'array')
+  ensures: return.properties[each].value.content may be undefined (when return.properties[each].value.kind is 'opaque')
+  ensures: return.properties[each].value.variants.length is exactly 2 (when return.properties[each].value.kind is 'taggedUnion')
+  ensures: return.properties[each].value.variants[0].record.properties.length is a finite integer number from 0 through 4294967295 (when return.properties[each].value.kind is 'taggedUnion')
+  ensures: return.properties[each].value.variants[1].record.properties.length is a finite integer number from 0 through 4294967295 (when return.properties[each].value.kind is 'taggedUnion')
+  assumes: properties[each].value.lower is finite and not NaN (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.upper is finite and not NaN (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.integer is a boolean (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.mayBeNaN is a boolean (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.excludesPoint is undefined or a finite non-NaN number (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.lossSite is undefined or a finite non-NaN number (when properties[each].value.kind is 'number')
+  assumes: properties[each].value.canBeTrue is a boolean (when properties[each].value.kind is 'boolean')
+  assumes: properties[each].value.canBeFalse is a boolean (when properties[each].value.kind is 'boolean')
+  assumes: properties[each].value.length.lower is finite and not NaN (when properties[each].value.kind is 'array')
+  assumes: properties[each].value.length.upper is finite and not NaN (when properties[each].value.kind is 'array')
+  assumes: properties[each].value.length.integer is a boolean (when properties[each].value.kind is 'array')
+  assumes: properties[each].value.length.mayBeNaN is a boolean (when properties[each].value.kind is 'array')
+  assumes: properties[each].value.length.excludesPoint is undefined or a finite non-NaN number (when properties[each].value.kind is 'array')
+  assumes: properties[each].value.length.lossSite is undefined or a finite non-NaN number (when properties[each].value.kind is 'array')
+
+recordProperty
+  unsupported: function call record.properties.find (array methods are outside the subset; rewrite as a for-of loop over the same array) at src/domain/value.ts:130:20
+
+joinValues
+  assumes: left.lower is finite and not NaN (when left.kind is 'number')
+  assumes: left.upper is finite and not NaN (when left.kind is 'number')
+  assumes: left.integer is a boolean (when left.kind is 'number')
+  assumes: left.mayBeNaN is a boolean (when left.kind is 'number')
+  assumes: left.excludesPoint is undefined or a finite non-NaN number (when left.kind is 'number')
+  assumes: left.lossSite is undefined or a finite non-NaN number (when left.kind is 'number')
+  assumes: left.canBeTrue is a boolean (when left.kind is 'boolean')
+  assumes: left.canBeFalse is a boolean (when left.kind is 'boolean')
+  assumes: left.length.lower is finite and not NaN (when left.kind is 'array')
+  assumes: left.length.upper is finite and not NaN (when left.kind is 'array')
+  assumes: left.length.integer is a boolean (when left.kind is 'array')
+  assumes: left.length.mayBeNaN is a boolean (when left.kind is 'array')
+  assumes: left.length.excludesPoint is undefined or a finite non-NaN number (when left.kind is 'array')
+  assumes: left.length.lossSite is undefined or a finite non-NaN number (when left.kind is 'array')
+  assumes: right.lower is finite and not NaN (when right.kind is 'number')
+  assumes: right.upper is finite and not NaN (when right.kind is 'number')
+  assumes: right.integer is a boolean (when right.kind is 'number')
+  assumes: right.mayBeNaN is a boolean (when right.kind is 'number')
+  assumes: right.excludesPoint is undefined or a finite non-NaN number (when right.kind is 'number')
+  assumes: right.lossSite is undefined or a finite non-NaN number (when right.kind is 'number')
+  assumes: right.canBeTrue is a boolean (when right.kind is 'boolean')
+  assumes: right.canBeFalse is a boolean (when right.kind is 'boolean')
+  assumes: right.length.lower is finite and not NaN (when right.kind is 'array')
+  assumes: right.length.upper is finite and not NaN (when right.kind is 'array')
+  assumes: right.length.integer is a boolean (when right.kind is 'array')
+  assumes: right.length.mayBeNaN is a boolean (when right.kind is 'array')
+  assumes: right.length.excludesPoint is undefined or a finite non-NaN number (when right.kind is 'array')
+  assumes: right.length.lossSite is undefined or a finite non-NaN number (when right.kind is 'array')
+  stopped: calls tryJoinValues, which hit unsupported code (call at src/domain/value.ts:135:18)
+
+tryJoinValues
+  unsupported: a non-null assertion turning NullishSentinels | null into NullishSentinels at src/domain/value.ts:165:47
+
+joinTaggedUnions
+  unsupported: value of type AbstractTaggedUnion | null at src/domain/value.ts:238:83
+
+taggedUnionHull
+  unsupported: value of type AbstractRecord | null at src/domain/value.ts:259:55
+
+sameVariantShape
+  unsupported: function call left.properties.every (array methods are outside the subset; rewrite as a for-of loop over the same array) at src/domain/value.ts:273:10
+
+arrayFromTupleTotal
+  unsupported: value of type AbstractArray | null at src/domain/value.ts:278:53
+
+constantLength
+  ensures: return.lower is a finite number
+  ensures: return.upper is a finite number
+  ensures: return.integer is true
+  ensures: return.mayBeNaN is false
+  ensures: return.excludesPoint is undefined
+  ensures: return.lossSite is undefined
+  assumes: length is finite and not NaN
+
+joinRecords
+  unsupported: statement (ContinueStatement) at src/domain/value.ts:306:24
+
+sameValues
+  unsupported: function call sameNumbers at src/domain/value.ts:317:27
+
+widenValue
+  unsupported: function call widenNumber at src/domain/value.ts:367:56
+
+joinBooleans
+  ensures: return.canBeTrue is boolean
+  ensures: return.canBeFalse is boolean
+  assumes: left.canBeTrue is a boolean
+  assumes: left.canBeFalse is a boolean
+  assumes: right.canBeTrue is a boolean
+  assumes: right.canBeFalse is a boolean

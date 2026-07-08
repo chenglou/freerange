@@ -174,12 +174,15 @@ export function requiredBranchBinding(symbol: ts.Symbol, bindings: Map<ts.Symbol
   return value
 }
 
-// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly two
-// places: the per-function loop in lowerSource, which discards the whole in-progress
-// FunctionContext and records an UnsupportedFunctionIR, and the module initializer's
+// Thrown when lowering meets a construct outside the accepted subset. Caught at exactly
+// three places: the per-function loop in lowerSource, which discards the whole in-progress
+// FunctionContext and records an UnsupportedFunctionIR; the module initializer's
 // statement loop in module.ts, which rolls the failed statement back and keeps lowering
-// (a skip). No other try/catch may exist under src/lower (a mid-lowering
-// catch would silently truncate bodies), and nothing outside src/lower may see this class.
+// (a skip); and the per-slot loop in style-slots.ts, which discards the slot's whole
+// in-progress context and retries once without const following before recording the skip.
+// All three discard or roll back complete units. No other try/catch may exist under
+// src/lower (a mid-lowering catch would silently truncate bodies), and nothing outside
+// src/lower may see this class.
 // Extends Error only so an accidentally escaping stop has a stack trace; the message is
 // never parsed or matched.
 export class LoweringStop extends Error {

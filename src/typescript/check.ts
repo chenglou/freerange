@@ -23,6 +23,9 @@ const compilerOptions: ts.CompilerOptions = {
   noEmit: true,
   skipLibCheck: true,
   types: [],
+  // Single-file .tsx analysis (the style-slot pass); a plain .ts file never contains JSX,
+  // so the option is inert there. @types/react (a devDependency) supplies jsx-runtime.
+  jsx: ts.JsxEmit.ReactJSX,
 }
 
 export function checkFile(file: string): CheckedSource {
@@ -33,7 +36,7 @@ export function checkFile(file: string): CheckedSource {
 
 export function checkSource(file: string, source: string): CheckedSource {
   const absoluteFile = resolve(file)
-  const sourceFile = ts.createSourceFile(absoluteFile, source, ts.ScriptTarget.ESNext, true, ts.ScriptKind.TS)
+  const sourceFile = ts.createSourceFile(absoluteFile, source, ts.ScriptTarget.ESNext, true, absoluteFile.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
   const host = ts.createCompilerHost(compilerOptions)
   const defaultGetSourceFile = host.getSourceFile.bind(host)
   const defaultFileExists = host.fileExists.bind(host)

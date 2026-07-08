@@ -1,0 +1,54 @@
+tests/fixtures/showcase.ts
+
+springStep
+  ensures: return.pos is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at tests/fixtures/showcase.ts:21:38)
+  ensures: return.dest is a finite number
+  ensures: return.v is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at tests/fixtures/showcase.ts:21:38)
+  assumes: s.pos is finite and not NaN
+  assumes: s.dest is finite and not NaN
+  assumes: s.v is finite and not NaN
+
+springDone
+  ensures: return is boolean
+  assumes: s.pos is finite and not NaN
+  assumes: s.dest is finite and not NaN
+  assumes: s.v is finite and not NaN
+
+frameSteps
+  ensures: return is a finite integer number from 0 through 100
+  assumes: now is finite and not NaN
+  assumes: animatedUntilTime is null or a finite non-NaN number
+
+advanceClock
+  assumes: now is finite and not NaN
+
+moveCursor
+  assumes: nx is finite and not NaN
+  assumes: ny is finite and not NaN
+
+cursorDistance
+  ensures: return is a possibly non-finite number from 0 through Infinity (can overflow at tests/fixtures/showcase.ts:46:10)
+  assumes: cursor.x is finite and not NaN
+  assumes: cursor.y is finite and not NaN
+
+middleGap
+  ensures: return is a finite integer number from 24 through 24
+
+totalClamped
+  ensures: return is a finite number at least 0
+  assumes: every values element is finite and not NaN
+
+firstPositive
+  ensures: return is a finite number at least 0
+  assumes: every values element is finite and not NaN
+
+headOr
+  ensures: return is a finite number
+  assumes: every values element is finite and not NaN
+  assumes: fallback is finite and not NaN
+
+widthPerColumn
+  requires: grid.columnCount is nonzero (division at tests/fixtures/showcase.ts:78:10)
+  ensures: return is a possibly non-finite number from -Infinity through Infinity (can overflow at tests/fixtures/showcase.ts:78:10)
+  assumes: grid.columnCount is finite and not NaN
+  assumes: width is finite and not NaN

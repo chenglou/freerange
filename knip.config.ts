@@ -5,6 +5,9 @@ const config: KnipConfig = {
   ignore: [
     '.claude/workflows/**', // named Workflow scripts, invoked by the agent harness, not imported
 'tests/**/*.ts'],
+  // Nothing imports @types/react by name: the compiler resolves it implicitly for
+  // react/jsx-runtime when single-file analysis checks a .tsx source.
+  ignoreDependencies: ['@types/react'],
   ignoreExportsUsedInFile: true,
 }
 

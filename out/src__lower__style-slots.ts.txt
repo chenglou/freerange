@@ -1,0 +1,22 @@
+src/lower/style-slots.ts
+
+lowerStyleSlots
+  unsupported: function parameter with type TypeChecker at src/lower/style-slots.ts:29:3
+
+lowerSlotFunction
+  unsupported: a write into an object (values are immutable; rebind a variable to a fresh object instead) at src/lower/style-slots.ts:159:19
+
+collectSlotDependencies
+  unsupported: function parameter with type TypeChecker at src/lower/style-slots.ts:215:3
+
+inlinableConstInitializer
+  unsupported: function call ts.isVariableDeclaration at src/lower/style-slots.ts:256:8
+
+expressionLowersPlainly
+  unsupported: expression (ArrowFunction) at src/lower/style-slots.ts:272:17
+
+valueUseIdentifiers
+  unsupported: function parameter with type TypeChecker at src/lower/style-slots.ts:323:3
+
+reassignedSymbols
+  unsupported: function parameter with type TypeChecker at src/lower/style-slots.ts:350:55

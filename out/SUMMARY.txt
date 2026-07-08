@@ -1,0 +1,30 @@
+{"files":36,"typeErrors":0,"noFunctions":7,"functions":284,"analyzed":59,"partial":16,"unsupported":209}
+
+requires (5):
+  tests/fixtures/preconditions.ts divideWidth: columnCount is nonzero (division at tests/fixtures/preconditions.ts:6:10)
+  tests/fixtures/preconditions.ts divideThroughCaller: columnCount is nonzero (division at tests/fixtures/preconditions.ts:6:10)
+  tests/fixtures/preconditions.ts divideThroughTwoCallers: columnCount is nonzero (division at tests/fixtures/preconditions.ts:6:10)
+  tests/fixtures/preconditions.ts divideAfterGap: (width - gap) is nonzero (division at tests/fixtures/preconditions.ts:6:10)
+  tests/fixtures/showcase.ts widthPerColumn: grid.columnCount is nonzero (division at tests/fixtures/showcase.ts:78:10)
+
+rejection reasons:
+   36  parameterType
+   32  typeCheckSuppressed
+   31  propertyWrite
+   19  valueType
+   12  expressionForm
+    9  propertyReadOnNonObject
+    7  prototypeMemberRead
+    4  statementForm
+    3  nonNumberOperand
+    3  binaryOperator
+    2  call:formatSite
+    2  call:lowerSource
+    2  call:data.map
+  seen once: call:(…).filter, call:(…).includes, call:(…).join, call:(…).slice, call:String, call:addNumbers, call:assumptions.some, call:bindings.get, call:blocks.map, call:completedEvaluation, call:context.bindings.get, call:context.bindings.has, call:context.checker.getTypeAtLocation, call:context.sites.push, call:emptySharedState, call:fn.blocks.map, call:isFiniteNumber, call:joined.push, call:left.properties.every, call:mkdirSync, call:modules.push, call:nextDown, call:nextUp, call:pairs.push, call:pairs.some, call:preconditions.some, call:program.moduleBindings.map, call:record.properties.find, call:recordProperty, call:requestAnimationFrame, call:resolve, call:sameNumbers, call:seen.includes, call:state.modules.slice, call:ts.isBinaryExpression, call:ts.isFunctionDeclaration, call:ts.isIdentifier, call:ts.isPropertyAccessExpression, call:ts.isVariableDeclaration, call:ts.isVariableStatement, call:tuple.elements.reduce, call:unknownBoolean, call:visit, call:widenNumber, kindChangingAssertion, parameterDefaultValue, variableDeclarationShape
+
+stop reasons:
+   14  calleeStopped
+    9  unmodeledNarrowing
+    2  unsupportedCode
+    1  moduleRead

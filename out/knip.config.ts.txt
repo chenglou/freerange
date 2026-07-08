@@ -1,0 +1,4 @@
+knip.config.ts
+
+module initialization
+  skipped: statement (ExportAssignment) at knip.config.ts:11:1

@@ -1,0 +1,9 @@
+tests/fixtures/module-imports.ts
+
+paddedBy
+  ensures: return is a finite number at least 7
+  assumes: width is finite and not NaN
+
+shiftedBy
+  assumes: width is finite and not NaN
+  stopped: reads importedOffset, which is imported from another module (read at tests/fixtures/module-imports.ts:10:18)
