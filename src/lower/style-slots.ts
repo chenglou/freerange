@@ -117,13 +117,16 @@ export function lowerStyleSlots(
         visitSlotValue(member.name.text, member.name)
         continue
       }
-      if (!ts.isIdentifier(member.name) && !ts.isStringLiteral(member.name)) {
-        // Only this member is skipped — the loop continues past it — so the label must
-        // not read as the whole object (a review round caught '(whole object)' here).
-        recordSkip('(computed key)', member.name, {kind: 'computedPropertyName'})
-        continue
+      // A computed key whose text is statically known — the CSS-custom-property idiom
+      // `['--loupe-image-left' as string]: offset` — is an ordinary named property. A key
+      // whose text is NOT known could name any sibling at runtime and override a slot
+      // already checked, so the whole object is skipped, same as a spread.
+      const keyText = literalKeyText(member.name)
+      if (keyText == null) {
+        recordSkip(null, member.name, {kind: 'computedPropertyName'})
+        return
       }
-      visitSlotValue(member.name.text, member.initializer)
+      visitSlotValue(keyText, member.initializer)
     }
   }
   const visit = (node: ts.Node): void => {
@@ -134,6 +137,21 @@ export function lowerStyleSlots(
   }
   visit(sourceFile)
   return slots
+}
+
+// The statically known text of a style property name: a plain identifier, a quoted
+// string, or a computed key that peels (parens, as-casts, satisfies) to a string literal.
+// Null means the key's text is only known at runtime.
+function literalKeyText(name: ts.PropertyName): string | null {
+  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) return name.text
+  if (ts.isComputedPropertyName(name)) {
+    let inner: ts.Expression = name.expression
+    while (ts.isParenthesizedExpression(inner) || ts.isAsExpression(inner) || ts.isSatisfiesExpression(inner)) {
+      inner = inner.expression
+    }
+    if (ts.isStringLiteralLike(inner)) return inner.text
+  }
+  return null
 }
 
 function lowerSlotFunction(
@@ -162,7 +180,7 @@ function lowerSlotFunction(
     parameters: [],
   }
   const dependencies = collectSlotDependencies(expression, sourceFile, checker, scan, functionsBySymbol, reassigned, followConsts)
-  for (const [symbol, use] of dependencies.parameters) {
+  const slotParameter = (symbol: ts.Symbol, use: ts.Identifier): number => {
     const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0] ?? use
     const declared = declaredKind(checker.getTypeAtLocation(declaration), checker, [])
     if (declared == null) {
@@ -171,12 +189,32 @@ function lowerSlotFunction(
     const value = context.nextValue++
     context.bindings.set(symbol, value)
     context.parameters.push({value, name: use.text, type: declared})
+    return value
   }
+  for (const [symbol, use] of dependencies.parameters) slotParameter(symbol, use)
   // The inlined consts lower first, oldest declaration first, so a later initializer that
   // reads an earlier const finds it already bound (a const can only reference consts
   // declared above it).
   for (const {symbol, initializer} of dependencies.prelude) {
     context.bindings.set(symbol, lowerExpression(initializer, context))
+  }
+  // Sever the two regions. The const lines and the style line are two observation moments
+  // of the same mutable inputs — body statements the pass never reads run in between — so
+  // every input the style expression itself mentions gets a second, fresh instance here.
+  // The consts' RESULTS still flow (a value held in a binding is genuinely the old value),
+  // but nothing LEARNED about the prelude's reads can transfer to the style line's own
+  // reads: a review round produced three false claims through exactly that transfer — a
+  // comparison on a cached property narrowing the record the style line re-reads, a module
+  // let narrowed across an elided reset() call, and a stale length guard discharging the
+  // style line's asserted element read. Both instances carry the same declared-kind
+  // assumptions, and the printed assumes dedupe by text.
+  if (dependencies.prelude.length > 0) {
+    const reseeded = new Set<ts.Symbol>()
+    for (const {symbol, node} of valueUseIdentifiers(expression, sourceFile, checker)) {
+      if (!dependencies.parameters.has(symbol) || reseeded.has(symbol)) continue
+      reseeded.add(symbol)
+      slotParameter(symbol, node)
+    }
   }
   const value = lowerExpression(expression, context)
   terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, expression)})
@@ -238,7 +276,15 @@ function collectSlotDependencies(
     while (pending.length > 0) {
       const {symbol, node} = pending.pop()!
       if (parameters.has(symbol) || inlined.has(symbol)) continue
-      if (scan.bindingsBySymbol.has(symbol) || functionsBySymbol.has(symbol)) continue
+      if (scan.bindingsBySymbol.has(symbol) || functionsBySymbol.has(symbol)) {
+        // A module-level `let` some function writes may change between the const lines
+        // and the style line like any other mutable state, and a const relocating its
+        // read into the synthetic function would sidestep the module channel's version
+        // stamps (no call happens inside the synthetic function to advance them). Module
+        // consts and function references stay free.
+        if (scan.bindingsBySymbol.has(symbol) && reassigned.has(symbol)) sawReassignedLeaf = true
+        continue
+      }
       const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
       if (declaration == null) continue
       // Imports and lib globals: their declarations live in other files.
@@ -428,6 +474,11 @@ function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): 
       record(node.operand)
     }
     if (ts.isDeleteExpression(node)) record(node.expression)
+    // `for (existing of items)` and `for (existing in obj)` assign the pre-declared
+    // variable each iteration without any `=` token.
+    if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
+      recordTarget(node.initializer)
+    }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const receiverIsMath = ts.isPropertyAccessExpression(node.expression)
         && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Math'
