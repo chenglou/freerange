@@ -118,7 +118,9 @@ export function lowerStyleSlots(
         continue
       }
       if (!ts.isIdentifier(member.name) && !ts.isStringLiteral(member.name)) {
-        recordSkip(null, member.name, {kind: 'computedPropertyName'})
+        // Only this member is skipped — the loop continues past it — so the label must
+        // not read as the whole object (a review round caught '(whole object)' here).
+        recordSkip('(computed key)', member.name, {kind: 'computedPropertyName'})
         continue
       }
       visitSlotValue(member.name.text, member.initializer)
@@ -278,10 +280,21 @@ function inlinableConstInitializer(declaration: ts.Declaration): ts.Expression |
 }
 
 // The constructs an initializer may contain and still be inlined: literals, arithmetic,
-// comparisons, property and element reads, ternaries, Math calls, object and array
-// literals. Anything else — other calls, arrows, casts, optional chains, assignments —
-// keeps the const as an assumed-by-type parameter, exactly its treatment before inlining
-// existed. A miss here costs precision, never a wrong claim.
+// comparisons, property and element reads, ternaries, Math calls. Anything else — other
+// calls, arrows, casts, optional chains, assignments — keeps the const as an
+// assumed-by-type parameter, exactly its treatment before inlining existed. A miss here
+// costs precision, never a wrong claim.
+//
+// Object and array literals are deliberately NOT inlinable. A literal carries exact
+// contents (`const sizeRef = {current: {w: 4}}` knows w is 4), and exact contents can go
+// stale through an alias the write scan cannot see — `const alias = sizeRef;
+// alias.current.w = 0` marks alias, never sizeRef, and no syntactic scan closes aliasing
+// in general (a review round produced four distinct evasions: alias binding, destructured
+// alias, for-of loop variable, mutated array elements). Primitives cannot alias, so a
+// followed chain may carry exactness only through primitive bindings. Property and
+// element reads that root at a PARAMETER stay inlinable because their result is the
+// declared-kind range, not an exact value — a range that covers the value before and
+// after any type-preserving mutation, so staleness cannot falsify it.
 function expressionLowersPlainly(root: ts.Expression): boolean {
   let plain = true
   const visit = (node: ts.Node): void => {
@@ -318,8 +331,6 @@ function expressionLowersPlainly(root: ts.Expression): boolean {
       || ts.isToken(node)
       || ts.isIdentifier(node) || ts.isParenthesizedExpression(node) || ts.isNonNullExpression(node)
       || ts.isConditionalExpression(node)
-      || ts.isObjectLiteralExpression(node) || ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)
-      || ts.isArrayLiteralExpression(node)
     )) {
       plain = false
       return
@@ -388,24 +399,52 @@ function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): 
     return (flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike
       | ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0
   }
+  // An assignment target can be a destructuring pattern — `[obj.x] = arr`,
+  // `({y: obj.z} = src)` — which parses as an array or object literal in assignment
+  // position; every leaf target inside gets recorded.
+  const recordTarget = (node: ts.Node): void => {
+    if (ts.isArrayLiteralExpression(node)) {
+      for (const element of node.elements) recordTarget(ts.isSpreadElement(element) ? element.expression : element)
+      return
+    }
+    if (ts.isObjectLiteralExpression(node)) {
+      for (const member of node.properties) {
+        if (ts.isPropertyAssignment(member)) recordTarget(member.initializer)
+        else if (ts.isShorthandPropertyAssignment(member)) recordTarget(member.name)
+        else if (ts.isSpreadAssignment(member)) recordTarget(member.expression)
+      }
+      return
+    }
+    record(node)
+  }
   const visit = (node: ts.Node): void => {
     if (ts.isBinaryExpression(node)
       && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
       && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
-      record(node.left)
+      recordTarget(node.left)
     }
     if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
       && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
       record(node.operand)
     }
     if (ts.isDeleteExpression(node)) record(node.expression)
-    if (ts.isCallExpression(node)) {
+    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const receiverIsMath = ts.isPropertyAccessExpression(node.expression)
         && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Math'
       if (ts.isPropertyAccessExpression(node.expression) && !receiverIsMath) record(node.expression.expression)
       if (!receiverIsMath) {
-        for (const argument of node.arguments) {
+        for (const argument of node.arguments ?? []) {
           if (!primitiveArgument(argument)) record(argument)
+        }
+      }
+    }
+    // A tagged template is a call in disguise: the tag function receives the interpolated
+    // values and may mutate any object among them.
+    if (ts.isTaggedTemplateExpression(node)) {
+      record(node.tag)
+      if (ts.isTemplateExpression(node.template)) {
+        for (const span of node.template.templateSpans) {
+          if (!primitiveArgument(span.expression)) record(span.expression)
         }
       }
     }

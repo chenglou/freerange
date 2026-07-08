@@ -125,7 +125,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
     }
   }
-  return {file: reportPath(program), functions, styleSlots: styleSlotLines(program, analysis)}
+  return {file: reportPath(program), functions, styleSlots: styleSlotLines(program, analysis, assumedBindings)}
 }
 
 // Which numeric style properties additionally reject negative values (or zero too, for
@@ -138,7 +138,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
 // opacity is absent because the browser clamps out-of-range opacity instead of dropping it.
 const nonnegativeStyleProperties = new Set([
   // Box sizes, physical and logical.
-  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight',
+  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'aspectRatio', 'zoom',
   'blockSize', 'inlineSize', 'minBlockSize', 'minInlineSize', 'maxBlockSize', 'maxInlineSize',
   // Padding, physical and logical. Margins are absent: negative margins are valid layout.
   'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
@@ -160,9 +160,11 @@ const nonnegativeStyleProperties = new Set([
   // Multi-column and rendering.
   'columnWidth', 'perspective', 'strokeWidth',
 ])
-// Zero is invalid too: an aspect ratio of 0, a 0-column layout, a 0-line clamp are all
-// dropped declarations.
-const positiveStyleProperties = new Set(['aspectRatio', 'columnCount', 'widows', 'orphans', 'lineClamp', 'WebkitLineClamp', 'zoom'])
+// Zero is invalid too: a 0-column layout or a 0-line clamp is a dropped declaration.
+// aspectRatio and zoom are NOT here — a review round verified in a real browser that
+// `aspect-ratio: 0` and `zoom: 0` are kept (zoom: 0 even resolves to 1), so they carry
+// only the negative-dropped check above.
+const positiveStyleProperties = new Set(['columnCount', 'widows', 'orphans', 'lineClamp', 'WebkitLineClamp'])
 
 const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
   'may be NaN': 0,
@@ -174,12 +176,12 @@ const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
   'skipped': 6,
 }
 
-function styleSlotLines(program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine[] {
-  const lines = program.styleSlots.map(slot => styleSlotLine(slot, analysis.functions[slot.fn]!, program, analysis))
+function styleSlotLines(program: ProgramIR, analysis: ProgramAnalysis, assumedBindings: boolean[][]): StyleSlotLine[] {
+  const lines = program.styleSlots.map(slot => styleSlotLine(slot, analysis.functions[slot.fn]!, program, analysis, assumedBindings[slot.fn]!))
   return lines.sort((a, b) => styleSlotSeverity[a.verdict] - styleSlotSeverity[b.verdict])
 }
 
-function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: ProgramIR, analysis: ProgramAnalysis): StyleSlotLine {
+function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: ProgramIR, analysis: ProgramAnalysis, assumedSlotBindings: boolean[]): StyleSlotLine {
   const name = fn.lowering.name
   const location = siteLocation(program, slot.site)
   const slotLine = (verdict: StyleSlotVerdict, line: string, guard: string | null = null): StyleSlotLine =>
@@ -203,7 +205,15 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
           : `the divisor at ${formatSite(program, assumption.site)} is nonzero`),
       ]
       const guard = needs.length > 0 ? needs.join(' and ') : null
-      const summary = numberSummary('the value', value, program) + (guard == null ? '' : `; guard to add: ${guard}`)
+      // A slot line travels alone — quoted in LINT.txt or read in isolation — so the
+      // assumptions that condition the claim print on the line itself, not only in the
+      // section header. `ok: the value is a finite number` for `dy - 4` is true only
+      // because the number input dy is assumed finite; a review round showed the bare
+      // sentence read as unconditional. Bounds assumptions are already in the guard text.
+      const assumes = assumptionLines(fn.lowering, program, assumedSlotBindings, [])
+      const summary = numberSummary('the value', value, program)
+        + (guard == null ? '' : `; guard to add: ${guard}`)
+        + (assumes.length === 0 ? '' : `; assumes: ${assumes.join(', ')}`)
       if (value.mayBeNaN) return slotLine('may be NaN', `${name}: ${summary}`, guard)
       if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {
         // Two different findings share an Infinity bound. With a division around, a zero

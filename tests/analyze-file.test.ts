@@ -3492,7 +3492,7 @@ export function LoadBar(props: {loaded: number; total: number}) {
   return <div style={{width: (props.loaded / props.total) * 100}} />
 }
 `)).toEqual([
-      'may be NaN: style.width at 3:30: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:31); guard to add: props.total is nonzero (division at slots.tsx:3:31)',
+      'may be NaN: style.width at 3:30: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:31); guard to add: props.total is nonzero (division at slots.tsx:3:31); assumes: props.loaded is finite and not NaN, props.total is finite and not NaN',
     ])
   })
 
@@ -3506,7 +3506,7 @@ export function ImageCard(props: {job: Job; columnWidth: number}) {
   return <div style={{height: cardHeight}} />
 }
 `)).toEqual([
-      'may be NaN: style.height at 7:31: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:6:23); guard to add: props.job.width is nonzero (division at slots.tsx:6:22)',
+      'may be NaN: style.height at 7:31: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:6:23); guard to add: props.job.width is nonzero (division at slots.tsx:6:22); assumes: props.job.width is finite and not NaN, props.job.height is finite and not NaN, props.columnWidth is finite and not NaN',
     ])
   })
 
@@ -3519,7 +3519,7 @@ export function SafeCard(props: {job: Job; columnWidth: number}) {
   return <div style={{height: Math.max(0, cardHeight)}} />
 }
 `)).toEqual([
-      'ok: style.height at 6:31: the value is a finite number from 0 through 600',
+      'ok: style.height at 6:31: the value is a finite number from 0 through 600; assumes: props.job.width is finite and not NaN, props.job.height is finite and not NaN, props.columnWidth is finite and not NaN',
     ])
   })
 
@@ -3535,7 +3535,7 @@ export function Mutated(props: {count: number}) {
   return <div style={{width: early - props.count * scale}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:38)',
+      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:38); assumes: scale is finite and not NaN, props.count is finite and not NaN, early is finite and not NaN',
     ])
   })
 
@@ -3551,7 +3551,7 @@ export function Gauge(props: {ratio: number}) {
   return <div style={{width: early - sizeRef.current.w}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:30)',
+      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:30); assumes: sizeRef.current.w is finite and not NaN, early is finite and not NaN',
     ])
   })
 
@@ -3594,7 +3594,7 @@ export function Progress(props: {loaded: number; total: number}) {
   return <div style={{width: \`\${(props.loaded / props.total) * 100}%\`}} />
 }
 `)).toEqual([
-      'may be NaN: style.width at 3:33: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:34); guard to add: props.total is nonzero (division at slots.tsx:3:34)',
+      'may be NaN: style.width at 3:33: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:3:34); guard to add: props.total is nonzero (division at slots.tsx:3:34); assumes: props.loaded is finite and not NaN, props.total is finite and not NaN',
     ])
   })
 
@@ -3606,7 +3606,7 @@ export function FixedNumerator(props: {parts: number}) {
   return <div style={{width: 10 / props.parts}} />
 }
 `)).toEqual([
-      'may reach Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30); guard to add: props.parts is nonzero (division at slots.tsx:3:30)',
+      'may reach Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30); guard to add: props.parts is nonzero (division at slots.tsx:3:30); assumes: props.parts is finite and not NaN',
     ])
     // size * 2 only reaches Infinity near the top of what a JS number holds; left has no
     // sign constraint, so the bare finite value is fine there.
@@ -3615,8 +3615,8 @@ export function Doubled(props: {size: number}) {
   return <div style={{width: props.size * 2, left: props.size}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30)',
-      'ok: style.left at 3:52: the value is a finite number',
+      'may overflow to Infinity: style.width at 3:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:3:30); assumes: props.size is finite and not NaN',
+      'ok: style.left at 3:52: the value is a finite number; assumes: props.size is finite and not NaN',
     ])
   })
 
@@ -3627,7 +3627,7 @@ export function Shorthand(props: {size: number}) {
   return <div style={{width}} />
 }
 `)).toEqual([
-      'ok: style.width at 4:23: the value is a finite number at least 0',
+      'ok: style.width at 4:23: the value is a finite number at least 0; assumes: props.size is finite and not NaN',
     ])
   })
 
@@ -3642,6 +3642,25 @@ export function Gapped(props: {index: number}) {
     ])
   })
 
+  test('a write through an alias cannot produce a stale exact claim', () => {
+    // The review round's headline finding: `alias.current.w = 0` marks alias, never
+    // sizeRef, so no syntactic scan can close aliasing. The fix is structural — object
+    // and array literals never inline (their exact contents could go stale), so the slot
+    // reads sizeRef as an input at its declared type and honestly reports the division.
+    // Before the fix this claimed `ok: the value is a finite number from 25 through 25`
+    // while the rendered value was Infinity.
+    expect(slotLines(`
+export function Gallery() {
+  const sizeRef = {current: {w: 4}}
+  const alias = sizeRef
+  alias.current.w = 0
+  return <div style={{width: 100 / sizeRef.current.w}} />
+}
+`)).toEqual([
+      'may reach Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:30); guard to add: sizeRef.current.w is nonzero (division at slots.tsx:6:30); assumes: sizeRef.current.w is finite and not NaN',
+    ])
+  })
+
   test('a followed const that trips the lowering retries without following, staying analyzed', () => {
     // The width const's ternary condition is a bare number — outside the subset, found
     // only when the lowering runs. The slot must fall back to plain parameter treatment,
@@ -3652,7 +3671,7 @@ export function Retry(props: {mode: number; size: number}) {
   return <div style={{width: width * 2}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 4:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:30)',
+      'may overflow to Infinity: style.width at 4:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:30); assumes: width is finite and not NaN',
     ])
   })
 })
