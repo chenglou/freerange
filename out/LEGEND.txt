@@ -1,8 +1,0 @@
-# freerange: static analysis of the numeric behavior of each top-level function.
-# requires: conditions the caller must make true; given them, the ensures lines hold.
-# ensures:  guarantees about the returned value whenever the function returns.
-# assumes:  input facts taken on faith; no other line holds unless these do.
-# unsupported: the function uses code outside the analyzed subset; the message names the construct and, when one exists, the rewrite that brings it inside.
-# stopped:  analysis halted partway on some path; the entry describes only what ran before the stop.
-# skipped:  a top-level statement the module analysis stepped over; anything it could write is distrusted.
-# on analyzed paths: evidence from the paths that completed - not a guarantee for the whole function.

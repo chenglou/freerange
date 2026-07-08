@@ -1,7 +1,0 @@
-tests/analyze-file.test.ts
-
-module initialization
-  stopped: a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed at tests/analyze-file.test.ts:2995:15
-
-analyzedFunction
-  unsupported: a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed at tests/analyze-file.test.ts:2995:15

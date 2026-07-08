@@ -1,4 +1,0 @@
-src/project.ts
-
-runProject
-  unsupported: function call mkdirSync at src/project.ts:18:3

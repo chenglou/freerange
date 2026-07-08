@@ -250,15 +250,18 @@ const inlinedConstCap = 16
 // functions resolve as callees, lib globals (Math, window, Infinity) have their own arms,
 // and anything unresolvable rejects by name.
 //
-// One hazard makes the walk refuse to inline: a leaf variable that some statement writes
-// (`let scale = 2; ... scale = 0`). The const captured the value the variable held at the
-// const's own line; the slot reads the variable's value now; the statements in between are
-// exactly the code this pass never reads. Modeling both reads as one parameter would treat
-// two possibly different values as equal — the analysis could then claim, say, that
-// `width - width` is exactly 0 when the two reads straddled a write. Rather than reason
-// about which writes can run when, any reassigned leaf disables inlining for the whole
-// slot, reverting it to the plain parameter treatment, which has one read per region and
-// no such hazard.
+// Two hazards make the walk refuse to inline for the whole slot, reverting it to the
+// plain parameter treatment (one read per region, no cross-moment transfer). First, a
+// leaf variable that some statement may write (`let scale = 2; ... scale = 0`, or any of
+// the mutation forms reassignedSymbols marks): the const captured the value at its own
+// line, the slot reads the value now, and modeling both reads as one parameter would
+// treat two possibly different values as equal — the analysis could then claim that
+// `width - width` is exactly 0 when the two reads straddled a write. Second, a module
+// binding that holds a record or array, even one nothing ever writes: the binding is
+// shared state the fresh-instance severing cannot copy, and its contents can change
+// through aliases no scan closes. Separately from these whole-slot refusals, a const
+// whose own value is not a primitive never inlines (see the vetting below) — that rule
+// is per-const, not a poison.
 function collectSlotDependencies(
   expression: ts.Expression,
   sourceFile: ts.SourceFile,
@@ -268,10 +271,10 @@ function collectSlotDependencies(
   reassigned: Set<ts.Symbol>,
   followConsts: boolean,
 ): SlotDependencies {
-  const collect = (allowInlining: boolean): SlotDependencies & {sawReassignedLeaf: boolean} => {
+  const collect = (allowInlining: boolean): SlotDependencies & {followingPoisoned: boolean} => {
     const parameters = new Map<ts.Symbol, ts.Identifier>()
     const inlined = new Map<ts.Symbol, {initializer: ts.Expression; position: number}>()
-    let sawReassignedLeaf = false
+    let followingPoisoned = false
     const pending = valueUseIdentifiers(expression, sourceFile, checker)
     while (pending.length > 0) {
       const {symbol, node} = pending.pop()!
@@ -290,7 +293,7 @@ function collectSlotDependencies(
         // Primitive never-written module constants stay free: genuinely immutable, so a
         // fact about them is true at both observation moments.
         if (moduleBinding != null && (reassigned.has(symbol) || !primitiveDeclaredKind(declaredKindOf(scan.bindings[moduleBinding]!.category)))) {
-          sawReassignedLeaf = true
+          followingPoisoned = true
         }
         continue
       }
@@ -303,7 +306,7 @@ function collectSlotDependencies(
       // must not inline either — the inlined literal would carry the stale 4 as an exact
       // value while the style line reads the 9.
       if (reassigned.has(symbol)) {
-        sawReassignedLeaf = true
+        followingPoisoned = true
         parameters.set(symbol, node)
         continue
       }
@@ -324,10 +327,10 @@ function collectSlotDependencies(
     const prelude = [...inlined.entries()]
       .sort((a, b) => a[1].position - b[1].position)
       .map(([symbol, entry]) => ({symbol, initializer: entry.initializer}))
-    return {parameters, prelude, sawReassignedLeaf}
+    return {parameters, prelude, followingPoisoned}
   }
   const first = collect(followConsts)
-  if (first.sawReassignedLeaf && first.prelude.length > 0) return collect(false)
+  if (first.followingPoisoned && first.prelude.length > 0) return collect(false)
   return first
 }
 

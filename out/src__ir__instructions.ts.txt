@@ -1,4 +1,0 @@
-src/ir/instructions.ts
-
-forEachOperand
-  unsupported: function call visit at src/ir/instructions.ts:111:25

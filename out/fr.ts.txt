@@ -1,5 +1,0 @@
-fr.ts
-
-module initialization
-  skipped: function call process.argv.slice (array methods are outside the subset; rewrite as a for-of loop over the same array) at fr.ts:7:15
-  skipped: function call runProject at fr.ts:11:3
