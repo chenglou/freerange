@@ -3523,6 +3523,28 @@ export function SafeCard(props: {job: Job; columnWidth: number}) {
     ])
   })
 
+  test('follows primitive unions instead of widening them to an arbitrary input', () => {
+    expect(slotLines(`
+export function Progress(props: {useSmallTarget: boolean}) {
+  const target = props.useSmallTarget ? 200 : 550
+  const width = 100 / target
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'ok: style.width at 5:23: the value is a finite number from 0.18181818181818182 through 0.5; assumes: props.useSmallTarget is a boolean',
+    ])
+  })
+
+  test('follows imported numeric literals inside style const chains', () => {
+    const fixture = new URL('./fixtures/style-imports.tsx', import.meta.url).pathname
+    const report = analyzeFile(fixture)
+    expect(report.styleSlots).toHaveLength(1)
+    expect(report.styleSlots[0]?.verdict).toBe('may overflow to Infinity')
+    expect(report.styleSlots[0]?.guard).toBeNull()
+    expect(report.styleSlots[0]?.line).not.toContain('possibly NaN')
+    expect(report.styleSlots[0]?.line).toContain('assumes: props.useSmallTarget is a boolean, props.total is finite and not NaN')
+  })
+
   test('a reassigned variable is observed separately across the write', () => {
     // early was computed with scale = 2, the slot reads scale after the `scale = 0` line;
     // following the const must give those two reads separate input values. An earlier

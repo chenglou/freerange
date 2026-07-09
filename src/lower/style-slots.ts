@@ -301,11 +301,13 @@ function collectSlotDependencies(
         // could incorrectly preserve a fact between them. A binding written inside a
         // function and any binding holding a record or array therefore prevent following.
         // An immutable scalar module value is safe wherever it is read.
-        if (moduleBinding != null && (
-          scan.writtenInsideFunctions.has(moduleBinding)
-          || !immutableDeclaredKind(declaredKindOf(scan.bindings[moduleBinding]!.category))
-        )) {
-          moduleReadPreventsFollowing = true
+        if (moduleBinding != null) {
+          const category = scan.bindings[moduleBinding]!.category
+          const immutableScalar = category.kind === 'importedConstant'
+            || immutableDeclaredKind(declaredKindOf(category))
+          if (scan.writtenInsideFunctions.has(moduleBinding) || !immutableScalar) {
+            moduleReadPreventsFollowing = true
+          }
         }
         continue
       }
@@ -363,6 +365,7 @@ function collectSlotDependencies(
 // A number, boolean, or string: a value, not a container — it cannot be mutated through
 // an alias, so carrying it across intervening code is sound.
 function primitiveType(type: ts.Type): boolean {
+  if (type.isUnion()) return type.types.every(primitiveType)
   return (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike)) !== 0
 }
 
