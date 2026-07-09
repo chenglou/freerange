@@ -378,12 +378,19 @@ export type ProgramIR = {
   // Numeric JSX style values (`style={{width: computedWidth}}`), each lowered as its own
   // synthetic function and appended to `functions` after every declared function — so a
   // call inside a slot still resolves same-file callees by their real FunctionIDs, while
-  // nothing can call a slot (no symbol maps to one). The report reads this list to keep
-  // slot entries out of the ordinary function entries. Empty for non-.tsx files.
+  // nothing can call a slot (no symbol maps to one). A const-following slot also keeps a
+  // plain-expression fallback for analysis limitations inside a followed initializer.
+  // The report reads this list to keep both versions out of the ordinary function entries.
+  // Empty for non-.tsx files.
   styleSlots: StyleSlotIR[]
 }
 
-export type StyleSlotIR = {fn: FunctionID; property: string; site: SiteID}
+export type StyleSlotIR = {
+  fn: FunctionID
+  fallbackFn: FunctionID | null
+  property: string
+  site: SiteID
+}
 
 // The synthetic initializer's display and IR name, shared by its two producers and read
 // back by the report, so the strings cannot drift apart.

@@ -61,9 +61,8 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
   const sites: SourceSpan[] = []
   const functions: FunctionLowering[] = []
   for (const declaration of declarations) {
-    // One of the two places a LoweringStop is caught. The half-built FunctionContext is
-    // discarded wholesale; only the name, the offending node's site, and the tagged reason
-    // survive.
+    // A failed function lowering discards the half-built FunctionContext wholesale; only
+    // the name, the offending node's site, and the tagged reason survive.
     try {
       functions.push(lowerFunction(declaration, sourceFile, checker, functionsBySymbol, scan, sites))
     } catch (error) {
@@ -78,7 +77,13 @@ export function lowerSource(checked: CheckedSource, baseDirectory: string = proc
   if (sourceFile.fileName.endsWith('.tsx')) {
     for (const slot of lowerStyleSlots(sourceFile, checker, functionsBySymbol, scan, sites)) {
       functions.push(slot.lowering)
-      styleSlots.push({fn: functions.length - 1, property: slot.property, site: slot.site})
+      const fn = functions.length - 1
+      let fallbackFn: StyleSlotIR['fallbackFn'] = null
+      if (slot.fallback != null) {
+        functions.push(slot.fallback)
+        fallbackFn = functions.length - 1
+      }
+      styleSlots.push({fn, fallbackFn, property: slot.property, site: slot.site})
     }
   }
   return {

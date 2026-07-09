@@ -100,7 +100,11 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
       }
       // Reason tags from the IR, not prose, so the tally is stable. Style slots have their
       // own tally below and stay out of the function ones.
-      const slotIds = new Set(lowered.styleSlots.map(slot => slot.fn))
+      const slotIds = new Set<number>()
+      for (const slot of lowered.styleSlots) {
+        slotIds.add(slot.fn)
+        if (slot.fallbackFn != null) slotIds.add(slot.fallbackFn)
+      }
       for (let fnId = 0; fnId < lowered.functions.length; fnId++) {
         const fn = lowered.functions[fnId]!
         if (slotIds.has(fnId)) continue

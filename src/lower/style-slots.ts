@@ -16,13 +16,18 @@
 // ProgramIR.styleSlots, which the report uses to keep them out of the ordinary entries.
 
 import * as ts from 'typescript'
-import {declaredKindOf, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type SourceSpan} from '../ir/program.ts'
+import {declaredKindOf, holdsMutableStructure, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type SourceSpan} from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {addSite, LoweringStop, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {declaredKind, type ModuleScan} from './module.ts'
 
-export type LoweredStyleSlot = {property: string; lowering: FunctionLowering; site: number}
+export type LoweredStyleSlot = {
+  property: string
+  lowering: FunctionLowering
+  fallback: FunctionLowering | null
+  site: number
+}
 
 export function lowerStyleSlots(
   sourceFile: ts.SourceFile,
@@ -32,7 +37,6 @@ export function lowerStyleSlots(
   sites: SourceSpan[],
 ): LoweredStyleSlot[] {
   const slots: LoweredStyleSlot[] = []
-  const reassigned = reassignedSymbols(sourceFile, checker)
   const slotName = (property: string | null, node: ts.Node): string => {
     const {line, character} = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile))
     return `${property == null ? 'style' : `style.${property}`} at ${line + 1}:${character + 1}`
@@ -42,32 +46,39 @@ export function lowerStyleSlots(
     slots.push({
       property: property ?? '(whole object)',
       lowering: {kind: 'unsupported', name: slotName(property, node), site: sites.length - 1, reason},
+      fallback: null,
       site: sites.length - 1,
     })
   }
   const lowerSlot = (property: string, expression: ts.Expression): void => {
     sites.push(nodeSpan(sourceFile, expression))
     const site = sites.length - 1
-    // Two attempts, both discarded wholesale on a stop, like lowerSource's per-function
-    // catch. The first follows const chains; an inlined initializer can still hit a
-    // construct the vetting walk let through (e.g. a ternary whose condition is a bare
-    // number), and without the retry that stop would demote a slot the plain treatment
-    // analyzes fine — the gallery run lost six NaN findings to exactly that.
-    for (const followConsts of [true, false]) {
+    const attempt = (followConsts: boolean): {lowering: FunctionLowering; followedConsts: boolean} => {
+      const sitesBeforeAttempt = sites.length
       try {
-        slots.push({
-          property,
-          lowering: lowerSlotFunction(slotName(property, expression), expression, sourceFile, checker, functionsBySymbol, scan, sites, reassigned, followConsts),
-          site,
-        })
-        return
+        return lowerSlotFunction(slotName(property, expression), expression, sourceFile, checker, functionsBySymbol, scan, sites, followConsts)
       } catch (error) {
         if (!(error instanceof LoweringStop)) throw error
-        if (followConsts) continue
+        sites.length = sitesBeforeAttempt
         sites.push(nodeSpan(sourceFile, error.node))
-        slots.push({property, lowering: {kind: 'unsupported', name: slotName(property, expression), site: sites.length - 1, reason: error.reason}, site})
+        return {
+          lowering: {kind: 'unsupported', name: slotName(property, expression), site: sites.length - 1, reason: error.reason},
+          followedConsts: false,
+        }
       }
     }
+    // Retain the plain-expression lowering whenever const following succeeded. The report
+    // uses it only when the followed version reaches an analysis limitation, never when it
+    // finds a real error such as an out-of-bounds read.
+    const sitesBeforeFollowedAttempt = sites.length
+    const followed = attempt(true)
+    if (followed.lowering.kind === 'unsupported') {
+      sites.length = sitesBeforeFollowedAttempt
+      slots.push({property, lowering: attempt(false).lowering, fallback: null, site})
+      return
+    }
+    const fallback = followed.followedConsts ? attempt(false).lowering : null
+    slots.push({property, lowering: followed.lowering, fallback, site})
   }
   // A slot is checked when its value's type is a plain number or a number-when-present
   // union (`number | undefined`, the standard React conditional-style idiom — undefined
@@ -175,9 +186,8 @@ function lowerSlotFunction(
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
   scan: ModuleScan,
   sites: SourceSpan[],
-  reassigned: Set<ts.Symbol>,
   followConsts: boolean,
-): FunctionIR {
+): {lowering: FunctionIR; followedConsts: boolean} {
   assertAccepted(expression)
   const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
   const context: FunctionContext = {
@@ -192,7 +202,7 @@ function lowerSlotFunction(
     bindings: new Map(),
     parameters: [],
   }
-  const dependencies = collectSlotDependencies(expression, sourceFile, checker, scan, functionsBySymbol, reassigned, followConsts)
+  const dependencies = collectSlotDependencies(expression, sourceFile, checker, scan, functionsBySymbol, followConsts)
   const slotParameter = (symbol: ts.Symbol, use: ts.Identifier): number => {
     const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0] ?? use
     const declared = declaredKind(checker.getTypeAtLocation(declaration), checker, [])
@@ -204,42 +214,40 @@ function lowerSlotFunction(
     context.parameters.push({value, name: use.text, type: declared})
     return value
   }
-  for (const [symbol, use] of dependencies.parameters) slotParameter(symbol, use)
-  // The inlined consts lower first, oldest declaration first, so a later initializer that
-  // reads an earlier const finds it already bound (a const can only reference consts
-  // declared above it).
-  for (const {symbol, initializer} of dependencies.prelude) {
-    context.bindings.set(symbol, lowerExpression(initializer, context))
-  }
-  // Sever the two regions. The const lines and the style line are two observation moments
-  // of the same mutable inputs — body statements the pass never reads run in between — so
-  // every input the style expression itself mentions gets a second, fresh instance here.
-  // The consts' RESULTS still flow (a value held in a binding is genuinely the old value),
-  // but nothing LEARNED about the prelude's reads can transfer to the style line's own
-  // reads: a review round produced three false claims through exactly that transfer — a
-  // comparison on a cached property narrowing the record the style line re-reads, a module
-  // let narrowed across an elided reset() call, and a stale length guard discharging the
-  // style line's asserted element read. Both instances carry the same declared-kind
-  // assumptions, and the printed assumes dedupe by text.
-  if (dependencies.prelude.length > 0) {
-    const reseeded = new Set<ts.Symbol>()
-    for (const {symbol, node} of valueUseIdentifiers(expression, sourceFile, checker)) {
-      if (!dependencies.parameters.has(symbol) || reseeded.has(symbol)) continue
-      reseeded.add(symbol)
-      slotParameter(symbol, node)
+  // An immutable const whose initializer is not followed is still one captured value, so it
+  // is introduced once and shared by every source position that reads it.
+  for (const [symbol, use] of dependencies.stableParameters) slotParameter(symbol, use)
+  // Consecutive plain declarations use the same parameters for mutable inputs because no
+  // code runs between them. After an intervening statement, the next group gets fresh
+  // parameters. Earlier scalar const results remain bound: the stored number itself cannot
+  // change even when the objects it was calculated from do.
+  for (const {snapshotParameters, declarations} of dependencies.prelude) {
+    for (const [parameter, use] of snapshotParameters) slotParameter(parameter, use)
+    for (const {symbol, initializer} of declarations) {
+      context.bindings.set(symbol, lowerExpression(initializer, context))
     }
   }
+  for (const [symbol, use] of dependencies.resultParameters) slotParameter(symbol, use)
   const value = lowerExpression(expression, context)
   terminate(context.currentBlock, {kind: 'return', value, site: addSite(context, expression)})
-  return {kind: 'lowered', name, parameters: context.parameters, returnPropertyNames: null, entry: 0, blocks: sealBlocks(context.blocks, name)}
+  return {
+    lowering: {kind: 'lowered', name, parameters: context.parameters, returnPropertyNames: null, entry: 0, blocks: sealBlocks(context.blocks, name)},
+    followedConsts: dependencies.prelude.length > 0,
+  }
 }
 
 type SlotDependencies = {
-  // Variables that stay inputs of the synthetic function, classified by declared type.
-  parameters: Map<ts.Symbol, ts.Identifier>
+  // Immutable local consts whose definitions are not followed. Their exact calculation is
+  // unknown, but the captured scalar value is stable across every later source position.
+  stableParameters: Map<ts.Symbol, ts.Identifier>
   // Body-local consts whose initializers are lowered into the synthetic function instead,
-  // sorted by declaration position.
-  prelude: Array<{symbol: ts.Symbol; initializer: ts.Expression}>
+  // grouped into consecutive runs and sorted by declaration position.
+  prelude: Array<{
+    snapshotParameters: Map<ts.Symbol, ts.Identifier>
+    declarations: Array<{symbol: ts.Symbol; initializer: ts.Expression}>
+  }>
+  // Fresh mutable inputs read by the final style expression.
+  resultParameters: Map<ts.Symbol, ts.Identifier>
 }
 
 // How many consts one slot may pull in. Layout math chains are short; a slot that needs
@@ -263,50 +271,41 @@ const inlinedConstCap = 16
 // functions resolve as callees, lib globals (Math, window, Infinity) have their own arms,
 // and anything unresolvable rejects by name.
 //
-// Two hazards make the walk refuse to inline for the whole slot, reverting it to the
-// plain parameter treatment (one read per region, no cross-moment transfer). First, a
-// leaf variable that some statement may write (`let scale = 2; ... scale = 0`, or any of
-// the mutation forms reassignedSymbols marks): the const captured the value at its own
-// line, the slot reads the value now, and modeling both reads as one parameter would
-// treat two possibly different values as equal — the analysis could then claim that
-// `width - width` is exactly 0 when the two reads straddled a write. Second, a module
-// binding that holds a record or array, even one nothing ever writes: the binding is
-// shared state the fresh-instance severing cannot copy, and its contents can change
-// through aliases no scan closes. Separately from these whole-slot refusals, a const
-// whose own value is not a primitive never inlines (see the vetting below) — that rule
-// is per-const, not a poison.
+// Local inputs need no alias analysis. Consecutive plain declarations share one input
+// snapshot; any intervening statement starts another, regardless of what the statement may
+// mutate. A same-file or imported call therefore cannot carry stale facts forward. Shared
+// module state still uses the module analysis: a written module binding or one holding a
+// record/array makes the whole slot fall back to plain parameter treatment. Separately, a
+// const whose own value is not a primitive never inlines (see the vetting below).
 function collectSlotDependencies(
   expression: ts.Expression,
   sourceFile: ts.SourceFile,
   checker: ts.TypeChecker,
   scan: ModuleScan,
   functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
-  reassigned: Set<ts.Symbol>,
   followConsts: boolean,
 ): SlotDependencies {
-  const collect = (allowInlining: boolean): SlotDependencies & {followingPoisoned: boolean} => {
-    const parameters = new Map<ts.Symbol, ts.Identifier>()
+  const collect = (allowInlining: boolean): SlotDependencies & {moduleReadPreventsFollowing: boolean} => {
     const inlined = new Map<ts.Symbol, {initializer: ts.Expression; position: number}>()
-    let followingPoisoned = false
+    const visited = new Set<ts.Symbol>()
+    let moduleReadPreventsFollowing = false
     const pending = valueUseIdentifiers(expression, sourceFile, checker)
     while (pending.length > 0) {
-      const {symbol, node} = pending.pop()!
-      if (parameters.has(symbol) || inlined.has(symbol)) continue
+      const {symbol} = pending.pop()!
+      if (visited.has(symbol)) continue
+      visited.add(symbol)
       const moduleBinding = scan.bindingsBySymbol.get(symbol)
       if (moduleBinding != null || functionsBySymbol.has(symbol)) {
-        // Module bindings are shared state the severing cannot copy: a read relocated
-        // into the synthetic function sidesteps the module channel's version stamps (no
-        // call inside the synthetic function ever advances them), so a fact learned from
-        // a const-line read could discharge an obligation on the style line's own read.
-        // Two cases poison the following outright: a binding some code writes (a module
-        // `let` assigned anywhere), and a binding holding a record or array — the binding
-        // itself never changes, but its CONTENTS can, through aliases no write scan
-        // closes (a review round popped a module record's array inside a body-called
-        // function and a stale length guard discharged the style line's asserted read).
-        // Primitive never-written module constants stay free: genuinely immutable, so a
-        // fact about them is true at both observation moments.
-        if (moduleBinding != null && (reassigned.has(symbol) || !primitiveDeclaredKind(declaredKindOf(scan.bindings[moduleBinding]!.category)))) {
-          followingPoisoned = true
+        // Module reads do not become snapshot parameters. If a module binding or the value
+        // inside it can change, lowering an earlier const and the style expression together
+        // could incorrectly preserve a fact between them. A binding written inside a
+        // function and any binding holding a record or array therefore prevent following.
+        // An immutable scalar module value is safe wherever it is read.
+        if (moduleBinding != null && (
+          scan.writtenInsideFunctions.has(moduleBinding)
+          || !immutableDeclaredKind(declaredKindOf(scan.bindings[moduleBinding]!.category))
+        )) {
+          moduleReadPreventsFollowing = true
         }
         continue
       }
@@ -314,47 +313,98 @@ function collectSlotDependencies(
       if (declaration == null) continue
       // Imports and lib globals: their declarations live in other files.
       if (declaration.getSourceFile() !== sourceFile) continue
-      // The write check comes BEFORE the inlining attempt: a const object whose property
-      // the body writes (`const sizeRef = {current: {w: 4}}; ... sizeRef.current.w = 9`)
-      // must not inline either — the inlined literal would carry the stale 4 as an exact
-      // value while the style line reads the 9.
-      if (reassigned.has(symbol)) {
-        followingPoisoned = true
-        parameters.set(symbol, node)
-        continue
-      }
       // Only a primitive-valued const may inline. A const holding an object or array —
-      // even via a bare alias like `const stale = props.sizes` — would hand the style
-      // line the instance observed at the const's line, defeating the fresh-instance
-      // severing: facts tied to that instance (a valid-index relation, a narrowing)
-      // would connect the two observation moments again.
+      // even via a bare alias like `const stale = props.sizes` — would carry one mutable
+      // instance across declaration groups. A valid-index check or other fact from the
+      // earlier group could then affect a later read of that same instance.
       const primitiveConst = primitiveType(checker.getTypeAtLocation(declaration))
       const initializer = allowInlining && primitiveConst && inlined.size < inlinedConstCap ? inlinableConstInitializer(declaration) : null
       if (initializer != null) {
         inlined.set(symbol, {initializer, position: declaration.pos})
         pending.push(...valueUseIdentifiers(initializer, sourceFile, checker))
-        continue
       }
-      parameters.set(symbol, node)
     }
-    const prelude = [...inlined.entries()]
+    const stableParameters = new Map<ts.Symbol, ts.Identifier>()
+    const collectSnapshotParameters = (root: ts.Expression, snapshot: Map<ts.Symbol, ts.Identifier>): void => {
+      for (const {symbol, node} of valueUseIdentifiers(root, sourceFile, checker)) {
+        if (inlined.has(symbol) || scan.bindingsBySymbol.has(symbol) || functionsBySymbol.has(symbol)) continue
+        const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0]
+        if (declaration == null || declaration.getSourceFile() !== sourceFile) continue
+        if (stableScalarConst(declaration, checker)) stableParameters.set(symbol, node)
+        else snapshot.set(symbol, node)
+      }
+    }
+    const sortedPrelude = [...inlined.entries()]
       .sort((a, b) => a[1].position - b[1].position)
-      .map(([symbol, entry]) => ({symbol, initializer: entry.initializer}))
-    return {parameters, prelude, followingPoisoned}
+    const groups: Array<SlotDependencies['prelude'][number] & {key: ts.Node}> = []
+    for (const [symbol, entry] of sortedPrelude) {
+      const key = constDeclarationGroup(entry.initializer)
+      let group = groups[groups.length - 1]
+      if (group?.key !== key) {
+        group = {key, snapshotParameters: new Map(), declarations: []}
+        groups.push(group)
+      }
+      collectSnapshotParameters(entry.initializer, group.snapshotParameters)
+      group.declarations.push({symbol, initializer: entry.initializer})
+    }
+    const prelude = groups.map(group => ({
+      snapshotParameters: group.snapshotParameters,
+      declarations: group.declarations,
+    }))
+    const resultParameters = new Map<ts.Symbol, ts.Identifier>()
+    collectSnapshotParameters(expression, resultParameters)
+    return {stableParameters, prelude, resultParameters, moduleReadPreventsFollowing}
   }
   const first = collect(followConsts)
-  if (first.followingPoisoned && first.prelude.length > 0) return collect(false)
+  if (first.moduleReadPreventsFollowing && first.prelude.length > 0) return collect(false)
   return first
 }
 
 // A number, boolean, or string: a value, not a container — it cannot be mutated through
-// an alias, so carrying it across the two observation moments is sound.
+// an alias, so carrying it across intervening code is sound.
 function primitiveType(type: ts.Type): boolean {
   return (type.flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike)) !== 0
 }
 
-function primitiveDeclaredKind(declared: DeclaredKind | null): boolean {
-  return declared != null && (declared.kind === 'number' || declared.kind === 'boolean' || declared.kind === 'opaque')
+function stableScalarConst(declaration: ts.Declaration, checker: ts.TypeChecker): boolean {
+  if (!ts.isVariableDeclaration(declaration)
+    || !ts.isIdentifier(declaration.name)
+    || !ts.isVariableDeclarationList(declaration.parent)
+    || (declaration.parent.flags & ts.NodeFlags.Const) === 0) return false
+  return immutableDeclaredKind(declaredKind(checker.getTypeAtLocation(declaration), checker, []))
+}
+
+// Identifier-named variable declarations are evaluated consecutively, so their property
+// reads see the same inputs under the analysis's ordinary record model. A call, assignment,
+// branch, loop, return, destructuring declaration, or other intervening statement starts
+// another group. The distinction is global: there is no attempt to decide which object the
+// statement might mutate.
+function constDeclarationGroup(initializer: ts.Expression): ts.Node {
+  const declaration = initializer.parent
+  if (!ts.isVariableDeclaration(declaration) || !ts.isVariableDeclarationList(declaration.parent)) return initializer
+  const statement = declaration.parent.parent
+  if (!ts.isVariableStatement(statement)) return initializer
+  const parent = statement.parent
+  const statements = ts.isBlock(parent) || ts.isSourceFile(parent) || ts.isModuleBlock(parent)
+    || ts.isCaseClause(parent) || ts.isDefaultClause(parent)
+    ? parent.statements
+    : null
+  if (statements == null) return initializer
+  const index = statements.indexOf(statement)
+  if (index < 0 || !plainVariableStatement(statement)) return initializer
+  let first = index
+  while (first > 0 && plainVariableStatement(statements[first - 1]!)) first--
+  return statements[first]!
+}
+
+function plainVariableStatement(statement: ts.Statement): boolean {
+  return ts.isVariableStatement(statement) && statement.declarationList.declarations.every(declaration =>
+    ts.isIdentifier(declaration.name)
+    && (declaration.initializer == null || expressionLowersPlainly(declaration.initializer)))
+}
+
+function immutableDeclaredKind(declared: DeclaredKind | null): boolean {
+  return declared != null && !holdsMutableStructure(declared)
 }
 
 // A const the walk may inline: identifier-named (destructuring keeps parameter treatment),
@@ -372,16 +422,11 @@ function inlinableConstInitializer(declaration: ts.Declaration): ts.Expression |
 // assumed-by-type parameter, exactly its treatment before inlining existed. A miss here
 // costs precision, never a wrong claim.
 //
-// Object and array literals are deliberately NOT inlinable. A literal carries exact
-// contents (`const sizeRef = {current: {w: 4}}` knows w is 4), and exact contents can go
-// stale through an alias the write scan cannot see — `const alias = sizeRef;
-// alias.current.w = 0` marks alias, never sizeRef, and no syntactic scan closes aliasing
-// in general (a review round produced four distinct evasions: alias binding, destructured
-// alias, for-of loop variable, mutated array elements). Primitives cannot alias, so a
-// followed chain may carry exactness only through primitive bindings. Property and
-// element reads that root at a PARAMETER stay inlinable because their result is the
-// declared-kind range, not an exact value — a range that covers the value before and
-// after any type-preserving mutation, so staleness cannot falsify it.
+// Object and array literals are deliberately NOT inlinable. Carrying one forward would
+// preserve the same mutable instance across declaration groups, allowing a fact learned
+// before an alias mutation to affect a later read. Scalar results cannot be mutated through
+// aliases, so followed chains carry only those. Property and element reads remain
+// inlinable because each declaration group receives a fresh input for the root object.
 function expressionLowersPlainly(root: ts.Expression): boolean {
   let plain = true
   const visit = (node: ts.Node): void => {
@@ -457,91 +502,4 @@ function valueUseIdentifiers(
   }
   visit(root)
   return found
-}
-
-// Every variable some code may write between a const's line and the style line. Direct
-// writes: `x = 5`, `x += 1`, `x++`. Property writes count against the variable at the
-// base of the path — `sizeRef.current.w = 5` marks sizeRef — because a const computed
-// from sizeRef before that line and a style value reading sizeRef after it would
-// otherwise be treated as seeing the same numbers. Mutation without assignment syntax
-// counts too: a method call may mutate its receiver (`items.push(job)` marks items;
-// Math is exempt), and a call may mutate an object handed to it
-// (`Object.assign(sizeRef.current, patch)` — any argument whose type is not a plain
-// number, boolean, or string marks its base variable). Built once per file; closures are
-// covered because the walk descends into every function body. A const chain that leans
-// on a marked variable is not inlined — see collectSlotDependencies.
-function reassignedSymbols(sourceFile: ts.SourceFile, checker: ts.TypeChecker): Set<ts.Symbol> {
-  const written = new Set<ts.Symbol>()
-  const record = (node: ts.Node): void => {
-    let target = node
-    while (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target) || ts.isParenthesizedExpression(target) || ts.isNonNullExpression(target)) {
-      target = target.expression
-    }
-    if (!ts.isIdentifier(target)) return
-    const symbol = checker.getSymbolAtLocation(target)
-    if (symbol != null) written.add(symbol)
-  }
-  const primitiveArgument = (argument: ts.Expression): boolean => {
-    const flags = checker.getTypeAtLocation(argument).flags
-    return (flags & (ts.TypeFlags.NumberLike | ts.TypeFlags.BooleanLike | ts.TypeFlags.StringLike
-      | ts.TypeFlags.Null | ts.TypeFlags.Undefined)) !== 0
-  }
-  // An assignment target can be a destructuring pattern — `[obj.x] = arr`,
-  // `({y: obj.z} = src)` — which parses as an array or object literal in assignment
-  // position; every leaf target inside gets recorded.
-  const recordTarget = (node: ts.Node): void => {
-    if (ts.isArrayLiteralExpression(node)) {
-      for (const element of node.elements) recordTarget(ts.isSpreadElement(element) ? element.expression : element)
-      return
-    }
-    if (ts.isObjectLiteralExpression(node)) {
-      for (const member of node.properties) {
-        if (ts.isPropertyAssignment(member)) recordTarget(member.initializer)
-        else if (ts.isShorthandPropertyAssignment(member)) recordTarget(member.name)
-        else if (ts.isSpreadAssignment(member)) recordTarget(member.expression)
-      }
-      return
-    }
-    record(node)
-  }
-  const visit = (node: ts.Node): void => {
-    if (ts.isBinaryExpression(node)
-      && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment
-      && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment) {
-      recordTarget(node.left)
-    }
-    if ((ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node))
-      && (node.operator === ts.SyntaxKind.PlusPlusToken || node.operator === ts.SyntaxKind.MinusMinusToken)) {
-      record(node.operand)
-    }
-    if (ts.isDeleteExpression(node)) record(node.expression)
-    // `for (existing of items)` and `for (existing in obj)` assign the pre-declared
-    // variable each iteration without any `=` token.
-    if ((ts.isForOfStatement(node) || ts.isForInStatement(node)) && !ts.isVariableDeclarationList(node.initializer)) {
-      recordTarget(node.initializer)
-    }
-    if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      const receiverIsMath = ts.isPropertyAccessExpression(node.expression)
-        && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'Math'
-      if (ts.isPropertyAccessExpression(node.expression) && !receiverIsMath) record(node.expression.expression)
-      if (!receiverIsMath) {
-        for (const argument of node.arguments ?? []) {
-          if (!primitiveArgument(argument)) record(argument)
-        }
-      }
-    }
-    // A tagged template is a call in disguise: the tag function receives the interpolated
-    // values and may mutate any object among them.
-    if (ts.isTaggedTemplateExpression(node)) {
-      record(node.tag)
-      if (ts.isTemplateExpression(node.template)) {
-        for (const span of node.template.templateSpans) {
-          if (!primitiveArgument(span.expression)) record(span.expression)
-        }
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(sourceFile)
-  return written
 }

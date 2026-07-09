@@ -74,7 +74,11 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       observed,
     })
   }
-  const slotIds = new Set(program.styleSlots.map(slot => slot.fn))
+  const slotIds = new Set<number>()
+  for (const slot of program.styleSlots) {
+    slotIds.add(slot.fn)
+    if (slot.fallbackFn != null) slotIds.add(slot.fallbackFn)
+  }
   for (let functionID = 0; functionID < analysis.functions.length; functionID++) {
     // Style slots print in their own section, not as function entries.
     if (slotIds.has(functionID)) continue
@@ -184,14 +188,25 @@ function styleSlotLines(
   initializerBoundsLines: string[],
   readsModules: boolean[],
 ): StyleSlotLine[] {
-  const lines = program.styleSlots.map(slot => styleSlotLine(
-    slot,
-    analysis.functions[slot.fn]!,
-    program,
-    analysis,
-    assumedBindings[slot.fn]!,
-    readsModules[slot.fn] === true ? initializerBoundsLines : [],
-  ))
+  const lines = program.styleSlots.map(slot => {
+    const primary = analysis.functions[slot.fn]!
+    const hitOnlyAnalysisLimitations = primary.kind === 'partial'
+      && primary.stops.every(stop => stop.reason.kind === 'unmodeledNarrowing')
+    let functionID = slot.fn
+    if (slot.fallbackFn != null
+      && hitOnlyAnalysisLimitations
+      && analysis.functions[slot.fallbackFn]!.kind === 'analyzed') {
+      functionID = slot.fallbackFn
+    }
+    return styleSlotLine(
+      slot,
+      analysis.functions[functionID]!,
+      program,
+      analysis,
+      assumedBindings[functionID]!,
+      readsModules[functionID] === true ? initializerBoundsLines : [],
+    )
+  })
   return lines.sort((a, b) => styleSlotSeverity[a.verdict] - styleSlotSeverity[b.verdict])
 }
 
@@ -269,7 +284,7 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
       // sentence read as unconditional. Bounds assumptions are already in the guard text.
       const reads = slotReadPaths(fn.lowering)
       const includePath = reads == null ? undefined : (path: string) => reads.has(path)
-      // The severed slot inputs (one instance per region) share names; dedupe by text.
+      // Fresh input parameters may share names; dedupe identical assumptions by text.
       const assumes = [...new Set([
         ...assumptionLines(fn.lowering, program, assumedSlotBindings, [], includePath),
         ...initializerBoundsLines,

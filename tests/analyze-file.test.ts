@@ -3478,9 +3478,9 @@ const importsReportPath = 'tests/fixtures/module-imports.ts'
 })
 describe('style slots', () => {
   // Each numeric JSX style value analyzed as its own synthetic function; these pins cover
-  // the collection rules (DOM tags only, literal objects only), the const-following walk
-  // and its two refusal hazards, the verdict tiers, and the retry that keeps a slot
-  // analyzed when a followed const trips the lowering.
+  // the collection rules (DOM tags only, literal objects only), the const-following walk,
+  // how mutable inputs are separated around intervening code, the verdict tiers, and both
+  // fallbacks that keep a slot analyzed when following a const cannot complete.
   const slotLines = (source: string): string[] => {
     const report = analyzeSource(resolve('slots.tsx'), source)
     return report.styleSlots.map(slot => `${slot.verdict}: ${slot.line}`)
@@ -3523,10 +3523,10 @@ export function SafeCard(props: {job: Job; columnWidth: number}) {
     ])
   })
 
-  test('a reassigned variable disables const following: no exact-zero claim across the write', () => {
+  test('a reassigned variable is observed separately across the write', () => {
     // early was computed with scale = 2, the slot reads scale after the `scale = 0` line;
-    // following the const would treat both reads as one value. The slot falls back to
-    // parameter treatment (overflow possible), never to `exactly early - 0`.
+    // following the const must give those two reads separate input values. An earlier
+    // multiplication may overflow, so subtracting the later multiplication may be NaN.
     expect(slotLines(`
 export function Mutated(props: {count: number}) {
   let scale = 2
@@ -3535,14 +3535,13 @@ export function Mutated(props: {count: number}) {
   return <div style={{width: early - props.count * scale}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:38); assumes: scale is finite and not NaN, props.count is finite and not NaN, early is finite and not NaN',
+      'may be NaN: style.width at 6:30: the value is a possibly NaN number from -Infinity through Infinity (NaN possible from the operation at slots.tsx:4:17); assumes: props.count is finite and not NaN, scale is finite and not NaN',
     ])
   })
 
-  test('a property write disables const following for the written object', () => {
-    // sizeRef the binding is never reassigned, but sizeRef.current.w is — inlining the
-    // object literal would carry the stale 4 as an exact value while the style line reads
-    // the 9.
+  test('a mutable object is observed separately across a property write', () => {
+    // sizeRef the binding is never reassigned, but sizeRef.current.w is. The earlier
+    // multiplication and the style line therefore receive separate sizeRef inputs.
     expect(slotLines(`
 export function Gauge(props: {ratio: number}) {
   const sizeRef = {current: {w: 4}}
@@ -3551,7 +3550,141 @@ export function Gauge(props: {ratio: number}) {
   return <div style={{width: early - sizeRef.current.w}} />
 }
 `)).toEqual([
-      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:6:30); assumes: sizeRef.current.w is finite and not NaN, early is finite and not NaN',
+      'may overflow to Infinity: style.width at 6:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:17); assumes: sizeRef.current.w is finite and not NaN',
+    ])
+  })
+
+  test('consecutive consts share inputs, while an intervening statement uses fresh inputs', () => {
+    expect(slotLines(`
+export function Widget(props: {sizes: number[]}) {
+  const count = props.sizes.length
+  const width = count > 0 ? Math.max(0, props.sizes[0]!) : 0
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'ok: style.width at 5:23: the value is a finite number at least 0; assumes: every props.sizes element is finite and not NaN',
+    ])
+    // count is captured before dropLast(), while width reads the aliased array afterward.
+    // No mutation scan could discover that relationship from the call itself. Treating
+    // both const initializers with the same inputs would incorrectly prove the index valid.
+    expect(slotLines(`
+let shared: number[] = []
+function dropLast(): void { shared.pop() }
+export function Widget(props: {sizes: number[]}) {
+  shared = props.sizes
+  const count = props.sizes.length
+  dropLast()
+  const width = count > 0 ? Math.max(0, Math.min(100, props.sizes[0]!)) : 0
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'needs a guard: style.width at 9:23: only safe when 0 is a valid props.sizes index (element read at slots.tsx:8:55); the value is a finite number from 0 through 100; assumes: every props.sizes element is finite and not NaN',
+    ])
+  })
+
+  test('calls hidden in variable declarations separate mutable inputs', () => {
+    // A destructuring default is part of the binding pattern rather than the declaration's
+    // right-hand side, but the default still runs. It must separate count from width just
+    // like a standalone dropLast() statement does.
+    const destructuringDefault = slotLines(`
+let shared: number[] = []
+function dropLast(): number { shared.pop(); return 0 }
+export function Widget(props: {sizes: number[]; options: {padding?: number}}) {
+  shared = props.sizes
+  const count = props.sizes.length
+  const {padding = dropLast()} = props.options
+  const width = count > 0 ? Math.max(0, Math.min(100, props.sizes[0]!)) : 0
+  return <div style={{width}} />
+}
+`)
+    expect(destructuringDefault).toHaveLength(1)
+    expect(destructuringDefault[0]).toContain('only safe when 0 is a valid props.sizes index (element read at slots.tsx:8:55)')
+
+    // The same rule applies when a call is one declarator inside a larger const statement.
+    const multipleDeclarators = slotLines(`
+let shared: number[] = []
+function dropLast(values: number[]): number { shared = values; shared.pop(); return 0 }
+export function Widget(props: {sizes: number[]}) {
+  const count = props.sizes.length,
+    extra = dropLast(props.sizes),
+    width = count > 0 ? Math.max(0, Math.min(100, props.sizes[0]!)) : 0
+  return <div style={{width}} />
+}
+`)
+    expect(multipleDeclarators).toHaveLength(1)
+    expect(multipleDeclarators[0]).toContain('only safe when 0 is a valid props.sizes index')
+  })
+
+  test('a primitive const remains one captured value across intervening code', () => {
+    // The call is deliberately not followed, but captured is an immutable number. copied
+    // must retain that same value so the nonzero check discharges the later division guard.
+    expect(slotLines(`
+function readOffset(): number { return 4 }
+export function Widget() {
+  const captured = readOffset()
+  const copied = captured
+  const left = captured !== 0 ? Math.max(-100, Math.min(100, 10 / copied)) : 0
+  return <div style={{left}} />
+}
+`)).toEqual([
+      'ok: style.left at 7:23: the value is a finite number from -100 through 100; assumes: captured is finite and not NaN',
+    ])
+
+    // An intervening call separates ordinary mutable inputs, but it cannot change a const's
+    // captured number. The equivalent let may be reassigned by code the pass does not read.
+    expect(slotLines(`
+function readOffset(): number { return 4 }
+function poke(): void {}
+export function Widget() {
+  const captured = readOffset()
+  const nonzero = captured !== 0
+  poke()
+  const left = nonzero ? Math.max(-100, Math.min(100, 10 / captured)) : 0
+  return <div style={{left}} />
+}
+`)).toEqual([
+      'ok: style.left at 9:23: the value is a finite number from -100 through 100; assumes: captured is finite and not NaN',
+    ])
+    expect(slotLines(`
+function readOffset(): number { return 4 }
+export function Widget() {
+  let captured = readOffset()
+  function clearOffset(): void { captured = 0 }
+  const nonzero = captured !== 0
+  clearOffset()
+  const left = nonzero ? Math.max(-100, Math.min(100, 10 / captured)) : 0
+  return <div style={{left}} />
+}
+`)).toEqual([
+      'needs a guard: style.left at 9:23: only safe when captured is nonzero (division at slots.tsx:8:55); the value is a finite number from -100 through 100; assumes: captured is finite and not NaN',
+    ])
+  })
+
+  test('module scalars may follow after top-level writes but not writes inside functions', () => {
+    // Top-level assignments finish during module initialization, before a component runs.
+    expect(slotLines(`
+let scale = 1
+scale = 3
+export function Widget(props: {count: number}) {
+  const width = props.count * scale
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 6:23: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:5:17); assumes: props.count is finite and not NaN',
+    ])
+
+    // A function may write scale between the const line and the style expression, so the
+    // const initializer must stay hidden and early must be treated as an input.
+    expect(slotLines(`
+let scale = 1
+function bump(): void { scale = 3 }
+export function Widget(props: {count: number}) {
+  const early = props.count * scale
+  bump()
+  return <div style={{width: early - props.count * scale}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 7:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:7:38); assumes: early is finite and not NaN, props.count is finite and not NaN, scale is finite and not NaN',
     ])
   })
 
@@ -3719,6 +3852,31 @@ export function Retry(props: {mode: number; size: number}) {
 }
 `)).toEqual([
       'may overflow to Infinity: style.width at 4:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:30); assumes: width is finite and not NaN',
+    ])
+  })
+
+  test('a followed const that stops during analysis uses the plain-expression fallback', () => {
+    // The any-valued branch lowers, but its mixed abstract value stops when multiplied.
+    // Treating carried as a declared-number input still analyzes the style expression, so
+    // following the initializer must not turn a useful overflow finding into a skip.
+    expect(slotLines(`
+export function Widget(value: any, flag: boolean) {
+  const carried: number = flag ? value : 1
+  return <div style={{width: carried * 2}} />
+}
+`)).toEqual([
+      'may overflow to Infinity: style.width at 4:30: the value is a possibly non-finite number from -Infinity through Infinity (can overflow at slots.tsx:4:30); assumes: carried is finite and not NaN',
+    ])
+  })
+
+  test('the plain-expression fallback does not hide a real finding in a followed const', () => {
+    expect(slotLines(`
+export function Widget(props: {values: number[]}) {
+  const width = props.values[-1]!
+  return <div style={{width}} />
+}
+`)).toEqual([
+      'skipped: style.width at 4:23: reads an element provably outside the array (at slots.tsx:3:17)',
     ])
   })
 })
