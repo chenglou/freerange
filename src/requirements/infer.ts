@@ -180,10 +180,11 @@ export function peelNonzero(expression: NumericExpression, site: SiteID, operati
   return {kind: 'nonzero', expression, operation, site}
 }
 
-// Deduplication is by expression only: when two operations need the same requirement, the
-// first causing site wins. Switching to one record per operation is deferred until reports
-// group requirements per operation.
+// Keep one condition per originating operation. Propagated requirements retain the
+// operation's site, so repeated calls with the same substituted expression collapse while
+// separate operations that need the same condition remain separate findings.
 function samePrecondition(left: InferredPrecondition, right: InferredPrecondition): boolean {
+  if (left.site !== right.site) return false
   if (left.kind !== right.kind) return false
   if (left.kind === 'inBounds' && right.kind === 'inBounds') {
     return sameExpression(left.index, right.index) && sameExpression(left.sequence, right.sequence)

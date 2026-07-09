@@ -2,9 +2,23 @@ import type {ArithmeticOperator} from '../ir/instructions.ts'
 import {formatSite, type ProgramIR} from '../ir/program.ts'
 import type {InferredPrecondition, NumericExpression} from '../requirements/model.ts'
 
+export type PreconditionOperation = 'division' | 'remainder' | 'element read'
+
 export function formatPrecondition(precondition: InferredPrecondition, parameterNames: string[], program: ProgramIR): string {
-  const operation = precondition.kind === 'inBounds' ? 'element read' : precondition.operation
-  return `${conditionWords(precondition, parameterNames)} (${operation} at ${formatSite(program, precondition.site)})`
+  const description = describePrecondition(precondition, parameterNames)
+  return `${description.condition} (${description.operation} at ${formatSite(program, precondition.site)})`
+}
+
+// Project reports group propagated requirements at the operation that created them, so
+// they need the condition and operation as separate fields instead of parsing prose.
+export function describePrecondition(
+  precondition: InferredPrecondition,
+  parameterNames: string[],
+): {condition: string; operation: PreconditionOperation} {
+  return {
+    condition: conditionWords(precondition, parameterNames),
+    operation: precondition.kind === 'inBounds' ? 'element read' : precondition.operation,
+  }
 }
 
 // The evidence wording for a requirement inferred before a stop — deliberately a different

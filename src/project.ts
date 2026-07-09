@@ -9,10 +9,47 @@ import {mkdirSync, writeFileSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeProgram} from './engine/analyze.ts'
+import type {SiteID} from './ir/ids.ts'
 import {siteLocation} from './ir/program.ts'
 import {lowerSource} from './lower/program.ts'
-import {formatPrecondition} from './report/format-requirement.ts'
+import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {createReport, formatReport, reportLegend} from './report/index.ts'
+
+type SimpleLintFinding = {
+  kind: 'simple'
+  file: string
+  line: number
+  column: number
+  level: 'error' | 'warning'
+  message: string
+  rule: 'out-of-bounds-read' | 'non-exiting-loop'
+}
+
+type CallerContract = {functionName: string; condition: string}
+
+type CallerContractFinding = {
+  kind: 'callerContracts'
+  file: string
+  line: number
+  column: number
+  level: 'note'
+  rule: 'caller-contract'
+  operation: PreconditionOperation
+  contracts: CallerContract[]
+  additionalLocations: Array<{line: number; column: number}>
+}
+
+type LintFinding = SimpleLintFinding | CallerContractFinding
+
+function sameCallerContracts(left: CallerContract[], right: CallerContract[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index++) {
+    if (left[index]!.functionName !== right[index]!.functionName || left[index]!.condition !== right[index]!.condition) {
+      return false
+    }
+  }
+  return true
+}
 
 export function runProject(repoRoot: string, outputDirectory: string): void {
   mkdirSync(outputDirectory, {recursive: true})
@@ -58,10 +95,9 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   const requiresIndex: string[] = []
 
   // The linter view: only obligations nobody discharges, at points where failure is
-  // silent, one conventional file:line:column line each — against the per-file reports,
-  // which print everything the analysis knows. See the LINT.txt header for the levels.
-  type LintEntry = {file: string; line: number; column: number; level: 'error' | 'warning' | 'note'; message: string; rule: string}
-  const lintEntries: LintEntry[] = []
+  // silent. Requirements propagated through several functions stay attached to the one
+  // operation that created them instead of appearing as independent findings.
+  const lintFindings: LintFinding[] = []
 
   const sourceFiles = program.getSourceFiles().filter(sourceFile =>
     !sourceFile.fileName.includes('node_modules')
@@ -86,6 +122,7 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
       const lowered = lowerSource({sourceFile, checker}, absoluteRepoRoot)
       const analysis = analyzeProgram(lowered)
       const report = createReport(lowered, analysis)
+      const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
       const functionReports = report.functions.filter(entry => entry.name !== 'module initialization')
       let analyzed = 0
       let partial = 0
@@ -108,9 +145,9 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
             // These two stops are findings in their own right, not coverage gaps.
             if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
             const location = siteLocation(lowered, stop.site)
-            lintEntries.push(stop.reason.kind === 'outOfBoundsRead'
-              ? {file: shortName, line: location.line, column: location.column, level: 'error', message: `asserted element read (arr[i]!) is provably out of bounds in ${fn.lowering.name}`, rule: 'out-of-bounds-read'}
-              : {file: shortName, line: location.line, column: location.column, level: 'warning', message: `loop in ${fn.lowering.name} has no analyzable exit — it may never terminate`, rule: 'non-exiting-loop'})
+            lintFindings.push(stop.reason.kind === 'outOfBoundsRead'
+              ? {kind: 'simple', file: shortName, line: location.line, column: location.column, level: 'error', message: `asserted element read (arr[i]!) is provably out of bounds in ${fn.lowering.name}`, rule: 'out-of-bounds-read'}
+              : {kind: 'simple', file: shortName, line: location.line, column: location.column, level: 'warning', message: `loop in ${fn.lowering.name} has no analyzable exit — it may never terminate`, rule: 'non-exiting-loop'})
           }
         }
         // An obligation that escaped to the function boundary: every same-file call
@@ -119,18 +156,42 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
         if (fn.kind === 'analyzed') {
           const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
           for (const precondition of fn.preconditions) {
-            const location = siteLocation(lowered, precondition.site)
-            lintEntries.push({
-              file: shortName,
-              line: location.line,
-              column: location.column,
-              level: 'note',
-              message: `callers of ${fn.lowering.name} must keep ${formatPrecondition(precondition, parameterNames, lowered)}`,
-              rule: 'caller-contract',
-            })
+            const description = describePrecondition(precondition, parameterNames)
+            let finding = callerContractsBySite.get(precondition.site)
+            if (finding == null) {
+              const location = siteLocation(lowered, precondition.site)
+              finding = {
+                kind: 'callerContracts',
+                file: shortName,
+                line: location.line,
+                column: location.column,
+                level: 'note',
+                rule: 'caller-contract',
+                operation: description.operation,
+                contracts: [],
+                additionalLocations: [],
+              }
+              callerContractsBySite.set(precondition.site, finding)
+            } else if (finding.operation !== description.operation) {
+              throw new Error(`One operation site produced both ${finding.operation} and ${description.operation} requirements`)
+            }
+            finding.contracts.push({functionName: fn.lowering.name, condition: description.condition})
           }
         }
       }
+      const groupedCallerContracts: CallerContractFinding[] = []
+      const callerContractOperations = [...callerContractsBySite.values()]
+        .sort((a, b) => a.line - b.line || a.column - b.column)
+      for (const finding of callerContractOperations) {
+        const existing = groupedCallerContracts.find(candidate =>
+          candidate.operation === finding.operation && sameCallerContracts(candidate.contracts, finding.contracts))
+        if (existing == null) {
+          groupedCallerContracts.push(finding)
+        } else {
+          existing.additionalLocations.push({line: finding.line, column: finding.column})
+        }
+      }
+      lintFindings.push(...groupedCallerContracts)
       rows.push({
         file: shortName,
         functions: functionReports.length,
@@ -174,9 +235,9 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)) {
     console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
   }
-  lintEntries.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
+  lintFindings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
   const lintCounts = new Map<string, number>()
-  for (const entry of lintEntries) bump(lintCounts, `${entry.level}:${entry.rule}`)
+  for (const finding of lintFindings) bump(lintCounts, `${finding.level}:${finding.rule}`)
   console.log('--- lint ---')
   for (const [rule, count] of [...lintCounts.entries()].sort((a, b) => b[1] - a[1])) {
     console.log(`${String(count).padStart(5)}  ${rule}`)
@@ -188,8 +249,34 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     'note    = a contract outside callers must uphold; unverifiable from this repo alone.',
     'The full value analysis (every function, every range) lives in the per-file reports.',
     '',
-    ...lintEntries.map(entry => `${entry.file}:${entry.line}:${entry.column}  ${entry.level}  ${entry.message}  [${entry.rule}]`),
   ]
+  for (const finding of lintFindings) {
+    const location = `${finding.file}:${finding.line}:${finding.column}`
+    if (finding.kind === 'simple') {
+      lintReport.push(`${location}  ${finding.level}  ${finding.message}  [${finding.rule}]`)
+      continue
+    }
+    const operationCount = finding.additionalLocations.length + 1
+    if (operationCount === 1 && finding.contracts.length === 1) {
+      const contract = finding.contracts[0]!
+      lintReport.push(`${location}  note  callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})  [caller-contract]`)
+      continue
+    }
+    const operationSubject = operationCount === 1
+      ? `this ${finding.operation}`
+      : `${operationCount} ${finding.operation === 'element read' ? 'element reads' : `${finding.operation}s`}`
+    const conditionSubject = `${finding.contracts.length} caller condition${finding.contracts.length === 1 ? '' : 's'}`
+    lintReport.push(`${location}  note  ${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}  [caller-contract]`)
+    let lastShownLine = finding.line
+    let lastShownColumn = finding.column
+    for (const additional of finding.additionalLocations) {
+      if (lastShownLine === additional.line && lastShownColumn === additional.column) continue
+      lastShownLine = additional.line
+      lastShownColumn = additional.column
+      lintReport.push(`  also at ${finding.file}:${additional.line}:${additional.column}`)
+    }
+    for (const contract of finding.contracts) lintReport.push(`  ${contract.functionName}: ${contract.condition}`)
+  }
   writeFileSync(`${outputDirectory}/LINT.txt`, lintReport.join('\n') + '\n')
   writeFileSync(`${outputDirectory}/__rows.json`, JSON.stringify(rows, null, 1))
   // The legend once per run (per-file reports omit it), and the summary this run's
