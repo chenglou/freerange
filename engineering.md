@@ -156,7 +156,7 @@ We don't use rules that:
 - drastically slow down checks. We don't use hook rules for example. Even on oxlint
 - are just stylistic nits. And we take an honest look at ourselves to determine what's actually semantically important vs what's just engineering theater
 
-Concretely, for TS config (use `@typescript/native-preview`. Faster):
+Concretely, for TS config (use TypeScript 7's native `tsc`. Faster):
 
 ```jsonc
 "strict": true,
@@ -213,11 +213,15 @@ For linting, we prefer oxlint + tsgolint npm packages for AI verification loop p
 
 Some of these configs for preventing extra checks (e.g. erroring on checking a value is null when it can't be) are crucial to shrink the codebase back when a feature's cleaned away. See early section for handling nulls for example.
 
-Recommended alias in package.json as e.g.:
+Use the regular `typescript` package for projects that only run the compiler. A tool that still imports the TypeScript 6 compiler API, like Freerange, keeps TypeScript 6 as `typescript` and installs TypeScript 7 under an alias:
 
 ```jsonc
+"devDependencies": {
+  "@typescript/native": "npm:typescript@^7.0.2",
+  "typescript": "^6.0.2",
+},
 "scripts": {
-  "check": "tsgo && oxlint --type-aware yourSourceFolder",
+  "check": "bunx @typescript/native && oxlint --type-aware yourSourceFolder",
 }
 ```
 

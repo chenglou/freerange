@@ -4,14 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "check": "tsgo && oxlint --type-aware && bun knip && bun test --parallel=4",
+    "check": "bunx @typescript/native && oxlint --type-aware && bun knip && bun test --parallel=4",
     "demo": "HOST=${HOST:-127.0.0.1}; PORT=${PORT:-3000}; bun ./demo/index.html --host=$HOST:$PORT",
     "fr": "bun fr.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",
     "@types/react": "^19.2.17",
-    "@typescript/native-preview": "^7.0.0-dev.20260701.1",
+    "@typescript/native": "npm:typescript@^7.0.2",
     "knip": "^6.14.2",
     "oxlint": "latest",
     "oxlint-tsgolint": "latest",
