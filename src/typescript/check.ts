@@ -37,16 +37,16 @@ export function checkFile(file: string): CheckedSource {
 export function checkSource(file: string, source: string): CheckedSource {
   const absoluteFile = resolve(file)
   const sourceFile = ts.createSourceFile(absoluteFile, source, ts.ScriptTarget.ESNext, true, absoluteFile.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
-  const host = ts.createCompilerHost(compilerOptions)
-  const defaultGetSourceFile = host.getSourceFile.bind(host)
-  const defaultFileExists = host.fileExists.bind(host)
-  const defaultReadFile = host.readFile.bind(host)
-  host.getSourceFile = (requestedFile, languageVersion, onError, shouldCreateNewSourceFile) => {
-    if (resolve(requestedFile) === absoluteFile) return sourceFile
-    return defaultGetSourceFile(requestedFile, languageVersion, onError, shouldCreateNewSourceFile)
+  const defaultHost = ts.createCompilerHost(compilerOptions)
+  const host: ts.CompilerHost = {
+    ...defaultHost,
+    getSourceFile: (requestedFile, languageVersion, onError, shouldCreateNewSourceFile) => {
+      if (resolve(requestedFile) === absoluteFile) return sourceFile
+      return defaultHost.getSourceFile(requestedFile, languageVersion, onError, shouldCreateNewSourceFile)
+    },
+    fileExists: requestedFile => resolve(requestedFile) === absoluteFile || defaultHost.fileExists(requestedFile),
+    readFile: requestedFile => resolve(requestedFile) === absoluteFile ? source : defaultHost.readFile(requestedFile),
   }
-  host.fileExists = requestedFile => resolve(requestedFile) === absoluteFile || defaultFileExists(requestedFile)
-  host.readFile = requestedFile => resolve(requestedFile) === absoluteFile ? source : defaultReadFile(requestedFile)
   const program = ts.createProgram([absoluteFile], compilerOptions, host)
   return checkedSource(program, absoluteFile)
 }

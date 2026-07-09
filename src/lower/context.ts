@@ -39,6 +39,28 @@ export type FunctionContext = {
   parameters: FunctionIR['parameters']
 }
 
+export function createFunctionContext(
+  sourceFile: ts.SourceFile,
+  checker: ts.TypeChecker,
+  functionsBySymbol: Map<ts.Symbol, TopLevelFunction>,
+  moduleBindingsBySymbol: Map<ts.Symbol, ModuleBindingID>,
+  sites: SourceSpan[],
+): FunctionContext {
+  const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
+  return {
+    sourceFile,
+    checker,
+    functionsBySymbol,
+    moduleBindingsBySymbol,
+    sites,
+    nextValue: 0,
+    currentBlock: entry,
+    blocks: [entry],
+    bindings: new Map(),
+    parameters: [],
+  }
+}
+
 // The mutable lowering state a skipped initializer statement must roll back, kept beside
 // the type so a future mutable field on FunctionContext is added to the snapshot in the
 // same file. Two fields are deliberately not rolled back: sites (rolled-back sites would

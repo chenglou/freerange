@@ -785,9 +785,8 @@ function requireNumberType(node: ts.Node, checker: ts.TypeChecker): void {
 }
 
 // The single value kind a type describes, or null when the type mixes kinds (a union like
-// number | boolean), mixes object shapes (a union like {x} | {x, y} — a latent tagged
-// union that needs discriminant support, or an inconsistency worth naming), or falls
-// outside the accepted kinds entirely (e.g. string).
+// number | boolean), mixes object shapes without a supported tag (a union like {x} |
+// {x, y}), or falls outside the accepted kinds entirely (e.g. bigint or symbol).
 type ValueKindResult = 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 'tuple' | 'opaque' | 'taggedUnion' | null
 
 // Exact memoization keyed on (interned type, remaining depth budget): the walk is pure
@@ -954,8 +953,6 @@ function taggedUnionPropertyUncached(members: readonly ts.Type[], checker: ts.Ty
   }
   return null
 }
-
-
 
 // The callee as a short display name for the call rejection. A method on a simple
 // receiver reads naturally (localStorage.getItem, Math.max — one or two identifiers); a
@@ -1164,10 +1161,6 @@ export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker):
   throw unsupported(node, {kind: 'nonBooleanCondition', typeText: checker.typeToString(type)})
 }
 
-// An optional property reads as `number | undefined` — nullability the subset does not
-// model. Across branch-merged records declared with one optional-property type, the
-// property may genuinely be missing on some paths, so letting the access through would
-// read a property the record value may not carry.
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
   // An optional property reads as its maybe-undefined value: declared kinds wrap it in
   // the undefined sentinel and object literals fill omitted ones explicitly, so a record

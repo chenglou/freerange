@@ -2,7 +2,7 @@ import * as ts from 'typescript'
 import {moduleInitializerName, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type ProgramIR, type SourceSpan, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
 import type {CheckedSource} from '../typescript/check.ts'
 import {assertAccepted, evalMention, typeCheckSuppressionMention} from './accept.ts'
-import {addSite, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addSite, createFunctionContext, LoweringStop, requiredSymbol, sealBlocks, terminate, unsupported, type MutableBlock, type TopLevelFunction} from './context.ts'
 import {valueKind} from './expression.ts'
 import {declaredKind, lowerModuleInitializer, scanModuleBindings, type ModuleScan} from './module.ts'
 import {lowerStatements} from './statements.ts'
@@ -132,19 +132,8 @@ function lowerFunction(
   if (!returnsVoid && valueKind(returnType, checker) == null) {
     throw unsupported(declaration.type ?? declaration, {kind: 'valueType', typeText: checker.typeToString(returnType)})
   }
-  const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
-  const context: FunctionContext = {
-    sourceFile,
-    checker,
-    functionsBySymbol,
-    moduleBindingsBySymbol: scan.bindingsBySymbol,
-    sites,
-    nextValue: 0,
-    currentBlock: entry,
-    blocks: [entry],
-    bindings: new Map(),
-    parameters: [],
-  }
+  const context = createFunctionContext(sourceFile, checker, functionsBySymbol, scan.bindingsBySymbol, sites)
+  const entry = context.currentBlock
   for (const parameter of declaration.parameters) {
     // `function area({width, height}: Size)` lowers as a synthetic record parameter plus
     // one property read per name — the same classification named parameters use, the

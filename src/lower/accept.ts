@@ -69,7 +69,7 @@ export function typeCheckSuppressionMention(sourceFile: ts.SourceFile): {start: 
   return match == null ? null : {start: match.index, end: match.index + match[0].length}
 }
 
-// The one file-wide rule: any mention of `eval` puts the whole file outside the subset,
+// The eval file-wide rule: any mention of `eval` puts the whole file outside the subset,
 // because an eval string can rewrite bindings that every function's report depends on.
 // A plain identifier scan deliberately over-rejects (e.g. a variable named eval shadowing
 // the global) — the spellings that matter, like `(eval)(...)`, all contain the identifier,

@@ -330,6 +330,17 @@ export function pointExcluded(value: AbstractNumber, point: number): boolean {
   return value.excludesPoint === point
 }
 
+// A joined or widened interval may keep one hole only when both inputs exclude it. Zero
+// is always considered because division cares about it even when neither input needed an
+// explicit cut before their disjoint ranges were combined.
+function sharedExcludedPoint(left: AbstractNumber, right: AbstractNumber, lower: number, upper: number): number | null {
+  for (const point of [left.excludesPoint, right.excludesPoint, 0]) {
+    if (point == null) continue
+    if (pointExcluded(left, point) && pointExcluded(right, point) && lower < point && point < upper) return point
+  }
+  return null
+}
+
 export function joinNumbers(left: AbstractNumber, right: AbstractNumber): AbstractNumber {
   const joined: AbstractNumber = {
     kind: 'number',
@@ -342,14 +353,8 @@ export function joinNumbers(left: AbstractNumber, right: AbstractNumber): Abstra
   // which is what pointExcluded checks. This also captures a sign-split join: [-5, -2]
   // joined with [2, 5] straddles zero yet never holds it (zero is tried even when neither
   // side carries a cut, since it is the point division cares about).
-  for (const point of [left.excludesPoint, right.excludesPoint, 0]) {
-    if (point == null) continue
-    if (pointExcluded(left, point) && pointExcluded(right, point)
-      && joined.lower < point && point < joined.upper) {
-      joined.excludesPoint = point
-      break
-    }
-  }
+  const excludesPoint = sharedExcludedPoint(left, right, joined.lower, joined.upper)
+  if (excludesPoint != null) joined.excludesPoint = excludesPoint
   const lossSite = left.lossSite ?? right.lossSite
   if (lossSite != null) joined.lossSite = lossSite
   return joined
@@ -380,14 +385,8 @@ export function widenNumber(previous: AbstractNumber, next: AbstractNumber): Abs
   // The widened interval is a fresh, wider cover — a point stays excluded only when both
   // rounds excluded it, same rule as joins. The cut can disappear across rounds and never
   // reappear, so the fixed point still converges.
-  for (const point of [previous.excludesPoint, next.excludesPoint, 0]) {
-    if (point == null) continue
-    if (pointExcluded(previous, point) && pointExcluded(next, point)
-      && widened.lower < point && point < widened.upper) {
-      widened.excludesPoint = point
-      break
-    }
-  }
+  const excludesPoint = sharedExcludedPoint(previous, next, widened.lower, widened.upper)
+  if (excludesPoint != null) widened.excludesPoint = excludesPoint
   return widened
 }
 

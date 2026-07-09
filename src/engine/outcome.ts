@@ -11,8 +11,8 @@ export type StopReason =
   // The called function never lowered, or its own evaluation has stops. The callee's report
   // entry carries the next hop or the root cause.
   | {kind: 'calleeStopped'; callee: FunctionID}
-  // A divisor may be zero and no requirement over the caller-visible parameters can name
-  // it (e.g. dividing by a platform read).
+  // A loop header's abstract state kept changing through the fixed-point backstop. No
+  // result computed before convergence is published as a guarantee.
   | {kind: 'loopLimit'; updates: number}
   // A loop whose exit edge is never taken on any analyzed path, e.g.
   // `for (let index = 0; true; index += 1) {}`. The fixed point converged with every path
@@ -33,7 +33,6 @@ export type StopReason =
   // is no element the assertion could produce. An empty array is the special case where
   // every read qualifies.
   | {kind: 'outOfBoundsRead'}
-
 
 export type Stop = {
   site: SiteID

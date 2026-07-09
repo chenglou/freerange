@@ -1,9 +1,10 @@
 import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
+import type {FunctionID} from '../ir/ids.ts'
 import {forEachOperand} from '../ir/instructions.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
-import {declaredKindOf, formatSite, reportPath, siteLocation, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, reportPath, siteLocation, styleFunctionFlags, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -24,7 +25,10 @@ export type AnalysisReport = {
   styleSlots: StyleSlotLine[]
 }
 
-export type StyleSlotVerdict = 'may be NaN' | 'may reach Infinity' | 'may overflow to Infinity' | 'may be zero or negative' | 'needs a guard' | 'ok' | 'skipped'
+// The display order is also the severity order. Project summaries import this tuple, so a
+// new verdict cannot appear in one output while silently falling out of another.
+export const styleSlotVerdicts = ['may be NaN', 'may reach Infinity', 'may overflow to Infinity', 'may be zero or negative', 'needs a guard', 'ok', 'skipped'] as const
+export type StyleSlotVerdict = (typeof styleSlotVerdicts)[number]
 export type StyleSlotLine = {
   verdict: StyleSlotVerdict
   line: string
@@ -37,7 +41,7 @@ export type StyleSlotLine = {
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
   const functions: FunctionReport[] = []
-  const assumedBindings = assumedKindBindings(program, analysis)
+  const {assumedBindings, readsModules} = functionModuleUsage(program, analysis)
   // An unproven asserted element read at the top level (`breakpoints[idx]!` with a
   // platform-derived idx) conditions everything the initializer published, and the
   // initializer usually prints no entry — so the assumption lines travel to every
@@ -47,11 +51,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
   const initializerBounds = analysis.initializer.kind === 'analyzed'
     ? analysis.initializer.boundsAssumptions
     : analysis.initializer.kind === 'partial' ? analysis.initializer.observedBoundsAssumptions : []
-  const initializerBoundsLines = initializerBounds.map(assumption =>
-    assumption.kind === 'elementInBounds'
-      ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
-      : `the divisor at ${formatSite(program, assumption.site)} is nonzero`)
-  const readsModules = moduleReadingFunctions(program)
+  const initializerBoundsLines = initializerBounds.map(assumption => formatBoundsAssumption(assumption, program))
   // Top-level code runs before any function, so its entry comes first — but only when it
   // stopped or skipped statements. A fully analyzed initializer with nothing skipped is
   // invisible: its results show up as the exact module values other entries report, with
@@ -74,14 +74,10 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       observed,
     })
   }
-  const slotIds = new Set<number>()
-  for (const slot of program.styleSlots) {
-    slotIds.add(slot.fn)
-    if (slot.fallbackFn != null) slotIds.add(slot.fallbackFn)
-  }
+  const isStyleFunction = styleFunctionFlags(program.styleSlots)
   for (let functionID = 0; functionID < analysis.functions.length; functionID++) {
     // Style slots print in their own section, not as function entries.
-    if (slotIds.has(functionID)) continue
+    if (isStyleFunction[functionID] === true) continue
     const fn = analysis.functions[functionID]!
     switch (fn.kind) {
       case 'notLowered': {
@@ -171,16 +167,6 @@ const nonnegativeStyleProperties = new Set([
 // only the negative-dropped check above.
 const positiveStyleProperties = new Set(['columnCount', 'widows', 'orphans', 'lineClamp', 'WebkitLineClamp'])
 
-const styleSlotSeverity: Record<StyleSlotVerdict, number> = {
-  'may be NaN': 0,
-  'may reach Infinity': 1,
-  'may overflow to Infinity': 2,
-  'may be zero or negative': 3,
-  'needs a guard': 4,
-  'ok': 5,
-  'skipped': 6,
-}
-
 function styleSlotLines(
   program: ProgramIR,
   analysis: ProgramAnalysis,
@@ -207,7 +193,7 @@ function styleSlotLines(
       readsModules[functionID] === true ? initializerBoundsLines : [],
     )
   })
-  return lines.sort((a, b) => styleSlotSeverity[a.verdict] - styleSlotSeverity[b.verdict])
+  return lines.sort((a, b) => styleSlotVerdicts.indexOf(a.verdict) - styleSlotVerdicts.indexOf(b.verdict))
 }
 
 // Which declared paths a slot's synthetic function actually reads, so its printed
@@ -272,9 +258,7 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
       // spelled out, not just the symptom.
       const needs = [
         ...fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-        ...fn.boundsAssumptions.map(assumption => assumption.kind === 'elementInBounds'
-          ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
-          : `the divisor at ${formatSite(program, assumption.site)} is nonzero`),
+        ...fn.boundsAssumptions.map(assumption => formatBoundsAssumption(assumption, program)),
       ]
       const guard = needs.length > 0 ? needs.join(' and ') : null
       // A slot line travels alone — quoted in LINT.txt or read in isolation — so the
@@ -312,7 +296,6 @@ function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: Program
     }
   }
 }
-
 // The legend targets a reader — usually another model — that has never seen a freerange
 // report: each line kind in one sentence, so the report is self-describing. Exported so
 // project runs (the survey) can write it ONCE per run instead of per file — it was 28% of
@@ -393,11 +376,16 @@ function assumptionLines(
     // The engine could not prove the asserted element read in bounds; the entry's
     // guarantees rest on it. E.g. `the element read at demo.ts:4:10 is in bounds`, or,
     // for a divisor no requirement could name, `the divisor at demo.ts:4:10 is nonzero`.
-    assumptions.push(assumption.kind === 'elementInBounds'
-      ? `the element read at ${formatSite(program, assumption.site)} is in bounds`
-      : `the divisor at ${formatSite(program, assumption.site)} is nonzero`)
+    assumptions.push(formatBoundsAssumption(assumption, program))
   }
   return assumptions
+}
+
+function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR): string {
+  switch (assumption.kind) {
+    case 'elementInBounds': return `the element read at ${formatSite(program, assumption.site)} is in bounds`
+    case 'nonzeroDivisor': return `the divisor at ${formatSite(program, assumption.site)} is nonzero`
+  }
 }
 
 // One assumption line per leaf of the declared kind: a record binding's condition is a
@@ -493,23 +481,29 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
   }
 }
 
-// Per function: the module bindings whose declared-kind seeding the function's results rest
-// on. A read without a published exact value rests on the declared kind alone — the printed
-// line is the condition under which the entry's guarantees hold. The assumption travels
-// through calls: a callee evaluates on the caller's own seeded slots, so the callee's read
-// is the caller's assumption too. Closed over static call edges; a call path that never
-// executes can only add a harmless extra assumption line.
-function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): boolean[][] {
-  const assumed: boolean[][] = []
-  const callees: Array<Set<number>> = []
+// Per function: the module bindings whose declared-kind seeding the result rests on, and
+// whether the function reads any module binding at all. Both facts travel through calls.
+// The first prints the conditions under which guarantees hold; the second carries a
+// top-level bounds assumption to every consumer of the initializer's values. Closing over
+// a static call edge that never executes can only add a harmless assumption line.
+function functionModuleUsage(
+  program: ProgramIR,
+  analysis: ProgramAnalysis,
+): {assumedBindings: boolean[][]; readsModules: boolean[]} {
+  const assumedBindings: boolean[][] = []
+  const readsModules: boolean[] = []
+  const callees: FunctionID[][] = []
   for (const lowering of program.functions) {
     const reads: boolean[] = []
-    const calls = new Set<number>()
+    let readsAny = false
+    const calls: FunctionID[] = []
     if (lowering.kind === 'lowered') {
       for (const block of lowering.blocks) {
         for (const instruction of block.instructions) {
-          if (instruction.kind === 'call') calls.add(instruction.function)
-          if (instruction.kind !== 'moduleRead' || analysis.moduleValues[instruction.binding] != null) continue
+          if (instruction.kind === 'call' && !calls.includes(instruction.function)) calls.push(instruction.function)
+          if (instruction.kind !== 'moduleRead') continue
+          readsAny = true
+          if (analysis.moduleValues[instruction.binding] != null) continue
           const binding = program.moduleBindings[instruction.binding]
           if (binding == null) throw new Error(`Unknown module binding ${instruction.binding}`)
           if (declaredKindOf(binding.category) != null) {
@@ -518,65 +512,32 @@ function assumedKindBindings(program: ProgramIR, analysis: ProgramAnalysis): boo
         }
       }
     }
-    assumed.push(reads)
+    assumedBindings.push(reads)
+    readsModules.push(readsAny)
     callees.push(calls)
   }
-  // Call graphs can have cycles, so propagate until stable.
+  // Call graphs can have cycles. Propagate both facts over the same graph until stable:
+  // callers inherit the module assumptions and initializer dependencies of their callees.
   let changed = true
   while (changed) {
     changed = false
-    for (let caller = 0; caller < assumed.length; caller++) {
+    for (let caller = 0; caller < assumedBindings.length; caller++) {
       for (const callee of callees[caller]!) {
-        const calleeAssumed = assumed[callee]!
+        if (readsModules[callee] === true && readsModules[caller] !== true) {
+          readsModules[caller] = true
+          changed = true
+        }
+        const calleeAssumed = assumedBindings[callee]!
         for (let bindingID = 0; bindingID < calleeAssumed.length; bindingID++) {
-          if (calleeAssumed[bindingID] === true && assumed[caller]![bindingID] !== true) {
-            assumed[caller]![bindingID] = true
+          if (calleeAssumed[bindingID] === true && assumedBindings[caller]![bindingID] !== true) {
+            assumedBindings[caller]![bindingID] = true
             changed = true
           }
         }
       }
     }
   }
-  return assumed
-}
-
-// Whether each function (transitively, through calls to the file's own functions) reads
-// any module binding at all — the consumers that rest on what the initializer published.
-// Coarser than per-binding tracking on purpose: which binding rests on which top-level
-// assumption is not tracked, and an extra assumption line on an unrelated reader is
-// harmless, the same trade assumedKindBindings makes for call paths that never execute.
-function moduleReadingFunctions(program: ProgramIR): boolean[] {
-  const reads: boolean[] = []
-  const callees: Array<Set<number>> = []
-  for (const lowering of program.functions) {
-    let readsAny = false
-    const calls = new Set<number>()
-    if (lowering.kind === 'lowered') {
-      for (const block of lowering.blocks) {
-        for (const instruction of block.instructions) {
-          if (instruction.kind === 'call') calls.add(instruction.function)
-          if (instruction.kind === 'moduleRead') readsAny = true
-        }
-      }
-    }
-    reads.push(readsAny)
-    callees.push(calls)
-  }
-  let changed = true
-  while (changed) {
-    changed = false
-    for (let caller = 0; caller < reads.length; caller++) {
-      if (reads[caller] === true) continue
-      for (const callee of callees[caller]!) {
-        if (reads[callee] === true) {
-          reads[caller] = true
-          changed = true
-          break
-        }
-      }
-    }
-  }
-  return reads
+  return {assumedBindings, readsModules}
 }
 
 // The only place stop prose exists; everything else branches on reason.kind.
@@ -669,9 +630,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'styleOnComponent': return 'style on a component, not a DOM tag — only DOM tags render style values as CSS'
     case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
     case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
-    case 'binaryOperator': return reason.operator === '!==' || reason.operator === '!='
-      ? `binary operator ${reason.operator} (not-equal narrowing is not modeled; invert to === with an early return, e.g. if (columnCount === 0) return 0)`
-      : `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
+    case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
       ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
       : reason.arrayMethod === true

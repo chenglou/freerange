@@ -34,9 +34,8 @@ export type InferredPrecondition =
       expression: NumericExpression
       // Which operation needs the divisor nonzero — division or remainder — for the prose.
       operation: 'division' | 'remainder'
-      // The operation that needs the requirement (today always a division). Propagated
-      // records keep the callee's site, so a caller's report points at the actual division
-      // even when the requirement surfaces two calls up.
+      // Propagated records keep the callee's site, so a caller's report points at the
+      // actual operation even when the requirement surfaces two calls up.
       site: SiteID
     }
   // An asserted element read (data[i]!) whose bounds the engine could not prove, with

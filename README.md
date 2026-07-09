@@ -23,9 +23,9 @@ Same mechanism, defensive direction: the report on our lightbox pointed out that
 
 ## Running it
 
-- `bun fr.ts` from a repo root audits every file that repo's tsconfig describes. Results land in `./freerange-report/`: one `.txt` per source file, `LEGEND.txt` (what requires/ensures/assumes mean — read once), `SUMMARY.txt` (function totals, the requires index, tallies of what got rejected and why), and `__rows.json` (the same per-function rows, machine-readable).
+- `bun fr.ts` from a repo root audits every file that repo's tsconfig describes. Results land in `./freerange-report/`: `LINT.txt` (actionable findings), one contract report per source file, `LEGEND.txt` (what requires/ensures/assumes mean — read once), `SUMMARY.txt` (function totals, the requires index, and rejection tallies), `STYLE-SLOTS.txt` when JSX style values were found, and `__rows.json` (per-file coverage rows, machine-readable).
 - `bun fr.ts src/some/file.ts` prints that one file's report to stdout.
-- Start with `SUMMARY.txt`. The requires index lists every function that puts an obligation on its callers — those are the actionable lines. The rejection tallies tell you which patterns to rewrite for more coverage.
+- Start with `LINT.txt`; it contains only findings that survived the analysis without a guard or caller discharging them. Use `SUMMARY.txt` for coverage and the requires index, then open per-file reports when you need the full ranges and assumptions.
 
 ## Recommendations from converting a production app
 

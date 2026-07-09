@@ -14,7 +14,7 @@ import {
 } from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
-import {addInstruction, addSite, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
 import {lowerExpression, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
@@ -217,19 +217,7 @@ export function lowerModuleInitializer(
   scan: ModuleScan,
   sites: SourceSpan[],
 ): {initializer: FunctionIR; skips: InitializerSkip[]} {
-  const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
-  const context: FunctionContext = {
-    sourceFile,
-    checker,
-    functionsBySymbol,
-    moduleBindingsBySymbol: scan.bindingsBySymbol,
-    sites,
-    nextValue: 0,
-    currentBlock: entry,
-    blocks: [entry],
-    bindings: new Map(),
-    parameters: [],
-  }
+  const context = createFunctionContext(sourceFile, checker, functionsBySymbol, scan.bindingsBySymbol, sites)
   const skips: InitializerSkip[] = []
   const statements = sourceFile.statements
   // Each statement gets its own catch: an unsupported one is skipped — its half-lowered

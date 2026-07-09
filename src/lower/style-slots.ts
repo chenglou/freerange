@@ -18,7 +18,7 @@
 import * as ts from 'typescript'
 import {declaredKindOf, holdsMutableStructure, nodeSpan, type DeclaredKind, type FunctionIR, type FunctionLowering, type SourceSpan} from '../ir/program.ts'
 import {assertAccepted} from './accept.ts'
-import {addSite, LoweringStop, sealBlocks, terminate, unsupported, type FunctionContext, type MutableBlock, type TopLevelFunction} from './context.ts'
+import {addSite, createFunctionContext, LoweringStop, sealBlocks, terminate, unsupported, type TopLevelFunction} from './context.ts'
 import {lowerExpression, valueKind} from './expression.ts'
 import {declaredKind, type ModuleScan} from './module.ts'
 
@@ -51,18 +51,19 @@ export function lowerStyleSlots(
     })
   }
   const lowerSlot = (property: string, expression: ts.Expression): void => {
+    const name = slotName(property, expression)
     sites.push(nodeSpan(sourceFile, expression))
     const site = sites.length - 1
     const attempt = (followConsts: boolean): {lowering: FunctionLowering; followedConsts: boolean} => {
       const sitesBeforeAttempt = sites.length
       try {
-        return lowerSlotFunction(slotName(property, expression), expression, sourceFile, checker, functionsBySymbol, scan, sites, followConsts)
+        return lowerSlotFunction(name, expression, sourceFile, checker, functionsBySymbol, scan, sites, followConsts)
       } catch (error) {
         if (!(error instanceof LoweringStop)) throw error
         sites.length = sitesBeforeAttempt
         sites.push(nodeSpan(sourceFile, error.node))
         return {
-          lowering: {kind: 'unsupported', name: slotName(property, expression), site: sites.length - 1, reason: error.reason},
+          lowering: {kind: 'unsupported', name, site: sites.length - 1, reason: error.reason},
           followedConsts: false,
         }
       }
@@ -189,19 +190,7 @@ function lowerSlotFunction(
   followConsts: boolean,
 ): {lowering: FunctionIR; followedConsts: boolean} {
   assertAccepted(expression)
-  const entry: MutableBlock = {loopHeader: null, parameters: [], instructions: [], terminator: null}
-  const context: FunctionContext = {
-    sourceFile,
-    checker,
-    functionsBySymbol,
-    moduleBindingsBySymbol: scan.bindingsBySymbol,
-    sites,
-    nextValue: 0,
-    currentBlock: entry,
-    blocks: [entry],
-    bindings: new Map(),
-    parameters: [],
-  }
+  const context = createFunctionContext(sourceFile, checker, functionsBySymbol, scan.bindingsBySymbol, sites)
   const dependencies = collectSlotDependencies(expression, sourceFile, checker, scan, functionsBySymbol, followConsts)
   const slotParameter = (symbol: ts.Symbol, use: ts.Identifier): number => {
     const declaration = symbol.valueDeclaration ?? symbol.declarations?.[0] ?? use

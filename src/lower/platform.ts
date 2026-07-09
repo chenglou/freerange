@@ -8,7 +8,8 @@ import * as ts from 'typescript'
 // every evaluation: these are reads of outside mutable state, so two reads of clientWidth
 // may differ and must never be treated as equal.
 //
-// Only number-valued entries live here; APIs returning `T | null` wait for nullability.
+// Only number-valued entries live here; a nullable API would need an explicit guard before
+// its numeric result could use a catalog fact.
 // (Related known gap for then: lib.dom types document.body as non-null, but it is null
 // before the body parses — a script running in <head> can throw on the scroll entries.
 // Partial correctness tolerates the throw; nullability work should revisit the entry.)

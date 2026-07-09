@@ -119,7 +119,6 @@ export function unknownBoolean(): AbstractBoolean {
   return {kind: 'boolean', canBeTrue: true, canBeFalse: true}
 }
 
-
 export function recordValue(properties: Array<{name: string; value: AbstractValue}>): AbstractRecord {
   return {kind: 'record', properties}
 }
@@ -288,7 +287,6 @@ function arrayFromTupleTotal(tuple: AbstractTuple): AbstractArray | null {
 function constantLength(length: number): AbstractNumber {
   return {kind: 'number', lower: length, upper: length, integer: true, mayBeNaN: false}
 }
-
 
 // Records join pointwise by property name, keeping only the names present on BOTH sides
 // whose values can actually meet. Different shapes genuinely meet: TypeScript accepts

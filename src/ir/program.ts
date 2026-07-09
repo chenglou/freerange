@@ -1,6 +1,6 @@
 import {relative} from 'node:path'
 import type * as ts from 'typescript'
-import {finiteInputNumber, unknownNumber} from '../domain/number.ts'
+import {finiteInputNumber, unknownNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
 import type {BlockID, FunctionID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
@@ -233,41 +233,8 @@ export function declaredKindOf(category: ModuleBindingCategory): DeclaredKind | 
 // prints an assumes line, and that machinery is what makes this value honest. Code without
 // the assumes plumbing must use coveringKindValue below instead.
 export function declaredKindValue(declared: DeclaredKind): AbstractValue {
-  switch (declared.kind) {
-    case 'number': return finiteInputNumber()
-    case 'boolean': return unknownBoolean()
-    case 'record': return recordValue(declared.properties.map(property => ({
-      name: property.name,
-      value: declaredKindValue(property.declared),
-    })))
-    case 'nullish': return {kind: 'maybeNullish', inner: declaredKindValue(declared.inner), sentinels: declared.sentinels}
-    case 'tuple': return {kind: 'tuple', elements: declared.elements.map(declaredKindValue)}
-    case 'array': return {
-      kind: 'array',
-      element: declaredKindValue(declared.element),
-      length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
-    }
-    case 'taggedUnion': {
-      const convertVariant = (variant: DeclaredVariant): TaggedVariant => ({
-        tagValue: variant.tagValue,
-        record: recordValue(variant.properties.map(property => ({
-          name: property.name,
-          value: property.name === declared.tagProperty
-            ? exactTagValue(variant.tagValue)
-            : declaredKindValue(property.declared),
-        }))),
-      })
-      const [firstVariant, ...restVariants] = declared.variants
-      return {
-        kind: 'taggedUnion',
-        tagProperty: declared.tagProperty,
-        variants: [convertVariant(firstVariant), ...restVariants.map(convertVariant)],
-      }
-    }
-    case 'opaque': return {kind: 'opaque'}
-  }
+  return valueFromDeclaredKind(declared, finiteInputNumber)
 }
-
 
 // Inside a declared variant, the tag property holds exactly its tag value — the string
 // content or the pinned boolean — rather than the walked hedge. This is what lets the
@@ -309,18 +276,33 @@ export function holdsMutableStructure(declared: DeclaredKind): boolean {
 // published values from the slot with no assumes line to carry a finiteness condition, so
 // the reset value must cover everything the skipped code could have produced.
 export function coveringKindValue(declared: DeclaredKind): AbstractValue {
+  return valueFromDeclaredKind(declared, unknownNumber)
+}
+
+// The two declared-kind values have identical recursive structure and differ only at
+// number leaves: function inputs assume finite numbers, while havoc must cover every
+// number. Keeping the walk here makes a new DeclaredKind arm impossible to add to one
+// conversion but not the other.
+function valueFromDeclaredKind(declared: DeclaredKind, numberValue: () => AbstractNumber): AbstractValue {
   switch (declared.kind) {
-    case 'number': return unknownNumber()
+    case 'number': return numberValue()
     case 'boolean': return unknownBoolean()
     case 'record': return recordValue(declared.properties.map(property => ({
       name: property.name,
-      value: coveringKindValue(property.declared),
+      value: valueFromDeclaredKind(property.declared, numberValue),
     })))
-    case 'nullish': return {kind: 'maybeNullish', inner: coveringKindValue(declared.inner), sentinels: declared.sentinels}
-    case 'tuple': return {kind: 'tuple', elements: declared.elements.map(coveringKindValue)}
+    case 'nullish': return {
+      kind: 'maybeNullish',
+      inner: valueFromDeclaredKind(declared.inner, numberValue),
+      sentinels: declared.sentinels,
+    }
+    case 'tuple': return {
+      kind: 'tuple',
+      elements: declared.elements.map(element => valueFromDeclaredKind(element, numberValue)),
+    }
     case 'array': return {
       kind: 'array',
-      element: coveringKindValue(declared.element),
+      element: valueFromDeclaredKind(declared.element, numberValue),
       length: {kind: 'number', lower: 0, upper: 4294967295, integer: true, mayBeNaN: false},
     }
     case 'taggedUnion': {
@@ -330,7 +312,7 @@ export function coveringKindValue(declared: DeclaredKind): AbstractValue {
           name: property.name,
           value: property.name === declared.tagProperty
             ? exactTagValue(variant.tagValue)
-            : coveringKindValue(property.declared),
+            : valueFromDeclaredKind(property.declared, numberValue),
         }))),
       })
       const [firstVariant, ...restVariants] = declared.variants
@@ -390,6 +372,18 @@ export type StyleSlotIR = {
   fallbackFn: FunctionID | null
   property: string
   site: SiteID
+}
+
+// Dense by FunctionID. Reports and project summaries both need to omit the synthetic
+// style functions from ordinary function lists; deriving the flags here keeps the
+// ProgramIR.styleSlots representation authoritative.
+export function styleFunctionFlags(slots: readonly StyleSlotIR[]): boolean[] {
+  const flags: boolean[] = []
+  for (const slot of slots) {
+    flags[slot.fn] = true
+    if (slot.fallbackFn != null) flags[slot.fallbackFn] = true
+  }
+  return flags
 }
 
 // The synthetic initializer's display and IR name, shared by its two producers and read
