@@ -2,7 +2,7 @@ import {relative} from 'node:path'
 import type * as ts from 'typescript'
 import {finiteInputNumber, unknownNumber, type AbstractNumber} from '../domain/number.ts'
 import {recordValue, unknownBoolean, type AbstractValue, type TaggedVariant} from '../domain/value.ts'
-import type {BlockID, FunctionID, SiteID, ValueID} from './ids.ts'
+import type {BlockID, SiteID, ValueID} from './ids.ts'
 import type {InstructionIR, TerminatorIR} from './instructions.ts'
 
 type ParameterIR = {
@@ -76,10 +76,6 @@ export type UnsupportedReason =
   | {kind: 'asyncOrGeneratorFunction'}
   | {kind: 'typePredicate'}
   | {kind: 'protoProperty'}
-  // A style attribute on a custom component, e.g. <ProgressBar style={{...}}>: only a DOM
-  // tag renders its style values as CSS; a component's style prop is an ordinary value the
-  // component may forward, transform, or ignore. Used only by the style-slot pass.
-  | {kind: 'styleOnComponent'}
   | {kind: 'enumMemberRead'}
   // point.toString and friends: a prototype member the record value cannot answer.
   | {kind: 'prototypeMemberRead'; property: string}
@@ -357,33 +353,6 @@ export type ProgramIR = {
   initializer: FunctionIR
   // Top-level statements the initializer's lowering skipped instead of stopping at.
   initializerSkips: InitializerSkip[]
-  // Numeric JSX style values (`style={{width: computedWidth}}`), each lowered as its own
-  // synthetic function and appended to `functions` after every declared function — so a
-  // call inside a slot still resolves same-file callees by their real FunctionIDs, while
-  // nothing can call a slot (no symbol maps to one). A const-following slot also keeps a
-  // plain-expression fallback for analysis limitations inside a followed initializer.
-  // The report reads this list to keep both versions out of the ordinary function entries.
-  // Empty for non-.tsx files.
-  styleSlots: StyleSlotIR[]
-}
-
-export type StyleSlotIR = {
-  fn: FunctionID
-  fallbackFn: FunctionID | null
-  property: string
-  site: SiteID
-}
-
-// Dense by FunctionID. Reports and project summaries both need to omit the synthetic
-// style functions from ordinary function lists; deriving the flags here keeps the
-// ProgramIR.styleSlots representation authoritative.
-export function styleFunctionFlags(slots: readonly StyleSlotIR[]): boolean[] {
-  const flags: boolean[] = []
-  for (const slot of slots) {
-    flags[slot.fn] = true
-    if (slot.fallbackFn != null) flags[slot.fallbackFn] = true
-  }
-  return flags
 }
 
 // The synthetic initializer's display and IR name, shared by its two producers and read

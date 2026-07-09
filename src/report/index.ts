@@ -2,9 +2,8 @@ import {nextDown, nextUp, isFiniteNumber, type AbstractNumber} from '../domain/n
 import {recordProperty, tryJoinValues, type AbstractValue} from '../domain/value.ts'
 import type {FunctionAnalysis, ProgramAnalysis, Stop} from '../engine/outcome.ts'
 import type {FunctionID} from '../ir/ids.ts'
-import {forEachOperand} from '../ir/instructions.ts'
 import type {BoundsAssumption} from '../requirements/model.ts'
-import {declaredKindOf, formatSite, reportPath, siteLocation, styleFunctionFlags, type DeclaredKind, type FunctionIR, type ProgramIR, type StyleSlotIR, type UnsupportedReason} from '../ir/program.ts'
+import {declaredKindOf, formatSite, reportPath, type DeclaredKind, type FunctionIR, type ProgramIR, type UnsupportedReason} from '../ir/program.ts'
 import {formatObservedNeed, formatPrecondition} from './format-requirement.ts'
 
 export type FunctionReport =
@@ -19,24 +18,6 @@ export type FunctionReport =
 export type AnalysisReport = {
   file: string
   functions: FunctionReport[]
-  // One line per numeric JSX style value, most severe verdict first. Empty outside .tsx
-  // files. Advisory: a flagged slot is the requires line the extract-to-.ts rewrite would
-  // surface, not a change to any function's contract.
-  styleSlots: StyleSlotLine[]
-}
-
-// The display order is also the severity order. Project summaries import this tuple, so a
-// new verdict cannot appear in one output while silently falling out of another.
-export const styleSlotVerdicts = ['may be NaN', 'may reach Infinity', 'may overflow to Infinity', 'may be zero or negative', 'needs a guard', 'ok', 'skipped'] as const
-export type StyleSlotVerdict = (typeof styleSlotVerdicts)[number]
-export type StyleSlotLine = {
-  verdict: StyleSlotVerdict
-  line: string
-  property: string
-  // Of the slot expression itself, for lint-style file:line:column output.
-  location: {line: number; column: number}
-  // The guard the requirement inference named (e.g. `totalFrames is nonzero`), when one exists.
-  guard: string | null
 }
 
 export function createReport(program: ProgramIR, analysis: ProgramAnalysis): AnalysisReport {
@@ -74,10 +55,7 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       observed,
     })
   }
-  const isStyleFunction = styleFunctionFlags(program.styleSlots)
   for (let functionID = 0; functionID < analysis.functions.length; functionID++) {
-    // Style slots print in their own section, not as function entries.
-    if (isStyleFunction[functionID] === true) continue
     const fn = analysis.functions[functionID]!
     switch (fn.kind) {
       case 'notLowered': {
@@ -126,176 +104,9 @@ export function createReport(program: ProgramIR, analysis: ProgramAnalysis): Ana
       }
     }
   }
-  return {file: reportPath(program), functions, styleSlots: styleSlotLines(program, analysis, assumedBindings, initializerBoundsLines, readsModules)}
+  return {file: reportPath(program), functions}
 }
 
-// Which numeric style properties additionally reject negative values (or zero too, for
-// the positive set): the browser drops the whole declaration, as silently as it drops
-// NaN. Finiteness needs no catalog — NaN and Infinity stringify to invalid CSS on every
-// property — so membership here only adds the sign check. The list is the exhaustive
-// sweep of CSS properties that take a plain number in a React style object and specify a
-// [0,∞] (or (0,∞]) range; properties where negative values are meaningful (top, left,
-// margin, letterSpacing, zIndex, order, the scale transform) are deliberately absent, and
-// opacity is absent because the browser clamps out-of-range opacity instead of dropping it.
-const nonnegativeStyleProperties = new Set([
-  // Box sizes, physical and logical.
-  'width', 'height', 'minWidth', 'minHeight', 'maxWidth', 'maxHeight', 'aspectRatio', 'zoom',
-  'blockSize', 'inlineSize', 'minBlockSize', 'minInlineSize', 'maxBlockSize', 'maxInlineSize',
-  // Padding, physical and logical. Margins are absent: negative margins are valid layout.
-  'padding', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft',
-  'paddingInline', 'paddingInlineStart', 'paddingInlineEnd',
-  'paddingBlock', 'paddingBlockStart', 'paddingBlockEnd',
-  // Border and outline widths.
-  'borderWidth', 'borderTopWidth', 'borderRightWidth', 'borderBottomWidth', 'borderLeftWidth',
-  'borderInlineWidth', 'borderInlineStartWidth', 'borderInlineEndWidth',
-  'borderBlockWidth', 'borderBlockStartWidth', 'borderBlockEndWidth',
-  'outlineWidth', 'columnRuleWidth',
-  // Corner radii, physical and logical.
-  'borderRadius', 'borderTopLeftRadius', 'borderTopRightRadius',
-  'borderBottomLeftRadius', 'borderBottomRightRadius',
-  'borderStartStartRadius', 'borderStartEndRadius', 'borderEndStartRadius', 'borderEndEndRadius',
-  // Text and font. lineHeight's number form multiplies fontSize and must be nonnegative.
-  'fontSize', 'lineHeight', 'tabSize',
-  // Flex and grid.
-  'gap', 'rowGap', 'columnGap', 'flexBasis', 'flexGrow', 'flexShrink',
-  // Multi-column and rendering.
-  'columnWidth', 'perspective', 'strokeWidth',
-])
-// Zero is invalid too: a 0-column layout or a 0-line clamp is a dropped declaration.
-// aspectRatio and zoom are NOT here — a review round verified in a real browser that
-// `aspect-ratio: 0` and `zoom: 0` are kept (zoom: 0 even resolves to 1), so they carry
-// only the negative-dropped check above.
-const positiveStyleProperties = new Set(['columnCount', 'widows', 'orphans', 'lineClamp', 'WebkitLineClamp'])
-
-function styleSlotLines(
-  program: ProgramIR,
-  analysis: ProgramAnalysis,
-  assumedBindings: boolean[][],
-  initializerBoundsLines: string[],
-  readsModules: boolean[],
-): StyleSlotLine[] {
-  const lines = program.styleSlots.map(slot => {
-    const primary = analysis.functions[slot.fn]!
-    const hitOnlyAnalysisLimitations = primary.kind === 'partial'
-      && primary.stops.every(stop => stop.reason.kind === 'unmodeledNarrowing')
-    let functionID = slot.fn
-    if (slot.fallbackFn != null
-      && hitOnlyAnalysisLimitations
-      && analysis.functions[slot.fallbackFn]!.kind === 'analyzed') {
-      functionID = slot.fallbackFn
-    }
-    return styleSlotLine(
-      slot,
-      analysis.functions[functionID]!,
-      program,
-      analysis,
-      assumedBindings[functionID]!,
-      readsModules[functionID] === true ? initializerBoundsLines : [],
-    )
-  })
-  return lines.sort((a, b) => styleSlotVerdicts.indexOf(a.verdict) - styleSlotVerdicts.indexOf(b.verdict))
-}
-
-// Which declared paths a slot's synthetic function actually reads, so its printed
-// assumptions cover exactly what the claim rests on — not every numeric leaf of a whole
-// props record (a review round measured a 566-character line on a gallery-shaped slot).
-// Fail-closed: when any read cannot be attributed to a path (an element's own property,
-// like sizes[i].w), the walk returns null and the caller prints the full assumptions
-// rather than risk dropping one the claim rests on.
-function slotReadPaths(fn: FunctionIR): Set<string> | null {
-  const pathByValue = new Map<number, string>()
-  for (const parameter of fn.parameters) pathByValue.set(parameter.value, parameter.name)
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) {
-      if (instruction.kind === 'property') {
-        const base = pathByValue.get(instruction.object)
-        if (base == null) return null
-        pathByValue.set(instruction.result, `${base}.${instruction.property}`)
-      }
-      if (instruction.kind === 'arrayIndex' && !pathByValue.has(instruction.array)) return null
-    }
-  }
-  const reads = new Set<string>()
-  const visitOperand = (operand: number): void => {
-    const path = pathByValue.get(operand)
-    if (path != null) reads.add(path)
-  }
-  for (const block of fn.blocks) {
-    for (const instruction of block.instructions) forEachOperand(instruction, visitOperand)
-    const terminator = block.terminator
-    if (terminator.kind === 'return' && terminator.value != null) visitOperand(terminator.value)
-    if (terminator.kind === 'jump') for (const argument of terminator.target.arguments) visitOperand(argument)
-    if (terminator.kind === 'branch') {
-      visitOperand(terminator.condition)
-      for (const argument of terminator.whenTrue.arguments) visitOperand(argument)
-      for (const argument of terminator.whenFalse.arguments) visitOperand(argument)
-    }
-  }
-  return reads
-}
-
-function styleSlotLine(slot: StyleSlotIR, fn: FunctionAnalysis, program: ProgramIR, analysis: ProgramAnalysis, assumedSlotBindings: boolean[], initializerBoundsLines: string[]): StyleSlotLine {
-  const name = fn.lowering.name
-  const location = siteLocation(program, slot.site)
-  const slotLine = (verdict: StyleSlotVerdict, line: string, guard: string | null = null): StyleSlotLine =>
-    ({verdict, line, property: slot.property, location, guard})
-  switch (fn.kind) {
-    case 'notLowered':
-      return slotLine('skipped', `${name}: ${formatUnsupportedReason(fn.lowering.reason)} at ${formatSite(program, fn.lowering.site)}`)
-    case 'partial':
-      return slotLine('skipped', `${name}: ${formatStop(fn.stops[0], program, analysis)}`)
-    case 'analyzed': {
-      // A `number | undefined` style value is the React conditional-style idiom: a missing
-      // value means the declaration is simply not applied, so the checks run on the
-      // number-when-present part and the line says so.
-      const returned = fn.returnValue
-      const whenPresent = returned.kind === 'maybeNullish' && returned.inner.kind === 'number'
-      const value = whenPresent ? returned.inner as AbstractNumber : returned
-      if (value.kind !== 'number') return slotLine('skipped', `${name}: the value is not a plain number`)
-      const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
-      // The requirement inference already names the guard a bad value needs (e.g. `total
-      // is nonzero` for a division); a flagged line carries that name so the rewrite is
-      // spelled out, not just the symptom.
-      const needs = [
-        ...fn.preconditions.map(precondition => formatPrecondition(precondition, parameterNames, program)),
-        ...fn.boundsAssumptions.map(assumption => formatBoundsAssumption(assumption, program)),
-      ]
-      const guard = needs.length > 0 ? needs.join(' and ') : null
-      // A slot line travels alone — quoted in LINT.txt or read in isolation — so the
-      // assumptions that condition the claim print on the line itself, not only in the
-      // section header. `ok: the value is a finite number` for `dy - 4` is true only
-      // because the number input dy is assumed finite; a review round showed the bare
-      // sentence read as unconditional. Bounds assumptions are already in the guard text.
-      const reads = slotReadPaths(fn.lowering)
-      const includePath = reads == null ? undefined : (path: string) => reads.has(path)
-      // Fresh input parameters may share names; dedupe identical assumptions by text.
-      const assumes = [...new Set([
-        ...assumptionLines(fn.lowering, program, assumedSlotBindings, [], includePath),
-        ...initializerBoundsLines,
-      ])]
-      const assumesSuffix = assumes.length === 0 ? '' : `; assumes: ${assumes.join(', ')}`
-      const core = (whenPresent ? 'when present, ' : '') + numberSummary('the value', value, program)
-      const summary = core + (guard == null ? '' : `; guard to add: ${guard}`) + assumesSuffix
-      if (value.mayBeNaN) return slotLine('may be NaN', `${name}: ${summary}`, guard)
-      if (value.lower === Number.NEGATIVE_INFINITY || value.upper === Number.POSITIVE_INFINITY) {
-        // Two different findings share an Infinity bound. With a division around, a zero
-        // divisor produces Infinity from everyday values (width / 0) — as reachable as the
-        // NaN class. Without one, Infinity needs a value near the top of what a JS number
-        // can hold (~1.8e308), which layout math only sees after something else already
-        // went wrong — real, but a missing-floor observation rather than a bug.
-        const divisionInvolved = fn.preconditions.some(precondition => precondition.kind !== 'inBounds')
-          || fn.boundsAssumptions.some(assumption => assumption.kind === 'nonzeroDivisor')
-        return slotLine(divisionInvolved ? 'may reach Infinity' : 'may overflow to Infinity', `${name}: ${summary}`, guard)
-      }
-      if ((nonnegativeStyleProperties.has(slot.property) && value.lower < 0)
-        || (positiveStyleProperties.has(slot.property) && value.lower <= 0)) {
-        return slotLine('may be zero or negative', `${name}: ${summary}`, guard)
-      }
-      if (guard != null) return slotLine('needs a guard', `${name}: only safe when ${guard}; ${core}${assumesSuffix}`, guard)
-      return slotLine('ok', `${name}: ${summary}`)
-    }
-  }
-}
 // The legend targets a reader — usually another model — that has never seen a freerange
 // report: each line kind in one sentence, so the report is self-describing. Exported so
 // project runs (the survey) can write it ONCE per run instead of per file — it was 28% of
@@ -338,10 +149,6 @@ export function formatReport(report: AnalysisReport, options?: {legend?: boolean
       }
     }
   }
-  if (report.styleSlots.length > 0) {
-    lines.push('', 'style slots (each numeric JSX style value, analyzed as if extracted into its own function):')
-    for (const slot of report.styleSlots) lines.push(`  ${slot.verdict}: ${slot.line}`)
-  }
   return lines.join('\n')
 }
 
@@ -357,13 +164,10 @@ function assumptionLines(
   program: ProgramIR,
   assumedBindings: boolean[],
   boundsAssumptions: BoundsAssumption[],
-  // Style slots pass a filter so a slot line's assumptions cover exactly the paths its
-  // synthetic function reads; function entries print every declared leaf as before.
-  includeParameterPath?: (path: string) => boolean,
 ): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
-    pushDeclaredAssumptions(parameter.name, parameter.type, assumptions, includeParameterPath)
+    pushDeclaredAssumptions(parameter.name, parameter.type, assumptions)
   }
   for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
     if (assumedBindings[bindingID] !== true) continue
@@ -390,17 +194,13 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
 
 // One assumption line per leaf of the declared kind: a record binding's condition is a
 // condition on each of its properties, e.g. `pointer.x is finite and not NaN`.
-function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[], include?: (path: string) => boolean): void {
-  // Tuples, arrays, and unions print or suppress as a whole: their reads attribute to the
-  // container's path (an element read names the array, a tag check names the union), so
-  // the filter decides at the container and the leaves inherit the decision.
-  const wholeInclude = include == null ? undefined : include(path) ? undefined : () => false
+function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
   switch (declared.kind) {
-    case 'number': if (include?.(path) ?? true) assumptions.push(`${path} is finite and not NaN`); break
-    case 'boolean': if (include?.(path) ?? true) assumptions.push(`${path} is a boolean`); break
+    case 'number': assumptions.push(`${path} is finite and not NaN`); break
+    case 'boolean': assumptions.push(`${path} is a boolean`); break
     case 'tuple': {
       for (let index = 0; index < declared.elements.length; index++) {
-        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions, wholeInclude)
+        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions)
       }
       break
     }
@@ -410,7 +210,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // `every grid[each] element is finite and not NaN`, and a record element prints
       // its property path, e.g. `points[each].x is finite and not NaN`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf, wholeInclude)
+      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf)
       for (const line of leaf) {
         const prefix = `${path}[each] is `
         // The `every X element is` sugar only reads right when the element path appears
@@ -430,9 +230,9 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
       if (declared.inner.kind === 'number') {
         // E.g. `animatedUntilTime is null or a finite non-NaN number`.
-        if (include?.(path) ?? true) assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
+        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
       } else if (declared.inner.kind === 'boolean') {
-        if (include?.(path) ?? true) assumptions.push(`${path} is ${sentinelWords} or a boolean`)
+        assumptions.push(`${path} is ${sentinelWords} or a boolean`)
       } else {
         // One line per inner leaf, each carrying the missing-value caveat — e.g. a
         // `Config | null` parameter prints `config is null or config.width is finite and
@@ -440,14 +240,14 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // ensures lines rest on it. An opaque inner (`string | null`) contributes no
         // line, because nothing is claimed about the string either way.
         const leaf: string[] = []
-        pushDeclaredAssumptions(path, declared.inner, leaf, include)
+        pushDeclaredAssumptions(path, declared.inner, leaf)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
       }
       break
     }
     case 'record': {
       for (const property of declared.properties) {
-        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions, include)
+        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions)
       }
       break
     }
@@ -469,7 +269,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
             ? `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)} and ${path}.${property.name} is present`
             : `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)}`
           const perProperty: string[] = []
-          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty, wholeInclude)
+          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty)
           for (const line of perProperty) leaf.push(`${line} (${qualifier})`)
         }
         for (const line of leaf) {
@@ -627,7 +427,6 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'asyncOrGeneratorFunction': return 'an async or generator function (the runtime result is a Promise or iterator, not the body\'s return value)'
     case 'typePredicate': return 'a type predicate (the checker takes the predicate on faith; return a plain boolean and check properties where they are read)'
     case 'protoProperty': return 'a property named __proto__ (prototype-setting syntax at runtime, not a data property)'
-    case 'styleOnComponent': return 'style on a component, not a DOM tag — only DOM tags render style values as CSS'
     case 'enumMemberRead': return 'an enum member read (replace the enum with plain module consts, e.g. const directionUp = 1)'
     case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`

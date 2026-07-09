@@ -9,10 +9,10 @@ import {mkdirSync, writeFileSync} from 'node:fs'
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeProgram} from './engine/analyze.ts'
-import {siteLocation, styleFunctionFlags} from './ir/program.ts'
+import {siteLocation} from './ir/program.ts'
 import {lowerSource} from './lower/program.ts'
 import {formatPrecondition} from './report/format-requirement.ts'
-import {createReport, formatReport, reportLegend, styleSlotVerdicts, type StyleSlotVerdict} from './report/index.ts'
+import {createReport, formatReport, reportLegend} from './report/index.ts'
 
 export function runProject(repoRoot: string, outputDirectory: string): void {
   mkdirSync(outputDirectory, {recursive: true})
@@ -57,9 +57,6 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   // surfaced in SUMMARY.txt instead of buried under the assumes bulk.
   const requiresIndex: string[] = []
 
-  // Every numeric JSX style value in the run, one verdict line each, for STYLE-SLOTS.txt.
-  const styleSlotLines: Array<{file: string; verdict: StyleSlotVerdict; line: string}> = []
-
   // The linter view: only obligations nobody discharges, at points where failure is
   // silent, one conventional file:line:column line each — against the per-file reports,
   // which print everything the analysis knows. See the LINT.txt header for the levels.
@@ -98,17 +95,13 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
         if (entry.kind === 'partial') partial++
         if (entry.kind === 'unsupported') unsupported++
       }
-      // Reason tags from the IR, not prose, so the tally is stable. Style slots have their
-      // own tally below and stay out of the function ones.
-      const isStyleFunction = styleFunctionFlags(lowered.styleSlots)
+      // Reason tags from the IR, not prose, so the tally is stable.
       for (let fnId = 0; fnId < lowered.functions.length; fnId++) {
         const fn = lowered.functions[fnId]!
-        if (isStyleFunction[fnId] === true) continue
         if (fn.kind === 'unsupported') bump(reasonCounts, fn.reason.kind === 'call' ? `call:${fn.reason.callee}` : fn.reason.kind)
       }
       for (let fnId = 0; fnId < analysis.functions.length; fnId++) {
         const fn = analysis.functions[fnId]!
-        if (isStyleFunction[fnId] === true) continue
         if (fn.kind === 'partial') {
           for (const stop of fn.stops) {
             bump(stopCounts, stop.reason.kind)
@@ -138,25 +131,6 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
           }
         }
       }
-      for (const slot of report.styleSlots) {
-        styleSlotLines.push({file: shortName, verdict: slot.verdict, line: slot.line})
-        // Lint: a bad number reaching a rendered style value fails silently — the browser
-        // drops the declaration without an error. NaN and division-reachable Infinity are
-        // warnings (a zero among everyday values produces them); overflow-only Infinity
-        // needs a value near the top of what a JS number holds, so it demotes to a note —
-        // a missing-floor observation, not a bug.
-        if (slot.verdict === 'may be NaN' || slot.verdict === 'may reach Infinity' || slot.verdict === 'may overflow to Infinity') {
-          const what = slot.verdict === 'may be NaN' ? 'NaN' : 'Infinity'
-          lintEntries.push({
-            file: shortName,
-            line: slot.location.line,
-            column: slot.location.column,
-            level: slot.verdict === 'may overflow to Infinity' ? 'note' : 'warning',
-            message: `${what} can reach this ${slot.property} style value — invalid CSS, silently dropped${slot.guard == null ? '' : `. Guard: ${slot.guard}`}`,
-            rule: slot.verdict === 'may be NaN' ? 'style-nan' : slot.verdict === 'may reach Infinity' ? 'style-infinity' : 'style-overflow',
-          })
-        }
-      }
       rows.push({
         file: shortName,
         functions: functionReports.length,
@@ -178,10 +152,6 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     }
   }
 
-  // A display-only derivation from the collected lines. Keeping no mutable count beside
-  // styleSlotLines means the summary cannot drift when collection changes.
-  const styleSlotCounts = new Map<StyleSlotVerdict, number>()
-  for (const slot of styleSlotLines) bump(styleSlotCounts, slot.verdict)
   const totals = {
     files: rows.length,
     typeErrors: rows.filter(row => row.verdict === 'typeErrors').length,
@@ -204,30 +174,6 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)) {
     console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
   }
-  if (styleSlotLines.length > 0) {
-    console.log('--- style slots ---')
-    for (const verdict of styleSlotVerdicts) {
-      const count = styleSlotCounts.get(verdict)
-      if (count != null) console.log(`${String(count).padStart(5)}  ${verdict}`)
-    }
-    const slotReport = [
-      'Numeric JSX style values, each analyzed as if extracted into its own function:',
-      'variables from the surrounding component are inputs assumed to match their declared',
-      'types. Plain-math const definitions feeding the value are followed; every other',
-      'statement of the component body is never analyzed. So a flag means the expression',
-      'and the consts it leans on do not defend themselves — a check in the unanalyzed',
-      'code may already prevent the bad case; look before fixing. The fix is the',
-      'extract-to-.ts rewrite with the named guard, which also moves the math to where',
-      'the analysis can verify the guard for good. Grouped worst-first.',
-    ]
-    for (const verdict of styleSlotVerdicts) {
-      const group = styleSlotLines.filter(slot => slot.verdict === verdict)
-      if (group.length === 0) continue
-      slotReport.push('', `${verdict} (${group.length}):`)
-      for (const slot of group) slotReport.push(`  ${slot.file} ${slot.line}`)
-    }
-    writeFileSync(`${outputDirectory}/STYLE-SLOTS.txt`, slotReport.join('\n') + '\n')
-  }
   lintEntries.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
   const lintCounts = new Map<string, number>()
   for (const entry of lintEntries) bump(lintCounts, `${entry.level}:${entry.rule}`)
@@ -236,11 +182,9 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     console.log(`${String(count).padStart(5)}  ${rule}`)
   }
   const lintReport = [
-    'freerange lint: only obligations nobody discharges, at points where failure is silent.',
+    'freerange lint: actionable failures and caller obligations from analyzed functions.',
     'error   = provably wrong on some reachable path.',
-    'warning = a representable bad value can reach this point and nothing defends against it.',
-    '          A check the analysis cannot see (earlier in a component body) may exist: look',
-    '          before fixing. The named guard is the fix either way.',
+    'warning = an analyzed path may fail to terminate.',
     'note    = a contract outside callers must uphold; unverifiable from this repo alone.',
     'The full value analysis (every function, every range) lives in the per-file reports.',
     '',
@@ -266,14 +210,6 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     '',
     'stop reasons:',
     ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
-    ...(styleSlotLines.length > 0
-      ? [
-          '',
-          'style slots (see STYLE-SLOTS.txt):',
-          ...styleSlotVerdicts.filter(verdict => styleSlotCounts.has(verdict))
-            .map(verdict => `${String(styleSlotCounts.get(verdict)).padStart(5)}  ${verdict}`),
-        ]
-      : []),
   ]
   writeFileSync(`${outputDirectory}/SUMMARY.txt`, summary.join('\n') + '\n')
 }
