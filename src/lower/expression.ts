@@ -794,8 +794,8 @@ type ValueKindResult = 'number' | 'boolean' | 'object' | 'nullable' | 'array' | 
 // re-walked from every expression node that mentions it. A profiling pass measured one
 // context-bag file issuing 757 million checker queries over ~216 distinct types, ~93% of
 // the whole survey's wall time, precisely because these walks recompute per call site.
-// (declaredKind has had the same cache since the tagged-union milestone; valueKind,
-// shapeFingerprint, and taggedUnionProperty gain theirs here.)
+// (declaredKind has had the same cache since the tagged-union milestone; valueKind and
+// taggedUnionProperty gain theirs here.)
 const valueKindCache = new WeakMap<ts.Type, ValueKindResult[]>()
 
 export function valueKind(type: ts.Type, checker: ts.TypeChecker, depth = 0): ValueKindResult {
@@ -888,11 +888,8 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
       if (restKind != null) return 'nullable'
       return taggedUnionProperty(rest, checker, depth) == null ? null : 'nullable'
     }
-    // A shared string-literal property makes the union tagged — checked BEFORE the
-    // shared-shape classification, because route variants that differ only by tag value
-    // (or only by properties an in-check splits) must not collapse into one merged
-    // record whose tag check narrows nothing. Unions without a tag fall back to the
-    // shared-kind rule (identical-shape aliases, literal unions, and friends).
+    // A shared string- or boolean-literal property makes a record union tagged. Other
+    // structural unions reject; scalar literal unions still collapse to one shared kind.
     if (taggedUnionProperty(type.types, checker, depth) != null) return 'taggedUnion'
     return classifyUnionMembers(type.types, checker, depth + 1)
   }
@@ -1034,16 +1031,10 @@ export function tagLiteralValues(type: ts.Type): Array<string | boolean> | null 
   return literals
 }
 
-// One shared kind for a group of union members, or null. Object, array, and tuple members
-// must additionally agree on their recursive shape fingerprints: TypeScript normalizes a
-// union of disjoint record shapes by adding each member's missing properties as
-// optional-undefined, so only the required properties describe the member's real shape,
-// and the property KINDS are part of it recursively — a discriminated union like
-// {ok: true; value: number} | {ok: false; value: boolean} has one name set but two
-// meanings for `value`. Members admitted here join losslessly (matching fingerprints mean
-// matching names and kinds at every depth), so every read the union's type exposes stays
-// answerable — including reads of array-typed properties on identically-shaped aliases,
-// which TypeScript keeps as a union at the read position.
+// One shared kind for a group of scalar union members, or null. Multiple object, array,
+// or tuple members need a string or boolean tag and are handled before this function.
+// A one-member list can occur after removing null and undefined; retain the ordinary
+// depth and cycle check for that structural member without comparing it to another shape.
 function classifyUnionMembers(
   members: readonly ts.Type[],
   checker: ts.TypeChecker,
@@ -1051,121 +1042,53 @@ function classifyUnionMembers(
 ): 'number' | 'boolean' | 'object' | 'array' | 'tuple' | 'opaque' | null {
   if (depth > 8) return null
   let shared: 'number' | 'boolean' | 'object' | 'array' | 'tuple' | 'opaque' | null = null
-  let sharedShape: string | null = null
   for (const member of members) {
     const kind = valueKind(member, checker, depth)
     // A nullable or tagged-union member cannot arise here (TypeScript flattens nested
     // unions), but the type system cannot see that; both fail the shared-kind rule.
     if (kind == null || kind === 'nullable' || kind === 'taggedUnion' || (shared != null && kind !== shared)) return null
     if (kind === 'object' || kind === 'array' || kind === 'tuple') {
-      const shape = shapeFingerprint(member, checker, [])
-      if (shape == null || (sharedShape != null && shape !== sharedShape)) return null
-      sharedShape = shape
+      if (members.length > 1 || !structuralTypeWalkCompletes(member, checker, [])) return null
     }
     shared = kind
   }
   return shared
 }
 
-// The recursive shape of an object type: property names with their kinds, nested records
-// spelled out in full. Two union members agree only when their fingerprints are equal.
-// 'other' labels a kind the analysis cannot represent; 'other' matches 'other', which is
-// safe not because such values cannot exist — a property typed
-// {width: number} | {code: number} is 'other' and its values are ordinary literals — but
-// because every read of an 'other' property is gated: direct access and destructuring
-// gate the result type through valueKind, spreads gate each copied property, and a read
-// the gates admit against a value the walk carried opaquely stops at the kind-mismatch
-// backstop. A fingerprint the seen set or depth cap CUT SHORT is different: below the cutoff
-// there can be readable properties the comparison never saw (discriminant narrowing types
-// deep reads against a single member), so a truncated fingerprint is null and never
-// compares equal — the union is rejected, mirroring how the module shape walk goes opaque
-// at its cap.
-// Same discipline as declaredKindCache: only walks that started fresh (seen empty) are
-// canonical — a type reached inside its own recursion fingerprints null there while the
-// same type from the top may fingerprint fine, so recursive walks neither read nor write.
-const shapeFingerprintCache = new WeakMap<ts.Type, string | null>()
-
-function shapeFingerprint(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
-  if (seen.length > 0) return shapeFingerprintUncached(type, checker, seen)
-  const cached = shapeFingerprintCache.get(type)
-  if (cached !== undefined) return cached
-  const result = shapeFingerprintUncached(type, checker, seen)
-  shapeFingerprintCache.set(type, result)
-  return result
-}
-
-function shapeFingerprintUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): string | null {
-  // An intersection fingerprints by its merged property view — the checker's property
-  // queries already answer for the whole intersection — so two route variants written as
-  // Base & {...} get DIFFERENT fingerprints and their union classifies as tagged instead
-  // of collapsing into one merged record whose tag check narrows nothing.
+// Nullable records still need the same bounded walk as other declared structures. A
+// recursive or excessively deep member rejects instead of producing an enormous partial
+// record. This walk only checks that traversal completes; it does not compare shapes.
+function structuralTypeWalkCompletes(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): boolean {
   if (type.isIntersection() && valueKind(type, checker) === 'object') {
-    if (seen.length >= 8 || seen.includes(type)) return null
-    const parts: string[] = []
-    for (const property of checker.getPropertiesOfType(type)) {
-      if ((property.flags & ts.SymbolFlags.Optional) !== 0) continue
-      const propertyShape = shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])
-      if (propertyShape == null) return null
-      parts.push(`${property.name}:${propertyShape}`)
-    }
-    return `{${parts.sort().join(',')}}`
+    if (seen.length >= 8 || seen.includes(type)) return false
+    return structuralPropertiesComplete(type, checker, seen)
   }
-  if ((type.flags & ts.TypeFlags.NumberLike) !== 0) return 'number'
-  if ((type.flags & ts.TypeFlags.BooleanLike) !== 0) return 'boolean'
-  if ((type.flags & ts.TypeFlags.StringLike) !== 0) return 'opaque'
-  // Arrays and tuples fingerprint by their element shapes: {items: number[]} and
-  // {items: boolean[]} are different shapes, or the join would drop a property the read
-  // gates still expose.
+  if (type.isUnion()) return type.types.every(member => structuralTypeWalkCompletes(member, checker, seen))
   if (checker.isTupleType(type)) {
-    if (seen.length >= 8 || seen.includes(type)) return null
-    const positions: string[] = []
-    for (const elementType of checker.getTypeArguments(type as ts.TypeReference)) {
-      const position = shapeFingerprint(elementType, checker, [...seen, type])
-      if (position == null) return null
-      positions.push(position)
-    }
-    return `tuple{${positions.join(',')}}`
+    if (seen.length >= 8 || seen.includes(type)) return false
+    return checker.getTypeArguments(type as ts.TypeReference)
+      .every(member => structuralTypeWalkCompletes(member, checker, [...seen, type]))
   }
   if (checker.isArrayType(type)) {
-    if (seen.length >= 8 || seen.includes(type)) return null
-    const elementType = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
-    if (elementType == null) return 'other'
-    const element = shapeFingerprint(elementType, checker, [...seen, type])
-    return element == null ? null : `array{${element}}`
+    if (seen.length >= 8 || seen.includes(type)) return false
+    const element = checker.getIndexTypeOfType(type, ts.IndexKind.Number)
+    return element == null || structuralTypeWalkCompletes(element, checker, [...seen, type])
   }
-  if ((type.flags & ts.TypeFlags.Object) !== 0) {
-    if (seen.length >= 8 || seen.includes(type)) return null
-    // A type the project did not write — HTMLDivElement, a library interface — is a
-    // claim-free leaf, the same rule declaredKind applies: its value is carried opaque,
-    // so 'opaque' is its honest shape (walking a DOM interface's hundreds of properties
-    // just burned the depth cap and vetoed the record around it — the gallery's BoxData,
-    // springs plus a node field, classified null because of this gap).
-    if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return 'opaque'
-    if (checker.getIndexInfosOfType(type).length > 0) return 'other'
-    if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return 'other'
-    const properties: string[] = []
-    for (const property of checker.getPropertiesOfType(type)) {
-      if ((property.flags & ts.SymbolFlags.Optional) !== 0) continue
-      const propertyFingerprint = shapeFingerprint(checker.getTypeOfSymbol(property), checker, [...seen, type])
-      if (propertyFingerprint == null) return null
-      properties.push(`${property.name}:${propertyFingerprint}`)
-    }
-    return `record{${properties.sort().join(',')}}`
+  if ((type.flags & ts.TypeFlags.Object) === 0) return true
+  if (seen.length >= 8 || seen.includes(type)) return false
+  if (declaredOnlyInDeclarationFiles(type.getSymbol() ?? type.aliasSymbol)) return true
+  if (checker.getIndexInfosOfType(type).length > 0) return true
+  if (type.getCallSignatures().length > 0 || type.getConstructSignatures().length > 0) return true
+  return structuralPropertiesComplete(type, checker, seen)
+}
+
+function structuralPropertiesComplete(type: ts.Type, checker: ts.TypeChecker, seen: ts.Type[]): boolean {
+  const nextSeen = [...seen, type]
+  for (const property of checker.getPropertiesOfType(type)) {
+    if ((property.flags & ts.SymbolFlags.Optional) !== 0) continue
+    if (!structuralTypeWalkCompletes(checker.getTypeOfSymbol(property), checker, nextSeen)) return false
   }
-  // `unknown` and `any` both carry without claims. For unknown the checker forces
-  // narrowing before any use, so its word stays intact; for any the checker's word is
-  // void, and claim-free is the one honest reading — nothing numeric is ever said about
-  // the value, every operation on it stops at the gates, and a write of one into a typed
-  // binding leaves the binding opaque instead of letting the declared type re-mint claims.
-  if ((type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) !== 0) return 'opaque'
-  if (type.isUnion()) {
-    if (type.types.every(member => (member.flags & ts.TypeFlags.NumberLike) !== 0)) return 'number'
-    if (type.types.every(member => (member.flags & ts.TypeFlags.BooleanLike) !== 0)) return 'boolean'
-    const memberFingerprints = type.types.map(member => shapeFingerprint(member, checker, seen))
-    if (memberFingerprints.some(fingerprint => fingerprint == null)) return null
-    if (new Set(memberFingerprints).size === 1) return memberFingerprints[0]!
-  }
-  return 'other'
+  return true
 }
 
 // Truthiness conditions like `if (width)` on a number are legal TypeScript but outside the
@@ -1486,9 +1409,9 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
     // lowerExpression) — an assertion is exactly where the checker's word and the runtime
     // value may diverge, and claim-free is the one honest reading. Three review rounds
     // settled this: each attempt to LICENSE carrying (asserted kind matches operand kind;
-    // then recursive shape fingerprints) was defeated by another diagnostic-clean aliasing
+    // then recursive type-shape comparisons) was defeated by another diagnostic-clean aliasing
     // route (`true as {} as number` via comparability, `flags as unknown[] as number[]`
-    // at the element level, optional-property and heterogeneous-union fingerprint
+    // at the element level, optional-property and heterogeneous-union comparison
     // collisions). No type-level test can be finer than TypeScript's own cast
     // permissiveness, so the license is gone rather than repaired again.
     if ((ts.isAsExpression(current) || ts.isTypeAssertionExpression(current))

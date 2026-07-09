@@ -170,7 +170,7 @@ describe('arrays and declared values', () => {
       .toEqual([`grid.columns is nonzero (division at ${file}:8:16)`])
   })
 
-  test('element-aware shapes, writes, copies, and sentinel chains remain sound', () => {
+  test('untagged array unions reject while copies and sentinel chains remain sound', () => {
     const report = analyzeSource('round2-fixes.ts', `
       export function itemCount(mode: number): number {
         const box: {items: (number | boolean)[]} = mode > 0 ? {items: [1, 2, 3]} : {items: [true]}
@@ -204,8 +204,8 @@ describe('arrays and declared values', () => {
         return 0
       }
     `)
-    // Array-property shapes fingerprint by element: {items: number[]} | {items: boolean[]}
-    // rejects instead of joining into an unreadable drop.
+    // An untagged structural union rejects instead of relying on coincidental member
+    // shapes: {items: number[]} | {items: boolean[]} cannot be joined here.
     expect(report.functions.find(fn => fn.name === 'itemCount')?.kind).toBe('unsupported')
     // A refinement of a stale saved read meets the record's current property value instead
     // of clobbering the fresher guard.
@@ -224,11 +224,14 @@ describe('arrays and declared values', () => {
     expect(analyzedFunction(report, 'readSize').ensures).toEqual(['return is a finite number'])
   })
 
-  test('recursive unions reject while literals, structural meets, and aliases remain sound', () => {
+  test('recursive unions reject while narrowing and literal unions remain sound', () => {
     const report = analyzeSource('round3-fixes.ts', `
       type Group = (Group | null)[]
       export function groupCount(group: Group): number {
         return group.length
+      }
+      export function nullableGroupCount(group: Group | null): number {
+        return group === null ? 0 : group.length
       }
       export function makeBox(): number {
         const box = {count: 5, data: [1, true]}
@@ -242,13 +245,6 @@ describe('arrays and declared values', () => {
           }
         }
         return -1
-      }
-      type Loaded = {samples: {value: number}[]}
-      type Cached = {samples: {value: number}[]}
-      export function sameShape(mode: number): number {
-        const state: Loaded | Cached = mode > 0 ? {samples: [{value: 20}]} : {samples: [{value: 10}]}
-        const first = state.samples[0]
-        return first === undefined ? 0 : first.value
       }
       export function sizeAtConst(index: number): number {
         const sizes = [4, 8, 24] as const
@@ -264,15 +260,13 @@ describe('arrays and declared values', () => {
     // A recursive type reaching itself through a union rejects (the depth guard survives
     // union arms); a mixed-element literal rejects in EVERY position, property values
     // included; a stale saved length meets instead of clobbering the fresher narrowing;
-    // identically-shaped record aliases (which TypeScript keeps as a union at the read
-    // position) read their array properties; an as-const table's bare dynamic read is
-    // nullable like number | undefined; typeof x === 'number' is the not-missing check.
+    // an as-const table's bare dynamic read is nullable like number | undefined; and
+    // typeof x === 'number' is the not-missing check.
     expect(report.functions.find(fn => fn.name === 'groupCount')?.kind).toBe('unsupported')
+    expect(report.functions.find(fn => fn.name === 'nullableGroupCount')?.kind).toBe('unsupported')
     expect(report.functions.find(fn => fn.name === 'makeBox')?.kind).toBe('unsupported')
     expect(analyzedFunction(report, 'freshThenStale').assumptions)
       .toEqual(['every values element is finite and not NaN'])
-    expect(analyzedFunction(report, 'sameShape').ensures)
-      .toEqual(['return is a finite integer number from 10 through 20'])
     expect(analyzedFunction(report, 'sizeAtConst').ensures)
       .toEqual(['return is a finite integer number from 0 through 24'])
     expect(analyzedFunction(report, 'typeofNumber').ensures).toEqual(['return is a finite number'])

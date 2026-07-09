@@ -279,13 +279,11 @@ describe('module state and nullability', () => {
       .toEqual(['return is a possibly NaN number from -Infinity through Infinity'])
   })
 
-  test('union record shapes compare recursively, and admitted unions read directly', () => {
-    // Shapes are fingerprinted to every depth: payloads diverging two levels down reject at
-    // the declarator (a narrowed read could otherwise reach a property the join dropped),
-    // while a union of one recursive shape joins losslessly — its discriminant reads
-    // directly and computes like any number, literal union included. The diverging shapes
-    // here carry no discriminant (status is a full string on both sides); with a literal
-    // or boolean tag the union would instead analyze through variant narrowing.
+  test('untagged record unions reject even when their shapes match', () => {
+    // A record union needs a string or boolean tag. Without one, separately declared
+    // members reject whether their shapes differ or happen to match. Code with one shared
+    // shape can state that directly, e.g. {mode: 1 | 2} instead of
+    // {mode: 1} | {mode: 2}.
     const report = analyzeSource('union-shapes.ts', `
       type Loaded = {status: string; data: {metrics: {width: number}}}
       type Failed = {status: string; data: {metrics: {code: number}}}
@@ -301,19 +299,13 @@ describe('module state and nullability', () => {
         return speed.mode + 1
       }
     `)
-    const measureFn = report.functions.find(candidate => candidate.name === 'measure')
-    expect(measureFn?.kind).toBe('unsupported')
-    expect(analyzedFunction(report, 'speedMode').ensures)
-      .toEqual(['return is a finite integer number from 2 through 3'])
+    expect(report.functions.find(candidate => candidate.name === 'measure')?.kind).toBe('unsupported')
+    expect(report.functions.find(candidate => candidate.name === 'speedMode')?.kind).toBe('unsupported')
   })
 
-  test('a declaration-file-typed property fingerprints as an opaque leaf', () => {
-    // The gallery's BoxData — springs plus a DOM node field — classified null inside
-    // `Box | undefined`, because the shape fingerprint walked INTO HTMLDivElement's
-    // hundreds of properties and burned the depth cap, where declaredKind's rule already
-    // carries foreign types as claim-free leaves. The fingerprint now applies the same
-    // rule, so the asserted element read analyzes and the record's own numeric claims
-    // survive around the carried node.
+  test('a declaration-file-typed property remains an opaque leaf', () => {
+    // Project records can contain foreign types such as HTMLDivElement. The foreign value
+    // carries no claims, while the record's own numeric properties remain analyzable.
     const report = analyzeSource('dom-leaf-shape.ts', `
       type Spring = {pos: number, dest: number}
       type Box = {id: string, x: Spring, node: HTMLDivElement}
@@ -427,25 +419,6 @@ describe('module state and nullability', () => {
       }
     `)
     expect(analyzedFunction(report, 'follow').ensures).toEqual(['return is a finite number'])
-  })
-
-  test('a shape fingerprint cut short by the depth cap never compares equal', () => {
-    // Two members diverging below the cap would otherwise be admitted as one shape, and
-    // discriminant narrowing could read the deep property the join dropped.
-    const report = analyzeSource('deep-union.ts', `
-      type DeepA = {tag: 1; l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: number}}}}}}}}}
-      type DeepB = {tag: 2; l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: boolean}}}}}}}}}
-      export function read(flag: number): number {
-        const a: DeepA = {tag: 1, l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: 42}}}}}}}}}
-        const b: DeepB = {tag: 2, l1: {l2: {l3: {l4: {l5: {l6: {l7: {l8: {value: true}}}}}}}}}
-        const chosen: DeepA | DeepB = flag > 0 ? a : b
-        if (chosen.tag === 1) {
-          return chosen.l1.l2.l3.l4.l5.l6.l7.l8.value
-        }
-        return 0
-      }
-    `)
-    expect(report.functions[0]?.kind).toBe('unsupported')
   })
 
   test('null checks narrow, and compound guards narrow through the short-circuit', () => {

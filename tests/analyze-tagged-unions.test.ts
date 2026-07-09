@@ -222,7 +222,7 @@ describe('tagged unions and narrowing', () => {
     // The laundered value is claim-free: the multiply stops, nothing crashes, and the
     // sibling functions still report. The element-level spellings (containers match,
     // elements differ — a later round's catch) erase the same way, because sameness is
-    // the recursive shape fingerprint, not the top-level kind.
+    // a recursive type-shape comparison, not the top-level kind.
     expect(report.functions.find(fn => fn.name === 'launderJoin')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderElements')?.kind).toBe('partial')
     expect(report.functions.find(fn => fn.name === 'launderTuple')?.kind).toBe('partial')
