@@ -15,7 +15,7 @@ import {
 import {assertAccepted} from './accept.ts'
 import {declaredOnlyInDeclarationFiles} from './platform.ts'
 import {addInstruction, addSite, createFunctionContext, LoweringStop, restoreLowering, sealBlocks, snapshotLowering, terminate, type FunctionContext, type TopLevelFunction} from './context.ts'
-import {lowerExpression, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
+import {lowerExpression, nonMissingUnionMembers, tagLiteralValues, taggedUnionProperty, valueKind} from './expression.ts'
 import {lowerStatement} from './statements.ts'
 
 export type ModuleScan = {
@@ -451,13 +451,11 @@ function declaredTaggedVariants(
 // too.
 //
 // Two disciplines make a memoized answer bit-identical to the walk it replaces. Depth is
-// part of the key, because the cap makes deep results budget-dependent. And a result is
+// part of the key, because the cap makes deep results budget-dependent. A nested result is
 // stored only when its walk never cut against an IN-PROGRESS ancestor (seen.includes) —
-// such a cut is what makes a result depend on which path reached it. A clean result is
-// context-free wherever it is reused: reaching some other path's ancestor from inside
-// this subtree would require a cycle through this type, and that cycle would have cut
-// this very walk at the type itself, making it non-clean. Depth-cap cuts are
-// deterministic per depth and stay storable.
+// such a cut can make the result depend on which path reached it. A top-level walk starts
+// with no ancestors, so its answer is context-free even when the walk later encounters a
+// cycle and may always be stored. Depth-cap cuts are deterministic per depth too.
 const declaredKindByDepth = new WeakMap<ts.Type, Array<DeclaredKind | null>>()
 // Bumped at every in-progress-ancestor cut; a walk whose subtree bumped it is not stored.
 let ancestorCuts = 0
@@ -482,7 +480,7 @@ export function declaredKind(type: ts.Type, checker: ts.TypeChecker, seen: ts.Ty
   if (cached !== undefined) return cached
   const cutsBefore = ancestorCuts
   const walked = declaredKindUncached(type, checker, seen)
-  if (ancestorCuts === cutsBefore) byDepth[depth] = walked
+  if (depth === 0 || ancestorCuts === cutsBefore) byDepth[depth] = walked
   return walked
 }
 
@@ -494,8 +492,7 @@ function declaredKindUncached(type: ts.Type, checker: ts.TypeChecker, seen: ts.T
     // which sentinels the type admits for seeding and report prose.
     case 'nullable': {
       if (!type.isUnion()) return null
-      const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
-      const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
+      const rest = nonMissingUnionMembers(type)
       if (rest.length === 0) return null
       let inner: DeclaredKind | null
       if (rest.length === 1) {

@@ -880,7 +880,7 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
     // (declarators, ternary results, destructure elements, returns) accept.
     const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     if (type.types.some(member => (member.flags & missingFlags) !== 0)) {
-      const rest = type.types.filter(member => (member.flags & missingFlags) === 0)
+      const rest = nonMissingUnionMembers(type)
       // The non-missing rest classifies as a group, so `4 | 8 | 24 | undefined` — an
       // as-const table's bare dynamic read — is nullable like `number | undefined`. A
       // rest that is itself a tagged union (`null | LightboxOwnerRoute`) is nullable too.
@@ -899,6 +899,21 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
   return null
 }
 
+// Filtering a nullable union creates a new array. That array is also the exact cache key
+// for taggedUnionProperty, so rebuilding it during every recursive declared-kind walk
+// defeats that cache. TypeScript interns union types, which makes their filtered member
+// lists safe to reuse as well.
+const nonMissingUnionMembersCache = new WeakMap<ts.UnionType, readonly ts.Type[]>()
+
+export function nonMissingUnionMembers(type: ts.UnionType): readonly ts.Type[] {
+  const cached = nonMissingUnionMembersCache.get(type)
+  if (cached != null) return cached
+  const missingFlags = ts.TypeFlags.Null | ts.TypeFlags.Undefined
+  const members = type.types.filter(member => (member.flags & missingFlags) === 0)
+  nonMissingUnionMembersCache.set(type, members)
+  return members
+}
+
 // The property that tells a union of record shapes apart: present and required in every
 // member, typed as a single string literal in each. The first property (in the first
 // member's declaration order) that qualifies wins — by convention the tag comes first
@@ -907,8 +922,8 @@ function valueKindUncached(type: ts.Type, checker: ts.TypeChecker, depth: number
 // an `in` check, exactly as it does in TypeScript's own narrowing. Null when no property
 // qualifies.
 // Keyed on the members ARRAY: a union type's .types array is interned by the checker, so
-// the reference identifies the member set exactly. Freshly built arrays (the nullable
-// walk's rest members) simply miss — correct, just unmemoized.
+// the reference identifies the member set exactly. Nullable unions use the stable array
+// from nonMissingUnionMembers; any other freshly built array simply misses.
 const taggedUnionPropertyCache = new WeakMap<readonly ts.Type[], Array<string | null>>()
 
 export function taggedUnionProperty(members: readonly ts.Type[], checker: ts.TypeChecker, depth = 0): string | null {
