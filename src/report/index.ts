@@ -170,14 +170,14 @@ function assumptionLines(
 ): string[] {
   const assumptions: string[] = []
   for (const parameter of fn.parameters) {
-    pushDeclaredAssumptions(parameter.name, parameter.type, assumptions)
+    pushRootAssumptions(parameter.name, parameter.type, assumptions)
   }
   for (let bindingID = 0; bindingID < program.moduleBindings.length; bindingID++) {
     if (assumedBindings[bindingID] !== true) continue
     const binding = program.moduleBindings[bindingID]!
     const declaredKind = declaredKindOf(binding.category)
     if (declaredKind == null) throw new Error(`Module binding ${binding.name} has no declared kind to assume`)
-    pushDeclaredAssumptions(binding.name, declaredKind, assumptions)
+    pushRootAssumptions(binding.name, declaredKind, assumptions)
   }
   for (const assumption of boundsAssumptions) {
     // The engine could not prove the asserted element read in bounds; the entry's
@@ -195,15 +195,70 @@ function formatBoundsAssumption(assumption: BoundsAssumption, program: ProgramIR
   }
 }
 
+// A record with many number leaves would print the same default once per leaf — a
+// PreparedLayout parameter with a dozen numeric properties repeats "is finite and not NaN"
+// a dozen times, on every function that takes one, and the repetition drowns the requires
+// and ensures lines that carry actual information. The number default folds into one line
+// per value, e.g. `every number in prepared is finite and not NaN`: exactly the same
+// assumption, since the leaf list is the declared type's own property list, already
+// visible in the source. Small values (one or two number leaves) keep their exact per-leaf
+// lines, and non-number leaves (booleans, tagged-union qualifiers) always print exactly.
+function pushRootAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
+  const folds = numberLeafCount(declared) >= 3 && declared.kind !== 'number'
+  if (folds) assumptions.push(`every number in ${path} is finite and not NaN`)
+  pushDeclaredAssumptions(path, declared, assumptions, {skipNumberLeaves: folds})
+}
+
+function numberLeafCount(declared: DeclaredKind): number {
+  switch (declared.kind) {
+    case 'number': return 1
+    case 'boolean': return 0
+    case 'opaque': return 0
+    case 'nullish': return numberLeafCount(declared.inner)
+    case 'array': return numberLeafCount(declared.element)
+    case 'tuple': {
+      let count = 0
+      for (const element of declared.elements) count += numberLeafCount(element)
+      return count
+    }
+    case 'record': {
+      let count = 0
+      for (const property of declared.properties) count += numberLeafCount(property.declared)
+      return count
+    }
+    case 'taggedUnion': {
+      let count = 0
+      for (const variant of declared.variants) {
+        for (const property of variant.properties) {
+          if (property.name === declared.tagProperty) continue
+          count += numberLeafCount(property.declared)
+        }
+      }
+      return count
+    }
+  }
+}
+
+type AssumptionOptions = {
+  // True when the root already printed the folded number line; number leaves then add
+  // nothing, while boolean and qualified lines still print per leaf.
+  skipNumberLeaves: boolean
+}
+
+const exactLeaves: AssumptionOptions = {skipNumberLeaves: false}
+
 // One assumption line per leaf of the declared kind: a record binding's condition is a
 // condition on each of its properties, e.g. `pointer.x is finite and not NaN`.
-function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[]): void {
+function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptions: string[], options: AssumptionOptions = exactLeaves): void {
   switch (declared.kind) {
-    case 'number': assumptions.push(`${path} is finite and not NaN`); break
+    case 'number': {
+      if (!options.skipNumberLeaves) assumptions.push(`${path} is finite and not NaN`)
+      break
+    }
     case 'boolean': assumptions.push(`${path} is a boolean`); break
     case 'tuple': {
       for (let index = 0; index < declared.elements.length; index++) {
-        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions)
+        pushDeclaredAssumptions(`${path}[${index}]`, declared.elements[index]!, assumptions, options)
       }
       break
     }
@@ -213,7 +268,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
       // `every grid[each] element is finite and not NaN`, and a record element prints
       // its property path, e.g. `points[each].x is finite and not NaN`.
       const leaf: string[] = []
-      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf)
+      pushDeclaredAssumptions(`${path}[each]`, declared.element, leaf, options)
       for (const line of leaf) {
         const prefix = `${path}[each] is `
         // The `every X element is` sugar only reads right when the element path appears
@@ -232,8 +287,9 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
     case 'nullish': {
       const sentinelWords = declared.sentinels === 'both' ? 'null or undefined' : declared.sentinels
       if (declared.inner.kind === 'number') {
-        // E.g. `animatedUntilTime is null or a finite non-NaN number`.
-        assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
+        // E.g. `animatedUntilTime is null or a finite non-NaN number`. The folded number
+        // line covers the when-present part, so a folding root prints nothing here.
+        if (!options.skipNumberLeaves) assumptions.push(`${path} is ${sentinelWords} or a finite non-NaN number`)
       } else if (declared.inner.kind === 'boolean') {
         assumptions.push(`${path} is ${sentinelWords} or a boolean`)
       } else {
@@ -243,14 +299,14 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
         // ensures lines rest on it. An opaque inner (`string | null`) contributes no
         // line, because nothing is claimed about the string either way.
         const leaf: string[] = []
-        pushDeclaredAssumptions(path, declared.inner, leaf)
+        pushDeclaredAssumptions(path, declared.inner, leaf, options)
         for (const line of leaf) assumptions.push(`${path} is ${sentinelWords} or ${line}`)
       }
       break
     }
     case 'record': {
       for (const property of declared.properties) {
-        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions)
+        pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, assumptions, options)
       }
       break
     }
@@ -272,7 +328,7 @@ function pushDeclaredAssumptions(path: string, declared: DeclaredKind, assumptio
             ? `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)} and ${path}.${property.name} is present`
             : `when ${path}.${declared.tagProperty} is ${formatTagValue(variant.tagValue)}`
           const perProperty: string[] = []
-          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty)
+          pushDeclaredAssumptions(`${path}.${property.name}`, property.declared, perProperty, options)
           for (const line of perProperty) leaf.push(`${line} (${qualifier})`)
         }
         for (const line of leaf) {
