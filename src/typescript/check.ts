@@ -1,5 +1,6 @@
 import {resolve} from 'node:path'
 import * as ts from 'typescript'
+import {TypeScriptDiagnosticsError} from './diagnostics.ts'
 
 export type CheckedSource = {
   sourceFile: ts.SourceFile
@@ -11,14 +12,10 @@ const compilerOptions: ts.CompilerOptions = {
   module: ts.ModuleKind.ESNext,
   moduleResolution: ts.ModuleResolutionKind.Bundler,
   moduleDetection: ts.ModuleDetectionKind.Force,
+  // Single-file analysis has no project config, so it gets the recommended authoring
+  // checks. Project analysis respects the project's choices except for strict nullability.
   strict: true,
-  // Bare arr[i] must type T | undefined so the analyzer can tell an honest possibly-missing
-  // read from an asserted arr[i]! — the decisions doc's stated regime for element reads.
   noUncheckedIndexedAccess: true,
-  // The optionals soundness anchor: under this flag a well-typed optional property is
-  // either absent or a T, never explicitly set to undefined, so the analyzer's collapse
-  // of absence into the undefined sentinel is exact. The doc cites this flag; it must
-  // actually be on (a review round caught it set in the survey harness but not here).
   exactOptionalPropertyTypes: true,
   noEmit: true,
   skipLibCheck: true,
@@ -50,17 +47,10 @@ export function checkSource(file: string, source: string): CheckedSource {
 
 function checkedSource(program: ts.Program, file: string): CheckedSource {
   const diagnostics = ts.getPreEmitDiagnostics(program)
-  if (diagnostics.length > 0) throw new Error(formatDiagnostics(diagnostics))
+  if (diagnostics.length > 0) {
+    throw new TypeScriptDiagnosticsError(diagnostics, compilerOptions, process.cwd())
+  }
   const sourceFile = program.getSourceFile(file)
   if (sourceFile == null) throw new Error(`TypeScript did not load ${file}`)
   return {sourceFile, checker: program.getTypeChecker()}
-}
-
-function formatDiagnostics(diagnostics: readonly ts.Diagnostic[]): string {
-  return diagnostics.map(diagnostic => {
-    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
-    if (diagnostic.file == null || diagnostic.start == null) return `TypeScript: ${message}`
-    const position = diagnostic.file.getLineAndCharacterOfPosition(diagnostic.start)
-    return `${diagnostic.file.fileName}:${position.line + 1}:${position.character + 1}: TypeScript: ${message}`
-  }).join('\n')
 }

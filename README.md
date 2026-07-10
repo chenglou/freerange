@@ -23,10 +23,32 @@ Same mechanism, defensive direction: the report on our lightbox pointed out that
 
 ## Running it
 
-- `bun fr.ts` from a repo root audits every file that repo's tsconfig describes. Results land in `./freerange-report/`: `LINT.txt` (actionable findings), one contract report per source file, `LEGEND.txt` (what requires/ensures/assumes mean — read once), `SUMMARY.txt` (function totals, the requires index, and rejection tallies), and `__rows.json` (per-file coverage rows, machine-readable).
-- `bun fr.ts src/some/file.ts` prints that one file's report to stdout.
+- Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It audits that project and its declared project references. Results land in `freerange-report/` beside that config: `LINT.txt` (actionable findings), one contract report per source file, `LEGEND.txt` (what requires/ensures/assumes mean — read once), `SUMMARY.txt` (function totals, the requires index, and rejection tallies), and `__rows.json` (per-file coverage rows, machine-readable).
+- `bun fr.ts src/some/file.ts` searches upward from the file for its nearest `tsconfig.json`, loads the whole TypeScript project for context, and prints only that file's report. Without a config, it uses freerange's fallback TypeScript settings.
+- TypeScript diagnostics use TypeScript's own formatting. Files with errors are skipped, clean files still analyze, and the command exits unsuccessfully when TypeScript reports an error.
 - Start with `LINT.txt`; it contains only findings that survived the analysis without a guard or caller discharging them. Use `SUMMARY.txt` for coverage and the requires index, then open per-file reports when you need the full ranges and assumptions.
 - `LINT.txt` prints one block for caller conditions caused by the same operation. If several operations need exactly the same conditions from the same functions, their locations share that block too. For example, one division used through two wrappers appears as one finding, not three unrelated findings. `SUMMARY.txt` and the per-file reports still list each function's own contract.
+
+## Recommended TypeScript checks
+
+Project mode uses the project's tsconfig unchanged and requires `strictNullChecks`, which preserves types such as `number | null` for the analysis. For clearer TypeScript errors before running freerange, we recommend enabling at least:
+
+```jsonc
+{
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitAny": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true
+  }
+}
+```
+
+These are authoring recommendations, not all freerange requirements. Freerange already treats a bare `values[index]` as possibly `undefined`, even without `noUncheckedIndexedAccess`, and handles optional properties conservatively without `exactOptionalPropertyTypes`.
+
+Freerange does not trust values typed as `any`: it carries them without making claims, and a path stops when an operation needs the value to be a number. Fewer `any` values therefore produce more complete reports. Prefer `noImplicitAny`, and annotate or narrow remaining `any` values where practical.
 
 ## Recommendations from converting a production app
 

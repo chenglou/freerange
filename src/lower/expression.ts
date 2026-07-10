@@ -1414,14 +1414,13 @@ function unwrap(expression: ts.Expression, checker: ts.TypeChecker): ts.Expressi
     // The non-null assertion `x!` peels only while the value kind is unchanged underneath —
     // on a nullable type, e.g. `x!` with `x: number | null`, the static type stops
     // describing the value the analysis models, so stop. The one blessed kind-changing
-    // form is `arr[i]!`: element reads type T | undefined under noUncheckedIndexedAccess,
-    // and the element-access lowering gives the asserted read its explicit treatment — an
-    // in-bounds assumption line, or a bounds proof when the loop supplies one.
+    // form is `arr[i]!`: the syntax itself requests asserted-read treatment — an in-bounds
+    // assumption line, or a bounds proof when the loop supplies one. Bare reads carry
+    // possible undefined in the engine regardless of the project's TypeScript options.
     if (ts.isNonNullExpression(current)) {
       const assertedType = checker.getTypeAtLocation(current)
       const operandType = checker.getTypeAtLocation(current.expression)
-      // The one blessed kind-changing assertion is `arr[i]!`: element reads type
-      // T | undefined under noUncheckedIndexedAccess, and the asserted read gets its
+      // The one blessed kind-changing assertion is `arr[i]!`: the asserted read gets its
       // explicit treatment in lowering — an in-bounds assumption line, or a bounds proof
       // when a loop supplies one. It stays wrapped so lowering can see the assertion.
       if (ts.isElementAccessExpression(current.expression) && valueKind(assertedType, checker) != null) {

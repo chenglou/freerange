@@ -205,9 +205,8 @@ describe('module state and nullability', () => {
     // machinery models. Object literals fill omitted optionals with an explicit undefined
     // (so `omitted` proves exactly 5 through the ?? fallback), spreads copy them as their
     // maybe-undefined values, and the assumes prose carries the honest condition. Sound
-    // under exactOptionalPropertyTypes, which the analyzer forces: a well-typed optional
-    // is either absent or a T, never an explicit undefined, so absence and the undefined
-    // sentinel provably coincide.
+    // even when exactOptionalPropertyTypes is disabled: ordinary reads cannot distinguish
+    // absence from explicit undefined, while supported presence checks stay conservative.
     const report = analyzeSource('optional-properties.ts', `
       type Config = {gain: number; volume?: number}
       export function effectiveVolume(): number {

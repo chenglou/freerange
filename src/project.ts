@@ -1,12 +1,12 @@
-// Project mode: one TypeScript program over every file of a repo (the repo's own
-// tsconfig plus the options the analyzer requires), then per-file lowering and analysis.
+// Project mode: the nearest TypeScript project (and its declared project references),
+// then per-file lowering and analysis under each project's own compiler options.
 // Full per-file reports go to an output directory mirroring the source tree names;
 // LEGEND.txt and SUMMARY.txt (totals, the requires index, rejection and stop tallies)
-// are written once per run, and stdout gets the tallies. This is the only mode that
-// analyzes repos with path aliases — single-file analysis cannot resolve them.
+// are written once per run, and stdout gets the tallies. Targeted file mode uses the same
+// project programs and therefore resolves aliases identically.
 
 import {mkdirSync, writeFileSync} from 'node:fs'
-import {resolve} from 'node:path'
+import {dirname, join, relative, resolve, sep} from 'node:path'
 import * as ts from 'typescript'
 import {analyzeProgram} from './engine/analyze.ts'
 import type {SiteID} from './ir/ids.ts'
@@ -14,6 +14,15 @@ import {siteLocation} from './ir/program.ts'
 import {lowerSource} from './lower/program.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
 import {createReport, formatReport, reportLegend} from './report/index.ts'
+import {checkFile} from './typescript/check.ts'
+import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError} from './typescript/diagnostics.ts'
+import {
+  findTypeScriptConfig,
+  loadTypeScriptProjectGraph,
+  projectSources,
+  type LoadedTypeScriptProject,
+  type ProjectSource,
+} from './typescript/project.ts'
 
 type SimpleLintFinding = {
   kind: 'simple'
@@ -51,28 +60,27 @@ function sameCallerContracts(left: CallerContract[], right: CallerContract[]): b
   return true
 }
 
-export function runProject(repoRoot: string, outputDirectory: string): void {
-  mkdirSync(outputDirectory, {recursive: true})
-  const absoluteRepoRoot = resolve(repoRoot)
-  const configPath = ts.findConfigFile(repoRoot, path => ts.sys.fileExists(path), 'tsconfig.json')
-  if (configPath == null) throw new Error(`No tsconfig.json under ${repoRoot}`)
-  const parsed = ts.getParsedCommandLineOfConfigFile(configPath, {
-    // The options the analyzer's element-read regime requires, forced over the repo's own.
-    noUncheckedIndexedAccess: true,
-    strict: true,
-    noEmit: true,
-    skipLibCheck: true,
-  }, {
-    ...ts.sys,
-    onUnRecoverableConfigFileDiagnostic: diagnostic => {
-      throw new Error(ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n'))
-    },
-  })
-  if (parsed == null) throw new Error('tsconfig parse failed')
+export type ProjectRunResult = {
+  hasTypeScriptErrors: boolean
+  rootDirectory: string
+}
 
-  console.error(`program over ${parsed.fileNames.length} files...`)
-  const program = ts.createProgram(parsed.fileNames, parsed.options)
-  const checker = program.getTypeChecker()
+export function runProject(searchFrom: string, requestedOutputDirectory?: string): ProjectRunResult {
+  const configPath = findTypeScriptConfig(searchFrom)
+  if (configPath == null) {
+    throw new Error(`No tsconfig.json found from ${resolve(searchFrom)} or any parent directory.`)
+  }
+  const projects = loadTypeScriptProjectGraph(configPath)
+  const rootProject = projects.at(-1)!
+  const rootDirectory = rootProject.rootDirectory
+  const outputDirectory = resolve(requestedOutputDirectory ?? join(rootDirectory, 'freerange-report'))
+  mkdirSync(outputDirectory, {recursive: true})
+  const sources = projectSources(projects)
+  const diagnosticsByProject = new Map(projects.map(project => [project, collectProjectDiagnostics(project)]))
+  const allDiagnostics = uniqueDiagnostics(projects.flatMap(project => diagnosticsByProject.get(project)!.all))
+
+  console.error(`program over ${sources.length} files in ${projects.length} TypeScript project${projects.length === 1 ? '' : 's'}...`)
+  printTypeScriptDiagnostics(allDiagnostics, rootProject.parsed.options, process.cwd())
   console.error('typecheck done, analyzing per file...')
 
   type FileRow = {
@@ -99,27 +107,25 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
   // operation that created them instead of appearing as independent findings.
   const lintFindings: LintFinding[] = []
 
-  const sourceFiles = program.getSourceFiles().filter(sourceFile =>
-    !sourceFile.fileName.includes('node_modules')
-    && !sourceFile.isDeclarationFile
-    && sourceFile.fileName.startsWith(absoluteRepoRoot))
-
-  for (const sourceFile of sourceFiles) {
-    const shortName = sourceFile.fileName.slice(absoluteRepoRoot.length + 1)
+  for (const source of sources) {
+    const {project, sourceFile} = source
+    const shortName = relative(rootDirectory, sourceFile.fileName).split(sep).join('/')
     console.error(`  ${shortName}`)
+    const projectDiagnostics = diagnosticsByProject.get(project)!
     const diagnostics = [
-      ...program.getSyntacticDiagnostics(sourceFile),
-      ...program.getSemanticDiagnostics(sourceFile),
+      ...projectDiagnostics.global,
+      ...(projectDiagnostics.byFile.get(resolve(sourceFile.fileName)) ?? []),
     ]
-    if (diagnostics.length > 0) {
+    const errors = diagnostics.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)
+    if (errors.length > 0) {
       rows.push({file: shortName, functions: 0, analyzed: 0, partial: 0, unsupported: 0, verdict: 'typeErrors'})
-      const first = diagnostics[0]!
+      const first = errors[0]!
       writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`,
-        `TYPE ERRORS under required options (${diagnostics.length}):\n${ts.flattenDiagnosticMessageText(first.messageText, '\n')}\n`)
+        `TYPE ERRORS (${errors.length}):\n${ts.flattenDiagnosticMessageText(first.messageText, '\n')}\n`)
       continue
     }
     try {
-      const lowered = lowerSource({sourceFile, checker}, absoluteRepoRoot)
+      const lowered = lowerSource({sourceFile, checker: project.program.getTypeChecker()}, rootDirectory)
       const analysis = analyzeProgram(lowered)
       const report = createReport(lowered, analysis)
       const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
@@ -299,4 +305,122 @@ export function runProject(repoRoot: string, outputDirectory: string): void {
     ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
   ]
   writeFileSync(`${outputDirectory}/SUMMARY.txt`, summary.join('\n') + '\n')
+  return {hasTypeScriptErrors: hasErrorDiagnostics(allDiagnostics), rootDirectory}
+}
+
+export function runFiles(files: string[]): boolean {
+  const absoluteFiles = files.map(file => resolve(file))
+  const reports: Array<string | null> = Array.from({length: files.length}, () => null)
+  const configGroups = new Map<string, Array<{file: string; index: number}>>()
+  const fallbackFiles: Array<{file: string; index: number}> = []
+
+  for (let index = 0; index < absoluteFiles.length; index++) {
+    const file = absoluteFiles[index]!
+    const configPath = findTypeScriptConfig(dirname(file))
+    if (configPath == null) {
+      fallbackFiles.push({file, index})
+      continue
+    }
+    const group = configGroups.get(configPath)
+    if (group == null) configGroups.set(configPath, [{file, index}])
+    else group.push({file, index})
+  }
+
+  let hasTypeScriptErrors = false
+  for (const [configPath, group] of configGroups) {
+    const projects = loadTypeScriptProjectGraph(configPath)
+    const rootProject = projects.at(-1)!
+    const sourcesByFile = new Map(projectSources(projects).map(source => [resolve(source.sourceFile.fileName), source]))
+    for (const target of group) {
+      const source = sourcesByFile.get(target.file)
+      if (source == null) {
+        throw new Error(`${target.file} is not part of the TypeScript project ${configPath}.`)
+      }
+      const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
+      if (diagnostics.length > 0) {
+        printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
+      }
+      if (hasErrorDiagnostics(diagnostics)) {
+        hasTypeScriptErrors = true
+        continue
+      }
+      reports[target.index] = formatReport(analyzeProjectSource(source, rootProject.rootDirectory))
+    }
+  }
+
+  for (const target of fallbackFiles) {
+    try {
+      const checked = checkFile(target.file)
+      const lowered = lowerSource(checked, process.cwd())
+      reports[target.index] = formatReport(createReport(lowered, analyzeProgram(lowered)))
+    } catch (error) {
+      if (!(error instanceof TypeScriptDiagnosticsError)) throw error
+      printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
+      hasTypeScriptErrors = true
+    }
+  }
+
+  let printed = false
+  for (const report of reports) {
+    if (report == null) continue
+    if (printed) console.log('')
+    console.log(report)
+    printed = true
+  }
+  return hasTypeScriptErrors
+}
+
+type CollectedProjectDiagnostics = {
+  all: readonly ts.Diagnostic[]
+  global: readonly ts.Diagnostic[]
+  byFile: Map<string, ts.Diagnostic[]>
+}
+
+function collectProjectDiagnostics(project: LoadedTypeScriptProject): CollectedProjectDiagnostics {
+  const all = ts.getPreEmitDiagnostics(project.program)
+  const global: ts.Diagnostic[] = []
+  const byFile = new Map<string, ts.Diagnostic[]>()
+  for (const diagnostic of all) {
+    if (diagnostic.file == null) {
+      global.push(diagnostic)
+      continue
+    }
+    const file = resolve(diagnostic.file.fileName)
+    const diagnostics = byFile.get(file)
+    if (diagnostics == null) byFile.set(file, [diagnostic])
+    else diagnostics.push(diagnostic)
+  }
+  return {all, global, byFile}
+}
+
+function analyzeProjectSource(source: ProjectSource, baseDirectory: string) {
+  const lowered = lowerSource({
+    sourceFile: source.sourceFile,
+    checker: source.project.program.getTypeChecker(),
+  }, baseDirectory)
+  return createReport(lowered, analyzeProgram(lowered))
+}
+
+function uniqueDiagnostics(diagnostics: readonly ts.Diagnostic[]): ts.Diagnostic[] {
+  const seen = new Set<string>()
+  return diagnostics.filter(diagnostic => {
+    const message = ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')
+    const key = `${diagnostic.file?.fileName ?? ''}:${diagnostic.start ?? ''}:${diagnostic.length ?? ''}:${diagnostic.code}:${message}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function printTypeScriptDiagnostics(
+  diagnostics: readonly ts.Diagnostic[],
+  options: ts.CompilerOptions,
+  currentDirectory: string,
+): void {
+  if (diagnostics.length === 0) return
+  console.error(formatTypeScriptDiagnostics(diagnostics, options, currentDirectory).trimEnd())
+}
+
+function hasErrorDiagnostics(diagnostics: readonly ts.Diagnostic[]): boolean {
+  return diagnostics.some(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)
 }

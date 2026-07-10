@@ -392,11 +392,10 @@ function declaredRecordProperties(
     const opaqueLeaf: DeclaredKind = {kind: 'opaque'}
     const propertyDeclared = declaredOnlyInDeclarationFiles(property) ? opaqueLeaf : (walked ?? opaqueLeaf)
     // `session?: boolean` reads as boolean | undefined, which is exactly what the missing-
-    // value machinery models; under exactOptionalPropertyTypes (which the analyzer forces)
-    // a well-typed value's optional property is either absent or a T, never an explicit
-    // undefined, so absent and the undefined sentinel provably coincide — the collapse is
-    // sound even against future `in` checks (see current-decisions.md). Object literals
-    // fill omitted optionals with an explicit undefined value, so joins keep the property.
+    // value machinery models. The analysis deliberately represents absence and explicit
+    // undefined alike: ordinary reads cannot distinguish them, and supported `in` checks
+    // treat an optional as unknown presence. Object literals fill omitted optionals with
+    // an explicit undefined value so joins keep the property.
     properties.push({
       name: property.name,
       declared: optional ? wrapOptional(propertyDeclared) : propertyDeclared,

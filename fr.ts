@@ -1,17 +1,19 @@
 #!/usr/bin/env bun
 
-import {resolve} from 'node:path'
-import {analyzeFile, formatReport} from './src/index.ts'
-import {runProject} from './src/project.ts'
+import {runFiles, runProject} from './src/project.ts'
+import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError} from './src/typescript/diagnostics.ts'
 
 const files = process.argv.slice(2)
-if (files.length === 0) {
-  // Project mode: audit the repo the working directory's tsconfig describes, reports
-  // under ./freerange-report (one file per source file, LEGEND.txt and SUMMARY.txt once).
-  runProject(process.cwd(), resolve('freerange-report'))
-} else {
-  for (let index = 0; index < files.length; index++) {
-    if (index > 0) console.log('')
-    console.log(formatReport(analyzeFile(resolve(files[index]!))))
+try {
+  const hasTypeScriptErrors = files.length === 0
+    ? runProject(process.cwd()).hasTypeScriptErrors
+    : runFiles(files)
+  if (hasTypeScriptErrors) process.exitCode = 1
+} catch (error) {
+  if (error instanceof TypeScriptDiagnosticsError) {
+    console.error(formatTypeScriptDiagnostics(error.diagnostics, error.options, error.currentDirectory).trimEnd())
+  } else {
+    console.error(error instanceof Error ? error.message : String(error))
   }
+  process.exitCode = 1
 }

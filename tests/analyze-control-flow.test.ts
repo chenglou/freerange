@@ -78,7 +78,7 @@ describe('control flow and contracts', () => {
       export function invalidWidth(containerWidth: string): number {
         return containerWidth
       }
-    `)).toThrow('TypeScript: Type \'string\' is not assignable to type \'number\'.')
+    `)).toThrow("error TS2322: Type 'string' is not assignable to type 'number'.")
   })
 
   test('records a shadowed Math object as unsupported instead of treating it as the standard library', () => {

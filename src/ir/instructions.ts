@@ -23,10 +23,10 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'unknownBoolean'})
   | (InstructionBase & {kind: 'arrayLiteral'; elements: ValueID[]; form: 'tuple' | 'array'})
   | (InstructionBase & {kind: 'arrayLength'; array: ValueID})
-  // An element read. `asserted` distinguishes arr[i]! (types T; unproven bounds become an
-  // assumption line) from bare arr[i] (types T | undefined; the result honestly carries
-  // the undefined). provenBounds marks reads a desugaring guarantees in bounds by
-  // construction (the for-of counter).
+  // An element read. `asserted` distinguishes arr[i]! (unproven bounds become an
+  // assumption line) from bare arr[i] (the result honestly carries possible undefined,
+  // regardless of the project's TypeScript options). provenBounds marks reads a
+  // desugaring guarantees in bounds by construction (the for-of counter).
   | (InstructionBase & {kind: 'arrayIndex'; array: ValueID; index: ValueID; asserted: boolean; provenBounds: boolean})
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).

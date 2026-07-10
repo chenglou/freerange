@@ -11,4 +11,4 @@ if (repoRoot == null || outputDirectory == null) {
   console.error('Usage: bun survey.ts <repo-root> <output-dir>')
   process.exit(1)
 }
-runProject(repoRoot, outputDirectory)
+if (runProject(repoRoot, outputDirectory).hasTypeScriptErrors) process.exitCode = 1
