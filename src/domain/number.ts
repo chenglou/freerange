@@ -246,7 +246,12 @@ export function squareRootNumber(value: AbstractNumber): AbstractNumber {
   const mayBeNegative = value.lower < 0
   const clippedLower = Math.max(value.lower, 0)
   if (value.upper < 0) {
-    return {kind: 'number', lower: Number.NaN, upper: Number.NaN, integer: false, mayBeNaN: true}
+    // The result is always NaN, and the domain has no NaN-only value: bounds must be
+    // real numbers, or every consumer of Math.min/Math.max over them (joins, clamps,
+    // branch refinement) silently turns its own bounds into NaN — literal NaN bounds
+    // here used to print `from NaN through NaN` while the function returned 0. The
+    // honest cover is the claim-free full range with the NaN flag on.
+    return unknownNumber()
   }
   return {
     kind: 'number',

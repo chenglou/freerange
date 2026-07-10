@@ -80,7 +80,8 @@ export type UnsupportedReason =
   | {kind: 'enumMemberRead'}
   // point.toString and friends: a prototype member the record value cannot answer.
   | {kind: 'prototypeMemberRead'; property: string}
-  // e.g. '%', '&&', '**', '??'
+  // e.g. '**', '>>', 'instanceof' in value position — the operators arithmetic and
+  // comparison lowering do not claim ('%' and '??' lower now and no longer land here)
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is a
   // short display name — an identifier, dotted pair, or (…).method for computed receivers.

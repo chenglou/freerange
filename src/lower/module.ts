@@ -126,7 +126,11 @@ function importedCategory(name: ts.Identifier, checker: ts.TypeChecker): ModuleB
 
 // The exact value of a numeric-literal initializer, unwrapping parentheses and `as`
 // assertions — both value-preserving, so `export const PILL_BUTTON = 40 as const`
-// initializes to exactly 40. A leading minus on the literal is folded, e.g. `-1`.
+// initializes to exactly 40. Unwrapping EVERY `as` here deliberately diverges from the
+// main pipeline's assertions-erase rule: erasure exists because an assertion changes what
+// the checker's word is worth, but this walk never consults the checker — the runtime
+// value of `40 as unknown as number` is 40 no matter what the types say, and only that
+// runtime value is published. A leading minus on the literal is folded, e.g. `-1`.
 // Anything else — arithmetic, identifier references, `Infinity` and `NaN` (identifiers,
 // not literals) — returns null.
 function numericLiteralValue(expression: ts.Expression): number | null {

@@ -480,4 +480,33 @@ ${chain}
       .toEqual(['return is a finite number from 0 through 1.3407807929942596e+154'])
   })
 
+  test('sqrt of a provably negative operand answers claim-free, not with NaN bounds', () => {
+    // Math.sqrt of a negative number is always NaN at runtime, and the domain has no
+    // NaN-only value. The old arm returned literal NaN interval bounds, which poisoned
+    // every Math.min/Math.max over them: branch refinement then printed the nonsense
+    // `from NaN through NaN` while clearing the NaN flag, and the function below
+    // actually returns 0 at runtime (NaN > 0 is false). The honest answer is the
+    // claim-free full range with the NaN possibility kept.
+    const report = analyzeSource('sqrt-negative.ts', `
+      export function refinedNaNBounds(): number {
+        const root = Math.sqrt(-4)
+        if (root > 0) return root
+        return 0
+      }
+      export function joinedWithClean(flag: boolean): number {
+        const root = Math.sqrt(-4)
+        const chosen = flag ? root : 5
+        if (chosen > 1) return chosen
+        return 1
+      }
+    `)
+    // The true branch of `root > 0` proves root is not NaN (a true ordered comparison
+    // has no NaN operand), so the joined result is honestly NaN-free; the runtime value
+    // 0 sits inside the printed range.
+    const refined = analyzedFunction(report, 'refinedNaNBounds').ensures[0]!
+    expect(refined).toContain('possibly non-finite number from 0 through Infinity')
+    const joined = analyzedFunction(report, 'joinedWithClean').ensures[0]!
+    expect(joined).toContain('possibly non-finite number from 1 through Infinity')
+  })
+
 })

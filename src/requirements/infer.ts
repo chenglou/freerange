@@ -38,8 +38,9 @@ export function createExpressionContext(
 // per level, so tree size is exponential in the worst case while the DAG stays linear.
 // The budget is by construction, not a magic number: each visit charges against the
 // function's own instruction count, so a requirement can never be more complex than the
-// function that produced it. Exhaustion returns null, which surfaces as the honest
-// divisorUnknown stop (or the assumes fallback for element reads).
+// function that produced it. Exhaustion returns null, which surfaces as the nonzero-divisor
+// assumes line (or the element-in-bounds assumes line for element reads) — analysis keeps
+// going either way.
 export function numericExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
   let remainingVisits = context.instructionCount
   const walk = (current: ValueID): NumericExpression | null => {
