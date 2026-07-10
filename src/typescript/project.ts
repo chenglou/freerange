@@ -19,17 +19,16 @@ export function findTypeScriptConfig(searchFrom: string): string | null {
 
 export function loadTypeScriptProjectGraph(configPath: string): LoadedTypeScriptProject[] {
   const loaded: LoadedTypeScriptProject[] = []
-  const byConfigPath = new Map<string, LoadedTypeScriptProject>()
-  const loading = new Set<string>()
+  const byConfigPath = new Map<string, LoadedTypeScriptProject | null>()
 
   const load = (requestedConfigPath: string): LoadedTypeScriptProject => {
     const absoluteConfigPath = resolve(requestedConfigPath)
     const existing = byConfigPath.get(absoluteConfigPath)
-    if (existing != null) return existing
-    if (loading.has(absoluteConfigPath)) {
+    if (existing === null) {
       throw new Error(`Circular TypeScript project reference involving ${absoluteConfigPath}`)
     }
-    loading.add(absoluteConfigPath)
+    if (existing !== undefined) return existing
+    byConfigPath.set(absoluteConfigPath, null)
     const parsed = parseConfig(absoluteConfigPath)
     requireStrictNullChecks(parsed.options, absoluteConfigPath)
     for (const reference of parsed.projectReferences ?? []) load(ts.resolveProjectReferencePath(reference))
@@ -44,7 +43,6 @@ export function loadTypeScriptProjectGraph(configPath: string): LoadedTypeScript
       parsed,
       program,
     }
-    loading.delete(absoluteConfigPath)
     byConfigPath.set(absoluteConfigPath, project)
     loaded.push(project)
     return project
@@ -55,19 +53,20 @@ export function loadTypeScriptProjectGraph(configPath: string): LoadedTypeScript
 }
 
 export function projectSources(projects: LoadedTypeScriptProject[]): ProjectSource[] {
-  const candidates = new Map<string, ProjectSource[]>()
+  const sources = new Map<string, ProjectSource>()
   for (const project of projects) {
     for (const sourceFile of project.program.getSourceFiles()) {
       if (sourceFile.isDeclarationFile || sourceFile.fileName.includes(`${sep}node_modules${sep}`)) continue
       const absoluteFile = resolve(sourceFile.fileName)
-      const existing = candidates.get(absoluteFile)
+      const existing = sources.get(absoluteFile)
       const candidate = {project, sourceFile}
-      if (existing == null) candidates.set(absoluteFile, [candidate])
-      else existing.push(candidate)
+      if (existing == null
+        || ownershipScore(project, absoluteFile) > ownershipScore(existing.project, absoluteFile)) {
+        sources.set(absoluteFile, candidate)
+      }
     }
   }
-  return [...candidates.entries()]
-    .map(([file, choices]) => choices.sort((left, right) => ownershipScore(right.project, file) - ownershipScore(left.project, file))[0]!)
+  return [...sources.values()]
     .sort((left, right) => left.sourceFile.fileName.localeCompare(right.sourceFile.fileName))
 }
 

@@ -8,9 +8,7 @@ export type ExpressionContext = {
   parameterExpressions: Array<NumericExpression | null>
   parameterIndexByValue: Array<number | undefined>
   instructionByValue: Array<InstructionIR | undefined>
-  // The walk budget below, reset per top-level numericExpression call.
   instructionCount: number
-  remainingVisits: number
 }
 
 export function createExpressionContext(
@@ -22,7 +20,6 @@ export function createExpressionContext(
     parameterIndexByValue: [],
     instructionByValue: [],
     instructionCount: 0,
-    remainingVisits: 0,
   }
   for (let index = 0; index < fn.parameters.length; index++) {
     context.parameterIndexByValue[fn.parameters[index]!.value] = index
@@ -44,76 +41,75 @@ export function createExpressionContext(
 // function that produced it. Exhaustion returns null, which surfaces as the honest
 // divisorUnknown stop (or the assumes fallback for element reads).
 export function numericExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
-  context.remainingVisits = context.instructionCount
-  return walkExpression(value, context)
-}
-
-function walkExpression(value: ValueID, context: ExpressionContext): NumericExpression | null {
-  const parameterIndex = context.parameterIndexByValue[value]
-  if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
-  const instruction = context.instructionByValue[value]
-  if (instruction == null) return null
-  // Only an instruction expansion is charged — re-expanding the same instruction is
-  // exactly what the duplication blowup repeats, while parameter and constant leaves are
-  // bounded by the expansions' own fan-in.
-  if (context.remainingVisits <= 0) return null
-  context.remainingVisits -= 1
-  switch (instruction.kind) {
-    case 'constant': return {kind: 'constant', value: instruction.value}
-    case 'binary': {
-      const left = walkExpression(instruction.left, context)
-      const right = walkExpression(instruction.right, context)
-      return left == null || right == null
-        ? null
-        : {kind: 'binary', operator: instruction.operator, left, right}
-    }
-    case 'floor': {
-      const operand = walkExpression(instruction.value, context)
-      return operand == null ? null : {kind: 'floor', operand}
-    }
-    // A module write's result is the assigned value, so the written expression carries over.
-    case 'moduleWrite': return walkExpression(instruction.value, context)
-    // Requirement expressions name only the function's own parameters; a module binding is
-    // not caller-visible, so a requirement cannot name it.
-    case 'moduleRead':
-    case 'moduleHavoc':
-    case 'platformValue':
-    case 'booleanConstant':
-    case 'not':
-    case 'absolute':
-    case 'call':
-    case 'compare':
-    case 'maximum':
-    case 'minimum':
-    case 'object':
-    case 'nullishConstant':
-    case 'opaqueConstant':
-    case 'unknownBoolean':
-    case 'mathUnary':
-    case 'stringLength':
-    case 'parsedNumber':
-    case 'numberCheck':
-    case 'tagCheck':
-    case 'inCheck':
-    case 'nullishCheck':
-    case 'arrayLiteral':
-    case 'arrayIndex': return null
-    // An array's length is fixed at construction (no push in the subset), so a length
-    // read over a nameable array could join the expression language later; not yet.
-    case 'arrayLength': return null
-    case 'property': {
-      // A read through a freshly built record resolves to the value that went in — the
-      // record is immutable, so `{...grid}.columns` IS grid.columns. This keeps spread
-      // copies nameable: dividing by copy.columns still requires grid.columns nonzero.
-      const producer = context.instructionByValue[instruction.object]
-      if (producer?.kind === 'object') {
-        const source = producer.properties.find(property => property.name === instruction.property)
-        if (source != null) return walkExpression(source.value, context)
+  let remainingVisits = context.instructionCount
+  const walk = (current: ValueID): NumericExpression | null => {
+    const parameterIndex = context.parameterIndexByValue[current]
+    if (parameterIndex != null) return context.parameterExpressions[parameterIndex] ?? null
+    const instruction = context.instructionByValue[current]
+    if (instruction == null) return null
+    // Only an instruction expansion is charged — re-expanding the same instruction is
+    // exactly what the duplication blowup repeats, while parameter and constant leaves are
+    // bounded by the expansions' own fan-in.
+    if (remainingVisits <= 0) return null
+    remainingVisits -= 1
+    switch (instruction.kind) {
+      case 'constant': return {kind: 'constant', value: instruction.value}
+      case 'binary': {
+        const left = walk(instruction.left)
+        const right = walk(instruction.right)
+        return left == null || right == null
+          ? null
+          : {kind: 'binary', operator: instruction.operator, left, right}
       }
-      const base = walkExpression(instruction.object, context)
-      return base == null ? null : {kind: 'property', base, name: instruction.property}
+      case 'floor': {
+        const operand = walk(instruction.value)
+        return operand == null ? null : {kind: 'floor', operand}
+      }
+      // A module write's result is the assigned value, so the written expression carries over.
+      case 'moduleWrite': return walk(instruction.value)
+      // Requirement expressions name only the function's own parameters; a module binding is
+      // not caller-visible, so a requirement cannot name it.
+      case 'moduleRead':
+      case 'moduleHavoc':
+      case 'platformValue':
+      case 'booleanConstant':
+      case 'not':
+      case 'absolute':
+      case 'call':
+      case 'compare':
+      case 'maximum':
+      case 'minimum':
+      case 'object':
+      case 'nullishConstant':
+      case 'opaqueConstant':
+      case 'unknownBoolean':
+      case 'mathUnary':
+      case 'stringLength':
+      case 'parsedNumber':
+      case 'numberCheck':
+      case 'tagCheck':
+      case 'inCheck':
+      case 'nullishCheck':
+      case 'arrayLiteral':
+      case 'arrayIndex': return null
+      // An array's length is fixed at construction (no push in the subset), so a length
+      // read over a nameable array could join the expression language later; not yet.
+      case 'arrayLength': return null
+      case 'property': {
+        // A read through a freshly built record resolves to the value that went in — the
+        // record is immutable, so `{...grid}.columns` IS grid.columns. This keeps spread
+        // copies nameable: dividing by copy.columns still requires grid.columns nonzero.
+        const producer = context.instructionByValue[instruction.object]
+        if (producer?.kind === 'object') {
+          const source = producer.properties.find(property => property.name === instruction.property)
+          if (source != null) return walk(source.value)
+        }
+        const base = walk(instruction.object)
+        return base == null ? null : {kind: 'property', base, name: instruction.property}
+      }
     }
   }
+  return walk(value)
 }
 
 // A stable name for the runtime value an IR value holds, used to key valid-index pairs:
@@ -136,7 +132,7 @@ export function canonicalValueKey(value: ValueID, context: ExpressionContext, st
     // counterexample). The slot-narrowing version guard decides: the key is
     // binding-rooted only while no write intervened since this read; otherwise it names
     // the immutable value itself, which a fresh read of the binding never matches.
-    const slot = state.shared.modules[producer.binding]
+    const slot = state.shared[producer.binding]
     const observed = state.frame.readVersions[value]
     if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
       return `m${producer.binding}`

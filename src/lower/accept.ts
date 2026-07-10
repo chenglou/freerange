@@ -23,7 +23,8 @@ export function assertAccepted(root: ts.Node): void {
       return
     }
     // Values are immutable after construction: any write through a property access —
-    // plain, compound, or ++/-- — is rejected with rebinding as the suggested rewrite.
+    // plain, compound, or ++/-- — is rejected. Reports may mention rebuilding a plain
+    // record conditionally, but the acceptance rule does not assume that rewrite is safe.
     if (
       ts.isBinaryExpression(node)
       && node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment

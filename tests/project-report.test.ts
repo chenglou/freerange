@@ -1,9 +1,8 @@
 import {expect, test} from 'bun:test'
-import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync} from 'node:fs'
+import {existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync} from 'node:fs'
 import {tmpdir} from 'node:os'
-import {join} from 'node:path'
+import {dirname, join} from 'node:path'
 import * as ts from 'typescript'
-import {runProject} from '../src/project.ts'
 import {formatTypeScriptDiagnostics} from '../src/typescript/diagnostics.ts'
 
 const freerangeCli = new URL('../fr.ts', import.meta.url).pathname
@@ -22,6 +21,27 @@ function runCli(cwd: string, ...arguments_: string[]) {
   }
 }
 
+function writeProject(
+  directory: string,
+  files: Record<string, string>,
+  compilerOptions: Record<string, unknown> = {},
+): void {
+  writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({
+    compilerOptions: {
+      strict: true,
+      target: 'ESNext',
+      module: 'ESNext',
+      ...compilerOptions,
+    },
+    include: ['**/*.ts'],
+  }))
+  for (const [file, source] of Object.entries(files)) {
+    const path = join(directory, file)
+    mkdirSync(dirname(path), {recursive: true})
+    writeFileSync(path, source)
+  }
+}
+
 test('TypeScript diagnostics use its plain and colored formats', () => {
   const diagnostic: ts.Diagnostic = {
     category: ts.DiagnosticCategory.Error,
@@ -37,14 +57,10 @@ test('TypeScript diagnostics use its plain and colored formats', () => {
     .toContain('\u001B[91merror\u001B[0m')
 })
 
-test('project reports group caller contracts by their originating operation', () => {
-  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-report-'))
+test('bare fr prints grouped lint findings and coverage without writing artifacts', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-lint-'))
   try {
-    writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
-      compilerOptions: {strict: true, target: 'ESNext', module: 'ESNext'},
-      include: ['contracts.ts'],
-    }))
-    writeFileSync(join(projectDirectory, 'contracts.ts'), `export function divide(width: number, columnCount: number): number {
+    writeProject(projectDirectory, {'contracts.ts': `export function divide(width: number, columnCount: number): number {
   return width / columnCount
 }
 
@@ -88,56 +104,78 @@ export function outOfBounds(): number {
   const values = [1]
   return values[2]!
 }
-`)
+`})
 
-    const outputDirectory = join(projectDirectory, 'report')
-    runProject(projectDirectory, outputDirectory)
+    const result = runCli(projectDirectory)
 
-    expect(readFileSync(join(outputDirectory, 'LINT.txt'), 'utf8')).toBe(`freerange lint: actionable failures and caller obligations from analyzed functions.
-error   = provably wrong on some reachable path.
-warning = an analyzed path may fail to terminate.
-note    = a contract outside callers must uphold; unverifiable from this repo alone.
-The full value analysis (every function, every range) lives in the per-file reports.
+    expect(result.exitCode).toBe(0)
+    expect(result.stderr).toBe('')
+    expect(result.stdout).toContain('freerange lint')
+    expect(result.stdout).toContain('contracts.ts:2:10  note  this division requires 7 caller conditions')
+    expect(result.stdout).toContain('  wrapper: columnCount is nonzero')
+    expect(result.stdout).toContain('  adapted: (width - gap) is nonzero')
+    expect(result.stdout).not.toContain('guarded: columnCount is nonzero')
+    expect(result.stdout).toContain('2 divisions require 1 caller condition')
+    expect(result.stdout).toContain('error  asserted element read (arr[i]!) is provably out of bounds')
+    expect(result.stdout).toContain('6 findings (1 error, 0 warnings, 5 notes).')
+    expect(result.stdout).toContain('coverage: 10/11 named top-level function declarations fully analyzed; 1 partial; 0 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(existsSync(join(projectDirectory, 'freerange-report'))).toBe(false)
 
-contracts.ts:2:10  note  this division requires 7 caller conditions  [caller-contract]
-  divide: columnCount is nonzero
-  direct: columnCount is nonzero
-  wrapper: columnCount is nonzero
-  adapted: (width - gap) is nonzero
-  twoCalls: first is nonzero
-  twoCalls: second is nonzero
-  duplicateCall: divisor is nonzero
-contracts.ts:22:10  note  callers of twoDivisions must keep first is nonzero (division at contracts.ts:22:10)  [caller-contract]
-contracts.ts:22:10  note  callers of twoDivisions must keep second is nonzero (division at contracts.ts:22:10)  [caller-contract]
-contracts.ts:26:10  note  callers of remainder must keep modulus is nonzero (remainder at contracts.ts:26:10)  [caller-contract]
-contracts.ts:34:10  note  2 divisions require 1 caller condition  [caller-contract]
-  also at contracts.ts:34:28
-  repeatedOperations: divisor is nonzero
-contracts.ts:43:10  error  asserted element read (arr[i]!) is provably out of bounds in outOfBounds  [out-of-bounds-read]
-`)
-
-    const summary = readFileSync(join(outputDirectory, 'SUMMARY.txt'), 'utf8')
-    expect(summary).toContain(`requires (12):
-  contracts.ts divide: columnCount is nonzero (division at contracts.ts:2:10)
-  contracts.ts direct: columnCount is nonzero (division at contracts.ts:2:10)
-  contracts.ts wrapper: columnCount is nonzero (division at contracts.ts:2:10)
-  contracts.ts adapted: (width - gap) is nonzero (division at contracts.ts:2:10)
-  contracts.ts twoDivisions: first is nonzero (division at contracts.ts:22:10)
-  contracts.ts twoDivisions: second is nonzero (division at contracts.ts:22:10)
-  contracts.ts remainder: modulus is nonzero (remainder at contracts.ts:26:10)
-  contracts.ts twoCalls: first is nonzero (division at contracts.ts:2:10)
-  contracts.ts twoCalls: second is nonzero (division at contracts.ts:2:10)
-  contracts.ts repeatedOperations: divisor is nonzero (division at contracts.ts:34:10)
-  contracts.ts repeatedOperations: divisor is nonzero (division at contracts.ts:34:28)
-  contracts.ts duplicateCall: divisor is nonzero (division at contracts.ts:2:10)
-`)
-
-    const fileReport = readFileSync(join(outputDirectory, 'contracts.ts.txt'), 'utf8')
-    expect(fileReport).toContain(`wrapper
+    const targeted = runCli(projectDirectory, 'contracts.ts')
+    expect(targeted.stdout).toContain(`wrapper
   requires: columnCount is nonzero (division at contracts.ts:2:10)`)
-    expect(fileReport).toContain(`adapted
+    expect(targeted.stdout).toContain(`adapted
   requires: (width - gap) is nonzero (division at contracts.ts:2:10)`)
-    expect(fileReport).not.toContain('guarded\n  requires:')
+    expect(targeted.stdout).not.toContain('guarded\n  requires:')
+  } finally {
+    rmSync(projectDirectory, {recursive: true, force: true})
+  }
+})
+
+test('project audit is a concise index while file audit keeps the detailed guide', () => {
+  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-audit-'))
+  try {
+    writeProject(projectDirectory, {'advice.ts': `export function divide(width: number, columnCount: number): number {
+  return width / columnCount
+}
+
+export function divideAgain(width: number, columnCount: number): number {
+  return divide(width, columnCount)
+}
+
+export function defaultWidth(width: number): number {
+  return width || 1
+}
+
+export function clean(): number {
+  return 24
+}
+`})
+
+    const projectAudit = runCli(projectDirectory, '--audit')
+
+    expect(projectAudit.exitCode).toBe(0)
+    expect(projectAudit.stderr).toBe('')
+    expect(projectAudit.stdout).toContain('freerange audit')
+    expect(projectAudit.stdout).toContain('advice.ts (3/4 functions fully analyzed; 1 unsupported)')
+    expect(projectAudit.stdout).toContain('[guard-derived-value, encode-input-rule]')
+    expect(projectAudit.stdout).toContain('[write-explicit-condition]')
+    expect(projectAudit.stdout).toContain('2 matched locations in 1 file.')
+    expect(projectAudit.stdout).toContain('coverage: 3/4 named top-level function declarations fully analyzed; 0 partial; 1 unsupported; 0/1 project files skipped for TypeScript errors.')
+    expect(projectAudit.stdout).not.toContain('export function remap')
+
+    const fileAudit = runCli(projectDirectory, '--audit', 'advice.ts')
+    expect(fileAudit.exitCode).toBe(0)
+    expect(fileAudit.stdout).toContain('### Check the exact divisor')
+    expect(fileAudit.stdout).toContain('**Encode a real input rule where the calculation begins.**')
+
+    const extraPath = runCli(projectDirectory, '--audit', 'advice.ts', 'other.ts')
+    expect(extraPath.exitCode).toBe(1)
+    expect(extraPath.stderr).toContain('Usage: fr --audit [file]')
+
+    const extraReportPath = runCli(projectDirectory, 'advice.ts', 'other.ts')
+    expect(extraReportPath.exitCode).toBe(1)
+    expect(extraReportPath.stderr).toContain('Usage: fr [file]')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
@@ -146,82 +184,57 @@ contracts.ts:43:10  error  asserted element read (arr[i]!) is provably out of bo
 test('project mode requires strict null checks but respects other project options', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-options-'))
   try {
-    writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
-      compilerOptions: {
-        strict: false,
-        strictNullChecks: true,
-        noImplicitAny: false,
-        noUncheckedIndexedAccess: false,
-        exactOptionalPropertyTypes: false,
-        target: 'ESNext',
-        module: 'ESNext',
-      },
-      include: ['optional-and-index.ts'],
-    }))
-    writeFileSync(join(projectDirectory, 'optional-and-index.ts'), `type Config = {width?: number}
+    writeProject(projectDirectory, {'optional-and-index.ts': `type Config = {width?: number}
 const config: Config = {width: undefined}
 export function width(): number { return config.width ?? 0 }
 export function indexed(values: number[], index: number): number | undefined { return values[index] }
+export function increment(values: number[], index: number): number { return values[index] + 1 }
+export function guardedIncrement(values: number[], index: number): number {
+  const value = values[index]
+  if (value === undefined) return 1
+  return value + 1
+}
 export function ignoresImplicitAny(value): number { return 1 }
-`)
+`}, {
+      strict: false,
+      strictNullChecks: true,
+      noImplicitAny: false,
+      noUncheckedIndexedAccess: false,
+      exactOptionalPropertyTypes: false,
+    })
 
-    const outputDirectory = join(projectDirectory, 'report')
-    runProject(projectDirectory, outputDirectory)
-
-    const analyzed = readFileSync(join(outputDirectory, 'optional-and-index.ts.txt'), 'utf8')
-    expect(analyzed).not.toContain('TYPE ERRORS')
-    expect(analyzed).toContain('return is undefined or a finite number')
-    expect(analyzed).toContain(`ignoresImplicitAny
+    const targeted = runCli(projectDirectory, 'optional-and-index.ts')
+    expect(targeted.exitCode).toBe(0)
+    expect(targeted.stderr).toBe('')
+    expect(targeted.stdout).toContain('return is undefined or a finite number')
+    expect(targeted.stdout).toContain('uses a possibly missing array element without handling undefined')
+    expect(targeted.stdout).toContain(`ignoresImplicitAny
   ensures: return is a finite integer number from 1 through 1`)
-  } finally {
-    rmSync(projectDirectory, {recursive: true, force: true})
-  }
-})
 
-test('project mode rejects a config without strict null checks', () => {
-  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-null-checks-'))
-  try {
+    const projectAudit = runCli(projectDirectory, '--audit')
+    expect(projectAudit.exitCode).toBe(0)
+    expect(projectAudit.stdout).toContain('increment: Handle a possibly missing array element')
+    expect(projectAudit.stdout).toContain('[handle-missing-element]')
+    expect(projectAudit.stdout).not.toContain('guardedIncrement:')
+
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: {strict: false},
-      include: ['file.ts'],
+      include: ['optional-and-index.ts'],
     }))
-    writeFileSync(join(projectDirectory, 'file.ts'), 'export const width = 1\n')
-
-    expect(() => runProject(projectDirectory, join(projectDirectory, 'report')))
-      .toThrow('freerange requires strictNullChecks')
+    const withoutNullChecks = runCli(projectDirectory)
+    expect(withoutNullChecks.exitCode).toBe(1)
+    expect(withoutNullChecks.stderr).toContain('freerange requires strictNullChecks')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
 })
 
-test('bare fr searches upward and writes the complete report at the project root', () => {
+test('bare fr searches upward and solution configs include their project references', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-upward-config-'))
   try {
-    const nestedDirectory = join(projectDirectory, 'src', 'nested')
-    mkdirSync(nestedDirectory, {recursive: true})
-    writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
-      compilerOptions: {strict: true, target: 'ESNext', module: 'ESNext'},
-      include: ['src/**/*.ts'],
-    }))
-    writeFileSync(join(projectDirectory, 'src', 'width.ts'),
-      'export function width(): number { return 24 }\n')
-
-    const result = runCli(nestedDirectory)
-
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('"files":1')
-    expect(existsSync(join(projectDirectory, 'freerange-report', 'src__width.ts.txt'))).toBe(true)
-    expect(existsSync(join(nestedDirectory, 'freerange-report'))).toBe(false)
-  } finally {
-    rmSync(projectDirectory, {recursive: true, force: true})
-  }
-})
-
-test('a solution config analyzes its declared project references', () => {
-  const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-project-references-'))
-  try {
     const packageDirectory = join(projectDirectory, 'packages', 'geometry')
-    mkdirSync(join(packageDirectory, 'src'), {recursive: true})
+    const nestedDirectory = join(packageDirectory, 'src', 'nested')
+    mkdirSync(nestedDirectory, {recursive: true})
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
       files: [],
       references: [{path: './packages/geometry'}],
@@ -240,21 +253,45 @@ test('a solution config analyzes its declared project references', () => {
     writeFileSync(join(packageDirectory, 'src', 'answer.ts'),
       'export function answer(): number { return 42 }\n')
 
-    const outputDirectory = join(projectDirectory, 'report')
-    const result = runProject(projectDirectory, outputDirectory)
+    const result = runCli(nestedDirectory)
 
-    expect(result.hasTypeScriptErrors).toBe(false)
-    expect(readFileSync(join(outputDirectory, 'packages__geometry__src__answer.ts.txt'), 'utf8'))
-      .toContain('return is a finite integer number from 42 through 42')
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('No lint findings.')
+    expect(result.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
 })
 
-test('targeted fr uses the project config and prints only that file diagnostics and report', () => {
+test('targeted fr uses only the requested file while bare fr checks the whole project', () => {
   const projectDirectory = mkdtempSync(join(tmpdir(), 'freerange-targeted-config-'))
   try {
-    mkdirSync(join(projectDirectory, 'src'))
+    writeProject(projectDirectory, {
+      'src/constants.ts': 'export const GAP = 24\n',
+      'src/target.ts': `import {GAP} from '@constants'
+export function gap(): number { return GAP }
+`,
+      'src/broken.ts': "export const broken: number = 'bad'\n",
+    }, {
+      moduleResolution: 'Bundler',
+      paths: {'@constants': ['./src/constants.ts']},
+    })
+
+    const full = runCli(projectDirectory)
+    expect(full.exitCode).toBe(1)
+    expect(full.stderr).toContain("src/broken.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.")
+    expect(full.stdout).toContain('coverage: 1/1 named top-level function declarations fully analyzed; 0 partial; 0 unsupported; 1/3 project files skipped for TypeScript errors.')
+
+    const targeted = runCli(join(projectDirectory, 'src'), 'target.ts')
+    expect(targeted.exitCode).toBe(0)
+    expect(targeted.stderr).not.toContain('broken.ts')
+    expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
+
+    const missing = runCli(join(projectDirectory, 'src'), 'missing.ts')
+    expect(missing.exitCode).toBe(1)
+    expect(missing.stderr).toContain('File not found:')
+    expect(missing.stderr).toContain('missing.ts')
+
     writeFileSync(join(projectDirectory, 'tsconfig.json'), JSON.stringify({
       compilerOptions: {
         strict: true,
@@ -262,34 +299,20 @@ test('targeted fr uses the project config and prints only that file diagnostics 
         module: 'ESNext',
         moduleResolution: 'Bundler',
         paths: {'@constants': ['./src/constants.ts']},
+        types: ['missing-types-package'],
       },
       include: ['src/**/*.ts'],
     }))
-    writeFileSync(join(projectDirectory, 'src', 'constants.ts'), 'export const GAP = 24\n')
-    writeFileSync(join(projectDirectory, 'src', 'target.ts'), `import {GAP} from '@constants'
-export function gap(): number { return GAP }
-`)
-    writeFileSync(join(projectDirectory, 'src', 'broken.ts'), "export const broken: number = 'bad'\n")
-
-    const full = runCli(projectDirectory)
-    expect(full.exitCode).toBe(1)
-    expect(full.stderr).toContain("src/broken.ts(1,14): error TS2322: Type 'string' is not assignable to type 'number'.")
-    const fullFileReport = readFileSync(
-      join(projectDirectory, 'freerange-report', 'src__target.ts.txt'),
-      'utf8',
-    ).trim()
-
-    const targeted = runCli(join(projectDirectory, 'src'), 'target.ts')
-    expect(targeted.exitCode).toBe(0)
-    expect(targeted.stderr).not.toContain('broken.ts')
-    expect(targeted.stdout).toContain(fullFileReport)
-    expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
+    const globalTypeError = runCli(projectDirectory)
+    expect(globalTypeError.exitCode).toBe(1)
+    expect(globalTypeError.stderr).toContain("Cannot find type definition file for 'missing-types-package'.")
+    expect(globalTypeError.stdout).toContain('3/3 project files skipped for TypeScript errors.')
   } finally {
     rmSync(projectDirectory, {recursive: true, force: true})
   }
 })
 
-test('targeted fr falls back without a config while bare fr requires a project', () => {
+test('targeted fr has fallback options while project commands require a tsconfig', () => {
   const directory = mkdtempSync(join(tmpdir(), 'freerange-no-config-'))
   try {
     writeFileSync(join(directory, 'width.ts'), 'export function width(): number { return 24 }\n')
@@ -298,9 +321,11 @@ test('targeted fr falls back without a config while bare fr requires a project',
     expect(targeted.exitCode).toBe(0)
     expect(targeted.stdout).toContain('return is a finite integer number from 24 through 24')
 
-    const bare = runCli(directory)
-    expect(bare.exitCode).toBe(1)
-    expect(bare.stderr).toContain('No tsconfig.json found')
+    for (const arguments_ of [[], ['--audit']]) {
+      const projectCommand = runCli(directory, ...arguments_)
+      expect(projectCommand.exitCode).toBe(1)
+      expect(projectCommand.stderr).toContain('No tsconfig.json found')
+    }
   } finally {
     rmSync(directory, {recursive: true, force: true})
   }

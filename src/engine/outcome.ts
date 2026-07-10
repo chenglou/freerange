@@ -29,6 +29,11 @@ export type StopReason =
   // though the checker's did — e.g. a guard shape the analysis does not model. The path
   // stops; the rest of the function and file report normally.
   | {kind: 'unmodeledNarrowing'}
+  // A bare array read (arr[i]) remained possibly undefined and reached an operation that
+  // needs a present value. This can be diagnostic-clean when noUncheckedIndexedAccess is
+  // disabled, so it has its own actionable reason instead of looking like unsupported
+  // TypeScript narrowing.
+  | {kind: 'possiblyMissingElement'}
   // An asserted element read (arr[i]!) whose index is provably outside the array — there
   // is no element the assertion could produce. An empty array is the special case where
   // every read qualifies.

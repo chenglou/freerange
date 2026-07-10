@@ -61,8 +61,13 @@ export function lowerStatementExpression(expression: ts.Expression, context: Fun
         if (assignment.logical === 'nullish') {
           condition = addInstruction(context, current, {kind: 'nullishCheck', value: currentValue, sentinel: 'nullish', negated: true})
         } else {
-          if (valueKind(targetType, context.checker) !== 'boolean') {
-            throw unsupported(assignment.target, {kind: 'nonBooleanCondition', typeText: context.checker.typeToString(targetType)})
+          const targetKind = valueKind(targetType, context.checker)
+          if (targetKind !== 'boolean') {
+            throw unsupported(assignment.target, {
+              kind: 'nonBooleanCondition',
+              conditionKind: targetKind === 'number' ? 'number' : 'other',
+              typeText: context.checker.typeToString(targetType),
+            })
           }
           condition = currentValue
         }
@@ -186,12 +191,17 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     return lowerElementAccess(current, false, context)
   }
   if (ts.isObjectLiteralExpression(current)) {
-    const properties: Array<{name: string; value: ValueID}> = []
+    // Map insertion order keeps the first position while set keeps the last value, which
+    // matches object-literal evaluation and overwrite order.
+    const properties = new Map<string, {name: string; value: ValueID}>()
     for (const property of current.properties) {
       if (ts.isShorthandPropertyAssignment(property)) {
         const symbol = context.checker.getShorthandAssignmentValueSymbol(property)
         if (symbol == null) throw unsupported(property, {kind: 'missingSymbol'})
-        properties.push({name: property.name.text, value: identifierValue(symbol, property.name, context)})
+        properties.set(property.name.text, {
+          name: property.name.text,
+          value: identifierValue(symbol, property.name, context),
+        })
         continue
       }
       if (ts.isPropertyAssignment(property)) {
@@ -199,7 +209,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         // `__proto__: value` in a literal is prototype-setting syntax at runtime — no own
         // property is created — while the checker types it as a plain property.
         if (name === '__proto__') throw unsupported(property, {kind: 'protoProperty'})
-        properties.push({name, value: lowerExpression(property.initializer, context)})
+        properties.set(name, {name, value: lowerExpression(property.initializer, context)})
         continue
       }
       // `{...spring, pos: newPos}` — the update idiom of the immutable subset. Every object
@@ -212,7 +222,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         // (`{...defaults, ...overrides}` where the overrides value carries a `volume` its
         // type omits). With the spread first, whatever extras it copies are either
         // overridden by the later explicit entries or unreadable through the result type.
-        if (properties.length > 0) {
+        if (properties.size > 0) {
           throw unsupported(property, {kind: 'spreadAfterProperties'})
         }
         const sourceType = context.checker.getTypeAtLocation(property.expression)
@@ -229,7 +239,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
           if (valueKind(memberType, context.checker) == null) {
             throw unsupported(property, {kind: 'valueType', typeText: context.checker.typeToString(memberType)})
           }
-          properties.push({
+          properties.set(member.name, {
             name: member.name,
             value: addInstruction(context, property, {kind: 'property', object: source, property: member.name}),
           })
@@ -238,9 +248,6 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       }
       throw unsupported(property, {kind: 'objectPropertyForm'})
     }
-    // Last write wins, matching runtime spread semantics; earlier reads still evaluate.
-    const lastByName = new Map<string, {name: string; value: ValueID}>()
-    for (const property of properties) lastByName.set(property.name, property)
     // A literal written where a tagged union is expected ({type: 'sidebar', width: 240}
     // returned as Frame) records which variant it builds, so branches building different
     // variants join per tag instead of dropping every mismatched property. The tag VALUE
@@ -255,9 +262,9 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
     // contextual record type has no optionals to fill.)
     const fillOptionalsFrom = (recordType: ts.Type): void => {
       for (const member of context.checker.getPropertiesOfType(recordType)) {
-        if ((member.flags & ts.SymbolFlags.Optional) === 0 || lastByName.has(member.name)) continue
+        if ((member.flags & ts.SymbolFlags.Optional) === 0 || properties.has(member.name)) continue
         const absent = addInstruction(context, current, {kind: 'nullishConstant', sentinel: 'undefined'})
-        lastByName.set(member.name, {name: member.name, value: absent})
+        properties.set(member.name, {name: member.name, value: absent})
       }
     }
     // The contextual type may sit behind a nullable wrapper (`const config: Config |
@@ -304,7 +311,7 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
         }
       }
     }
-    return addInstruction(context, current, {kind: 'object', properties: [...lastByName.values()], ...(tag == null ? {} : {tag})})
+    return addInstruction(context, current, {kind: 'object', properties: [...properties.values()], ...(tag == null ? {} : {tag})})
   }
   if (identifierAssignment(current) != null) {
     throw unsupported(current, {kind: 'assignmentInValuePosition'})
@@ -477,10 +484,12 @@ export function lowerExpression(expression: ts.Expression, context: FunctionCont
       }
       const arrayMethod = ts.isPropertyAccessExpression(current.expression)
         && context.checker.isArrayType(context.checker.getTypeAtLocation(current.expression.expression))
+        ? current.expression.name.text === 'reduce' ? 'reduce' : 'other'
+        : null
       throw unsupported(current, {
         kind: 'call',
         callee: calleeDisplayName(current.expression, context.sourceFile),
-        ...(arrayMethod ? {arrayMethod: true} : {}),
+        ...(arrayMethod == null ? {} : {arrayMethod}),
       })
     }
   }
@@ -1087,8 +1096,13 @@ function structuralPropertiesComplete(type: ts.Type, checker: ts.TypeChecker, se
 // accepted subset; the engine represents conditions as booleans only.
 export function requireBooleanCondition(node: ts.Node, checker: ts.TypeChecker): void {
   const type = checker.getTypeAtLocation(node)
-  if (valueKind(type, checker) === 'boolean') return
-  throw unsupported(node, {kind: 'nonBooleanCondition', typeText: checker.typeToString(type)})
+  const kind = valueKind(type, checker)
+  if (kind === 'boolean') return
+  throw unsupported(node, {
+    kind: 'nonBooleanCondition',
+    conditionKind: kind === 'number' ? 'number' : 'other',
+    typeText: checker.typeToString(type),
+  })
 }
 
 function requireAccessedPropertyKind(access: ts.PropertyAccessExpression, checker: ts.TypeChecker): void {
@@ -1141,7 +1155,15 @@ function lowerElementAccess(access: ts.ElementAccessExpression, asserted: boolea
   requireNumberType(access.argumentExpression, context.checker)
   const array = lowerExpression(access.expression, context)
   const index = lowerExpression(access.argumentExpression, context)
-  return addInstruction(context, access, {kind: 'arrayIndex', array, index, asserted, provenBounds: false})
+  const missingFlag = ts.TypeFlags.Undefined
+  const staticTypeAllowsUndefined = (resultType.flags & missingFlag) !== 0
+    || (resultType.isUnion() && resultType.types.some(member => (member.flags & missingFlag) !== 0))
+  return addInstruction(context, access, {
+    kind: 'arrayIndex',
+    array,
+    index,
+    mode: asserted ? 'asserted' : staticTypeAllowsUndefined ? 'bare' : 'bareUnchecked',
+  })
 }
 
 // A read of the union's tag property (`route.type` where route is one of several
@@ -1264,21 +1286,23 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
   }
   // `typeof x === 'number'` (or 'string', or 'boolean') on a value whose only
   // non-missing kind matches the literal equals "x is not missing" — the common
-  // narrowing spelling for number | undefined and friends. Which analyzer kind each
-  // typeof answer names:
-  const typeofKinds: Record<string, 'number' | 'opaque' | 'boolean'> = {
-    number: 'number',
-    string: 'opaque',
-    boolean: 'boolean',
-  }
-  const typeofLiteral = (side: ts.Expression): string | null => {
+  // narrowing spelling for number | undefined and friends.
+  const primitiveTypeofFlags = (side: ts.Expression): ts.TypeFlags | null => {
     const unwrapped = unwrap(side, context.checker)
-    return ts.isStringLiteral(unwrapped) && typeofKinds[unwrapped.text] != null ? unwrapped.text : null
+    if (!ts.isStringLiteral(unwrapped)) return null
+    switch (unwrapped.text) {
+      case 'number': return ts.TypeFlags.NumberLike
+      case 'string': return ts.TypeFlags.StringLike
+      case 'boolean': return ts.TypeFlags.BooleanLike
+      default: return null
+    }
   }
-  const typeofSide = ts.isTypeOfExpression(expression.left) && typeofLiteral(expression.right) != null
-    ? {operand: expression.left, literal: typeofLiteral(expression.right)!}
-    : ts.isTypeOfExpression(expression.right) && typeofLiteral(expression.left) != null
-      ? {operand: expression.right, literal: typeofLiteral(expression.left)!}
+  const rightFlags = primitiveTypeofFlags(expression.right)
+  const leftFlags = primitiveTypeofFlags(expression.left)
+  const typeofSide = ts.isTypeOfExpression(expression.left) && rightFlags != null
+    ? {operand: expression.left, flags: rightFlags}
+    : ts.isTypeOfExpression(expression.right) && leftFlags != null
+      ? {operand: expression.right, flags: leftFlags}
       : null
   if (typeofSide != null) {
     const operandType = context.checker.getTypeAtLocation(typeofSide.operand.expression)
@@ -1289,16 +1313,10 @@ function missingSentinelCheck(expression: ts.BinaryExpression, context: Function
     // "not missing"; everything else (unknown operands, mixed unions) answers an
     // unknown boolean — typeof is an effect-free operator, so both branches analyzing
     // is always sound.
-    const wantedFlags: Record<string, ts.TypeFlags> = {
-      number: ts.TypeFlags.NumberLike,
-      string: ts.TypeFlags.StringLike,
-      boolean: ts.TypeFlags.BooleanLike,
-    }
-    const wanted = wantedFlags[typeofSide.literal]!
     const missing = ts.TypeFlags.Null | ts.TypeFlags.Undefined
     const members = operandType.isUnion() ? operandType.types : [operandType]
     const restMatches = members.every(member =>
-      (member.flags & missing) !== 0 || (member.flags & wanted) !== 0)
+      (member.flags & missing) !== 0 || (member.flags & typeofSide.flags) !== 0)
     && members.some(member => (member.flags & missing) === 0)
     const value = lowerExpression(typeofSide.operand.expression, context)
     if (restMatches) {

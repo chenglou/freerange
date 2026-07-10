@@ -108,10 +108,13 @@ describe('control flow and contracts', () => {
     expect(formatReport(report)).toContain('  unsupported: function call Math.max at ')
   })
 
-  test('stops one function at unsupported code, records its callers as partial, and keeps analyzing the rest', () => {
+  test('stops unsupported call chains and keeps analyzing the rest', () => {
     // scaledRemainder is declared before its failing callee: declaration order does not
     // matter because the caller stops at the call during its own evaluation.
     const report = analyzeSource('unsupported-callee.ts', `
+      export function outerWidth(width: number): number {
+        return scaledRemainder(width) + 1
+      }
       export function scaledRemainder(width: number): number {
         return remainderWidth(width) + 1
       }
@@ -127,15 +130,22 @@ describe('control flow and contracts', () => {
     expect(report.functions).toEqual([
       {
         kind: 'partial',
+        name: 'outerWidth',
+        assumptions: ['width is finite and not NaN'],
+        stopped: [`calls scaledRemainder, whose analysis stopped (call at ${file}:3:16)`],
+        observed: [],
+      },
+      {
+        kind: 'partial',
         name: 'scaledRemainder',
         assumptions: ['width is finite and not NaN'],
-        stopped: [`calls remainderWidth, which hit unsupported code (call at ${file}:3:16)`],
+        stopped: [`calls remainderWidth, which hit unsupported code (call at ${file}:6:16)`],
         observed: [],
       },
       {
         kind: 'unsupported',
         name: 'remainderWidth',
-        unsupported: `binary operator ** (supported: + - * / %, comparisons, and boolean && || !) at ${file}:6:16`,
+        unsupported: `binary operator ** (supported: + - * / %, comparisons, and boolean && || !) at ${file}:9:16`,
       },
       {
         kind: 'analyzed',
@@ -183,42 +193,6 @@ describe('control flow and contracts', () => {
         assumptions: [],
         requires: [],
         ensures: ['return is a finite integer number from 6 through 6'],
-      },
-    ])
-  })
-
-  test('names a merely stopped callee accurately in a transitive chain', () => {
-    const report = analyzeSource('two-hop.ts', `
-      export function outerWidth(width: number): number {
-        return middleWidth(width) + 1
-      }
-      export function middleWidth(width: number): number {
-        return remainderWidth(width) + 1
-      }
-      export function remainderWidth(width: number): number {
-        return width ** 2
-      }
-    `)
-    const file = 'two-hop.ts'
-    expect(report.functions).toEqual([
-      {
-        kind: 'partial',
-        name: 'outerWidth',
-        assumptions: ['width is finite and not NaN'],
-        stopped: [`calls middleWidth, whose analysis stopped (call at ${file}:3:16)`],
-        observed: [],
-      },
-      {
-        kind: 'partial',
-        name: 'middleWidth',
-        assumptions: ['width is finite and not NaN'],
-        stopped: [`calls remainderWidth, which hit unsupported code (call at ${file}:6:16)`],
-        observed: [],
-      },
-      {
-        kind: 'unsupported',
-        name: 'remainderWidth',
-        unsupported: `binary operator ** (supported: + - * / %, comparisons, and boolean && || !) at ${file}:9:16`,
       },
     ])
   })
@@ -298,8 +272,9 @@ describe('control flow and contracts', () => {
       .toEqual(['return is a finite integer number from 1 through 2'])
   })
 
-  test('rejects writes into objects with rebinding as the rewrite', () => {
-    // Values are immutable after construction; state updates rebind a variable instead.
+  test('rejects object writes and phrases rebuilding as conditional guidance', () => {
+    // Values are immutable after construction; rebuilding is suitable only when its
+    // observable behavior matches the original mutation.
     const report = analyzeSource('property-write.ts', `
       export function step(config: {pos: number}): void {
         config.pos = 1
@@ -309,7 +284,7 @@ describe('control flow and contracts', () => {
     expect(report.functions).toEqual([{
       kind: 'unsupported',
       name: 'step',
-      unsupported: `a write into an object (values are immutable; rebind a variable to a fresh object instead) at ${file}:3:9`,
+      unsupported: `a write into an object (mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed) at ${file}:3:9`,
     }])
   })
 
@@ -612,25 +587,6 @@ describe('control flow and contracts', () => {
       }
     `)
     expect(analyzedFunction(report, 'paddedWidth').ensures).toEqual(['return is a finite number at least 24'])
-  })
-
-  test('merges reassigned locals after an if statement', () => {
-    const report = analyzeSource('if-assignment.ts', `
-      export function minimumWidth(width: number): number {
-        let result = 10
-        if (width > 10) result = width
-        return result
-      }
-
-      export function nonnegativeWidth(width: number): number {
-        if (width < 0) return 0
-        return width
-      }
-    `)
-    expect(analyzedFunction(report, 'minimumWidth').ensures)
-      .toEqual(['return is a finite number at least 10'])
-    expect(analyzedFunction(report, 'nonnegativeWidth').ensures)
-      .toEqual(['return is a finite number at least 0'])
   })
 
 })

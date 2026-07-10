@@ -1,37 +1,99 @@
-WIP rewrite
+# Freerange
 
-## The pitch, in one example
+Freerange analyzes the numeric behavior of TypeScript functions. It reports conditions callers must satisfy, ranges and other facts about returned values, and the parts of a file it could not fully analyze.
 
-Our production app has layout code that positions an input bar, a tray under it, and a content area, all computed from the window size. We added one line to it:
+## One production example
+
+Our production app positions an input bar, a tray below it, and the surrounding content from the window size. We added one line:
 
 ```ts
-windowSizeY = Math.max(320, windowSizeY) // treat every window as at least 320px tall
+windowSizeY = Math.max(320, windowSizeY)
 ```
 
-That line barely does anything at runtime — no real window is smaller than that. But freerange read the layout math with that one fact in hand, and its report on the same functions changed from "these positions could be anything, including broken values like Infinity" to plain statements such as:
+The branch almost never runs because real windows are taller than 320 pixels. Its purpose is to state an actual product rule: layout below that height is unsupported. With that rule in the code, Freerange derived facts several calculations later:
 
-```
+```text
 ensures: return.inputTray.top is a finite number at least 54
 ensures: return.nav.bottom is a finite number at least 320
 ```
 
-Nobody wrote those numbers anywhere. "The tray starts at least 54 pixels down" is something the tool worked out by pushing the one declared fact through three layers of arithmetic — the window floor, plus the gap math, plus the input row height. And it holds for every window size that can exist, not just the ones somebody tested.
+Nobody wrote `54` as a bound. Freerange combined the window minimum, the gap, and the input-row height. If a later refactor weakens or removes that guarantee, the contract changes with the code.
 
-The part that makes this durable rather than a one-time audit: the report regenerates from the code. Next month someone — a teammate, or an AI agent doing a refactor — changes the padding math. If the tray can now overlap the input bar, that `at least 54` line changes or disappears, and the diff shows it before any user sees it. TypeScript can tell you a value is a number; this tells you *which* numbers it can be, and keeps that promise up to date as the code changes.
+The same analysis found a different problem in image-fitting code. A 0 by 0 image caused division by zero, followed by `0 * Infinity`, which produces `NaN`. The function now handles missing image dimensions before doing the calculation, and its report no longer requires every caller to do so.
 
-Same mechanism, defensive direction: the report on our lightbox pointed out that its image-fitting math would produce NaN (an unrenderable "not a number") for a 0×0 image record — dividing by zero width, then multiplying zero by the Infinity that came out. One more one-liner made that state impossible, and the report now proves it can't come back.
+TypeScript can tell you that a value is a number. Freerange tells you which numbers it can be, including whether `NaN` or Infinity is possible.
 
 ## Running it
 
-- Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It audits that project and its declared project references. Results land in `freerange-report/` beside that config: `LINT.txt` (actionable findings), one contract report per source file, `LEGEND.txt` (what requires/ensures/assumes mean — read once), `SUMMARY.txt` (function totals, the requires index, and rejection tallies), and `__rows.json` (per-file coverage rows, machine-readable).
-- `bun fr.ts src/some/file.ts` searches upward from the file for its nearest `tsconfig.json`, loads the whole TypeScript project for context, and prints only that file's report. Without a config, it uses freerange's fallback TypeScript settings.
-- TypeScript diagnostics use TypeScript's own formatting. Files with errors are skipped, clean files still analyze, and the command exits unsuccessfully when TypeScript reports an error.
-- Start with `LINT.txt`; it contains only findings that survived the analysis without a guard or caller discharging them. Use `SUMMARY.txt` for coverage and the requires index, then open per-file reports when you need the full ranges and assumptions.
-- `LINT.txt` prints one block for caller conditions caused by the same operation. If several operations need exactly the same conditions from the same functions, their locations share that block too. For example, one division used through two wrappers appears as one finding, not three unrelated findings. `SUMMARY.txt` and the per-file reports still list each function's own contract.
+- Like `tsc`, `bun fr.ts` searches the current directory and then its parents for the nearest `tsconfig.json`. It analyzes that project and its declared project references, then prints lint findings and coverage.
+- `bun fr.ts src/some/file.ts` uses the nearest project for type information and prints that file's exact contracts. Without a config, it uses Freerange's fallback TypeScript settings.
+- `bun fr.ts --audit` prints a project-wide index of recognized refactoring patterns and coverage. It lists only matching locations, not every contract or unsupported function.
+- `bun fr.ts --audit src/some/file.ts` prints that file's contracts, coverage, and relevant refactoring examples. Use this while moving a calculation into the supported subset.
+- TypeScript diagnostics use TypeScript's own formatting. A file-specific error skips that file while clean files still analyze. A project-wide diagnostic, such as a missing package named in `compilerOptions.types`, skips that project's files because their type information cannot be trusted. The command exits with status 1 when TypeScript reports an error.
+
+These commands write no files. Redirect stdout when you deliberately want a snapshot. No lint findings does not mean an unsupported or partially analyzed file is safe, so always read the coverage line. A change such as `at least 54` becoming `at least 0` is visible only in the exact contract output for that file.
+
+## Reading contracts
+
+- `requires`: a condition the caller must satisfy. The guarantee below it assumes the condition is true.
+- `ensures`: a guarantee about the returned value whenever the function returns.
+- `assumes`: an input condition Freerange accepts without proving, such as a number parameter being finite and not `NaN`.
+- `unsupported`: the function uses code outside the analyzed subset. Only the first blocker is shown, so rerun after changing it.
+- `stopped`: Freerange analyzed part of the function, but at least one path stopped. `on analyzed paths` describes only the paths that completed; it is not a contract for the whole function.
+- `skipped`: module setup contained a statement Freerange did not analyze. Values that statement could change are not trusted afterward.
+
+## Writing analyzable code
+
+Freerange is deliberately designed for code that can be refactored, especially code written or maintained by agents. The goal is not to accept every TypeScript pattern. The goal is to make the useful boundary predictable and make good rewrites cheap.
+
+Put important numeric calculations in synchronous named top-level function declarations with explicit inputs. A React component, callback, or async function can call the helper even when the surrounding framework code remains unsupported. This was the most useful pattern in the production conversion: geometry moved into plain functions that returned records, while hooks, DOM calls, and rendering stayed where they were.
+
+For example, keep image fitting in a plain function and let the component use its result:
+
+```tsx
+export function fittedImageHeight(frameWidth: number, imageWidth: number, imageHeight: number): number {
+  const width = Math.max(1, imageWidth)
+  const height = Math.max(1, imageHeight)
+  return (frameWidth * height) / width
+}
+
+function ImageCard(props: {frameWidth: number; imageWidth: number; imageHeight: number}) {
+  const height = fittedImageHeight(props.frameWidth, props.imageWidth, props.imageHeight)
+  return <img style={{height}} />
+}
+```
+
+Write real domain rules as executable checks where the program defines them. For example, a virtualized grid may define its column count as a positive integer, and an application may define a minimum supported window size. Do not add a clamp merely to improve a report. A clamp changes runtime behavior and belongs only where that behavior is intended.
+
+Guard the exact value an operation uses. For example, if the divisor is `oldMax - oldMin`, bind that expression to `oldSpan` and check `oldSpan === 0`. Freerange does not generally remember an algebraic relationship between two separate values, so checking `oldMin === oldMax` does not currently prove a later fact about the subtraction.
+
+Be careful with precomputed ratios. Two positive numbers can divide to an exact result so tiny that JavaScript rounds it to zero. In image layout, `(frameWidth * imageHeight) / imageWidth` can therefore be easier to verify than `frameWidth / (imageWidth / imageHeight)` once the original dimensions are checked. The two expressions may round differently, so precision-sensitive code must choose its evaluation order intentionally.
+
+Treat values as immutable after construction inside analyzed code. Rebuilding a plain record with `{...layout, width}` is appropriate when callers should receive a new value. It is not a general replacement for mutation when callers observe object identity, prototypes, accessors, proxies, or the mutation itself. Array writes often need a larger algorithm change rather than a mechanical rewrite.
+
+Use direct control flow. Write the numeric condition you mean instead of relying on truthiness, use exhaustive tagged-union switches without fallthrough, and use explicit loops for simple dense-array aggregation. Array callbacks are not automatically equivalent to loops because holes, callback arguments, returned arrays, and side effects can be observable.
+
+Do not use casts or `any` as proof. Freerange carries those values without numeric claims. Parse and validate outside data, then pass checked values into the numeric helper. A file containing `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected because its declared types can no longer be trusted.
+
+## Limits to expect
+
+Freerange tracks each value's range, integer status, possible `NaN`, possible Infinity, and a small amount of branch information. It does not keep arbitrary formulas or relationships between separate values. When branches meet, the result covers every branch. Loop ranges become more conservative until the analysis stabilizes; Freerange does not derive a closed formula for the loop.
+
+Function calls are analyzed when Freerange can see and support the callee. Unknown calls, callback order, mutation through aliases, and most framework effects stop the affected path or function. An imported constant is followed only when its initializer is a plain numeric literal, e.g. `export const GAP = 24`; calculated constants and imported function behavior are not inferred.
+
+An `ensures` line assumes its `requires` and `assumes`. A `requires` line may be a real API condition, or it may expose a relationship Freerange cannot currently prove. An `assumes` line may identify an unchecked program boundary or an analysis limitation. Neither should be changed automatically without deciding what the program should do for that input.
+
+## Audits
+
+`bun fr.ts --audit` is the quick project view intended for agents. It lists files and locations where Freerange recognizes a useful refactoring pattern. Run `bun fr.ts --audit <file>` for the detailed view: coverage, ordinary contracts, and the checked examples relevant to that file.
+
+Each pattern says when the rewrite applies and what behavior it may change. The catalog's before and after snippets are run through Freerange in the test suite, and behavior-sensitive examples also have runtime tests. To keep the output short, the audit prints one primary example for each cause and describes secondary options without repeating their code. The audit deliberately gives no recommendation when the syntax alone is not enough to choose a safe rewrite. For example, an unknown function call does not prove that the function contains numeric work worth extracting. The audit does not edit source code.
+
+Library users can call `auditSource(file, source)` to receive the same coverage, source references, and guide IDs as structured data instead of parsing the formatted audit.
 
 ## Recommended TypeScript checks
 
-Project mode uses the project's tsconfig unchanged and requires `strictNullChecks`, which preserves types such as `number | null` for the analysis. For clearer TypeScript errors before running freerange, we recommend enabling at least:
+Project mode uses the project's tsconfig unchanged and requires `strictNullChecks`, which preserves types such as `number | null` for the analysis. For clearer TypeScript errors before running Freerange, we recommend:
 
 ```jsonc
 {
@@ -46,23 +108,6 @@ Project mode uses the project's tsconfig unchanged and requires `strictNullCheck
 }
 ```
 
-These are authoring recommendations, not all freerange requirements. Freerange already treats a bare `values[index]` as possibly `undefined`, even without `noUncheckedIndexedAccess`, and handles optional properties conservatively without `exactOptionalPropertyTypes`.
+These are authoring recommendations, not all Freerange requirements. Freerange already treats a bare `values[index]` as possibly `undefined`, even without `noUncheckedIndexedAccess`, and handles optional properties conservatively without `exactOptionalPropertyTypes`.
 
 Freerange does not trust values typed as `any`: it carries them without making claims, and a path stops when an operation needs the value to be a number. Fewer `any` values therefore produce more complete reports. Prefer `noImplicitAny`, and annotate or narrow remaining `any` values where practical.
-
-## Recommendations from converting a production app
-
-Rough notes from converting mj-gallery's layout code; unpolished, final pass pre-launch.
-
-- Declare floors as enforced code, not comments or config. One `Math.max(320, windowSizeY)` unlocked derived guarantees across three layers of layout arithmetic — the best value per line of anything we did. Below a reasonable floor, treat rendering as undefined behavior; the analysis just has to prove nothing reaches Infinity or NaN.
-- Clamp where the value is born, not where it's used. `Math.max(1, imageWidth)` at the one place image dimensions enter discharged every downstream division at once; patching each use site would have taken a dozen edits.
-- Guard the divisor, not the result. `jobWidth > 0 ? (width * jobHeight) / jobWidth : width` reports clean; computing first and patching up NaN afterward doesn't.
-- To compare two ratios, cross-multiply instead of dividing: `a / b < c / d` rewritten as `a * d < c * b` needs no divisor guard at all.
-- Keep numeric math out of JSX. Move it into a plain `.ts` function that returns numbers and let the component consume the results. Every successful conversion was this one move, and it's also what makes the math nameable, reusable, and diffable.
-- Treat rejections as rewrite prompts, not failures. Array-method rejections come with the for-of rewrite; unknown-call rejections usually mean the numeric math should be extracted away from the call. The subset is prescriptive on purpose — agents reshape code cheaply.
-- Fix requires before polishing ensures. A requires line is an obligation on every caller; an ensures line is free information. Clear the requires index first, then chase nicer bounds.
-- Some requires are genuine caller contracts (e.g. a remap function that needs a nonzero input range). Leave those in place — the index is where callers go to learn them.
-- Deduplicate semi-copied math into one function with a contract. Three masonry variants shared most of their card-height arithmetic; one extracted function gave all three the same proof.
-- Watch the report diff after refactors. If a derived bound (like "at least 54") weakens or disappears, the refactor broke an invariant nobody wrote down. Checking in `SUMMARY.txt` and gitignoring the rest of the report folder is enough for the diff to show it.
-- An `assumes` line on a division is a todo item. The analyzer assumes an unproven divisor is nonzero and says so; add the guard and the line disappears.
-- A file mentioning `@ts-ignore`, `@ts-expect-error`, `@ts-nocheck`, or `eval` is rejected wholesale. The analysis is built on the checker's word, and those turn the checker off.

@@ -21,9 +21,6 @@ import {lowerStatement} from './statements.ts'
 export type ModuleScan = {
   bindings: ModuleBindingIR[]
   bindingsBySymbol: Map<ts.Symbol, ModuleBindingID>
-  // Bindings some function writes. A skipped top-level statement can call any function, so
-  // these are havocked alongside the statement's own writes at every skip.
-  writtenInsideFunctions: Set<ModuleBindingID>
 }
 
 // Classifies every top-level binding by one rule: a function may trust the binding's value
@@ -78,20 +75,15 @@ export function scanModuleBindings(sourceFile: ts.SourceFile, checker: ts.TypeCh
   }
 
   // Demote bindings that functions write.
-  const writtenInsideFunctions = new Set<ModuleBindingID>()
   const visit = (node: ts.Node, insideFunction: boolean): void => {
     if (insideFunction) {
-      for (const written of moduleWritesIn(node, checker, bindingsBySymbol)) writtenInsideFunctions.add(written)
+      for (const written of moduleWritesIn(node, checker, bindingsBySymbol)) demote(bindings, written)
     }
     const enteringFunction = insideFunction || ts.isFunctionLike(node)
     ts.forEachChild(node, child => { visit(child, enteringFunction) })
   }
   visit(sourceFile, false)
-
-  for (let binding = 0; binding < bindings.length; binding++) {
-    if (writtenInsideFunctions.has(binding)) demote(bindings, binding)
-  }
-  return {bindings, bindingsBySymbol, writtenInsideFunctions}
+  return {bindings, bindingsBySymbol}
 }
 
 // The category of one imported name. A named or default import whose target resolves to a
@@ -251,17 +243,15 @@ export function lowerModuleInitializer(
       // position, `scores.push(999)` in receiver position, and an alias variant mentions
       // it nowhere — so no mention scan is sound for them. Scalars are copied on read;
       // only a write-position form can change one, and those are collected above.
-      const havocked = new Set(scan.writtenInsideFunctions)
       for (const written of allModuleWritesIn(statement, checker, scan.bindingsBySymbol)) {
         demote(scan.bindings, written)
-        havocked.add(written)
       }
       for (let binding = 0; binding < scan.bindings.length; binding++) {
-        const declared = declaredKindOf(scan.bindings[binding]!.category)
-        if (declared != null && holdsMutableStructure(declared)) havocked.add(binding)
-      }
-      for (const binding of havocked) {
-        addInstruction(context, statement, {kind: 'moduleHavoc', binding})
+        const category = scan.bindings[binding]!.category
+        const declared = declaredKindOf(category)
+        if (category.kind === 'kind' || (declared != null && holdsMutableStructure(declared))) {
+          addInstruction(context, statement, {kind: 'moduleHavoc', binding})
+        }
       }
     }
   }

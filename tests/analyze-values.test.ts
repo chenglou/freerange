@@ -338,6 +338,11 @@ describe('arrays and declared values', () => {
         if (enabled) { return value }
         return 0
       }
+      export function concatenated(width: number): number {
+        let message = 'w: '
+        message += width + 'px'
+        return width
+      }
     `)
     const scaled = analyzedFunction(report, 'scaledWidth')
     // The string property makes no assumption line — there is nothing to claim about it.
@@ -353,6 +358,7 @@ describe('arrays and declared values', () => {
     // Boolean parameters are new too (the flat-numbers gate rejected them).
     expect(analyzedFunction(report, 'flagged').assumptions)
       .toEqual(['enabled is a boolean', 'value is finite and not NaN'])
+    expect(analyzedFunction(report, 'concatenated').ensures).toEqual(['return is a finite number'])
   })
 
   test('nullish-wrapped module arrays hedge when the file is not fully analyzed', () => {
@@ -373,29 +379,6 @@ describe('arrays and declared values', () => {
     // No exact claims about the initializer value survive; the read rests on the
     // declared-kind hedge, printed with its inner leaf condition.
     expect(reader.assumptions).toEqual(['queue is null or every queue element is finite and not NaN'])
-  })
-
-  test('string dispatch on a possibly-missing string analyzes', () => {
-    // `mode?: string` is the everyday optional-config spelling; the missing value simply
-    // compares unequal, so the unknown-boolean comparison needs no null guard first.
-    const report = analyzeSource('optional-string-dispatch.ts', `
-      export function pickWidth(mode: string | undefined, compact: number, wide: number): number {
-        if (mode === 'compact') { return compact }
-        return wide
-      }
-    `)
-    expect(analyzedFunction(report, 'pickWidth').ensures).toEqual(['return is a finite number'])
-  })
-
-  test('string concatenation with + and += is carried, not rejected', () => {
-    const report = analyzeSource('string-concat.ts', `
-      export function label(width: number): number {
-        let message = 'w: '
-        message += width + 'px'
-        return width
-      }
-    `)
-    expect(analyzedFunction(report, 'label').ensures).toEqual(['return is a finite number'])
   })
 
   test('nullable structural parameters print their inner leaf assumptions', () => {
@@ -424,7 +407,7 @@ describe('arrays and declared values', () => {
     ])
   })
 
-  test('a non-literal parameter default rejects while a literal default is covered by assumptions', () => {
+  test('parameter defaults must be literals inside the declared kind', () => {
     // The analysis never evaluates a default initializer. `= 5` provably satisfies the
     // assumed-finite seeding, so ignoring the expression is sound; `= Number.POSITIVE_INFINITY`
     // would falsify the ensures on a zero-argument call, so the function rejects.
@@ -432,18 +415,6 @@ describe('arrays and declared values', () => {
       export function scaled(zoom: number = Number.POSITIVE_INFINITY): number {
         return zoom
       }
-    `)
-    const scaled = report.functions.find(fn => fn.name === 'scaled')!
-    if (scaled.kind !== 'unsupported') throw new Error(`expected scaled to be unsupported, got ${scaled.kind}`)
-    expect(scaled.unsupported).toContain('default value for parameter zoom')
-  })
-
-  test('sentinel and inner-kind literal defaults on nullable parameters analyze', () => {
-    // `deadline: number | null = null` is the standard optional-parameter spelling: the
-    // null literal is one of the declared sentinels, as provably inside the kind as = 5
-    // is for number. Both defaults satisfy the printed disjunction, so ignoring the
-    // initializer stays sound.
-    const report = analyzeSource('nullable-defaults.ts', `
       export function remaining(deadline: number | null = null): number {
         return deadline === null ? 0 : deadline
       }
@@ -451,6 +422,9 @@ describe('arrays and declared values', () => {
         return zoom === null ? 1 : zoom
       }
     `)
+    const scaled = report.functions.find(fn => fn.name === 'scaled')!
+    if (scaled.kind !== 'unsupported') throw new Error(`expected scaled to be unsupported, got ${scaled.kind}`)
+    expect(scaled.unsupported).toContain('default value for parameter zoom')
     expect(analyzedFunction(report, 'remaining').assumptions).toEqual(['deadline is null or a finite non-NaN number'])
     expect(analyzedFunction(report, 'zoomOr').ensures).toEqual(['return is a finite number'])
   })
@@ -467,9 +441,14 @@ describe('arrays and declared values', () => {
       export function gapFor(size: 4 | 8 | undefined): number {
         return size === undefined ? 4 : size
       }
+      export function pickWidth(mode: string | undefined, compact: number, wide: number): number {
+        if (mode === 'compact') return compact
+        return wide
+      }
     `)
     expect(analyzedFunction(report, 'pick').ensures).toEqual(['return is a finite number'])
     expect(analyzedFunction(report, 'gapFor').assumptions).toEqual(['size is undefined or a finite non-NaN number'])
+    expect(analyzedFunction(report, 'pickWidth').ensures).toEqual(['return is a finite number'])
   })
 
   test('arrays of nullish records keep the [each] assumption wording', () => {

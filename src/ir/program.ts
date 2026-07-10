@@ -46,9 +46,10 @@ export type FunctionIR = {
   blocks: BlockIR[]
 }
 
-// Why one function's lowering stopped. Code branches only on `kind`; the string fields are
-// display data (identifier text, operator text, checker.typeToString results captured while
-// the checker is alive). Prose is composed only in src/report; nothing may branch on it.
+// Why one function's lowering stopped. String fields are display data (identifier text,
+// operator text, checker.typeToString results captured while the checker is alive). Code
+// that needs a decision uses a separate boolean or tagged field. Prose is composed only in
+// src/report; nothing may branch on display text.
 export type UnsupportedReason =
   // An identifier with no lowered binding: module-level state, globals, captured outer
   // locals. E.g. reading a module-level `let` inside a function.
@@ -83,9 +84,10 @@ export type UnsupportedReason =
   | {kind: 'binaryOperator'; operator: string}
   // Callee is neither a top-level function in this file nor supported Math. `callee` is a
   // short display name — an identifier, dotted pair, or (…).method for computed receivers.
-  // arrayMethod marks a method called on an array value, where the rewrite that brings the
-  // code inside the subset is unambiguous: a for-of loop over the same array.
-  | {kind: 'call'; callee: string; arrayMethod?: boolean}
+  // arrayMethod classifies a method called on an array value. Only reduce has a checked
+  // guide; every other method stays distinct from a general unknown call without routing
+  // on the display-only callee text.
+  | {kind: 'call'; callee: string; arrayMethod?: 'reduce' | 'other'}
   // A call passing fewer arguments than the callee declares. TypeScript accepts the shorter
   // call when the omitted parameters have default values, e.g. scaled() calling
   // `function scaled(width: number = 5)`, but lowering never reads parameter initializers,
@@ -97,7 +99,7 @@ export type UnsupportedReason =
   // points at the exact operand, so no role tag is needed.
   | {kind: 'nonNumberOperand'; typeText: string}
   // A branch condition whose type is not boolean, e.g. `if (width)` truthiness on a number.
-  | {kind: 'nonBooleanCondition'; typeText: string}
+  | {kind: 'nonBooleanCondition'; conditionKind: 'number' | 'other'; typeText: string}
   // The acceptance rules (see current-decisions.md): `var` hoists, so one variable can
   // have several declaration sites and the binding model does not apply.
   | {kind: 'varDeclaration'}

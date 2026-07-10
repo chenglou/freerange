@@ -23,11 +23,16 @@ export type InstructionIR =
   | (InstructionBase & {kind: 'unknownBoolean'})
   | (InstructionBase & {kind: 'arrayLiteral'; elements: ValueID[]; form: 'tuple' | 'array'})
   | (InstructionBase & {kind: 'arrayLength'; array: ValueID})
-  // An element read. `asserted` distinguishes arr[i]! (unproven bounds become an
-  // assumption line) from bare arr[i] (the result honestly carries possible undefined,
-  // regardless of the project's TypeScript options). provenBounds marks reads a
-  // desugaring guarantees in bounds by construction (the for-of counter).
-  | (InstructionBase & {kind: 'arrayIndex'; array: ValueID; index: ValueID; asserted: boolean; provenBounds: boolean})
+  // An element read. Bare reads honestly carry possible undefined regardless of the
+  // project's TypeScript options; bareUnchecked marks the case where those options hide
+  // undefined and Freerange should explain a later kind mismatch. Asserted reads create
+  // an assumption when bounds are unknown, while proven is the for-of counter.
+  | (InstructionBase & {
+      kind: 'arrayIndex'
+      array: ValueID
+      index: ValueID
+      mode: 'bare' | 'bareUnchecked' | 'asserted' | 'proven'
+    })
   // `value === null` and friends. sentinel 'nullish' is the loose form (== null, and the
   // ?? test), which covers both sentinels; negated flips the polarity (!==, !=).
   // route.type === 'lightbox': consumes the tagged-union value directly (the tag read

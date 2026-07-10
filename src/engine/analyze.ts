@@ -50,7 +50,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
   for (let binding = 0; binding < program.moduleBindings.length; binding++) {
     const category = program.moduleBindings[binding]!.category
     if (category.kind === 'importedConstant') {
-      initializerState.modules[binding] = {kind: 'value', value: constantNumber(category.value), version: freshSlotVersion()}
+      initializerState[binding] = {kind: 'value', value: constantNumber(category.value), version: freshSlotVersion()}
     }
   }
   // The initializer runs first, so top-level calls into declared functions see the module
@@ -74,9 +74,7 @@ export function analyzeProgram(program: ProgramIR): ProgramAnalysis {
     }
     const arguments_: AbstractValue[] = []
     const argumentExpressions: Array<NumericExpression | null> = []
-    const sharedState: SharedState = {
-      modules: seedModuleSlots(program, moduleValues),
-    }
+    const sharedState = seedModuleSlots(program, moduleValues)
     for (let index = 0; index < fn.parameters.length; index++) {
       const parameter = fn.parameters[index]!
       // Seeded from the declared kind — the same assumed-finite constructor module hedges
@@ -161,7 +159,7 @@ function publishedModuleValues(
 ): Array<AbstractValue | null> {
   const fn = program.initializer
   const ends: ModuleSlot[][] = [...run.moduleEnds]
-  if (evaluation.normal != null) ends.push(evaluation.normal.sharedState.modules)
+  if (evaluation.normal != null) ends.push(evaluation.normal.sharedState)
 
   const demoted = new Set<ModuleBindingID>()
   const successors = blockSuccessors(fn)
@@ -321,7 +319,7 @@ function runEvaluation(
         break
       }
       if (result.kind === 'stop') {
-        addStop(run, blockID, result.stop, state.shared.modules.slice(), index)
+        addStop(run, blockID, result.stop, state.shared.slice(), index)
         // A return recorded by an earlier visit of this block described a smaller incoming
         // state; the stop supersedes it.
         run.blocks[blockID]!.pendingReturn = null
@@ -349,7 +347,7 @@ function runEvaluation(
           run,
           blockID,
           {site: block.terminator.site, reason: {kind: 'unsupportedCode', reason: block.terminator.reason}},
-          state.shared.modules.slice(),
+          state.shared.slice(),
           block.instructions.length,
         )
         break
@@ -359,9 +357,14 @@ function runEvaluation(
         break
       }
       case 'branch': {
-        const conditionOutcome = branchConditionOutcome(state, block.terminator.condition, block.terminator.site)
+        const conditionOutcome = branchConditionOutcome(
+          state,
+          block.terminator.condition,
+          block.terminator.site,
+          expressionContext,
+        )
         if (conditionOutcome.kind === 'stop') {
-          addStop(run, blockID, conditionOutcome.stop, state.shared.modules.slice(), block.instructions.length)
+          addStop(run, blockID, conditionOutcome.stop, state.shared.slice(), block.instructions.length)
           run.blocks[blockID]!.pendingReturn = null
           break
         }
@@ -434,9 +437,7 @@ function runEvaluation(
     }
     normal = {
       returnValue: joinValues(normal.returnValue, pending.value),
-      sharedState: {
-        modules: joinModuleSlots(normal.sharedState.modules, pending.shared.modules),
-      },
+      sharedState: joinModuleSlots(normal.sharedState, pending.shared),
     }
   }
 
@@ -469,7 +470,7 @@ function runEvaluation(
           run,
           headerID,
           {site: header.loopHeader, reason: {kind: 'nonExitingLoop'}},
-          entry_.state.shared.modules.slice(),
+          entry_.state.shared.slice(),
           0,
         )
       }
@@ -534,7 +535,7 @@ function propagate(
         run,
         sourceBlock,
         {site: target.loopHeader, reason: {kind: 'loopLimit', updates: maximumLoopHeaderUpdates}},
-        state.shared.modules.slice(),
+        state.shared.slice(),
         0,
       )
       run.blocks[edge.block]!.failedHeader = true

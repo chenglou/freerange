@@ -3,7 +3,7 @@ import {analyzeSource} from '../src/index.ts'
 import {analyzedFunction} from './analyze-helpers.ts'
 
 describe('requirements and numeric checks', () => {
-  test('switch dispatches without fallthrough: strings, numbers with narrowing, break merges', () => {
+  test('switch dispatch and rejection boundaries', () => {
     // Owner decision: every non-empty case body ends in break or return, stacked empty
     // labels share the next body, default comes last. Under that rule a switch is exactly
     // an if/else chain on ===: string subjects analyze both branches, number subjects get
@@ -33,17 +33,6 @@ describe('requirements and numeric checks', () => {
           default: return 0
         }
       }
-    `)
-    expect(analyzedFunction(report, 'dispatch').ensures).toEqual(['return is a finite number'])
-    expect(analyzedFunction(report, 'gapFor').ensures).toEqual(['return is a finite integer number from 1 through 3'])
-    // Inside case 4 the subject is exactly 4, so the division discharges with no
-    // requirement — the same narrowing an if (step === 4) gets.
-    expect(analyzedFunction(report, 'narrows').requires).toEqual([])
-    expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite number from 0 through 25'])
-  })
-
-  test('switch rejections: fallthrough, default not last, unsupported subjects', () => {
-    const report = analyzeSource('switch-rejects.ts', `
       export function falls(mode: string, a: number): number {
         switch (mode) {
           case 'a': a = a + 1
@@ -64,6 +53,12 @@ describe('requirements and numeric checks', () => {
         }
       }
     `)
+    expect(analyzedFunction(report, 'dispatch').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'gapFor').ensures).toEqual(['return is a finite integer number from 1 through 3'])
+    // Inside case 4 the subject is exactly 4, so the division discharges with no
+    // requirement — the same narrowing an if (step === 4) gets.
+    expect(analyzedFunction(report, 'narrows').requires).toEqual([])
+    expect(analyzedFunction(report, 'narrows').ensures).toEqual(['return is a finite number from 0 through 25'])
     const entries = new Map(report.functions.map(fn => [fn.name, fn]))
     const falls = entries.get('falls')!
     if (falls.kind !== 'unsupported') throw new Error(`expected falls to be unsupported, got ${falls.kind}`)
@@ -459,6 +454,9 @@ ${chain}
       export function cells(width: number): number {
         return Math.max(1, Math.ceil(width / 240))
       }
+      export function truncated(value: number): number {
+        return Math.trunc(value)
+      }
       export function bareLength(dx: number, dy: number): number {
         return Math.sqrt(dx * dx + dy * dy)
       }
@@ -470,6 +468,9 @@ ${chain}
     `)
     expect(analyzedFunction(report, 'cells').ensures)
       .toEqual(['return is a finite integer number from 1 through 7.490388061926316e+305'])
+    expect(analyzedFunction(report, 'snap').requires).toEqual([])
+    expect(analyzedFunction(report, 'snap').ensures[0]).toContain('possibly NaN')
+    expect(analyzedFunction(report, 'truncated').ensures).toEqual(['return is a finite integer number'])
     // Squares cannot be negative, so the sum has no opposite-infinity corner and never
     // turns NaN — the unguarded length can only overflow, and sqrt carries the honest
     // possibly-non-finite through.

@@ -1,19 +1,23 @@
-// Project mode: the nearest TypeScript project (and its declared project references),
-// then per-file lowering and analysis under each project's own compiler options.
-// Full per-file reports go to an output directory mirroring the source tree names;
-// LEGEND.txt and SUMMARY.txt (totals, the requires index, rejection and stop tallies)
-// are written once per run, and stdout gets the tallies. Targeted file mode uses the same
-// project programs and therefore resolves aliases identically.
+// Project commands load the nearest TypeScript project and its declared references once,
+// analyze every type-correct source file, and render either lint findings or a concise
+// refactoring index. Detailed contracts remain available through targeted file commands.
 
-import {mkdirSync, writeFileSync} from 'node:fs'
-import {dirname, join, relative, resolve, sep} from 'node:path'
+import {existsSync} from 'node:fs'
+import {dirname, resolve} from 'node:path'
 import * as ts from 'typescript'
-import {analyzeProgram} from './engine/analyze.ts'
+import {analyzeCheckedSource, type DetailedAnalysis} from './analyze.ts'
+import {
+  createFileAudit,
+  formatFileAudit,
+  refactorGuide,
+  type AuditCoverage,
+  type AuditReference,
+  type FileAudit,
+} from './audit.ts'
 import type {SiteID} from './ir/ids.ts'
-import {siteLocation} from './ir/program.ts'
-import {lowerSource} from './lower/program.ts'
+import {reportPath, siteLocation} from './ir/program.ts'
 import {describePrecondition, type PreconditionOperation} from './report/format-requirement.ts'
-import {createReport, formatReport, reportLegend} from './report/index.ts'
+import {createReport, formatReport} from './report/index.ts'
 import {checkFile} from './typescript/check.ts'
 import {formatTypeScriptDiagnostics, TypeScriptDiagnosticsError} from './typescript/diagnostics.ts'
 import {
@@ -29,9 +33,8 @@ type SimpleLintFinding = {
   file: string
   line: number
   column: number
-  level: 'error' | 'warning'
-  message: string
-  rule: 'out-of-bounds-read' | 'non-exiting-loop'
+  functionName: string
+  stop: 'outOfBoundsRead' | 'nonExitingLoop'
 }
 
 type CallerContract = {functionName: string; condition: string}
@@ -41,8 +44,6 @@ type CallerContractFinding = {
   file: string
   line: number
   column: number
-  level: 'note'
-  rule: 'caller-contract'
   operation: PreconditionOperation
   contracts: CallerContract[]
   additionalLocations: Array<{line: number; column: number}>
@@ -50,22 +51,52 @@ type CallerContractFinding = {
 
 type LintFinding = SimpleLintFinding | CallerContractFinding
 
-function sameCallerContracts(left: CallerContract[], right: CallerContract[]): boolean {
-  if (left.length !== right.length) return false
-  for (let index = 0; index < left.length; index++) {
-    if (left[index]!.functionName !== right[index]!.functionName || left[index]!.condition !== right[index]!.condition) {
-      return false
-    }
-  }
-  return true
+export type ProjectCoverage = {
+  files: number
+  typeErrorFiles: number
+  functions: number
+  analyzed: number
+  partial: number
+  unsupported: number
 }
 
-export type ProjectRunResult = {
+type ProjectScan = {
+  files: DetailedAnalysis[]
+  coverage: ProjectCoverage
   hasTypeScriptErrors: boolean
-  rootDirectory: string
 }
 
-export function runProject(searchFrom: string, requestedOutputDirectory?: string): ProjectRunResult {
+export function runProject(searchFrom: string): boolean {
+  const scan = analyzeProject(searchFrom)
+  const findings = scan.files.flatMap(collectLintFindings)
+    .sort((left, right) =>
+      left.file.localeCompare(right.file) || left.line - right.line || left.column - right.column)
+  console.log(formatProjectLint(findings, scan.coverage))
+  return scan.hasTypeScriptErrors
+}
+
+export function runProjectAudit(searchFrom: string): boolean {
+  const scan = analyzeProject(searchFrom)
+  const audits = scan.files.map(createFileAudit)
+  console.log(formatProjectAudit(audits, scan.coverage))
+  return scan.hasTypeScriptErrors
+}
+
+export function runFile(file: string): boolean {
+  const detailed = analyzeTargetFile(file)
+  if (detailed == null) return true
+  console.log(formatReport(createReport(detailed.program, detailed.analysis)))
+  return false
+}
+
+export function runAudit(file: string): boolean {
+  const detailed = analyzeTargetFile(file)
+  if (detailed == null) return true
+  console.log(formatFileAudit(createFileAudit(detailed)))
+  return false
+}
+
+function analyzeProject(searchFrom: string): ProjectScan {
   const configPath = findTypeScriptConfig(searchFrom)
   if (configPath == null) {
     throw new Error(`No tsconfig.json found from ${resolve(searchFrom)} or any parent directory.`)
@@ -73,301 +104,283 @@ export function runProject(searchFrom: string, requestedOutputDirectory?: string
   const projects = loadTypeScriptProjectGraph(configPath)
   const rootProject = projects.at(-1)!
   const rootDirectory = rootProject.rootDirectory
-  const outputDirectory = resolve(requestedOutputDirectory ?? join(rootDirectory, 'freerange-report'))
-  mkdirSync(outputDirectory, {recursive: true})
   const sources = projectSources(projects)
   const diagnosticsByProject = new Map(projects.map(project => [project, collectProjectDiagnostics(project)]))
   const allDiagnostics = uniqueDiagnostics(projects.flatMap(project => diagnosticsByProject.get(project)!.all))
-
-  console.error(`program over ${sources.length} files in ${projects.length} TypeScript project${projects.length === 1 ? '' : 's'}...`)
   printTypeScriptDiagnostics(allDiagnostics, rootProject.parsed.options, process.cwd())
-  console.error('typecheck done, analyzing per file...')
 
-  type FileRow = {
-    file: string
-    functions: number
-    analyzed: number
-    partial: number
-    unsupported: number
-    verdict: 'typeErrors' | 'noFunctions' | 'analyzed'
-  }
-  const rows: FileRow[] = []
-  const reasonCounts = new Map<string, number>()
-  const stopCounts = new Map<string, number>()
-  const bump = <Key>(map: Map<Key, number>, key: Key): void => {
-    map.set(key, (map.get(key) ?? 0) + 1)
-  }
-
-  // Every requires line in the run, with its home — the rarest and most actionable content,
-  // surfaced in SUMMARY.txt instead of buried under the assumes bulk.
-  const requiresIndex: string[] = []
-
-  // The linter view: only obligations nobody discharges, at points where failure is
-  // silent. Requirements propagated through several functions stay attached to the one
-  // operation that created them instead of appearing as independent findings.
-  const lintFindings: LintFinding[] = []
+  const files: DetailedAnalysis[] = []
+  let typeErrorFiles = 0
+  let analyzed = 0
+  let partial = 0
+  let unsupported = 0
 
   for (const source of sources) {
-    const {project, sourceFile} = source
-    const shortName = relative(rootDirectory, sourceFile.fileName).split(sep).join('/')
-    console.error(`  ${shortName}`)
-    const projectDiagnostics = diagnosticsByProject.get(project)!
+    const projectDiagnostics = diagnosticsByProject.get(source.project)!
     const diagnostics = [
       ...projectDiagnostics.global,
-      ...(projectDiagnostics.byFile.get(resolve(sourceFile.fileName)) ?? []),
+      ...(projectDiagnostics.byFile.get(resolve(source.sourceFile.fileName)) ?? []),
     ]
-    const errors = diagnostics.filter(diagnostic => diagnostic.category === ts.DiagnosticCategory.Error)
-    if (errors.length > 0) {
-      rows.push({file: shortName, functions: 0, analyzed: 0, partial: 0, unsupported: 0, verdict: 'typeErrors'})
-      const first = errors[0]!
-      writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`,
-        `TYPE ERRORS (${errors.length}):\n${ts.flattenDiagnosticMessageText(first.messageText, '\n')}\n`)
+    if (hasErrorDiagnostics(diagnostics)) {
+      typeErrorFiles++
       continue
     }
-    try {
-      const lowered = lowerSource({sourceFile, checker: project.program.getTypeChecker()}, rootDirectory)
-      const analysis = analyzeProgram(lowered)
-      const report = createReport(lowered, analysis)
-      const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
-      const functionReports = report.functions.filter(entry => entry.name !== 'module initialization')
-      let analyzed = 0
-      let partial = 0
-      let unsupported = 0
-      for (const entry of functionReports) {
-        if (entry.kind === 'analyzed') analyzed++
-        if (entry.kind === 'partial') partial++
-        if (entry.kind === 'unsupported') unsupported++
-      }
-      // Reason tags from the IR, not prose, so the tally is stable.
-      for (let fnId = 0; fnId < lowered.functions.length; fnId++) {
-        const fn = lowered.functions[fnId]!
-        if (fn.kind === 'unsupported') bump(reasonCounts, fn.reason.kind === 'call' ? `call:${fn.reason.callee}` : fn.reason.kind)
-      }
-      for (let fnId = 0; fnId < analysis.functions.length; fnId++) {
-        const fn = analysis.functions[fnId]!
-        if (fn.kind === 'partial') {
-          for (const stop of fn.stops) {
-            bump(stopCounts, stop.reason.kind)
-            // These two stops are findings in their own right, not coverage gaps.
-            if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
-            const location = siteLocation(lowered, stop.site)
-            lintFindings.push(stop.reason.kind === 'outOfBoundsRead'
-              ? {kind: 'simple', file: shortName, line: location.line, column: location.column, level: 'error', message: `asserted element read (arr[i]!) is provably out of bounds in ${fn.lowering.name}`, rule: 'out-of-bounds-read'}
-              : {kind: 'simple', file: shortName, line: location.line, column: location.column, level: 'warning', message: `loop in ${fn.lowering.name} has no analyzable exit — it may never terminate`, rule: 'non-exiting-loop'})
-          }
-        }
-        // An obligation that escaped to the function boundary: every same-file call
-        // discharging it stays silent, so what remains is a contract outside callers must
-        // uphold, unverifiable from this repo's analyzed subset alone.
-        if (fn.kind === 'analyzed') {
-          const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
-          for (const precondition of fn.preconditions) {
-            const description = describePrecondition(precondition, parameterNames)
-            let finding = callerContractsBySite.get(precondition.site)
-            if (finding == null) {
-              const location = siteLocation(lowered, precondition.site)
-              finding = {
-                kind: 'callerContracts',
-                file: shortName,
-                line: location.line,
-                column: location.column,
-                level: 'note',
-                rule: 'caller-contract',
-                operation: description.operation,
-                contracts: [],
-                additionalLocations: [],
-              }
-              callerContractsBySite.set(precondition.site, finding)
-            } else if (finding.operation !== description.operation) {
-              throw new Error(`One operation site produced both ${finding.operation} and ${description.operation} requirements`)
-            }
-            finding.contracts.push({functionName: fn.lowering.name, condition: description.condition})
-          }
-        }
-      }
-      const groupedCallerContracts: CallerContractFinding[] = []
-      const callerContractOperations = [...callerContractsBySite.values()]
-        .sort((a, b) => a.line - b.line || a.column - b.column)
-      for (const finding of callerContractOperations) {
-        const existing = groupedCallerContracts.find(candidate =>
-          candidate.operation === finding.operation && sameCallerContracts(candidate.contracts, finding.contracts))
-        if (existing == null) {
-          groupedCallerContracts.push(finding)
-        } else {
-          existing.additionalLocations.push({line: finding.line, column: finding.column})
-        }
-      }
-      lintFindings.push(...groupedCallerContracts)
-      rows.push({
-        file: shortName,
-        functions: functionReports.length,
-        analyzed,
-        partial,
-        unsupported,
-        verdict: functionReports.length === 0 ? 'noFunctions' : 'analyzed',
-      })
-      for (const entry of functionReports) {
-        if (entry.kind === 'analyzed') {
-          for (const precondition of entry.requires) requiresIndex.push(`${shortName} ${entry.name}: ${precondition}`)
-        }
-      }
-      writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`, formatReport(report, {legend: false}))
-    } catch (error) {
-      rows.push({file: shortName, functions: 0, analyzed: 0, partial: 0, unsupported: 0, verdict: 'typeErrors'})
-      writeFileSync(`${outputDirectory}/${shortName.replaceAll('/', '__')}.txt`, `ANALYZER ERROR: ${String(error)}\n`)
-      bump(reasonCounts, `ANALYZER_CRASH:${String(error).slice(0, 80)}`)
+
+    const detailed = analyzeProjectSource(source, rootDirectory)
+    files.push(detailed)
+    const fileFunctions = detailed.analysis.functions
+    for (const fn of fileFunctions) {
+      if (fn.kind === 'analyzed') analyzed++
+      else if (fn.kind === 'partial') partial++
+      else unsupported++
     }
   }
 
-  const totals = {
-    files: rows.length,
-    typeErrors: rows.filter(row => row.verdict === 'typeErrors').length,
-    noFunctions: rows.filter(row => row.verdict === 'noFunctions').length,
-    functions: rows.reduce((sum, row) => sum + row.functions, 0),
-    analyzed: rows.reduce((sum, row) => sum + row.analyzed, 0),
-    partial: rows.reduce((sum, row) => sum + row.partial, 0),
-    unsupported: rows.reduce((sum, row) => sum + row.unsupported, 0),
+  return {
+    files,
+    coverage: {
+      files: sources.length,
+      typeErrorFiles,
+      functions: analyzed + partial + unsupported,
+      analyzed,
+      partial,
+      unsupported,
+    },
+    hasTypeScriptErrors: hasErrorDiagnostics(allDiagnostics),
   }
-  console.log(JSON.stringify(totals))
-  console.log('--- rejection reasons (top 30) ---')
-  for (const [reason, count] of [...reasonCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 30)) {
-    console.log(`${String(count).padStart(5)}  ${reason}`)
-  }
-  console.log('--- stop reasons (top 15) ---')
-  for (const [reason, count] of [...stopCounts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) {
-    console.log(`${String(count).padStart(5)}  ${reason}`)
-  }
-  console.log('--- files with the most fully analyzed functions ---')
-  for (const row of [...rows].sort((a, b) => b.analyzed - a.analyzed).slice(0, 15)) {
-    console.log(`${String(row.analyzed).padStart(4)} analyzed / ${String(row.functions).padStart(4)} total  ${row.file}`)
-  }
-  lintFindings.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line || a.column - b.column)
-  const lintCounts = new Map<string, number>()
-  for (const finding of lintFindings) bump(lintCounts, `${finding.level}:${finding.rule}`)
-  console.log('--- lint ---')
-  for (const [rule, count] of [...lintCounts.entries()].sort((a, b) => b[1] - a[1])) {
-    console.log(`${String(count).padStart(5)}  ${rule}`)
-  }
-  const lintReport = [
-    'freerange lint: actionable failures and caller obligations from analyzed functions.',
-    'error   = provably wrong on some reachable path.',
-    'warning = an analyzed path may fail to terminate.',
-    'note    = a contract outside callers must uphold; unverifiable from this repo alone.',
-    'The full value analysis (every function, every range) lives in the per-file reports.',
-    '',
-  ]
-  for (const finding of lintFindings) {
-    const location = `${finding.file}:${finding.line}:${finding.column}`
-    if (finding.kind === 'simple') {
-      lintReport.push(`${location}  ${finding.level}  ${finding.message}  [${finding.rule}]`)
-      continue
-    }
-    const operationCount = finding.additionalLocations.length + 1
-    if (operationCount === 1 && finding.contracts.length === 1) {
-      const contract = finding.contracts[0]!
-      lintReport.push(`${location}  note  callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})  [caller-contract]`)
-      continue
-    }
-    const operationSubject = operationCount === 1
-      ? `this ${finding.operation}`
-      : `${operationCount} ${finding.operation === 'element read' ? 'element reads' : `${finding.operation}s`}`
-    const conditionSubject = `${finding.contracts.length} caller condition${finding.contracts.length === 1 ? '' : 's'}`
-    lintReport.push(`${location}  note  ${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}  [caller-contract]`)
-    let lastShownLine = finding.line
-    let lastShownColumn = finding.column
-    for (const additional of finding.additionalLocations) {
-      if (lastShownLine === additional.line && lastShownColumn === additional.column) continue
-      lastShownLine = additional.line
-      lastShownColumn = additional.column
-      lintReport.push(`  also at ${finding.file}:${additional.line}:${additional.column}`)
-    }
-    for (const contract of finding.contracts) lintReport.push(`  ${contract.functionName}: ${contract.condition}`)
-  }
-  writeFileSync(`${outputDirectory}/LINT.txt`, lintReport.join('\n') + '\n')
-  writeFileSync(`${outputDirectory}/__rows.json`, JSON.stringify(rows, null, 1))
-  // The legend once per run (per-file reports omit it), and the summary this run's
-  // measuring otherwise gets rebuilt by hand: totals, the full reason and stop tallies,
-  // and the requires index. Checked in, its diff is the progress metric.
-  writeFileSync(`${outputDirectory}/LEGEND.txt`, `${reportLegend}\n`)
-  const summary = [
-    JSON.stringify(totals),
-    '',
-    `requires (${requiresIndex.length}):`,
-    ...requiresIndex.map(line => `  ${line}`),
-    '',
-    'rejection reasons:',
-    ...[...reasonCounts.entries()].filter(([, count]) => count > 1).sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
-    // Once-seen reasons are a tail, not a trend — atop the tally they read as noise, and
-    // their actionable form (location plus rewrite hint) lives in the per-file reports.
-    `  seen once: ${[...reasonCounts.entries()].filter(([, count]) => count === 1).map(([reason]) => reason).sort().join(', ')}`,
-    '',
-    'stop reasons:',
-    ...[...stopCounts.entries()].sort((a, b) => b[1] - a[1]).map(([reason, count]) => `${String(count).padStart(5)}  ${reason}`),
-  ]
-  writeFileSync(`${outputDirectory}/SUMMARY.txt`, summary.join('\n') + '\n')
-  return {hasTypeScriptErrors: hasErrorDiagnostics(allDiagnostics), rootDirectory}
 }
 
-export function runFiles(files: string[]): boolean {
-  const absoluteFiles = files.map(file => resolve(file))
-  const reports: Array<string | null> = Array.from({length: files.length}, () => null)
-  const configGroups = new Map<string, Array<{file: string; index: number}>>()
-  const fallbackFiles: Array<{file: string; index: number}> = []
+function collectLintFindings({program, analysis}: DetailedAnalysis): LintFinding[] {
+  const file = reportPath(program)
+  const findings: LintFinding[] = []
+  const callerContractsBySite = new Map<SiteID, CallerContractFinding>()
 
-  for (let index = 0; index < absoluteFiles.length; index++) {
-    const file = absoluteFiles[index]!
-    const configPath = findTypeScriptConfig(dirname(file))
-    if (configPath == null) {
-      fallbackFiles.push({file, index})
+  for (const fn of analysis.functions) {
+    if (fn.kind === 'partial') {
+      for (const stop of fn.stops) {
+        if (stop.reason.kind !== 'outOfBoundsRead' && stop.reason.kind !== 'nonExitingLoop') continue
+        const location = siteLocation(program, stop.site)
+        findings.push({
+          kind: 'simple',
+          file,
+          line: location.line,
+          column: location.column,
+          functionName: fn.lowering.name,
+          stop: stop.reason.kind,
+        })
+      }
+    }
+    if (fn.kind !== 'analyzed') continue
+
+    const parameterNames = fn.lowering.parameters.map(parameter => parameter.name)
+    for (const precondition of fn.preconditions) {
+      const description = describePrecondition(precondition, parameterNames)
+      let finding = callerContractsBySite.get(precondition.site)
+      if (finding == null) {
+        const location = siteLocation(program, precondition.site)
+        finding = {
+          kind: 'callerContracts',
+          file,
+          line: location.line,
+          column: location.column,
+          operation: description.operation,
+          contracts: [],
+          additionalLocations: [],
+        }
+        callerContractsBySite.set(precondition.site, finding)
+      } else if (finding.operation !== description.operation) {
+        throw new Error(
+          `One operation site produced both ${finding.operation} and ${description.operation} requirements`,
+        )
+      }
+      finding.contracts.push({functionName: fn.lowering.name, condition: description.condition})
+    }
+  }
+
+  const groupedCallerContracts: CallerContractFinding[] = []
+  const callerContractOperations = [...callerContractsBySite.values()]
+    .sort((left, right) => left.line - right.line || left.column - right.column)
+  for (const finding of callerContractOperations) {
+    const existing = groupedCallerContracts.find(candidate =>
+      candidate.operation === finding.operation && sameCallerContracts(candidate.contracts, finding.contracts))
+    if (existing == null) groupedCallerContracts.push(finding)
+    else existing.additionalLocations.push({line: finding.line, column: finding.column})
+  }
+  findings.push(...groupedCallerContracts)
+  return findings
+}
+
+function formatProjectLint(findings: LintFinding[], coverage: ProjectCoverage): string {
+  const lines = [
+    'freerange lint',
+    '',
+    'Notes are caller conditions that this project cannot verify.',
+    '',
+  ]
+  for (const finding of findings) lines.push(...formatLintFinding(finding))
+
+  if (findings.length === 0) lines.push('No lint findings.')
+  const errors = findings.filter(finding => lintLevel(finding) === 'error').length
+  const warnings = findings.filter(finding => lintLevel(finding) === 'warning').length
+  const notes = findings.filter(finding => lintLevel(finding) === 'note').length
+  lines.push(
+    '',
+    `${findings.length} finding${findings.length === 1 ? '' : 's'} (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'}, ${notes} note${notes === 1 ? '' : 's'}).`,
+    formatCoverage(coverage),
+    'Lint findings come only from analyzed paths. Run `fr --audit` for recognized refactoring patterns or `fr <file>` for exact contracts.',
+  )
+  return lines.join('\n')
+}
+
+function formatLintFinding(finding: LintFinding): string[] {
+  const location = `${finding.file}:${finding.line}:${finding.column}`
+  if (finding.kind === 'simple') {
+    return [finding.stop === 'outOfBoundsRead'
+      ? `${location}  error  asserted element read (arr[i]!) is provably out of bounds in ${finding.functionName}  [out-of-bounds-read]`
+      : `${location}  warning  loop in ${finding.functionName} has no analyzable exit; it may never terminate  [non-exiting-loop]`]
+  }
+  const operationCount = finding.additionalLocations.length + 1
+  if (operationCount === 1 && finding.contracts.length === 1) {
+    const contract = finding.contracts[0]!
+    return [
+      `${location}  note  callers of ${contract.functionName} must keep ${contract.condition} (${finding.operation} at ${location})  [caller-contract]`,
+    ]
+  }
+
+  const operationSubject = operationCount === 1
+    ? `this ${finding.operation}`
+    : `${operationCount} ${finding.operation === 'element read' ? 'element reads' : `${finding.operation}s`}`
+  const conditionSubject = `${finding.contracts.length} caller condition${finding.contracts.length === 1 ? '' : 's'}`
+  const lines = [
+    `${location}  note  ${operationSubject} ${operationCount === 1 ? 'requires' : 'require'} ${conditionSubject}  [caller-contract]`,
+  ]
+  let lastShownLine = finding.line
+  let lastShownColumn = finding.column
+  for (const additional of finding.additionalLocations) {
+    if (lastShownLine === additional.line && lastShownColumn === additional.column) continue
+    lastShownLine = additional.line
+    lastShownColumn = additional.column
+    lines.push(`  also at ${finding.file}:${additional.line}:${additional.column}`)
+  }
+  for (const contract of finding.contracts) lines.push(`  ${contract.functionName}: ${contract.condition}`)
+  return lines
+}
+
+function lintLevel(finding: LintFinding): 'error' | 'warning' | 'note' {
+  if (finding.kind === 'callerContracts') return 'note'
+  return finding.stop === 'outOfBoundsRead' ? 'error' : 'warning'
+}
+
+function formatProjectAudit(audits: FileAudit[], coverage: ProjectCoverage): string {
+  const matched = audits
+    .map(audit => ({
+      audit,
+      matches: groupAuditReferences(audit.references),
+    }))
+    .filter(entry => entry.matches.length > 0)
+    .sort((left, right) => left.audit.file.localeCompare(right.audit.file))
+  const matchCount = matched.reduce((total, entry) => total + entry.matches.length, 0)
+  const lines = ['freerange audit', '']
+
+  if (matched.length === 0) {
+    lines.push('No recognized refactoring patterns matched.')
+  } else {
+    for (let index = 0; index < matched.length; index++) {
+      const {audit, matches} = matched[index]!
+      if (index > 0) lines.push('')
+      lines.push(`${audit.file} (${formatAuditCoverage(audit.coverage)})`)
+      for (const match of matches) lines.push(formatAuditMatch(audit, match))
+    }
+  }
+
+  lines.push(
+    '',
+    `${matchCount} matched location${matchCount === 1 ? '' : 's'} in ${matched.length} file${matched.length === 1 ? '' : 's'}.`,
+    formatCoverage(coverage),
+    'Only recognized patterns are listed; no suggestion does not mean an unsupported function is safe.',
+    'Run `fr --audit <file>` for that file\'s contracts, examples, and behavior warnings.',
+  )
+  return lines.join('\n')
+}
+
+function formatAuditCoverage(coverage: AuditCoverage): string {
+  const parts = coverage.functions === 0
+    ? ['no named function declarations']
+    : [`${coverage.analyzed}/${coverage.functions} functions fully analyzed`]
+  if (coverage.partial > 0) parts.push(`${coverage.partial} partial`)
+  if (coverage.unsupported > 0) parts.push(`${coverage.unsupported} unsupported`)
+  if (coverage.initializer !== 'analyzed') parts.push(`module setup ${coverage.initializer}`)
+  if (coverage.initializerSkips > 0) {
+    parts.push(`${coverage.initializerSkips} module statement${coverage.initializerSkips === 1 ? '' : 's'} skipped`)
+  }
+  return parts.join('; ')
+}
+
+function groupAuditReferences(references: AuditReference[]): AuditReference[] {
+  const matches: AuditReference[] = []
+  for (const reference of references) {
+    if (reference.guideIDs.length === 0) continue
+    // createFileAudit sorts by span, so references for one location are adjacent.
+    const previous = matches.at(-1)
+    if (previous == null
+      || previous.span.start !== reference.span.start
+      || previous.span.end !== reference.span.end) {
+      matches.push({...reference, guideIDs: [...reference.guideIDs]})
       continue
     }
-    const group = configGroups.get(configPath)
-    if (group == null) configGroups.set(configPath, [{file, index}])
-    else group.push({file, index})
-  }
-
-  let hasTypeScriptErrors = false
-  for (const [configPath, group] of configGroups) {
-    const projects = loadTypeScriptProjectGraph(configPath)
-    const rootProject = projects.at(-1)!
-    const sourcesByFile = new Map(projectSources(projects).map(source => [resolve(source.sourceFile.fileName), source]))
-    for (const target of group) {
-      const source = sourcesByFile.get(target.file)
-      if (source == null) {
-        throw new Error(`${target.file} is not part of the TypeScript project ${configPath}.`)
-      }
-      const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
-      if (diagnostics.length > 0) {
-        printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
-      }
-      if (hasErrorDiagnostics(diagnostics)) {
-        hasTypeScriptErrors = true
-        continue
-      }
-      reports[target.index] = formatReport(analyzeProjectSource(source, rootProject.rootDirectory))
+    for (const guideID of reference.guideIDs) {
+      if (!previous.guideIDs.includes(guideID)) previous.guideIDs.push(guideID)
     }
   }
+  return matches
+}
 
-  for (const target of fallbackFiles) {
+function formatAuditMatch(audit: FileAudit, reference: AuditReference): string {
+  const locationPrefix = `${audit.file}:`
+  const location = reference.location.startsWith(locationPrefix)
+    ? reference.location.slice(locationPrefix.length)
+    : reference.location
+  const guides = reference.guideIDs.map(refactorGuide)
+  return `  ${location}  ${reference.functionName}: ${guides.map(guide => guide.title).join('; also consider ')}  [${reference.guideIDs.join(', ')}]`
+}
+
+function formatCoverage(coverage: ProjectCoverage): string {
+  return `coverage: ${coverage.analyzed}/${coverage.functions} named top-level function declarations fully analyzed; ${coverage.partial} partial; ${coverage.unsupported} unsupported; ${coverage.typeErrorFiles}/${coverage.files} project files skipped for TypeScript errors.`
+}
+
+function sameCallerContracts(left: CallerContract[], right: CallerContract[]): boolean {
+  if (left.length !== right.length) return false
+  for (let index = 0; index < left.length; index++) {
+    if (left[index]!.functionName !== right[index]!.functionName
+      || left[index]!.condition !== right[index]!.condition) {
+      return false
+    }
+  }
+  return true
+}
+
+function analyzeTargetFile(file: string): DetailedAnalysis | null {
+  const absoluteFile = resolve(file)
+  if (!existsSync(absoluteFile)) throw new Error(`File not found: ${absoluteFile}`)
+  const configPath = findTypeScriptConfig(dirname(absoluteFile))
+  if (configPath == null) {
     try {
-      const checked = checkFile(target.file)
-      const lowered = lowerSource(checked, process.cwd())
-      reports[target.index] = formatReport(createReport(lowered, analyzeProgram(lowered)))
+      return analyzeCheckedSource(checkFile(absoluteFile), process.cwd())
     } catch (error) {
       if (!(error instanceof TypeScriptDiagnosticsError)) throw error
       printTypeScriptDiagnostics(error.diagnostics, error.options, process.cwd())
-      hasTypeScriptErrors = true
+      return null
     }
   }
 
-  let printed = false
-  for (const report of reports) {
-    if (report == null) continue
-    if (printed) console.log('')
-    console.log(report)
-    printed = true
-  }
-  return hasTypeScriptErrors
+  const projects = loadTypeScriptProjectGraph(configPath)
+  const rootProject = projects.at(-1)!
+  const source = projectSources(projects).find(candidate => resolve(candidate.sourceFile.fileName) === absoluteFile)
+  if (source == null) throw new Error(`${absoluteFile} is not part of the TypeScript project ${configPath}.`)
+  const diagnostics = ts.getPreEmitDiagnostics(source.project.program, source.sourceFile)
+  printTypeScriptDiagnostics(diagnostics, source.project.parsed.options, process.cwd())
+  if (hasErrorDiagnostics(diagnostics)) return null
+  return analyzeProjectSource(source, rootProject.rootDirectory)
 }
 
 type CollectedProjectDiagnostics = {
@@ -393,12 +406,11 @@ function collectProjectDiagnostics(project: LoadedTypeScriptProject): CollectedP
   return {all, global, byFile}
 }
 
-function analyzeProjectSource(source: ProjectSource, baseDirectory: string) {
-  const lowered = lowerSource({
+function analyzeProjectSource(source: ProjectSource, baseDirectory: string): DetailedAnalysis {
+  return analyzeCheckedSource({
     sourceFile: source.sourceFile,
     checker: source.project.program.getTypeChecker(),
   }, baseDirectory)
-  return createReport(lowered, analyzeProgram(lowered))
 }
 
 function uniqueDiagnostics(diagnostics: readonly ts.Diagnostic[]): ts.Diagnostic[] {

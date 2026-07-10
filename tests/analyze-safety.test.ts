@@ -422,7 +422,7 @@ describe('acceptance and module safety', () => {
       stopped: [],
       skipped: [
         `function call window.addEventListener at ${file}:3:7`,
-        `a write into an object (values are immutable; rebind a variable to a fresh object instead) at ${file}:6:7`,
+        `a write into an object (mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed) at ${file}:6:7`,
       ],
       observed: [],
     })
@@ -599,6 +599,9 @@ describe('acceptance and module safety', () => {
     `)
     // scaledUp never reads scaleFactor itself, but its result rests on currentScale's
     // assumed-finite read; without the line its ensures would overclaim finiteness.
+    const reader = analyzedFunction(report, 'currentScale')
+    expect(reader.assumptions).toEqual(['scaleFactor is finite and not NaN'])
+    expect(reader.ensures).toEqual(['return is a finite number'])
     const caller = analyzedFunction(report, 'scaledUp')
     expect(caller.assumptions).toEqual(['scaleFactor is finite and not NaN'])
     expect(caller.ensures).toEqual(['return is a finite number at least 1'])

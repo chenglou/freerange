@@ -295,7 +295,12 @@ function lowerForOfStatement(statement: ts.ForOfStatement, context: FunctionCont
   context.bindings = new Map(conditionBindings)
   context.bindings.set(
     requiredSymbol(elementName, context.checker),
-    addInstruction(context, statement, {kind: 'arrayIndex', array, index: counter, asserted: true, provenBounds: true}),
+    addInstruction(context, statement, {
+      kind: 'arrayIndex',
+      array,
+      index: counter,
+      mode: 'proven',
+    }),
   )
   lowerStatement(statement.statement, context)
   if (context.currentBlock.terminator == null) {

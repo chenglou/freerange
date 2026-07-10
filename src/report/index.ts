@@ -115,8 +115,8 @@ export const reportLegend = [
   '# freerange: static analysis of the numeric behavior of each top-level function.',
   '# requires: conditions the caller must make true; given them, the ensures lines hold.',
   '# ensures:  guarantees about the returned value whenever the function returns.',
-  '# assumes:  input facts taken on faith; no other line holds unless these do.',
-  '# unsupported: the function uses code outside the analyzed subset; the message names the construct and, when one exists, the rewrite that brings it inside.',
+  '# assumes:  input conditions accepted without proof; no other line holds unless these do.',
+  '# unsupported: the function uses code outside the analyzed subset; the message names the construct and may include a short conditional hint.',
   '# stopped:  analysis halted partway on some path; the entry describes only what ran before the stop.',
   '# skipped:  a top-level statement the module analysis stepped over; anything it could write is distrusted.',
   '# on analyzed paths: evidence from the paths that completed - not a guarantee for the whole function.',
@@ -125,10 +125,13 @@ export const reportLegend = [
 // Within an entry, line kinds print rarest-and-most-actionable first: requires (what the
 // caller must arrange), ensures (what it gets), assumes (what is being trusted — the
 // bulkiest kind, and the one every reader scans past to reach the other two).
-export function formatReport(report: AnalysisReport, options?: {legend?: boolean}): string {
-  const lines: string[] = options?.legend === false ? [report.file] : [reportLegend, report.file]
+export function formatReport(report: AnalysisReport, options?: {legend?: boolean; file?: boolean}): string {
+  const lines: string[] = []
+  if (options?.legend !== false) lines.push(reportLegend)
+  if (options?.file !== false) lines.push(report.file)
   for (const fn of report.functions) {
-    lines.push('', fn.name)
+    if (lines.length > 0) lines.push('')
+    lines.push(fn.name)
     switch (fn.kind) {
       case 'analyzed': {
         for (const precondition of fn.requires) lines.push(`  requires: ${precondition}`)
@@ -359,6 +362,9 @@ function formatStop(stop: Stop, program: ProgramIR, analysis: ProgramAnalysis): 
     case 'unmodeledNarrowing': {
       return `narrows a value in a way the analysis does not model (at ${formatSite(program, stop.site)})`
     }
+    case 'possiblyMissingElement': {
+      return `uses a possibly missing array element without handling undefined (at ${formatSite(program, stop.site)})`
+    }
     case 'loopLimit': {
       return `the loop at ${formatSite(program, stop.site)} did not converge after ${reason.updates} updates`
     }
@@ -431,9 +437,9 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'prototypeMemberRead': return `read of the inherited prototype member ${reason.property} (records carry only their own data properties)`
     case 'binaryOperator': return `binary operator ${reason.operator} (supported: + - * / %, comparisons, and boolean && || !)`
     case 'call': return reason.callee === 'Object.assign'
-      ? 'function call Object.assign (values are immutable; rebind a variable to a fresh object instead)'
-      : reason.arrayMethod === true
-        ? `function call ${reason.callee} (array methods are outside the subset; rewrite as a for-of loop over the same array)`
+      ? 'function call Object.assign (object mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed)'
+      : reason.arrayMethod != null
+        ? `function call ${reason.callee} (array methods are outside the subset; a for loop may suit simple dense-array aggregation)`
         : `function call ${reason.callee}`
     case 'callWithFewerArguments': return `call to ${reason.callee} with fewer arguments than parameters (pass every argument explicitly)`
     case 'nonNumberOperand': return `non-number operand of type ${reason.typeText}`
@@ -443,7 +449,7 @@ function formatUnsupportedReason(reason: UnsupportedReason): string {
     case 'propertyReadOnNonObject': return `property read from ${reason.typeText}`
     case 'statementAfterReturn': return 'statements after return'
     case 'assignmentInValuePosition': return 'an assignment used as a value (write it as its own statement)'
-    case 'propertyWrite': return 'a write into an object (values are immutable; rebind a variable to a fresh object instead)'
+    case 'propertyWrite': return 'a write into an object (mutation is outside the subset; rebuilding a plain-data record may be suitable when identity and mutation are not observed)'
     case 'varDeclaration': return 'var declarations (use let or const)'
     case 'evalInFile': return 'eval appears in this file; an eval string can rewrite any binding, so no function in the file is analyzed'
     case 'typeCheckSuppressed': return 'a @ts-ignore, @ts-expect-error, or @ts-nocheck comment turns off type checking in this file, so declared types cannot be trusted and no function is analyzed'

@@ -67,7 +67,11 @@ export type TransferContext = {
 // establish. That is a mismatch between two narrowing systems, not an accepted-subset
 // violation, so it degrades to a per-path stop (owner decision) instead of crashing the
 // run — thrown here, converted to a stop at the single catch in evaluateInstruction.
-class KindMismatch extends Error {}
+class KindMismatch extends Error {
+  constructor(message: string, readonly value: ValueID) {
+    super(message)
+  }
+}
 
 // One instruction either produces a value or stops the current path.
 export type StepResult =
@@ -142,6 +146,14 @@ export function evaluateInstruction(
     return evaluateInstructionKinded(instruction, state, context)
   } catch (error) {
     if (error instanceof KindMismatch) {
+      const missingElementSite = possiblyMissingElementReadSite(
+        state,
+        error.value,
+        context.expressionContext.instructionByValue,
+      )
+      if (missingElementSite != null) {
+        return {kind: 'stop', stop: {site: missingElementSite, reason: {kind: 'possiblyMissingElement'}}}
+      }
       return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'unmodeledNarrowing'}}}
     }
     throw error
@@ -183,7 +195,7 @@ function evaluateInstructionKinded(
       // bounds-check relation (`i >= 0 && i < arr.length` — the lower bound and
       // integrality still come from the index's own interval; a float index fails here
       // honestly, since arr[1.5] misses).
-      const inBounds = instruction.provenBounds
+      const inBounds = instruction.mode === 'proven'
         || (index.integer && !index.mayBeNaN && index.lower >= 0 && index.upper < length.lower)
         || (index.integer && !index.mayBeNaN && index.lower >= 0
           && hasValidIndexPair(
@@ -197,12 +209,12 @@ function evaluateInstructionKinded(
       const provablyOut = element == null
         || (index.integer && !index.mayBeNaN && (index.lower >= length.upper || index.upper < 0))
       if (provablyOut) {
-        if (instruction.asserted) {
+        if (instruction.mode === 'asserted' || instruction.mode === 'proven') {
           return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'outOfBoundsRead'}}}
         }
         return value({kind: 'nullish', sentinels: 'undefined'})
       }
-      if (!instruction.asserted) {
+      if (instruction.mode === 'bare' || instruction.mode === 'bareUnchecked') {
         // Bare arr[i] types T | undefined; a proven read cannot miss, an unproven one
         // honestly carries the possibility.
         return inBounds
@@ -299,7 +311,7 @@ function evaluateInstructionKinded(
       canBeFalse: !instruction.value,
     })
     case 'moduleRead': {
-      const slot = state.shared.modules[instruction.binding]
+      const slot = state.shared[instruction.binding]
       if (slot == null) throw new Error(`Unknown module binding ${instruction.binding}`)
       if (slot.kind === 'uninitialized') {
         return {kind: 'stop', stop: {site: instruction.site, reason: {kind: 'moduleRead', binding: instruction.binding}}}
@@ -320,7 +332,7 @@ function evaluateInstructionKinded(
       // category is single-kind: value/kind writes are type-checked against the declared
       // number, boolean, or record shape.
       if (binding.category.kind !== 'opaque') {
-        state.shared.modules[instruction.binding] = {kind: 'value', value: assigned, version: freshSlotVersion()}
+        state.shared[instruction.binding] = {kind: 'value', value: assigned, version: freshSlotVersion()}
       }
       // A bounds check proven against the binding's previous value must not survive the
       // rebind: `data = [7]` can shrink the array under a recorded pair.
@@ -333,7 +345,7 @@ function evaluateInstructionKinded(
       const declaredKind = declaredKindOf(binding.category)
       // Covering, not assumed-finite: values computed from this slot can publish without
       // any assumes line, so the reset must include NaN and infinities.
-      state.shared.modules[instruction.binding] = declaredKind == null
+      state.shared[instruction.binding] = declaredKind == null
         ? {kind: 'uninitialized'}
         : {kind: 'value', value: coveringKindValue(declaredKind), version: freshSlotVersion()}
       state.validIndexPairs = dropModuleRootedPairs(state.validIndexPairs, instruction.binding)
@@ -377,14 +389,18 @@ function evaluateInstructionKinded(
       if (object.kind === 'taggedUnion') {
         const variantProperty = (variant: TaggedVariant): AbstractValue => {
           const inVariant = recordProperty(variant.record, instruction.property)
-          if (inVariant == null) throw new KindMismatch(`Variant ${variant.tagValue} has no property ${instruction.property}`)
+          if (inVariant == null) {
+            throw new KindMismatch(`Variant ${variant.tagValue} has no property ${instruction.property}`, instruction.object)
+          }
           return inVariant
         }
         const [firstVariant, ...restVariants] = object.variants
         let joined: AbstractValue = variantProperty(firstVariant)
         for (const variant of restVariants) {
           const next = tryJoinValues(joined, variantProperty(variant))
-          if (next == null) throw new KindMismatch(`Property ${instruction.property} mixes kinds across variants`)
+          if (next == null) {
+            throw new KindMismatch(`Property ${instruction.property} mixes kinds across variants`, instruction.object)
+          }
           joined = next
         }
         return passthroughValue(joined)
@@ -395,7 +411,9 @@ function evaluateInstructionKinded(
       // met a plain record degraded to their shared hull, and a read past the hull is
       // exactly a narrowing the analysis did not model. (Before hulls existed this was a
       // gate-bug tripwire; the backstop bucket is what review rounds audit now.)
-      if (propertyValue == null) throw new KindMismatch(`Record has no property ${instruction.property}`)
+      if (propertyValue == null) {
+        throw new KindMismatch(`Record has no property ${instruction.property}`, instruction.object)
+      }
       return passthroughValue(propertyValue)
     }
     case 'compare': {
@@ -584,7 +602,7 @@ function withoutSentinel(sentinels: 'null' | 'undefined' | 'both', sentinel: 'nu
 // (e.g. the value cannot be the checked sentinel).
 function requiredTaggedUnion(state: ExecutionState, id: ValueID): AbstractTaggedUnion {
   const operand = requiredValue(state, id)
-  if (operand.kind !== 'taggedUnion') throw new KindMismatch(`IR value ${id} is not a tagged union`)
+  if (operand.kind !== 'taggedUnion') throw new KindMismatch(`IR value ${id} is not a tagged union`, id)
   return operand
 }
 
@@ -785,10 +803,10 @@ function writeThroughProducers(
   // value (another read's refinement of the same slot landed first), so the write meets
   // the two covers instead of overwriting.
   if (producer?.kind === 'moduleRead') {
-    const slot = state.shared.modules[producer.binding]
+    const slot = state.shared[producer.binding]
     const observed = state.frame.readVersions[id]
     if (slot?.kind === 'value' && observed != null && observed !== mixedSlotVersion && slot.version === observed) {
-      state.shared.modules[producer.binding] = {kind: 'value', value: meetValues(slot.value, met), version: slot.version}
+      state.shared[producer.binding] = {kind: 'value', value: meetValues(slot.value, met), version: slot.version}
     }
   }
   if (producer?.kind === 'arrayLength' && met.kind === 'number') {
@@ -1087,13 +1105,13 @@ export function refineCheck(
 
 function requiredNumber(state: ExecutionState, id: ValueID): AbstractNumber {
   const value = requiredValue(state, id)
-  if (value.kind !== 'number') throw new KindMismatch(`IR value ${id} is not a number`)
+  if (value.kind !== 'number') throw new KindMismatch(`IR value ${id} is not a number`, id)
   return value
 }
 
 export function requiredBoolean(state: ExecutionState, id: ValueID): AbstractBoolean {
   const value = requiredValue(state, id)
-  if (value.kind !== 'boolean') throw new KindMismatch(`IR value ${id} is not a boolean`)
+  if (value.kind !== 'boolean') throw new KindMismatch(`IR value ${id} is not a boolean`, id)
   return value
 }
 
@@ -1107,15 +1125,38 @@ export function branchConditionOutcome(
   state: ExecutionState,
   id: ValueID,
   site: SiteID,
+  expressionContext: ExpressionContext,
 ): {kind: 'value'; value: AbstractBoolean} | {kind: 'stop'; stop: Stop} {
   try {
     return {kind: 'value', value: requiredBoolean(state, id)}
   } catch (error) {
     if (error instanceof KindMismatch) {
+      const missingElementSite = possiblyMissingElementReadSite(
+        state,
+        id,
+        expressionContext.instructionByValue,
+      )
+      if (missingElementSite != null) {
+        return {kind: 'stop', stop: {site: missingElementSite, reason: {kind: 'possiblyMissingElement'}}}
+      }
       return {kind: 'stop', stop: {site, reason: {kind: 'unmodeledNarrowing'}}}
     }
     throw error
   }
+}
+
+function possiblyMissingElementReadSite(
+  state: ExecutionState,
+  valueID: ValueID,
+  producers: Array<InstructionIR | undefined>,
+): SiteID | null {
+  const producer = producers[valueID]
+  if (producer?.kind !== 'arrayIndex' || producer.mode !== 'bareUnchecked') return null
+  const value = state.frame.values[valueID]
+  if (value == null) return null
+  const canBeUndefined = (value.kind === 'nullish' || value.kind === 'maybeNullish')
+    && value.sentinels !== 'null'
+  return canBeUndefined ? producer.site : null
 }
 
 // A constant in-bounds index picks the exact tuple element; anything else takes the hull.
@@ -1131,13 +1172,13 @@ function tupleElement(tuple: Extract<AbstractValue, {kind: 'tuple'}>, index: Abs
 
 function requiredSequence(state: ExecutionState, id: ValueID): Extract<AbstractValue, {kind: 'tuple' | 'array'}> {
   const value = requiredValue(state, id)
-  if (value.kind !== 'tuple' && value.kind !== 'array') throw new KindMismatch(`IR value ${id} is not an array`)
+  if (value.kind !== 'tuple' && value.kind !== 'array') throw new KindMismatch(`IR value ${id} is not an array`, id)
   return value
 }
 
 function requiredRecord(state: ExecutionState, id: ValueID): AbstractRecord {
   const value = requiredValue(state, id)
-  if (value.kind !== 'record') throw new KindMismatch(`IR value ${id} is not a record`)
+  if (value.kind !== 'record') throw new KindMismatch(`IR value ${id} is not a record`, id)
   return value
 }
 

@@ -32,11 +32,9 @@ export function freshSlotVersion(): number {
   return slotVersionCounter
 }
 
-export type SharedState = {
-  // Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
-  // callee's module writes are visible to the caller after a completed call.
-  modules: ModuleSlot[]
-}
+// Indexed by ModuleBindingID, fixed length per program. Flows through calls, so a
+// callee's module writes are visible to the caller after a completed call.
+export type SharedState = ModuleSlot[]
 
 export type ExecutionState = {
   frame: FunctionFrame
@@ -83,12 +81,12 @@ export function dropModuleRootedPairs(pairs: ValidIndexPair[], binding: number |
 export function emptySharedState(moduleCount: number): SharedState {
   const modules: ModuleSlot[] = []
   for (let index = 0; index < moduleCount; index++) modules.push({kind: 'uninitialized'})
-  return {modules}
+  return modules
 }
 
 export function cloneSharedState(state: SharedState): SharedState {
   // Slots are replaced whole on write, never mutated, so a shallow copy suffices.
-  return {modules: state.modules.slice()}
+  return state.slice()
 }
 
 export function cloneState(state: ExecutionState): ExecutionState {
@@ -125,9 +123,7 @@ export function joinStates(left: ExecutionState, right: ExecutionState): Executi
     hasValidIndexPair(right.validIndexPairs, pair.index, pair.array))
   return {
     frame: {values, readVersions},
-    shared: {
-      modules: joinModuleSlots(left.shared.modules, right.shared.modules),
-    },
+    shared: joinModuleSlots(left.shared, right.shared),
     validIndexPairs,
   }
 }
@@ -178,9 +174,9 @@ export function sameState(left: ExecutionState, right: ExecutionState): boolean 
   for (let index = 0; index < readLength; index++) {
     if (left.frame.readVersions[index] !== right.frame.readVersions[index]) return false
   }
-  for (let index = 0; index < left.shared.modules.length; index++) {
-    const leftSlot = left.shared.modules[index]!
-    const rightSlot = right.shared.modules[index]!
+  for (let index = 0; index < left.shared.length; index++) {
+    const leftSlot = left.shared[index]!
+    const rightSlot = right.shared[index]!
     if (leftSlot.kind !== rightSlot.kind) return false
     if (leftSlot.kind === 'value' && rightSlot.kind === 'value') {
       if (leftSlot.version !== rightSlot.version) return false
@@ -203,12 +199,12 @@ export function widenState(previous: ExecutionState, next: ExecutionState): Exec
       widened.frame.values[index] = widenValue(previousValue, nextValue)
     }
   }
-  for (let index = 0; index < widened.shared.modules.length; index++) {
-    const previousSlot = previous.shared.modules[index]!
-    const slot = widened.shared.modules[index]!
+  for (let index = 0; index < widened.shared.length; index++) {
+    const previousSlot = previous.shared[index]!
+    const slot = widened.shared[index]!
     if (previousSlot.kind === 'value' && slot.kind === 'value') {
       // The version stays the joined one: widening loosens the value cover, it is not a write.
-      widened.shared.modules[index] = {kind: 'value', value: widenValue(previousSlot.value, slot.value), version: slot.version}
+      widened.shared[index] = {kind: 'value', value: widenValue(previousSlot.value, slot.value), version: slot.version}
     }
   }
   return widened

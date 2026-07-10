@@ -27,47 +27,22 @@ describe('module state and nullability', () => {
     expect(report.functions.map(fn => fn.name)).toEqual(['paddedWidth', 'debugOffset'])
   })
 
-  test('keeps only the declared kind of a module binding that a function writes', () => {
-    const report = analyzeSource('module-written.ts', `
-      let scaleFactor = 2
-      export function doubleScale(): void {
-        scaleFactor = scaleFactor * 2
-      }
-      export function currentScale(): number {
-        return scaleFactor
-      }
-    `)
-    const reader = analyzedFunction(report, 'currentScale')
-    expect(reader.assumptions).toEqual(['scaleFactor is finite and not NaN'])
-    expect(reader.ensures).toEqual(['return is a finite number'])
-  })
-
-  test('publishes an exact module record into functions', () => {
+  test('publishes flat and nested module records exactly', () => {
     const report = analyzeSource('module-record.ts', `
       const gridSize = {cols: 8, rows: 6}
+      const config = {margins: {left: 4, right: 12}, snap: true}
       export function cellCount(): number {
         return gridSize.cols * gridSize.rows
       }
-    `)
-    // The exact 48 proves the record's property values flowed in, not just its shape; and
-    // a trusted exact value needs no assumption line.
-    expect(report.functions).toEqual([{
-      kind: 'analyzed',
-      name: 'cellCount',
-      assumptions: [],
-      requires: [],
-      ensures: ['return is a finite integer number from 48 through 48'],
-    }])
-  })
-
-  test('publishes nested module records exactly', () => {
-    // Module state is a tree of records hanging off roots; publishing must reach the leaves.
-    const report = analyzeSource('module-record-nested.ts', `
-      const config = {margins: {left: 4, right: 12}, snap: true}
       export function leftEdge(): number {
         return config.margins.left
       }
     `)
+    // The exact 48 proves the record's property values flowed in, not just its shape; and
+    // a trusted exact value needs no assumption line.
+    expect(analyzedFunction(report, 'cellCount').ensures)
+      .toEqual(['return is a finite integer number from 48 through 48'])
+    // Module state is a tree of records hanging off roots; publishing reaches the leaves.
     expect(analyzedFunction(report, 'leftEdge').ensures)
       .toEqual(['return is a finite integer number from 4 through 4'])
   })

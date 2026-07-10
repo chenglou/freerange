@@ -21,7 +21,7 @@ describe('tagged unions and narrowing', () => {
         return route.index
       }
       type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      function pick(wide: boolean): Frame {
+      export function pick(wide: boolean): Frame {
         if (wide) { return {type: 'sidebar', width: 240} }
         return {type: 'mobile', scale: 0.5}
       }
@@ -36,6 +36,13 @@ describe('tagged unions and narrowing', () => {
           default: return frame.scale
         }
       }
+      export function total(frames: Frame[]): number {
+        let sum = 0
+        for (const frame of frames) {
+          if (frame.type === 'sidebar') { sum = sum + frame.width }
+        }
+        return sum
+      }
     `)
     expect(analyzedFunction(report, 'elseIfChain').assumptions).toEqual([
       "route.index is finite and not NaN (when route.type is 'lightbox')",
@@ -45,6 +52,15 @@ describe('tagged unions and narrowing', () => {
     // The two variants' exact constants survive the join and re-split at the caller.
     expect(analyzedFunction(report, 'useIt').ensures).toEqual(['return is a finite number from 50 through 240'])
     expect(analyzedFunction(report, 'switchOnTag').ensures).toEqual(['return is a finite number'])
+    expect(analyzedFunction(report, 'pick').ensures).toEqual([
+      "return.type is 'sidebar' or 'mobile'",
+      "return.width is a finite integer number from 240 through 240 (when return.type is 'sidebar')",
+      "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'mobile')",
+    ])
+    expect(analyzedFunction(report, 'total').assumptions).toEqual([
+      "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
+      "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
+    ])
   })
 
   test('tagged unions: duplicate tag values keep both variants, and in-checks tell them apart', () => {
@@ -77,32 +93,6 @@ describe('tagged unions and narrowing', () => {
       "box.owner is null or box.owner.count is finite and not NaN (when box.owner.type is 'imagine')",
     ])
     expect(analyzedFunction(report, 'ownerPage').ensures).toEqual(['return is a finite number'])
-  })
-
-  test('tagged unions: per-variant return facts, and loops over unions converge', () => {
-    const report = analyzeSource('tagged-returns.ts', `
-      type Frame = {type: 'sidebar'; width: number} | {type: 'mobile'; scale: number}
-      export function pick(wide: boolean): Frame {
-        if (wide) { return {type: 'sidebar', width: 240} }
-        return {type: 'mobile', scale: 0.5}
-      }
-      export function total(frames: Frame[]): number {
-        let sum = 0
-        for (const frame of frames) {
-          if (frame.type === 'sidebar') { sum = sum + frame.width }
-        }
-        return sum
-      }
-    `)
-    expect(analyzedFunction(report, 'pick').ensures).toEqual([
-      "return.type is 'sidebar' or 'mobile'",
-      "return.width is a finite integer number from 240 through 240 (when return.type is 'sidebar')",
-      "return.scale is a finite number from 0.5 through 0.5 (when return.type is 'mobile')",
-    ])
-    expect(analyzedFunction(report, 'total').assumptions).toEqual([
-      "frames[each].width is finite and not NaN (when frames[each].type is 'sidebar')",
-      "frames[each].scale is finite and not NaN (when frames[each].type is 'mobile')",
-    ])
   })
 
   test('tagged unions: boolean tags and literal-union tags dispatch like string tags', () => {
@@ -305,17 +295,15 @@ describe('tagged unions and narrowing', () => {
       }
     `)
     const widthOf = analyzedFunction(report, 'widthOf')
-    expect(widthOf.ensures[0]).toContain('number')
+    expect(widthOf.ensures[0]).toContain('possibly non-finite')
     expect(analyzedFunction(report, 'levelOf').ensures).toEqual(['return is a finite number'])
   })
 
-  test('unclassifiable properties become opaque leaves; intersections classify; hull reads stop honestly', () => {
+  test('unclassifiable properties become opaque leaves and intersections classify', () => {
     // A recursive or mixed-literal property no longer vetoes its record: it is carried
     // without claims, numeric use of it rejects at the read position, and the record's
     // numeric contract survives its weird neighbors. Route variants written as
-    // intersections (Base & {...}) classify like the merged record they are. And a read
-    // past a degraded hull (a union that met a plain record) stops honestly instead of
-    // crashing the run.
+    // intersections (Base & {...}) classify like the merged record they are.
     const report = analyzeSource('opaque-leaves.ts', `
       type Filter = {kind: 'all'} | {kind: 'top'}
       type Base = {type: 'explore'; scroll: number}
@@ -351,12 +339,11 @@ describe('tagged unions and narrowing', () => {
     expect(analyzedFunction(report, 'pageOf').ensures).toEqual(['return is a finite integer number from 1 through 2'])
   })
 
-  test('tag checks on plain-record operands dispatch blind; inherited lib properties stay boundary leaves', () => {
+  test('tag checks on plain-record operands dispatch without narrowing', () => {
     // A builder whose declared return is a single variant produces a plain record; the
     // caller's union-typed binding then tag-checks it. The record's tag was never
     // learned, so the check is honestly unknown and both branches analyze — the round-2
-    // regression (a kind-mismatch stop) healed. And a project interface extending a lib
-    // interface contracts only the properties the project wrote.
+    // regression (a kind-mismatch stop) healed.
     const report = analyzeSource('record-dispatch.ts', `
       type Route = {kind: 'home'; scroll: number} | {kind: 'about'; scroll: number}
       function openHome(): {kind: 'home'; scroll: number} { return {kind: 'home', scroll: 3} }
@@ -470,7 +457,7 @@ describe('tagged unions and narrowing', () => {
     `)
     expect(analyzedFunction(report, 'parsed').ensures).toEqual(['return is a finite number at most 100'])
     expect(analyzedFunction(report, 'withCallback').ensures).toEqual(['return is a finite number'])
-    expect(analyzedFunction(report, 'carries').ensures[0]).toContain('number')
+    expect(analyzedFunction(report, 'carries').ensures[0]).toContain('possibly non-finite')
     expect(analyzedFunction(report, 'domCheck').ensures).toEqual(['return is a finite number'])
   })
 
